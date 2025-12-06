@@ -1,0 +1,141 @@
+"""Create events table for event sourcing.
+
+Revision ID: ${revision_id}
+Revises: ${down_revision}
+Create Date: ${create_date}
+
+This migration creates the events table, which is the core of the event
+sourcing infrastructure. Choose either the non-partitioned or partitioned
+version based on your expected event volume.
+
+For high-volume deployments (>10M events/month), use the partitioned version.
+"""
+
+from typing import Sequence, Union
+
+from alembic import op
+import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
+
+
+# revision identifiers, used by Alembic.
+revision: str = '${revision_id}'
+down_revision: Union[str, Sequence[str], None] = ${down_revision}
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+# Configuration: Set to True for partitioned table (high-volume deployments)
+USE_PARTITIONING = False
+
+
+def upgrade() -> None:
+    """Create events table with indexes."""
+    if USE_PARTITIONING:
+        _create_partitioned_events_table()
+    else:
+        _create_events_table()
+
+
+def _create_events_table() -> None:
+    """Create non-partitioned events table."""
+    op.create_table(
+        'events',
+        sa.Column('event_id', postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column('aggregate_id', postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column('aggregate_type', sa.String(255), nullable=False),
+        sa.Column('event_type', sa.String(255), nullable=False),
+        sa.Column('tenant_id', postgresql.UUID(as_uuid=True), nullable=True),
+        sa.Column('actor_id', sa.String(255), nullable=True),
+        sa.Column('version', sa.Integer(), nullable=False),
+        sa.Column('timestamp', sa.DateTime(timezone=True), nullable=False),
+        sa.Column('payload', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('NOW()'), nullable=False),
+        sa.UniqueConstraint('aggregate_id', 'aggregate_type', 'version', name='uq_events_aggregate_version'),
+    )
+
+    # Create indexes
+    op.create_index('idx_events_aggregate_id', 'events', ['aggregate_id'])
+    op.create_index('idx_events_aggregate_type', 'events', ['aggregate_type'])
+    op.create_index('idx_events_event_type', 'events', ['event_type'])
+    op.create_index('idx_events_timestamp', 'events', ['timestamp'])
+    op.create_index(
+        'idx_events_tenant_id', 'events', ['tenant_id'],
+        postgresql_where=sa.text('tenant_id IS NOT NULL')
+    )
+    op.create_index(
+        'idx_events_type_tenant_timestamp', 'events',
+        ['aggregate_type', 'tenant_id', 'timestamp']
+    )
+    op.create_index(
+        'idx_events_aggregate_version', 'events',
+        ['aggregate_id', 'aggregate_type', 'version']
+    )
+
+
+def _create_partitioned_events_table() -> None:
+    """Create partitioned events table with pg_partman support."""
+    # Create partitioned table using raw SQL
+    op.execute("""
+        CREATE TABLE events (
+            event_id UUID NOT NULL,
+            aggregate_id UUID NOT NULL,
+            aggregate_type VARCHAR(255) NOT NULL,
+            event_type VARCHAR(255) NOT NULL,
+            tenant_id UUID,
+            actor_id VARCHAR(255),
+            version INTEGER NOT NULL,
+            timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+            payload JSONB NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (event_id, timestamp),
+            UNIQUE (aggregate_id, aggregate_type, version, timestamp)
+        ) PARTITION BY RANGE (timestamp)
+    """)
+
+    # Create indexes on partitioned table
+    op.create_index('idx_events_aggregate_id', 'events', ['aggregate_id'])
+    op.create_index('idx_events_aggregate_type', 'events', ['aggregate_type'])
+    op.create_index('idx_events_event_type', 'events', ['event_type'])
+    op.create_index('idx_events_timestamp', 'events', ['timestamp'])
+    op.create_index('idx_events_tenant_id', 'events', ['tenant_id'])
+    op.create_index(
+        'idx_events_type_tenant_timestamp', 'events',
+        ['aggregate_type', 'tenant_id', 'timestamp']
+    )
+    op.create_index(
+        'idx_events_aggregate_version', 'events',
+        ['aggregate_id', 'aggregate_type', 'version']
+    )
+
+    # Create default partition
+    op.execute("CREATE TABLE events_default PARTITION OF events DEFAULT")
+
+    # Optional: Configure pg_partman if available
+    # Uncomment the following if pg_partman is installed:
+    # op.execute("""
+    #     SELECT partman.create_parent(
+    #         p_parent_table => 'public.events',
+    #         p_control => 'timestamp',
+    #         p_interval => '1 month',
+    #         p_type => 'range',
+    #         p_premake => 6,
+    #         p_automatic_maintenance => 'on'
+    #     )
+    # """)
+
+
+def downgrade() -> None:
+    """Drop events table."""
+    if USE_PARTITIONING:
+        # Drop partitioned table and all partitions
+        op.execute("DROP TABLE IF EXISTS events CASCADE")
+    else:
+        # Drop indexes first
+        op.drop_index('idx_events_aggregate_version', table_name='events')
+        op.drop_index('idx_events_type_tenant_timestamp', table_name='events')
+        op.drop_index('idx_events_tenant_id', table_name='events')
+        op.drop_index('idx_events_timestamp', table_name='events')
+        op.drop_index('idx_events_event_type', table_name='events')
+        op.drop_index('idx_events_aggregate_type', table_name='events')
+        op.drop_index('idx_events_aggregate_id', table_name='events')
+        op.drop_table('events')

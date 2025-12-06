@@ -1,0 +1,166 @@
+"""Create projection_checkpoints table for tracking projection positions.
+
+Revision ID: ${revision_id}
+Revises: ${down_revision}
+Create Date: ${create_date}
+
+This migration creates the projection_checkpoints table, which tracks
+the position of each projection in the event stream.
+
+Checkpoints enable resumable processing after restarts and lag monitoring.
+"""
+
+from typing import Sequence, Union
+
+from alembic import op
+import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
+
+
+# revision identifiers, used by Alembic.
+revision: str = '${revision_id}'
+down_revision: Union[str, Sequence[str], None] = ${down_revision}
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+
+def upgrade() -> None:
+    """Create projection_checkpoints table with indexes and triggers."""
+    op.create_table(
+        'projection_checkpoints',
+        sa.Column('projection_name', sa.String(255), primary_key=True),
+        sa.Column('last_event_id', postgresql.UUID(as_uuid=True), nullable=True),
+        sa.Column('last_event_type', sa.String(255), nullable=True),
+        sa.Column('last_processed_at', sa.DateTime(timezone=True), nullable=True),
+        sa.Column('events_processed', sa.BigInteger(), server_default='0', nullable=False),
+        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('NOW()'), nullable=False),
+        sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('NOW()'), nullable=False),
+    )
+
+    # Create indexes
+    op.create_index(
+        'idx_checkpoints_last_processed',
+        'projection_checkpoints',
+        ['last_processed_at']
+    )
+    op.create_index(
+        'idx_checkpoints_updated_at',
+        'projection_checkpoints',
+        ['updated_at']
+    )
+
+    # Create trigger function for auto-updating updated_at
+    op.execute("""
+        CREATE OR REPLACE FUNCTION update_checkpoint_timestamp()
+        RETURNS TRIGGER AS $$
+        BEGIN
+            NEW.updated_at = NOW();
+            RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
+    """)
+
+    # Create trigger
+    op.execute("""
+        CREATE TRIGGER trg_checkpoint_updated_at
+            BEFORE UPDATE ON projection_checkpoints
+            FOR EACH ROW
+            EXECUTE FUNCTION update_checkpoint_timestamp();
+    """)
+
+    # Create helper function for updating checkpoints (UPSERT pattern)
+    op.execute("""
+        CREATE OR REPLACE FUNCTION update_projection_checkpoint(
+            p_projection_name VARCHAR(255),
+            p_event_id UUID,
+            p_event_type VARCHAR(255)
+        ) RETURNS VOID AS $$
+        BEGIN
+            INSERT INTO projection_checkpoints
+                (projection_name, last_event_id, last_event_type,
+                 last_processed_at, events_processed, created_at, updated_at)
+            VALUES
+                (p_projection_name, p_event_id, p_event_type,
+                 NOW(), 1, NOW(), NOW())
+            ON CONFLICT (projection_name) DO UPDATE
+            SET last_event_id = EXCLUDED.last_event_id,
+                last_event_type = EXCLUDED.last_event_type,
+                last_processed_at = EXCLUDED.last_processed_at,
+                events_processed = projection_checkpoints.events_processed + 1,
+                updated_at = NOW();
+        END;
+        $$ LANGUAGE plpgsql;
+    """)
+
+    # Create helper function to reset a checkpoint
+    op.execute("""
+        CREATE OR REPLACE FUNCTION reset_projection_checkpoint(
+            p_projection_name VARCHAR(255)
+        ) RETURNS BOOLEAN AS $$
+        DECLARE
+            deleted BOOLEAN;
+        BEGIN
+            DELETE FROM projection_checkpoints
+            WHERE projection_name = p_projection_name;
+            GET DIAGNOSTICS deleted = FOUND;
+            RETURN deleted;
+        END;
+        $$ LANGUAGE plpgsql;
+    """)
+
+    # Create helper function to get stale projections
+    op.execute("""
+        CREATE OR REPLACE FUNCTION get_stale_projections(
+            stale_threshold_minutes INTEGER DEFAULT 60
+        ) RETURNS TABLE (
+            projection_name VARCHAR(255),
+            last_event_id UUID,
+            last_processed_at TIMESTAMP WITH TIME ZONE,
+            events_processed BIGINT,
+            minutes_since_update DOUBLE PRECISION
+        ) AS $$
+        BEGIN
+            RETURN QUERY
+            SELECT
+                pc.projection_name,
+                pc.last_event_id,
+                pc.last_processed_at,
+                pc.events_processed,
+                EXTRACT(EPOCH FROM (NOW() - pc.updated_at)) / 60 AS minutes_since_update
+            FROM projection_checkpoints pc
+            WHERE pc.updated_at < NOW() - (stale_threshold_minutes || ' minutes')::INTERVAL
+            ORDER BY pc.updated_at ASC;
+        END;
+        $$ LANGUAGE plpgsql;
+    """)
+
+    # Create statistics view
+    op.execute("""
+        CREATE OR REPLACE VIEW projection_checkpoint_stats AS
+        SELECT
+            projection_name,
+            last_event_id,
+            last_event_type,
+            last_processed_at,
+            events_processed,
+            created_at,
+            updated_at,
+            EXTRACT(EPOCH FROM (NOW() - last_processed_at)) AS seconds_since_last_event,
+            EXTRACT(EPOCH FROM (NOW() - updated_at)) AS seconds_since_update
+        FROM projection_checkpoints
+        ORDER BY updated_at DESC;
+    """)
+
+
+def downgrade() -> None:
+    """Drop projection_checkpoints table and related objects."""
+    op.execute("DROP VIEW IF EXISTS projection_checkpoint_stats")
+    op.execute("DROP FUNCTION IF EXISTS get_stale_projections")
+    op.execute("DROP FUNCTION IF EXISTS reset_projection_checkpoint")
+    op.execute("DROP FUNCTION IF EXISTS update_projection_checkpoint")
+    op.execute("DROP TRIGGER IF EXISTS trg_checkpoint_updated_at ON projection_checkpoints")
+    op.execute("DROP FUNCTION IF EXISTS update_checkpoint_timestamp")
+
+    op.drop_index('idx_checkpoints_updated_at', table_name='projection_checkpoints')
+    op.drop_index('idx_checkpoints_last_processed', table_name='projection_checkpoints')
+    op.drop_table('projection_checkpoints')

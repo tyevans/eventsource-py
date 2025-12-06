@@ -1,0 +1,213 @@
+"""Create all eventsource tables.
+
+Revision ID: ${revision_id}
+Revises: ${down_revision}
+Create Date: ${create_date}
+
+This migration creates all tables required by the eventsource library:
+- events: Core event store table
+- event_outbox: Transactional outbox for reliable publishing
+- projection_checkpoints: Projection position tracking
+- dead_letter_queue: Failed event processing storage
+
+For production deployments with high event volume, consider using the
+partitioned events table instead (see events.py.template with USE_PARTITIONING=True).
+"""
+
+from typing import Sequence, Union
+
+from alembic import op
+import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
+
+
+# revision identifiers, used by Alembic.
+revision: str = '${revision_id}'
+down_revision: Union[str, Sequence[str], None] = ${down_revision}
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+
+def upgrade() -> None:
+    """Create all eventsource tables."""
+    _create_events_table()
+    _create_outbox_table()
+    _create_checkpoints_table()
+    _create_dlq_table()
+
+
+def _create_events_table() -> None:
+    """Create events table with indexes."""
+    op.create_table(
+        'events',
+        sa.Column('event_id', postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column('aggregate_id', postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column('aggregate_type', sa.String(255), nullable=False),
+        sa.Column('event_type', sa.String(255), nullable=False),
+        sa.Column('tenant_id', postgresql.UUID(as_uuid=True), nullable=True),
+        sa.Column('actor_id', sa.String(255), nullable=True),
+        sa.Column('version', sa.Integer(), nullable=False),
+        sa.Column('timestamp', sa.DateTime(timezone=True), nullable=False),
+        sa.Column('payload', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('NOW()'), nullable=False),
+        sa.UniqueConstraint('aggregate_id', 'aggregate_type', 'version', name='uq_events_aggregate_version'),
+    )
+
+    op.create_index('idx_events_aggregate_id', 'events', ['aggregate_id'])
+    op.create_index('idx_events_aggregate_type', 'events', ['aggregate_type'])
+    op.create_index('idx_events_event_type', 'events', ['event_type'])
+    op.create_index('idx_events_timestamp', 'events', ['timestamp'])
+    op.create_index(
+        'idx_events_tenant_id', 'events', ['tenant_id'],
+        postgresql_where=sa.text('tenant_id IS NOT NULL')
+    )
+    op.create_index(
+        'idx_events_type_tenant_timestamp', 'events',
+        ['aggregate_type', 'tenant_id', 'timestamp']
+    )
+    op.create_index(
+        'idx_events_aggregate_version', 'events',
+        ['aggregate_id', 'aggregate_type', 'version']
+    )
+
+
+def _create_outbox_table() -> None:
+    """Create event_outbox table with indexes."""
+    op.create_table(
+        'event_outbox',
+        sa.Column(
+            'id',
+            postgresql.UUID(as_uuid=True),
+            primary_key=True,
+            server_default=sa.text('gen_random_uuid()')
+        ),
+        sa.Column('event_id', postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column('event_type', sa.String(255), nullable=False),
+        sa.Column('aggregate_id', postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column('aggregate_type', sa.String(255), nullable=False),
+        sa.Column('tenant_id', postgresql.UUID(as_uuid=True), nullable=True),
+        sa.Column('event_data', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('NOW()'), nullable=False),
+        sa.Column('published_at', sa.DateTime(timezone=True), nullable=True),
+        sa.Column('retry_count', sa.Integer(), server_default='0', nullable=False),
+        sa.Column('last_error', sa.Text(), nullable=True),
+        sa.Column('status', sa.String(20), server_default='pending', nullable=False),
+        sa.CheckConstraint("status IN ('pending', 'published', 'failed')", name='chk_outbox_status'),
+    )
+
+    op.create_index(
+        'idx_outbox_status_created', 'event_outbox', ['status', 'created_at'],
+        postgresql_where=sa.text("status = 'pending'")
+    )
+    op.create_index(
+        'idx_outbox_pending', 'event_outbox', ['created_at'],
+        postgresql_where=sa.text("status = 'pending'")
+    )
+    op.create_index('idx_outbox_event_id', 'event_outbox', ['event_id'])
+    op.create_index(
+        'idx_outbox_tenant_id', 'event_outbox', ['tenant_id'],
+        postgresql_where=sa.text('tenant_id IS NOT NULL')
+    )
+
+
+def _create_checkpoints_table() -> None:
+    """Create projection_checkpoints table with indexes and triggers."""
+    op.create_table(
+        'projection_checkpoints',
+        sa.Column('projection_name', sa.String(255), primary_key=True),
+        sa.Column('last_event_id', postgresql.UUID(as_uuid=True), nullable=True),
+        sa.Column('last_event_type', sa.String(255), nullable=True),
+        sa.Column('last_processed_at', sa.DateTime(timezone=True), nullable=True),
+        sa.Column('events_processed', sa.BigInteger(), server_default='0', nullable=False),
+        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('NOW()'), nullable=False),
+        sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('NOW()'), nullable=False),
+    )
+
+    op.create_index('idx_checkpoints_last_processed', 'projection_checkpoints', ['last_processed_at'])
+    op.create_index('idx_checkpoints_updated_at', 'projection_checkpoints', ['updated_at'])
+
+    # Auto-update trigger for updated_at
+    op.execute("""
+        CREATE OR REPLACE FUNCTION update_checkpoint_timestamp()
+        RETURNS TRIGGER AS $$
+        BEGIN
+            NEW.updated_at = NOW();
+            RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
+    """)
+
+    op.execute("""
+        CREATE TRIGGER trg_checkpoint_updated_at
+            BEFORE UPDATE ON projection_checkpoints
+            FOR EACH ROW
+            EXECUTE FUNCTION update_checkpoint_timestamp();
+    """)
+
+
+def _create_dlq_table() -> None:
+    """Create dead_letter_queue table with indexes."""
+    op.create_table(
+        'dead_letter_queue',
+        sa.Column('id', sa.BigInteger(), primary_key=True, autoincrement=True),
+        sa.Column('event_id', postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column('projection_name', sa.String(255), nullable=False),
+        sa.Column('event_type', sa.String(255), nullable=False),
+        sa.Column('event_data', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+        sa.Column('error_message', sa.Text(), nullable=False),
+        sa.Column('error_stacktrace', sa.Text(), nullable=True),
+        sa.Column('retry_count', sa.Integer(), server_default='0', nullable=False),
+        sa.Column('first_failed_at', sa.DateTime(timezone=True), server_default=sa.text('NOW()'), nullable=False),
+        sa.Column('last_failed_at', sa.DateTime(timezone=True), server_default=sa.text('NOW()'), nullable=False),
+        sa.Column('status', sa.String(20), server_default='failed', nullable=False),
+        sa.Column('resolved_at', sa.DateTime(timezone=True), nullable=True),
+        sa.Column('resolved_by', sa.String(255), nullable=True),
+        sa.CheckConstraint("status IN ('failed', 'retrying', 'resolved')", name='chk_dlq_status'),
+        sa.UniqueConstraint('event_id', 'projection_name', name='uq_dlq_event_projection'),
+    )
+
+    op.create_index('idx_dlq_status', 'dead_letter_queue', ['status'])
+    op.create_index('idx_dlq_projection_name', 'dead_letter_queue', ['projection_name'])
+    op.create_index('idx_dlq_event_id', 'dead_letter_queue', ['event_id'])
+    op.create_index('idx_dlq_first_failed_at', 'dead_letter_queue', ['first_failed_at'])
+    op.create_index('idx_dlq_projection_status', 'dead_letter_queue', ['projection_name', 'status'])
+    op.create_index(
+        'idx_dlq_active_failures', 'dead_letter_queue', ['first_failed_at'],
+        postgresql_where=sa.text("status IN ('failed', 'retrying')")
+    )
+
+
+def downgrade() -> None:
+    """Drop all eventsource tables in reverse order."""
+    # Drop DLQ table
+    op.drop_index('idx_dlq_active_failures', table_name='dead_letter_queue')
+    op.drop_index('idx_dlq_projection_status', table_name='dead_letter_queue')
+    op.drop_index('idx_dlq_first_failed_at', table_name='dead_letter_queue')
+    op.drop_index('idx_dlq_event_id', table_name='dead_letter_queue')
+    op.drop_index('idx_dlq_projection_name', table_name='dead_letter_queue')
+    op.drop_index('idx_dlq_status', table_name='dead_letter_queue')
+    op.drop_table('dead_letter_queue')
+
+    # Drop checkpoints table
+    op.execute("DROP TRIGGER IF EXISTS trg_checkpoint_updated_at ON projection_checkpoints")
+    op.execute("DROP FUNCTION IF EXISTS update_checkpoint_timestamp")
+    op.drop_index('idx_checkpoints_updated_at', table_name='projection_checkpoints')
+    op.drop_index('idx_checkpoints_last_processed', table_name='projection_checkpoints')
+    op.drop_table('projection_checkpoints')
+
+    # Drop outbox table
+    op.drop_index('idx_outbox_tenant_id', table_name='event_outbox')
+    op.drop_index('idx_outbox_event_id', table_name='event_outbox')
+    op.drop_index('idx_outbox_pending', table_name='event_outbox')
+    op.drop_index('idx_outbox_status_created', table_name='event_outbox')
+    op.drop_table('event_outbox')
+
+    # Drop events table
+    op.drop_index('idx_events_aggregate_version', table_name='events')
+    op.drop_index('idx_events_type_tenant_timestamp', table_name='events')
+    op.drop_index('idx_events_tenant_id', table_name='events')
+    op.drop_index('idx_events_timestamp', table_name='events')
+    op.drop_index('idx_events_event_type', table_name='events')
+    op.drop_index('idx_events_aggregate_type', table_name='events')
+    op.drop_index('idx_events_aggregate_id', table_name='events')
+    op.drop_table('events')

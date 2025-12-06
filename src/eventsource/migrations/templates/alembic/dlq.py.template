@@ -1,0 +1,234 @@
+"""Create dead_letter_queue table for failed event processing.
+
+Revision ID: ${revision_id}
+Revises: ${down_revision}
+Create Date: ${create_date}
+
+This migration creates the dead_letter_queue table, which stores events
+that failed processing after all retry attempts.
+
+The DLQ enables manual investigation, replay mechanisms, and failure monitoring.
+"""
+
+from typing import Sequence, Union
+
+from alembic import op
+import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
+
+
+# revision identifiers, used by Alembic.
+revision: str = '${revision_id}'
+down_revision: Union[str, Sequence[str], None] = ${down_revision}
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+
+def upgrade() -> None:
+    """Create dead_letter_queue table with indexes and helper functions."""
+    op.create_table(
+        'dead_letter_queue',
+        sa.Column('id', sa.BigInteger(), primary_key=True, autoincrement=True),
+        sa.Column('event_id', postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column('projection_name', sa.String(255), nullable=False),
+        sa.Column('event_type', sa.String(255), nullable=False),
+        sa.Column('event_data', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+        sa.Column('error_message', sa.Text(), nullable=False),
+        sa.Column('error_stacktrace', sa.Text(), nullable=True),
+        sa.Column('retry_count', sa.Integer(), server_default='0', nullable=False),
+        sa.Column('first_failed_at', sa.DateTime(timezone=True), server_default=sa.text('NOW()'), nullable=False),
+        sa.Column('last_failed_at', sa.DateTime(timezone=True), server_default=sa.text('NOW()'), nullable=False),
+        sa.Column('status', sa.String(20), server_default='failed', nullable=False),
+        sa.Column('resolved_at', sa.DateTime(timezone=True), nullable=True),
+        sa.Column('resolved_by', sa.String(255), nullable=True),
+        sa.CheckConstraint(
+            "status IN ('failed', 'retrying', 'resolved')",
+            name='chk_dlq_status'
+        ),
+        sa.UniqueConstraint('event_id', 'projection_name', name='uq_dlq_event_projection'),
+    )
+
+    # Create indexes
+    op.create_index('idx_dlq_status', 'dead_letter_queue', ['status'])
+    op.create_index('idx_dlq_projection_name', 'dead_letter_queue', ['projection_name'])
+    op.create_index('idx_dlq_event_id', 'dead_letter_queue', ['event_id'])
+    op.create_index('idx_dlq_first_failed_at', 'dead_letter_queue', ['first_failed_at'])
+    op.create_index(
+        'idx_dlq_projection_status', 'dead_letter_queue',
+        ['projection_name', 'status']
+    )
+    op.create_index(
+        'idx_dlq_active_failures', 'dead_letter_queue',
+        ['first_failed_at'],
+        postgresql_where=sa.text("status IN ('failed', 'retrying')")
+    )
+    op.create_index(
+        'idx_dlq_resolved_at', 'dead_letter_queue',
+        ['resolved_at'],
+        postgresql_where=sa.text("status = 'resolved'")
+    )
+
+    # Create helper function to add or update failed event
+    op.execute("""
+        CREATE OR REPLACE FUNCTION add_to_dlq(
+            p_event_id UUID,
+            p_projection_name VARCHAR(255),
+            p_event_type VARCHAR(255),
+            p_event_data JSONB,
+            p_error_message TEXT,
+            p_error_stacktrace TEXT DEFAULT NULL,
+            p_retry_count INTEGER DEFAULT 0
+        ) RETURNS BIGINT AS $$
+        DECLARE
+            result_id BIGINT;
+        BEGIN
+            INSERT INTO dead_letter_queue
+                (event_id, projection_name, event_type, event_data,
+                 error_message, error_stacktrace, retry_count,
+                 first_failed_at, last_failed_at, status)
+            VALUES
+                (p_event_id, p_projection_name, p_event_type, p_event_data,
+                 p_error_message, p_error_stacktrace, p_retry_count,
+                 NOW(), NOW(), 'failed')
+            ON CONFLICT (event_id, projection_name) DO UPDATE
+            SET retry_count = EXCLUDED.retry_count,
+                last_failed_at = NOW(),
+                error_message = EXCLUDED.error_message,
+                error_stacktrace = EXCLUDED.error_stacktrace,
+                status = 'failed'
+            RETURNING id INTO result_id;
+            RETURN result_id;
+        END;
+        $$ LANGUAGE plpgsql;
+    """)
+
+    # Create function to resolve DLQ entry
+    op.execute("""
+        CREATE OR REPLACE FUNCTION resolve_dlq_entry(
+            p_dlq_id BIGINT,
+            p_resolved_by VARCHAR(255)
+        ) RETURNS BOOLEAN AS $$
+        DECLARE
+            updated BOOLEAN;
+        BEGIN
+            UPDATE dead_letter_queue
+            SET status = 'resolved',
+                resolved_at = NOW(),
+                resolved_by = p_resolved_by
+            WHERE id = p_dlq_id
+              AND status != 'resolved';
+            GET DIAGNOSTICS updated = FOUND;
+            RETURN updated;
+        END;
+        $$ LANGUAGE plpgsql;
+    """)
+
+    # Create function to get DLQ statistics
+    op.execute("""
+        CREATE OR REPLACE FUNCTION get_dlq_stats()
+        RETURNS TABLE (
+            total_failed BIGINT,
+            total_retrying BIGINT,
+            total_resolved BIGINT,
+            affected_projections BIGINT,
+            oldest_failure TIMESTAMP WITH TIME ZONE
+        ) AS $$
+        BEGIN
+            RETURN QUERY
+            SELECT
+                COUNT(*) FILTER (WHERE dlq.status = 'failed'),
+                COUNT(*) FILTER (WHERE dlq.status = 'retrying'),
+                COUNT(*) FILTER (WHERE dlq.status = 'resolved'),
+                COUNT(DISTINCT projection_name) FILTER (WHERE dlq.status IN ('failed', 'retrying')),
+                MIN(first_failed_at) FILTER (WHERE dlq.status IN ('failed', 'retrying'))
+            FROM dead_letter_queue dlq;
+        END;
+        $$ LANGUAGE plpgsql;
+    """)
+
+    # Create function to cleanup resolved entries
+    op.execute("""
+        CREATE OR REPLACE FUNCTION cleanup_resolved_dlq(
+            retention_days INTEGER DEFAULT 30
+        ) RETURNS INTEGER AS $$
+        DECLARE
+            deleted_count INTEGER;
+        BEGIN
+            DELETE FROM dead_letter_queue
+            WHERE status = 'resolved'
+              AND resolved_at < NOW() - (retention_days || ' days')::INTERVAL;
+            GET DIAGNOSTICS deleted_count = ROW_COUNT;
+            RETURN deleted_count;
+        END;
+        $$ LANGUAGE plpgsql;
+    """)
+
+    # Create function to retry all failed events for a projection
+    op.execute("""
+        CREATE OR REPLACE FUNCTION retry_projection_dlq(
+            p_projection_name VARCHAR(255)
+        ) RETURNS INTEGER AS $$
+        DECLARE
+            updated_count INTEGER;
+        BEGIN
+            UPDATE dead_letter_queue
+            SET status = 'retrying'
+            WHERE projection_name = p_projection_name
+              AND status = 'failed';
+            GET DIAGNOSTICS updated_count = ROW_COUNT;
+            RETURN updated_count;
+        END;
+        $$ LANGUAGE plpgsql;
+    """)
+
+    # Create monitoring views
+    op.execute("""
+        CREATE OR REPLACE VIEW dlq_active_failures AS
+        SELECT
+            id,
+            event_id,
+            projection_name,
+            event_type,
+            error_message,
+            retry_count,
+            first_failed_at,
+            last_failed_at,
+            status,
+            EXTRACT(EPOCH FROM (NOW() - first_failed_at)) / 3600 AS hours_since_first_failure
+        FROM dead_letter_queue
+        WHERE status IN ('failed', 'retrying')
+        ORDER BY first_failed_at DESC;
+    """)
+
+    op.execute("""
+        CREATE OR REPLACE VIEW dlq_summary AS
+        SELECT
+            projection_name,
+            COUNT(*) FILTER (WHERE status = 'failed') AS failed_count,
+            COUNT(*) FILTER (WHERE status = 'retrying') AS retrying_count,
+            MIN(first_failed_at) AS oldest_failure,
+            MAX(last_failed_at) AS most_recent_failure
+        FROM dead_letter_queue
+        WHERE status IN ('failed', 'retrying')
+        GROUP BY projection_name;
+    """)
+
+
+def downgrade() -> None:
+    """Drop dead_letter_queue table and related objects."""
+    op.execute("DROP VIEW IF EXISTS dlq_summary")
+    op.execute("DROP VIEW IF EXISTS dlq_active_failures")
+    op.execute("DROP FUNCTION IF EXISTS retry_projection_dlq")
+    op.execute("DROP FUNCTION IF EXISTS cleanup_resolved_dlq")
+    op.execute("DROP FUNCTION IF EXISTS get_dlq_stats")
+    op.execute("DROP FUNCTION IF EXISTS resolve_dlq_entry")
+    op.execute("DROP FUNCTION IF EXISTS add_to_dlq")
+
+    op.drop_index('idx_dlq_resolved_at', table_name='dead_letter_queue')
+    op.drop_index('idx_dlq_active_failures', table_name='dead_letter_queue')
+    op.drop_index('idx_dlq_projection_status', table_name='dead_letter_queue')
+    op.drop_index('idx_dlq_first_failed_at', table_name='dead_letter_queue')
+    op.drop_index('idx_dlq_event_id', table_name='dead_letter_queue')
+    op.drop_index('idx_dlq_projection_name', table_name='dead_letter_queue')
+    op.drop_index('idx_dlq_status', table_name='dead_letter_queue')
+    op.drop_table('dead_letter_queue')

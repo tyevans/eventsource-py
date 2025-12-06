@@ -1,0 +1,145 @@
+"""Create event_outbox table for transactional outbox pattern.
+
+Revision ID: ${revision_id}
+Revises: ${down_revision}
+Create Date: ${create_date}
+
+This migration creates the event_outbox table, which implements the
+transactional outbox pattern for reliable event publishing.
+
+The outbox ensures events are reliably published even when the message
+broker is temporarily unavailable.
+"""
+
+from typing import Sequence, Union
+
+from alembic import op
+import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
+
+
+# revision identifiers, used by Alembic.
+revision: str = '${revision_id}'
+down_revision: Union[str, Sequence[str], None] = ${down_revision}
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+
+def upgrade() -> None:
+    """Create event_outbox table with indexes."""
+    op.create_table(
+        'event_outbox',
+        sa.Column(
+            'id',
+            postgresql.UUID(as_uuid=True),
+            primary_key=True,
+            server_default=sa.text('gen_random_uuid()')
+        ),
+        sa.Column('event_id', postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column('event_type', sa.String(255), nullable=False),
+        sa.Column('aggregate_id', postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column('aggregate_type', sa.String(255), nullable=False),
+        sa.Column('tenant_id', postgresql.UUID(as_uuid=True), nullable=True),
+        sa.Column('event_data', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('NOW()'), nullable=False),
+        sa.Column('published_at', sa.DateTime(timezone=True), nullable=True),
+        sa.Column('retry_count', sa.Integer(), server_default='0', nullable=False),
+        sa.Column('last_error', sa.Text(), nullable=True),
+        sa.Column('status', sa.String(20), server_default='pending', nullable=False),
+        sa.CheckConstraint(
+            "status IN ('pending', 'published', 'failed')",
+            name='chk_outbox_status'
+        ),
+    )
+
+    # Create indexes for efficient querying
+    op.create_index(
+        'idx_outbox_status_created', 'event_outbox',
+        ['status', 'created_at'],
+        postgresql_where=sa.text("status = 'pending'")
+    )
+    op.create_index(
+        'idx_outbox_pending', 'event_outbox',
+        ['created_at'],
+        postgresql_where=sa.text("status = 'pending'")
+    )
+    op.create_index('idx_outbox_event_id', 'event_outbox', ['event_id'])
+    op.create_index(
+        'idx_outbox_tenant_id', 'event_outbox',
+        ['tenant_id'],
+        postgresql_where=sa.text('tenant_id IS NOT NULL')
+    )
+    op.create_index(
+        'idx_outbox_failed', 'event_outbox',
+        ['created_at'],
+        postgresql_where=sa.text("status = 'failed'")
+    )
+    op.create_index(
+        'idx_outbox_published_at', 'event_outbox',
+        ['published_at'],
+        postgresql_where=sa.text("status = 'published'")
+    )
+
+    # Create helper function for getting pending events with row locking
+    op.execute("""
+        CREATE OR REPLACE FUNCTION get_pending_outbox_events(
+            batch_size INTEGER DEFAULT 100,
+            max_retries INTEGER DEFAULT 5
+        ) RETURNS SETOF event_outbox AS $$
+        BEGIN
+            RETURN QUERY
+            SELECT *
+            FROM event_outbox
+            WHERE status = 'pending'
+              AND retry_count < max_retries
+            ORDER BY created_at ASC
+            LIMIT batch_size
+            FOR UPDATE SKIP LOCKED;
+        END;
+        $$ LANGUAGE plpgsql;
+    """)
+
+    # Create cleanup function for published events
+    op.execute("""
+        CREATE OR REPLACE FUNCTION cleanup_published_outbox_events(
+            retention_days INTEGER DEFAULT 7
+        ) RETURNS INTEGER AS $$
+        DECLARE
+            deleted_count INTEGER;
+        BEGIN
+            DELETE FROM event_outbox
+            WHERE status = 'published'
+              AND published_at < NOW() - (retention_days || ' days')::INTERVAL;
+            GET DIAGNOSTICS deleted_count = ROW_COUNT;
+            RETURN deleted_count;
+        END;
+        $$ LANGUAGE plpgsql;
+    """)
+
+    # Create statistics view
+    op.execute("""
+        CREATE OR REPLACE VIEW event_outbox_stats AS
+        SELECT
+            COUNT(*) FILTER (WHERE status = 'pending') AS pending_count,
+            COUNT(*) FILTER (WHERE status = 'published') AS published_count,
+            COUNT(*) FILTER (WHERE status = 'failed') AS failed_count,
+            MIN(created_at) FILTER (WHERE status = 'pending') AS oldest_pending,
+            AVG(retry_count) FILTER (WHERE status = 'pending') AS avg_retry_count,
+            COUNT(*) AS total_count
+        FROM event_outbox;
+    """)
+
+
+def downgrade() -> None:
+    """Drop event_outbox table and related objects."""
+    op.execute("DROP VIEW IF EXISTS event_outbox_stats")
+    op.execute("DROP FUNCTION IF EXISTS cleanup_published_outbox_events")
+    op.execute("DROP FUNCTION IF EXISTS get_pending_outbox_events")
+
+    op.drop_index('idx_outbox_published_at', table_name='event_outbox')
+    op.drop_index('idx_outbox_failed', table_name='event_outbox')
+    op.drop_index('idx_outbox_tenant_id', table_name='event_outbox')
+    op.drop_index('idx_outbox_event_id', table_name='event_outbox')
+    op.drop_index('idx_outbox_pending', table_name='event_outbox')
+    op.drop_index('idx_outbox_status_created', table_name='event_outbox')
+    op.drop_table('event_outbox')

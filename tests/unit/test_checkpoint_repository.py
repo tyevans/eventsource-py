@@ -1,0 +1,246 @@
+"""
+Unit tests for CheckpointRepository implementations.
+
+Tests the InMemoryCheckpointRepository for:
+- Checkpoint storage and retrieval
+- Update with event tracking
+- Lag metrics calculation
+- Reset functionality
+"""
+
+import pytest
+from datetime import UTC, datetime
+from uuid import uuid4
+
+from eventsource.repositories.checkpoint import (
+    CheckpointData,
+    CheckpointRepository,
+    InMemoryCheckpointRepository,
+    LagMetrics,
+)
+
+
+class TestInMemoryCheckpointRepository:
+    """Tests for InMemoryCheckpointRepository."""
+
+    @pytest.fixture
+    def repo(self) -> InMemoryCheckpointRepository:
+        """Create a fresh repository for each test."""
+        return InMemoryCheckpointRepository()
+
+    @pytest.mark.asyncio
+    async def test_get_checkpoint_returns_none_when_empty(
+        self, repo: InMemoryCheckpointRepository
+    ):
+        """Test that get_checkpoint returns None for non-existent projection."""
+        result = await repo.get_checkpoint("NonExistentProjection")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_update_and_get_checkpoint(
+        self, repo: InMemoryCheckpointRepository
+    ):
+        """Test updating and retrieving a checkpoint."""
+        projection_name = "TestProjection"
+        event_id = uuid4()
+        event_type = "TestEvent"
+
+        await repo.update_checkpoint(projection_name, event_id, event_type)
+
+        result = await repo.get_checkpoint(projection_name)
+        assert result == event_id
+
+    @pytest.mark.asyncio
+    async def test_update_checkpoint_increments_count(
+        self, repo: InMemoryCheckpointRepository
+    ):
+        """Test that updating checkpoint increments the events_processed count."""
+        projection_name = "TestProjection"
+
+        # Update three times
+        for i in range(3):
+            event_id = uuid4()
+            await repo.update_checkpoint(projection_name, event_id, f"Event{i}")
+
+        # Check count
+        checkpoints = await repo.get_all_checkpoints()
+        assert len(checkpoints) == 1
+        assert checkpoints[0].events_processed == 3
+
+    @pytest.mark.asyncio
+    async def test_update_checkpoint_overwrites_previous(
+        self, repo: InMemoryCheckpointRepository
+    ):
+        """Test that updating checkpoint replaces the previous event_id."""
+        projection_name = "TestProjection"
+        first_event_id = uuid4()
+        second_event_id = uuid4()
+
+        await repo.update_checkpoint(projection_name, first_event_id, "Event1")
+        await repo.update_checkpoint(projection_name, second_event_id, "Event2")
+
+        result = await repo.get_checkpoint(projection_name)
+        assert result == second_event_id
+
+    @pytest.mark.asyncio
+    async def test_multiple_projections_independent(
+        self, repo: InMemoryCheckpointRepository
+    ):
+        """Test that different projections have independent checkpoints."""
+        proj1 = "Projection1"
+        proj2 = "Projection2"
+        event_id_1 = uuid4()
+        event_id_2 = uuid4()
+
+        await repo.update_checkpoint(proj1, event_id_1, "Event1")
+        await repo.update_checkpoint(proj2, event_id_2, "Event2")
+
+        assert await repo.get_checkpoint(proj1) == event_id_1
+        assert await repo.get_checkpoint(proj2) == event_id_2
+
+    @pytest.mark.asyncio
+    async def test_get_lag_metrics_returns_none_when_no_checkpoint(
+        self, repo: InMemoryCheckpointRepository
+    ):
+        """Test that lag metrics returns None for non-existent projection."""
+        result = await repo.get_lag_metrics("NonExistent")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_lag_metrics_returns_data_for_existing_checkpoint(
+        self, repo: InMemoryCheckpointRepository
+    ):
+        """Test that lag metrics returns data for existing checkpoint."""
+        projection_name = "TestProjection"
+        event_id = uuid4()
+
+        await repo.update_checkpoint(projection_name, event_id, "TestEvent")
+
+        result = await repo.get_lag_metrics(projection_name)
+        assert result is not None
+        assert isinstance(result, LagMetrics)
+        assert result.projection_name == projection_name
+        assert result.last_event_id == str(event_id)
+        assert result.events_processed == 1
+
+    @pytest.mark.asyncio
+    async def test_reset_checkpoint_removes_checkpoint(
+        self, repo: InMemoryCheckpointRepository
+    ):
+        """Test that reset_checkpoint removes the checkpoint."""
+        projection_name = "TestProjection"
+        event_id = uuid4()
+
+        await repo.update_checkpoint(projection_name, event_id, "TestEvent")
+        assert await repo.get_checkpoint(projection_name) == event_id
+
+        await repo.reset_checkpoint(projection_name)
+        assert await repo.get_checkpoint(projection_name) is None
+
+    @pytest.mark.asyncio
+    async def test_reset_checkpoint_does_not_affect_others(
+        self, repo: InMemoryCheckpointRepository
+    ):
+        """Test that reset only affects the specified projection."""
+        proj1 = "Projection1"
+        proj2 = "Projection2"
+        event_id_1 = uuid4()
+        event_id_2 = uuid4()
+
+        await repo.update_checkpoint(proj1, event_id_1, "Event1")
+        await repo.update_checkpoint(proj2, event_id_2, "Event2")
+
+        await repo.reset_checkpoint(proj1)
+
+        assert await repo.get_checkpoint(proj1) is None
+        assert await repo.get_checkpoint(proj2) == event_id_2
+
+    @pytest.mark.asyncio
+    async def test_reset_nonexistent_checkpoint_no_error(
+        self, repo: InMemoryCheckpointRepository
+    ):
+        """Test that resetting non-existent checkpoint doesn't raise error."""
+        await repo.reset_checkpoint("NonExistent")  # Should not raise
+
+    @pytest.mark.asyncio
+    async def test_get_all_checkpoints_empty(
+        self, repo: InMemoryCheckpointRepository
+    ):
+        """Test get_all_checkpoints returns empty list when no checkpoints."""
+        result = await repo.get_all_checkpoints()
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_get_all_checkpoints_returns_all(
+        self, repo: InMemoryCheckpointRepository
+    ):
+        """Test get_all_checkpoints returns all checkpoints sorted by name."""
+        projections = ["Zebra", "Apple", "Middle"]
+        for proj in projections:
+            await repo.update_checkpoint(proj, uuid4(), "TestEvent")
+
+        result = await repo.get_all_checkpoints()
+        assert len(result) == 3
+        # Should be sorted alphabetically
+        assert [c.projection_name for c in result] == ["Apple", "Middle", "Zebra"]
+
+    @pytest.mark.asyncio
+    async def test_clear_removes_all_checkpoints(
+        self, repo: InMemoryCheckpointRepository
+    ):
+        """Test that clear removes all checkpoints."""
+        for i in range(3):
+            await repo.update_checkpoint(f"Proj{i}", uuid4(), "Event")
+
+        repo.clear()
+
+        result = await repo.get_all_checkpoints()
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_checkpoint_data_structure(
+        self, repo: InMemoryCheckpointRepository
+    ):
+        """Test that checkpoint data has correct structure."""
+        projection_name = "TestProjection"
+        event_id = uuid4()
+        event_type = "TestEventType"
+
+        await repo.update_checkpoint(projection_name, event_id, event_type)
+
+        checkpoints = await repo.get_all_checkpoints()
+        assert len(checkpoints) == 1
+        checkpoint = checkpoints[0]
+
+        assert isinstance(checkpoint, CheckpointData)
+        assert checkpoint.projection_name == projection_name
+        assert checkpoint.last_event_id == event_id
+        assert checkpoint.last_event_type == event_type
+        assert checkpoint.events_processed == 1
+        assert checkpoint.last_processed_at is not None
+
+    @pytest.mark.asyncio
+    async def test_lag_metrics_has_timestamp_info(
+        self, repo: InMemoryCheckpointRepository
+    ):
+        """Test that lag metrics includes timestamp information."""
+        projection_name = "TestProjection"
+        event_id = uuid4()
+
+        await repo.update_checkpoint(projection_name, event_id, "TestEvent")
+
+        result = await repo.get_lag_metrics(projection_name)
+        assert result is not None
+        assert result.last_processed_at is not None
+        # Should be a valid ISO timestamp string
+        datetime.fromisoformat(result.last_processed_at)
+
+
+class TestCheckpointRepositoryProtocol:
+    """Tests to verify InMemoryCheckpointRepository implements the protocol."""
+
+    def test_implements_protocol(self):
+        """Test that InMemoryCheckpointRepository implements CheckpointRepository protocol."""
+        repo = InMemoryCheckpointRepository()
+        # The protocol is runtime checkable
+        assert isinstance(repo, CheckpointRepository)

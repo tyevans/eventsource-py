@@ -1,0 +1,86 @@
+"""
+Projection system for the eventsource library.
+
+This module provides the core abstractions and utilities for building
+projections (read models) from domain events.
+
+Public API:
+- Projection: Abstract base class for projections
+- SyncProjection: Synchronous projection base class
+- EventHandlerBase: Base class for event handlers
+- CheckpointTrackingProjection: Projection with checkpoint, retry, and DLQ support
+- DeclarativeProjection: Projection with @handles decorator support
+- handles: Decorator for marking event handler methods
+- get_handled_event_type: Utility to get event type from decorated handler
+- is_event_handler: Check if a function is decorated with @handles
+- ProjectionRegistry: Registry for managing multiple projections
+- ProjectionCoordinator: Coordinates event distribution to projections
+- SubscriberRegistry: Registry for EventSubscriber instances
+- EventHandler: Protocol for event handlers
+- SyncEventHandler: Protocol for sync event handlers
+- EventSubscriber: Base class for event subscribers
+- AsyncEventHandler: Base class for async event handlers
+
+Example:
+    >>> from eventsource.projections import (
+    ...     DeclarativeProjection,
+    ...     handles,
+    ...     ProjectionRegistry,
+    ... )
+    >>>
+    >>> class OrderProjection(DeclarativeProjection):
+    ...     @handles(OrderCreated)
+    ...     async def _handle_order_created(self, conn, event: OrderCreated):
+    ...         # Handle the event
+    ...         pass
+    >>>
+    >>> registry = ProjectionRegistry()
+    >>> registry.register_projection(OrderProjection())
+    >>> await registry.dispatch(event)
+"""
+
+from eventsource.projections.base import (
+    CheckpointTrackingProjection,
+    DeclarativeProjection,
+    EventHandlerBase,
+    Projection,
+    SyncProjection,
+)
+from eventsource.projections.coordinator import (
+    ProjectionCoordinator,
+    ProjectionRegistry,
+    SubscriberRegistry,
+)
+from eventsource.projections.decorators import (
+    get_handled_event_type,
+    handles,
+    is_event_handler,
+)
+from eventsource.projections.protocols import (
+    AsyncEventHandler,
+    EventHandler,
+    EventSubscriber,
+    SyncEventHandler,
+)
+
+__all__ = [
+    # Base classes
+    "Projection",
+    "SyncProjection",
+    "EventHandlerBase",
+    "CheckpointTrackingProjection",
+    "DeclarativeProjection",
+    # Decorators
+    "handles",
+    "get_handled_event_type",
+    "is_event_handler",
+    # Coordinators and registries
+    "ProjectionRegistry",
+    "ProjectionCoordinator",
+    "SubscriberRegistry",
+    # Protocols
+    "EventHandler",
+    "SyncEventHandler",
+    "EventSubscriber",
+    "AsyncEventHandler",
+]

@@ -1,0 +1,621 @@
+"""
+Base classes for projections and event handlers.
+
+Projections build read models from domain events. This module provides:
+- Projection: Abstract base class for all projections
+- EventHandler: Base class for event handlers
+- CheckpointTrackingProjection: Adds checkpoint, retry, and DLQ support
+- DeclarativeProjection: Adds @handles decorator support
+
+Projections are a core concept in event sourcing, responsible for
+maintaining read models optimized for specific query patterns.
+"""
+
+import asyncio
+import inspect
+import logging
+from abc import ABC, abstractmethod
+from typing import Any, Callable
+
+from eventsource.events.base import DomainEvent
+from eventsource.projections.decorators import get_handled_event_type
+from eventsource.projections.protocols import EventSubscriber
+from eventsource.repositories.checkpoint import (
+    CheckpointRepository,
+    InMemoryCheckpointRepository,
+)
+from eventsource.repositories.dlq import DLQRepository, InMemoryDLQRepository
+
+logger = logging.getLogger(__name__)
+
+
+class Projection(ABC):
+    """
+    Base class for projections.
+
+    Projections consume domain events and build read models
+    optimized for specific query patterns. They provide the
+    query side in CQRS architecture.
+
+    Subclasses must implement:
+    - handle(): Process a single event
+    - reset(): Clear all read model data
+
+    Example:
+        >>> class OrderSummaryProjection(Projection):
+        ...     async def handle(self, event: DomainEvent) -> None:
+        ...         if isinstance(event, OrderCreated):
+        ...             await self._create_summary(event)
+        ...
+        ...     async def reset(self) -> None:
+        ...         await self._clear_all_summaries()
+    """
+
+    @abstractmethod
+    async def handle(self, event: DomainEvent) -> None:
+        """
+        Handle a domain event.
+
+        Args:
+            event: The domain event to process
+        """
+        pass
+
+    @abstractmethod
+    async def reset(self) -> None:
+        """
+        Reset the projection (clear all read model data).
+
+        Useful for rebuilding projections from scratch.
+        """
+        pass
+
+
+class SyncProjection(ABC):
+    """
+    Synchronous base class for projections.
+
+    Useful for projections that don't require async I/O,
+    or for testing scenarios.
+    """
+
+    @abstractmethod
+    def handle(self, event: DomainEvent) -> None:
+        """
+        Handle a domain event synchronously.
+
+        Args:
+            event: The domain event to process
+        """
+        pass
+
+    @abstractmethod
+    def reset(self) -> None:
+        """
+        Reset the projection (clear all read model data).
+        """
+        pass
+
+
+class EventHandlerBase(ABC):
+    """
+    Base class for event handlers.
+
+    Event handlers react to specific event types and perform actions
+    (update read models, send notifications, trigger workflows, etc.)
+
+    Unlike projections, handlers are focused on individual event types
+    and provide explicit can_handle() checking.
+
+    Example:
+        >>> class OrderNotificationHandler(EventHandlerBase):
+        ...     def can_handle(self, event: DomainEvent) -> bool:
+        ...         return isinstance(event, (OrderShipped, OrderDelivered))
+        ...
+        ...     async def handle(self, event: DomainEvent) -> None:
+        ...         await send_notification(event)
+    """
+
+    @abstractmethod
+    def can_handle(self, event: DomainEvent) -> bool:
+        """
+        Check if this handler can process the given event.
+
+        Args:
+            event: The event to check
+
+        Returns:
+            True if this handler can process the event
+        """
+        pass
+
+    @abstractmethod
+    async def handle(self, event: DomainEvent) -> None:
+        """
+        Handle the event.
+
+        Args:
+            event: The event to process
+        """
+        pass
+
+
+class CheckpointTrackingProjection(EventSubscriber, ABC):
+    """
+    Base class for projections with automatic checkpoint tracking.
+
+    Provides:
+    - Automatic checkpoint management after each event
+    - Idempotent event processing
+    - Retry logic with exponential backoff
+    - Dead letter queue for permanent failures
+    - Lag monitoring support
+
+    Subclasses must implement:
+    - subscribed_to(): List of event types to handle
+    - _process_event(): Actual projection logic
+    - _truncate_read_models(): Table truncation for reset
+
+    Configuration:
+    - MAX_RETRIES: Number of retry attempts (default: 3)
+    - RETRY_BACKOFF_BASE: Base for exponential backoff in seconds (default: 2)
+
+    Example:
+        >>> class OrderProjection(CheckpointTrackingProjection):
+        ...     def subscribed_to(self) -> list[type[DomainEvent]]:
+        ...         return [OrderCreated, OrderShipped]
+        ...
+        ...     async def _process_event(self, conn, event: DomainEvent) -> None:
+        ...         if isinstance(event, OrderCreated):
+        ...             await self._handle_created(conn, event)
+        ...
+        ...     async def _truncate_read_models(self, conn) -> None:
+        ...         await conn.execute(text("TRUNCATE TABLE orders"))
+    """
+
+    # Retry configuration
+    MAX_RETRIES: int = 3
+    RETRY_BACKOFF_BASE: int = 2  # seconds (exponential: 2s, 4s, 8s)
+
+    def __init__(
+        self,
+        checkpoint_repo: CheckpointRepository | None = None,
+        dlq_repo: DLQRepository | None = None,
+    ) -> None:
+        """
+        Initialize the checkpoint-tracking projection.
+
+        Args:
+            checkpoint_repo: Repository for checkpoint storage.
+                           If None, uses InMemoryCheckpointRepository.
+            dlq_repo: Repository for dead letter queue.
+                     If None, uses InMemoryDLQRepository.
+        """
+        self._projection_name = self.__class__.__name__
+        self._checkpoint_repo = checkpoint_repo or InMemoryCheckpointRepository()
+        self._dlq_repo = dlq_repo or InMemoryDLQRepository()
+
+    async def handle(self, event: DomainEvent) -> None:
+        """
+        Handle event with retry logic and DLQ fallback.
+
+        This method wraps the projection logic with:
+        1. Retry with exponential backoff for transient failures
+        2. Dead letter queue for permanent failures
+        3. Checkpoint tracking for successful processing
+
+        Args:
+            event: The domain event to process
+        """
+        for attempt in range(self.MAX_RETRIES):
+            try:
+                # Process the event in projection-specific logic
+                await self._process_event(event)
+
+                # Update checkpoint after successful processing
+                await self._checkpoint_repo.update_checkpoint(
+                    projection_name=self._projection_name,
+                    event_id=event.event_id,
+                    event_type=event.event_type,
+                )
+
+                # Success - log and return
+                logger.debug(
+                    "Projection %s processed event %s (type: %s)",
+                    self._projection_name,
+                    event.event_id,
+                    event.event_type,
+                    extra={
+                        "projection": self._projection_name,
+                        "event_id": str(event.event_id),
+                        "event_type": event.event_type,
+                    },
+                )
+                return
+
+            except Exception as e:
+                logger.error(
+                    "Projection %s failed to process event %s (attempt %d/%d): %s",
+                    self._projection_name,
+                    event.event_id,
+                    attempt + 1,
+                    self.MAX_RETRIES,
+                    e,
+                    exc_info=True,
+                    extra={
+                        "projection": self._projection_name,
+                        "event_id": str(event.event_id),
+                        "event_type": event.event_type,
+                        "attempt": attempt + 1,
+                        "max_attempts": self.MAX_RETRIES,
+                        "error": str(e),
+                    },
+                )
+
+                # Last attempt failed - send to DLQ and re-raise
+                if attempt == self.MAX_RETRIES - 1:
+                    await self._send_to_dlq(event, e, attempt + 1)
+                    logger.critical(
+                        "Event %s sent to DLQ after %d attempts",
+                        event.event_id,
+                        self.MAX_RETRIES,
+                        extra={
+                            "projection": self._projection_name,
+                            "event_id": str(event.event_id),
+                            "event_type": event.event_type,
+                            "retry_count": attempt + 1,
+                        },
+                    )
+                    # Re-raise the exception after exhausting all retries
+                    raise
+                else:
+                    # Exponential backoff before retry
+                    backoff = self.RETRY_BACKOFF_BASE**attempt
+                    logger.info(
+                        "Retrying in %d seconds...",
+                        backoff,
+                        extra={
+                            "projection": self._projection_name,
+                            "event_id": str(event.event_id),
+                            "backoff_seconds": backoff,
+                        },
+                    )
+                    await asyncio.sleep(backoff)
+
+    async def _send_to_dlq(
+        self, event: DomainEvent, error: Exception, retry_count: int
+    ) -> None:
+        """
+        Send failed event to dead letter queue.
+
+        Args:
+            event: The event that failed processing
+            error: The exception that occurred
+            retry_count: Number of retry attempts made
+        """
+        try:
+            await self._dlq_repo.add_failed_event(
+                event_id=event.event_id,
+                projection_name=self._projection_name,
+                event_type=event.event_type,
+                event_data=event.model_dump(mode="json"),
+                error=error,
+                retry_count=retry_count,
+            )
+        except Exception as dlq_error:
+            # DLQ write failed - log but don't crash
+            logger.critical(
+                "Failed to write event %s to DLQ: %s",
+                event.event_id,
+                dlq_error,
+                exc_info=True,
+                extra={
+                    "projection": self._projection_name,
+                    "event_id": str(event.event_id),
+                    "original_error": str(error),
+                    "dlq_error": str(dlq_error),
+                },
+            )
+
+    @abstractmethod
+    async def _process_event(self, event: DomainEvent) -> None:
+        """
+        Process event in projection-specific way.
+
+        This method must be implemented by subclasses to define how
+        the projection updates its read models based on events.
+
+        Args:
+            event: The domain event to process
+        """
+        pass
+
+    async def get_checkpoint(self) -> str | None:
+        """
+        Get last processed event ID.
+
+        Returns:
+            Last processed event ID as string, or None if no checkpoint exists
+        """
+        event_id = await self._checkpoint_repo.get_checkpoint(self._projection_name)
+        return str(event_id) if event_id else None
+
+    async def get_lag_metrics(self) -> dict[str, Any] | None:
+        """
+        Get projection lag metrics.
+
+        Returns:
+            Dictionary with lag information, or None if no checkpoint exists
+        """
+        metrics = await self._checkpoint_repo.get_lag_metrics(
+            self._projection_name,
+            event_types=[et.__name__ for et in self.subscribed_to()],
+        )
+        if metrics is None:
+            return None
+        return {
+            "projection_name": metrics.projection_name,
+            "last_event_id": metrics.last_event_id,
+            "latest_event_id": metrics.latest_event_id,
+            "lag_seconds": metrics.lag_seconds,
+            "events_processed": metrics.events_processed,
+            "last_processed_at": metrics.last_processed_at,
+        }
+
+    async def reset(self) -> None:
+        """
+        Reset the projection by clearing checkpoint and read model data.
+
+        Calls _truncate_read_models() which subclasses may override.
+        """
+        logger.warning(
+            "Resetting projection %s",
+            self._projection_name,
+            extra={"projection": self._projection_name},
+        )
+
+        # Reset checkpoint
+        await self._checkpoint_repo.reset_checkpoint(self._projection_name)
+
+        # Subclass truncates its read model tables
+        await self._truncate_read_models()
+
+    async def _truncate_read_models(self) -> None:
+        """
+        Truncate read model tables for this projection.
+
+        Override in subclasses to specify which tables to clear.
+        Default implementation does nothing.
+        """
+        pass
+
+    @property
+    def projection_name(self) -> str:
+        """Get the projection name."""
+        return self._projection_name
+
+
+class DeclarativeProjection(CheckpointTrackingProjection):
+    """
+    Projection that uses declarative event handlers with the @handles decorator.
+
+    This base class automatically discovers handler methods decorated with @handles
+    and routes events to them. The subscribed_to() method is auto-generated from
+    the @handles decorators, eliminating duplication.
+
+    Subclasses just need to:
+    1. Implement handler methods decorated with @handles(EventType)
+    2. Optionally override _truncate_read_models() for reset support
+
+    Handler Signature:
+        Handler methods must be async and accept exactly 2 parameters:
+        - conn: Database connection (if using database)
+        - event: The domain event to process
+
+        For projections not using database connections, you can use
+        a generic parameter name but must maintain the 2-parameter signature.
+
+    Example:
+        >>> class OrderProjection(DeclarativeProjection):
+        ...     @handles(OrderCreated)
+        ...     async def _handle_order_created(self, conn, event: OrderCreated) -> None:
+        ...         # Handle the event
+        ...         pass
+        ...
+        ...     @handles(OrderShipped)
+        ...     async def _handle_order_shipped(self, conn, event: OrderShipped) -> None:
+        ...         # Handle shipping event
+        ...         pass
+        ...
+        ...     async def _truncate_read_models(self, conn) -> None:
+        ...         await conn.execute(text("TRUNCATE TABLE orders"))
+    """
+
+    def __init__(
+        self,
+        checkpoint_repo: CheckpointRepository | None = None,
+        dlq_repo: DLQRepository | None = None,
+    ) -> None:
+        """
+        Initialize the declarative projection.
+
+        Discovers all @handles decorated methods and builds a routing map.
+
+        Args:
+            checkpoint_repo: Repository for checkpoint storage.
+            dlq_repo: Repository for dead letter queue.
+        """
+        # Initialize handlers dict before calling super().__init__()
+        # in case subscribed_to() is called during parent initialization
+        self._handlers: dict[type[DomainEvent], Callable] = {}
+
+        super().__init__(checkpoint_repo=checkpoint_repo, dlq_repo=dlq_repo)
+
+        # Discover all handler methods
+        for attr_name in dir(self):
+            if attr_name.startswith("_") and not attr_name.startswith("__"):
+                # Skip private methods that aren't handlers
+                attr = getattr(self, attr_name, None)
+                if attr is None:
+                    continue
+                event_type = get_handled_event_type(attr)
+                if event_type is not None:
+                    # Skip if event_type is not a proper type (e.g., it's a mock)
+                    if not isinstance(event_type, type):
+                        continue
+                    self._handlers[event_type] = attr
+                    logger.debug(
+                        "Registered handler %s for %s",
+                        attr_name,
+                        event_type.__name__,
+                        extra={
+                            "projection": self._projection_name,
+                            "handler": attr_name,
+                            "event_type": event_type.__name__,
+                        },
+                    )
+            elif not attr_name.startswith("_"):
+                # Also check public methods for @handles decorator
+                attr = getattr(self, attr_name, None)
+                if attr is None:
+                    continue
+                event_type = get_handled_event_type(attr)
+                if event_type is not None and isinstance(event_type, type):
+                    self._handlers[event_type] = attr
+                    logger.debug(
+                        "Registered handler %s for %s",
+                        attr_name,
+                        event_type.__name__,
+                        extra={
+                            "projection": self._projection_name,
+                            "handler": attr_name,
+                            "event_type": event_type.__name__,
+                        },
+                    )
+
+        # Validate handler signatures
+        self._validate_handlers()
+
+    def subscribed_to(self) -> list[type[DomainEvent]]:
+        """
+        Return list of event types this projection handles.
+
+        Auto-generates from @handles decorators. Subclasses can
+        override to customize the subscription list if needed.
+
+        Returns:
+            List of event type classes
+        """
+        return list(self._handlers.keys())
+
+    def _validate_handlers(self) -> None:
+        """
+        Validate handler signatures to ensure correctness.
+
+        Checks that all handler methods:
+        1. Have the correct signature: (self, conn, event: EventType) or just (self, event: EventType)
+        2. Are async functions
+        3. Have event type annotations matching the @handles decorator (warning if mismatch)
+
+        Raises:
+            ValueError: If a handler has an incorrect signature or is not async
+        """
+        for event_type, handler in self._handlers.items():
+            handler_name = handler.__name__
+
+            # Check if handler is async
+            if not inspect.iscoroutinefunction(handler):
+                raise ValueError(
+                    f"Handler {handler_name} in {self._projection_name} must be async. "
+                    f"Add 'async def' to the method definition."
+                )
+
+            # Check handler signature
+            sig = inspect.signature(handler)
+            params = list(sig.parameters.values())
+
+            # Should have 1 or 2 parameters (event only, or conn + event)
+            # Note: self is not in params for bound methods
+            if len(params) < 1 or len(params) > 2:
+                raise ValueError(
+                    f"Handler {handler_name} in {self._projection_name} must accept "
+                    f"1 or 2 parameters (event) or (conn, event), but has {len(params)} parameters: "
+                    f"{', '.join(p.name for p in params)}"
+                )
+
+            # Get the event parameter (last parameter)
+            event_param = params[-1]
+
+            # Check event type annotation matches @handles decorator
+            if event_param.annotation != inspect.Parameter.empty:
+                if (
+                    isinstance(event_param.annotation, type)
+                    and event_param.annotation != event_type
+                ):
+                    logger.warning(
+                        "Handler %s in %s: Event type annotation %s "
+                        "doesn't match @handles(%s)",
+                        handler_name,
+                        self._projection_name,
+                        event_param.annotation.__name__,
+                        event_type.__name__,
+                        extra={
+                            "projection": self._projection_name,
+                            "handler": handler_name,
+                            "expected_type": event_type.__name__,
+                            "actual_annotation": event_param.annotation.__name__,
+                        },
+                    )
+
+    async def _process_event(self, event: DomainEvent) -> None:
+        """
+        Route event to appropriate handler method.
+
+        Called by CheckpointTrackingProjection.handle() within a transaction.
+
+        Args:
+            event: The domain event to process
+        """
+        event_type = type(event)
+
+        if event_type not in self._handlers:
+            # Build list of available handlers for helpful error message
+            available_handlers = (
+                ", ".join(et.__name__ for et in self._handlers.keys())
+                if self._handlers
+                else "none"
+            )
+
+            logger.warning(
+                "No handler registered for event type %s in %s. "
+                "Available handlers: %s. "
+                "Add @handles(%s) decorator to handle this event.",
+                event_type.__name__,
+                self._projection_name,
+                available_handlers,
+                event_type.__name__,
+                extra={
+                    "projection": self._projection_name,
+                    "event_type": event_type.__name__,
+                    "event_id": str(event.event_id),
+                    "available_handlers": list(
+                        et.__name__ for et in self._handlers.keys()
+                    ),
+                },
+            )
+            return
+
+        handler = self._handlers[event_type]
+
+        # Check handler signature to determine how to call it
+        sig = inspect.signature(handler)
+        params = list(sig.parameters.values())
+
+        if len(params) == 1:
+            # Single parameter handler: just event
+            await handler(event)
+        else:
+            # Two parameter handler: conn, event
+            # Pass None for conn since we don't have a database connection in base class
+            # Subclasses that need database access should override _process_event
+            await handler(None, event)
