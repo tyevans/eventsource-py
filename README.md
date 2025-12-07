@@ -4,6 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![PyPI version](https://img.shields.io/pypi/v/eventsource-py.svg)](https://pypi.org/project/eventsource-py/)
 [![CI](https://github.com/tyevans/eventsource-py/actions/workflows/ci.yml/badge.svg)](https://github.com/tyevans/eventsource-py/actions)
+[![Documentation](https://img.shields.io/badge/docs-GitHub%20Pages-blue.svg)](https://tyevans.github.io/eventsource-py)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 
 A production-ready event sourcing library for Python 3.11+.
@@ -205,47 +206,12 @@ asyncio.run(main())
 
 ## Documentation
 
-For comprehensive documentation, see the [Documentation Index](docs/index.md).
+📚 **[Full Documentation](https://tyevans.github.io/eventsource-py)**
 
-### Getting Started
-
-- [Getting Started Guide](docs/getting-started.md) - Installation and first steps
-- [Architecture Overview](docs/architecture.md) - System design and concepts
-- [FAQ](docs/faq.md) - Frequently asked questions
-
-### Guides
-
-- [Multi-tenant Setup](docs/guides/multi-tenant.md) - Tenant isolation patterns and configuration
-- [Error Handling](docs/guides/error-handling.md) - Exception handling best practices
-- [Authentication](docs/guides/authentication.md) - Security integration patterns
-- [Production Deployment](docs/guides/production.md) - Production readiness checklist
-
-### API Reference
-
-- [Events API](docs/api/events.md) - DomainEvent and EventRegistry
-- [Event Stores](docs/api/stores.md) - EventStore interface and implementations
-- [Aggregates](docs/api/aggregates.md) - AggregateRoot and Repository
-- [Projections](docs/api/projections.md) - Projection system
-- [Event Bus](docs/api/bus.md) - Event distribution
-
-### Examples
-
-- [Basic Usage](docs/examples/basic-order.md) - Simple order example
-- [Multi-tenant Setup](docs/examples/multi-tenant.md) - Multi-tenancy configuration
-- [Projections](docs/examples/projections.md) - Building read models
-- [Testing Patterns](docs/examples/testing.md) - Unit and integration testing
-
-### Architecture Decision Records
-
-- [ADR Index](docs/adrs/index.md) - All architectural decisions
-- [ADR-0001: Async-First Design](docs/adrs/0001-async-first-design.md)
-- [ADR-0002: Pydantic Event Models](docs/adrs/0002-pydantic-event-models.md)
-- [ADR-0003: Optimistic Locking](docs/adrs/0003-optimistic-locking.md)
-
-### Developer Documentation
-
-- [Code Structure](docs/development/code-structure.md) - Project organization
-- [Testing Guide](docs/development/testing.md) - Testing strategies and patterns
+- [Getting Started Guide](https://tyevans.github.io/eventsource-py/getting-started/) - Installation and first steps
+- [Architecture Overview](https://tyevans.github.io/eventsource-py/architecture/) - System design and concepts
+- [API Reference](https://tyevans.github.io/eventsource-py/api/) - Complete API documentation
+- [FAQ](https://tyevans.github.io/eventsource-py/faq/) - Frequently asked questions
 
 ## Development
 
