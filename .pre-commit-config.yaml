@@ -17,13 +17,13 @@ repos:
       - id: ruff-format
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.13.0
+    rev: v1.19.0
     hooks:
       - id: mypy
         additional_dependencies:
           - pydantic>=2.0
           - sqlalchemy>=2.0
-          - redis>=5.0
+          - redis==5.3.1
           - opentelemetry-api>=1.0
         args: [--config-file=pyproject.toml]
         files: ^src/
