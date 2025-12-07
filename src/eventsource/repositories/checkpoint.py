@@ -8,14 +8,18 @@ enabling:
 - Safe rebuilds from specific positions
 """
 
+import contextlib
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from threading import Lock
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
+
+if TYPE_CHECKING:
+    import aiosqlite
 
 
 @dataclass(frozen=True)
@@ -472,6 +476,258 @@ class InMemoryCheckpointRepository:
         """Clear all checkpoints. Useful for test setup/teardown."""
         with self._lock:
             self._checkpoints.clear()
+
+
+class SQLiteCheckpointRepository:
+    """
+    SQLite implementation of checkpoint repository.
+
+    Stores checkpoints in the `projection_checkpoints` table.
+
+    SQLite-specific adaptations:
+    - UUIDs stored as TEXT (36 characters, hyphenated format)
+    - Timestamps stored as TEXT in ISO 8601 format
+    - Uses UPSERT with ON CONFLICT syntax (SQLite 3.24+)
+    - Simplified lag metrics (no FILTER clause or array operators)
+
+    Example:
+        >>> async with aiosqlite.connect("events.db") as db:
+        ...     repo = SQLiteCheckpointRepository(db)
+        ...     await repo.update_checkpoint(
+        ...         "MyProjection",
+        ...         event.event_id,
+        ...         event.event_type,
+        ...     )
+    """
+
+    def __init__(self, connection: "aiosqlite.Connection") -> None:
+        """
+        Initialize the checkpoint repository.
+
+        Args:
+            connection: aiosqlite database connection
+        """
+        self._connection = connection
+
+    async def get_checkpoint(self, projection_name: str) -> UUID | None:
+        """
+        Get the last processed event ID for a projection.
+
+        Args:
+            projection_name: Name of the projection
+
+        Returns:
+            Last processed event ID, or None if no checkpoint exists
+        """
+        cursor = await self._connection.execute(
+            """
+            SELECT last_event_id
+            FROM projection_checkpoints
+            WHERE projection_name = ?
+            """,
+            (projection_name,),
+        )
+        row = await cursor.fetchone()
+        if row and row[0]:
+            return UUID(row[0])
+        return None
+
+    async def update_checkpoint(
+        self,
+        projection_name: str,
+        event_id: UUID,
+        event_type: str,
+    ) -> None:
+        """
+        Update the checkpoint for a projection.
+
+        Uses UPSERT pattern for idempotency - safe to call multiple times.
+
+        Args:
+            projection_name: Name of the projection
+            event_id: Event ID that was processed
+            event_type: Type of event processed
+        """
+        now = datetime.now(UTC).isoformat()
+        await self._connection.execute(
+            """
+            INSERT INTO projection_checkpoints
+                (projection_name, last_event_id, last_event_type,
+                 last_processed_at, events_processed, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 1, ?, ?)
+            ON CONFLICT (projection_name) DO UPDATE
+            SET last_event_id = excluded.last_event_id,
+                last_event_type = excluded.last_event_type,
+                last_processed_at = excluded.last_processed_at,
+                events_processed = projection_checkpoints.events_processed + 1,
+                updated_at = excluded.updated_at
+            """,
+            (
+                projection_name,
+                str(event_id),
+                event_type,
+                now,
+                now,
+                now,
+            ),
+        )
+        await self._connection.commit()
+
+    async def get_lag_metrics(
+        self,
+        projection_name: str,
+        event_types: list[str] | None = None,
+    ) -> LagMetrics | None:
+        """
+        Get lag metrics for a projection.
+
+        Note: SQLite implementation uses simplified queries since
+        SQLite lacks PostgreSQL's FILTER clause and ANY() array operator.
+
+        Args:
+            projection_name: Name of the projection
+            event_types: List of event types this projection handles
+
+        Returns:
+            LagMetrics if checkpoint exists, None otherwise
+        """
+        # First, get the checkpoint data
+        cursor = await self._connection.execute(
+            """
+            SELECT
+                projection_name,
+                last_event_id,
+                last_processed_at,
+                events_processed
+            FROM projection_checkpoints
+            WHERE projection_name = ?
+            """,
+            (projection_name,),
+        )
+        checkpoint_row = await cursor.fetchone()
+
+        if not checkpoint_row:
+            return None
+
+        # Get the latest relevant event from the event store
+        # If event_types is specified, filter by those types
+        if event_types:
+            # Build query with IN clause for event types
+            placeholders = ",".join("?" * len(event_types))
+            cursor = await self._connection.execute(
+                f"""
+                SELECT event_id, timestamp
+                FROM events
+                WHERE event_type IN ({placeholders})
+                ORDER BY timestamp DESC
+                LIMIT 1
+                """,  # nosec B608 - placeholders only contains "?" chars, values are parameterized
+                tuple(event_types),
+            )
+        else:
+            # Get latest event of any type
+            cursor = await self._connection.execute(
+                """
+                SELECT event_id, timestamp
+                FROM events
+                ORDER BY timestamp DESC
+                LIMIT 1
+                """
+            )
+
+        latest_event_row = await cursor.fetchone()
+
+        # Extract values
+        last_event_id = checkpoint_row[1]
+        last_processed_at_str = checkpoint_row[2]
+        events_processed = checkpoint_row[3] or 0
+
+        latest_event_id = latest_event_row[0] if latest_event_row else None
+        latest_event_time_str = latest_event_row[1] if latest_event_row else None
+
+        # Calculate lag in seconds
+        lag_seconds = 0.0
+        if last_processed_at_str and latest_event_time_str:
+            try:
+                last_processed_at_dt = datetime.fromisoformat(
+                    last_processed_at_str.replace("Z", "+00:00")
+                )
+                latest_event_time_dt = datetime.fromisoformat(
+                    latest_event_time_str.replace("Z", "+00:00")
+                )
+                raw_lag = (latest_event_time_dt - last_processed_at_dt).total_seconds()
+                # If projection is up-to-date or ahead, lag is 0
+                if raw_lag > 0 and last_event_id != latest_event_id:
+                    lag_seconds = round(raw_lag, 1)
+            except (ValueError, TypeError):
+                lag_seconds = 0.0
+
+        return LagMetrics(
+            projection_name=checkpoint_row[0],
+            last_event_id=last_event_id,
+            latest_event_id=latest_event_id,
+            lag_seconds=lag_seconds,
+            events_processed=events_processed,
+            last_processed_at=last_processed_at_str,
+        )
+
+    async def reset_checkpoint(self, projection_name: str) -> None:
+        """
+        Reset the checkpoint for a projection.
+
+        Used when rebuilding a projection from scratch.
+
+        Args:
+            projection_name: Name of the projection
+        """
+        await self._connection.execute(
+            """
+            DELETE FROM projection_checkpoints
+            WHERE projection_name = ?
+            """,
+            (projection_name,),
+        )
+        await self._connection.commit()
+
+    async def get_all_checkpoints(self) -> list[CheckpointData]:
+        """
+        Get all projection checkpoints.
+
+        Returns:
+            List of CheckpointData for all projections
+        """
+        cursor = await self._connection.execute(
+            """
+            SELECT projection_name, last_event_id, last_event_type,
+                   last_processed_at, events_processed
+            FROM projection_checkpoints
+            ORDER BY projection_name
+            """
+        )
+        rows = await cursor.fetchall()
+
+        result: list[CheckpointData] = []
+        for row in rows:
+            # Parse last_event_id from TEXT to UUID
+            last_event_id = UUID(row[1]) if row[1] else None
+
+            # Parse last_processed_at from ISO 8601 string
+            last_processed_at = None
+            if row[3]:
+                with contextlib.suppress(ValueError, TypeError):
+                    last_processed_at = datetime.fromisoformat(row[3].replace("Z", "+00:00"))
+
+            result.append(
+                CheckpointData(
+                    projection_name=row[0],
+                    last_event_id=last_event_id,
+                    last_event_type=row[2],
+                    last_processed_at=last_processed_at,
+                    events_processed=row[4] or 0,
+                )
+            )
+
+        return result
 
 
 # Type alias for backwards compatibility

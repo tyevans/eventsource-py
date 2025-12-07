@@ -13,6 +13,7 @@ from eventsource.stores.interface import (
     SyncEventStore,
 )
 from eventsource.stores.postgresql import PostgreSQLEventStore
+from eventsource.stores.sqlite import SQLiteEventStore
 
 __all__ = [
     # Data structures
@@ -28,6 +29,7 @@ __all__ = [
     # Concrete implementations
     "InMemoryEventStore",
     "PostgreSQLEventStore",
+    "SQLiteEventStore",
     # Protocols
     "EventPublisher",
 ]

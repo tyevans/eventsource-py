@@ -15,6 +15,7 @@ from eventsource import (
     # Implementations
     InMemoryEventStore,
     PostgreSQLEventStore,
+    SQLiteEventStore,
 
     # Data structures
     EventStream,
@@ -278,6 +279,182 @@ CREATE TABLE event_outbox (
 
 CREATE INDEX idx_outbox_status ON event_outbox(status, created_at);
 ```
+
+---
+
+## SQLiteEventStore
+
+Lightweight SQLite implementation for development, testing, and embedded applications.
+
+### Installation
+
+```bash
+pip install eventsource[sqlite]
+```
+
+### Setup
+
+```python
+from eventsource import SQLiteEventStore
+
+# File-based database
+async with SQLiteEventStore("./events.db") as store:
+    await store.initialize()
+    # ... use store
+
+# In-memory database for testing
+async with SQLiteEventStore(":memory:") as store:
+    await store.initialize()
+    # ... use store
+```
+
+### Constructor Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `database` | `str` | Required | Path to SQLite file or `:memory:` |
+| `event_registry` | `EventRegistry` | Default registry | Event type lookup |
+| `wal_mode` | `bool` | `True` | Enable WAL journal mode |
+| `busy_timeout` | `int` | `5000` | Timeout in ms for locked database |
+
+### Features
+
+- **Optimistic locking**: Version-based conflict detection
+- **Idempotent writes**: Duplicate events are skipped
+- **WAL mode**: Better concurrent read performance (optional)
+- **Multi-tenancy**: Built-in tenant isolation
+- **Full EventStore interface**: Drop-in replacement for other stores
+
+### SQLite-Specific Adaptations
+
+The SQLite implementation handles type differences transparently:
+
+- **UUIDs**: Stored as TEXT (36-character hyphenated format)
+- **Timestamps**: Stored as TEXT (ISO 8601 format)
+- **JSON**: Stored as TEXT (SQLite lacks native JSONB)
+- **Auto-increment**: Uses INTEGER PRIMARY KEY AUTOINCREMENT
+
+### Context Manager
+
+Always use the async context manager for proper resource cleanup:
+
+```python
+# Recommended approach
+async with SQLiteEventStore("./events.db") as store:
+    await store.initialize()
+    result = await store.append_events(...)
+
+# Manual approach (requires explicit cleanup)
+store = SQLiteEventStore("./events.db")
+await store._connect()
+await store.initialize()
+try:
+    result = await store.append_events(...)
+finally:
+    await store.close()
+```
+
+### Properties
+
+```python
+store = SQLiteEventStore("./events.db", wal_mode=True, busy_timeout=10000)
+
+# Read-only properties
+store.database        # "./events.db"
+store.event_registry  # EventRegistry instance
+store.is_connected    # True if connection is open
+store.wal_mode        # True
+store.busy_timeout    # 10000
+```
+
+### Database Schema
+
+The store uses the following schema (created by `initialize()`):
+
+```sql
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id TEXT NOT NULL UNIQUE,
+    event_type TEXT NOT NULL,
+    aggregate_type TEXT NOT NULL,
+    aggregate_id TEXT NOT NULL,
+    tenant_id TEXT,
+    actor_id TEXT,
+    version INTEGER NOT NULL,
+    timestamp TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(aggregate_id, aggregate_type, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_aggregate
+    ON events(aggregate_id, aggregate_type);
+CREATE INDEX IF NOT EXISTS idx_events_type
+    ON events(aggregate_type);
+CREATE INDEX IF NOT EXISTS idx_events_tenant
+    ON events(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_events_timestamp
+    ON events(timestamp);
+```
+
+### Limitations
+
+- **Single writer**: Only one write operation at a time
+- **No network access**: Cannot share database across machines
+- **Busy timeout**: Concurrent writers may fail after timeout
+
+### When to Use
+
+- Local development without database setup
+- Unit and integration testing
+- CI/CD pipelines
+- Single-instance deployments
+- Embedded applications
+- Edge computing scenarios
+
+### When NOT to Use
+
+- High-throughput production workloads
+- Multi-instance deployments
+- Heavy concurrent write loads
+
+### Example: Complete Usage
+
+```python
+import asyncio
+from uuid import uuid4
+from eventsource import SQLiteEventStore, AggregateRepository
+
+async def main():
+    async with SQLiteEventStore("./app.db", wal_mode=True) as store:
+        await store.initialize()
+
+        # Direct event operations
+        order_id = uuid4()
+        result = await store.append_events(
+            aggregate_id=order_id,
+            aggregate_type="Order",
+            events=[order_created_event],
+            expected_version=0,
+        )
+        print(f"Appended: version={result.new_version}")
+
+        # Get events
+        stream = await store.get_events(order_id, "Order")
+        print(f"Stream has {len(stream.events)} events")
+
+        # Check existence
+        exists = await store.event_exists(order_created_event.event_id)
+        print(f"Event exists: {exists}")
+
+        # Stream all events
+        async for stored_event in store.read_all():
+            print(f"Position {stored_event.global_position}: {stored_event.event_type}")
+
+asyncio.run(main())
+```
+
+See [SQLite Backend Guide](../guides/sqlite-backend.md) for detailed usage patterns and best practices.
 
 ---
 

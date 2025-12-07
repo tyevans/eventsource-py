@@ -15,7 +15,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from threading import Lock
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 from uuid import UUID, uuid4
 
 from sqlalchemy import text
@@ -23,6 +23,9 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from eventsource.events.base import DomainEvent
 from eventsource.repositories._json import EventSourceJSONEncoder, json_dumps
+
+if TYPE_CHECKING:
+    import aiosqlite
 
 
 @dataclass
@@ -581,6 +584,255 @@ class InMemoryOutboxRepository:
         """Clear all entries. Useful for test setup/teardown."""
         with self._lock:
             self._entries.clear()
+
+
+class SQLiteOutboxRepository:
+    """
+    SQLite implementation of outbox repository.
+
+    Stores outbox events in the `event_outbox` table.
+
+    SQLite-specific adaptations:
+    - UUIDs stored as TEXT (36 characters, hyphenated format)
+    - Timestamps stored as TEXT in ISO 8601 format
+    - Uses `?` positional parameters instead of named parameters
+    - Uses `datetime('now', '-' || ? || ' days')` for interval arithmetic
+    - Uses `SUM(CASE WHEN ... THEN 1 ELSE 0 END)` instead of `COUNT(*) FILTER`
+    - Uses `cursor.lastrowid` for inserted row ID
+
+    Example:
+        >>> async with aiosqlite.connect("events.db") as db:
+        ...     repo = SQLiteOutboxRepository(db)
+        ...     outbox_id = await repo.add_event(event)
+        ...
+        >>> # Later, in the publisher worker:
+        >>> pending = await repo.get_pending_events(limit=100)
+        >>> for entry in pending:
+        ...     # Publish to event bus
+        ...     await repo.mark_published(UUID(entry["id"]))
+    """
+
+    def __init__(self, connection: "aiosqlite.Connection") -> None:
+        """
+        Initialize the outbox repository.
+
+        Args:
+            connection: aiosqlite database connection
+        """
+        self._connection = connection
+
+    async def add_event(self, event: DomainEvent) -> UUID:
+        """
+        Add an event to the outbox for publishing.
+
+        Args:
+            event: Domain event to publish
+
+        Returns:
+            Outbox record ID (generated UUID)
+        """
+        outbox_id = uuid4()
+        now = datetime.now(UTC)
+
+        # Serialize event data
+        event_data = {
+            "event_id": str(event.event_id),
+            "aggregate_id": str(event.aggregate_id),
+            "aggregate_type": event.aggregate_type,
+            "tenant_id": str(event.tenant_id) if event.tenant_id else None,
+            "occurred_at": event.occurred_at.isoformat(),
+            "payload": json.loads(event.model_dump_json()),
+        }
+
+        await self._connection.execute(
+            """
+            INSERT INTO event_outbox
+                (event_id, event_type, aggregate_id, aggregate_type,
+                 tenant_id, event_data, created_at, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
+            """,
+            (
+                str(event.event_id),
+                event.event_type,
+                str(event.aggregate_id),
+                event.aggregate_type,
+                str(event.tenant_id) if event.tenant_id else None,
+                json.dumps(event_data, cls=EventSourceJSONEncoder),
+                now.isoformat(),
+            ),
+        )
+        await self._connection.commit()
+
+        return outbox_id
+
+    async def get_pending_events(self, limit: int = 100) -> list[dict[str, Any]]:
+        """
+        Get pending events that need to be published.
+
+        Args:
+            limit: Maximum number of events to return
+
+        Returns:
+            List of pending outbox records
+        """
+        cursor = await self._connection.execute(
+            """
+            SELECT id, event_id, event_type, aggregate_id, aggregate_type,
+                   tenant_id, event_data, created_at, retry_count
+            FROM event_outbox
+            WHERE status = 'pending'
+            ORDER BY created_at ASC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+
+        return [
+            {
+                "id": str(row[0]),
+                "event_id": str(row[1]),
+                "event_type": row[2],
+                "aggregate_id": str(row[3]),
+                "aggregate_type": row[4],
+                "tenant_id": str(row[5]) if row[5] else None,
+                "event_data": row[6],
+                "created_at": row[7],
+                "retry_count": row[8],
+            }
+            for row in rows
+        ]
+
+    async def mark_published(self, outbox_id: UUID | int) -> None:
+        """
+        Mark an outbox event as successfully published.
+
+        Args:
+            outbox_id: Outbox record ID (UUID or integer for SQLite)
+        """
+        now = datetime.now(UTC)
+        await self._connection.execute(
+            """
+            UPDATE event_outbox
+            SET status = 'published',
+                published_at = ?
+            WHERE id = ?
+            """,
+            (now.isoformat(), str(outbox_id) if isinstance(outbox_id, UUID) else outbox_id),
+        )
+        await self._connection.commit()
+
+    async def increment_retry(self, outbox_id: UUID | int, error: str | None = None) -> None:
+        """
+        Increment retry count for a failed publishing attempt.
+
+        Args:
+            outbox_id: Outbox record ID (UUID or integer for SQLite)
+            error: Error message (optional)
+        """
+        await self._connection.execute(
+            """
+            UPDATE event_outbox
+            SET retry_count = retry_count + 1,
+                last_error = ?
+            WHERE id = ?
+            """,
+            (error, str(outbox_id) if isinstance(outbox_id, UUID) else outbox_id),
+        )
+        await self._connection.commit()
+
+    async def mark_failed(self, outbox_id: UUID | int, error: str) -> None:
+        """
+        Mark an outbox event as permanently failed.
+
+        Args:
+            outbox_id: Outbox record ID (UUID or integer for SQLite)
+            error: Error message
+        """
+        await self._connection.execute(
+            """
+            UPDATE event_outbox
+            SET status = 'failed',
+                last_error = ?
+            WHERE id = ?
+            """,
+            (error, str(outbox_id) if isinstance(outbox_id, UUID) else outbox_id),
+        )
+        await self._connection.commit()
+
+    async def cleanup_published(self, days: int = 7) -> int:
+        """
+        Clean up published events older than specified days.
+
+        Args:
+            days: Number of days to retain published events
+
+        Returns:
+            Number of records deleted
+        """
+        # SQLite uses different date arithmetic syntax
+        cursor = await self._connection.execute(
+            """
+            DELETE FROM event_outbox
+            WHERE status = 'published'
+              AND published_at < datetime('now', '-' || ? || ' days')
+            """,
+            (days,),
+        )
+        await self._connection.commit()
+        return cursor.rowcount if cursor.rowcount is not None else 0
+
+    async def get_stats(self) -> dict[str, Any]:
+        """
+        Get outbox statistics.
+
+        Returns:
+            Dictionary with outbox metrics including:
+            - pending_count: Number of pending events
+            - published_count: Number of published events
+            - failed_count: Number of failed events
+            - oldest_pending: Timestamp of oldest pending event
+            - avg_retries: Average retry count for pending events
+        """
+        # SQLite doesn't support FILTER clause, use CASE WHEN instead
+        cursor = await self._connection.execute(
+            """
+            SELECT
+                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending_count,
+                SUM(CASE WHEN status = 'published' THEN 1 ELSE 0 END) as published_count,
+                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed_count,
+                MIN(CASE WHEN status = 'pending' THEN created_at END) as oldest_pending,
+                AVG(CASE WHEN status = 'pending' THEN retry_count END) as avg_retries
+            FROM event_outbox
+            """
+        )
+        row = await cursor.fetchone()
+
+        # Aggregate query always returns a row, but values may be NULL
+        if row is None:
+            return {
+                "pending_count": 0,
+                "published_count": 0,
+                "failed_count": 0,
+                "oldest_pending": None,
+                "avg_retries": 0.0,
+            }
+
+        # Parse oldest_pending from ISO 8601 string to datetime
+        oldest_pending = None
+        if row[3]:
+            try:
+                oldest_pending = datetime.fromisoformat(row[3].replace("Z", "+00:00"))
+            except (ValueError, TypeError):
+                oldest_pending = None
+
+        return {
+            "pending_count": row[0] or 0,
+            "published_count": row[1] or 0,
+            "failed_count": row[2] or 0,
+            "oldest_pending": oldest_pending,
+            "avg_retries": float(row[4]) if row[4] else 0.0,
+        }
 
 
 # Type alias for backwards compatibility
