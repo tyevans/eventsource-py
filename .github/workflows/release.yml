@@ -1,0 +1,197 @@
+# Release Workflow
+# Publishes package to PyPI when a version tag is pushed
+#
+# Triggers on tags matching v* (e.g., v0.1.0, v1.0.0a1)
+# - Stable versions (v1.0.0) -> PyPI
+# - Pre-releases (v1.0.0a1, v1.0.0b1) -> TestPyPI
+# - Release candidates (v1.0.0rc1) -> PyPI (marked as pre-release)
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write      # For GitHub Release creation
+  id-token: write      # For Trusted Publishing (OIDC)
+
+jobs:
+  # Validate release tag and extract version info
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      is_prerelease: ${{ steps.version.outputs.is_prerelease }}
+      publish_target: ${{ steps.version.outputs.publish_target }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG=${GITHUB_REF#refs/tags/v}
+          echo "version=$TAG" >> $GITHUB_OUTPUT
+
+          # Determine if this is a pre-release and where to publish
+          if [[ "$TAG" =~ (a|b)[0-9]+ ]]; then
+            # Alpha or Beta -> TestPyPI
+            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+            echo "publish_target=testpypi" >> $GITHUB_OUTPUT
+          elif [[ "$TAG" =~ rc[0-9]+ ]]; then
+            # Release candidate -> PyPI but marked as pre-release
+            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+            echo "publish_target=pypi" >> $GITHUB_OUTPUT
+          else
+            # Stable release -> PyPI
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+            echo "publish_target=pypi" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Validate version matches pyproject.toml
+        run: |
+          pip install tomli
+          PYPROJECT_VERSION=$(python -c "import tomli; print(tomli.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          if [[ "${{ steps.version.outputs.version }}" != "$PYPROJECT_VERSION" ]]; then
+            echo "::error::Tag version (${{ steps.version.outputs.version }}) does not match pyproject.toml ($PYPROJECT_VERSION)"
+            exit 1
+          fi
+          echo "Version validated: $PYPROJECT_VERSION"
+
+  # Run CI checks (reuse existing workflow)
+  ci:
+    needs: validate
+    uses: ./.github/workflows/ci.yml
+
+  # Build distribution packages
+  build:
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install build tools
+        run: pip install build
+
+      - name: Build distributions
+        run: python -m build
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  # Publish to PyPI (stable releases and RCs)
+  publish-pypi:
+    needs: [validate, build]
+    if: needs.validate.outputs.publish_target == 'pypi'
+    runs-on: ubuntu-latest
+    environment: pypi
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  # Publish to TestPyPI (alpha and beta releases)
+  publish-testpypi:
+    needs: [validate, build]
+    if: needs.validate.outputs.publish_target == 'testpypi'
+    runs-on: ubuntu-latest
+    environment: testpypi
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  # Create GitHub Release
+  github-release:
+    needs: [validate, build, publish-pypi, publish-testpypi]
+    if: always() && needs.build.result == 'success' && (needs.publish-pypi.result == 'success' || needs.publish-testpypi.result == 'success' || needs.publish-pypi.result == 'skipped' || needs.publish-testpypi.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Extract changelog for this version
+        id: changelog
+        run: |
+          VERSION=${{ needs.validate.outputs.version }}
+          # Extract the section for this version from CHANGELOG.md
+          # This captures everything between ## [VERSION] and the next ## [
+          CONTENT=$(awk "/^## \[$VERSION\]/{flag=1; next} /^## \[/{flag=0} flag" CHANGELOG.md)
+
+          # Handle multi-line content for GitHub Actions
+          echo "content<<EOF" >> $GITHUB_OUTPUT
+          echo "$CONTENT" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          prerelease: ${{ needs.validate.outputs.is_prerelease }}
+          body: |
+            ## What's Changed
+
+            ${{ steps.changelog.outputs.content }}
+
+            ## Installation
+
+            ```bash
+            pip install eventsource-py==${{ needs.validate.outputs.version }}
+            ```
+          generate_release_notes: false
+
+  # Post-publish verification
+  verify:
+    needs: [validate, publish-pypi]
+    if: needs.publish-pypi.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for PyPI propagation
+        run: sleep 60
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install from PyPI
+        run: pip install eventsource-py==${{ needs.validate.outputs.version }}
+
+      - name: Verify import and version
+        run: |
+          python -c "import eventsource; print(f'Installed version: {eventsource.__version__}')"
+          python -c "from eventsource import DomainEvent, InMemoryEventStore; print('Basic imports successful')"

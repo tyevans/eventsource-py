@@ -1,8 +1,8 @@
-# eventsource
+# eventsource-py
 
 [![Python Version](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![PyPI version](https://img.shields.io/badge/pypi-coming%20soon-lightgrey.svg)](https://pypi.org/project/eventsource/)
+[![PyPI version](https://img.shields.io/pypi/v/eventsource-py.svg)](https://pypi.org/project/eventsource-py/)
 [![CI](https://github.com/tyevans/eventsource-py/actions/workflows/ci.yml/badge.svg)](https://github.com/tyevans/eventsource-py/actions)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 
@@ -10,7 +10,7 @@ A production-ready event sourcing library for Python 3.11+.
 
 ## Features
 
-- **Event Store** - PostgreSQL and In-Memory backends with optimistic locking
+- **Event Store** - PostgreSQL, SQLite, and In-Memory backends with optimistic locking
 - **Domain Events** - Immutable event classes with Pydantic validation and versioning
 - **Event Registry** - Thread-safe event type registration for serialization/deserialization
 - **Aggregate Pattern** - Base classes for event-sourced aggregates with state reconstruction
@@ -25,19 +25,22 @@ A production-ready event sourcing library for Python 3.11+.
 
 ```bash
 # Basic installation
-pip install eventsource
+pip install eventsource-py
 
 # With PostgreSQL support
-pip install eventsource[postgresql]
+pip install eventsource-py[postgresql]
+
+# With SQLite support
+pip install eventsource-py[sqlite]
 
 # With Redis support
-pip install eventsource[redis]
+pip install eventsource-py[redis]
 
 # With OpenTelemetry support
-pip install eventsource[telemetry]
+pip install eventsource-py[telemetry]
 
 # All optional dependencies
-pip install eventsource[all]
+pip install eventsource-py[all]
 ```
 
 ## Requirements

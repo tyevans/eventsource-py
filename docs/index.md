@@ -1,6 +1,6 @@
-# eventsource Documentation
+# eventsource-py Documentation
 
-Welcome to the eventsource documentation. This library provides a production-ready event sourcing implementation for Python 3.11+.
+Welcome to the eventsource-py documentation. This library provides a production-ready event sourcing implementation for Python 3.11+.
 
 ## Quick Links
 
@@ -67,19 +67,22 @@ Command Query Responsibility Segregation separates reads from writes:
 
 ```bash
 # Basic
-pip install eventsource
+pip install eventsource-py
 
 # With PostgreSQL
-pip install eventsource[postgresql]
+pip install eventsource-py[postgresql]
+
+# With SQLite
+pip install eventsource-py[sqlite]
 
 # With Redis
-pip install eventsource[redis]
+pip install eventsource-py[redis]
 
 # With OpenTelemetry
-pip install eventsource[telemetry]
+pip install eventsource-py[telemetry]
 
 # All extras
-pip install eventsource[all]
+pip install eventsource-py[all]
 ```
 
 ## Quick Example

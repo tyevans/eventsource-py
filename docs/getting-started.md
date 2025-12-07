@@ -1,35 +1,35 @@
 # Getting Started Guide
 
-This guide will walk you through setting up eventsource and implementing your first event-sourced application.
+This guide will walk you through setting up eventsource-py and implementing your first event-sourced application.
 
 ## Installation
 
 ### Basic Installation
 
 ```bash
-pip install eventsource
+pip install eventsource-py
 ```
 
 ### With Optional Dependencies
 
 ```bash
 # SQLite support (development/testing/embedded)
-pip install eventsource[sqlite]
+pip install eventsource-py[sqlite]
 
 # PostgreSQL support (production)
-pip install eventsource[postgresql]
+pip install eventsource-py[postgresql]
 
 # Redis support (distributed event bus)
-pip install eventsource[redis]
+pip install eventsource-py[redis]
 
 # OpenTelemetry support (observability)
-pip install eventsource[telemetry]
+pip install eventsource-py[telemetry]
 
 # All database backends
-pip install eventsource[all-backends]
+pip install eventsource-py[all-backends]
 
 # All optional dependencies
-pip install eventsource[all]
+pip install eventsource-py[all]
 ```
 
 ## Core Concepts
