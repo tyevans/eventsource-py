@@ -290,6 +290,7 @@ class RedisEventBus(EventBus):
             )
 
             # Test connection
+            assert self._redis is not None
             await self._redis.ping()
             logger.info(
                 "Connected to Redis",

@@ -294,6 +294,7 @@ class PostgreSQLDLQRepository:
 
         where_clause = " AND ".join(where_clauses)
 
+        # where_clause is built from safe static strings only
         query = text(f"""
             SELECT id, event_id, projection_name, event_type, event_data,
                    error_message, error_stacktrace, retry_count,
@@ -302,7 +303,7 @@ class PostgreSQLDLQRepository:
             WHERE {where_clause}
             ORDER BY first_failed_at DESC
             LIMIT :limit
-        """)
+        """)  # nosec B608
 
         if isinstance(self.conn, AsyncEngine):
             async with self.conn.connect() as conn:
