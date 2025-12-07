@@ -1,8 +1,8 @@
-site_name: eventsource
+site_name: eventsource-py
 site_description: Production-ready event sourcing library for Python
-site_url: https://your-org.github.io/eventsource
-repo_url: https://github.com/your-org/eventsource
-repo_name: your-org/eventsource
+site_url: https://tyevans.github.io/eventsource-py
+repo_url: https://github.com/tyevans/eventsource-py
+repo_name: tyevans/eventsource-py
 
 theme:
   name: material
