@@ -74,7 +74,7 @@ try:
     OTEL_AVAILABLE = True
 except ImportError:
     OTEL_AVAILABLE = False
-    trace = None  # type: ignore[assignment]
+    trace = None
 
 logger = logging.getLogger(__name__)
 
@@ -290,7 +290,8 @@ class RedisEventBus(EventBus):
             )
 
             # Test connection
-            await self._redis.ping()
+            assert self._redis is not None
+            await self._redis.ping()  # type: ignore[misc]
             logger.info(
                 "Connected to Redis",
                 extra={

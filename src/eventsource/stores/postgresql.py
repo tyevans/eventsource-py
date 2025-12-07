@@ -40,7 +40,7 @@ try:
 
     OTEL_AVAILABLE = True
 except ImportError:
-    trace = None  # type: ignore[assignment]
+    trace = None
     OTEL_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
@@ -119,7 +119,7 @@ class PostgreSQLEventStore(EventStore):
         if self._enable_tracing and trace is not None:
             self._tracer = trace.get_tracer(__name__)
         else:
-            self._tracer = None  # type: ignore[assignment]
+            self._tracer = None
 
     async def append_events(
         self,
