@@ -42,7 +42,7 @@ telemetry = [
     "opentelemetry-sdk>=1.0,<2.0",
 ]
 all = [
-    "eventsource[postgresql,redis,telemetry]",
+    "eventsource[postgresql,sqlite,redis,telemetry]",
 ]
 all-backends = [
     "eventsource[postgresql,sqlite]",
