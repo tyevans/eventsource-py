@@ -6,13 +6,17 @@ They maintain their state by applying events and emit new events
 when commands are executed.
 """
 
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Generic
 from uuid import UUID
 
 from eventsource.events.base import DomainEvent
+from eventsource.exceptions import EventVersionError
 from eventsource.types import TState
+
+logger = logging.getLogger(__name__)
 
 # Type alias for event handler functions
 EventHandler = Callable[[DomainEvent], None]
@@ -79,6 +83,11 @@ class AggregateRoot(Generic[TState], ABC):
     # Class-level aggregate type (subclasses should override)
     aggregate_type: str = "Unknown"
 
+    # Class-level configuration for version validation
+    # When True, events with incorrect versions will raise EventVersionError
+    # When False, version mismatches are logged as warnings but allowed
+    validate_versions: bool = True
+
     # Class-level registry of event handlers (populated by decorator)
     _event_handlers: dict[type[DomainEvent], str] = {}
 
@@ -132,17 +141,23 @@ class AggregateRoot(Generic[TState], ABC):
         Apply an event to the aggregate.
 
         This method:
-        1. Updates the version to match the event's aggregate_version
-        2. Calls _apply() to update the state
-        3. If is_new=True, adds the event to uncommitted events
+        1. Validates the event version (for new events with validation enabled)
+        2. Updates the version to match the event's aggregate_version
+        3. Calls _apply() to update the state
+        4. If is_new=True, adds the event to uncommitted events
 
         Args:
             event: The domain event to apply
             is_new: Whether this is a new event (True) or replayed from history (False)
 
+        Raises:
+            EventVersionError: If version validation is enabled (validate_versions=True),
+                              is_new=True, and the event version doesn't match expected
+                              (current version + 1)
+
         Note:
             When replaying events from history, pass is_new=False to avoid
-            adding them to the uncommitted events list.
+            adding them to the uncommitted events list and to skip version validation.
 
         Example:
             >>> # New event (will be tracked for persistence)
@@ -151,6 +166,34 @@ class AggregateRoot(Generic[TState], ABC):
             >>> # Replayed event (from event store)
             >>> aggregate.apply_event(historic_event, is_new=False)
         """
+        # Validate version for new events (not historical replay)
+        if is_new:
+            expected_version = self._version + 1
+            if event.aggregate_version != expected_version:
+                if self.validate_versions:
+                    raise EventVersionError(
+                        expected_version=expected_version,
+                        actual_version=event.aggregate_version,
+                        event_id=event.event_id,
+                        aggregate_id=self._aggregate_id,
+                    )
+                else:
+                    # Log warning when validation is disabled but versions don't match
+                    logger.warning(
+                        "Version mismatch (validation disabled): expected %d, got %d "
+                        "for aggregate %s, event %s",
+                        expected_version,
+                        event.aggregate_version,
+                        self._aggregate_id,
+                        event.event_id,
+                        extra={
+                            "aggregate_id": str(self._aggregate_id),
+                            "expected_version": expected_version,
+                            "actual_version": event.aggregate_version,
+                            "event_id": str(event.event_id),
+                        },
+                    )
+
         # Update version
         self._version = event.aggregate_version
 
