@@ -388,7 +388,7 @@ class TestIdempotency:
 
         # Should still succeed but event count stays the same
         assert result.success is True
-        assert store.get_event_count() == 1
+        assert await store.get_event_count() == 1
 
     @pytest.mark.asyncio
     async def test_mixed_new_and_duplicate_events(
@@ -415,7 +415,7 @@ class TestIdempotency:
         )
 
         assert result.success is True
-        assert store.get_event_count() == 2  # Only 2 unique events
+        assert await store.get_event_count() == 2  # Only 2 unique events
 
 
 # --- Event Filtering Tests ---
@@ -857,14 +857,14 @@ class TestHelperMethods:
             expected_version=0,
         )
 
-        assert store.get_event_count() == 3
+        assert await store.get_event_count() == 3
 
-        store.clear()
+        await store.clear()
 
-        assert store.get_event_count() == 0
-        assert store.get_global_position() == 0
-        assert len(store.get_aggregate_ids()) == 0
-        assert len(store.get_all_events()) == 0
+        assert await store.get_event_count() == 0
+        assert await store.get_global_position() == 0
+        assert len(await store.get_aggregate_ids()) == 0
+        assert len(await store.get_all_events()) == 0
 
     @pytest.mark.asyncio
     async def test_get_all_events(self, store: InMemoryEventStore) -> None:
@@ -902,7 +902,7 @@ class TestHelperMethods:
             expected_version=1,
         )
 
-        all_events = store.get_all_events()
+        all_events = await store.get_all_events()
 
         assert len(all_events) == 3
         # Should be in chronological order
@@ -913,7 +913,7 @@ class TestHelperMethods:
     @pytest.mark.asyncio
     async def test_get_event_count(self, store: InMemoryEventStore, aggregate_id: UUID) -> None:
         """Test getting total event count."""
-        assert store.get_event_count() == 0
+        assert await store.get_event_count() == 0
 
         events = [SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(5)]
         await store.append_events(
@@ -923,7 +923,7 @@ class TestHelperMethods:
             expected_version=0,
         )
 
-        assert store.get_event_count() == 5
+        assert await store.get_event_count() == 5
 
     @pytest.mark.asyncio
     async def test_get_aggregate_ids(self, store: InMemoryEventStore) -> None:
@@ -941,7 +941,7 @@ class TestHelperMethods:
                 expected_version=0,
             )
 
-        ids = store.get_aggregate_ids()
+        ids = await store.get_aggregate_ids()
 
         assert len(ids) == 3
         assert agg1 in ids
@@ -951,7 +951,7 @@ class TestHelperMethods:
     @pytest.mark.asyncio
     async def test_get_global_position(self, store: InMemoryEventStore, aggregate_id: UUID) -> None:
         """Test getting current global position."""
-        assert store.get_global_position() == 0
+        assert await store.get_global_position() == 0
 
         events = [SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(3)]
         await store.append_events(
@@ -961,7 +961,7 @@ class TestHelperMethods:
             expected_version=0,
         )
 
-        assert store.get_global_position() == 3
+        assert await store.get_global_position() == 3
 
 
 # --- Thread Safety Tests ---
@@ -996,7 +996,7 @@ class TestThreadSafety:
         await asyncio.gather(*tasks)
 
         # All events should be stored
-        assert store.get_event_count() == num_tasks * events_per_task
+        assert await store.get_event_count() == num_tasks * events_per_task
 
     @pytest.mark.asyncio
     async def test_concurrent_reads_and_writes(self, store: InMemoryEventStore) -> None:
@@ -1026,7 +1026,7 @@ class TestThreadSafety:
         await asyncio.gather(*tasks)
 
         # All events should be stored
-        assert store.get_event_count() == num_operations
+        assert await store.get_event_count() == num_operations
 
 
 # --- Multiple Aggregate Types Tests ---
@@ -1114,7 +1114,7 @@ class TestEdgeCases:
 
         assert result.success is True
         assert result.new_version == 1000
-        assert store.get_event_count() == 1000
+        assert await store.get_event_count() == 1000
 
     @pytest.mark.asyncio
     async def test_event_order_preserved(

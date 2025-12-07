@@ -11,10 +11,10 @@ This enables:
 - Decoupled publishing from the main request path
 """
 
+import asyncio
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from threading import Lock
 from typing import Any, Protocol, runtime_checkable
 from uuid import UUID, uuid4
 
@@ -22,6 +22,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from eventsource.events.base import DomainEvent
+from eventsource.repositories._connection import execute_with_connection
 from eventsource.repositories._json import EventSourceJSONEncoder, json_dumps
 
 
@@ -205,11 +206,8 @@ class PostgreSQLOutboxRepository:
             "created_at": now,
         }
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.begin() as conn:
-                await conn.execute(query, params)
-        else:
-            await self.conn.execute(query, params)
+        async with execute_with_connection(self.conn, transactional=True) as conn:
+            await conn.execute(query, params)
 
         return outbox_id
 
@@ -232,12 +230,8 @@ class PostgreSQLOutboxRepository:
             LIMIT :limit
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.connect() as conn:
-                result = await conn.execute(query, {"limit": limit})
-                rows = result.fetchall()
-        else:
-            result = await self.conn.execute(query, {"limit": limit})
+        async with execute_with_connection(self.conn, transactional=False) as conn:
+            result = await conn.execute(query, {"limit": limit})
             rows = result.fetchall()
 
         return [
@@ -270,11 +264,8 @@ class PostgreSQLOutboxRepository:
             WHERE id = :id
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.begin() as conn:
-                await conn.execute(query, {"id": outbox_id, "published_at": now})
-        else:
-            await self.conn.execute(query, {"id": outbox_id, "published_at": now})
+        async with execute_with_connection(self.conn, transactional=True) as conn:
+            await conn.execute(query, {"id": outbox_id, "published_at": now})
 
     async def increment_retry(self, outbox_id: UUID, error: str | None = None) -> None:
         """
@@ -291,11 +282,8 @@ class PostgreSQLOutboxRepository:
             WHERE id = :id
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.begin() as conn:
-                await conn.execute(query, {"id": outbox_id, "error": error})
-        else:
-            await self.conn.execute(query, {"id": outbox_id, "error": error})
+        async with execute_with_connection(self.conn, transactional=True) as conn:
+            await conn.execute(query, {"id": outbox_id, "error": error})
 
     async def mark_failed(self, outbox_id: UUID, error: str) -> None:
         """
@@ -312,11 +300,8 @@ class PostgreSQLOutboxRepository:
             WHERE id = :id
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.begin() as conn:
-                await conn.execute(query, {"id": outbox_id, "error": error})
-        else:
-            await self.conn.execute(query, {"id": outbox_id, "error": error})
+        async with execute_with_connection(self.conn, transactional=True) as conn:
+            await conn.execute(query, {"id": outbox_id, "error": error})
 
     async def cleanup_published(self, days: int = 7) -> int:
         """
@@ -335,12 +320,8 @@ class PostgreSQLOutboxRepository:
             RETURNING id
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.begin() as conn:
-                result = await conn.execute(query, {"days": days})
-                return len(result.fetchall())
-        else:
-            result = await self.conn.execute(query, {"days": days})
+        async with execute_with_connection(self.conn, transactional=True) as conn:
+            result = await conn.execute(query, {"days": days})
             return len(result.fetchall())
 
     async def get_stats(self) -> dict[str, Any]:
@@ -360,12 +341,8 @@ class PostgreSQLOutboxRepository:
             FROM event_outbox
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.connect() as conn:
-                result = await conn.execute(query)
-                row = result.fetchone()
-        else:
-            result = await self.conn.execute(query)
+        async with execute_with_connection(self.conn, transactional=False) as conn:
+            result = await conn.execute(query)
             row = result.fetchone()
 
         # Aggregate query always returns a row
@@ -403,7 +380,7 @@ class InMemoryOutboxRepository:
     def __init__(self) -> None:
         """Initialize an empty in-memory outbox repository."""
         self._entries: dict[UUID, OutboxEntry] = {}
-        self._lock = Lock()
+        self._lock: asyncio.Lock = asyncio.Lock()
 
     async def add_event(self, event: DomainEvent) -> UUID:
         """
@@ -428,7 +405,7 @@ class InMemoryOutboxRepository:
             "payload": json.loads(event.model_dump_json()),
         }
 
-        with self._lock:
+        async with self._lock:
             self._entries[outbox_id] = OutboxEntry(
                 id=outbox_id,
                 event_id=event.event_id,
@@ -453,7 +430,7 @@ class InMemoryOutboxRepository:
         Returns:
             List of pending outbox records
         """
-        with self._lock:
+        async with self._lock:
             pending = [e for e in self._entries.values() if e.status == "pending"]
             # Sort by created_at ascending (oldest first)
             pending.sort(key=lambda e: e.created_at)
@@ -482,7 +459,7 @@ class InMemoryOutboxRepository:
             outbox_id: Outbox record ID
         """
         now = datetime.now(UTC)
-        with self._lock:
+        async with self._lock:
             if outbox_id in self._entries:
                 entry = self._entries[outbox_id]
                 entry.status = "published"
@@ -496,7 +473,7 @@ class InMemoryOutboxRepository:
             outbox_id: Outbox record ID
             error: Error message (optional)
         """
-        with self._lock:
+        async with self._lock:
             if outbox_id in self._entries:
                 entry = self._entries[outbox_id]
                 entry.retry_count += 1
@@ -510,7 +487,7 @@ class InMemoryOutboxRepository:
             outbox_id: Outbox record ID
             error: Error message
         """
-        with self._lock:
+        async with self._lock:
             if outbox_id in self._entries:
                 entry = self._entries[outbox_id]
                 entry.status = "failed"
@@ -531,7 +508,7 @@ class InMemoryOutboxRepository:
         cutoff = datetime.now(UTC) - timedelta(days=days)
 
         deleted = 0
-        with self._lock:
+        async with self._lock:
             ids_to_delete = []
             for id_, entry in self._entries.items():
                 if (
@@ -554,7 +531,7 @@ class InMemoryOutboxRepository:
         Returns:
             Dictionary with outbox metrics
         """
-        with self._lock:
+        async with self._lock:
             entries = list(self._entries.values())
 
             pending = [e for e in entries if e.status == "pending"]
@@ -577,9 +554,9 @@ class InMemoryOutboxRepository:
                 "avg_retries": avg_retries,
             }
 
-    def clear(self) -> None:
+    async def clear(self) -> None:
         """Clear all entries. Useful for test setup/teardown."""
-        with self._lock:
+        async with self._lock:
             self._entries.clear()
 
 

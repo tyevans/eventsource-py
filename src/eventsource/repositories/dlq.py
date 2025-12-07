@@ -8,16 +8,17 @@ all retry attempts. This enables:
 - Failure monitoring and alerting
 """
 
+import asyncio
 import traceback
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from threading import Lock
 from typing import Any, Protocol, runtime_checkable
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from eventsource.repositories._connection import execute_with_connection
 from eventsource.repositories._json import json_dumps
 
 
@@ -261,11 +262,8 @@ class PostgreSQLDLQRepository:
             "now": now,
         }
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.begin() as conn:
-                await conn.execute(query, params)
-        else:
-            await self.conn.execute(query, params)
+        async with execute_with_connection(self.conn, transactional=True) as conn:
+            await conn.execute(query, params)
 
     async def get_failed_events(
         self,
@@ -305,12 +303,8 @@ class PostgreSQLDLQRepository:
             LIMIT :limit
         """)  # nosec B608
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.connect() as conn:
-                result = await conn.execute(query, params)
-                rows = result.fetchall()
-        else:
-            result = await self.conn.execute(query, params)
+        async with execute_with_connection(self.conn, transactional=False) as conn:
+            result = await conn.execute(query, params)
             rows = result.fetchall()
 
         return [
@@ -349,12 +343,8 @@ class PostgreSQLDLQRepository:
             WHERE id = :dlq_id
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.connect() as conn:
-                result = await conn.execute(query, {"dlq_id": dlq_id})
-                row = result.fetchone()
-        else:
-            result = await self.conn.execute(query, {"dlq_id": dlq_id})
+        async with execute_with_connection(self.conn, transactional=False) as conn:
+            result = await conn.execute(query, {"dlq_id": dlq_id})
             row = result.fetchone()
 
         if not row:
@@ -395,14 +385,8 @@ class PostgreSQLDLQRepository:
             WHERE id = :dlq_id
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.begin() as conn:
-                await conn.execute(
-                    query,
-                    {"now": now, "resolved_by": resolved_by_str, "dlq_id": dlq_id},
-                )
-        else:
-            await self.conn.execute(
+        async with execute_with_connection(self.conn, transactional=True) as conn:
+            await conn.execute(
                 query,
                 {"now": now, "resolved_by": resolved_by_str, "dlq_id": dlq_id},
             )
@@ -420,11 +404,8 @@ class PostgreSQLDLQRepository:
             WHERE id = :dlq_id
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.begin() as conn:
-                await conn.execute(query, {"dlq_id": dlq_id})
-        else:
-            await self.conn.execute(query, {"dlq_id": dlq_id})
+        async with execute_with_connection(self.conn, transactional=True) as conn:
+            await conn.execute(query, {"dlq_id": dlq_id})
 
     async def get_failure_stats(self) -> dict[str, Any]:
         """
@@ -443,12 +424,8 @@ class PostgreSQLDLQRepository:
             WHERE status IN ('failed', 'retrying')
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.connect() as conn:
-                result = await conn.execute(query)
-                row = result.fetchone()
-        else:
-            result = await self.conn.execute(query)
+        async with execute_with_connection(self.conn, transactional=False) as conn:
+            result = await conn.execute(query)
             row = result.fetchone()
 
         return {
@@ -477,12 +454,8 @@ class PostgreSQLDLQRepository:
             ORDER BY failure_count DESC
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.connect() as conn:
-                result = await conn.execute(query)
-                rows = result.fetchall()
-        else:
-            result = await self.conn.execute(query)
+        async with execute_with_connection(self.conn, transactional=False) as conn:
+            result = await conn.execute(query)
             rows = result.fetchall()
 
         return [
@@ -514,12 +487,8 @@ class PostgreSQLDLQRepository:
             RETURNING id
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.begin() as conn:
-                result = await conn.execute(query, {"days": older_than_days})
-                return len(result.fetchall())
-        else:
-            result = await self.conn.execute(query, {"days": older_than_days})
+        async with execute_with_connection(self.conn, transactional=True) as conn:
+            result = await conn.execute(query, {"days": older_than_days})
             return len(result.fetchall())
 
 
@@ -544,7 +513,7 @@ class InMemoryDLQRepository:
         """Initialize an empty in-memory DLQ repository."""
         self._entries: dict[str, DLQEntry] = {}  # key: "{event_id}:{projection_name}"
         self._id_counter: int = 0
-        self._lock = Lock()
+        self._lock: asyncio.Lock = asyncio.Lock()
 
     def _make_key(self, event_id: UUID, projection_name: str) -> str:
         """Create a unique key for event_id + projection_name combination."""
@@ -573,7 +542,7 @@ class InMemoryDLQRepository:
         now = datetime.now(UTC)
         key = self._make_key(event_id, projection_name)
 
-        with self._lock:
+        async with self._lock:
             existing = self._entries.get(key)
             if existing:
                 # Update existing entry
@@ -616,7 +585,7 @@ class InMemoryDLQRepository:
         Returns:
             List of failed event records
         """
-        with self._lock:
+        async with self._lock:
             entries = list(self._entries.values())
 
             # Filter by status
@@ -659,7 +628,7 @@ class InMemoryDLQRepository:
         Returns:
             Failed event record, or None if not found
         """
-        with self._lock:
+        async with self._lock:
             for entry in self._entries.values():
                 if entry.id == dlq_id:
                     return {
@@ -694,7 +663,7 @@ class InMemoryDLQRepository:
             resolved_by: User ID or identifier of resolver
         """
         now = datetime.now(UTC)
-        with self._lock:
+        async with self._lock:
             for entry in self._entries.values():
                 if entry.id == dlq_id:
                     entry.status = "resolved"
@@ -709,7 +678,7 @@ class InMemoryDLQRepository:
         Args:
             dlq_id: DLQ record ID
         """
-        with self._lock:
+        async with self._lock:
             for entry in self._entries.values():
                 if entry.id == dlq_id:
                     entry.status = "retrying"
@@ -722,7 +691,7 @@ class InMemoryDLQRepository:
         Returns:
             Dictionary with failure statistics
         """
-        with self._lock:
+        async with self._lock:
             active_entries = [
                 e for e in self._entries.values() if e.status in ("failed", "retrying")
             ]
@@ -753,7 +722,7 @@ class InMemoryDLQRepository:
         Returns:
             List of projection failure statistics
         """
-        with self._lock:
+        async with self._lock:
             active_entries = [
                 e for e in self._entries.values() if e.status in ("failed", "retrying")
             ]
@@ -809,7 +778,7 @@ class InMemoryDLQRepository:
         cutoff = cutoff - timedelta(days=older_than_days)
 
         deleted = 0
-        with self._lock:
+        async with self._lock:
             keys_to_delete = []
             for key, entry in self._entries.items():
                 if entry.status == "resolved" and entry.resolved_at and entry.resolved_at < cutoff:
@@ -821,9 +790,9 @@ class InMemoryDLQRepository:
 
         return deleted
 
-    def clear(self) -> None:
+    async def clear(self) -> None:
         """Clear all entries. Useful for test setup/teardown."""
-        with self._lock:
+        async with self._lock:
             self._entries.clear()
             self._id_counter = 0
 

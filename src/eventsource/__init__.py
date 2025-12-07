@@ -55,8 +55,17 @@ from eventsource.exceptions import (
     AggregateNotFoundError,
     EventNotFoundError,
     EventSourceError,
+    EventVersionError,
     OptimisticLockError,
     ProjectionError,
+)
+
+# Projections (Task 09)
+from eventsource.projections.base import (
+    CheckpointTrackingProjection,
+    DatabaseProjection,
+    DeclarativeProjection,
+    Projection,
 )
 
 # Repository infrastructure (Task 12)
@@ -106,17 +115,6 @@ from eventsource.types import (
     TenantId,
     TState,
 )
-
-# The following imports will be added as modules are implemented:
-#
-# Projections (Task 09)
-# from eventsource.projections.base import (
-#     Projection,
-#     CheckpointTrackingProjection,
-#     DeclarativeProjection,
-#     ProjectionRegistry,
-# )
-# from eventsource.projections.decorators import handles
 
 __all__ = [
     # Version
@@ -175,6 +173,7 @@ __all__ = [
     "AggregateNotFoundError",
     "EventNotFoundError",
     "EventSourceError",
+    "EventVersionError",
     "OptimisticLockError",
     "ProjectionError",
     # Repository infrastructure (Task 12)
@@ -195,4 +194,9 @@ __all__ = [
     "OutboxEntry",
     "OutboxStats",
     "EventSourceJSONEncoder",
+    # Projections (Task 09)
+    "Projection",
+    "CheckpointTrackingProjection",
+    "DeclarativeProjection",
+    "DatabaseProjection",
 ]

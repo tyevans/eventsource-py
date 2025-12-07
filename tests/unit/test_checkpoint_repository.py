@@ -173,7 +173,7 @@ class TestInMemoryCheckpointRepository:
         for i in range(3):
             await repo.update_checkpoint(f"Proj{i}", uuid4(), "Event")
 
-        repo.clear()
+        await repo.clear()
 
         result = await repo.get_all_checkpoints()
         assert result == []
@@ -221,3 +221,119 @@ class TestCheckpointRepositoryProtocol:
         repo = InMemoryCheckpointRepository()
         # The protocol is runtime checkable
         assert isinstance(repo, CheckpointRepository)
+
+
+class TestInMemoryCheckpointRepositoryConcurrency:
+    """Tests for concurrent access to InMemoryCheckpointRepository.
+
+    These tests verify that asyncio.Lock properly serializes concurrent
+    operations without deadlocks or data corruption.
+    """
+
+    @pytest.fixture
+    def repo(self) -> InMemoryCheckpointRepository:
+        """Create a fresh repository for each test."""
+        return InMemoryCheckpointRepository()
+
+    @pytest.mark.asyncio
+    async def test_concurrent_updates_no_deadlock(self, repo: InMemoryCheckpointRepository):
+        """Test that 100 concurrent updates complete without deadlock."""
+        import asyncio
+
+        projection_name = "TestProjection"
+        num_updates = 100
+
+        async def update_checkpoint(i: int):
+            event_id = uuid4()
+            await repo.update_checkpoint(projection_name, event_id, f"Event{i}")
+
+        # Run 100 concurrent updates
+        tasks = [update_checkpoint(i) for i in range(num_updates)]
+        await asyncio.wait_for(asyncio.gather(*tasks), timeout=5.0)
+
+        # Verify events_processed count
+        checkpoints = await repo.get_all_checkpoints()
+        assert len(checkpoints) == 1
+        assert checkpoints[0].events_processed == num_updates
+
+    @pytest.mark.asyncio
+    async def test_concurrent_read_write(self, repo: InMemoryCheckpointRepository):
+        """Test mixed concurrent reads and writes complete without issues."""
+        import asyncio
+
+        projection_name = "TestProjection"
+        num_operations = 50
+        read_results: list[bool] = []
+
+        async def writer(i: int):
+            event_id = uuid4()
+            await repo.update_checkpoint(projection_name, event_id, f"Event{i}")
+
+        async def reader():
+            result = await repo.get_checkpoint(projection_name)
+            read_results.append(result is not None or True)
+
+        # Interleave reads and writes
+        tasks = []
+        for i in range(num_operations):
+            tasks.append(writer(i))
+            tasks.append(reader())
+
+        await asyncio.wait_for(asyncio.gather(*tasks), timeout=5.0)
+
+        # All operations completed
+        assert len(read_results) == num_operations
+
+    @pytest.mark.asyncio
+    async def test_concurrent_multiple_projections(self, repo: InMemoryCheckpointRepository):
+        """Test concurrent updates to different projections."""
+        import asyncio
+
+        num_projections = 10
+        updates_per_projection = 10
+
+        async def update_projection(proj_id: int, update_id: int):
+            event_id = uuid4()
+            await repo.update_checkpoint(
+                f"Projection{proj_id}",
+                event_id,
+                f"Event{update_id}",
+            )
+
+        tasks = []
+        for proj in range(num_projections):
+            for update in range(updates_per_projection):
+                tasks.append(update_projection(proj, update))
+
+        await asyncio.wait_for(asyncio.gather(*tasks), timeout=5.0)
+
+        # Verify all projections exist with correct counts
+        checkpoints = await repo.get_all_checkpoints()
+        assert len(checkpoints) == num_projections
+        for checkpoint in checkpoints:
+            assert checkpoint.events_processed == updates_per_projection
+
+    @pytest.mark.asyncio
+    async def test_concurrent_reset_and_update(self, repo: InMemoryCheckpointRepository):
+        """Test concurrent reset and update operations."""
+        import asyncio
+
+        projection_name = "TestProjection"
+
+        # First, create the checkpoint
+        await repo.update_checkpoint(projection_name, uuid4(), "Initial")
+
+        async def updater():
+            for _ in range(10):
+                await repo.update_checkpoint(projection_name, uuid4(), "Update")
+
+        async def resetter():
+            for _ in range(3):
+                await repo.reset_checkpoint(projection_name)
+                await asyncio.sleep(0.001)
+
+        # Run concurrent updates and resets - should not deadlock
+        await asyncio.wait_for(
+            asyncio.gather(updater(), resetter()),
+            timeout=5.0,
+        )

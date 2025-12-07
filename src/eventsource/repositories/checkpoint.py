@@ -8,14 +8,16 @@ enabling:
 - Safe rebuilds from specific positions
 """
 
+import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from threading import Lock
 from typing import Protocol, runtime_checkable
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
+
+from eventsource.repositories._connection import execute_with_connection
 
 
 @dataclass(frozen=True)
@@ -174,13 +176,8 @@ class PostgreSQLCheckpointRepository:
         """)
         params = {"projection_name": projection_name}
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.connect() as conn:
-                result = await conn.execute(query, params)
-                row = result.fetchone()
-                return row[0] if row else None
-        else:
-            result = await self.conn.execute(query, params)
+        async with execute_with_connection(self.conn, transactional=False) as conn:
+            result = await conn.execute(query, params)
             row = result.fetchone()
             return row[0] if row else None
 
@@ -220,11 +217,8 @@ class PostgreSQLCheckpointRepository:
             "now": now,
         }
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.begin() as conn:
-                await conn.execute(query, params)
-        else:
-            await self.conn.execute(query, params)
+        async with execute_with_connection(self.conn, transactional=True) as conn:
+            await conn.execute(query, params)
 
     async def get_lag_metrics(
         self,
@@ -266,12 +260,8 @@ class PostgreSQLCheckpointRepository:
         """)
         params = {"projection_name": projection_name, "event_types": event_types}
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.connect() as conn:
-                result = await conn.execute(query, params)
-                row = result.fetchone()
-        else:
-            result = await self.conn.execute(query, params)
+        async with execute_with_connection(self.conn, transactional=False) as conn:
+            result = await conn.execute(query, params)
             row = result.fetchone()
 
         if not row:
@@ -311,11 +301,8 @@ class PostgreSQLCheckpointRepository:
         """)
         params = {"projection_name": projection_name}
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.begin() as conn:
-                await conn.execute(query, params)
-        else:
-            await self.conn.execute(query, params)
+        async with execute_with_connection(self.conn, transactional=True) as conn:
+            await conn.execute(query, params)
 
     async def get_all_checkpoints(self) -> list[CheckpointData]:
         """
@@ -331,12 +318,8 @@ class PostgreSQLCheckpointRepository:
             ORDER BY projection_name
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.connect() as conn:
-                result = await conn.execute(query)
-                rows = result.fetchall()
-        else:
-            result = await self.conn.execute(query)
+        async with execute_with_connection(self.conn, transactional=False) as conn:
+            result = await conn.execute(query)
             rows = result.fetchall()
 
         return [
@@ -366,7 +349,7 @@ class InMemoryCheckpointRepository:
     def __init__(self) -> None:
         """Initialize an empty in-memory checkpoint repository."""
         self._checkpoints: dict[str, CheckpointData] = {}
-        self._lock = Lock()
+        self._lock: asyncio.Lock = asyncio.Lock()
 
     async def get_checkpoint(self, projection_name: str) -> UUID | None:
         """
@@ -378,7 +361,7 @@ class InMemoryCheckpointRepository:
         Returns:
             Last processed event ID, or None if no checkpoint exists
         """
-        with self._lock:
+        async with self._lock:
             checkpoint = self._checkpoints.get(projection_name)
             return checkpoint.last_event_id if checkpoint else None
 
@@ -397,7 +380,7 @@ class InMemoryCheckpointRepository:
             event_type: Type of event processed
         """
         now = datetime.now(UTC)
-        with self._lock:
+        async with self._lock:
             existing = self._checkpoints.get(projection_name)
             events_processed = (existing.events_processed + 1) if existing else 1
 
@@ -427,7 +410,7 @@ class InMemoryCheckpointRepository:
         Returns:
             LagMetrics if checkpoint exists, None otherwise
         """
-        with self._lock:
+        async with self._lock:
             checkpoint = self._checkpoints.get(projection_name)
             if not checkpoint:
                 return None
@@ -452,7 +435,7 @@ class InMemoryCheckpointRepository:
         Args:
             projection_name: Name of the projection
         """
-        with self._lock:
+        async with self._lock:
             self._checkpoints.pop(projection_name, None)
 
     async def get_all_checkpoints(self) -> list[CheckpointData]:
@@ -462,15 +445,15 @@ class InMemoryCheckpointRepository:
         Returns:
             List of CheckpointData for all projections
         """
-        with self._lock:
+        async with self._lock:
             return sorted(
                 self._checkpoints.values(),
                 key=lambda c: c.projection_name,
             )
 
-    def clear(self) -> None:
+    async def clear(self) -> None:
         """Clear all checkpoints. Useful for test setup/teardown."""
-        with self._lock:
+        async with self._lock:
             self._checkpoints.clear()
 
 
