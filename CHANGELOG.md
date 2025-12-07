@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Pre-commit hooks configuration with ruff, mypy, and bandit for automated code quality checks
+
 ### Changed
 
 - Improved type annotations for better mypy compatibility across all modules
