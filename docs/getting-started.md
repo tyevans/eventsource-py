@@ -330,8 +330,8 @@ print(projection.get_pending_tasks())
 ## Next Steps
 
 - Read the [Architecture Overview](architecture.md) to understand the full system
-- Explore the [API Reference](api/) for detailed documentation
-- Check out [Examples](examples/) for more complex scenarios
+- Explore the [API Reference](api/index.md) for detailed documentation
+- Check out [Examples](examples/basic-order.md) for more complex scenarios
 
 ## Complete Example
 

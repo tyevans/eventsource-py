@@ -315,10 +315,10 @@ class DuplicateEventTypeError(ValueError):
 
 ### Code References
 
-- [`src/eventsource/events/registry.py`](../../src/eventsource/events/registry.py) - Complete `EventRegistry` implementation (436 lines)
-- [`src/eventsource/events/base.py`](../../src/eventsource/events/base.py) - `DomainEvent` base class with serialization methods
-- [`src/eventsource/stores/postgresql.py`](../../src/eventsource/stores/postgresql.py) - Registry usage in deserialization (see `_deserialize_event` method)
-- [`src/eventsource/events/__init__.py`](../../src/eventsource/events/__init__.py) - Public API exports
+- `src/eventsource/events/registry.py` - Complete `EventRegistry` implementation
+- `src/eventsource/events/base.py` - `DomainEvent` base class with serialization methods
+- `src/eventsource/stores/postgresql.py` - Registry usage in deserialization (see `_deserialize_event` method)
+- `src/eventsource/events/__init__.py` - Public API exports
 
 ### External Documentation
 

@@ -268,9 +268,9 @@ Validation occurs automatically at instantiation, ensuring invalid events are re
 
 ### Code References
 
-- [`src/eventsource/events/base.py`](../../src/eventsource/events/base.py) - `DomainEvent` base class implementation
-- [`src/eventsource/events/registry.py`](../../src/eventsource/events/registry.py) - Event type registry for deserialization
-- [`tests/unit/test_domain_event.py`](../../tests/unit/test_domain_event.py) - Comprehensive tests demonstrating event usage
+- `src/eventsource/events/base.py` - `DomainEvent` base class implementation
+- `src/eventsource/events/registry.py` - Event type registry for deserialization
+- `tests/unit/test_domain_event.py` - Comprehensive tests demonstrating event usage
 
 ### External Documentation
 

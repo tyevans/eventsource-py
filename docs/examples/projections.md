@@ -660,7 +660,7 @@ async def demo():
 
 ## Complete Example
 
-See the full working example at [`examples/projection_example.py`](../../examples/projection_example.py), which demonstrates:
+See the full working example in `examples/projection_example.py`, which demonstrates:
 
 - Multiple projections (`OrderListProjection`, `CustomerStatsProjection`, `DailyRevenueProjection`)
 - Event bus integration

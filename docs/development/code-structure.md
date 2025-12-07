@@ -809,6 +809,6 @@ mypy src/eventsource/
 
 - [Architecture Overview](../architecture.md) - High-level system design
 - [Getting Started Guide](../getting-started.md) - Quick start tutorial
-- [API Reference](../api/) - Detailed API documentation
+- [API Reference](../api/index.md) - Detailed API documentation
 - [Testing Guide](testing.md) - Testing strategies and patterns
 - [Production Guide](../guides/production.md) - Deployment recommendations

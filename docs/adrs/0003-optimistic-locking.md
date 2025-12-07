@@ -220,11 +220,11 @@ with self._lock:
 
 ### Code
 
-- [`src/eventsource/exceptions.py`](../../src/eventsource/exceptions.py) - `OptimisticLockError` definition (lines 12-22)
-- [`src/eventsource/stores/interface.py`](../../src/eventsource/stores/interface.py) - `ExpectedVersion` class (lines 274-286), `append_events()` interface (lines 319-365)
-- [`src/eventsource/stores/postgresql.py`](../../src/eventsource/stores/postgresql.py) - PostgreSQL implementation with version checking (lines 203-236)
-- [`src/eventsource/stores/in_memory.py`](../../src/eventsource/stores/in_memory.py) - In-memory implementation (lines 82-177)
-- [`src/eventsource/aggregates/repository.py`](../../src/eventsource/aggregates/repository.py) - Repository save with expected_version (lines 165-214)
+- `src/eventsource/exceptions.py` - `OptimisticLockError` definition
+- `src/eventsource/stores/interface.py` - `ExpectedVersion` class, `append_events()` interface
+- `src/eventsource/stores/postgresql.py` - PostgreSQL implementation with version checking
+- `src/eventsource/stores/in_memory.py` - In-memory implementation
+- `src/eventsource/aggregates/repository.py` - Repository save with expected_version
 
 ### External Resources
 

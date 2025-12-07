@@ -339,9 +339,9 @@ This ensures the system continues operating even if the DLQ is temporarily unava
 
 ### Code References
 
-- [`src/eventsource/projections/base.py`](../../src/eventsource/projections/base.py) - `CheckpointTrackingProjection` with retry logic (lines 143-396)
-- [`src/eventsource/repositories/dlq.py`](../../src/eventsource/repositories/dlq.py) - `DLQRepository` protocol and implementations
-- [`src/eventsource/repositories/checkpoint.py`](../../src/eventsource/repositories/checkpoint.py) - `CheckpointRepository` protocol and implementations
+- `src/eventsource/projections/base.py` - `CheckpointTrackingProjection` with retry logic
+- `src/eventsource/repositories/dlq.py` - `DLQRepository` protocol and implementations
+- `src/eventsource/repositories/checkpoint.py` - `CheckpointRepository` protocol and implementations
 
 ### Related ADRs
 
