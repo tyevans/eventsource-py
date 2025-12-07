@@ -357,6 +357,7 @@ dependencies = [
 
 [package.optional-dependencies]
 all = [
+    { name = "aiosqlite" },
     { name = "asyncpg" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-sdk" },
@@ -405,8 +406,8 @@ dev = [
 requires-dist = [
     { name = "aiosqlite", marker = "extra == 'sqlite'", specifier = ">=0.19.0,<1.0" },
     { name = "asyncpg", marker = "extra == 'postgresql'", specifier = ">=0.27.0,<1.0" },
-    { name = "eventsource", extras = ["postgresql", "redis", "telemetry"], marker = "extra == 'all'" },
     { name = "eventsource", extras = ["postgresql", "sqlite"], marker = "extra == 'all-backends'" },
+    { name = "eventsource", extras = ["postgresql", "sqlite", "redis", "telemetry"], marker = "extra == 'all'" },
     { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.5" },
     { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.5" },
     { name = "mkdocstrings", extras = ["python"], marker = "extra == 'docs'", specifier = ">=0.24" },
