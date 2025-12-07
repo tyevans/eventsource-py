@@ -1,5 +1,11 @@
 # eventsource
 
+[![Python Version](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
+[![PyPI version](https://img.shields.io/badge/pypi-coming%20soon-lightgrey.svg)](https://pypi.org/project/eventsource/)
+[![CI](https://img.shields.io/badge/CI-passing-brightgreen.svg)](https://github.com/yourusername/eventsource-py/actions)
+[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
+
 A production-ready event sourcing library for Python 3.11+.
 
 ## Features
@@ -196,9 +202,21 @@ asyncio.run(main())
 
 ## Documentation
 
-- [Getting Started Guide](docs/getting-started.md)
-- [Architecture Overview](docs/architecture.md)
-- [Migration Guide](docs/migration-guide.md) (for Honeybadger users)
+For comprehensive documentation, see the [Documentation Index](docs/index.md).
+
+### Getting Started
+
+- [Getting Started Guide](docs/getting-started.md) - Installation and first steps
+- [Architecture Overview](docs/architecture.md) - System design and concepts
+- [FAQ](docs/faq.md) - Frequently asked questions
+- [Migration Guide](docs/migration-guide.md) - For Honeybadger users
+
+### Guides
+
+- [Multi-tenant Setup](docs/guides/multi-tenant.md) - Tenant isolation patterns and configuration
+- [Error Handling](docs/guides/error-handling.md) - Exception handling best practices
+- [Authentication](docs/guides/authentication.md) - Security integration patterns
+- [Production Deployment](docs/guides/production.md) - Production readiness checklist
 
 ### API Reference
 
@@ -214,6 +232,18 @@ asyncio.run(main())
 - [Multi-tenant Setup](docs/examples/multi-tenant.md) - Multi-tenancy configuration
 - [Projections](docs/examples/projections.md) - Building read models
 - [Testing Patterns](docs/examples/testing.md) - Unit and integration testing
+
+### Architecture Decision Records
+
+- [ADR Index](docs/adrs/index.md) - All architectural decisions
+- [ADR-0001: Async-First Design](docs/adrs/0001-async-first-design.md)
+- [ADR-0002: Pydantic Event Models](docs/adrs/0002-pydantic-event-models.md)
+- [ADR-0003: Optimistic Locking](docs/adrs/0003-optimistic-locking.md)
+
+### Developer Documentation
+
+- [Code Structure](docs/development/code-structure.md) - Project organization
+- [Testing Guide](docs/development/testing.md) - Testing strategies and patterns
 
 ## Development
 
@@ -239,4 +269,4 @@ ruff format src/eventsource
 
 ## License
 
-MIT License
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

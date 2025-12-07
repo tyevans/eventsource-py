@@ -1,0 +1,96 @@
+site_name: eventsource
+site_description: Production-ready event sourcing library for Python
+site_url: https://your-org.github.io/eventsource
+repo_url: https://github.com/your-org/eventsource
+repo_name: your-org/eventsource
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - navigation.indexes
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.tabs.link
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  font:
+    text: Roboto
+    code: Roboto Mono
+
+plugins:
+  - search:
+      lang: en
+      separator: '[\s\-\.]+'
+
+# Exclude internal development files from the documentation build
+exclude_docs: |
+  tasks/
+  futures/
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - admonition
+  - pymdownx.details
+  - toc:
+      permalink: true
+  - attr_list
+  - md_in_html
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Architecture: architecture.md
+  - FAQ: faq.md
+  - API Reference:
+      - api/index.md
+      - Events: api/events.md
+      - Event Stores: api/stores.md
+      - Aggregates: api/aggregates.md
+      - Projections: api/projections.md
+      - Event Bus: api/bus.md
+  - Guides:
+      - Multi-Tenancy: guides/multi-tenant.md
+      - Error Handling: guides/error-handling.md
+      - Authentication: guides/authentication.md
+      - Production Deployment: guides/production.md
+  - Examples:
+      - Basic Order: examples/basic-order.md
+      - Multi-Tenant: examples/multi-tenant.md
+      - Projections: examples/projections.md
+      - Testing: examples/testing.md
+  - ADRs:
+      - adrs/index.md
+      - "ADR-0001: Async-First Design": adrs/0001-async-first-design.md
+      - "ADR-0002: Pydantic Event Models": adrs/0002-pydantic-event-models.md
+      - "ADR-0003: Optimistic Locking": adrs/0003-optimistic-locking.md
+      - "ADR-0004: Projection Error Handling": adrs/0004-projection-error-handling.md
+      - "ADR-0005: API Design Patterns": adrs/0005-api-design-patterns.md
+      - "ADR-0006: Event Registry Serialization": adrs/0006-event-registry-serialization.md
+  - Development:
+      - Code Structure: development/code-structure.md
+      - Testing: development/testing.md
+  - Migration Guide: migration-guide.md

@@ -16,6 +16,10 @@ Welcome to the eventsource documentation. This library provides a production-rea
 - [Projections](api/projections.md) - Projection system
 - [Event Bus](api/bus.md) - Event distribution
 
+## Development
+
+- [Testing Strategy](development/testing.md) - Testing patterns, fixtures, and best practices
+
 ## Examples
 
 The library includes working examples in the `examples/` directory:

@@ -471,3 +471,7 @@ async def test_order_flow(order_helper):
 5. **Test projections in isolation** - Feed events directly
 6. **Use fixtures** - Share setup code between tests
 7. **Mark integration tests** - Separate slow tests from fast ones
+
+## See Also
+
+- [Testing Strategy Guide](../development/testing.md) - Comprehensive testing documentation with advanced patterns, integration testing setup, and CI/CD examples

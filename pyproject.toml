@@ -49,6 +49,12 @@ dev = [
     "ruff>=0.3",
     "testcontainers>=4.0",
 ]
+docs = [
+    "mkdocs>=1.5",
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.24",
+    "pymdown-extensions>=10.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/your-org/eventsource"

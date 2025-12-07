@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://[ORGANIZATION].github.io/eventsource-py
+    about: Check our documentation for answers
+  - name: Questions & Discussions
+    url: https://github.com/[ORGANIZATION]/eventsource-py/discussions
+    about: Ask questions and discuss ideas
