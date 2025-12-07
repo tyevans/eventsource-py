@@ -106,6 +106,17 @@ from eventsource.stores.interface import (
 )
 from eventsource.stores.postgresql import PostgreSQLEventStore
 
+# SQLite Event Store and Repositories (optional - requires aiosqlite)
+try:
+    from eventsource.repositories.checkpoint import SQLiteCheckpointRepository  # noqa: F401
+    from eventsource.repositories.dlq import SQLiteDLQRepository  # noqa: F401
+    from eventsource.repositories.outbox import SQLiteOutboxRepository  # noqa: F401
+    from eventsource.stores.sqlite import SQLiteEventStore  # noqa: F401
+
+    SQLITE_AVAILABLE = True
+except ImportError:
+    SQLITE_AVAILABLE = False
+
 # Types - available immediately
 from eventsource.types import (
     AggregateId,
@@ -200,3 +211,15 @@ __all__ = [
     "DeclarativeProjection",
     "DatabaseProjection",
 ]
+
+# Conditionally add SQLite exports when aiosqlite is available
+if SQLITE_AVAILABLE:
+    __all__.extend(
+        [
+            "SQLITE_AVAILABLE",
+            "SQLiteEventStore",
+            "SQLiteCheckpointRepository",
+            "SQLiteOutboxRepository",
+            "SQLiteDLQRepository",
+        ]
+    )

@@ -31,6 +31,9 @@ dependencies = [
 postgresql = [
     "asyncpg>=0.27.0,<1.0",
 ]
+sqlite = [
+    "aiosqlite>=0.19.0,<1.0",
+]
 redis = [
     "redis>=5.0,<6.0",
 ]
@@ -39,7 +42,10 @@ telemetry = [
     "opentelemetry-sdk>=1.0,<2.0",
 ]
 all = [
-    "eventsource[postgresql,redis,telemetry]",
+    "eventsource[postgresql,sqlite,redis,telemetry]",
+]
+all-backends = [
+    "eventsource[postgresql,sqlite]",
 ]
 dev = [
     "pytest>=8.0",
@@ -78,6 +84,7 @@ asyncio_default_test_loop_scope = "session"
 markers = [
     "integration: marks tests as integration tests (may require docker)",
     "postgres: marks tests that require PostgreSQL",
+    "sqlite: marks tests that require SQLite",
     "redis: marks tests that require Redis",
     "e2e: marks tests as end-to-end integration tests",
 ]
@@ -102,6 +109,10 @@ ignore_missing_imports = true
 module = "redis.*"
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = "aiosqlite.*"
+ignore_missing_imports = true
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
@@ -119,5 +130,6 @@ skips = ["B101"]  # Allow assert statements
 
 [dependency-groups]
 dev = [
+    "bandit>=1.9.2",
     "mypy>=1.19.0",
 ]

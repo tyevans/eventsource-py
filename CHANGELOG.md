@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- SQLite backend support via `SQLiteEventStore` for lightweight deployments, development, and testing
+- SQLite implementations for `CheckpointRepository`, `OutboxRepository`, and `DLQRepository`
+- `sqlite` optional dependency group (`pip install eventsource[sqlite]`)
 - Pre-commit hooks configuration with ruff, mypy, and bandit for automated code quality checks
 - `DatabaseProjection` class for projections requiring raw database connection access
 - `execute_with_connection` helper for consistent connection handling across repositories
@@ -24,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fixed optional dependency handling so package imports work without `aiosqlite` installed
 - Fixed broken documentation links in ADRs and guides
 - Resolved mypy type errors in projections, repositories, and event bus modules
 - Fixed `DeclarativeProjection` connection handling to properly share transactions with checkpoint updates

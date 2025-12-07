@@ -13,6 +13,9 @@ pip install eventsource
 ### With Optional Dependencies
 
 ```bash
+# SQLite support (development/testing/embedded)
+pip install eventsource[sqlite]
+
 # PostgreSQL support (production)
 pip install eventsource[postgresql]
 
@@ -21,6 +24,9 @@ pip install eventsource[redis]
 
 # OpenTelemetry support (observability)
 pip install eventsource[telemetry]
+
+# All database backends
+pip install eventsource[all-backends]
 
 # All optional dependencies
 pip install eventsource[all]
@@ -182,13 +188,26 @@ class TaskAggregate(AggregateRoot[TaskState]):
 
 ## Step 4: Set Up the Event Store
 
-For development, use the in-memory store. For production, use PostgreSQL.
+Choose an event store based on your needs:
 
 ```python
 from eventsource import InMemoryEventStore, AggregateRepository
 
-# Development: In-memory store
+# Development: In-memory store (no persistence)
 event_store = InMemoryEventStore()
+
+# Development/Testing: SQLite store (file-based or in-memory)
+# from eventsource import SQLiteEventStore
+#
+# # File-based (persistent)
+# async with SQLiteEventStore("./events.db") as store:
+#     await store.initialize()
+#     event_store = store
+#
+# # In-memory (fast tests)
+# async with SQLiteEventStore(":memory:") as store:
+#     await store.initialize()
+#     event_store = store
 
 # Production: PostgreSQL store
 # from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
@@ -198,6 +217,12 @@ event_store = InMemoryEventStore()
 # session_factory = async_sessionmaker(engine, expire_on_commit=False)
 # event_store = PostgreSQLEventStore(session_factory)
 ```
+
+| Store | Use Case | Persistence | Concurrency |
+|-------|----------|-------------|-------------|
+| `InMemoryEventStore` | Unit tests, prototyping | None | Single process |
+| `SQLiteEventStore` | Dev, testing, embedded | File or memory | Single writer |
+| `PostgreSQLEventStore` | Production | Full | Multiple writers |
 
 ## Step 5: Create the Repository
 
@@ -332,6 +357,8 @@ print(projection.get_pending_tasks())
 - Read the [Architecture Overview](architecture.md) to understand the full system
 - Explore the [API Reference](api/index.md) for detailed documentation
 - Check out [Examples](examples/basic-order.md) for more complex scenarios
+- Use [SQLite Backend](guides/sqlite-backend.md) for development and testing
+- Set up [Production Deployment](guides/production.md) with PostgreSQL
 
 ## Complete Example
 
