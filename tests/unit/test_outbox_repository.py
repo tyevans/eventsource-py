@@ -8,9 +8,9 @@ Tests the InMemoryOutboxRepository for:
 - Statistics and cleanup
 """
 
-import pytest
-from datetime import UTC, datetime
 from uuid import UUID, uuid4
+
+import pytest
 
 from eventsource.events.base import DomainEvent
 from eventsource.repositories.outbox import (
@@ -170,7 +170,6 @@ class TestInMemoryOutboxRepository:
     @pytest.mark.asyncio
     async def test_cleanup_published(self, repo: InMemoryOutboxRepository):
         """Test cleaning up old published events."""
-        from datetime import timedelta
 
         # Add and publish an event
         event = SampleEvent(aggregate_id=uuid4(), test_field="test")

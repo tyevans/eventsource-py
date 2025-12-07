@@ -89,10 +89,7 @@ def get_schema(name: SchemaName) -> str:
         >>> events_sql = get_schema("events")
         >>> checkpoints_sql = get_schema("checkpoints")
     """
-    if name == "all":
-        path = _SCHEMAS_DIR / "all.sql"
-    else:
-        path = _TEMPLATES_DIR / f"{name}.sql"
+    path = _SCHEMAS_DIR / "all.sql" if name == "all" else _TEMPLATES_DIR / f"{name}.sql"
 
     if not path.exists():
         raise FileNotFoundError(f"Schema file not found: {path}")

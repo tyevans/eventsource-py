@@ -14,9 +14,8 @@ Tests cover:
 
 from __future__ import annotations
 
-import asyncio
-from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from datetime import datetime
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 import pytest
@@ -25,22 +24,20 @@ from pydantic import BaseModel
 from eventsource import (
     AggregateRepository,
     DomainEvent,
-    EventRegistry,
     InMemoryEventBus,
     PostgreSQLEventStore,
 )
 
 from ..conftest import (
     TestOrderAggregate,
+    TestOrderCompleted,
     TestOrderCreated,
     TestOrderItemAdded,
-    TestOrderCompleted,
-    TestItemCreated,
     skip_if_no_postgres_infra,
 )
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+    pass
 
 
 pytestmark = [
@@ -100,8 +97,7 @@ class TestOrderProjection:
                         ),
                     }
                 )
-        elif isinstance(event, TestOrderCompleted):
-            if event.aggregate_id in self._orders:
+        elif isinstance(event, TestOrderCompleted) and event.aggregate_id in self._orders:
                 order = self._orders[event.aggregate_id]
                 self._orders[event.aggregate_id] = order.model_copy(
                     update={

@@ -199,9 +199,7 @@ class TestAsyncEventHandler:
 
             def can_handle(self, event: DomainEvent) -> bool:
                 # Only handle high-value orders
-                if isinstance(event, OrderCreated):
-                    return True  # Simplified check
-                return False
+                return isinstance(event, OrderCreated)
 
             async def handle(self, event: DomainEvent) -> None:
                 pass

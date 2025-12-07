@@ -13,57 +13,6 @@ This library provides:
 __version__ = "0.1.0"
 
 # Exceptions - available immediately
-from eventsource.exceptions import (
-    AggregateNotFoundError,
-    EventNotFoundError,
-    EventSourceError,
-    OptimisticLockError,
-    ProjectionError,
-)
-
-# Types - available immediately
-from eventsource.types import (
-    AggregateId,
-    CausationId,
-    CorrelationId,
-    EventId,
-    TenantId,
-    TState,
-)
-
-# Core event primitives (Task 02)
-from eventsource.events.base import DomainEvent
-
-# Event registry (Task 03)
-from eventsource.events.registry import (
-    DuplicateEventTypeError,
-    EventRegistry,
-    EventTypeNotFoundError,
-    default_registry,
-    get_event_class,
-    get_event_class_or_none,
-    is_event_registered,
-    list_registered_events,
-    register_event,
-)
-
-# Event store interface and data structures (Task 04)
-from eventsource.stores.interface import (
-    AppendResult,
-    EventPublisher,
-    EventStore,
-    EventStream,
-    ExpectedVersion,
-    ReadDirection,
-    ReadOptions,
-    StoredEvent,
-    SyncEventStore,
-)
-
-# Event store implementations (Task 05, Task 06)
-from eventsource.stores.in_memory import InMemoryEventStore
-from eventsource.stores.postgresql import PostgreSQLEventStore
-
 # Aggregates (Task 07, Task 08)
 from eventsource.aggregates.base import AggregateRoot, DeclarativeAggregate, handles
 from eventsource.aggregates.repository import AggregateRepository
@@ -87,6 +36,29 @@ from eventsource.bus.redis import (
     RedisNotAvailableError,
 )
 
+# Core event primitives (Task 02)
+from eventsource.events.base import DomainEvent
+
+# Event registry (Task 03)
+from eventsource.events.registry import (
+    DuplicateEventTypeError,
+    EventRegistry,
+    EventTypeNotFoundError,
+    default_registry,
+    get_event_class,
+    get_event_class_or_none,
+    is_event_registered,
+    list_registered_events,
+    register_event,
+)
+from eventsource.exceptions import (
+    AggregateNotFoundError,
+    EventNotFoundError,
+    EventSourceError,
+    OptimisticLockError,
+    ProjectionError,
+)
+
 # Repository infrastructure (Task 12)
 from eventsource.repositories import (
     CheckpointData,
@@ -106,6 +78,33 @@ from eventsource.repositories import (
     PostgreSQLDLQRepository,
     PostgreSQLOutboxRepository,
     ProjectionFailureCount,
+)
+
+# Event store implementations (Task 05, Task 06)
+from eventsource.stores.in_memory import InMemoryEventStore
+
+# Event store interface and data structures (Task 04)
+from eventsource.stores.interface import (
+    AppendResult,
+    EventPublisher,
+    EventStore,
+    EventStream,
+    ExpectedVersion,
+    ReadDirection,
+    ReadOptions,
+    StoredEvent,
+    SyncEventStore,
+)
+from eventsource.stores.postgresql import PostgreSQLEventStore
+
+# Types - available immediately
+from eventsource.types import (
+    AggregateId,
+    CausationId,
+    CorrelationId,
+    EventId,
+    TenantId,
+    TState,
 )
 
 # The following imports will be added as modules are implemented:

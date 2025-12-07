@@ -7,9 +7,7 @@ Tests cover:
 - is_event_handler utility
 """
 
-from uuid import uuid4
 
-import pytest
 from pydantic import Field
 
 from eventsource.events.base import DomainEvent
@@ -127,7 +125,10 @@ class TestGetHandledEventType:
 
     def test_returns_none_for_lambda(self) -> None:
         """Returns None for lambda functions."""
-        func = lambda event: None
+
+        def func(event):
+            return None
+
         result = get_handled_event_type(func)
         assert result is None
 

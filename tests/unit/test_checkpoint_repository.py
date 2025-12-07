@@ -8,9 +8,10 @@ Tests the InMemoryCheckpointRepository for:
 - Reset functionality
 """
 
-import pytest
-from datetime import UTC, datetime
+from datetime import datetime
 from uuid import uuid4
+
+import pytest
 
 from eventsource.repositories.checkpoint import (
     CheckpointData,

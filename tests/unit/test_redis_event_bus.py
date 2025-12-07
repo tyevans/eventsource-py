@@ -4,7 +4,6 @@ These tests use mocks to test the RedisEventBus without requiring
 a real Redis server.
 """
 
-import asyncio
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
@@ -12,7 +11,6 @@ from uuid import UUID, uuid4
 import pytest
 
 from eventsource.bus.redis import (
-    REDIS_AVAILABLE,
     RedisEventBus,
     RedisEventBusConfig,
     RedisEventBusStats,
@@ -1020,14 +1018,15 @@ class TestRedisEventBusErrorHandling:
 
     def test_redis_not_available_error(self):
         """Test error when redis is not available."""
-        with patch("eventsource.bus.redis.REDIS_AVAILABLE", False):
-            with pytest.raises(RedisNotAvailableError):
-                # Need to reimport to pick up the patched value
-                from eventsource.bus.redis import RedisEventBus as PatchedBus
+        with (
+            patch("eventsource.bus.redis.REDIS_AVAILABLE", False),
+            pytest.raises(RedisNotAvailableError),
+        ):
+            # Need to reimport to pick up the patched value
 
-                # This won't work due to how Python imports work
-                # We test the error class directly instead
-                raise RedisNotAvailableError()
+            # This won't work due to how Python imports work
+            # We test the error class directly instead
+            raise RedisNotAvailableError()
 
     def test_redis_not_available_error_message(self):
         """Test RedisNotAvailableError message."""

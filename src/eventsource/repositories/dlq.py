@@ -9,11 +9,11 @@ all retry attempts. This enables:
 """
 
 import traceback
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from threading import Lock
 from typing import Any, Protocol, runtime_checkable
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
@@ -728,7 +728,7 @@ class InMemoryDLQRepository:
 
             total_failed = sum(1 for e in active_entries if e.status == "failed")
             total_retrying = sum(1 for e in active_entries if e.status == "retrying")
-            affected_projections = len(set(e.projection_name for e in active_entries))
+            affected_projections = len({e.projection_name for e in active_entries})
 
             oldest_failure = None
             if active_entries:
@@ -810,9 +810,8 @@ class InMemoryDLQRepository:
         with self._lock:
             keys_to_delete = []
             for key, entry in self._entries.items():
-                if entry.status == "resolved" and entry.resolved_at:
-                    if entry.resolved_at < cutoff:
-                        keys_to_delete.append(key)
+                if entry.status == "resolved" and entry.resolved_at and entry.resolved_at < cutoff:
+                    keys_to_delete.append(key)
 
             for key in keys_to_delete:
                 del self._entries[key]

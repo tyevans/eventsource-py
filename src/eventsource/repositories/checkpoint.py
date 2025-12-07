@@ -8,8 +8,7 @@ enabling:
 - Safe rebuilds from specific positions
 """
 
-from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from threading import Lock
 from typing import Protocol, runtime_checkable
@@ -285,9 +284,7 @@ class PostgreSQLCheckpointRepository:
 
         # Calculate actual lag
         # If last_event_id matches latest_event_id, projection is up-to-date
-        if last_event_id and latest_event_id and last_event_id == latest_event_id:
-            lag_seconds = 0.0
-        elif raw_lag < 0:
+        if last_event_id and latest_event_id and last_event_id == latest_event_id or raw_lag < 0:
             lag_seconds = 0.0
         else:
             lag_seconds = round(raw_lag, 1)

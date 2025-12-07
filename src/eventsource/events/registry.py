@@ -37,7 +37,8 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import TYPE_CHECKING, Callable, Iterator, TypeVar, overload
+from collections.abc import Callable, Iterator
+from typing import TYPE_CHECKING, TypeVar, overload
 
 if TYPE_CHECKING:
     from eventsource.events.base import DomainEvent

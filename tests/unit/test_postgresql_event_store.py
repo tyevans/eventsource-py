@@ -34,7 +34,6 @@ from eventsource.stores.interface import (
 )
 from eventsource.stores.postgresql import PostgreSQLEventStore
 
-
 # --- Test Event Classes ---
 
 

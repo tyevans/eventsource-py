@@ -15,19 +15,16 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from eventsource.bus.memory import InMemoryEventBus
 from eventsource.events.base import DomainEvent
-from eventsource.exceptions import OptimisticLockError, AggregateNotFoundError
-from eventsource.stores.in_memory import InMemoryEventStore
-from eventsource.stores.interface import (
-    ExpectedVersion,
-    ReadDirection,
-    ReadOptions,
-)
 from eventsource.repositories.checkpoint import InMemoryCheckpointRepository
 from eventsource.repositories.dlq import InMemoryDLQRepository
 from eventsource.repositories.outbox import InMemoryOutboxRepository
-from eventsource.bus.memory import InMemoryEventBus
-
+from eventsource.stores.in_memory import InMemoryEventStore
+from eventsource.stores.interface import (
+    ReadDirection,
+    ReadOptions,
+)
 
 # --- Test Event Classes ---
 

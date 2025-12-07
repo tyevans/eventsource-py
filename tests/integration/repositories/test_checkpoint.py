@@ -10,7 +10,6 @@ These tests verify actual database operations for checkpoint tracking including:
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -24,7 +23,7 @@ from ..conftest import (
 )
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncEngine
+    pass
 
 
 pytestmark = [
@@ -73,7 +72,7 @@ class TestPostgreSQLCheckpointRepositoryBasics:
         projection_name = "CountingProjection"
 
         # Update multiple times
-        for i in range(5):
+        for _ in range(5):
             event_id = uuid4()
             await postgres_checkpoint_repo.update_checkpoint(
                 projection_name=projection_name,

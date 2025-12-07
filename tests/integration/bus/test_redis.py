@@ -20,9 +20,9 @@ from uuid import uuid4
 import pytest
 
 from eventsource import (
+    REDIS_AVAILABLE,
     DomainEvent,
     EventRegistry,
-    REDIS_AVAILABLE,
 )
 
 from ..conftest import (
@@ -239,7 +239,7 @@ class TestRedisEventBusSubscription:
             await redis_event_bus.stop_consuming()
             try:
                 await asyncio.wait_for(consume_task, timeout=2.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 consume_task.cancel()
 
         assert len(received_events) == 1
@@ -292,7 +292,7 @@ class TestRedisEventBusSubscription:
             await redis_event_bus.stop_consuming()
             try:
                 await asyncio.wait_for(consume_task, timeout=2.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 consume_task.cancel()
 
         # Both handlers should have received the event
@@ -341,7 +341,7 @@ class TestRedisEventBusSubscription:
             await redis_event_bus.stop_consuming()
             try:
                 await asyncio.wait_for(consume_task, timeout=2.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 consume_task.cancel()
 
         assert len(all_events) == 2
@@ -467,11 +467,11 @@ class TestRedisEventBusDLQ:
             await bus.stop_consuming()
             try:
                 await asyncio.wait_for(consume_task, timeout=2.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 consume_task.cancel()
 
             # The event should be pending (not acked due to failure)
-            info = await bus.get_stream_info()
+            await bus.get_stream_info()
             # Handler was called at least once
             assert fail_count >= 1
 
@@ -522,7 +522,7 @@ class TestRedisEventBusEdgeCases:
         await redis_event_bus.stop_consuming()
         try:
             await asyncio.wait_for(consume_task, timeout=2.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             consume_task.cancel()
 
         # Handler was called

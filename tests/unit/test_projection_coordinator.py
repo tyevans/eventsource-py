@@ -10,7 +10,6 @@ Tests cover:
 """
 
 import asyncio
-from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -673,7 +672,7 @@ class TestConcurrentExecution:
         await registry.dispatch(event)
 
         # Both should start before slow finishes
-        slow_start_idx = execution_order.index("slow_start")
+        _slow_start_idx = execution_order.index("slow_start")
         slow_end_idx = execution_order.index("slow_end")
         fast_start_idx = execution_order.index("fast_start")
 

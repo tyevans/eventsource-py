@@ -601,7 +601,7 @@ class TestRegistryIteration:
         assert bool(registry) is True
         # This is important - registry should be truthy even when empty
         # so that 'registry or default_registry' works correctly
-        assert registry or "fallback" == registry
+        assert registry or registry == "fallback"
 
 
 class TestErrorMessages:

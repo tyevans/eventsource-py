@@ -10,39 +10,34 @@ These tests target specific uncovered lines identified in the coverage report:
 
 import asyncio
 from datetime import UTC, datetime
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 
-from eventsource.events.base import DomainEvent
-from eventsource.bus.memory import InMemoryEventBus
+from eventsource.aggregates.base import AggregateRoot, DeclarativeAggregate
 from eventsource.bus.interface import (
-    EventBus,
+    AsyncEventHandler,
     EventHandler,
     EventSubscriber,
-    AsyncEventHandler,
 )
+from eventsource.bus.memory import InMemoryEventBus
+from eventsource.events.base import DomainEvent
 from eventsource.projections.base import (
-    Projection,
-    SyncProjection,
-    EventHandlerBase,
     CheckpointTrackingProjection,
     DeclarativeProjection,
+    EventHandlerBase,
+    Projection,
+    SyncProjection,
 )
 from eventsource.projections.decorators import handles
 from eventsource.repositories.checkpoint import InMemoryCheckpointRepository
-from eventsource.repositories.dlq import InMemoryDLQRepository
-from eventsource.aggregates.base import AggregateRoot, DeclarativeAggregate
 from eventsource.stores.interface import (
-    EventStore,
-    EventStream,
     AppendResult,
-    StoredEvent,
+    EventStream,
     ReadOptions,
+    StoredEvent,
 )
-
 
 # --- Test Event Classes ---
 
@@ -174,7 +169,8 @@ class TestInMemoryEventBusBackgroundPublishing:
 
     def test_handler_name_for_lambda(self, bus: InMemoryEventBus):
         """Test that lambda handlers get a name."""
-        handler = lambda e: None
+        def handler(e: DomainEvent) -> None:
+            pass
         bus.subscribe(AdditionalTestEvent, handler)
 
         # Subscribe should work

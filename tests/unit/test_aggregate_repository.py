@@ -13,8 +13,6 @@ Tests cover:
 - Integration with InMemoryEventStore
 """
 
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
@@ -25,8 +23,6 @@ from eventsource.aggregates.repository import AggregateRepository
 from eventsource.events.base import DomainEvent
 from eventsource.exceptions import AggregateNotFoundError, OptimisticLockError
 from eventsource.stores.in_memory import InMemoryEventStore
-from eventsource.stores.interface import EventPublisher, EventStore
-
 
 # =============================================================================
 # Test fixtures: State models and Events
@@ -163,8 +159,7 @@ class OrderAggregate(AggregateRoot[OrderState]):
                         "total": self._state.total + event.price,
                     }
                 )
-        elif isinstance(event, OrderShipped):
-            if self._state:
+        elif isinstance(event, OrderShipped) and self._state:
                 self._state = self._state.model_copy(update={"status": "shipped"})
 
     def create(self, customer_id: UUID) -> None:
@@ -985,7 +980,7 @@ class TestEdgeCases:
         aggregate = counter_repository.create_new(uuid4())
 
         # Add many events before saving
-        for i in range(50):
+        for _ in range(50):
             aggregate.increment(1)
 
         # Single save with all events

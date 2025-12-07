@@ -28,7 +28,6 @@ from eventsource.stores.interface import (
     StoredEvent,
 )
 
-
 # --- Test Event Classes ---
 
 

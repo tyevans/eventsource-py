@@ -8,9 +8,9 @@ Tests the InMemoryDLQRepository for:
 - Failure statistics
 """
 
-import pytest
-from datetime import UTC, datetime
 from uuid import uuid4
+
+import pytest
 
 from eventsource.repositories.dlq import (
     DLQRepository,
@@ -342,7 +342,6 @@ class TestInMemoryDLQRepository:
     @pytest.mark.asyncio
     async def test_delete_resolved_events(self, repo: InMemoryDLQRepository):
         """Test deleting resolved events older than specified days."""
-        from datetime import timedelta
 
         # Add and resolve an event
         event_id = uuid4()

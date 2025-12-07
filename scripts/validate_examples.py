@@ -270,13 +270,13 @@ def main() -> int:
     exec_passed = sum(1 for r in results if r.execution_ok)
     total = len(results)
 
-    print(f"\nExamples:")
+    print("\nExamples:")
     print(f"  Syntax:    {syntax_passed}/{total} passed")
     if not args.syntax:
         print(f"  Execution: {exec_passed}/{total} passed")
 
     if args.docs and docs_dir.exists():
-        print(f"\nDocumentation:")
+        print("\nDocumentation:")
         print(f"  Code blocks with errors: {len(doc_errors)}")
 
     if all_passed:

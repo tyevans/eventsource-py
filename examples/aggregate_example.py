@@ -25,7 +25,6 @@ from eventsource import (
     register_event,
 )
 
-
 # =============================================================================
 # Domain Events for Shopping Cart
 # =============================================================================
@@ -418,7 +417,7 @@ async def main():
     mouse_id = products[0][0]
     cart.change_quantity(mouse_id, 3)  # Change from 2 to 3
     await repo.save(cart)
-    print(f"   Updated mouse quantity to 3")
+    print("   Updated mouse quantity to 3")
     print(f"   New total: ${cart.state.total_amount:.2f}")
 
     # Remove item
@@ -427,7 +426,7 @@ async def main():
     hub_id = products[1][0]
     cart.remove_item(hub_id)
     await repo.save(cart)
-    print(f"   Removed USB-C Hub")
+    print("   Removed USB-C Hub")
     print(f"   New total: ${cart.state.total_amount:.2f}")
     print(f"   Remaining items: {len(cart.state.items)}")
 
@@ -462,7 +461,7 @@ async def main():
     abandoned_cart.add_item(uuid4(), "Some Product", 1, 19.99)
     abandoned_cart.abandon("Session timeout")
     await repo.save(abandoned_cart)
-    print(f"   Cart abandoned")
+    print("   Cart abandoned")
     print(f"   Status: {abandoned_cart.state.status}")
 
     print("\n" + "=" * 60)

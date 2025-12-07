@@ -8,7 +8,8 @@ and other handlers to react to events independently.
 """
 
 from abc import ABC, abstractmethod
-from typing import Awaitable, Callable, Protocol, runtime_checkable
+from collections.abc import Awaitable, Callable
+from typing import Protocol, runtime_checkable
 
 from eventsource.events.base import DomainEvent
 

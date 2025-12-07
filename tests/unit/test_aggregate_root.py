@@ -24,7 +24,6 @@ from eventsource.aggregates.base import (
 )
 from eventsource.events.base import DomainEvent
 
-
 # =============================================================================
 # Test fixtures: State models and Events
 # =============================================================================
@@ -200,9 +199,8 @@ class OrderAggregate(AggregateRoot[OrderState]):
                         "total": self._state.total + event.price,
                     }
                 )
-        elif isinstance(event, OrderShipped):
-            if self._state:
-                self._state = self._state.model_copy(update={"status": "shipped"})
+        elif isinstance(event, OrderShipped) and self._state:
+            self._state = self._state.model_copy(update={"status": "shipped"})
 
     def create(self, customer_id: UUID) -> None:
         """Command: Create the order."""
@@ -449,7 +447,7 @@ class TestVersionTracking:
         """Version should match the number of events applied."""
         aggregate = CounterAggregate(uuid4())
 
-        for i in range(5):
+        for _i in range(5):
             aggregate.increment(1)
 
         assert aggregate.version == 5
@@ -841,7 +839,7 @@ class TestAggregateEquality:
 
         assert aggregate != "not an aggregate"
         assert aggregate != 123
-        assert aggregate != None
+        assert aggregate is not None
 
     def test_hash_based_on_id(self) -> None:
         """Aggregates with same ID should have same hash."""

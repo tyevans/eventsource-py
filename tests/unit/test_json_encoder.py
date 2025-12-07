@@ -8,9 +8,10 @@ Tests for:
 """
 
 import json
-import pytest
 from datetime import UTC, datetime
 from uuid import uuid4
+
+import pytest
 
 from eventsource.repositories._json import (
     EventSourceJSONEncoder,

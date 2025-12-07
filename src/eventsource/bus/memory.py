@@ -97,7 +97,7 @@ class InMemoryEventBus(EventBus):
         """
         # If it's an object with a handle method
         if hasattr(handler, "handle"):
-            handle_method = getattr(handler, "handle")
+            handle_method = handler.handle
             if asyncio.iscoroutinefunction(handle_method):
                 # Already async
                 return (handler, handle_method)

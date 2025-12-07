@@ -31,14 +31,15 @@ Example:
 from __future__ import annotations
 
 import asyncio
-import json
+import contextlib
 import logging
 import socket
 import uuid
 from collections import defaultdict
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from eventsource.bus.interface import (
     EventBus,
@@ -108,6 +109,8 @@ class RedisEventBusConfig:
         enable_tracing: Enable OpenTelemetry tracing if available (default: True)
         retry_key_prefix: Prefix for retry count keys (default: "retry")
         retry_key_expiry_seconds: Expiry for retry count keys (default: 86400 = 24h)
+        single_connection_client: Use single connection instead of pool (default: False).
+            Useful for testing to avoid event loop issues.
     """
 
     redis_url: str = "redis://localhost:6379"
@@ -125,6 +128,7 @@ class RedisEventBusConfig:
     enable_tracing: bool = True
     retry_key_prefix: str = "retry"
     retry_key_expiry_seconds: int = 86400  # 24 hours
+    single_connection_client: bool = False
 
     def __post_init__(self) -> None:
         """Generate consumer name if not provided."""
@@ -285,6 +289,7 @@ class RedisEventBus(EventBus):
                 decode_responses=True,
                 socket_timeout=self._config.socket_timeout,
                 socket_connect_timeout=self._config.socket_connect_timeout,
+                single_connection_client=self._config.single_connection_client,
             )
 
             # Test connection
@@ -310,10 +315,8 @@ class RedisEventBus(EventBus):
         """Disconnect from Redis."""
         if self._consumer_task:
             self._consumer_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._consumer_task
-            except asyncio.CancelledError:
-                pass
             self._consumer_task = None
 
         if self._redis:
@@ -370,7 +373,7 @@ class RedisEventBus(EventBus):
         """
         # If it's an object with a handle method
         if hasattr(handler, "handle"):
-            handle_method = getattr(handler, "handle")
+            handle_method = handler.handle
             if asyncio.iscoroutinefunction(handle_method):
                 return (handler, handle_method)
             else:
@@ -724,7 +727,7 @@ class RedisEventBus(EventBus):
                     continue
 
                 # Process messages
-                for stream_name, stream_messages in messages:
+                for _stream_name, stream_messages in messages:
                     for message_id, message_data in stream_messages:
                         await self._process_message(
                             message_id, message_data, actual_consumer_name

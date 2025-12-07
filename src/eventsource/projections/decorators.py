@@ -5,7 +5,8 @@ This module contains the @handles decorator for declarative projections,
 enabling automatic event routing based on decorated handler methods.
 """
 
-from typing import Any, Callable, TypeVar
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 from eventsource.events.base import DomainEvent
 

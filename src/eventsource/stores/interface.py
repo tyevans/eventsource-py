@@ -14,10 +14,11 @@ This module provides:
 """
 
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import AsyncIterator, Protocol
+from typing import Protocol
 from uuid import UUID
 
 from eventsource.events.base import DomainEvent

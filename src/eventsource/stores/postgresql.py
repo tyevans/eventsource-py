@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, AsyncIterator
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import text
@@ -316,7 +317,7 @@ class PostgreSQLEventStore(EventStore):
                     )
                     row = result.fetchone()
                     actual_version = row[0] if row else 0
-                    raise OptimisticLockError(aggregate_id, expected_version, actual_version)
+                    raise OptimisticLockError(aggregate_id, expected_version, actual_version) from e
                 raise
 
     async def _write_to_outbox(

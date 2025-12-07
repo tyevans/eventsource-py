@@ -5,21 +5,17 @@ Tests the EventBus interface, protocols, and InMemoryEventBus implementation.
 """
 
 import asyncio
-from typing import Any
 from uuid import uuid4
 
 import pytest
 
 from eventsource.bus.interface import (
     AsyncEventHandler,
-    EventBus,
     EventHandler,
-    EventHandlerFunc,
     EventSubscriber,
 )
 from eventsource.bus.memory import InMemoryEventBus
 from eventsource.events.base import DomainEvent
-
 
 # =============================================================================
 # Test Event Classes

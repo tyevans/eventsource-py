@@ -12,7 +12,7 @@ This enables:
 """
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from threading import Lock
 from typing import Any, Protocol, runtime_checkable
@@ -533,9 +533,8 @@ class InMemoryOutboxRepository:
         with self._lock:
             ids_to_delete = []
             for id_, entry in self._entries.items():
-                if entry.status == "published" and entry.published_at:
-                    if entry.published_at < cutoff:
-                        ids_to_delete.append(id_)
+                if entry.status == "published" and entry.published_at and entry.published_at < cutoff:
+                    ids_to_delete.append(id_)
 
             for id_ in ids_to_delete:
                 del self._entries[id_]

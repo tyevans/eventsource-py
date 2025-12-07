@@ -10,8 +10,6 @@ Tests cover:
 - Handler discovery and validation
 """
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -144,7 +142,7 @@ class TestEventHandlerBase:
 
         class OrderHandler(EventHandlerBase):
             def can_handle(self, event: DomainEvent) -> bool:
-                return isinstance(event, (OrderCreated, OrderShipped))
+                return isinstance(event, OrderCreated | OrderShipped)
 
             async def handle(self, event: DomainEvent) -> None:
                 events_handled.append(event)

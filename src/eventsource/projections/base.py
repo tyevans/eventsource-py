@@ -15,7 +15,8 @@ import asyncio
 import inspect
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Coroutine
+from collections.abc import Callable, Coroutine
+from typing import Any
 
 from eventsource.events.base import DomainEvent
 from eventsource.projections.decorators import get_handled_event_type
@@ -547,25 +548,25 @@ class DeclarativeProjection(CheckpointTrackingProjection):
             event_param = params[-1]
 
             # Check event type annotation matches @handles decorator
-            if event_param.annotation != inspect.Parameter.empty:
-                if (
-                    isinstance(event_param.annotation, type)
-                    and event_param.annotation != event_type
-                ):
-                    logger.warning(
-                        "Handler %s in %s: Event type annotation %s "
-                        "doesn't match @handles(%s)",
-                        handler_name,
-                        self._projection_name,
-                        event_param.annotation.__name__,
-                        event_type.__name__,
-                        extra={
-                            "projection": self._projection_name,
-                            "handler": handler_name,
-                            "expected_type": event_type.__name__,
-                            "actual_annotation": event_param.annotation.__name__,
-                        },
-                    )
+            if (
+                event_param.annotation != inspect.Parameter.empty
+                and isinstance(event_param.annotation, type)
+                and event_param.annotation != event_type
+            ):
+                logger.warning(
+                    "Handler %s in %s: Event type annotation %s "
+                    "doesn't match @handles(%s)",
+                    handler_name,
+                    self._projection_name,
+                    event_param.annotation.__name__,
+                    event_type.__name__,
+                    extra={
+                        "projection": self._projection_name,
+                        "handler": handler_name,
+                        "expected_type": event_type.__name__,
+                        "actual_annotation": event_param.annotation.__name__,
+                    },
+                )
 
     async def _process_event(self, event: DomainEvent) -> None:
         """
@@ -581,7 +582,7 @@ class DeclarativeProjection(CheckpointTrackingProjection):
         if event_type not in self._handlers:
             # Build list of available handlers for helpful error message
             available_handlers = (
-                ", ".join(et.__name__ for et in self._handlers.keys())
+                ", ".join(et.__name__ for et in self._handlers)
                 if self._handlers
                 else "none"
             )
@@ -598,9 +599,7 @@ class DeclarativeProjection(CheckpointTrackingProjection):
                     "projection": self._projection_name,
                     "event_type": event_type.__name__,
                     "event_id": str(event.event_id),
-                    "available_handlers": list(
-                        et.__name__ for et in self._handlers.keys()
-                    ),
+                    "available_handlers": [et.__name__ for et in self._handlers],
                 },
             )
             return

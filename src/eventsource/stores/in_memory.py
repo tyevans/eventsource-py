@@ -6,9 +6,9 @@ as all events are lost when the process terminates.
 """
 
 from collections import defaultdict
-from datetime import UTC, datetime
+from collections.abc import AsyncIterator
+from datetime import datetime
 from threading import Lock
-from typing import AsyncIterator
 from uuid import UUID
 
 from eventsource.events.base import DomainEvent
@@ -261,7 +261,7 @@ class InMemoryEventStore(EventStore):
             all_events: list[DomainEvent] = []
 
             # Iterate through all aggregates
-            for agg_id, events in self._events.items():
+            for _agg_id, events in self._events.items():
                 for event in events:
                     # Filter by aggregate type
                     if event.aggregate_type != aggregate_type:
@@ -272,9 +272,8 @@ class InMemoryEventStore(EventStore):
                         continue
 
                     # Filter by timestamp if specified
-                    if from_timestamp is not None:
-                        if event.occurred_at.timestamp() <= from_timestamp:
-                            continue
+                    if from_timestamp is not None and event.occurred_at.timestamp() <= from_timestamp:
+                        continue
 
                     all_events.append(event)
 
@@ -391,7 +390,7 @@ class InMemoryEventStore(EventStore):
 
                 # Find global position for this event
                 global_pos = 0
-                for evt, gpos, sid in self._global_events:
+                for evt, gpos, _sid in self._global_events:
                     if evt.event_id == event.event_id:
                         global_pos = gpos
                         break
