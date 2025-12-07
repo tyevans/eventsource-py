@@ -332,7 +332,6 @@ print(projection.get_pending_tasks())
 - Read the [Architecture Overview](architecture.md) to understand the full system
 - Explore the [API Reference](api/) for detailed documentation
 - Check out [Examples](examples/) for more complex scenarios
-- If migrating from Honeybadger, see the [Migration Guide](migration-guide.md)
 
 ## Complete Example
 

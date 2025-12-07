@@ -6,7 +6,6 @@ Welcome to the eventsource documentation. This library provides a production-rea
 
 - [Getting Started](getting-started.md) - Installation and first steps
 - [Architecture Overview](architecture.md) - Understanding the system design
-- [Migration Guide](migration-guide.md) - For Honeybadger users
 
 ## API Reference
 
