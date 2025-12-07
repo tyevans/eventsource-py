@@ -6,6 +6,7 @@ Projections build read models from domain events. This module provides:
 - EventHandler: Base class for event handlers
 - CheckpointTrackingProjection: Adds checkpoint, retry, and DLQ support
 - DeclarativeProjection: Adds @handles decorator support
+- DatabaseProjection: Adds database connection support for handlers
 
 Projections are a core concept in event sourcing, responsible for
 maintaining read models optimized for specific query patterns.
@@ -613,3 +614,186 @@ class DeclarativeProjection(CheckpointTrackingProjection):
             # Pass None for conn since we don't have a database connection in base class
             # Subclasses that need database access should override _process_event
             await handler(None, event)
+
+
+class DatabaseProjection(DeclarativeProjection):
+    """
+    Projection with database connection support for handlers.
+
+    Extends DeclarativeProjection to provide a real database connection to
+    handlers with 2-parameter signatures (conn, event). This enables handlers
+    to execute SQL operations within the projection's transaction context.
+
+    The database session wraps all handler operations, ensuring that:
+    - Handler SQL operations are transactional
+    - Checkpoint updates share the same transaction (when using compatible repos)
+    - Errors cause automatic rollback
+
+    Handler Signatures:
+        - (event): Single parameter handler, no database access
+        - (conn, event): Two parameter handler, receives AsyncConnection
+
+    Example:
+        >>> from sqlalchemy.ext.asyncio import async_sessionmaker
+        >>>
+        >>> class OrderProjection(DatabaseProjection):
+        ...     @handles(OrderCreated)
+        ...     async def _handle_order_created(self, conn, event: OrderCreated) -> None:
+        ...         await conn.execute(text(
+        ...             "INSERT INTO orders (id, number) VALUES (:id, :num)"
+        ...         ), {"id": str(event.aggregate_id), "num": event.order_number})
+        ...
+        ...     @handles(OrderShipped)
+        ...     async def _handle_order_shipped(self, event: OrderShipped) -> None:
+        ...         # Single param handler also works
+        ...         print(f"Order shipped: {event.tracking_number}")
+        >>>
+        >>> # Usage
+        >>> projection = OrderProjection(session_factory=async_session_factory)
+        >>> await projection.handle(event)
+
+    Attributes:
+        _session_factory: SQLAlchemy async session factory for database connections
+        _current_connection: Current database connection within handle() context
+    """
+
+    def __init__(
+        self,
+        session_factory: "async_sessionmaker[AsyncSession]",
+        checkpoint_repo: CheckpointRepository | None = None,
+        dlq_repo: DLQRepository | None = None,
+    ) -> None:
+        """
+        Initialize the database projection.
+
+        Args:
+            session_factory: SQLAlchemy async session factory for creating
+                           database sessions. Required for database operations.
+            checkpoint_repo: Repository for checkpoint storage.
+                           If None, uses InMemoryCheckpointRepository.
+            dlq_repo: Repository for dead letter queue.
+                     If None, uses InMemoryDLQRepository.
+        """
+        super().__init__(checkpoint_repo=checkpoint_repo, dlq_repo=dlq_repo)
+        self._session_factory = session_factory
+        self._current_connection: AsyncConnection | None = None
+
+        logger.info(
+            "DatabaseProjection %s initialized with session factory",
+            self._projection_name,
+            extra={
+                "projection": self._projection_name,
+                "session_factory_type": type(session_factory).__name__,
+            },
+        )
+
+    async def handle(self, event: DomainEvent) -> None:
+        """
+        Handle event within a database transaction.
+
+        Wraps the parent handle() in a database session context, ensuring
+        all handler operations share the same transaction. On successful
+        completion, the transaction is committed. On error, the transaction
+        is rolled back.
+
+        Args:
+            event: The domain event to process
+        """
+        logger.debug(
+            "DatabaseProjection %s beginning transaction for event %s",
+            self._projection_name,
+            event.event_id,
+            extra={
+                "projection": self._projection_name,
+                "event_id": str(event.event_id),
+                "event_type": event.event_type,
+            },
+        )
+
+        async with self._session_factory() as session, session.begin():
+            # Get connection from session and store for use by _process_event
+            conn = await session.connection()
+            self._current_connection = conn
+
+            try:
+                await super().handle(event)
+
+                logger.debug(
+                    "DatabaseProjection %s committing transaction for event %s",
+                    self._projection_name,
+                    event.event_id,
+                    extra={
+                        "projection": self._projection_name,
+                        "event_id": str(event.event_id),
+                        "event_type": event.event_type,
+                    },
+                )
+            except Exception as e:
+                logger.error(
+                    "DatabaseProjection %s rolling back transaction for event %s: %s",
+                    self._projection_name,
+                    event.event_id,
+                    e,
+                    extra={
+                        "projection": self._projection_name,
+                        "event_id": str(event.event_id),
+                        "event_type": event.event_type,
+                        "error": str(e),
+                    },
+                )
+                raise
+            finally:
+                self._current_connection = None
+
+    async def _process_event(self, event: DomainEvent) -> None:
+        """
+        Route event to appropriate handler with database connection.
+
+        Extends DeclarativeProjection._process_event to provide a real
+        database connection to handlers with 2-parameter signatures.
+
+        Args:
+            event: The domain event to process
+
+        Raises:
+            RuntimeError: If called without an active database connection
+                         (i.e., not called via handle())
+        """
+        event_type = type(event)
+
+        if event_type not in self._handlers:
+            # Use parent class warning behavior for unhandled events
+            return await super()._process_event(event)
+
+        handler = self._handlers[event_type]
+        sig = inspect.signature(handler)
+        params = list(sig.parameters.values())
+
+        if len(params) == 1:
+            # Single parameter handler: just event (no database needed)
+            await handler(event)
+        else:
+            # Two parameter handler: provide real connection
+            conn = self._current_connection
+            if conn is None:
+                raise RuntimeError(
+                    f"Handler {handler.__name__} requires database connection "
+                    f"but DatabaseProjection.handle() was not used. "
+                    f"Ensure you call handle() rather than _process_event() directly."
+                )
+            await handler(conn, event)
+
+
+# Type hints for SQLAlchemy (imported at runtime if available)
+try:
+    from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionmaker
+except ImportError:
+    # SQLAlchemy not installed - provide type stubs for type checking
+    from typing import TYPE_CHECKING
+
+    if TYPE_CHECKING:
+        from sqlalchemy.ext.asyncio import (
+            AsyncConnection,
+            AsyncSession,
+            async_sessionmaker,
+        )

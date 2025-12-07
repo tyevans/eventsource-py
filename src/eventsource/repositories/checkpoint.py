@@ -17,6 +17,8 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from eventsource.repositories._connection import execute_with_connection
+
 
 @dataclass(frozen=True)
 class CheckpointData:
@@ -174,13 +176,8 @@ class PostgreSQLCheckpointRepository:
         """)
         params = {"projection_name": projection_name}
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.connect() as conn:
-                result = await conn.execute(query, params)
-                row = result.fetchone()
-                return row[0] if row else None
-        else:
-            result = await self.conn.execute(query, params)
+        async with execute_with_connection(self.conn, transactional=False) as conn:
+            result = await conn.execute(query, params)
             row = result.fetchone()
             return row[0] if row else None
 
@@ -220,11 +217,8 @@ class PostgreSQLCheckpointRepository:
             "now": now,
         }
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.begin() as conn:
-                await conn.execute(query, params)
-        else:
-            await self.conn.execute(query, params)
+        async with execute_with_connection(self.conn, transactional=True) as conn:
+            await conn.execute(query, params)
 
     async def get_lag_metrics(
         self,
@@ -266,12 +260,8 @@ class PostgreSQLCheckpointRepository:
         """)
         params = {"projection_name": projection_name, "event_types": event_types}
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.connect() as conn:
-                result = await conn.execute(query, params)
-                row = result.fetchone()
-        else:
-            result = await self.conn.execute(query, params)
+        async with execute_with_connection(self.conn, transactional=False) as conn:
+            result = await conn.execute(query, params)
             row = result.fetchone()
 
         if not row:
@@ -311,11 +301,8 @@ class PostgreSQLCheckpointRepository:
         """)
         params = {"projection_name": projection_name}
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.begin() as conn:
-                await conn.execute(query, params)
-        else:
-            await self.conn.execute(query, params)
+        async with execute_with_connection(self.conn, transactional=True) as conn:
+            await conn.execute(query, params)
 
     async def get_all_checkpoints(self) -> list[CheckpointData]:
         """
@@ -331,12 +318,8 @@ class PostgreSQLCheckpointRepository:
             ORDER BY projection_name
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.connect() as conn:
-                result = await conn.execute(query)
-                rows = result.fetchall()
-        else:
-            result = await self.conn.execute(query)
+        async with execute_with_connection(self.conn, transactional=False) as conn:
+            result = await conn.execute(query)
             rows = result.fetchall()
 
         return [

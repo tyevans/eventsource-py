@@ -18,6 +18,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from eventsource.repositories._connection import execute_with_connection
 from eventsource.repositories._json import json_dumps
 
 
@@ -261,11 +262,8 @@ class PostgreSQLDLQRepository:
             "now": now,
         }
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.begin() as conn:
-                await conn.execute(query, params)
-        else:
-            await self.conn.execute(query, params)
+        async with execute_with_connection(self.conn, transactional=True) as conn:
+            await conn.execute(query, params)
 
     async def get_failed_events(
         self,
@@ -305,12 +303,8 @@ class PostgreSQLDLQRepository:
             LIMIT :limit
         """)  # nosec B608
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.connect() as conn:
-                result = await conn.execute(query, params)
-                rows = result.fetchall()
-        else:
-            result = await self.conn.execute(query, params)
+        async with execute_with_connection(self.conn, transactional=False) as conn:
+            result = await conn.execute(query, params)
             rows = result.fetchall()
 
         return [
@@ -349,12 +343,8 @@ class PostgreSQLDLQRepository:
             WHERE id = :dlq_id
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.connect() as conn:
-                result = await conn.execute(query, {"dlq_id": dlq_id})
-                row = result.fetchone()
-        else:
-            result = await self.conn.execute(query, {"dlq_id": dlq_id})
+        async with execute_with_connection(self.conn, transactional=False) as conn:
+            result = await conn.execute(query, {"dlq_id": dlq_id})
             row = result.fetchone()
 
         if not row:
@@ -395,14 +385,8 @@ class PostgreSQLDLQRepository:
             WHERE id = :dlq_id
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.begin() as conn:
-                await conn.execute(
-                    query,
-                    {"now": now, "resolved_by": resolved_by_str, "dlq_id": dlq_id},
-                )
-        else:
-            await self.conn.execute(
+        async with execute_with_connection(self.conn, transactional=True) as conn:
+            await conn.execute(
                 query,
                 {"now": now, "resolved_by": resolved_by_str, "dlq_id": dlq_id},
             )
@@ -420,11 +404,8 @@ class PostgreSQLDLQRepository:
             WHERE id = :dlq_id
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.begin() as conn:
-                await conn.execute(query, {"dlq_id": dlq_id})
-        else:
-            await self.conn.execute(query, {"dlq_id": dlq_id})
+        async with execute_with_connection(self.conn, transactional=True) as conn:
+            await conn.execute(query, {"dlq_id": dlq_id})
 
     async def get_failure_stats(self) -> dict[str, Any]:
         """
@@ -443,12 +424,8 @@ class PostgreSQLDLQRepository:
             WHERE status IN ('failed', 'retrying')
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.connect() as conn:
-                result = await conn.execute(query)
-                row = result.fetchone()
-        else:
-            result = await self.conn.execute(query)
+        async with execute_with_connection(self.conn, transactional=False) as conn:
+            result = await conn.execute(query)
             row = result.fetchone()
 
         return {
@@ -477,12 +454,8 @@ class PostgreSQLDLQRepository:
             ORDER BY failure_count DESC
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.connect() as conn:
-                result = await conn.execute(query)
-                rows = result.fetchall()
-        else:
-            result = await self.conn.execute(query)
+        async with execute_with_connection(self.conn, transactional=False) as conn:
+            result = await conn.execute(query)
             rows = result.fetchall()
 
         return [
@@ -514,12 +487,8 @@ class PostgreSQLDLQRepository:
             RETURNING id
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.begin() as conn:
-                result = await conn.execute(query, {"days": older_than_days})
-                return len(result.fetchall())
-        else:
-            result = await self.conn.execute(query, {"days": older_than_days})
+        async with execute_with_connection(self.conn, transactional=True) as conn:
+            result = await conn.execute(query, {"days": older_than_days})
             return len(result.fetchall())
 
 

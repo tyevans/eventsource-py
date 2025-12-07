@@ -22,6 +22,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from eventsource.events.base import DomainEvent
+from eventsource.repositories._connection import execute_with_connection
 from eventsource.repositories._json import EventSourceJSONEncoder, json_dumps
 
 
@@ -205,11 +206,8 @@ class PostgreSQLOutboxRepository:
             "created_at": now,
         }
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.begin() as conn:
-                await conn.execute(query, params)
-        else:
-            await self.conn.execute(query, params)
+        async with execute_with_connection(self.conn, transactional=True) as conn:
+            await conn.execute(query, params)
 
         return outbox_id
 
@@ -232,12 +230,8 @@ class PostgreSQLOutboxRepository:
             LIMIT :limit
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.connect() as conn:
-                result = await conn.execute(query, {"limit": limit})
-                rows = result.fetchall()
-        else:
-            result = await self.conn.execute(query, {"limit": limit})
+        async with execute_with_connection(self.conn, transactional=False) as conn:
+            result = await conn.execute(query, {"limit": limit})
             rows = result.fetchall()
 
         return [
@@ -270,11 +264,8 @@ class PostgreSQLOutboxRepository:
             WHERE id = :id
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.begin() as conn:
-                await conn.execute(query, {"id": outbox_id, "published_at": now})
-        else:
-            await self.conn.execute(query, {"id": outbox_id, "published_at": now})
+        async with execute_with_connection(self.conn, transactional=True) as conn:
+            await conn.execute(query, {"id": outbox_id, "published_at": now})
 
     async def increment_retry(self, outbox_id: UUID, error: str | None = None) -> None:
         """
@@ -291,11 +282,8 @@ class PostgreSQLOutboxRepository:
             WHERE id = :id
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.begin() as conn:
-                await conn.execute(query, {"id": outbox_id, "error": error})
-        else:
-            await self.conn.execute(query, {"id": outbox_id, "error": error})
+        async with execute_with_connection(self.conn, transactional=True) as conn:
+            await conn.execute(query, {"id": outbox_id, "error": error})
 
     async def mark_failed(self, outbox_id: UUID, error: str) -> None:
         """
@@ -312,11 +300,8 @@ class PostgreSQLOutboxRepository:
             WHERE id = :id
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.begin() as conn:
-                await conn.execute(query, {"id": outbox_id, "error": error})
-        else:
-            await self.conn.execute(query, {"id": outbox_id, "error": error})
+        async with execute_with_connection(self.conn, transactional=True) as conn:
+            await conn.execute(query, {"id": outbox_id, "error": error})
 
     async def cleanup_published(self, days: int = 7) -> int:
         """
@@ -335,12 +320,8 @@ class PostgreSQLOutboxRepository:
             RETURNING id
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.begin() as conn:
-                result = await conn.execute(query, {"days": days})
-                return len(result.fetchall())
-        else:
-            result = await self.conn.execute(query, {"days": days})
+        async with execute_with_connection(self.conn, transactional=True) as conn:
+            result = await conn.execute(query, {"days": days})
             return len(result.fetchall())
 
     async def get_stats(self) -> dict[str, Any]:
@@ -360,12 +341,8 @@ class PostgreSQLOutboxRepository:
             FROM event_outbox
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.connect() as conn:
-                result = await conn.execute(query)
-                row = result.fetchone()
-        else:
-            result = await self.conn.execute(query)
+        async with execute_with_connection(self.conn, transactional=False) as conn:
+            result = await conn.execute(query)
             row = result.fetchone()
 
         # Aggregate query always returns a row
