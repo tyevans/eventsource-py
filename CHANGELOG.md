@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Improved type annotations for better mypy compatibility across all modules
+- Applied consistent code formatting with ruff
+
+### Fixed
+
+- Fixed broken documentation links in ADRs and guides
+- Resolved mypy type errors in projections, repositories, and event bus modules
+
+### Documentation
+
+- Updated MkDocs configuration
+- Fixed links in getting-started guide and ADR documents
+
+### Tests
+
+- Improved test fixtures and integration test configuration
+- Enhanced unit test coverage and organization
+
 ## [0.1.0] - 2025-XX-XX
 
 ### Added
