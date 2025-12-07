@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import TYPE_CHECKING, Callable, TypeVar, overload
+from typing import TYPE_CHECKING, Callable, Iterator, TypeVar, overload
 
 if TYPE_CHECKING:
     from eventsource.events.base import DomainEvent
@@ -300,7 +300,7 @@ class EventRegistry:
         """Support 'in' operator for checking registration."""
         return self.contains(event_type)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[str]:
         """Iterate over registered event type names."""
         with self._lock:
             # Return a copy to avoid issues with concurrent modification

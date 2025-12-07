@@ -15,7 +15,7 @@ import asyncio
 import inspect
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Callable
+from typing import Any, Callable, Coroutine
 
 from eventsource.events.base import DomainEvent
 from eventsource.projections.decorators import get_handled_event_type
@@ -447,7 +447,7 @@ class DeclarativeProjection(CheckpointTrackingProjection):
         """
         # Initialize handlers dict before calling super().__init__()
         # in case subscribed_to() is called during parent initialization
-        self._handlers: dict[type[DomainEvent], Callable] = {}
+        self._handlers: dict[type[DomainEvent], Callable[..., Coroutine[Any, Any, None]]] = {}
 
         super().__init__(checkpoint_repo=checkpoint_repo, dlq_repo=dlq_repo)
 

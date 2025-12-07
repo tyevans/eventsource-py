@@ -262,7 +262,7 @@ class ProjectionCoordinator:
         self.batch_size = batch_size
         self.poll_interval_seconds = poll_interval_seconds
         self._running = False
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[None] | None = None
 
     async def dispatch_events(self, events: list[DomainEvent]) -> int:
         """

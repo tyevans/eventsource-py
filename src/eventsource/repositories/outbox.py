@@ -368,6 +368,16 @@ class PostgreSQLOutboxRepository:
             result = await self.conn.execute(query)
             row = result.fetchone()
 
+        # Aggregate query always returns a row
+        if row is None:
+            return {
+                "pending_count": 0,
+                "published_count": 0,
+                "failed_count": 0,
+                "oldest_pending": None,
+                "avg_retries": 0.0,
+            }
+
         return {
             "pending_count": row[0] or 0,
             "published_count": row[1] or 0,

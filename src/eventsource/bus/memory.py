@@ -28,7 +28,7 @@ try:
     OTEL_AVAILABLE = True
 except ImportError:
     OTEL_AVAILABLE = False
-    trace = None  # type: ignore[assignment, unused-ignore]
+    trace = None
 
 logger = logging.getLogger(__name__)
 

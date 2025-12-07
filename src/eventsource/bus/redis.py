@@ -73,7 +73,7 @@ try:
     OTEL_AVAILABLE = True
 except ImportError:
     OTEL_AVAILABLE = False
-    trace = None  # type: ignore[assignment]
+    trace = None
 
 logger = logging.getLogger(__name__)
 
@@ -279,7 +279,7 @@ class RedisEventBus(EventBus):
             return
 
         try:
-            self._redis = await aioredis.from_url(
+            self._redis = await aioredis.from_url(  # type: ignore[no-untyped-call]
                 self._config.redis_url,
                 encoding="utf-8",
                 decode_responses=True,
@@ -478,7 +478,7 @@ class RedisEventBus(EventBus):
 
         message_id = await self._redis.xadd(
             name=self._config.stream_name,
-            fields=event_data,
+            fields=event_data,  # type: ignore[arg-type]
         )
 
         self._stats.events_published += 1
@@ -503,7 +503,7 @@ class RedisEventBus(EventBus):
         async with self._redis.pipeline(transaction=False) as pipe:
             for event in events:
                 event_data = self._serialize_event(event)
-                pipe.xadd(name=self._config.stream_name, fields=event_data)
+                pipe.xadd(name=self._config.stream_name, fields=event_data)  # type: ignore[arg-type]
 
             # Execute all XADDs in a single network round-trip
             message_ids = await pipe.execute()
@@ -695,6 +695,7 @@ class RedisEventBus(EventBus):
         await self._ensure_consumer_group_exists()
 
         actual_consumer_name = consumer_name or self._config.consumer_name
+        assert actual_consumer_name is not None, "Consumer name must be set"
         self._consuming = True
 
         logger.info(
@@ -1226,7 +1227,7 @@ class RedisEventBus(EventBus):
 
         await self._redis.xadd(
             name=self._config.dlq_stream_name,
-            fields=dlq_data,
+            fields=dlq_data,  # type: ignore[arg-type]
         )
 
         logger.info(

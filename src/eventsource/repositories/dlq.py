@@ -781,7 +781,12 @@ class InMemoryDLQRepository:
                 })
 
             # Sort by failure count descending
-            result.sort(key=lambda x: x["failure_count"], reverse=True)
+            # Cast needed because dict values are typed as Any
+            def get_failure_count(x: dict[str, Any]) -> int:
+                count = x["failure_count"]
+                return count if isinstance(count, int) else 0
+
+            result.sort(key=get_failure_count, reverse=True)
             return result
 
     async def delete_resolved_events(self, older_than_days: int = 30) -> int:

@@ -5,12 +5,12 @@ This module contains the @handles decorator for declarative projections,
 enabling automatic event routing based on decorated handler methods.
 """
 
-from typing import Callable, TypeVar
+from typing import Any, Callable, TypeVar
 
 from eventsource.events.base import DomainEvent
 
 # Type variable for handler functions
-F = TypeVar("F", bound=Callable)
+F = TypeVar("F", bound=Callable[..., Any])
 
 
 def handles(event_type: type[DomainEvent]) -> Callable[[F], F]:
@@ -56,7 +56,7 @@ def handles(event_type: type[DomainEvent]) -> Callable[[F], F]:
     return decorator
 
 
-def get_handled_event_type(func: Callable) -> type[DomainEvent] | None:
+def get_handled_event_type(func: Callable[..., Any]) -> type[DomainEvent] | None:
     """
     Get the event type handled by a decorated function.
 
@@ -78,7 +78,7 @@ def get_handled_event_type(func: Callable) -> type[DomainEvent] | None:
     return getattr(func, "_handles_event_type", None)
 
 
-def is_event_handler(func: Callable) -> bool:
+def is_event_handler(func: Callable[..., Any]) -> bool:
     """
     Check if a function is decorated as an event handler.
 
