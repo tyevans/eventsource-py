@@ -367,7 +367,7 @@ class TestInMemoryDLQRepository:
                 error=Exception(f"Error {i}"),
             )
 
-        repo.clear()
+        await repo.clear()
 
         events = await repo.get_failed_events()
         assert len(events) == 0

@@ -8,9 +8,9 @@ enabling:
 - Safe rebuilds from specific positions
 """
 
+import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from threading import Lock
 from typing import Protocol, runtime_checkable
 from uuid import UUID
 
@@ -349,7 +349,7 @@ class InMemoryCheckpointRepository:
     def __init__(self) -> None:
         """Initialize an empty in-memory checkpoint repository."""
         self._checkpoints: dict[str, CheckpointData] = {}
-        self._lock = Lock()
+        self._lock: asyncio.Lock = asyncio.Lock()
 
     async def get_checkpoint(self, projection_name: str) -> UUID | None:
         """
@@ -361,7 +361,7 @@ class InMemoryCheckpointRepository:
         Returns:
             Last processed event ID, or None if no checkpoint exists
         """
-        with self._lock:
+        async with self._lock:
             checkpoint = self._checkpoints.get(projection_name)
             return checkpoint.last_event_id if checkpoint else None
 
@@ -380,7 +380,7 @@ class InMemoryCheckpointRepository:
             event_type: Type of event processed
         """
         now = datetime.now(UTC)
-        with self._lock:
+        async with self._lock:
             existing = self._checkpoints.get(projection_name)
             events_processed = (existing.events_processed + 1) if existing else 1
 
@@ -410,7 +410,7 @@ class InMemoryCheckpointRepository:
         Returns:
             LagMetrics if checkpoint exists, None otherwise
         """
-        with self._lock:
+        async with self._lock:
             checkpoint = self._checkpoints.get(projection_name)
             if not checkpoint:
                 return None
@@ -435,7 +435,7 @@ class InMemoryCheckpointRepository:
         Args:
             projection_name: Name of the projection
         """
-        with self._lock:
+        async with self._lock:
             self._checkpoints.pop(projection_name, None)
 
     async def get_all_checkpoints(self) -> list[CheckpointData]:
@@ -445,15 +445,15 @@ class InMemoryCheckpointRepository:
         Returns:
             List of CheckpointData for all projections
         """
-        with self._lock:
+        async with self._lock:
             return sorted(
                 self._checkpoints.values(),
                 key=lambda c: c.projection_name,
             )
 
-    def clear(self) -> None:
+    async def clear(self) -> None:
         """Clear all checkpoints. Useful for test setup/teardown."""
-        with self._lock:
+        async with self._lock:
             self._checkpoints.clear()
 
 

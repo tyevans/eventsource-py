@@ -173,7 +173,7 @@ class TestInMemoryCheckpointRepository:
         for i in range(3):
             await repo.update_checkpoint(f"Proj{i}", uuid4(), "Event")
 
-        repo.clear()
+        await repo.clear()
 
         result = await repo.get_all_checkpoints()
         assert result == []

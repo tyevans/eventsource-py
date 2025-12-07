@@ -11,10 +11,10 @@ This enables:
 - Decoupled publishing from the main request path
 """
 
+import asyncio
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from threading import Lock
 from typing import Any, Protocol, runtime_checkable
 from uuid import UUID, uuid4
 
@@ -380,7 +380,7 @@ class InMemoryOutboxRepository:
     def __init__(self) -> None:
         """Initialize an empty in-memory outbox repository."""
         self._entries: dict[UUID, OutboxEntry] = {}
-        self._lock = Lock()
+        self._lock: asyncio.Lock = asyncio.Lock()
 
     async def add_event(self, event: DomainEvent) -> UUID:
         """
@@ -405,7 +405,7 @@ class InMemoryOutboxRepository:
             "payload": json.loads(event.model_dump_json()),
         }
 
-        with self._lock:
+        async with self._lock:
             self._entries[outbox_id] = OutboxEntry(
                 id=outbox_id,
                 event_id=event.event_id,
@@ -430,7 +430,7 @@ class InMemoryOutboxRepository:
         Returns:
             List of pending outbox records
         """
-        with self._lock:
+        async with self._lock:
             pending = [e for e in self._entries.values() if e.status == "pending"]
             # Sort by created_at ascending (oldest first)
             pending.sort(key=lambda e: e.created_at)
@@ -459,7 +459,7 @@ class InMemoryOutboxRepository:
             outbox_id: Outbox record ID
         """
         now = datetime.now(UTC)
-        with self._lock:
+        async with self._lock:
             if outbox_id in self._entries:
                 entry = self._entries[outbox_id]
                 entry.status = "published"
@@ -473,7 +473,7 @@ class InMemoryOutboxRepository:
             outbox_id: Outbox record ID
             error: Error message (optional)
         """
-        with self._lock:
+        async with self._lock:
             if outbox_id in self._entries:
                 entry = self._entries[outbox_id]
                 entry.retry_count += 1
@@ -487,7 +487,7 @@ class InMemoryOutboxRepository:
             outbox_id: Outbox record ID
             error: Error message
         """
-        with self._lock:
+        async with self._lock:
             if outbox_id in self._entries:
                 entry = self._entries[outbox_id]
                 entry.status = "failed"
@@ -508,7 +508,7 @@ class InMemoryOutboxRepository:
         cutoff = datetime.now(UTC) - timedelta(days=days)
 
         deleted = 0
-        with self._lock:
+        async with self._lock:
             ids_to_delete = []
             for id_, entry in self._entries.items():
                 if (
@@ -531,7 +531,7 @@ class InMemoryOutboxRepository:
         Returns:
             Dictionary with outbox metrics
         """
-        with self._lock:
+        async with self._lock:
             entries = list(self._entries.values())
 
             pending = [e for e in entries if e.status == "pending"]
@@ -554,9 +554,9 @@ class InMemoryOutboxRepository:
                 "avg_retries": avg_retries,
             }
 
-    def clear(self) -> None:
+    async def clear(self) -> None:
         """Clear all entries. Useful for test setup/teardown."""
-        with self._lock:
+        async with self._lock:
             self._entries.clear()
 
 

@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": ".."
+		},
+		{
+			"path": "../../eventsource-py-wt-1"
+		},
+		{
+			"path": "../../eventsource-py-wt-2"
+		}
+	],
+	"settings": {}
+}

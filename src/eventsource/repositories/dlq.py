@@ -8,10 +8,10 @@ all retry attempts. This enables:
 - Failure monitoring and alerting
 """
 
+import asyncio
 import traceback
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from threading import Lock
 from typing import Any, Protocol, runtime_checkable
 from uuid import UUID
 
@@ -513,7 +513,7 @@ class InMemoryDLQRepository:
         """Initialize an empty in-memory DLQ repository."""
         self._entries: dict[str, DLQEntry] = {}  # key: "{event_id}:{projection_name}"
         self._id_counter: int = 0
-        self._lock = Lock()
+        self._lock: asyncio.Lock = asyncio.Lock()
 
     def _make_key(self, event_id: UUID, projection_name: str) -> str:
         """Create a unique key for event_id + projection_name combination."""
@@ -542,7 +542,7 @@ class InMemoryDLQRepository:
         now = datetime.now(UTC)
         key = self._make_key(event_id, projection_name)
 
-        with self._lock:
+        async with self._lock:
             existing = self._entries.get(key)
             if existing:
                 # Update existing entry
@@ -585,7 +585,7 @@ class InMemoryDLQRepository:
         Returns:
             List of failed event records
         """
-        with self._lock:
+        async with self._lock:
             entries = list(self._entries.values())
 
             # Filter by status
@@ -628,7 +628,7 @@ class InMemoryDLQRepository:
         Returns:
             Failed event record, or None if not found
         """
-        with self._lock:
+        async with self._lock:
             for entry in self._entries.values():
                 if entry.id == dlq_id:
                     return {
@@ -663,7 +663,7 @@ class InMemoryDLQRepository:
             resolved_by: User ID or identifier of resolver
         """
         now = datetime.now(UTC)
-        with self._lock:
+        async with self._lock:
             for entry in self._entries.values():
                 if entry.id == dlq_id:
                     entry.status = "resolved"
@@ -678,7 +678,7 @@ class InMemoryDLQRepository:
         Args:
             dlq_id: DLQ record ID
         """
-        with self._lock:
+        async with self._lock:
             for entry in self._entries.values():
                 if entry.id == dlq_id:
                     entry.status = "retrying"
@@ -691,7 +691,7 @@ class InMemoryDLQRepository:
         Returns:
             Dictionary with failure statistics
         """
-        with self._lock:
+        async with self._lock:
             active_entries = [
                 e for e in self._entries.values() if e.status in ("failed", "retrying")
             ]
@@ -722,7 +722,7 @@ class InMemoryDLQRepository:
         Returns:
             List of projection failure statistics
         """
-        with self._lock:
+        async with self._lock:
             active_entries = [
                 e for e in self._entries.values() if e.status in ("failed", "retrying")
             ]
@@ -778,7 +778,7 @@ class InMemoryDLQRepository:
         cutoff = cutoff - timedelta(days=older_than_days)
 
         deleted = 0
-        with self._lock:
+        async with self._lock:
             keys_to_delete = []
             for key, entry in self._entries.items():
                 if entry.status == "resolved" and entry.resolved_at and entry.resolved_at < cutoff:
@@ -790,9 +790,9 @@ class InMemoryDLQRepository:
 
         return deleted
 
-    def clear(self) -> None:
+    async def clear(self) -> None:
         """Clear all entries. Useful for test setup/teardown."""
-        with self._lock:
+        async with self._lock:
             self._entries.clear()
             self._id_counter = 0
 

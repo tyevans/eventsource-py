@@ -897,6 +897,8 @@ class TestImmutableStatePatterns:
         state2 = aggregate.state
 
         # States should be different objects
+        assert state1 is not None
+        assert state2 is not None
         assert state1 is not state2
         assert state1.value == 5
         assert state2.value == 8
@@ -907,8 +909,10 @@ class TestImmutableStatePatterns:
         aggregate.create(uuid4())
         aggregate.add_item("Widget A", 10.0)
 
+        assert aggregate.state is not None
         items1 = aggregate.state.items
         aggregate.add_item("Widget B", 15.0)
+        assert aggregate.state is not None
         items2 = aggregate.state.items
 
         # Lists should be different objects
@@ -956,9 +960,11 @@ class TestEdgeCases:
         aggregate = CounterAggregate(uuid4())
         aggregate.increment(100)
         aggregate.increment(50)
+        assert aggregate.state is not None
         assert aggregate.state.value == 150
 
         aggregate.reset()
+        assert aggregate.state is not None
         assert aggregate.state.value == 0
         assert aggregate.version == 3
 

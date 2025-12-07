@@ -224,7 +224,7 @@ class TestInMemoryOutboxRepository:
             event = SampleEvent(aggregate_id=uuid4(), test_field=f"event_{i}")
             await repo.add_event(event)
 
-        repo.clear()
+        await repo.clear()
 
         pending = await repo.get_pending_events()
         assert len(pending) == 0
