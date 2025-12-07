@@ -8,9 +8,10 @@ Tests for:
 """
 
 import json
-import pytest
 from datetime import UTC, datetime
 from uuid import uuid4
+
+import pytest
 
 from eventsource.repositories._json import (
     EventSourceJSONEncoder,
@@ -56,9 +57,7 @@ class TestEventSourceJSONEncoder:
             "event": {
                 "id": test_uuid,
                 "occurred_at": test_dt,
-                "items": [
-                    {"sub_id": uuid4(), "created_at": datetime.now(UTC)}
-                ],
+                "items": [{"sub_id": uuid4(), "created_at": datetime.now(UTC)}],
             }
         }
 

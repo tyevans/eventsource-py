@@ -73,6 +73,7 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "-v --cov=src/eventsource --cov-report=term-missing"
 asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
 markers = [
     "integration: marks tests as integration tests (may require docker)",
     "postgres: marks tests that require PostgreSQL",
@@ -92,6 +93,14 @@ strict = true
 warn_return_any = true
 warn_unused_ignores = true
 
+[[tool.mypy.overrides]]
+module = "opentelemetry.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "redis.*"
+ignore_missing_imports = true
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
@@ -102,3 +111,8 @@ ignore = ["E501"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["eventsource"]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.19.0",
+]

@@ -9,13 +9,13 @@ If testcontainers or Docker is not available, tests are automatically skipped.
 
 from __future__ import annotations
 
-import asyncio
-import os
+from collections.abc import AsyncGenerator, Generator
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Generator
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 import pytest
+import pytest_asyncio
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
@@ -26,20 +26,15 @@ if TYPE_CHECKING:
 # Pytest Configuration
 # ============================================================================
 
+
 def pytest_configure(config: pytest.Config) -> None:
     """Register custom markers for integration tests."""
     config.addinivalue_line(
         "markers", "integration: marks tests as integration tests (may require docker)"
     )
-    config.addinivalue_line(
-        "markers", "postgres: marks tests that require PostgreSQL"
-    )
-    config.addinivalue_line(
-        "markers", "redis: marks tests that require Redis"
-    )
-    config.addinivalue_line(
-        "markers", "e2e: marks tests as end-to-end integration tests"
-    )
+    config.addinivalue_line("markers", "postgres: marks tests that require PostgreSQL")
+    config.addinivalue_line("markers", "redis: marks tests that require Redis")
+    config.addinivalue_line("markers", "e2e: marks tests as end-to-end integration tests")
 
 
 # ============================================================================
@@ -53,6 +48,7 @@ REDIS_CONTAINER = None
 try:
     from testcontainers.postgres import PostgresContainer
     from testcontainers.redis import RedisContainer
+
     TESTCONTAINERS_AVAILABLE = True
 except ImportError:
     PostgresContainer = None  # type: ignore[assignment, misc]
@@ -62,6 +58,7 @@ except ImportError:
 def is_docker_available() -> bool:
     """Check if Docker is available for running containers."""
     import subprocess
+
     try:
         result = subprocess.run(
             ["docker", "info"],
@@ -81,23 +78,21 @@ DOCKER_AVAILABLE = is_docker_available()
 # ============================================================================
 
 skip_if_no_testcontainers = pytest.mark.skipif(
-    not TESTCONTAINERS_AVAILABLE,
-    reason="testcontainers not installed (pip install testcontainers)"
+    not TESTCONTAINERS_AVAILABLE, reason="testcontainers not installed (pip install testcontainers)"
 )
 
 skip_if_no_docker = pytest.mark.skipif(
-    not DOCKER_AVAILABLE,
-    reason="Docker not available or not running"
+    not DOCKER_AVAILABLE, reason="Docker not available or not running"
 )
 
 skip_if_no_postgres_infra = pytest.mark.skipif(
     not (TESTCONTAINERS_AVAILABLE and DOCKER_AVAILABLE),
-    reason="PostgreSQL test infrastructure not available"
+    reason="PostgreSQL test infrastructure not available",
 )
 
 skip_if_no_redis_infra = pytest.mark.skipif(
     not (TESTCONTAINERS_AVAILABLE and DOCKER_AVAILABLE),
-    reason="Redis test infrastructure not available"
+    reason="Redis test infrastructure not available",
 )
 
 
@@ -105,12 +100,13 @@ skip_if_no_redis_infra = pytest.mark.skipif(
 # Test Events and Aggregates
 # ============================================================================
 
-from eventsource import DomainEvent, register_event
+from eventsource import DomainEvent, register_event  # noqa: E402
 
 
 @register_event
 class TestItemCreated(DomainEvent):
     """Test event for item creation."""
+
     event_type: str = "TestItemCreated"
     aggregate_type: str = "TestItem"
     name: str
@@ -120,6 +116,7 @@ class TestItemCreated(DomainEvent):
 @register_event
 class TestItemUpdated(DomainEvent):
     """Test event for item updates."""
+
     event_type: str = "TestItemUpdated"
     aggregate_type: str = "TestItem"
     name: str | None = None
@@ -129,6 +126,7 @@ class TestItemUpdated(DomainEvent):
 @register_event
 class TestItemDeleted(DomainEvent):
     """Test event for item deletion."""
+
     event_type: str = "TestItemDeleted"
     aggregate_type: str = "TestItem"
 
@@ -136,6 +134,7 @@ class TestItemDeleted(DomainEvent):
 @register_event
 class TestOrderCreated(DomainEvent):
     """Test event for order creation (used in e2e tests)."""
+
     event_type: str = "TestOrderCreated"
     aggregate_type: str = "TestOrder"
     customer_id: UUID
@@ -145,6 +144,7 @@ class TestOrderCreated(DomainEvent):
 @register_event
 class TestOrderItemAdded(DomainEvent):
     """Test event for adding items to an order."""
+
     event_type: str = "TestOrderItemAdded"
     aggregate_type: str = "TestOrder"
     item_id: UUID
@@ -156,6 +156,7 @@ class TestOrderItemAdded(DomainEvent):
 @register_event
 class TestOrderCompleted(DomainEvent):
     """Test event for order completion."""
+
     event_type: str = "TestOrderCompleted"
     aggregate_type: str = "TestOrder"
     completed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -165,11 +166,12 @@ class TestOrderCompleted(DomainEvent):
 # Test Aggregate
 # ============================================================================
 
-from eventsource import AggregateRoot, handles, DeclarativeAggregate
+from eventsource import DeclarativeAggregate, handles  # noqa: E402
 
 
 class TestOrderState(BaseModel):
     """State for TestOrderAggregate."""
+
     order_id: UUID
     customer_id: UUID | None = None
     items: list[dict[str, Any]] = []
@@ -264,94 +266,110 @@ class TestOrderAggregate(DeclarativeAggregate[TestOrderState]):
 # PostgreSQL Fixtures
 # ============================================================================
 
-# SQL Schema for tests
-EVENTS_SCHEMA = """
-CREATE TABLE IF NOT EXISTS events (
-    id BIGSERIAL PRIMARY KEY,
-    event_id UUID NOT NULL UNIQUE,
-    event_type VARCHAR(255) NOT NULL,
-    aggregate_type VARCHAR(255) NOT NULL,
-    aggregate_id UUID NOT NULL,
-    tenant_id VARCHAR(255),
-    actor_id VARCHAR(255),
-    version INTEGER NOT NULL,
-    timestamp TIMESTAMPTZ NOT NULL,
-    payload JSONB NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+# SQL Schema for tests - split into individual statements for asyncpg compatibility
+EVENTS_SCHEMA_STATEMENTS = [
+    """
+    CREATE TABLE IF NOT EXISTS events (
+        id BIGSERIAL PRIMARY KEY,
+        event_id UUID NOT NULL UNIQUE,
+        event_type VARCHAR(255) NOT NULL,
+        aggregate_type VARCHAR(255) NOT NULL,
+        aggregate_id UUID NOT NULL,
+        tenant_id VARCHAR(255),
+        actor_id VARCHAR(255),
+        version INTEGER NOT NULL,
+        timestamp TIMESTAMPTZ NOT NULL,
+        payload JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_events_aggregate_version
+    ON events (aggregate_id, aggregate_type, version)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_events_aggregate
+    ON events (aggregate_id, aggregate_type)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_events_type
+    ON events (event_type)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_events_timestamp
+    ON events (timestamp)
+    """,
+]
 
-CREATE UNIQUE INDEX IF NOT EXISTS uq_events_aggregate_version
-ON events (aggregate_id, aggregate_type, version);
+CHECKPOINTS_SCHEMA_STATEMENTS = [
+    """
+    CREATE TABLE IF NOT EXISTS projection_checkpoints (
+        projection_name VARCHAR(255) PRIMARY KEY,
+        last_event_id UUID,
+        last_event_type VARCHAR(255),
+        last_processed_at TIMESTAMPTZ,
+        events_processed BIGINT DEFAULT 0,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+]
 
-CREATE INDEX IF NOT EXISTS idx_events_aggregate
-ON events (aggregate_id, aggregate_type);
+DLQ_SCHEMA_STATEMENTS = [
+    """
+    CREATE TABLE IF NOT EXISTS dead_letter_queue (
+        id BIGSERIAL PRIMARY KEY,
+        event_id UUID NOT NULL,
+        projection_name VARCHAR(255) NOT NULL,
+        event_type VARCHAR(255) NOT NULL,
+        event_data JSONB NOT NULL,
+        error_message TEXT NOT NULL,
+        error_stacktrace TEXT,
+        retry_count INTEGER DEFAULT 0,
+        first_failed_at TIMESTAMPTZ NOT NULL,
+        last_failed_at TIMESTAMPTZ NOT NULL,
+        status VARCHAR(50) DEFAULT 'failed',
+        resolved_at TIMESTAMPTZ,
+        resolved_by VARCHAR(255),
+        UNIQUE(event_id, projection_name)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_dlq_status
+    ON dead_letter_queue (status)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_dlq_projection
+    ON dead_letter_queue (projection_name)
+    """,
+]
 
-CREATE INDEX IF NOT EXISTS idx_events_type
-ON events (event_type);
-
-CREATE INDEX IF NOT EXISTS idx_events_timestamp
-ON events (timestamp);
-"""
-
-CHECKPOINTS_SCHEMA = """
-CREATE TABLE IF NOT EXISTS projection_checkpoints (
-    projection_name VARCHAR(255) PRIMARY KEY,
-    last_event_id UUID,
-    last_event_type VARCHAR(255),
-    last_processed_at TIMESTAMPTZ,
-    events_processed BIGINT DEFAULT 0,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-"""
-
-DLQ_SCHEMA = """
-CREATE TABLE IF NOT EXISTS dead_letter_queue (
-    id BIGSERIAL PRIMARY KEY,
-    event_id UUID NOT NULL,
-    projection_name VARCHAR(255) NOT NULL,
-    event_type VARCHAR(255) NOT NULL,
-    event_data JSONB NOT NULL,
-    error_message TEXT NOT NULL,
-    error_stacktrace TEXT,
-    retry_count INTEGER DEFAULT 0,
-    first_failed_at TIMESTAMPTZ NOT NULL,
-    last_failed_at TIMESTAMPTZ NOT NULL,
-    status VARCHAR(50) DEFAULT 'failed',
-    resolved_at TIMESTAMPTZ,
-    resolved_by VARCHAR(255),
-    UNIQUE(event_id, projection_name)
-);
-
-CREATE INDEX IF NOT EXISTS idx_dlq_status
-ON dead_letter_queue (status);
-
-CREATE INDEX IF NOT EXISTS idx_dlq_projection
-ON dead_letter_queue (projection_name);
-"""
-
-OUTBOX_SCHEMA = """
-CREATE TABLE IF NOT EXISTS event_outbox (
-    id UUID PRIMARY KEY,
-    event_id UUID NOT NULL,
-    event_type VARCHAR(255) NOT NULL,
-    aggregate_id UUID NOT NULL,
-    aggregate_type VARCHAR(255) NOT NULL,
-    tenant_id UUID,
-    event_data JSONB NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL,
-    status VARCHAR(50) DEFAULT 'pending',
-    published_at TIMESTAMPTZ,
-    retry_count INTEGER DEFAULT 0,
-    last_error TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_outbox_status
-ON event_outbox (status);
-
-CREATE INDEX IF NOT EXISTS idx_outbox_created
-ON event_outbox (created_at) WHERE status = 'pending';
-"""
+OUTBOX_SCHEMA_STATEMENTS = [
+    """
+    CREATE TABLE IF NOT EXISTS event_outbox (
+        id UUID PRIMARY KEY,
+        event_id UUID NOT NULL,
+        event_type VARCHAR(255) NOT NULL,
+        aggregate_id UUID NOT NULL,
+        aggregate_type VARCHAR(255) NOT NULL,
+        tenant_id UUID,
+        event_data JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        status VARCHAR(50) DEFAULT 'pending',
+        published_at TIMESTAMPTZ,
+        retry_count INTEGER DEFAULT 0,
+        last_error TEXT
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_outbox_status
+    ON event_outbox (status)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_outbox_created
+    ON event_outbox (created_at) WHERE status = 'pending'
+    """,
+]
 
 
 @pytest.fixture(scope="session")
@@ -378,17 +396,7 @@ def postgres_connection_url(postgres_container: Any) -> str:
     """Get PostgreSQL connection URL from container."""
     # testcontainers returns psycopg2 URL, convert to asyncpg
     url = postgres_container.get_connection_url()
-    return url.replace("postgresql://", "postgresql+asyncpg://").replace(
-        "psycopg2", "asyncpg"
-    )
-
-
-@pytest.fixture(scope="session")
-def event_loop() -> Generator[asyncio.AbstractEventLoop, None, None]:
-    """Create event loop for async tests."""
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
+    return url.replace("postgresql://", "postgresql+asyncpg://").replace("psycopg2", "asyncpg")
 
 
 @pytest.fixture(scope="session")
@@ -400,8 +408,8 @@ async def postgres_engine(
 
     Creates all required tables on startup.
     """
-    from sqlalchemy.ext.asyncio import create_async_engine
     from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
 
     engine = create_async_engine(
         postgres_connection_url,
@@ -410,12 +418,16 @@ async def postgres_engine(
         max_overflow=10,
     )
 
-    # Create schema
+    # Create schema - execute each statement individually for asyncpg compatibility
     async with engine.begin() as conn:
-        await conn.execute(text(EVENTS_SCHEMA))
-        await conn.execute(text(CHECKPOINTS_SCHEMA))
-        await conn.execute(text(DLQ_SCHEMA))
-        await conn.execute(text(OUTBOX_SCHEMA))
+        for statement in EVENTS_SCHEMA_STATEMENTS:
+            await conn.execute(text(statement))
+        for statement in CHECKPOINTS_SCHEMA_STATEMENTS:
+            await conn.execute(text(statement))
+        for statement in DLQ_SCHEMA_STATEMENTS:
+            await conn.execute(text(statement))
+        for statement in OUTBOX_SCHEMA_STATEMENTS:
+            await conn.execute(text(statement))
 
     yield engine
 
@@ -427,7 +439,7 @@ async def postgres_session_factory(
     postgres_engine: AsyncEngine,
 ) -> AsyncGenerator[async_sessionmaker[AsyncSession], None]:
     """Provide SQLAlchemy async session factory."""
-    from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     factory = async_sessionmaker(
         postgres_engine,
@@ -459,6 +471,7 @@ async def clean_postgres_tables(postgres_engine: AsyncEngine) -> AsyncGenerator[
 # Redis Fixtures
 # ============================================================================
 
+
 @pytest.fixture(scope="session")
 def redis_container() -> Generator[Any, None, None]:
     """
@@ -486,7 +499,7 @@ def redis_connection_url(redis_container: Any) -> str:
     return f"redis://{host}:{port}"
 
 
-@pytest.fixture
+@pytest_asyncio.fixture(loop_scope="session")
 async def redis_client(redis_connection_url: str) -> AsyncGenerator[Any, None]:
     """
     Provide async Redis client connected to container.
@@ -498,7 +511,12 @@ async def redis_client(redis_connection_url: str) -> AsyncGenerator[Any, None]:
     except ImportError:
         pytest.skip("redis package not installed")
 
-    client = redis.from_url(redis_connection_url, decode_responses=True)
+    # Use single_connection_client=True to avoid connection pool event loop issues
+    client = redis.from_url(
+        redis_connection_url,
+        decode_responses=True,
+        single_connection_client=True,
+    )
 
     await client.flushall()
 
@@ -508,17 +526,39 @@ async def redis_client(redis_connection_url: str) -> AsyncGenerator[Any, None]:
     await client.aclose()
 
 
-@pytest.fixture
-async def clean_redis(redis_client: Any) -> AsyncGenerator[None, None]:
+@pytest_asyncio.fixture(loop_scope="session")
+async def clean_redis(redis_connection_url: str) -> AsyncGenerator[None, None]:
     """Clean Redis state before and after each test."""
-    await redis_client.flushall()
+    try:
+        import redis.asyncio as redis
+    except ImportError:
+        pytest.skip("redis package not installed")
+
+    # Use a separate single-connection client for cleanup to avoid event loop issues
+    client = redis.from_url(
+        redis_connection_url,
+        decode_responses=True,
+        single_connection_client=True,
+    )
+    await client.flushall()
+    await client.aclose()
+
     yield
-    await redis_client.flushall()
+
+    # Cleanup after test
+    client = redis.from_url(
+        redis_connection_url,
+        decode_responses=True,
+        single_connection_client=True,
+    )
+    await client.flushall()
+    await client.aclose()
 
 
 # ============================================================================
 # Event Store Fixtures
 # ============================================================================
+
 
 @pytest.fixture
 async def postgres_event_store(
@@ -526,7 +566,7 @@ async def postgres_event_store(
     clean_postgres_tables: None,
 ) -> AsyncGenerator[Any, None]:
     """Provide PostgreSQL event store for integration tests."""
-    from eventsource import PostgreSQLEventStore, EventRegistry
+    from eventsource import EventRegistry, PostgreSQLEventStore
 
     # Create fresh registry for tests
     registry = EventRegistry()
@@ -552,7 +592,7 @@ async def postgres_event_store_with_outbox(
     clean_postgres_tables: None,
 ) -> AsyncGenerator[Any, None]:
     """Provide PostgreSQL event store with outbox enabled."""
-    from eventsource import PostgreSQLEventStore, EventRegistry
+    from eventsource import EventRegistry, PostgreSQLEventStore
 
     registry = EventRegistry()
     registry.register(TestItemCreated)
@@ -575,49 +615,77 @@ async def postgres_event_store_with_outbox(
 # Redis Event Bus Fixtures
 # ============================================================================
 
+
 @pytest.fixture
-async def redis_event_bus(
+def redis_event_bus_factory(
     redis_connection_url: str,
-    clean_redis: None,
-) -> AsyncGenerator[Any, None]:
-    """Provide Redis event bus for integration tests."""
+) -> Any:
+    """
+    Factory fixture for creating Redis event bus instances.
+
+    Returns a factory function that creates a new, unconnected RedisEventBus.
+    Each test is responsible for calling connect() and shutdown().
+
+    This avoids event loop issues that occur when connecting in fixture setup.
+    """
     from eventsource import (
+        REDIS_AVAILABLE,
+        EventRegistry,
         RedisEventBus,
         RedisEventBusConfig,
-        EventRegistry,
-        REDIS_AVAILABLE,
     )
 
     if not REDIS_AVAILABLE:
         pytest.skip("Redis package not installed")
 
-    registry = EventRegistry()
-    registry.register(TestItemCreated)
-    registry.register(TestItemUpdated)
-    registry.register(TestItemDeleted)
-    registry.register(TestOrderCreated)
-    registry.register(TestOrderItemAdded)
-    registry.register(TestOrderCompleted)
+    def create_bus() -> RedisEventBus:
+        registry = EventRegistry()
+        registry.register(TestItemCreated)
+        registry.register(TestItemUpdated)
+        registry.register(TestItemDeleted)
+        registry.register(TestOrderCreated)
+        registry.register(TestOrderItemAdded)
+        registry.register(TestOrderCompleted)
 
-    config = RedisEventBusConfig(
-        redis_url=redis_connection_url,
-        stream_prefix="test_events",
-        consumer_group="test_group",
-        batch_size=10,
-        block_ms=1000,
-    )
+        config = RedisEventBusConfig(
+            redis_url=redis_connection_url,
+            stream_prefix="test_events",
+            consumer_group="test_group",
+            batch_size=10,
+            block_ms=1000,
+            single_connection_client=True,  # Avoid event loop issues in tests
+        )
 
-    bus = RedisEventBus(config=config, event_registry=registry)
+        return RedisEventBus(config=config, event_registry=registry)
+
+    return create_bus
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def redis_event_bus(
+    redis_event_bus_factory: Any,
+    clean_redis: None,
+) -> AsyncGenerator[Any, None]:
+    """
+    Provide Redis event bus for integration tests.
+
+    Creates a fresh bus instance, connects it within the test's event loop,
+    and ensures proper cleanup after the test.
+    """
+    bus = redis_event_bus_factory()
     await bus.connect()
 
     yield bus
 
-    await bus.shutdown()
+    # Only shutdown if still connected
+    if bus.is_connected:
+        await bus.shutdown()
 
 
 # ============================================================================
 # Repository Fixtures
 # ============================================================================
+
 
 @pytest.fixture
 async def postgres_checkpoint_repo(
@@ -658,6 +726,7 @@ async def postgres_outbox_repo(
 # ============================================================================
 # Sample Data Fixtures
 # ============================================================================
+
 
 @pytest.fixture
 def sample_aggregate_id() -> UUID:

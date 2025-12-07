@@ -28,7 +28,6 @@ from eventsource import (
 from eventsource.projections import DeclarativeProjection, handles
 from eventsource.repositories import InMemoryCheckpointRepository, InMemoryDLQRepository
 
-
 # =============================================================================
 # Domain Events
 # =============================================================================
@@ -126,9 +125,8 @@ class OrderAggregate(AggregateRoot[OrderState]):
         elif isinstance(event, OrderDelivered):
             if self._state:
                 self._state = self._state.model_copy(update={"status": "delivered"})
-        elif isinstance(event, OrderCancelled):
-            if self._state:
-                self._state = self._state.model_copy(update={"status": "cancelled"})
+        elif isinstance(event, OrderCancelled) and self._state:
+            self._state = self._state.model_copy(update={"status": "cancelled"})
 
     def place(
         self, customer_id: UUID, customer_name: str, total_amount: float, item_count: int
@@ -306,7 +304,7 @@ class CustomerStatsProjection(DeclarativeProjection):
         """Track delivered order."""
         # Need to find customer from order - in production, you'd have a lookup
         # For demo, we iterate
-        for customer_id, stats in self.stats.items():
+        for _customer_id, stats in self.stats.items():
             if stats["customer_id"]:
                 # In a real system, you'd look this up properly
                 pass
@@ -497,7 +495,9 @@ async def main():
     # Replay all events to rebuild projection
     print("\n10. Rebuilding projection from event stream")
     async for stored_event in event_store.read_all():
-        if isinstance(stored_event.event, (OrderPlaced, OrderShipped, OrderDelivered, OrderCancelled)):
+        if isinstance(
+            stored_event.event, OrderPlaced | OrderShipped | OrderDelivered | OrderCancelled
+        ):
             await order_list.handle(stored_event.event)
 
     print(f"    Rebuilt orders: {len(order_list.get_all_orders())}")

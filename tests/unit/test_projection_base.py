@@ -10,8 +10,6 @@ Tests cover:
 - Handler discovery and validation
 """
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -144,7 +142,7 @@ class TestEventHandlerBase:
 
         class OrderHandler(EventHandlerBase):
             def can_handle(self, event: DomainEvent) -> bool:
-                return isinstance(event, (OrderCreated, OrderShipped))
+                return isinstance(event, OrderCreated | OrderShipped)
 
             async def handle(self, event: DomainEvent) -> None:
                 events_handled.append(event)
@@ -460,9 +458,7 @@ class TestDeclarativeProjection:
 
         class TestProjection(DeclarativeProjection):
             @handles(OrderCreated)
-            async def _handle_order_created(
-                self, conn, event: OrderCreated
-            ) -> None:
+            async def _handle_order_created(self, conn, event: OrderCreated) -> None:
                 conn_values.append(conn)
                 events_handled.append(event)
 
@@ -500,9 +496,7 @@ class TestDeclarativeProjection:
 
             class BadProjection(DeclarativeProjection):
                 @handles(OrderCreated)
-                async def _handle_order_created(
-                    self, a, b, c: OrderCreated
-                ) -> None:
+                async def _handle_order_created(self, a, b, c: OrderCreated) -> None:
                     pass
 
             BadProjection(checkpoint_repo=checkpoint_repo)

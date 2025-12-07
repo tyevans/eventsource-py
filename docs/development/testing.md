@@ -1662,4 +1662,3 @@ Key requirements:
 - [API Reference - Aggregates](../api/aggregates.md) - AggregateRoot documentation
 - [API Reference - Projections](../api/projections.md) - Projection system
 - [Examples - Testing Patterns](../examples/testing.md) - Additional examples
-- [Contributing Guide](../../CONTRIBUTING.md) - Development workflow

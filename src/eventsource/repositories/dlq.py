@@ -9,11 +9,11 @@ all retry attempts. This enables:
 """
 
 import traceback
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from threading import Lock
 from typing import Any, Protocol, runtime_checkable
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
@@ -728,7 +728,7 @@ class InMemoryDLQRepository:
 
             total_failed = sum(1 for e in active_entries if e.status == "failed")
             total_retrying = sum(1 for e in active_entries if e.status == "retrying")
-            affected_projections = len(set(e.projection_name for e in active_entries))
+            affected_projections = len({e.projection_name for e in active_entries})
 
             oldest_failure = None
             if active_entries:
@@ -769,19 +769,26 @@ class InMemoryDLQRepository:
                 failures_with_first = [e.first_failed_at for e in entries if e.first_failed_at]
                 failures_with_last = [e.last_failed_at for e in entries if e.last_failed_at]
 
-                result.append({
-                    "projection_name": projection_name,
-                    "failure_count": len(entries),
-                    "oldest_failure": (
-                        min(failures_with_first).isoformat() if failures_with_first else None
-                    ),
-                    "most_recent_failure": (
-                        max(failures_with_last).isoformat() if failures_with_last else None
-                    ),
-                })
+                result.append(
+                    {
+                        "projection_name": projection_name,
+                        "failure_count": len(entries),
+                        "oldest_failure": (
+                            min(failures_with_first).isoformat() if failures_with_first else None
+                        ),
+                        "most_recent_failure": (
+                            max(failures_with_last).isoformat() if failures_with_last else None
+                        ),
+                    }
+                )
 
             # Sort by failure count descending
-            result.sort(key=lambda x: x["failure_count"], reverse=True)
+            # Cast needed because dict values are typed as Any
+            def get_failure_count(x: dict[str, Any]) -> int:
+                count = x["failure_count"]
+                return count if isinstance(count, int) else 0
+
+            result.sort(key=get_failure_count, reverse=True)
             return result
 
     async def delete_resolved_events(self, older_than_days: int = 30) -> int:
@@ -794,20 +801,18 @@ class InMemoryDLQRepository:
         Returns:
             Number of events deleted
         """
-        cutoff = datetime.now(UTC).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
+        cutoff = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
         # Subtract days (simplified for in-memory implementation)
         from datetime import timedelta
+
         cutoff = cutoff - timedelta(days=older_than_days)
 
         deleted = 0
         with self._lock:
             keys_to_delete = []
             for key, entry in self._entries.items():
-                if entry.status == "resolved" and entry.resolved_at:
-                    if entry.resolved_at < cutoff:
-                        keys_to_delete.append(key)
+                if entry.status == "resolved" and entry.resolved_at and entry.resolved_at < cutoff:
+                    keys_to_delete.append(key)
 
             for key in keys_to_delete:
                 del self._entries[key]

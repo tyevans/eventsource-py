@@ -4,7 +4,6 @@ These tests use mocks to test the RedisEventBus without requiring
 a real Redis server.
 """
 
-import asyncio
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
@@ -12,7 +11,6 @@ from uuid import UUID, uuid4
 import pytest
 
 from eventsource.bus.redis import (
-    REDIS_AVAILABLE,
     RedisEventBus,
     RedisEventBusConfig,
     RedisEventBusStats,
@@ -640,9 +638,7 @@ class TestRedisEventBusDispatch:
 class TestRedisEventBusDeserialization:
     """Tests for event deserialization."""
 
-    async def test_deserialize_known_event(
-        self, bus: RedisEventBus, event_registry: EventRegistry
-    ):
+    async def test_deserialize_known_event(self, bus: RedisEventBus, event_registry: EventRegistry):
         """Test deserializing a known event type."""
         aggregate_id = uuid4()
         customer_id = uuid4()
@@ -716,9 +712,7 @@ class TestRedisEventBusMessageProcessing:
         assert len(handler.handled_events) == 1
         mock_redis.xack.assert_called_once()
 
-    async def test_process_message_unknown_event(
-        self, bus: RedisEventBus, mock_redis: AsyncMock
-    ):
+    async def test_process_message_unknown_event(self, bus: RedisEventBus, mock_redis: AsyncMock):
         """Test processing unknown event type."""
         message_data = {
             "event_id": str(uuid4()),
@@ -905,9 +899,7 @@ class TestRedisEventBusPendingRecovery:
         assert stats["claimed"] == 1
         assert stats["reprocessed"] == 1
 
-    async def test_recover_pending_messages_to_dlq(
-        self, bus: RedisEventBus, mock_redis: AsyncMock
-    ):
+    async def test_recover_pending_messages_to_dlq(self, bus: RedisEventBus, mock_redis: AsyncMock):
         """Test pending message recovery sends to DLQ after max retries."""
         mock_redis.xpending.return_value = {"pending": 1}
         mock_redis.xpending_range.return_value = [
@@ -1020,14 +1012,15 @@ class TestRedisEventBusErrorHandling:
 
     def test_redis_not_available_error(self):
         """Test error when redis is not available."""
-        with patch("eventsource.bus.redis.REDIS_AVAILABLE", False):
-            with pytest.raises(RedisNotAvailableError):
-                # Need to reimport to pick up the patched value
-                from eventsource.bus.redis import RedisEventBus as PatchedBus
+        with (
+            patch("eventsource.bus.redis.REDIS_AVAILABLE", False),
+            pytest.raises(RedisNotAvailableError),
+        ):
+            # Need to reimport to pick up the patched value
 
-                # This won't work due to how Python imports work
-                # We test the error class directly instead
-                raise RedisNotAvailableError()
+            # This won't work due to how Python imports work
+            # We test the error class directly instead
+            raise RedisNotAvailableError()
 
     def test_redis_not_available_error_message(self):
         """Test RedisNotAvailableError message."""

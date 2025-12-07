@@ -31,14 +31,15 @@ Example:
 from __future__ import annotations
 
 import asyncio
-import json
+import contextlib
 import logging
 import socket
 import uuid
 from collections import defaultdict
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from eventsource.bus.interface import (
     EventBus,
@@ -83,8 +84,7 @@ class RedisNotAvailableError(ImportError):
 
     def __init__(self) -> None:
         super().__init__(
-            "Redis package is not installed. "
-            "Install it with: pip install eventsource[redis]"
+            "Redis package is not installed. Install it with: pip install eventsource[redis]"
         )
 
 
@@ -108,6 +108,8 @@ class RedisEventBusConfig:
         enable_tracing: Enable OpenTelemetry tracing if available (default: True)
         retry_key_prefix: Prefix for retry count keys (default: "retry")
         retry_key_expiry_seconds: Expiry for retry count keys (default: 86400 = 24h)
+        single_connection_client: Use single connection instead of pool (default: False).
+            Useful for testing to avoid event loop issues.
     """
 
     redis_url: str = "redis://localhost:6379"
@@ -125,6 +127,7 @@ class RedisEventBusConfig:
     enable_tracing: bool = True
     retry_key_prefix: str = "retry"
     retry_key_expiry_seconds: int = 86400  # 24 hours
+    single_connection_client: bool = False
 
     def __post_init__(self) -> None:
         """Generate consumer name if not provided."""
@@ -233,9 +236,7 @@ class RedisEventBus(EventBus):
         self._consuming = False
 
         # Subscriber management
-        self._subscribers: dict[type[DomainEvent], list[HandlerWrapper]] = defaultdict(
-            list
-        )
+        self._subscribers: dict[type[DomainEvent], list[HandlerWrapper]] = defaultdict(list)
         self._all_event_handlers: list[HandlerWrapper] = []
         self._lock = asyncio.Lock()
 
@@ -279,12 +280,13 @@ class RedisEventBus(EventBus):
             return
 
         try:
-            self._redis = await aioredis.from_url(
+            self._redis = await aioredis.from_url(  # type: ignore[no-untyped-call]
                 self._config.redis_url,
                 encoding="utf-8",
                 decode_responses=True,
                 socket_timeout=self._config.socket_timeout,
                 socket_connect_timeout=self._config.socket_connect_timeout,
+                single_connection_client=self._config.single_connection_client,
             )
 
             # Test connection
@@ -310,10 +312,8 @@ class RedisEventBus(EventBus):
         """Disconnect from Redis."""
         if self._consumer_task:
             self._consumer_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._consumer_task
-            except asyncio.CancelledError:
-                pass
             self._consumer_task = None
 
         if self._redis:
@@ -349,16 +349,12 @@ class RedisEventBus(EventBus):
         except ResponseError as e:
             if "BUSYGROUP" in str(e):
                 # Group already exists, this is fine
-                logger.debug(
-                    f"Consumer group '{self._config.consumer_group}' already exists"
-                )
+                logger.debug(f"Consumer group '{self._config.consumer_group}' already exists")
             else:
                 logger.error(f"Failed to create consumer group: {e}")
                 raise
 
-    def _normalize_handler(
-        self, handler: EventHandler | EventHandlerFunc
-    ) -> HandlerWrapper:
+    def _normalize_handler(self, handler: EventHandler | EventHandlerFunc) -> HandlerWrapper:
         """
         Normalize a handler to an async callable.
 
@@ -370,7 +366,7 @@ class RedisEventBus(EventBus):
         """
         # If it's an object with a handle method
         if hasattr(handler, "handle"):
-            handle_method = getattr(handler, "handle")
+            handle_method = handler.handle
             if asyncio.iscoroutinefunction(handle_method):
                 return (handler, handle_method)
             else:
@@ -478,7 +474,7 @@ class RedisEventBus(EventBus):
 
         message_id = await self._redis.xadd(
             name=self._config.stream_name,
-            fields=event_data,
+            fields=event_data,  # type: ignore[arg-type]
         )
 
         self._stats.events_published += 1
@@ -503,7 +499,7 @@ class RedisEventBus(EventBus):
         async with self._redis.pipeline(transaction=False) as pipe:
             for event in events:
                 event_data = self._serialize_event(event)
-                pipe.xadd(name=self._config.stream_name, fields=event_data)
+                pipe.xadd(name=self._config.stream_name, fields=event_data)  # type: ignore[arg-type]
 
             # Execute all XADDs in a single network round-trip
             message_ids = await pipe.execute()
@@ -695,6 +691,7 @@ class RedisEventBus(EventBus):
         await self._ensure_consumer_group_exists()
 
         actual_consumer_name = consumer_name or self._config.consumer_name
+        assert actual_consumer_name is not None, "Consumer name must be set"
         self._consuming = True
 
         logger.info(
@@ -723,11 +720,9 @@ class RedisEventBus(EventBus):
                     continue
 
                 # Process messages
-                for stream_name, stream_messages in messages:
+                for _stream_name, stream_messages in messages:
                     for message_id, message_data in stream_messages:
-                        await self._process_message(
-                            message_id, message_data, actual_consumer_name
-                        )
+                        await self._process_message(message_id, message_data, actual_consumer_name)
 
             except asyncio.CancelledError:
                 logger.info("Consumer loop cancelled")
@@ -1090,9 +1085,7 @@ class RedisEventBus(EventBus):
                 # Get retry count from Redis
                 retry_key = self._config.get_retry_key(message_id)
                 retry_count_str = await self._redis.get(retry_key)
-                retry_count = (
-                    int(retry_count_str) if retry_count_str else times_delivered - 1
-                )
+                retry_count = int(retry_count_str) if retry_count_str else times_delivered - 1
 
                 try:
                     # Claim the message
@@ -1143,9 +1136,7 @@ class RedisEventBus(EventBus):
                     else:
                         # Reprocess the message
                         try:
-                            await self._process_message(
-                                message_id, message_data, "recovery-worker"
-                            )
+                            await self._process_message(message_id, message_data, "recovery-worker")
                             stats["reprocessed"] += 1
                             self._stats.messages_recovered += 1
 
@@ -1226,7 +1217,7 @@ class RedisEventBus(EventBus):
 
         await self._redis.xadd(
             name=self._config.dlq_stream_name,
-            fields=dlq_data,
+            fields=dlq_data,  # type: ignore[arg-type]
         )
 
         logger.info(

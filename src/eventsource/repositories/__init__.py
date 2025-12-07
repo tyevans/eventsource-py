@@ -14,6 +14,12 @@ Each repository type provides:
 """
 
 # Checkpoint repository
+# JSON utilities
+from eventsource.repositories._json import (
+    EventSourceJSONEncoder,
+    json_dumps,
+    json_loads,
+)
 from eventsource.repositories.checkpoint import (
     CheckpointData,
     CheckpointRepository,
@@ -42,13 +48,6 @@ from eventsource.repositories.outbox import (
     OutboxRepositoryProtocol,
     OutboxStats,
     PostgreSQLOutboxRepository,
-)
-
-# JSON utilities
-from eventsource.repositories._json import (
-    EventSourceJSONEncoder,
-    json_dumps,
-    json_loads,
 )
 
 __all__ = [

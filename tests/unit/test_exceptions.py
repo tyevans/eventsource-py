@@ -4,18 +4,19 @@ Unit tests for exceptions module.
 Tests all exception types and their error messages.
 """
 
-import pytest
 from uuid import uuid4
 
+import pytest
+
 from eventsource.exceptions import (
-    EventSourceError,
-    OptimisticLockError,
-    EventNotFoundError,
-    ProjectionError,
     AggregateNotFoundError,
-    EventStoreError,
-    EventBusError,
     CheckpointError,
+    EventBusError,
+    EventNotFoundError,
+    EventSourceError,
+    EventStoreError,
+    OptimisticLockError,
+    ProjectionError,
     SerializationError,
 )
 

@@ -3,7 +3,7 @@
 [![Python Version](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![PyPI version](https://img.shields.io/badge/pypi-coming%20soon-lightgrey.svg)](https://pypi.org/project/eventsource/)
-[![CI](https://img.shields.io/badge/CI-passing-brightgreen.svg)](https://github.com/yourusername/eventsource-py/actions)
+[![CI](https://github.com/tyevans/eventsource-py/actions/workflows/ci.yml/badge.svg)](https://github.com/tyevans/eventsource-py/actions)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 
 A production-ready event sourcing library for Python 3.11+.
@@ -209,7 +209,6 @@ For comprehensive documentation, see the [Documentation Index](docs/index.md).
 - [Getting Started Guide](docs/getting-started.md) - Installation and first steps
 - [Architecture Overview](docs/architecture.md) - System design and concepts
 - [FAQ](docs/faq.md) - Frequently asked questions
-- [Migration Guide](docs/migration-guide.md) - For Honeybadger users
 
 ### Guides
 

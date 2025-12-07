@@ -93,4 +93,3 @@ nav:
   - Development:
       - Code Structure: development/code-structure.md
       - Testing: development/testing.md
-  - Migration Guide: migration-guide.md

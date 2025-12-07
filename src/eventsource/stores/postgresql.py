@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, AsyncIterator
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import text
@@ -39,7 +40,7 @@ try:
 
     OTEL_AVAILABLE = True
 except ImportError:
-    trace = None
+    trace = None  # type: ignore[assignment]
     OTEL_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
@@ -118,7 +119,7 @@ class PostgreSQLEventStore(EventStore):
         if self._enable_tracing and trace is not None:
             self._tracer = trace.get_tracer(__name__)
         else:
-            self._tracer = None
+            self._tracer = None  # type: ignore[assignment]
 
     async def append_events(
         self,
@@ -208,12 +209,8 @@ class PostgreSQLEventStore(EventStore):
                 elif expected_version == ExpectedVersion.STREAM_EXISTS:
                     # Stream must exist (have at least one event)
                     if current_version == 0:
-                        logger.debug(
-                            f"Stream does not exist for {aggregate_type}/{aggregate_id}"
-                        )
-                        raise OptimisticLockError(
-                            aggregate_id, expected_version, current_version
-                        )
+                        logger.debug(f"Stream does not exist for {aggregate_type}/{aggregate_id}")
+                        raise OptimisticLockError(aggregate_id, expected_version, current_version)
                 elif expected_version == ExpectedVersion.NO_STREAM:
                     # Stream must not exist
                     if current_version != 0:
@@ -221,9 +218,7 @@ class PostgreSQLEventStore(EventStore):
                             f"Stream already exists for {aggregate_type}/{aggregate_id}: "
                             f"version={current_version}"
                         )
-                        raise OptimisticLockError(
-                            aggregate_id, expected_version, current_version
-                        )
+                        raise OptimisticLockError(aggregate_id, expected_version, current_version)
                 else:
                     # Specific version check (optimistic locking)
                     if current_version != expected_version:
@@ -231,9 +226,7 @@ class PostgreSQLEventStore(EventStore):
                             f"Version conflict for {aggregate_type}/{aggregate_id}: "
                             f"expected={expected_version}, actual={current_version}"
                         )
-                        raise OptimisticLockError(
-                            aggregate_id, expected_version, current_version
-                        )
+                        raise OptimisticLockError(aggregate_id, expected_version, current_version)
 
                 # Append events
                 new_version = current_version
@@ -316,7 +309,7 @@ class PostgreSQLEventStore(EventStore):
                     )
                     row = result.fetchone()
                     actual_version = row[0] if row else 0
-                    raise OptimisticLockError(aggregate_id, expected_version, actual_version)
+                    raise OptimisticLockError(aggregate_id, expected_version, actual_version) from e
                 raise
 
     async def _write_to_outbox(
@@ -863,13 +856,9 @@ class PostgreSQLEventStore(EventStore):
                     except (ValueError, AttributeError):
                         result[key] = value
                 # Convert datetime strings
-                elif isinstance(value, str) and (
-                    key == "occurred_at" or key.endswith("_at")
-                ):
+                elif isinstance(value, str) and (key == "occurred_at" or key.endswith("_at")):
                     try:
-                        result[key] = datetime.fromisoformat(
-                            value.replace("Z", "+00:00")
-                        )
+                        result[key] = datetime.fromisoformat(value.replace("Z", "+00:00"))
                     except (ValueError, AttributeError):
                         result[key] = value
                 # Recursively process nested structures

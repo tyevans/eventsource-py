@@ -13,7 +13,6 @@ Brief description of what this PR does.
 
 ## Checklist
 
-- [ ] I have read the [CONTRIBUTING](CONTRIBUTING.md) guidelines
 - [ ] My code follows the project's code style
 - [ ] I have added tests that prove my fix/feature works
 - [ ] All new and existing tests pass

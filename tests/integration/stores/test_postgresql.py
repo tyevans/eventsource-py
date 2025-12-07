@@ -20,9 +20,9 @@ from uuid import uuid4
 import pytest
 
 from eventsource import (
+    ExpectedVersion,
     OptimisticLockError,
     PostgreSQLEventStore,
-    ExpectedVersion,
     ReadDirection,
     ReadOptions,
 )
@@ -30,13 +30,12 @@ from eventsource import (
 from ..conftest import (
     TestItemCreated,
     TestItemUpdated,
-    TestItemDeleted,
     TestOrderCreated,
     skip_if_no_postgres_infra,
 )
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+    pass
 
 
 pytestmark = [
@@ -552,7 +551,7 @@ class TestPostgreSQLEventStoreIdempotency:
 
         # Try to append same event again with ANY version
         # The event should be skipped due to idempotency check
-        result2 = await postgres_event_store.append_events(
+        await postgres_event_store.append_events(
             aggregate_id=sample_aggregate_id,
             aggregate_type="TestItem",
             events=[event1],

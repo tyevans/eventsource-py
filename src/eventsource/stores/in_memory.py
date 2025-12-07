@@ -6,9 +6,9 @@ as all events are lost when the process terminates.
 """
 
 from collections import defaultdict
-from datetime import UTC, datetime
+from collections.abc import AsyncIterator
+from datetime import datetime
 from threading import Lock
-from typing import AsyncIterator
 from uuid import UUID
 
 from eventsource.events.base import DomainEvent
@@ -171,7 +171,9 @@ class InMemoryEventStore(EventStore):
                 self._aggregate_types[aggregate_id] = aggregate_type
 
             # Calculate new version based on events of this aggregate type
-            new_events = [e for e in self._events[aggregate_id] if e.aggregate_type == aggregate_type]
+            new_events = [
+                e for e in self._events[aggregate_id] if e.aggregate_type == aggregate_type
+            ]
             new_version = len(new_events)
 
             return AppendResult.successful(new_version, last_global_position)
@@ -261,7 +263,7 @@ class InMemoryEventStore(EventStore):
             all_events: list[DomainEvent] = []
 
             # Iterate through all aggregates
-            for agg_id, events in self._events.items():
+            for _agg_id, events in self._events.items():
                 for event in events:
                     # Filter by aggregate type
                     if event.aggregate_type != aggregate_type:
@@ -272,9 +274,11 @@ class InMemoryEventStore(EventStore):
                         continue
 
                     # Filter by timestamp if specified
-                    if from_timestamp is not None:
-                        if event.occurred_at.timestamp() <= from_timestamp:
-                            continue
+                    if (
+                        from_timestamp is not None
+                        and event.occurred_at.timestamp() <= from_timestamp
+                    ):
+                        continue
 
                     all_events.append(event)
 
@@ -369,7 +373,7 @@ class InMemoryEventStore(EventStore):
 
             # Apply from_position filter
             if options.from_position > 0:
-                all_events = all_events[options.from_position:]
+                all_events = all_events[options.from_position :]
 
             total_version = len(all_events)
 
@@ -391,7 +395,7 @@ class InMemoryEventStore(EventStore):
 
                 # Find global position for this event
                 global_pos = 0
-                for evt, gpos, sid in self._global_events:
+                for evt, gpos, _sid in self._global_events:
                     if evt.event_id == event.event_id:
                         global_pos = gpos
                         break
@@ -441,7 +445,9 @@ class InMemoryEventStore(EventStore):
             # Apply from_position filter
             if options.from_position > 0:
                 all_global = [
-                    (event, pos, sid) for event, pos, sid in all_global if pos > options.from_position
+                    (event, pos, sid)
+                    for event, pos, sid in all_global
+                    if pos > options.from_position
                 ]
 
             # Apply timestamp filters
@@ -476,7 +482,9 @@ class InMemoryEventStore(EventStore):
                     agg_id = UUID(parts[0])
                     agg_type = parts[1]
                     # Count events in stream up to this one
-                    stream_events = [e for e in self._events[agg_id] if e.aggregate_type == agg_type]
+                    stream_events = [
+                        e for e in self._events[agg_id] if e.aggregate_type == agg_type
+                    ]
                     stream_pos = 0
                     for i, e in enumerate(stream_events):
                         if e.event_id == event.event_id:

@@ -28,7 +28,7 @@ try:
     OTEL_AVAILABLE = True
 except ImportError:
     OTEL_AVAILABLE = False
-    trace = None  # type: ignore[assignment, unused-ignore]
+    trace = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -65,9 +65,7 @@ class InMemoryEventBus(EventBus):
     def __init__(self) -> None:
         """Initialize the event bus with empty subscriber registry."""
         # Map of event type -> list of (original_handler, normalized_handler) tuples
-        self._subscribers: dict[type[DomainEvent], list[HandlerWrapper]] = defaultdict(
-            list
-        )
+        self._subscribers: dict[type[DomainEvent], list[HandlerWrapper]] = defaultdict(list)
         # List of wildcard handlers
         self._all_event_handlers: list[HandlerWrapper] = []
         # Lock for thread-safe subscription management
@@ -83,9 +81,7 @@ class InMemoryEventBus(EventBus):
             "background_tasks_completed": 0,
         }
 
-    def _normalize_handler(
-        self, handler: EventHandler | EventHandlerFunc
-    ) -> HandlerWrapper:
+    def _normalize_handler(self, handler: EventHandler | EventHandlerFunc) -> HandlerWrapper:
         """
         Normalize a handler to an async callable.
 
@@ -97,7 +93,7 @@ class InMemoryEventBus(EventBus):
         """
         # If it's an object with a handle method
         if hasattr(handler, "handle"):
-            handle_method = getattr(handler, "handle")
+            handle_method = handler.handle
             if asyncio.iscoroutinefunction(handle_method):
                 # Already async
                 return (handler, handle_method)
@@ -248,9 +244,7 @@ class InMemoryEventBus(EventBus):
         else:
             await self._invoke_handlers(handlers, event)
 
-    async def _invoke_handlers(
-        self, handlers: list[HandlerWrapper], event: DomainEvent
-    ) -> None:
+    async def _invoke_handlers(self, handlers: list[HandlerWrapper], event: DomainEvent) -> None:
         """
         Invoke all handlers for an event concurrently.
 
@@ -262,9 +256,7 @@ class InMemoryEventBus(EventBus):
         tasks = [self._safe_handle(handler, event) for handler in handlers]
         await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def _safe_handle(
-        self, handler_wrapper: HandlerWrapper, event: DomainEvent
-    ) -> None:
+    async def _safe_handle(self, handler_wrapper: HandlerWrapper, event: DomainEvent) -> None:
         """
         Safely execute a handler, catching and logging exceptions.
 

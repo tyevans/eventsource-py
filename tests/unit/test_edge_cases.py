@@ -15,19 +15,16 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from eventsource.bus.memory import InMemoryEventBus
 from eventsource.events.base import DomainEvent
-from eventsource.exceptions import OptimisticLockError, AggregateNotFoundError
-from eventsource.stores.in_memory import InMemoryEventStore
-from eventsource.stores.interface import (
-    ExpectedVersion,
-    ReadDirection,
-    ReadOptions,
-)
 from eventsource.repositories.checkpoint import InMemoryCheckpointRepository
 from eventsource.repositories.dlq import InMemoryDLQRepository
 from eventsource.repositories.outbox import InMemoryOutboxRepository
-from eventsource.bus.memory import InMemoryEventBus
-
+from eventsource.stores.in_memory import InMemoryEventStore
+from eventsource.stores.interface import (
+    ReadDirection,
+    ReadOptions,
+)
 
 # --- Test Event Classes ---
 
@@ -59,9 +56,7 @@ class TestInMemoryEventStoreEdgeCases:
         return InMemoryEventStore()
 
     @pytest.mark.asyncio
-    async def test_get_events_with_to_timestamp_filter(
-        self, store: InMemoryEventStore
-    ):
+    async def test_get_events_with_to_timestamp_filter(self, store: InMemoryEventStore):
         """Test filtering events by to_timestamp."""
         aggregate_id = uuid4()
 
@@ -71,15 +66,11 @@ class TestInMemoryEventStoreEdgeCases:
 
         # Get events with future to_timestamp
         future_time = datetime.now(UTC) + timedelta(hours=1)
-        stream = await store.get_events(
-            aggregate_id, "Test", to_timestamp=future_time
-        )
+        stream = await store.get_events(aggregate_id, "Test", to_timestamp=future_time)
         assert len(stream.events) == 1
 
     @pytest.mark.asyncio
-    async def test_get_events_by_type_with_timestamp_filter(
-        self, store: InMemoryEventStore
-    ):
+    async def test_get_events_by_type_with_timestamp_filter(self, store: InMemoryEventStore):
         """Test get_events_by_type with timestamp filter."""
         aggregate_id = uuid4()
         old_timestamp = datetime.now(UTC).timestamp() - 3600  # 1 hour ago
@@ -88,15 +79,11 @@ class TestInMemoryEventStoreEdgeCases:
         await store.append_events(aggregate_id, "Test", [event], 0)
 
         # Get events created after old timestamp
-        events = await store.get_events_by_type(
-            "Test", from_timestamp=old_timestamp
-        )
+        events = await store.get_events_by_type("Test", from_timestamp=old_timestamp)
         assert len(events) == 1
 
     @pytest.mark.asyncio
-    async def test_get_events_by_type_with_tenant_filter(
-        self, store: InMemoryEventStore
-    ):
+    async def test_get_events_by_type_with_tenant_filter(self, store: InMemoryEventStore):
         """Test get_events_by_type with tenant_id filter."""
         aggregate_id = uuid4()
         tenant_id = uuid4()
@@ -113,12 +100,8 @@ class TestInMemoryEventStoreEdgeCases:
             data="tenant2",
         )
 
-        await store.append_events(
-            event1.aggregate_id, "Test", [event1], 0
-        )
-        await store.append_events(
-            event2.aggregate_id, "Test", [event2], 0
-        )
+        await store.append_events(event1.aggregate_id, "Test", [event1], 0)
+        await store.append_events(event2.aggregate_id, "Test", [event2], 0)
 
         # Filter by tenant_id
         events = await store.get_events_by_type("Test", tenant_id=tenant_id)
@@ -130,17 +113,12 @@ class TestInMemoryEventStoreEdgeCases:
         """Test reading stream in backward direction."""
         aggregate_id = uuid4()
 
-        events = [
-            EdgeTestEvent(aggregate_id=aggregate_id, data=f"event_{i}")
-            for i in range(5)
-        ]
+        events = [EdgeTestEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(5)]
         await store.append_events(aggregate_id, "Test", events, 0)
 
         stream_id = f"{aggregate_id}:Test"
         options = ReadOptions(direction=ReadDirection.BACKWARD)
-        stored_events = [
-            se async for se in store.read_stream(stream_id, options)
-        ]
+        stored_events = [se async for se in store.read_stream(stream_id, options)]
 
         assert len(stored_events) == 5
         # Should be in reverse order (last event first)
@@ -148,9 +126,7 @@ class TestInMemoryEventStoreEdgeCases:
         assert "event_0" in stored_events[4].event.data
 
     @pytest.mark.asyncio
-    async def test_read_stream_without_aggregate_type(
-        self, store: InMemoryEventStore
-    ):
+    async def test_read_stream_without_aggregate_type(self, store: InMemoryEventStore):
         """Test reading stream with ID only (no aggregate type in stream_id)."""
         aggregate_id = uuid4()
 
@@ -159,17 +135,13 @@ class TestInMemoryEventStoreEdgeCases:
 
         # Use just the aggregate ID as stream_id
         stream_id = str(aggregate_id)
-        stored_events = [
-            se async for se in store.read_stream(stream_id)
-        ]
+        stored_events = [se async for se in store.read_stream(stream_id)]
 
         # Should return events (though may not filter by type)
         assert len(stored_events) >= 1
 
     @pytest.mark.asyncio
-    async def test_read_stream_with_from_timestamp(
-        self, store: InMemoryEventStore
-    ):
+    async def test_read_stream_with_from_timestamp(self, store: InMemoryEventStore):
         """Test reading stream with from_timestamp filter."""
         aggregate_id = uuid4()
 
@@ -180,15 +152,11 @@ class TestInMemoryEventStoreEdgeCases:
         past_time = datetime.now(UTC) - timedelta(hours=1)
         options = ReadOptions(from_timestamp=past_time)
 
-        stored_events = [
-            se async for se in store.read_stream(stream_id, options)
-        ]
+        stored_events = [se async for se in store.read_stream(stream_id, options)]
         assert len(stored_events) == 1
 
     @pytest.mark.asyncio
-    async def test_read_stream_with_to_timestamp(
-        self, store: InMemoryEventStore
-    ):
+    async def test_read_stream_with_to_timestamp(self, store: InMemoryEventStore):
         """Test reading stream with to_timestamp filter."""
         aggregate_id = uuid4()
 
@@ -199,15 +167,11 @@ class TestInMemoryEventStoreEdgeCases:
         future_time = datetime.now(UTC) + timedelta(hours=1)
         options = ReadOptions(to_timestamp=future_time)
 
-        stored_events = [
-            se async for se in store.read_stream(stream_id, options)
-        ]
+        stored_events = [se async for se in store.read_stream(stream_id, options)]
         assert len(stored_events) == 1
 
     @pytest.mark.asyncio
-    async def test_read_all_with_from_timestamp(
-        self, store: InMemoryEventStore
-    ):
+    async def test_read_all_with_from_timestamp(self, store: InMemoryEventStore):
         """Test read_all with from_timestamp filter."""
         aggregate_id = uuid4()
 
@@ -221,9 +185,7 @@ class TestInMemoryEventStoreEdgeCases:
         assert len(stored_events) == 1
 
     @pytest.mark.asyncio
-    async def test_read_all_with_to_timestamp(
-        self, store: InMemoryEventStore
-    ):
+    async def test_read_all_with_to_timestamp(self, store: InMemoryEventStore):
         """Test read_all with to_timestamp filter."""
         aggregate_id = uuid4()
 
@@ -237,16 +199,11 @@ class TestInMemoryEventStoreEdgeCases:
         assert len(stored_events) == 1
 
     @pytest.mark.asyncio
-    async def test_read_all_backward_direction(
-        self, store: InMemoryEventStore
-    ):
+    async def test_read_all_backward_direction(self, store: InMemoryEventStore):
         """Test read_all in backward direction."""
         aggregate_id = uuid4()
 
-        events = [
-            EdgeTestEvent(aggregate_id=aggregate_id, data=f"event_{i}")
-            for i in range(3)
-        ]
+        events = [EdgeTestEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(3)]
         await store.append_events(aggregate_id, "Test", events, 0)
 
         options = ReadOptions(direction=ReadDirection.BACKWARD)
@@ -257,16 +214,11 @@ class TestInMemoryEventStoreEdgeCases:
         assert "event_2" in stored_events[0].event.data
 
     @pytest.mark.asyncio
-    async def test_read_all_stream_position_calculation(
-        self, store: InMemoryEventStore
-    ):
+    async def test_read_all_stream_position_calculation(self, store: InMemoryEventStore):
         """Test that stream position is correctly calculated in read_all."""
         aggregate_id = uuid4()
 
-        events = [
-            EdgeTestEvent(aggregate_id=aggregate_id, data=f"event_{i}")
-            for i in range(3)
-        ]
+        events = [EdgeTestEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(3)]
         await store.append_events(aggregate_id, "Test", events, 0)
 
         stored_events = [se async for se in store.read_all()]
@@ -304,9 +256,7 @@ class TestInMemoryEventBusEdgeCases:
         return InMemoryEventBus()
 
     @pytest.mark.asyncio
-    async def test_handler_exception_isolation(
-        self, bus: InMemoryEventBus
-    ):
+    async def test_handler_exception_isolation(self, bus: InMemoryEventBus):
         """Test that one handler's exception doesn't affect others."""
         received = []
 
@@ -353,10 +303,9 @@ class TestInMemoryEventBusEdgeCases:
 
         assert len(received) == 1
 
-    def test_unsubscribe_returns_false_for_unknown_handler(
-        self, bus: InMemoryEventBus
-    ):
+    def test_unsubscribe_returns_false_for_unknown_handler(self, bus: InMemoryEventBus):
         """Test that unsubscribe returns False for unknown handler."""
+
         async def handler(event: DomainEvent):
             pass
 
@@ -387,9 +336,7 @@ class TestCheckpointRepositoryEdgeCases:
         return InMemoryCheckpointRepository()
 
     @pytest.mark.asyncio
-    async def test_lag_metrics_with_event_types(
-        self, repo: InMemoryCheckpointRepository
-    ):
+    async def test_lag_metrics_with_event_types(self, repo: InMemoryCheckpointRepository):
         """Test get_lag_metrics with event_types parameter."""
         projection_name = "TestProjection"
         event_id = uuid4()
@@ -398,9 +345,7 @@ class TestCheckpointRepositoryEdgeCases:
 
         # Even though event_types is ignored in in-memory impl,
         # it should still work
-        result = await repo.get_lag_metrics(
-            projection_name, event_types=["EdgeTestEvent"]
-        )
+        result = await repo.get_lag_metrics(projection_name, event_types=["EdgeTestEvent"])
         assert result is not None
         assert result.projection_name == projection_name
 
@@ -416,9 +361,7 @@ class TestDLQRepositoryEdgeCases:
         return InMemoryDLQRepository()
 
     @pytest.mark.asyncio
-    async def test_delete_resolved_events_with_none_resolved_at(
-        self, repo: InMemoryDLQRepository
-    ):
+    async def test_delete_resolved_events_with_none_resolved_at(self, repo: InMemoryDLQRepository):
         """Test delete_resolved_events doesn't fail with None resolved_at."""
         event_id = uuid4()
         await repo.add_failed_event(
@@ -454,9 +397,7 @@ class TestDLQRepositoryEdgeCases:
         assert len(counts) == 3
 
     @pytest.mark.asyncio
-    async def test_failure_stats_with_no_active_entries(
-        self, repo: InMemoryDLQRepository
-    ):
+    async def test_failure_stats_with_no_active_entries(self, repo: InMemoryDLQRepository):
         """Test failure stats when all entries are resolved."""
         event_id = uuid4()
         await repo.add_failed_event(
@@ -485,17 +426,13 @@ class TestOutboxRepositoryEdgeCases:
         return InMemoryOutboxRepository()
 
     @pytest.mark.asyncio
-    async def test_cleanup_published_no_events(
-        self, repo: InMemoryOutboxRepository
-    ):
+    async def test_cleanup_published_no_events(self, repo: InMemoryOutboxRepository):
         """Test cleanup when no published events exist."""
         deleted = await repo.cleanup_published(days=0)
         assert deleted == 0
 
     @pytest.mark.asyncio
-    async def test_increment_retry_nonexistent(
-        self, repo: InMemoryOutboxRepository
-    ):
+    async def test_increment_retry_nonexistent(self, repo: InMemoryOutboxRepository):
         """Test increment_retry on non-existent entry."""
         # Should not raise
         await repo.increment_retry(uuid4(), "Error")
@@ -516,9 +453,7 @@ class TestConcurrentAccess:
         async def update_checkpoint():
             for _ in range(10):
                 event_id = uuid4()
-                await repo.update_checkpoint(
-                    projection_name, event_id, "EdgeTestEvent"
-                )
+                await repo.update_checkpoint(projection_name, event_id, "EdgeTestEvent")
 
         await asyncio.gather(*[update_checkpoint() for _ in range(5)])
 

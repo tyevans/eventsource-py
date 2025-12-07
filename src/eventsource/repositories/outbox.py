@@ -12,7 +12,7 @@ This enables:
 """
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from threading import Lock
 from typing import Any, Protocol, runtime_checkable
@@ -368,6 +368,16 @@ class PostgreSQLOutboxRepository:
             result = await self.conn.execute(query)
             row = result.fetchone()
 
+        # Aggregate query always returns a row
+        if row is None:
+            return {
+                "pending_count": 0,
+                "published_count": 0,
+                "failed_count": 0,
+                "oldest_pending": None,
+                "avg_retries": 0.0,
+            }
+
         return {
             "pending_count": row[0] or 0,
             "published_count": row[1] or 0,
@@ -517,15 +527,19 @@ class InMemoryOutboxRepository:
             Number of records deleted
         """
         from datetime import timedelta
+
         cutoff = datetime.now(UTC) - timedelta(days=days)
 
         deleted = 0
         with self._lock:
             ids_to_delete = []
             for id_, entry in self._entries.items():
-                if entry.status == "published" and entry.published_at:
-                    if entry.published_at < cutoff:
-                        ids_to_delete.append(id_)
+                if (
+                    entry.status == "published"
+                    and entry.published_at
+                    and entry.published_at < cutoff
+                ):
+                    ids_to_delete.append(id_)
 
             for id_ in ids_to_delete:
                 del self._entries[id_]

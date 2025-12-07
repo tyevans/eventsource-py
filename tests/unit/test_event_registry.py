@@ -480,8 +480,7 @@ class TestThreadSafety:
         # Run registrations concurrently
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = [
-                executor.submit(register_events, events)
-                for events in event_classes_per_thread
+                executor.submit(register_events, events) for events in event_classes_per_thread
             ]
             for f in futures:
                 f.result()
@@ -601,7 +600,7 @@ class TestRegistryIteration:
         assert bool(registry) is True
         # This is important - registry should be truthy even when empty
         # so that 'registry or default_registry' works correctly
-        assert registry or "fallback" == registry
+        assert registry or registry == "fallback"
 
 
 class TestErrorMessages:

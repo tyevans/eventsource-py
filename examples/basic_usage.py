@@ -23,7 +23,6 @@ from eventsource import (
     register_event,
 )
 
-
 # =============================================================================
 # Step 1: Define Domain Events
 # =============================================================================
@@ -108,11 +107,10 @@ class BankAccountAggregate(AggregateRoot[BankAccountState]):
                 self._state = self._state.model_copy(
                     update={"balance": self._state.balance + event.amount}
                 )
-        elif isinstance(event, MoneyWithdrawn):
-            if self._state:
-                self._state = self._state.model_copy(
-                    update={"balance": self._state.balance - event.amount}
-                )
+        elif isinstance(event, MoneyWithdrawn) and self._state:
+            self._state = self._state.model_copy(
+                update={"balance": self._state.balance - event.amount}
+            )
 
     # Command methods - these validate business rules and emit events
 
@@ -231,9 +229,7 @@ async def main():
         print(f"   [{i}] {event.event_type}")
         if isinstance(event, AccountOpened):
             print(f"       Owner: {event.owner_name}, Initial: ${event.initial_balance:.2f}")
-        elif isinstance(event, MoneyDeposited):
-            print(f"       Amount: ${event.amount:.2f}")
-        elif isinstance(event, MoneyWithdrawn):
+        elif isinstance(event, MoneyDeposited | MoneyWithdrawn):
             print(f"       Amount: ${event.amount:.2f}")
 
     # Demonstrate business rule validation

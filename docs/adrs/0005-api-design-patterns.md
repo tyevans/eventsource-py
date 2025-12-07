@@ -294,12 +294,17 @@ The library follows consistent naming patterns:
 
 ## References
 
-- [src/eventsource/aggregates/repository.py](../../src/eventsource/aggregates/repository.py) - AggregateRepository implementation
-- [src/eventsource/stores/interface.py](../../src/eventsource/stores/interface.py) - EventStore ABC, read_stream(), read_all()
-- [src/eventsource/projections/decorators.py](../../src/eventsource/projections/decorators.py) - @handles decorator
-- [src/eventsource/projections/base.py](../../src/eventsource/projections/base.py) - DeclarativeProjection
-- [src/eventsource/projections/protocols.py](../../src/eventsource/projections/protocols.py) - EventHandler Protocol
-- [src/eventsource/events/base.py](../../src/eventsource/events/base.py) - DomainEvent with fluent API
+### Code References
+
+- `src/eventsource/aggregates/repository.py` - AggregateRepository implementation
+- `src/eventsource/stores/interface.py` - EventStore ABC, read_stream(), read_all()
+- `src/eventsource/projections/decorators.py` - @handles decorator
+- `src/eventsource/projections/base.py` - DeclarativeProjection
+- `src/eventsource/projections/protocols.py` - EventHandler Protocol
+- `src/eventsource/events/base.py` - DomainEvent with fluent API
+
+### External Documentation
+
 - [Martin Fowler - Repository Pattern](https://martinfowler.com/eaaCatalog/repository.html)
 - [PEP 544 - Protocols: Structural Subtyping](https://peps.python.org/pep-0544/)
 - [ADR-0001: Async-First Design](0001-async-first-design.md)

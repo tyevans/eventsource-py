@@ -139,9 +139,7 @@ def validate_markdown_code_blocks(
                 # Skip those that are obviously partial
                 if "..." in code or "@" in code.split("\n")[0]:
                     continue
-                errors.append(
-                    (md_file, line_num, f"Line {line_num + (e.lineno or 0)}: {e.msg}")
-                )
+                errors.append((md_file, line_num, f"Line {line_num + (e.lineno or 0)}: {e.msg}"))
 
     return errors
 
@@ -165,9 +163,7 @@ def find_example_files(examples_dir: Path) -> list[Path]:
 
 def main() -> int:
     """Main entry point."""
-    parser = argparse.ArgumentParser(
-        description="Validate Python examples in the project."
-    )
+    parser = argparse.ArgumentParser(description="Validate Python examples in the project.")
     parser.add_argument(
         "--syntax",
         action="store_true",
@@ -270,13 +266,13 @@ def main() -> int:
     exec_passed = sum(1 for r in results if r.execution_ok)
     total = len(results)
 
-    print(f"\nExamples:")
+    print("\nExamples:")
     print(f"  Syntax:    {syntax_passed}/{total} passed")
     if not args.syntax:
         print(f"  Execution: {exec_passed}/{total} passed")
 
     if args.docs and docs_dir.exists():
-        print(f"\nDocumentation:")
+        print("\nDocumentation:")
         print(f"  Code blocks with errors: {len(doc_errors)}")
 
     if all_passed:

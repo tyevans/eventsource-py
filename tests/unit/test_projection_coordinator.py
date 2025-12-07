@@ -10,7 +10,6 @@ Tests cover:
 """
 
 import asyncio
-from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -67,9 +66,7 @@ class TestProjectionRegistry:
         assert projection in registry.projections
         assert registry.get_projection_count() == 1
 
-    def test_register_multiple_projections(
-        self, registry: ProjectionRegistry
-    ) -> None:
+    def test_register_multiple_projections(self, registry: ProjectionRegistry) -> None:
         """Can register multiple projections."""
 
         class Projection1(Projection):
@@ -125,9 +122,7 @@ class TestProjectionRegistry:
         assert result is True
         assert registry.get_projection_count() == 0
 
-    def test_unregister_nonexistent_projection(
-        self, registry: ProjectionRegistry
-    ) -> None:
+    def test_unregister_nonexistent_projection(self, registry: ProjectionRegistry) -> None:
         """Unregistering nonexistent projection returns False."""
 
         class TestProjection(Projection):
@@ -142,9 +137,7 @@ class TestProjectionRegistry:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_dispatch_to_all_projections(
-        self, registry: ProjectionRegistry
-    ) -> None:
+    async def test_dispatch_to_all_projections(self, registry: ProjectionRegistry) -> None:
         """dispatch sends event to all projections."""
         events1: list[DomainEvent] = []
         events2: list[DomainEvent] = []
@@ -173,9 +166,7 @@ class TestProjectionRegistry:
         assert len(events2) == 1
 
     @pytest.mark.asyncio
-    async def test_dispatch_to_handlers(
-        self, registry: ProjectionRegistry
-    ) -> None:
+    async def test_dispatch_to_handlers(self, registry: ProjectionRegistry) -> None:
         """dispatch sends event to handlers that can handle it."""
         handled_events: list[DomainEvent] = []
 
@@ -293,9 +284,7 @@ class TestProjectionCoordinator:
         return ProjectionRegistry()
 
     @pytest.fixture
-    def coordinator(
-        self, registry: ProjectionRegistry
-    ) -> ProjectionCoordinator:
+    def coordinator(self, registry: ProjectionRegistry) -> ProjectionCoordinator:
         """Create a coordinator."""
         return ProjectionCoordinator(registry=registry)
 
@@ -510,9 +499,7 @@ class TestSubscriberRegistry:
         assert result is True
         assert registry.get_subscriber_count() == 0
 
-    def test_get_subscribers_for_event_type(
-        self, registry: SubscriberRegistry
-    ) -> None:
+    def test_get_subscribers_for_event_type(self, registry: SubscriberRegistry) -> None:
         """get_subscribers_for returns subscribers for event type."""
 
         class OrderSubscriber(EventSubscriber):
@@ -543,9 +530,7 @@ class TestSubscriberRegistry:
         assert shipping_sub in shipping_subs
 
     @pytest.mark.asyncio
-    async def test_dispatch_to_interested_subscribers(
-        self, registry: SubscriberRegistry
-    ) -> None:
+    async def test_dispatch_to_interested_subscribers(self, registry: SubscriberRegistry) -> None:
         """dispatch only sends to interested subscribers."""
         order_events: list[DomainEvent] = []
         shipping_events: list[DomainEvent] = []
@@ -673,7 +658,7 @@ class TestConcurrentExecution:
         await registry.dispatch(event)
 
         # Both should start before slow finishes
-        slow_start_idx = execution_order.index("slow_start")
+        _slow_start_idx = execution_order.index("slow_start")
         slow_end_idx = execution_order.index("slow_end")
         fast_start_idx = execution_order.index("fast_start")
 

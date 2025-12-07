@@ -8,9 +8,9 @@ Tests the InMemoryDLQRepository for:
 - Failure statistics
 """
 
-import pytest
-from datetime import UTC, datetime
 from uuid import uuid4
+
+import pytest
 
 from eventsource.repositories.dlq import (
     DLQRepository,
@@ -86,9 +86,7 @@ class TestInMemoryDLQRepository:
         assert "Error 2" in failed_events[0]["error_message"]
 
     @pytest.mark.asyncio
-    async def test_get_failed_events_with_projection_filter(
-        self, repo: InMemoryDLQRepository
-    ):
+    async def test_get_failed_events_with_projection_filter(self, repo: InMemoryDLQRepository):
         """Test filtering failed events by projection name."""
         # Add events for different projections
         await repo.add_failed_event(
@@ -121,9 +119,7 @@ class TestInMemoryDLQRepository:
         assert proj2_events[0]["projection_name"] == "Projection2"
 
     @pytest.mark.asyncio
-    async def test_get_failed_events_with_status_filter(
-        self, repo: InMemoryDLQRepository
-    ):
+    async def test_get_failed_events_with_status_filter(self, repo: InMemoryDLQRepository):
         """Test filtering failed events by status."""
         event_id = uuid4()
         await repo.add_failed_event(
@@ -191,9 +187,7 @@ class TestInMemoryDLQRepository:
         assert event["retry_count"] == 2
 
     @pytest.mark.asyncio
-    async def test_get_failed_event_by_id_not_found(
-        self, repo: InMemoryDLQRepository
-    ):
+    async def test_get_failed_event_by_id_not_found(self, repo: InMemoryDLQRepository):
         """Test getting non-existent event by ID returns None."""
         result = await repo.get_failed_event_by_id(999999)
         assert result is None
@@ -282,9 +276,7 @@ class TestInMemoryDLQRepository:
         assert stats["oldest_failure"] is not None
 
     @pytest.mark.asyncio
-    async def test_get_failure_stats_with_retrying(
-        self, repo: InMemoryDLQRepository
-    ):
+    async def test_get_failure_stats_with_retrying(self, repo: InMemoryDLQRepository):
         """Test failure stats includes retrying count."""
         # Add two events
         for i in range(2):
@@ -315,9 +307,7 @@ class TestInMemoryDLQRepository:
         assert stats["oldest_failure"] is None
 
     @pytest.mark.asyncio
-    async def test_get_projection_failure_counts(
-        self, repo: InMemoryDLQRepository
-    ):
+    async def test_get_projection_failure_counts(self, repo: InMemoryDLQRepository):
         """Test getting failure counts grouped by projection."""
         # Add events for different projections
         for i in range(5):
@@ -342,7 +332,6 @@ class TestInMemoryDLQRepository:
     @pytest.mark.asyncio
     async def test_delete_resolved_events(self, repo: InMemoryDLQRepository):
         """Test deleting resolved events older than specified days."""
-        from datetime import timedelta
 
         # Add and resolve an event
         event_id = uuid4()

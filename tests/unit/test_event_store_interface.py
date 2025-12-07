@@ -30,7 +30,6 @@ from eventsource.stores.interface import (
     SyncEventStore,
 )
 
-
 # --- Test Fixtures ---
 
 
@@ -55,10 +54,7 @@ def sample_event() -> SampleTestEvent:
 def sample_events() -> list[SampleTestEvent]:
     """Create a list of sample test events."""
     aggregate_id = uuid4()
-    return [
-        SampleTestEvent(aggregate_id=aggregate_id, test_data=f"event_{i}")
-        for i in range(3)
-    ]
+    return [SampleTestEvent(aggregate_id=aggregate_id, test_data=f"event_{i}") for i in range(3)]
 
 
 # --- StoredEvent Tests ---
@@ -406,9 +402,10 @@ class MockEventStore(EventStore):
         result: list[DomainEvent] = []
         for events in self._events.values():
             for event in events:
-                if event.aggregate_type == aggregate_type:
-                    if tenant_id is None or event.tenant_id == tenant_id:
-                        result.append(event)
+                if event.aggregate_type == aggregate_type and (
+                    tenant_id is None or event.tenant_id == tenant_id
+                ):
+                    result.append(event)
         return result
 
     async def event_exists(self, event_id: UUID) -> bool:
@@ -704,9 +701,10 @@ class MockSyncEventStore(SyncEventStore):
         result: list[DomainEvent] = []
         for events in self._events.values():
             for event in events:
-                if event.aggregate_type == aggregate_type:
-                    if tenant_id is None or event.tenant_id == tenant_id:
-                        result.append(event)
+                if event.aggregate_type == aggregate_type and (
+                    tenant_id is None or event.tenant_id == tenant_id
+                ):
+                    result.append(event)
         return result
 
     def event_exists(self, event_id: UUID) -> bool:

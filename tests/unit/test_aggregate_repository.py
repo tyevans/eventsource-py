@@ -13,8 +13,6 @@ Tests cover:
 - Integration with InMemoryEventStore
 """
 
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
@@ -25,8 +23,6 @@ from eventsource.aggregates.repository import AggregateRepository
 from eventsource.events.base import DomainEvent
 from eventsource.exceptions import AggregateNotFoundError, OptimisticLockError
 from eventsource.stores.in_memory import InMemoryEventStore
-from eventsource.stores.interface import EventPublisher, EventStore
-
 
 # =============================================================================
 # Test fixtures: State models and Events
@@ -163,9 +159,8 @@ class OrderAggregate(AggregateRoot[OrderState]):
                         "total": self._state.total + event.price,
                     }
                 )
-        elif isinstance(event, OrderShipped):
-            if self._state:
-                self._state = self._state.model_copy(update={"status": "shipped"})
+        elif isinstance(event, OrderShipped) and self._state:
+            self._state = self._state.model_copy(update={"status": "shipped"})
 
     def create(self, customer_id: UUID) -> None:
         """Command: Create the order."""
@@ -278,9 +273,7 @@ def counter_repository_with_publisher(
 class TestRepositoryInitialization:
     """Tests for repository initialization and properties."""
 
-    def test_repository_stores_event_store(
-        self, event_store: InMemoryEventStore
-    ) -> None:
+    def test_repository_stores_event_store(self, event_store: InMemoryEventStore) -> None:
         """Repository should store the event store reference."""
         repo: AggregateRepository[CounterAggregate] = AggregateRepository(
             event_store=event_store,
@@ -289,9 +282,7 @@ class TestRepositoryInitialization:
         )
         assert repo.event_store is event_store
 
-    def test_repository_stores_aggregate_type(
-        self, event_store: InMemoryEventStore
-    ) -> None:
+    def test_repository_stores_aggregate_type(self, event_store: InMemoryEventStore) -> None:
         """Repository should store the aggregate type."""
         repo: AggregateRepository[CounterAggregate] = AggregateRepository(
             event_store=event_store,
@@ -312,9 +303,7 @@ class TestRepositoryInitialization:
         )
         assert repo.event_publisher is mock_publisher
 
-    def test_repository_without_publisher(
-        self, event_store: InMemoryEventStore
-    ) -> None:
+    def test_repository_without_publisher(self, event_store: InMemoryEventStore) -> None:
         """Repository without publisher should have None event_publisher."""
         repo: AggregateRepository[CounterAggregate] = AggregateRepository(
             event_store=event_store,
@@ -985,7 +974,7 @@ class TestEdgeCases:
         aggregate = counter_repository.create_new(uuid4())
 
         # Add many events before saving
-        for i in range(50):
+        for _ in range(50):
             aggregate.increment(1)
 
         # Single save with all events

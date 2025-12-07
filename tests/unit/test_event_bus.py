@@ -5,21 +5,17 @@ Tests the EventBus interface, protocols, and InMemoryEventBus implementation.
 """
 
 import asyncio
-from typing import Any
 from uuid import uuid4
 
 import pytest
 
 from eventsource.bus.interface import (
     AsyncEventHandler,
-    EventBus,
     EventHandler,
-    EventHandlerFunc,
     EventSubscriber,
 )
 from eventsource.bus.memory import InMemoryEventBus
 from eventsource.events.base import DomainEvent
-
 
 # =============================================================================
 # Test Event Classes
@@ -563,9 +559,7 @@ class TestInMemoryEventBusWildcardSubscriptions:
 
         assert handler.handle_count == 0
 
-    def test_unsubscribe_from_all_events_not_found(
-        self, event_bus: InMemoryEventBus
-    ) -> None:
+    def test_unsubscribe_from_all_events_not_found(self, event_bus: InMemoryEventBus) -> None:
         """Test unsubscribing handler that isn't registered."""
         handler = RecordingHandler()
         result = event_bus.unsubscribe_from_all_events(handler)
@@ -758,9 +752,7 @@ class TestInMemoryEventBusSubscriberManagement:
         assert event_bus.get_subscriber_count(OrderCreated) == 0
         assert event_bus.get_wildcard_subscriber_count() == 0
 
-    def test_get_subscriber_count_specific_type(
-        self, event_bus: InMemoryEventBus
-    ) -> None:
+    def test_get_subscriber_count_specific_type(self, event_bus: InMemoryEventBus) -> None:
         """Test getting subscriber count for specific event type."""
         handler1 = RecordingHandler()
         handler2 = RecordingHandler()
@@ -892,9 +884,7 @@ class TestInMemoryEventBusStatistics:
 class TestInMemoryEventBusThreadSafety:
     """Tests for thread safety of subscription operations."""
 
-    def test_subscribe_from_multiple_threads(
-        self, event_bus: InMemoryEventBus
-    ) -> None:
+    def test_subscribe_from_multiple_threads(self, event_bus: InMemoryEventBus) -> None:
         """Test that subscribe is thread-safe."""
         import threading
 
@@ -913,9 +903,7 @@ class TestInMemoryEventBusThreadSafety:
 
         assert event_bus.get_subscriber_count(OrderCreated) == 10
 
-    def test_unsubscribe_from_multiple_threads(
-        self, event_bus: InMemoryEventBus
-    ) -> None:
+    def test_unsubscribe_from_multiple_threads(self, event_bus: InMemoryEventBus) -> None:
         """Test that unsubscribe is thread-safe."""
         import threading
 
@@ -929,9 +917,7 @@ class TestInMemoryEventBusThreadSafety:
             result = event_bus.unsubscribe(OrderCreated, h)
             results.append(result)
 
-        threads = [
-            threading.Thread(target=unsubscribe_handler, args=(h,)) for h in handlers
-        ]
+        threads = [threading.Thread(target=unsubscribe_handler, args=(h,)) for h in handlers]
         for t in threads:
             t.start()
         for t in threads:
@@ -949,16 +935,12 @@ class TestInMemoryEventBusThreadSafety:
 class TestInvalidHandlerTypes:
     """Tests for invalid handler type detection."""
 
-    def test_subscribe_invalid_handler_raises(
-        self, event_bus: InMemoryEventBus
-    ) -> None:
+    def test_subscribe_invalid_handler_raises(self, event_bus: InMemoryEventBus) -> None:
         """Test that subscribing invalid handler raises TypeError."""
         with pytest.raises(TypeError, match="Handler must have a handle\\(\\) method"):
             event_bus.subscribe(OrderCreated, "not_a_handler")  # type: ignore[arg-type]
 
-    def test_subscribe_to_all_invalid_handler_raises(
-        self, event_bus: InMemoryEventBus
-    ) -> None:
+    def test_subscribe_to_all_invalid_handler_raises(self, event_bus: InMemoryEventBus) -> None:
         """Test that wildcard subscription with invalid handler raises TypeError."""
         with pytest.raises(TypeError, match="Handler must have a handle\\(\\) method"):
             event_bus.subscribe_to_all_events(123)  # type: ignore[arg-type]
@@ -973,9 +955,7 @@ class TestEventOrdering:
     """Tests for event ordering guarantees."""
 
     @pytest.mark.asyncio
-    async def test_events_processed_in_order(
-        self, event_bus: InMemoryEventBus
-    ) -> None:
+    async def test_events_processed_in_order(self, event_bus: InMemoryEventBus) -> None:
         """Test that events are processed in order."""
         order: list[str] = []
 
