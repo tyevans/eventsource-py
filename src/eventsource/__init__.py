@@ -10,7 +10,13 @@ This library provides:
 - Transactional Outbox pattern
 """
 
-__version__ = "0.1.0"
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("eventsource-py")
+except PackageNotFoundError:
+    # Package not installed (running from source without install)
+    __version__ = "0.0.0.dev0"
 
 # Exceptions - available immediately
 # Aggregates (Task 07, Task 08)

@@ -1,12 +1,12 @@
 [project]
-name = "eventsource"
+name = "eventsource-py"
 version = "0.1.0"
 description = "Production-ready event sourcing library for Python"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
-    {name = "Honeybadger Team"}
+    {name = "Ty Evans", email = "tyevans@gmail.com"}
 ]
 keywords = ["event-sourcing", "cqrs", "ddd", "domain-driven-design", "events"]
 classifiers = [
@@ -42,10 +42,10 @@ telemetry = [
     "opentelemetry-sdk>=1.0,<2.0",
 ]
 all = [
-    "eventsource[postgresql,sqlite,redis,telemetry]",
+    "eventsource-py[postgresql,sqlite,redis,telemetry]",
 ]
 all-backends = [
-    "eventsource[postgresql,sqlite]",
+    "eventsource-py[postgresql,sqlite]",
 ]
 dev = [
     "pytest>=8.0",
@@ -64,9 +64,10 @@ docs = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/your-org/eventsource"
-Documentation = "https://your-org.github.io/eventsource"
-Repository = "https://github.com/your-org/eventsource"
+Homepage = "https://github.com/tyevans/eventsource-py"
+Documentation = "https://tyevans.github.io/eventsource-py"
+Repository = "https://github.com/tyevans/eventsource-py"
+Changelog = "https://github.com/tyevans/eventsource-py/blob/main/CHANGELOG.md"
 
 [build-system]
 requires = ["hatchling"]
