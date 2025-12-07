@@ -30,17 +30,13 @@ class TestInMemoryCheckpointRepository:
         return InMemoryCheckpointRepository()
 
     @pytest.mark.asyncio
-    async def test_get_checkpoint_returns_none_when_empty(
-        self, repo: InMemoryCheckpointRepository
-    ):
+    async def test_get_checkpoint_returns_none_when_empty(self, repo: InMemoryCheckpointRepository):
         """Test that get_checkpoint returns None for non-existent projection."""
         result = await repo.get_checkpoint("NonExistentProjection")
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_update_and_get_checkpoint(
-        self, repo: InMemoryCheckpointRepository
-    ):
+    async def test_update_and_get_checkpoint(self, repo: InMemoryCheckpointRepository):
         """Test updating and retrieving a checkpoint."""
         projection_name = "TestProjection"
         event_id = uuid4()
@@ -52,9 +48,7 @@ class TestInMemoryCheckpointRepository:
         assert result == event_id
 
     @pytest.mark.asyncio
-    async def test_update_checkpoint_increments_count(
-        self, repo: InMemoryCheckpointRepository
-    ):
+    async def test_update_checkpoint_increments_count(self, repo: InMemoryCheckpointRepository):
         """Test that updating checkpoint increments the events_processed count."""
         projection_name = "TestProjection"
 
@@ -69,9 +63,7 @@ class TestInMemoryCheckpointRepository:
         assert checkpoints[0].events_processed == 3
 
     @pytest.mark.asyncio
-    async def test_update_checkpoint_overwrites_previous(
-        self, repo: InMemoryCheckpointRepository
-    ):
+    async def test_update_checkpoint_overwrites_previous(self, repo: InMemoryCheckpointRepository):
         """Test that updating checkpoint replaces the previous event_id."""
         projection_name = "TestProjection"
         first_event_id = uuid4()
@@ -84,9 +76,7 @@ class TestInMemoryCheckpointRepository:
         assert result == second_event_id
 
     @pytest.mark.asyncio
-    async def test_multiple_projections_independent(
-        self, repo: InMemoryCheckpointRepository
-    ):
+    async def test_multiple_projections_independent(self, repo: InMemoryCheckpointRepository):
         """Test that different projections have independent checkpoints."""
         proj1 = "Projection1"
         proj2 = "Projection2"
@@ -125,9 +115,7 @@ class TestInMemoryCheckpointRepository:
         assert result.events_processed == 1
 
     @pytest.mark.asyncio
-    async def test_reset_checkpoint_removes_checkpoint(
-        self, repo: InMemoryCheckpointRepository
-    ):
+    async def test_reset_checkpoint_removes_checkpoint(self, repo: InMemoryCheckpointRepository):
         """Test that reset_checkpoint removes the checkpoint."""
         projection_name = "TestProjection"
         event_id = uuid4()
@@ -157,24 +145,18 @@ class TestInMemoryCheckpointRepository:
         assert await repo.get_checkpoint(proj2) == event_id_2
 
     @pytest.mark.asyncio
-    async def test_reset_nonexistent_checkpoint_no_error(
-        self, repo: InMemoryCheckpointRepository
-    ):
+    async def test_reset_nonexistent_checkpoint_no_error(self, repo: InMemoryCheckpointRepository):
         """Test that resetting non-existent checkpoint doesn't raise error."""
         await repo.reset_checkpoint("NonExistent")  # Should not raise
 
     @pytest.mark.asyncio
-    async def test_get_all_checkpoints_empty(
-        self, repo: InMemoryCheckpointRepository
-    ):
+    async def test_get_all_checkpoints_empty(self, repo: InMemoryCheckpointRepository):
         """Test get_all_checkpoints returns empty list when no checkpoints."""
         result = await repo.get_all_checkpoints()
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_get_all_checkpoints_returns_all(
-        self, repo: InMemoryCheckpointRepository
-    ):
+    async def test_get_all_checkpoints_returns_all(self, repo: InMemoryCheckpointRepository):
         """Test get_all_checkpoints returns all checkpoints sorted by name."""
         projections = ["Zebra", "Apple", "Middle"]
         for proj in projections:
@@ -186,9 +168,7 @@ class TestInMemoryCheckpointRepository:
         assert [c.projection_name for c in result] == ["Apple", "Middle", "Zebra"]
 
     @pytest.mark.asyncio
-    async def test_clear_removes_all_checkpoints(
-        self, repo: InMemoryCheckpointRepository
-    ):
+    async def test_clear_removes_all_checkpoints(self, repo: InMemoryCheckpointRepository):
         """Test that clear removes all checkpoints."""
         for i in range(3):
             await repo.update_checkpoint(f"Proj{i}", uuid4(), "Event")
@@ -199,9 +179,7 @@ class TestInMemoryCheckpointRepository:
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_checkpoint_data_structure(
-        self, repo: InMemoryCheckpointRepository
-    ):
+    async def test_checkpoint_data_structure(self, repo: InMemoryCheckpointRepository):
         """Test that checkpoint data has correct structure."""
         projection_name = "TestProjection"
         event_id = uuid4()
@@ -221,9 +199,7 @@ class TestInMemoryCheckpointRepository:
         assert checkpoint.last_processed_at is not None
 
     @pytest.mark.asyncio
-    async def test_lag_metrics_has_timestamp_info(
-        self, repo: InMemoryCheckpointRepository
-    ):
+    async def test_lag_metrics_has_timestamp_info(self, repo: InMemoryCheckpointRepository):
         """Test that lag metrics includes timestamp information."""
         projection_name = "TestProjection"
         event_id = uuid4()

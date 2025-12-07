@@ -439,7 +439,9 @@ class InMemoryCheckpointRepository:
                 lag_seconds=0.0,  # Cannot calculate without event store
                 events_processed=checkpoint.events_processed,
                 last_processed_at=(
-                    checkpoint.last_processed_at.isoformat() if checkpoint.last_processed_at else None
+                    checkpoint.last_processed_at.isoformat()
+                    if checkpoint.last_processed_at
+                    else None
                 ),
             )
 

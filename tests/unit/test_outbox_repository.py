@@ -45,9 +45,7 @@ class TestInMemoryOutboxRepository:
         )
 
     @pytest.mark.asyncio
-    async def test_add_event(
-        self, repo: InMemoryOutboxRepository, sample_event: SampleEvent
-    ):
+    async def test_add_event(self, repo: InMemoryOutboxRepository, sample_event: SampleEvent):
         """Test adding an event to the outbox."""
         outbox_id = await repo.add_event(sample_event)
 
@@ -75,9 +73,7 @@ class TestInMemoryOutboxRepository:
         assert "test_data" in event_data
 
     @pytest.mark.asyncio
-    async def test_get_pending_events_order(
-        self, repo: InMemoryOutboxRepository
-    ):
+    async def test_get_pending_events_order(self, repo: InMemoryOutboxRepository):
         """Test that pending events are returned in FIFO order."""
         # Add events
         events = []
@@ -98,9 +94,7 @@ class TestInMemoryOutboxRepository:
         assert "event_2" in pending[2]["event_data"]
 
     @pytest.mark.asyncio
-    async def test_get_pending_events_limit(
-        self, repo: InMemoryOutboxRepository
-    ):
+    async def test_get_pending_events_limit(self, repo: InMemoryOutboxRepository):
         """Test limiting number of pending events returned."""
         for i in range(5):
             event = SampleEvent(aggregate_id=uuid4(), test_field=f"event_{i}")
@@ -110,17 +104,13 @@ class TestInMemoryOutboxRepository:
         assert len(pending) == 3
 
     @pytest.mark.asyncio
-    async def test_get_pending_events_empty(
-        self, repo: InMemoryOutboxRepository
-    ):
+    async def test_get_pending_events_empty(self, repo: InMemoryOutboxRepository):
         """Test getting pending events when none exist."""
         pending = await repo.get_pending_events()
         assert pending == []
 
     @pytest.mark.asyncio
-    async def test_mark_published(
-        self, repo: InMemoryOutboxRepository, sample_event: SampleEvent
-    ):
+    async def test_mark_published(self, repo: InMemoryOutboxRepository, sample_event: SampleEvent):
         """Test marking an event as published."""
         outbox_id = await repo.add_event(sample_event)
 
@@ -136,9 +126,7 @@ class TestInMemoryOutboxRepository:
         assert stats["published_count"] == 1
 
     @pytest.mark.asyncio
-    async def test_mark_failed(
-        self, repo: InMemoryOutboxRepository, sample_event: SampleEvent
-    ):
+    async def test_mark_failed(self, repo: InMemoryOutboxRepository, sample_event: SampleEvent):
         """Test marking an event as failed."""
         outbox_id = await repo.add_event(sample_event)
 
@@ -154,9 +142,7 @@ class TestInMemoryOutboxRepository:
         assert stats["failed_count"] == 1
 
     @pytest.mark.asyncio
-    async def test_increment_retry(
-        self, repo: InMemoryOutboxRepository, sample_event: SampleEvent
-    ):
+    async def test_increment_retry(self, repo: InMemoryOutboxRepository, sample_event: SampleEvent):
         """Test incrementing retry count."""
         outbox_id = await repo.add_event(sample_event)
 
@@ -216,9 +202,7 @@ class TestInMemoryOutboxRepository:
         assert stats["avg_retries"] == 0.0
 
     @pytest.mark.asyncio
-    async def test_get_stats_avg_retries(
-        self, repo: InMemoryOutboxRepository
-    ):
+    async def test_get_stats_avg_retries(self, repo: InMemoryOutboxRepository):
         """Test average retries calculation in stats."""
         # Add events with different retry counts
         for i in range(3):
@@ -264,9 +248,7 @@ class TestInMemoryOutboxRepository:
         assert pending[0]["tenant_id"] == str(tenant_id)
 
     @pytest.mark.asyncio
-    async def test_event_without_tenant_id(
-        self, repo: InMemoryOutboxRepository
-    ):
+    async def test_event_without_tenant_id(self, repo: InMemoryOutboxRepository):
         """Test that events without tenant_id are handled."""
         event = SampleEvent(
             aggregate_id=uuid4(),
@@ -280,9 +262,7 @@ class TestInMemoryOutboxRepository:
         assert pending[0]["tenant_id"] is None
 
     @pytest.mark.asyncio
-    async def test_multiple_events_same_aggregate(
-        self, repo: InMemoryOutboxRepository
-    ):
+    async def test_multiple_events_same_aggregate(self, repo: InMemoryOutboxRepository):
         """Test adding multiple events for the same aggregate."""
         aggregate_id = uuid4()
 
@@ -301,16 +281,12 @@ class TestInMemoryOutboxRepository:
             assert entry["aggregate_id"] == str(aggregate_id)
 
     @pytest.mark.asyncio
-    async def test_mark_published_nonexistent(
-        self, repo: InMemoryOutboxRepository
-    ):
+    async def test_mark_published_nonexistent(self, repo: InMemoryOutboxRepository):
         """Test marking non-existent event as published (no error)."""
         await repo.mark_published(uuid4())  # Should not raise
 
     @pytest.mark.asyncio
-    async def test_mark_failed_nonexistent(
-        self, repo: InMemoryOutboxRepository
-    ):
+    async def test_mark_failed_nonexistent(self, repo: InMemoryOutboxRepository):
         """Test marking non-existent event as failed (no error)."""
         await repo.mark_failed(uuid4(), "Error")  # Should not raise
 

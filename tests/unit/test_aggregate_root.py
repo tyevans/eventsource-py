@@ -257,17 +257,13 @@ class DeclarativeCounterAggregate(DeclarativeAggregate[CounterState]):
     def _on_counter_incremented(self, event: CounterIncremented) -> None:
         if self._state is None:
             self._state = self._get_initial_state()
-        self._state = self._state.model_copy(
-            update={"value": self._state.value + event.increment}
-        )
+        self._state = self._state.model_copy(update={"value": self._state.value + event.increment})
 
     @handles(CounterDecremented)
     def _on_counter_decremented(self, event: CounterDecremented) -> None:
         if self._state is None:
             self._state = self._get_initial_state()
-        self._state = self._state.model_copy(
-            update={"value": self._state.value - event.decrement}
-        )
+        self._state = self._state.model_copy(update={"value": self._state.value - event.decrement})
 
     @handles(CounterNamed)
     def _on_counter_named(self, event: CounterNamed) -> None:

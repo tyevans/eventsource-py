@@ -527,13 +527,18 @@ class InMemoryOutboxRepository:
             Number of records deleted
         """
         from datetime import timedelta
+
         cutoff = datetime.now(UTC) - timedelta(days=days)
 
         deleted = 0
         with self._lock:
             ids_to_delete = []
             for id_, entry in self._entries.items():
-                if entry.status == "published" and entry.published_at and entry.published_at < cutoff:
+                if (
+                    entry.status == "published"
+                    and entry.published_at
+                    and entry.published_at < cutoff
+                ):
                     ids_to_delete.append(id_)
 
             for id_ in ids_to_delete:

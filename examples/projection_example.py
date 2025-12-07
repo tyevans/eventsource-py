@@ -495,7 +495,9 @@ async def main():
     # Replay all events to rebuild projection
     print("\n10. Rebuilding projection from event stream")
     async for stored_event in event_store.read_all():
-        if isinstance(stored_event.event, OrderPlaced | OrderShipped | OrderDelivered | OrderCancelled):
+        if isinstance(
+            stored_event.event, OrderPlaced | OrderShipped | OrderDelivered | OrderCancelled
+        ):
             await order_list.handle(stored_event.event)
 
     print(f"    Rebuilt orders: {len(order_list.get_all_orders())}")

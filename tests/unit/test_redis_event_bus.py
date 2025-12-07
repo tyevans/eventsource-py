@@ -638,9 +638,7 @@ class TestRedisEventBusDispatch:
 class TestRedisEventBusDeserialization:
     """Tests for event deserialization."""
 
-    async def test_deserialize_known_event(
-        self, bus: RedisEventBus, event_registry: EventRegistry
-    ):
+    async def test_deserialize_known_event(self, bus: RedisEventBus, event_registry: EventRegistry):
         """Test deserializing a known event type."""
         aggregate_id = uuid4()
         customer_id = uuid4()
@@ -714,9 +712,7 @@ class TestRedisEventBusMessageProcessing:
         assert len(handler.handled_events) == 1
         mock_redis.xack.assert_called_once()
 
-    async def test_process_message_unknown_event(
-        self, bus: RedisEventBus, mock_redis: AsyncMock
-    ):
+    async def test_process_message_unknown_event(self, bus: RedisEventBus, mock_redis: AsyncMock):
         """Test processing unknown event type."""
         message_data = {
             "event_id": str(uuid4()),
@@ -903,9 +899,7 @@ class TestRedisEventBusPendingRecovery:
         assert stats["claimed"] == 1
         assert stats["reprocessed"] == 1
 
-    async def test_recover_pending_messages_to_dlq(
-        self, bus: RedisEventBus, mock_redis: AsyncMock
-    ):
+    async def test_recover_pending_messages_to_dlq(self, bus: RedisEventBus, mock_redis: AsyncMock):
         """Test pending message recovery sends to DLQ after max retries."""
         mock_redis.xpending.return_value = {"pending": 1}
         mock_redis.xpending_range.return_value = [

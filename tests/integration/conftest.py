@@ -26,20 +26,15 @@ if TYPE_CHECKING:
 # Pytest Configuration
 # ============================================================================
 
+
 def pytest_configure(config: pytest.Config) -> None:
     """Register custom markers for integration tests."""
     config.addinivalue_line(
         "markers", "integration: marks tests as integration tests (may require docker)"
     )
-    config.addinivalue_line(
-        "markers", "postgres: marks tests that require PostgreSQL"
-    )
-    config.addinivalue_line(
-        "markers", "redis: marks tests that require Redis"
-    )
-    config.addinivalue_line(
-        "markers", "e2e: marks tests as end-to-end integration tests"
-    )
+    config.addinivalue_line("markers", "postgres: marks tests that require PostgreSQL")
+    config.addinivalue_line("markers", "redis: marks tests that require Redis")
+    config.addinivalue_line("markers", "e2e: marks tests as end-to-end integration tests")
 
 
 # ============================================================================
@@ -53,6 +48,7 @@ REDIS_CONTAINER = None
 try:
     from testcontainers.postgres import PostgresContainer
     from testcontainers.redis import RedisContainer
+
     TESTCONTAINERS_AVAILABLE = True
 except ImportError:
     PostgresContainer = None  # type: ignore[assignment, misc]
@@ -62,6 +58,7 @@ except ImportError:
 def is_docker_available() -> bool:
     """Check if Docker is available for running containers."""
     import subprocess
+
     try:
         result = subprocess.run(
             ["docker", "info"],
@@ -81,23 +78,21 @@ DOCKER_AVAILABLE = is_docker_available()
 # ============================================================================
 
 skip_if_no_testcontainers = pytest.mark.skipif(
-    not TESTCONTAINERS_AVAILABLE,
-    reason="testcontainers not installed (pip install testcontainers)"
+    not TESTCONTAINERS_AVAILABLE, reason="testcontainers not installed (pip install testcontainers)"
 )
 
 skip_if_no_docker = pytest.mark.skipif(
-    not DOCKER_AVAILABLE,
-    reason="Docker not available or not running"
+    not DOCKER_AVAILABLE, reason="Docker not available or not running"
 )
 
 skip_if_no_postgres_infra = pytest.mark.skipif(
     not (TESTCONTAINERS_AVAILABLE and DOCKER_AVAILABLE),
-    reason="PostgreSQL test infrastructure not available"
+    reason="PostgreSQL test infrastructure not available",
 )
 
 skip_if_no_redis_infra = pytest.mark.skipif(
     not (TESTCONTAINERS_AVAILABLE and DOCKER_AVAILABLE),
-    reason="Redis test infrastructure not available"
+    reason="Redis test infrastructure not available",
 )
 
 
@@ -111,6 +106,7 @@ from eventsource import DomainEvent, register_event  # noqa: E402
 @register_event
 class TestItemCreated(DomainEvent):
     """Test event for item creation."""
+
     event_type: str = "TestItemCreated"
     aggregate_type: str = "TestItem"
     name: str
@@ -120,6 +116,7 @@ class TestItemCreated(DomainEvent):
 @register_event
 class TestItemUpdated(DomainEvent):
     """Test event for item updates."""
+
     event_type: str = "TestItemUpdated"
     aggregate_type: str = "TestItem"
     name: str | None = None
@@ -129,6 +126,7 @@ class TestItemUpdated(DomainEvent):
 @register_event
 class TestItemDeleted(DomainEvent):
     """Test event for item deletion."""
+
     event_type: str = "TestItemDeleted"
     aggregate_type: str = "TestItem"
 
@@ -136,6 +134,7 @@ class TestItemDeleted(DomainEvent):
 @register_event
 class TestOrderCreated(DomainEvent):
     """Test event for order creation (used in e2e tests)."""
+
     event_type: str = "TestOrderCreated"
     aggregate_type: str = "TestOrder"
     customer_id: UUID
@@ -145,6 +144,7 @@ class TestOrderCreated(DomainEvent):
 @register_event
 class TestOrderItemAdded(DomainEvent):
     """Test event for adding items to an order."""
+
     event_type: str = "TestOrderItemAdded"
     aggregate_type: str = "TestOrder"
     item_id: UUID
@@ -156,6 +156,7 @@ class TestOrderItemAdded(DomainEvent):
 @register_event
 class TestOrderCompleted(DomainEvent):
     """Test event for order completion."""
+
     event_type: str = "TestOrderCompleted"
     aggregate_type: str = "TestOrder"
     completed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -170,6 +171,7 @@ from eventsource import DeclarativeAggregate, handles  # noqa: E402
 
 class TestOrderState(BaseModel):
     """State for TestOrderAggregate."""
+
     order_id: UUID
     customer_id: UUID | None = None
     items: list[dict[str, Any]] = []
@@ -394,9 +396,7 @@ def postgres_connection_url(postgres_container: Any) -> str:
     """Get PostgreSQL connection URL from container."""
     # testcontainers returns psycopg2 URL, convert to asyncpg
     url = postgres_container.get_connection_url()
-    return url.replace("postgresql://", "postgresql+asyncpg://").replace(
-        "psycopg2", "asyncpg"
-    )
+    return url.replace("postgresql://", "postgresql+asyncpg://").replace("psycopg2", "asyncpg")
 
 
 @pytest.fixture(scope="session")
@@ -470,6 +470,7 @@ async def clean_postgres_tables(postgres_engine: AsyncEngine) -> AsyncGenerator[
 # ============================================================================
 # Redis Fixtures
 # ============================================================================
+
 
 @pytest.fixture(scope="session")
 def redis_container() -> Generator[Any, None, None]:
@@ -558,6 +559,7 @@ async def clean_redis(redis_connection_url: str) -> AsyncGenerator[None, None]:
 # Event Store Fixtures
 # ============================================================================
 
+
 @pytest.fixture
 async def postgres_event_store(
     postgres_session_factory: async_sessionmaker[AsyncSession],
@@ -612,6 +614,7 @@ async def postgres_event_store_with_outbox(
 # ============================================================================
 # Redis Event Bus Fixtures
 # ============================================================================
+
 
 @pytest.fixture
 def redis_event_bus_factory(
@@ -683,6 +686,7 @@ async def redis_event_bus(
 # Repository Fixtures
 # ============================================================================
 
+
 @pytest.fixture
 async def postgres_checkpoint_repo(
     postgres_engine: AsyncEngine,
@@ -722,6 +726,7 @@ async def postgres_outbox_repo(
 # ============================================================================
 # Sample Data Fixtures
 # ============================================================================
+
 
 @pytest.fixture
 def sample_aggregate_id() -> UUID:

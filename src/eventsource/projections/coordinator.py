@@ -152,9 +152,7 @@ class ProjectionRegistry:
                     if i < len(projection_tasks):
                         task_name = self._projections[i].__class__.__name__
                     else:
-                        task_name = self._handlers[
-                            i - len(projection_tasks)
-                        ].__class__.__name__
+                        task_name = self._handlers[i - len(projection_tasks)].__class__.__name__
                     logger.error(
                         "Error in %s %s while processing %s: %s",
                         task_type,
@@ -473,9 +471,7 @@ class SubscriberRegistry:
         except ValueError:
             return False
 
-    def get_subscribers_for(
-        self, event_type: type[DomainEvent]
-    ) -> list[EventSubscriber]:
+    def get_subscribers_for(self, event_type: type[DomainEvent]) -> list[EventSubscriber]:
         """
         Get all subscribers interested in an event type.
 
@@ -485,9 +481,7 @@ class SubscriberRegistry:
         Returns:
             List of subscribers that handle this event type
         """
-        return [
-            s for s in self._subscribers if event_type in s.subscribed_to()
-        ]
+        return [s for s in self._subscribers if event_type in s.subscribed_to()]
 
     async def dispatch(self, event: DomainEvent) -> None:
         """

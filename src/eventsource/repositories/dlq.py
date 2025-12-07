@@ -769,16 +769,18 @@ class InMemoryDLQRepository:
                 failures_with_first = [e.first_failed_at for e in entries if e.first_failed_at]
                 failures_with_last = [e.last_failed_at for e in entries if e.last_failed_at]
 
-                result.append({
-                    "projection_name": projection_name,
-                    "failure_count": len(entries),
-                    "oldest_failure": (
-                        min(failures_with_first).isoformat() if failures_with_first else None
-                    ),
-                    "most_recent_failure": (
-                        max(failures_with_last).isoformat() if failures_with_last else None
-                    ),
-                })
+                result.append(
+                    {
+                        "projection_name": projection_name,
+                        "failure_count": len(entries),
+                        "oldest_failure": (
+                            min(failures_with_first).isoformat() if failures_with_first else None
+                        ),
+                        "most_recent_failure": (
+                            max(failures_with_last).isoformat() if failures_with_last else None
+                        ),
+                    }
+                )
 
             # Sort by failure count descending
             # Cast needed because dict values are typed as Any
@@ -799,11 +801,10 @@ class InMemoryDLQRepository:
         Returns:
             Number of events deleted
         """
-        cutoff = datetime.now(UTC).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
+        cutoff = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
         # Subtract days (simplified for in-memory implementation)
         from datetime import timedelta
+
         cutoff = cutoff - timedelta(days=older_than_days)
 
         deleted = 0

@@ -91,9 +91,7 @@ class TestInMemoryEventStoreBasic:
     """Tests for basic append and get operations."""
 
     @pytest.mark.asyncio
-    async def test_append_single_event(
-        self, store: InMemoryEventStore, aggregate_id: UUID
-    ) -> None:
+    async def test_append_single_event(self, store: InMemoryEventStore, aggregate_id: UUID) -> None:
         """Test appending a single event to a new stream."""
         event = SampleEvent(aggregate_id=aggregate_id, data="first")
 
@@ -113,9 +111,7 @@ class TestInMemoryEventStoreBasic:
         self, store: InMemoryEventStore, aggregate_id: UUID
     ) -> None:
         """Test appending multiple events at once."""
-        events = [
-            SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(3)
-        ]
+        events = [SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(3)]
 
         result = await store.append_events(
             aggregate_id=aggregate_id,
@@ -129,9 +125,7 @@ class TestInMemoryEventStoreBasic:
         assert result.global_position == 3
 
     @pytest.mark.asyncio
-    async def test_append_empty_list(
-        self, store: InMemoryEventStore, aggregate_id: UUID
-    ) -> None:
+    async def test_append_empty_list(self, store: InMemoryEventStore, aggregate_id: UUID) -> None:
         """Test appending empty event list returns success with current version."""
         result = await store.append_events(
             aggregate_id=aggregate_id,
@@ -148,9 +142,7 @@ class TestInMemoryEventStoreBasic:
         self, store: InMemoryEventStore, aggregate_id: UUID
     ) -> None:
         """Test getting events from an existing stream."""
-        events = [
-            SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(3)
-        ]
+        events = [SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(3)]
 
         await store.append_events(
             aggregate_id=aggregate_id,
@@ -180,9 +172,7 @@ class TestInMemoryEventStoreBasic:
         assert stream.is_empty is True
 
     @pytest.mark.asyncio
-    async def test_event_exists(
-        self, store: InMemoryEventStore, aggregate_id: UUID
-    ) -> None:
+    async def test_event_exists(self, store: InMemoryEventStore, aggregate_id: UUID) -> None:
         """Test checking if an event exists."""
         event = SampleEvent(aggregate_id=aggregate_id, data="test")
 
@@ -440,9 +430,7 @@ class TestEventFiltering:
     ) -> None:
         """Test filtering by aggregate type."""
         # Add Order event
-        order_event = OrderCreated(
-            aggregate_id=aggregate_id, customer_name="John"
-        )
+        order_event = OrderCreated(aggregate_id=aggregate_id, customer_name="John")
         await store.append_events(
             aggregate_id=aggregate_id,
             aggregate_type="Order",
@@ -504,9 +492,7 @@ class TestEventFiltering:
         self, store: InMemoryEventStore, aggregate_id: UUID
     ) -> None:
         """Test getting events from a specific version."""
-        events = [
-            SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(5)
-        ]
+        events = [SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(5)]
         await store.append_events(
             aggregate_id=aggregate_id,
             aggregate_type="TestAggregate",
@@ -547,9 +533,7 @@ class TestEventFiltering:
 
         # Get events from last 90 minutes
         from_ts = now - timedelta(minutes=90)
-        stream = await store.get_events(
-            aggregate_id, "TestAggregate", from_timestamp=from_ts
-        )
+        stream = await store.get_events(aggregate_id, "TestAggregate", from_timestamp=from_ts)
 
         assert len(stream.events) == 2
         assert stream.events[0].data == "middle"
@@ -592,13 +576,9 @@ class TestStreamVersion:
     """Tests for get_stream_version method."""
 
     @pytest.mark.asyncio
-    async def test_get_stream_version(
-        self, store: InMemoryEventStore, aggregate_id: UUID
-    ) -> None:
+    async def test_get_stream_version(self, store: InMemoryEventStore, aggregate_id: UUID) -> None:
         """Test getting stream version."""
-        events = [
-            SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(5)
-        ]
+        events = [SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(5)]
         await store.append_events(
             aggregate_id=aggregate_id,
             aggregate_type="TestAggregate",
@@ -625,13 +605,9 @@ class TestReadStream:
     """Tests for read_stream async iterator."""
 
     @pytest.mark.asyncio
-    async def test_read_stream_forward(
-        self, store: InMemoryEventStore, aggregate_id: UUID
-    ) -> None:
+    async def test_read_stream_forward(self, store: InMemoryEventStore, aggregate_id: UUID) -> None:
         """Test reading stream in forward direction."""
-        events = [
-            SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(3)
-        ]
+        events = [SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(3)]
         await store.append_events(
             aggregate_id=aggregate_id,
             aggregate_type="TestAggregate",
@@ -656,9 +632,7 @@ class TestReadStream:
         self, store: InMemoryEventStore, aggregate_id: UUID
     ) -> None:
         """Test reading stream in backward direction."""
-        events = [
-            SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(3)
-        ]
+        events = [SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(3)]
         await store.append_events(
             aggregate_id=aggregate_id,
             aggregate_type="TestAggregate",
@@ -683,9 +657,7 @@ class TestReadStream:
         self, store: InMemoryEventStore, aggregate_id: UUID
     ) -> None:
         """Test reading stream with limit."""
-        events = [
-            SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(5)
-        ]
+        events = [SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(5)]
         await store.append_events(
             aggregate_id=aggregate_id,
             aggregate_type="TestAggregate",
@@ -708,9 +680,7 @@ class TestReadStream:
         self, store: InMemoryEventStore, aggregate_id: UUID
     ) -> None:
         """Test reading stream from specific position."""
-        events = [
-            SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(5)
-        ]
+        events = [SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(5)]
         await store.append_events(
             aggregate_id=aggregate_id,
             aggregate_type="TestAggregate",
@@ -728,9 +698,7 @@ class TestReadStream:
         assert stored_events[0].event.data == "event_2"
 
     @pytest.mark.asyncio
-    async def test_read_stream_with_global_position(
-        self, store: InMemoryEventStore
-    ) -> None:
+    async def test_read_stream_with_global_position(self, store: InMemoryEventStore) -> None:
         """Test that read_stream includes global position."""
         agg1 = uuid4()
         agg2 = uuid4()
@@ -899,9 +867,7 @@ class TestHelperMethods:
         assert len(store.get_all_events()) == 0
 
     @pytest.mark.asyncio
-    async def test_get_all_events(
-        self, store: InMemoryEventStore
-    ) -> None:
+    async def test_get_all_events(self, store: InMemoryEventStore) -> None:
         """Test getting all events in chronological order."""
         now = datetime.now(UTC)
         agg1 = uuid4()
@@ -945,9 +911,7 @@ class TestHelperMethods:
         assert all_events[2].data == "third"
 
     @pytest.mark.asyncio
-    async def test_get_event_count(
-        self, store: InMemoryEventStore, aggregate_id: UUID
-    ) -> None:
+    async def test_get_event_count(self, store: InMemoryEventStore, aggregate_id: UUID) -> None:
         """Test getting total event count."""
         assert store.get_event_count() == 0
 
@@ -962,9 +926,7 @@ class TestHelperMethods:
         assert store.get_event_count() == 5
 
     @pytest.mark.asyncio
-    async def test_get_aggregate_ids(
-        self, store: InMemoryEventStore
-    ) -> None:
+    async def test_get_aggregate_ids(self, store: InMemoryEventStore) -> None:
         """Test getting all aggregate IDs."""
         agg1 = uuid4()
         agg2 = uuid4()
@@ -987,9 +949,7 @@ class TestHelperMethods:
         assert agg3 in ids
 
     @pytest.mark.asyncio
-    async def test_get_global_position(
-        self, store: InMemoryEventStore, aggregate_id: UUID
-    ) -> None:
+    async def test_get_global_position(self, store: InMemoryEventStore, aggregate_id: UUID) -> None:
         """Test getting current global position."""
         assert store.get_global_position() == 0
 
@@ -1141,14 +1101,9 @@ class TestEdgeCases:
     """Tests for edge cases and boundary conditions."""
 
     @pytest.mark.asyncio
-    async def test_large_event_batch(
-        self, store: InMemoryEventStore, aggregate_id: UUID
-    ) -> None:
+    async def test_large_event_batch(self, store: InMemoryEventStore, aggregate_id: UUID) -> None:
         """Test appending a large batch of events."""
-        events = [
-            SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}")
-            for i in range(1000)
-        ]
+        events = [SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(1000)]
 
         result = await store.append_events(
             aggregate_id=aggregate_id,
@@ -1166,10 +1121,7 @@ class TestEdgeCases:
         self, store: InMemoryEventStore, aggregate_id: UUID
     ) -> None:
         """Test that event order is preserved in stream."""
-        events = [
-            SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}")
-            for i in range(10)
-        ]
+        events = [SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(10)]
 
         await store.append_events(
             aggregate_id=aggregate_id,

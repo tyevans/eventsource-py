@@ -480,8 +480,7 @@ class TestThreadSafety:
         # Run registrations concurrently
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = [
-                executor.submit(register_events, events)
-                for events in event_classes_per_thread
+                executor.submit(register_events, events) for events in event_classes_per_thread
             ]
             for f in futures:
                 f.result()

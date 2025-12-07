@@ -57,9 +57,7 @@ class TestEventSourceJSONEncoder:
             "event": {
                 "id": test_uuid,
                 "occurred_at": test_dt,
-                "items": [
-                    {"sub_id": uuid4(), "created_at": datetime.now(UTC)}
-                ],
+                "items": [{"sub_id": uuid4(), "created_at": datetime.now(UTC)}],
             }
         }
 

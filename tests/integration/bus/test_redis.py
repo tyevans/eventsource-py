@@ -118,9 +118,7 @@ class TestRedisEventBusPublishing:
         await redis_event_bus.publish([event])
 
         # Verify event is in stream
-        stream_info = await redis_client.xinfo_stream(
-            redis_event_bus.config.stream_name
-        )
+        stream_info = await redis_client.xinfo_stream(redis_event_bus.config.stream_name)
         assert stream_info["length"] == 1
 
         # Check stats
@@ -145,9 +143,7 @@ class TestRedisEventBusPublishing:
         await redis_event_bus.publish(events)
 
         # Verify all events are in stream
-        stream_info = await redis_client.xinfo_stream(
-            redis_event_bus.config.stream_name
-        )
+        stream_info = await redis_client.xinfo_stream(redis_event_bus.config.stream_name)
         assert stream_info["length"] == 5
 
         # Check stats

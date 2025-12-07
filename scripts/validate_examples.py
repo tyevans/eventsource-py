@@ -139,9 +139,7 @@ def validate_markdown_code_blocks(
                 # Skip those that are obviously partial
                 if "..." in code or "@" in code.split("\n")[0]:
                     continue
-                errors.append(
-                    (md_file, line_num, f"Line {line_num + (e.lineno or 0)}: {e.msg}")
-                )
+                errors.append((md_file, line_num, f"Line {line_num + (e.lineno or 0)}: {e.msg}"))
 
     return errors
 
@@ -165,9 +163,7 @@ def find_example_files(examples_dir: Path) -> list[Path]:
 
 def main() -> int:
     """Main entry point."""
-    parser = argparse.ArgumentParser(
-        description="Validate Python examples in the project."
-    )
+    parser = argparse.ArgumentParser(description="Validate Python examples in the project.")
     parser.add_argument(
         "--syntax",
         action="store_true",

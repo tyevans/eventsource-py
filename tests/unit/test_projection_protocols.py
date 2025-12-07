@@ -64,6 +64,7 @@ class TestEventHandlerProtocol:
 
     def test_sync_handler_fails_check(self) -> None:
         """Sync handler method fails check (needs async)."""
+
         # Note: The protocol check doesn't verify async,
         # it just checks for the method existence
         class SyncHandler:
@@ -217,9 +218,7 @@ class TestProtocolDuckTyping:
     async def test_function_accepting_event_handler(self) -> None:
         """Function can accept any EventHandler implementation."""
 
-        async def process_event(
-            handler: EventHandler, event: DomainEvent
-        ) -> None:
+        async def process_event(handler: EventHandler, event: DomainEvent) -> None:
             await handler.handle(event)
 
         class CustomHandler:

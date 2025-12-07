@@ -49,6 +49,7 @@ def handles(event_type: type[DomainEvent]) -> Callable[[F], F]:
         - The event type in the @handles decorator should match the event parameter type annotation
         - DeclarativeProjection will validate signatures at initialization time
     """
+
     def decorator(func: F) -> F:
         # Attach the event type to the function for later discovery
         func._handles_event_type = event_type  # type: ignore[attr-defined]

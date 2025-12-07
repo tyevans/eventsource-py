@@ -54,10 +54,7 @@ def sample_event() -> SampleTestEvent:
 def sample_events() -> list[SampleTestEvent]:
     """Create a list of sample test events."""
     aggregate_id = uuid4()
-    return [
-        SampleTestEvent(aggregate_id=aggregate_id, test_data=f"event_{i}")
-        for i in range(3)
-    ]
+    return [SampleTestEvent(aggregate_id=aggregate_id, test_data=f"event_{i}") for i in range(3)]
 
 
 # --- StoredEvent Tests ---

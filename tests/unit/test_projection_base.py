@@ -458,9 +458,7 @@ class TestDeclarativeProjection:
 
         class TestProjection(DeclarativeProjection):
             @handles(OrderCreated)
-            async def _handle_order_created(
-                self, conn, event: OrderCreated
-            ) -> None:
+            async def _handle_order_created(self, conn, event: OrderCreated) -> None:
                 conn_values.append(conn)
                 events_handled.append(event)
 
@@ -498,9 +496,7 @@ class TestDeclarativeProjection:
 
             class BadProjection(DeclarativeProjection):
                 @handles(OrderCreated)
-                async def _handle_order_created(
-                    self, a, b, c: OrderCreated
-                ) -> None:
+                async def _handle_order_created(self, a, b, c: OrderCreated) -> None:
                     pass
 
             BadProjection(checkpoint_repo=checkpoint_repo)

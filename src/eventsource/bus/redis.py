@@ -84,8 +84,7 @@ class RedisNotAvailableError(ImportError):
 
     def __init__(self) -> None:
         super().__init__(
-            "Redis package is not installed. "
-            "Install it with: pip install eventsource[redis]"
+            "Redis package is not installed. Install it with: pip install eventsource[redis]"
         )
 
 
@@ -237,9 +236,7 @@ class RedisEventBus(EventBus):
         self._consuming = False
 
         # Subscriber management
-        self._subscribers: dict[type[DomainEvent], list[HandlerWrapper]] = defaultdict(
-            list
-        )
+        self._subscribers: dict[type[DomainEvent], list[HandlerWrapper]] = defaultdict(list)
         self._all_event_handlers: list[HandlerWrapper] = []
         self._lock = asyncio.Lock()
 
@@ -352,16 +349,12 @@ class RedisEventBus(EventBus):
         except ResponseError as e:
             if "BUSYGROUP" in str(e):
                 # Group already exists, this is fine
-                logger.debug(
-                    f"Consumer group '{self._config.consumer_group}' already exists"
-                )
+                logger.debug(f"Consumer group '{self._config.consumer_group}' already exists")
             else:
                 logger.error(f"Failed to create consumer group: {e}")
                 raise
 
-    def _normalize_handler(
-        self, handler: EventHandler | EventHandlerFunc
-    ) -> HandlerWrapper:
+    def _normalize_handler(self, handler: EventHandler | EventHandlerFunc) -> HandlerWrapper:
         """
         Normalize a handler to an async callable.
 
@@ -729,9 +722,7 @@ class RedisEventBus(EventBus):
                 # Process messages
                 for _stream_name, stream_messages in messages:
                     for message_id, message_data in stream_messages:
-                        await self._process_message(
-                            message_id, message_data, actual_consumer_name
-                        )
+                        await self._process_message(message_id, message_data, actual_consumer_name)
 
             except asyncio.CancelledError:
                 logger.info("Consumer loop cancelled")
@@ -1094,9 +1085,7 @@ class RedisEventBus(EventBus):
                 # Get retry count from Redis
                 retry_key = self._config.get_retry_key(message_id)
                 retry_count_str = await self._redis.get(retry_key)
-                retry_count = (
-                    int(retry_count_str) if retry_count_str else times_delivered - 1
-                )
+                retry_count = int(retry_count_str) if retry_count_str else times_delivered - 1
 
                 try:
                     # Claim the message
@@ -1147,9 +1136,7 @@ class RedisEventBus(EventBus):
                     else:
                         # Reprocess the message
                         try:
-                            await self._process_message(
-                                message_id, message_data, "recovery-worker"
-                            )
+                            await self._process_message(message_id, message_data, "recovery-worker")
                             stats["reprocessed"] += 1
                             self._stats.messages_recovered += 1
 

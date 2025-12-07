@@ -384,9 +384,11 @@ def handles(event_type: type[DomainEvent]) -> Callable[[Callable[..., None]], Ca
         ...     def _on_order_created(self, event: OrderCreated) -> None:
         ...         self._state = OrderState(...)
     """
+
     def decorator(func: Callable[..., None]) -> Callable[..., None]:
         func._handles_event_type = event_type  # type: ignore[attr-defined]
         return func
+
     return decorator
 
 

@@ -244,9 +244,7 @@ class TestPostgreSQLEventStoreBasic:
         aggregate_id: UUID,
     ) -> None:
         """Test appending multiple events at once."""
-        events = [
-            SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(3)
-        ]
+        events = [SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(3)]
 
         # Mock version query and insert operations
         mock_session.execute.side_effect = [
@@ -299,9 +297,7 @@ class TestPostgreSQLEventStoreBasic:
         aggregate_id: UUID,
     ) -> None:
         """Test getting events from an existing stream."""
-        events = [
-            SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(3)
-        ]
+        events = [SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(3)]
 
         # Create mock rows for the events
         rows = [create_event_row(event, version=i + 1) for i, event in enumerate(events)]
@@ -621,9 +617,9 @@ class TestEventFiltering:
         agg_id = uuid4()
         order_event = OrderCreated(aggregate_id=agg_id, customer_name="John")
 
-        mock_session.execute.return_value = create_mock_result([
-            create_event_row(order_event, version=1)
-        ])
+        mock_session.execute.return_value = create_mock_result(
+            [create_event_row(order_event, version=1)]
+        )
 
         events = await store.get_events_by_type("Order")
 
@@ -641,9 +637,7 @@ class TestEventFiltering:
         agg_id = uuid4()
         event = SampleEvent(aggregate_id=agg_id, data="with_tenant", tenant_id=tenant_id)
 
-        mock_session.execute.return_value = create_mock_result([
-            create_event_row(event, version=1)
-        ])
+        mock_session.execute.return_value = create_mock_result([create_event_row(event, version=1)])
 
         events = await store.get_events_by_type("TestAggregate", tenant_id=tenant_id)
 
@@ -658,9 +652,7 @@ class TestEventFiltering:
         aggregate_id: UUID,
     ) -> None:
         """Test getting events from a specific version."""
-        events = [
-            SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(3)
-        ]
+        events = [SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(3)]
         # Return only events after version 2
         rows = [create_event_row(events[2], version=3)]
         mock_session.execute.return_value = create_mock_result(rows)
@@ -686,9 +678,7 @@ class TestEventFiltering:
         mock_session.execute.return_value = create_mock_result(rows)
 
         from_ts = now - timedelta(hours=1)
-        stream = await store.get_events(
-            aggregate_id, "TestAggregate", from_timestamp=from_ts
-        )
+        stream = await store.get_events(aggregate_id, "TestAggregate", from_timestamp=from_ts)
 
         assert len(stream.events) == 1
 
@@ -704,9 +694,7 @@ class TestEventFiltering:
         event = SampleEvent(aggregate_id=agg_id, data="new")
         event = event.model_copy(update={"occurred_at": now})
 
-        mock_session.execute.return_value = create_mock_result([
-            create_event_row(event, version=1)
-        ])
+        mock_session.execute.return_value = create_mock_result([create_event_row(event, version=1)])
 
         from_ts = (now - timedelta(hours=1)).timestamp()
         events = await store.get_events_by_type("TestAggregate", from_timestamp=from_ts)
@@ -763,9 +751,7 @@ class TestReadStream:
         aggregate_id: UUID,
     ) -> None:
         """Test reading stream in forward direction."""
-        events = [
-            SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(3)
-        ]
+        events = [SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(3)]
         rows = [
             create_full_event_row(event, version=i + 1, global_id=i + 1)
             for i, event in enumerate(events)
@@ -791,9 +777,7 @@ class TestReadStream:
         aggregate_id: UUID,
     ) -> None:
         """Test reading stream in backward direction."""
-        events = [
-            SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(3)
-        ]
+        events = [SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(3)]
         # Rows returned in reverse order
         rows = [
             create_full_event_row(events[2], version=3, global_id=3),
@@ -821,9 +805,7 @@ class TestReadStream:
         aggregate_id: UUID,
     ) -> None:
         """Test reading stream with limit."""
-        events = [
-            SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(2)
-        ]
+        events = [SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(2)]
         rows = [
             create_full_event_row(event, version=i + 1, global_id=i + 1)
             for i, event in enumerate(events)
@@ -846,9 +828,7 @@ class TestReadStream:
         aggregate_id: UUID,
     ) -> None:
         """Test reading stream from specific position."""
-        events = [
-            SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(3)
-        ]
+        events = [SampleEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(3)]
         # Only return events after position 2
         rows = [create_full_event_row(events[2], version=3, global_id=3)]
         mock_session.execute.return_value = create_mock_result(rows)
@@ -1058,7 +1038,7 @@ class TestSerialization:
             f'"event_id": "{event.event_id}", "aggregate_id": "{aggregate_id}", '
             f'"occurred_at": "{event.occurred_at.isoformat()}", "event_version": 1, '
             '"aggregate_version": 1, "tenant_id": null, "actor_id": null, '
-            f'"correlation_id": "{event.correlation_id}", "causation_id": null, "metadata": {{}}}}'
+            f'"correlation_id": "{event.correlation_id}", "causation_id": null, "metadata": {{}}}}',
         )
         mock_session.execute.return_value = create_mock_result([row])
 

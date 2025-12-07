@@ -52,8 +52,10 @@ pytestmark = [
 # Simple Projection for Testing
 # =============================================================================
 
+
 class OrderSummary(BaseModel):
     """Read model for order summary."""
+
     order_id: UUID
     customer_id: UUID
     item_count: int = 0
@@ -92,19 +94,17 @@ class TestOrderProjection:
                 self._orders[event.aggregate_id] = order.model_copy(
                     update={
                         "item_count": order.item_count + 1,
-                        "total_amount": order.total_amount + (
-                            event.quantity * event.unit_price
-                        ),
+                        "total_amount": order.total_amount + (event.quantity * event.unit_price),
                     }
                 )
         elif isinstance(event, TestOrderCompleted) and event.aggregate_id in self._orders:
-                order = self._orders[event.aggregate_id]
-                self._orders[event.aggregate_id] = order.model_copy(
-                    update={
-                        "status": "completed",
-                        "completed_at": event.completed_at,
-                    }
-                )
+            order = self._orders[event.aggregate_id]
+            self._orders[event.aggregate_id] = order.model_copy(
+                update={
+                    "status": "completed",
+                    "completed_at": event.completed_at,
+                }
+            )
 
         self._events_processed += 1
 
@@ -112,6 +112,7 @@ class TestOrderProjection:
 # =============================================================================
 # Full Flow Tests
 # =============================================================================
+
 
 class TestCommandToProjectionFlow:
     """Tests for complete command-to-projection flow."""
@@ -542,9 +543,6 @@ class TestOutboxIntegration:
 
         # Verify event is in outbox
         pending = await postgres_outbox_repo.get_pending_events()
-        matching = [
-            e for e in pending
-            if e["event_id"] == str(event.event_id)
-        ]
+        matching = [e for e in pending if e["event_id"] == str(event.event_id)]
         assert len(matching) == 1
         assert matching[0]["event_type"] == "TestOrderCreated"

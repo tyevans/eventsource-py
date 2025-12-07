@@ -160,7 +160,7 @@ class OrderAggregate(AggregateRoot[OrderState]):
                     }
                 )
         elif isinstance(event, OrderShipped) and self._state:
-                self._state = self._state.model_copy(update={"status": "shipped"})
+            self._state = self._state.model_copy(update={"status": "shipped"})
 
     def create(self, customer_id: UUID) -> None:
         """Command: Create the order."""
@@ -273,9 +273,7 @@ def counter_repository_with_publisher(
 class TestRepositoryInitialization:
     """Tests for repository initialization and properties."""
 
-    def test_repository_stores_event_store(
-        self, event_store: InMemoryEventStore
-    ) -> None:
+    def test_repository_stores_event_store(self, event_store: InMemoryEventStore) -> None:
         """Repository should store the event store reference."""
         repo: AggregateRepository[CounterAggregate] = AggregateRepository(
             event_store=event_store,
@@ -284,9 +282,7 @@ class TestRepositoryInitialization:
         )
         assert repo.event_store is event_store
 
-    def test_repository_stores_aggregate_type(
-        self, event_store: InMemoryEventStore
-    ) -> None:
+    def test_repository_stores_aggregate_type(self, event_store: InMemoryEventStore) -> None:
         """Repository should store the aggregate type."""
         repo: AggregateRepository[CounterAggregate] = AggregateRepository(
             event_store=event_store,
@@ -307,9 +303,7 @@ class TestRepositoryInitialization:
         )
         assert repo.event_publisher is mock_publisher
 
-    def test_repository_without_publisher(
-        self, event_store: InMemoryEventStore
-    ) -> None:
+    def test_repository_without_publisher(self, event_store: InMemoryEventStore) -> None:
         """Repository without publisher should have None event_publisher."""
         repo: AggregateRepository[CounterAggregate] = AggregateRepository(
             event_store=event_store,

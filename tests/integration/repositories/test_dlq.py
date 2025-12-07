@@ -56,9 +56,7 @@ class TestPostgreSQLDLQRepositoryBasics:
         )
 
         # Retrieve and verify
-        failed_events = await postgres_dlq_repo.get_failed_events(
-            projection_name=projection_name
-        )
+        failed_events = await postgres_dlq_repo.get_failed_events(projection_name=projection_name)
 
         assert len(failed_events) == 1
         assert failed_events[0]["event_id"] == str(event_id)
@@ -123,9 +121,7 @@ class TestPostgreSQLDLQRepositoryBasics:
         )
 
         # Should only have one entry
-        failed_events = await postgres_dlq_repo.get_failed_events(
-            projection_name=projection_name
-        )
+        failed_events = await postgres_dlq_repo.get_failed_events(projection_name=projection_name)
 
         assert len(failed_events) == 1
         assert failed_events[0]["retry_count"] == 1
@@ -151,15 +147,11 @@ class TestPostgreSQLDLQRepositoryRetrieval:
             )
 
         # Get for ProjectionA only
-        events_a = await postgres_dlq_repo.get_failed_events(
-            projection_name="ProjectionA"
-        )
+        events_a = await postgres_dlq_repo.get_failed_events(projection_name="ProjectionA")
         assert len(events_a) == 2
 
         # Get for ProjectionB only
-        events_b = await postgres_dlq_repo.get_failed_events(
-            projection_name="ProjectionB"
-        )
+        events_b = await postgres_dlq_repo.get_failed_events(projection_name="ProjectionB")
         assert len(events_b) == 1
 
     async def test_get_failed_events_by_status(
@@ -230,9 +222,7 @@ class TestPostgreSQLDLQRepositoryRetrieval:
         )
 
         # Get all to find the ID
-        all_events = await postgres_dlq_repo.get_failed_events(
-            projection_name="ByIdProjection"
-        )
+        all_events = await postgres_dlq_repo.get_failed_events(projection_name="ByIdProjection")
         dlq_id = all_events[0]["id"]
 
         # Get by ID
@@ -271,9 +261,7 @@ class TestPostgreSQLDLQRepositoryStatusTransitions:
         )
 
         # Get ID
-        events = await postgres_dlq_repo.get_failed_events(
-            projection_name="ResolveProjection"
-        )
+        events = await postgres_dlq_repo.get_failed_events(projection_name="ResolveProjection")
         dlq_id = events[0]["id"]
 
         # Mark resolved
@@ -301,9 +289,7 @@ class TestPostgreSQLDLQRepositoryStatusTransitions:
         )
 
         # Get ID
-        events = await postgres_dlq_repo.get_failed_events(
-            projection_name="RetryingProjection"
-        )
+        events = await postgres_dlq_repo.get_failed_events(projection_name="RetryingProjection")
         dlq_id = events[0]["id"]
 
         # Mark retrying
@@ -417,9 +403,7 @@ class TestPostgreSQLDLQRepositoryCleanup:
             error=ValueError("Error"),
         )
 
-        events = await postgres_dlq_repo.get_failed_events(
-            projection_name="CleanupProjection"
-        )
+        events = await postgres_dlq_repo.get_failed_events(projection_name="CleanupProjection")
         dlq_id = events[0]["id"]
 
         await postgres_dlq_repo.mark_resolved(dlq_id, "user")
@@ -461,9 +445,7 @@ class TestPostgreSQLDLQRepositoryCleanup:
             error=ValueError("Error"),
         )
 
-        events = await postgres_dlq_repo.get_failed_events(
-            projection_name="RecentProjection"
-        )
+        events = await postgres_dlq_repo.get_failed_events(projection_name="RecentProjection")
         dlq_id = events[0]["id"]
 
         await postgres_dlq_repo.mark_resolved(dlq_id, "user")

@@ -283,9 +283,7 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
                     )
                     await asyncio.sleep(backoff)
 
-    async def _send_to_dlq(
-        self, event: DomainEvent, error: Exception, retry_count: int
-    ) -> None:
+    async def _send_to_dlq(self, event: DomainEvent, error: Exception, retry_count: int) -> None:
         """
         Send failed event to dead letter queue.
 
@@ -554,8 +552,7 @@ class DeclarativeProjection(CheckpointTrackingProjection):
                 and event_param.annotation != event_type
             ):
                 logger.warning(
-                    "Handler %s in %s: Event type annotation %s "
-                    "doesn't match @handles(%s)",
+                    "Handler %s in %s: Event type annotation %s doesn't match @handles(%s)",
                     handler_name,
                     self._projection_name,
                     event_param.annotation.__name__,
@@ -582,9 +579,7 @@ class DeclarativeProjection(CheckpointTrackingProjection):
         if event_type not in self._handlers:
             # Build list of available handlers for helpful error message
             available_handlers = (
-                ", ".join(et.__name__ for et in self._handlers)
-                if self._handlers
-                else "none"
+                ", ".join(et.__name__ for et in self._handlers) if self._handlers else "none"
             )
 
             logger.warning(

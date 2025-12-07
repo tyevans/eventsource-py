@@ -209,12 +209,8 @@ class PostgreSQLEventStore(EventStore):
                 elif expected_version == ExpectedVersion.STREAM_EXISTS:
                     # Stream must exist (have at least one event)
                     if current_version == 0:
-                        logger.debug(
-                            f"Stream does not exist for {aggregate_type}/{aggregate_id}"
-                        )
-                        raise OptimisticLockError(
-                            aggregate_id, expected_version, current_version
-                        )
+                        logger.debug(f"Stream does not exist for {aggregate_type}/{aggregate_id}")
+                        raise OptimisticLockError(aggregate_id, expected_version, current_version)
                 elif expected_version == ExpectedVersion.NO_STREAM:
                     # Stream must not exist
                     if current_version != 0:
@@ -222,9 +218,7 @@ class PostgreSQLEventStore(EventStore):
                             f"Stream already exists for {aggregate_type}/{aggregate_id}: "
                             f"version={current_version}"
                         )
-                        raise OptimisticLockError(
-                            aggregate_id, expected_version, current_version
-                        )
+                        raise OptimisticLockError(aggregate_id, expected_version, current_version)
                 else:
                     # Specific version check (optimistic locking)
                     if current_version != expected_version:
@@ -232,9 +226,7 @@ class PostgreSQLEventStore(EventStore):
                             f"Version conflict for {aggregate_type}/{aggregate_id}: "
                             f"expected={expected_version}, actual={current_version}"
                         )
-                        raise OptimisticLockError(
-                            aggregate_id, expected_version, current_version
-                        )
+                        raise OptimisticLockError(aggregate_id, expected_version, current_version)
 
                 # Append events
                 new_version = current_version
@@ -864,13 +856,9 @@ class PostgreSQLEventStore(EventStore):
                     except (ValueError, AttributeError):
                         result[key] = value
                 # Convert datetime strings
-                elif isinstance(value, str) and (
-                    key == "occurred_at" or key.endswith("_at")
-                ):
+                elif isinstance(value, str) and (key == "occurred_at" or key.endswith("_at")):
                     try:
-                        result[key] = datetime.fromisoformat(
-                            value.replace("Z", "+00:00")
-                        )
+                        result[key] = datetime.fromisoformat(value.replace("Z", "+00:00"))
                     except (ValueError, AttributeError):
                         result[key] = value
                 # Recursively process nested structures

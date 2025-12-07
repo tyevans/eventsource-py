@@ -7,7 +7,6 @@ Tests cover:
 - is_event_handler utility
 """
 
-
 from pydantic import Field
 
 from eventsource.events.base import DomainEvent

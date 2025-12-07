@@ -93,6 +93,7 @@ class TestInMemoryEventBusBackgroundPublishing:
     @pytest.mark.asyncio
     async def test_background_task_error_is_logged(self, bus: InMemoryEventBus):
         """Test that errors in background tasks are logged."""
+
         async def failing_handler(event: DomainEvent):
             raise RuntimeError("Background failure")
 
@@ -112,6 +113,7 @@ class TestInMemoryEventBusBackgroundPublishing:
     @pytest.mark.asyncio
     async def test_shutdown_with_timeout(self, bus: InMemoryEventBus):
         """Test shutdown with tasks that take longer than timeout."""
+
         async def slow_handler(event: DomainEvent):
             await asyncio.sleep(10)  # Very slow
 
@@ -169,8 +171,10 @@ class TestInMemoryEventBusBackgroundPublishing:
 
     def test_handler_name_for_lambda(self, bus: InMemoryEventBus):
         """Test that lambda handlers get a name."""
+
         def handler(e: DomainEvent) -> None:
             pass
+
         bus.subscribe(AdditionalTestEvent, handler)
 
         # Subscribe should work
@@ -211,6 +215,7 @@ class TestProjectionAbstractMethods:
             class IncompleteSyncProjection(SyncProjection):
                 def handle(self, event):
                     pass
+
                 # Missing reset()
 
             IncompleteSyncProjection()
@@ -222,6 +227,7 @@ class TestProjectionAbstractMethods:
             class IncompleteHandler(EventHandlerBase):
                 def can_handle(self, event):
                     return True
+
                 # Missing handle()
 
             IncompleteHandler()
@@ -233,6 +239,7 @@ class TestCheckpointTrackingProjectionDLQFailure:
     @pytest.mark.asyncio
     async def test_dlq_write_failure_is_logged(self):
         """Test that DLQ write failures are logged and the original exception is re-raised."""
+
         # Create a checkpoint tracking projection
         class TestProjection(CheckpointTrackingProjection):
             # Set MAX_RETRIES to 1 to skip retries quickly
@@ -249,9 +256,7 @@ class TestCheckpointTrackingProjectionDLQFailure:
 
         # Create a failing DLQ repo
         failing_dlq = AsyncMock()
-        failing_dlq.add_failed_event = AsyncMock(
-            side_effect=Exception("DLQ write failed")
-        )
+        failing_dlq.add_failed_event = AsyncMock(side_effect=Exception("DLQ write failed"))
 
         projection = TestProjection(
             checkpoint_repo=InMemoryCheckpointRepository(),
@@ -389,6 +394,7 @@ class TestAggregateRootAbstractMethods:
             class IncompleteAggregate(AggregateRoot[dict]):
                 def _get_initial_state(self):
                     return {}
+
                 # Missing _apply()
 
             IncompleteAggregate(uuid4())
@@ -400,6 +406,7 @@ class TestAggregateRootAbstractMethods:
             class IncompleteAggregate(AggregateRoot[dict]):
                 def _apply(self, event):
                     pass
+
                 # Missing _get_initial_state()
 
             IncompleteAggregate(uuid4())
