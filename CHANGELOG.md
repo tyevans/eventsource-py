@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved type annotations for better mypy compatibility across all modules
 - Applied consistent code formatting with ruff
 - Refactored DLQ, outbox, and checkpoint repositories to use `execute_with_connection` helper
+- In-memory repositories now use `asyncio.Lock` for proper async concurrency safety
 
 ### Fixed
 
@@ -36,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Improved test fixtures and integration test configuration
 - Enhanced unit test coverage and organization
+- Added concurrency tests for `InMemoryCheckpointRepository`, `InMemoryOutboxRepository`, and `InMemoryDLQRepository`
 
 ## [0.1.0] - 2025-XX-XX
 
