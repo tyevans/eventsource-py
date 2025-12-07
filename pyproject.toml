@@ -48,6 +48,7 @@ dev = [
     "mypy>=1.8",
     "ruff>=0.3",
     "testcontainers>=4.0",
+    "pre-commit>=4.0",
 ]
 docs = [
     "mkdocs>=1.5",
@@ -111,6 +112,10 @@ ignore = ["E501"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["eventsource"]
+
+[tool.bandit]
+exclude_dirs = ["tests", "examples"]
+skips = ["B101"]  # Allow assert statements
 
 [dependency-groups]
 dev = [
