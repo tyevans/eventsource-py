@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2025-12-07
+
+### Fixed
+
+- Fixed release workflow version validation
+
+## [0.1.1] - 2025-12-07
+
+### Fixed
+
+- Release infrastructure corrections
+
 ## [0.1.0] - 2025-12-07
 
 ### Added
@@ -36,5 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Automatic schema creation and migrations
 - GitHub Actions CI/CD pipeline
 
-[Unreleased]: https://github.com/tyevans/eventsource-py/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/tyevans/eventsource-py/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/tyevans/eventsource-py/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/tyevans/eventsource-py/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/tyevans/eventsource-py/releases/tag/v0.1.0
