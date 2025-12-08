@@ -8,6 +8,7 @@
 --   2. event_outbox - Transactional outbox for reliable publishing
 --   3. projection_checkpoints - Projection position tracking
 --   4. dead_letter_queue - Failed event processing storage
+--   5. snapshots - Aggregate state snapshots for fast loading
 --
 -- Usage:
 --   Run this file against a PostgreSQL 12+ database to create all tables.
@@ -155,6 +156,35 @@ CREATE INDEX IF NOT EXISTS idx_dlq_resolved_at ON dead_letter_queue (resolved_at
 
 COMMENT ON TABLE dead_letter_queue IS 'Stores events that failed processing after all retries';
 
+-- =============================================================================
+-- 5. Snapshots Table
+-- =============================================================================
+-- Stores aggregate state snapshots for fast loading.
+-- One snapshot per aggregate (keyed by aggregate_id + aggregate_type).
+
+CREATE TABLE IF NOT EXISTS snapshots (
+    id BIGSERIAL PRIMARY KEY,
+    aggregate_id UUID NOT NULL,
+    aggregate_type VARCHAR(255) NOT NULL,
+    version INTEGER NOT NULL,
+    schema_version INTEGER NOT NULL DEFAULT 1,
+    state JSONB NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_snapshots_aggregate UNIQUE (aggregate_id, aggregate_type)
+);
+
+-- Snapshots indexes
+CREATE INDEX IF NOT EXISTS idx_snapshots_aggregate_lookup
+    ON snapshots(aggregate_id, aggregate_type);
+CREATE INDEX IF NOT EXISTS idx_snapshots_aggregate_type
+    ON snapshots(aggregate_type);
+CREATE INDEX IF NOT EXISTS idx_snapshots_schema_version
+    ON snapshots(aggregate_type, schema_version);
+CREATE INDEX IF NOT EXISTS idx_snapshots_created_at
+    ON snapshots(created_at);
+
+COMMENT ON TABLE snapshots IS 'Point-in-time aggregate state snapshots for fast loading';
+
 COMMIT;
 
 -- =============================================================================
@@ -165,6 +195,6 @@ COMMIT;
 SELECT table_name, table_type
 FROM information_schema.tables
 WHERE table_schema = 'public'
-  AND table_name IN ('events', 'event_outbox', 'projection_checkpoints', 'dead_letter_queue')
+  AND table_name IN ('events', 'event_outbox', 'projection_checkpoints', 'dead_letter_queue', 'snapshots')
 ORDER BY table_name;
 */

@@ -114,6 +114,17 @@ from eventsource.repositories import (
     ProjectionFailureCount,
 )
 
+# Snapshots
+from eventsource.snapshots import (
+    InMemorySnapshotStore,
+    Snapshot,
+    SnapshotDeserializationError,
+    SnapshotError,
+    SnapshotNotFoundError,
+    SnapshotSchemaVersionError,
+    SnapshotStore,
+)
+
 # Event store implementations (Task 05, Task 06)
 from eventsource.stores.in_memory import InMemoryEventStore
 
@@ -243,6 +254,15 @@ __all__ = [
     "CheckpointTrackingProjection",
     "DeclarativeProjection",
     "DatabaseProjection",
+    # Snapshots
+    "Snapshot",
+    "SnapshotStore",
+    "InMemorySnapshotStore",
+    # Snapshot exceptions
+    "SnapshotError",
+    "SnapshotDeserializationError",
+    "SnapshotSchemaVersionError",
+    "SnapshotNotFoundError",
 ]
 
 # Conditionally add SQLite exports when aiosqlite is available

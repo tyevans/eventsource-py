@@ -1,0 +1,1 @@
+../templates/snapshots.sql

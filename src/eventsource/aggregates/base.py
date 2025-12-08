@@ -9,7 +9,7 @@ when commands are executed.
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import Generic
+from typing import Any, Generic, cast, get_args, get_origin
 from uuid import UUID
 
 from eventsource.events.base import DomainEvent
@@ -78,13 +78,51 @@ class AggregateRoot(Generic[TState], ABC):
 
     Attributes:
         aggregate_id: Unique identifier for this aggregate instance
+        aggregate_type: String identifier for this aggregate type (subclasses should override)
+        schema_version: Version number for the aggregate's state schema. Increment this
+                       when the TState model structure changes in a way that makes
+                       old snapshots incompatible. Default is 1.
         version: Current version (number of events applied)
         _uncommitted_events: Events that haven't been persisted yet
         _state: Current state of the aggregate
+
+    Schema Versioning:
+        When using snapshots, the schema_version attribute tracks compatibility
+        between the aggregate's state model and stored snapshots. If a snapshot's
+        schema_version doesn't match the aggregate's schema_version, the snapshot
+        is invalidated and a full event replay is performed.
+
+        Example:
+            >>> # Initial version
+            >>> class OrderAggregate(AggregateRoot[OrderState]):
+            ...     schema_version = 1
+            ...
+            >>> # After adding a new required field to OrderState
+            >>> class OrderAggregate(AggregateRoot[OrderState]):
+            ...     schema_version = 2  # Increment to invalidate old snapshots
+
+    Snapshot Support:
+        Aggregates support snapshotting for performance optimization. When a
+        snapshot exists, the aggregate can be restored to a previous state
+        without replaying all historical events.
+
+        Key methods (used internally by AggregateRepository):
+        - _serialize_state(): Convert state to dictionary for snapshot storage
+        - _restore_from_snapshot(): Restore state from snapshot dictionary
+        - _get_state_type(): Get the TState type for deserialization
+
+        To enable schema evolution safety, set the schema_version class attribute:
+
+            >>> class OrderAggregate(AggregateRoot[OrderState]):
+            ...     schema_version = 1  # Increment when OrderState changes
     """
 
     # Class-level aggregate type (subclasses should override)
     aggregate_type: str = "Unknown"
+
+    # Class-level schema version for snapshot compatibility
+    # Increment when TState structure changes incompatibly
+    schema_version: int = 1
 
     # Class-level configuration for version validation
     # When True, events with incorrect versions will raise EventVersionError
@@ -328,6 +366,118 @@ class AggregateRoot(Generic[TState], ABC):
         """
         self.apply_event(event, is_new=True)
 
+    def _serialize_state(self) -> dict[str, Any]:
+        """
+        Serialize the current aggregate state for snapshotting.
+
+        Converts the Pydantic state model to a JSON-compatible dictionary
+        using model_dump(mode="json"). This ensures all nested models,
+        UUIDs, datetimes, and other complex types are properly serialized.
+
+        Returns:
+            Dictionary representation of the state, suitable for JSON storage.
+            Returns empty dict if state is None (new aggregate).
+
+        Example:
+            >>> order = OrderAggregate(uuid4())
+            >>> order.create(customer_id=uuid4())
+            >>> state_dict = order._serialize_state()
+            >>> # state_dict can be stored as JSON in snapshot
+        """
+        if self._state is None:
+            return {}
+        return self._state.model_dump(mode="json")
+
+    def _restore_from_snapshot(
+        self,
+        state_dict: dict[str, Any],
+        version: int,
+    ) -> None:
+        """
+        Restore aggregate state from a snapshot.
+
+        Sets the aggregate's internal state and version from snapshot data.
+        After calling this method, the aggregate is in the state it was
+        when the snapshot was taken. Subsequent events can then be replayed
+        to bring it to the current state.
+
+        Args:
+            state_dict: Serialized state dictionary from snapshot.
+                       Should be the output of _serialize_state().
+            version: Aggregate version when snapshot was taken.
+                    Events with version > this will be replayed.
+
+        Raises:
+            ValidationError: If state_dict doesn't match TState schema.
+
+        Note:
+            This method is called by AggregateRepository before replaying
+            events since the snapshot. User code should not call this directly.
+
+        Example:
+            >>> # Internal use by repository:
+            >>> aggregate = OrderAggregate(aggregate_id)
+            >>> aggregate._restore_from_snapshot(snapshot.state, snapshot.version)
+            >>> aggregate.load_from_history(events_since_snapshot)
+        """
+        if not state_dict:
+            # Empty state - leave as initial
+            self._version = version
+            return
+
+        state_type = self._get_state_type()
+        self._state = state_type.model_validate(state_dict)
+        self._version = version
+
+    def _get_state_type(self) -> type[TState]:
+        """
+        Get the state type (TState) from the Generic parameter.
+
+        Uses Python's typing introspection to extract the concrete type
+        used for TState in the subclass. This is needed for deserializing
+        snapshot state back into the correct Pydantic model.
+
+        Returns:
+            The concrete type used for TState in this aggregate class.
+
+        Raises:
+            RuntimeError: If the state type cannot be determined.
+
+        Example:
+            >>> class OrderAggregate(AggregateRoot[OrderState]):
+            ...     ...
+            >>>
+            >>> aggregate = OrderAggregate(uuid4())
+            >>> state_type = aggregate._get_state_type()
+            >>> assert state_type is OrderState
+        """
+        # Walk up the MRO to find the AggregateRoot parameterization
+        for base in type(self).__mro__:
+            if not hasattr(base, "__orig_bases__"):
+                continue
+
+            for orig_base in base.__orig_bases__:
+                origin = get_origin(orig_base)
+
+                # Check if this is a Generic base that's AggregateRoot or subclass
+                if origin is None:
+                    continue
+
+                # Handle both AggregateRoot and DeclarativeAggregate
+                try:
+                    if issubclass(origin, AggregateRoot):
+                        args = get_args(orig_base)
+                        if args:
+                            return cast(type[TState], args[0])
+                except TypeError:
+                    # issubclass can fail for some typing constructs
+                    continue
+
+        raise RuntimeError(
+            f"Cannot determine state type for {type(self).__name__}. "
+            "Ensure the class properly inherits from AggregateRoot[StateType]."
+        )
+
     def __repr__(self) -> str:
         """String representation of aggregate."""
         return (
@@ -390,6 +540,15 @@ class DeclarativeAggregate(AggregateRoot[TState], ABC):
         >>> class StrictOrderAggregate(DeclarativeAggregate[OrderState]):
         ...     unregistered_event_handling = "error"
         ...     # ... handlers ...
+
+    Example with schema versioning:
+        >>> class OrderAggregate(DeclarativeAggregate[OrderState]):
+        ...     aggregate_type = "Order"
+        ...     schema_version = 2  # Increment when OrderState changes
+        ...
+        ...     @handles(OrderCreated)
+        ...     def _on_order_created(self, event: OrderCreated) -> None:
+        ...         ...
     """
 
     # Class-level configuration for unregistered event handling
