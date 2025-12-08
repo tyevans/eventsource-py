@@ -18,19 +18,11 @@ from eventsource.bus.interface import (
     EventHandlerFunc,
 )
 from eventsource.events.base import DomainEvent
+from eventsource.observability import TracingMixin
 from eventsource.protocols import (
     FlexibleEventHandler,
     FlexibleEventSubscriber,
 )
-
-# Optional OpenTelemetry integration
-try:
-    from opentelemetry import trace
-
-    OTEL_AVAILABLE = True
-except ImportError:
-    OTEL_AVAILABLE = False
-    trace = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +31,7 @@ logger = logging.getLogger(__name__)
 HandlerWrapper = tuple[Any, Any]  # (original_handler, normalized_async_handler)
 
 
-class InMemoryEventBus(EventBus):
+class InMemoryEventBus(EventBus, TracingMixin):
     """
     In-memory event bus for event distribution.
 
@@ -64,8 +56,14 @@ class InMemoryEventBus(EventBus):
         - Publishing should only be called from async context
     """
 
-    def __init__(self) -> None:
-        """Initialize the event bus with empty subscriber registry."""
+    def __init__(self, *, enable_tracing: bool = True) -> None:
+        """
+        Initialize the event bus with empty subscriber registry.
+
+        Args:
+            enable_tracing: If True and OpenTelemetry is available, emit traces.
+                           Defaults to True for consistency with other components.
+        """
         # Map of event type -> list of (original_handler, normalized_handler) tuples
         self._subscribers: dict[type[DomainEvent], list[HandlerWrapper]] = defaultdict(list)
         # List of wildcard handlers
@@ -82,6 +80,9 @@ class InMemoryEventBus(EventBus):
             "background_tasks_created": 0,
             "background_tasks_completed": 0,
         }
+
+        # Tracing configuration - simplified with TracingMixin
+        self._init_tracing(__name__, enable_tracing)
 
     def _normalize_handler(
         self, handler: FlexibleEventHandler | EventHandlerFunc
@@ -232,20 +233,16 @@ class InMemoryEventBus(EventBus):
             },
         )
 
-        # Create span for event dispatch if OpenTelemetry is available
-        if OTEL_AVAILABLE and trace is not None:
-            tracer = trace.get_tracer(__name__)
-            with tracer.start_as_current_span(
-                f"event.dispatch.{event_type.__name__}",
-                attributes={
-                    "event.type": event_type.__name__,
-                    "event.id": str(event.event_id),
-                    "event.aggregate_id": str(event.aggregate_id),
-                    "event.handler_count": len(handlers),
-                },
-            ):
-                await self._invoke_handlers(handlers, event)
-        else:
+        # Trace event dispatch with dynamic attributes
+        with self._create_span_context(
+            f"event.dispatch.{event_type.__name__}",
+            {
+                "event.type": event_type.__name__,
+                "event.id": str(event.event_id),
+                "event.aggregate_id": str(event.aggregate_id),
+                "event.handler_count": len(handlers),
+            },
+        ):
             await self._invoke_handlers(handlers, event)
 
     async def _invoke_handlers(self, handlers: list[HandlerWrapper], event: DomainEvent) -> None:
@@ -271,48 +268,20 @@ class InMemoryEventBus(EventBus):
         original_handler, async_handler = handler_wrapper
         handler_name = self._get_handler_name(original_handler)
 
-        # Create a span for the handler if OpenTelemetry is available
-        if OTEL_AVAILABLE and trace is not None:
-            tracer = trace.get_tracer(__name__)
-            with tracer.start_as_current_span(
-                f"event_handler.{handler_name}",
-                attributes={
-                    "event.type": type(event).__name__,
-                    "event.id": str(event.event_id),
-                    "event.aggregate_id": str(event.aggregate_id),
-                    "handler.name": handler_name,
-                },
-            ) as span:
-                try:
-                    await async_handler(event)
-                    span.set_attribute("handler.success", True)
-                    self._stats["handlers_invoked"] += 1
-                    logger.debug(
-                        f"Handler {handler_name} processed {type(event).__name__}",
-                        extra={
-                            "handler": handler_name,
-                            "event_type": type(event).__name__,
-                            "event_id": str(event.event_id),
-                        },
-                    )
-                except Exception as e:
-                    span.set_attribute("handler.success", False)
-                    span.record_exception(e)
-                    self._stats["handler_errors"] += 1
-                    logger.error(
-                        f"Handler {handler_name} failed processing {type(event).__name__}: {e}",
-                        exc_info=True,
-                        extra={
-                            "handler": handler_name,
-                            "event_type": type(event).__name__,
-                            "event_id": str(event.event_id),
-                            "error": str(e),
-                        },
-                    )
-        else:
-            # Fallback without OpenTelemetry
+        # Trace handler execution with dynamic attributes and error recording
+        with self._create_span_context(
+            f"event_handler.{handler_name}",
+            {
+                "event.type": type(event).__name__,
+                "event.id": str(event.event_id),
+                "event.aggregate_id": str(event.aggregate_id),
+                "handler.name": handler_name,
+            },
+        ) as span:
             try:
                 await async_handler(event)
+                if span:
+                    span.set_attribute("handler.success", True)
                 self._stats["handlers_invoked"] += 1
                 logger.debug(
                     f"Handler {handler_name} processed {type(event).__name__}",
@@ -323,6 +292,9 @@ class InMemoryEventBus(EventBus):
                     },
                 )
             except Exception as e:
+                if span:
+                    span.set_attribute("handler.success", False)
+                    span.record_exception(e)
                 self._stats["handler_errors"] += 1
                 logger.error(
                     f"Handler {handler_name} failed processing {type(event).__name__}: {e}",

@@ -578,7 +578,7 @@ class TestSQLiteCheckpointRepository:
 
     @pytest.mark.asyncio
     async def test_lag_metrics_with_events(
-        self, repo: SQLiteCheckpointRepository, db_connection: aiosqlite.Connection
+        self, repo: "SQLiteCheckpointRepository", db_connection: "aiosqlite.Connection"
     ):
         """Test that lag metrics can calculate lag against events table."""
         from datetime import UTC
@@ -610,7 +610,7 @@ class TestSQLiteCheckpointRepository:
 
     @pytest.mark.asyncio
     async def test_lag_metrics_with_event_type_filter(
-        self, repo: SQLiteCheckpointRepository, db_connection: aiosqlite.Connection
+        self, repo: "SQLiteCheckpointRepository", db_connection: "aiosqlite.Connection"
     ):
         """Test that lag metrics correctly filters by event types."""
         from datetime import UTC

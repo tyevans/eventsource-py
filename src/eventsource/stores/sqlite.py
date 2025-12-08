@@ -19,8 +19,11 @@ import json
 import logging
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
+
+if TYPE_CHECKING:
+    from opentelemetry.trace import Tracer
 
 import aiosqlite
 
@@ -38,6 +41,15 @@ from eventsource.stores.interface import (
     ReadOptions,
     StoredEvent,
 )
+
+# Optional OpenTelemetry support
+try:
+    from opentelemetry import trace
+
+    OTEL_AVAILABLE = True
+except ImportError:
+    trace = None  # type: ignore[assignment]
+    OTEL_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +100,7 @@ class SQLiteEventStore(EventStore):
         *,
         wal_mode: bool = True,
         busy_timeout: int = 5000,
+        enable_tracing: bool = True,
     ) -> None:
         """
         Initialize the SQLite event store.
@@ -97,6 +110,7 @@ class SQLiteEventStore(EventStore):
             event_registry: Event registry for deserialization (defaults to module registry)
             wal_mode: If True, enable WAL mode for better concurrency (default: True)
             busy_timeout: Timeout in milliseconds when database is locked (default: 5000)
+            enable_tracing: If True and OpenTelemetry is available, emit traces (default: True)
 
         Example:
             >>> # In-memory database for testing
@@ -107,12 +121,21 @@ class SQLiteEventStore(EventStore):
             >>>
             >>> # Without WAL mode (for read-only or single-process scenarios)
             >>> store = SQLiteEventStore("events.db", event_registry, wal_mode=False)
+            >>>
+            >>> # Without tracing
+            >>> store = SQLiteEventStore("events.db", event_registry, enable_tracing=False)
         """
         self._database = database
         self._event_registry = event_registry or default_registry
         self._wal_mode = wal_mode
         self._busy_timeout = busy_timeout
         self._connection: aiosqlite.Connection | None = None
+
+        # Tracing initialization
+        self._enable_tracing = enable_tracing and OTEL_AVAILABLE
+        self._tracer: Tracer | None = None
+        if self._enable_tracing and trace is not None:
+            self._tracer = trace.get_tracer(__name__)
 
     async def __aenter__(self) -> SQLiteEventStore:
         """
@@ -277,6 +300,36 @@ class SQLiteEventStore(EventStore):
         if not events:
             return AppendResult.successful(expected_version)
 
+        # Start tracing span if enabled
+        if self._enable_tracing and self._tracer is not None:
+            with self._tracer.start_as_current_span(
+                "event_store.append_events",
+                attributes={
+                    "aggregate.id": str(aggregate_id),
+                    "aggregate.type": aggregate_type,
+                    "event.count": len(events),
+                    "expected_version": expected_version,
+                    "event.types": ",".join(type(e).__name__ for e in events),
+                    "db.system": "sqlite",
+                    "db.name": self._database,
+                },
+            ):
+                return await self._do_append_events(
+                    aggregate_id, aggregate_type, events, expected_version
+                )
+        else:
+            return await self._do_append_events(
+                aggregate_id, aggregate_type, events, expected_version
+            )
+
+    async def _do_append_events(
+        self,
+        aggregate_id: UUID,
+        aggregate_type: str,
+        events: list[DomainEvent],
+        expected_version: int,
+    ) -> AppendResult:
+        """Internal implementation of append_events."""
         conn = self._ensure_connected()
 
         try:
@@ -430,6 +483,35 @@ class SQLiteEventStore(EventStore):
             >>> for event in stream.events:
             ...     aggregate.apply(event)
         """
+        # Start tracing span if enabled
+        if self._enable_tracing and self._tracer is not None:
+            with self._tracer.start_as_current_span(
+                "event_store.get_events",
+                attributes={
+                    "aggregate.id": str(aggregate_id),
+                    "aggregate.type": aggregate_type or "any",
+                    "from_version": from_version,
+                    "db.system": "sqlite",
+                    "db.name": self._database,
+                },
+            ):
+                return await self._do_get_events(
+                    aggregate_id, aggregate_type, from_version, from_timestamp, to_timestamp
+                )
+        else:
+            return await self._do_get_events(
+                aggregate_id, aggregate_type, from_version, from_timestamp, to_timestamp
+            )
+
+    async def _do_get_events(
+        self,
+        aggregate_id: UUID,
+        aggregate_type: str | None = None,
+        from_version: int = 0,
+        from_timestamp: datetime | None = None,
+        to_timestamp: datetime | None = None,
+    ) -> EventStream:
+        """Internal implementation of get_events."""
         conn = self._ensure_connected()
 
         # Build query dynamically
