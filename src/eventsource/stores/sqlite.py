@@ -28,6 +28,7 @@ from eventsource.events.base import DomainEvent
 from eventsource.events.registry import EventRegistry, default_registry
 from eventsource.exceptions import OptimisticLockError
 from eventsource.migrations import get_schema
+from eventsource.stores._compat import normalize_timestamp
 from eventsource.stores.interface import (
     AppendResult,
     EventStore,
@@ -511,7 +512,7 @@ class SQLiteEventStore(EventStore):
         self,
         aggregate_type: str,
         tenant_id: UUID | None = None,
-        from_timestamp: float | None = None,
+        from_timestamp: datetime | float | None = None,
     ) -> list[DomainEvent]:
         """
         Get all events for a specific aggregate type.
@@ -519,7 +520,8 @@ class SQLiteEventStore(EventStore):
         Args:
             aggregate_type: Type of aggregate (e.g., 'Order')
             tenant_id: Filter by tenant ID (optional)
-            from_timestamp: Only events after this Unix timestamp (optional)
+            from_timestamp: Only events after this timestamp (datetime preferred,
+                float/int Unix timestamp deprecated)
 
         Returns:
             List of events in chronological order
@@ -531,6 +533,9 @@ class SQLiteEventStore(EventStore):
             >>> events = await store.get_events_by_type("Order", tenant_id=my_tenant)
         """
         conn = self._ensure_connected()
+
+        # Normalize timestamp (handles deprecation warning for float)
+        normalized_timestamp = normalize_timestamp(from_timestamp, "from_timestamp")
 
         # Build query
         query_parts = [
@@ -548,10 +553,9 @@ class SQLiteEventStore(EventStore):
             query_parts.append("AND tenant_id = ?")
             params.append(str(tenant_id))
 
-        if from_timestamp is not None:
-            timestamp_dt = datetime.fromtimestamp(from_timestamp, tz=UTC)
+        if normalized_timestamp is not None:
             query_parts.append("AND timestamp > ?")
-            params.append(timestamp_dt.isoformat())
+            params.append(normalized_timestamp.isoformat())
 
         query_parts.append("ORDER BY timestamp ASC")
         query = "\n".join(query_parts)

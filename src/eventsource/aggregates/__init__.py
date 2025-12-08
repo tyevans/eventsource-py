@@ -3,7 +3,7 @@
 from eventsource.aggregates.base import (
     AggregateRoot,
     DeclarativeAggregate,
-    handles,
+    handles,  # Deprecated, re-exported for backwards compatibility
 )
 from eventsource.aggregates.repository import (
     AggregateRepository,
@@ -15,7 +15,7 @@ __all__ = [
     "AggregateRoot",
     "AggregateRepository",
     "DeclarativeAggregate",
-    "handles",
+    "handles",  # Deprecated: import from eventsource.projections.decorators instead
     "TAggregate",
     "TState",
 ]

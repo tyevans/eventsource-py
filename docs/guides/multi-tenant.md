@@ -212,8 +212,7 @@ class OrderAggregate(AggregateRoot[OrderState]):
 The same pattern works with `DeclarativeAggregate`:
 
 ```python
-from eventsource import DeclarativeAggregate
-from eventsource.aggregates.base import handles
+from eventsource import DeclarativeAggregate, handles
 
 class OrderAggregate(DeclarativeAggregate[OrderState]):
     """Declarative tenant-aware Order aggregate."""

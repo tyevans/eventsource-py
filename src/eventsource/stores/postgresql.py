@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from eventsource.events.base import DomainEvent
 from eventsource.events.registry import EventRegistry, default_registry
 from eventsource.exceptions import OptimisticLockError
+from eventsource.stores._compat import normalize_timestamp
 from eventsource.stores.interface import (
     AppendResult,
     EventStore,
@@ -60,6 +61,7 @@ class PostgreSQLEventStore(EventStore):
     - Optional OpenTelemetry tracing
     - Partition-aware timestamp filtering
     - Multi-tenancy support
+    - Configurable UUID field detection
 
     Thread-safe and supports concurrent operations across multiple
     processes/workers.
@@ -83,7 +85,49 @@ class PostgreSQLEventStore(EventStore):
         ...     events=[order_created],
         ...     expected_version=0,
         ... )
+
+        # Custom UUID field detection:
+        >>> store = PostgreSQLEventStore(
+        ...     session_factory,
+        ...     uuid_fields={"custom_reference_id", "parent_id"},
+        ...     string_id_fields={"stripe_customer_id", "external_api_id"},
+        ... )
+
+        # Strict mode (explicit only, no auto-detection):
+        >>> store = PostgreSQLEventStore.with_strict_uuid_detection(
+        ...     session_factory,
+        ...     uuid_fields={"event_id", "aggregate_id"},
+        ... )
     """
+
+    # Default UUID fields (always treated as UUID)
+    DEFAULT_UUID_FIELDS: frozenset[str] = frozenset(
+        {
+            "event_id",
+            "aggregate_id",
+            "tenant_id",
+            "correlation_id",
+            "causation_id",
+            "template_id",
+            "issuance_id",
+            "user_id",
+        }
+    )
+
+    # Default string ID fields (never treated as UUID even if ends with _id)
+    DEFAULT_STRING_ID_FIELDS: frozenset[str] = frozenset(
+        {
+            "actor_id",
+            "issuer_id",
+            "recipient_id",
+            "invited_by",
+            "assigned_by",
+            "revoked_by",
+            "deactivated_by",
+            "reactivated_by",
+            "removed_by",
+        }
+    )
 
     def __init__(
         self,
@@ -92,6 +136,10 @@ class PostgreSQLEventStore(EventStore):
         event_registry: EventRegistry | None = None,
         outbox_enabled: bool = False,
         enable_tracing: bool = True,
+        uuid_fields: set[str] | None = None,
+        string_id_fields: set[str] | None = None,
+        auto_detect_uuid: bool = True,
+        _use_defaults: bool = True,
     ) -> None:
         """
         Initialize the PostgreSQL event store.
@@ -101,6 +149,13 @@ class PostgreSQLEventStore(EventStore):
             event_registry: Event registry for deserialization (defaults to module registry)
             outbox_enabled: If True, write events to outbox table on append
             enable_tracing: If True and OpenTelemetry is available, emit traces
+            uuid_fields: Additional field names to treat as UUIDs.
+                        These are added to the default UUID fields.
+            string_id_fields: Field names that should NOT be treated as UUIDs,
+                             even if they match UUID patterns (e.g., end in '_id').
+            auto_detect_uuid: If True (default), fields ending in '_id' are
+                             treated as UUIDs unless in string_id_fields.
+                             Set to False for explicit control only.
 
         Example:
             >>> engine = create_async_engine("postgresql+asyncpg://localhost/mydb")
@@ -110,16 +165,98 @@ class PostgreSQLEventStore(EventStore):
             ...     outbox_enabled=True,
             ...     enable_tracing=True,
             ... )
+
+            # Add custom UUID fields:
+            >>> store = PostgreSQLEventStore(
+            ...     session_factory,
+            ...     uuid_fields={"custom_reference_id", "parent_id"},
+            ... )
+
+            # Exclude string ID fields from auto-detection:
+            >>> store = PostgreSQLEventStore(
+            ...     session_factory,
+            ...     string_id_fields={"stripe_customer_id", "paypal_transaction_id"},
+            ... )
         """
         self._session_factory = session_factory
         self._event_registry = event_registry or default_registry
         self._outbox_enabled = outbox_enabled
         self._enable_tracing = enable_tracing and OTEL_AVAILABLE
 
+        # Build UUID field set
+        if _use_defaults:
+            self._uuid_fields: frozenset[str] = (
+                self.DEFAULT_UUID_FIELDS | frozenset(uuid_fields)
+                if uuid_fields
+                else self.DEFAULT_UUID_FIELDS
+            )
+        else:
+            # Strict mode: only use explicitly provided fields
+            self._uuid_fields = frozenset(uuid_fields) if uuid_fields else frozenset()
+
+        # Build string ID field set (exclusions)
+        if _use_defaults:
+            self._string_id_fields: frozenset[str] = (
+                self.DEFAULT_STRING_ID_FIELDS | frozenset(string_id_fields)
+                if string_id_fields
+                else self.DEFAULT_STRING_ID_FIELDS
+            )
+        else:
+            # Strict mode: only use explicitly provided exclusions
+            self._string_id_fields = (
+                frozenset(string_id_fields) if string_id_fields else frozenset()
+            )
+
+        self._auto_detect_uuid = auto_detect_uuid
+
         if self._enable_tracing and trace is not None:
             self._tracer = trace.get_tracer(__name__)
         else:
             self._tracer = None  # type: ignore[assignment]
+
+    @classmethod
+    def with_strict_uuid_detection(
+        cls,
+        session_factory: async_sessionmaker[AsyncSession],
+        uuid_fields: set[str],
+        *,
+        event_registry: EventRegistry | None = None,
+        outbox_enabled: bool = False,
+        enable_tracing: bool = True,
+    ) -> PostgreSQLEventStore:
+        """
+        Create store with explicit UUID field list only (no auto-detection).
+
+        Use this when you want full control over which fields are UUIDs.
+        Only the explicitly provided uuid_fields will be treated as UUIDs;
+        no auto-detection based on field name patterns will occur.
+
+        Args:
+            session_factory: SQLAlchemy async session factory for database access
+            uuid_fields: Exact set of fields to treat as UUIDs
+            event_registry: Event registry for deserialization (defaults to module registry)
+            outbox_enabled: If True, write events to outbox table on append
+            enable_tracing: If True and OpenTelemetry is available, emit traces
+
+        Returns:
+            PostgreSQLEventStore with strict UUID detection
+
+        Example:
+            >>> store = PostgreSQLEventStore.with_strict_uuid_detection(
+            ...     session_factory=session_factory,
+            ...     uuid_fields={"event_id", "aggregate_id", "tenant_id"},
+            ... )
+        """
+        return cls(
+            session_factory=session_factory,
+            event_registry=event_registry,
+            outbox_enabled=outbox_enabled,
+            enable_tracing=enable_tracing,
+            uuid_fields=uuid_fields,
+            string_id_fields=set(),  # Empty - not needed without auto-detect
+            auto_detect_uuid=False,
+            _use_defaults=False,  # Only use explicitly provided fields
+        )
 
     async def append_events(
         self,
@@ -494,7 +631,7 @@ class PostgreSQLEventStore(EventStore):
         self,
         aggregate_type: str,
         tenant_id: UUID | None = None,
-        from_timestamp: float | None = None,
+        from_timestamp: datetime | float | None = None,
     ) -> list[DomainEvent]:
         """
         Get all events for a specific aggregate type.
@@ -502,11 +639,15 @@ class PostgreSQLEventStore(EventStore):
         Args:
             aggregate_type: Type of aggregate (e.g., 'Order')
             tenant_id: Filter by tenant ID (optional)
-            from_timestamp: Only events after this Unix timestamp (optional)
+            from_timestamp: Only events after this datetime (optional).
+                Float (Unix timestamp) is deprecated and will emit a warning.
 
         Returns:
             List of events in chronological order
         """
+        # Normalize timestamp (handles deprecation warning for float)
+        normalized_timestamp = normalize_timestamp(from_timestamp, "from_timestamp")
+
         async with self._session_factory() as session:
             # Build query
             query_parts = [
@@ -524,10 +665,9 @@ class PostgreSQLEventStore(EventStore):
                 query_parts.append("AND tenant_id = :tenant_id")
                 params["tenant_id"] = str(tenant_id)
 
-            if from_timestamp is not None:
-                timestamp_dt = datetime.fromtimestamp(from_timestamp, tz=UTC)
+            if normalized_timestamp is not None:
                 query_parts.append("AND timestamp > :from_timestamp")
-                params["from_timestamp"] = timestamp_dt
+                params["from_timestamp"] = normalized_timestamp
 
             query_parts.append("ORDER BY timestamp ASC")
             query = "\n".join(query_parts)
@@ -874,34 +1014,31 @@ class PostgreSQLEventStore(EventStore):
         return data
 
     def _is_uuid_field(self, key: str) -> bool:
-        """Check if a field should be converted to UUID."""
-        # These fields are explicitly strings, not UUIDs
-        string_id_fields = {
-            "actor_id",
-            "issuer_id",
-            "recipient_id",
-            "invited_by",
-            "assigned_by",
-            "revoked_by",
-            "deactivated_by",
-            "reactivated_by",
-            "removed_by",
-        }
-        if key in string_id_fields:
+        """
+        Determine if a field should be treated as a UUID.
+
+        Args:
+            key: Field name to check
+
+        Returns:
+            True if field should be parsed/serialized as UUID
+
+        The detection logic:
+        1. If key is in explicit uuid_fields, return True
+        2. If key is in string_id_fields, return False (exclusion)
+        3. If auto_detect_uuid is True and key ends with '_id', return True
+        4. Otherwise return False
+        """
+        # Explicit UUID fields always match
+        if key in self._uuid_fields:
+            return True
+
+        # Excluded fields never match
+        if key in self._string_id_fields:
             return False
 
-        # These are UUID fields
-        uuid_field_names = {
-            "event_id",
-            "aggregate_id",
-            "tenant_id",
-            "correlation_id",
-            "causation_id",
-            "template_id",
-            "issuance_id",
-            "user_id",
-        }
-        return key.endswith("_id") or key in uuid_field_names
+        # Auto-detection based on suffix
+        return self._auto_detect_uuid and key.endswith("_id")
 
     @property
     def session_factory(self) -> async_sessionmaker[AsyncSession]:

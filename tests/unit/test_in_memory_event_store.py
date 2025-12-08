@@ -13,6 +13,7 @@ Tests cover:
 """
 
 import asyncio
+import warnings
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -561,9 +562,13 @@ class TestEventFiltering:
             expected_version=0,
         )
 
-        # Get events from last 90 minutes using Unix timestamp
+        # Get events from last 90 minutes using Unix timestamp (deprecated)
+        # Use warnings.catch_warnings to suppress the deprecation warning
+        # since we're intentionally testing backward compatibility
         from_ts = (now - timedelta(minutes=90)).timestamp()
-        events = await store.get_events_by_type("TestAggregate", from_timestamp=from_ts)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            events = await store.get_events_by_type("TestAggregate", from_timestamp=from_ts)
 
         assert len(events) == 1
         assert events[0].data == "new"

@@ -26,7 +26,6 @@ This section provides comprehensive API documentation for the eventsource librar
 | | [`DeclarativeAggregate`](aggregates.md#declarativeaggregate) | Aggregate with decorator-based handlers |
 | | [`AggregateRepository`](aggregates.md#aggregaterepository) | Repository pattern for aggregates |
 | **Projections** | [`Projection`](projections.md#projection) | Simple async projection base class |
-| | [`SyncProjection`](projections.md#syncprojection) | Synchronous projection base class |
 | | [`DeclarativeProjection`](projections.md#declarativeprojection) | Projection with `@handles` decorators |
 | | [`CheckpointTrackingProjection`](projections.md#checkpointtrackingprojection) | Projection with checkpoints and DLQ |
 | | [`@handles`](projections.md#declarativeprojection) | Decorator for event handlers |
@@ -89,7 +88,6 @@ Persistent storage for events with optimistic locking and streaming support.
 from eventsource import (
     # Interface
     EventStore,
-    SyncEventStore,
 
     # Implementations
     InMemoryEventStore,
@@ -199,7 +197,6 @@ Build read-optimized views from event streams.
 from eventsource.projections import (
     # Base classes
     Projection,
-    SyncProjection,
     DeclarativeProjection,
     CheckpointTrackingProjection,
 

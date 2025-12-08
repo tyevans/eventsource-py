@@ -106,34 +106,32 @@ class EventStore(ABC):
         ...
 ```
 
-#### Sync Compatibility Layer
+#### Sync Usage via asyncio.run()
 
-For contexts where async is not available, we provide a synchronous interface:
+For contexts where async is not available or desired, users can wrap async calls:
 
 ```python
-# src/eventsource/stores/interface.py (lines 618-696)
-class SyncEventStore(ABC):
-    @abstractmethod
-    def append_events(
-        self,
-        aggregate_id: UUID,
-        aggregate_type: str,
-        events: list[DomainEvent],
-        expected_version: int,
-    ) -> AppendResult:
-        """Append events (synchronous)."""
-        pass
+import asyncio
+from eventsource import InMemoryEventStore
 
-    @abstractmethod
-    def get_events(
-        self,
-        aggregate_id: UUID,
-        aggregate_type: str | None = None,
-        from_version: int = 0,
-    ) -> EventStream:
-        """Get events (synchronous)."""
-        pass
+store = InMemoryEventStore()
+
+# Synchronous usage via asyncio.run()
+result = asyncio.run(store.append_events(
+    aggregate_id=order_id,
+    aggregate_type="Order",
+    events=[order_created],
+    expected_version=0,
+))
+
+stream = asyncio.run(store.get_events(order_id, "Order"))
 ```
+
+This approach was chosen over a separate `SyncEventStore` ABC because:
+- No concrete implementations existed for the sync interface
+- Modern Python I/O libraries are async-first
+- `asyncio.run()` provides a simple escape hatch when needed
+- Maintaining both interfaces adds maintenance burden without clear benefit
 
 #### Repository Pattern
 
@@ -189,14 +187,14 @@ class EventBus(ABC):
         pass
 ```
 
-### When to Use Sync vs Async APIs
+### When to Use Async vs asyncio.run()
 
-| Use Case | Recommended API |
-|----------|-----------------|
+| Use Case | Recommended Approach |
+|----------|---------------------|
 | Web applications (FastAPI, Starlette) | Async `EventStore` |
 | Background workers | Async `EventStore` |
-| CLI tools | Either (sync simpler for simple tools) |
-| Django (without async views) | `SyncEventStore` wrapper |
+| CLI tools | `asyncio.run()` wrapper for simplicity |
+| Django (without async views) | `asyncio.run()` wrapper |
 | Testing | Async (with pytest-asyncio) |
 | Jupyter notebooks | Async with `await` |
 
@@ -221,15 +219,14 @@ class EventBus(ABC):
 
 ### Neutral
 
-- **Need to maintain both async and sync interfaces**: The `SyncEventStore` ABC provides an escape hatch but adds maintenance overhead
-- **Framework integration varies**: FastAPI and Starlette are async-native; Flask and Django require adaptation
+- **Framework integration varies**: FastAPI and Starlette are async-native; Flask and Django require `asyncio.run()` wrappers
 - **Ecosystem dependency on async-capable drivers**: Must use asyncpg (not psycopg2) for PostgreSQL
 
 ## References
 
 ### Code References
 
-- `src/eventsource/stores/interface.py` - EventStore and SyncEventStore ABCs
+- `src/eventsource/stores/interface.py` - EventStore ABC
 - `src/eventsource/stores/postgresql.py` - Async PostgreSQL implementation
 - `src/eventsource/stores/in_memory.py` - Async in-memory implementation
 - `src/eventsource/aggregates/repository.py` - Async repository pattern

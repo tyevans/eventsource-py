@@ -110,3 +110,44 @@ class EventVersionError(EventSourceError):
             f"expected version {expected_version}, got {actual_version} "
             f"(event_id: {event_id})"
         )
+
+
+class UnhandledEventError(EventSourceError):
+    """
+    Raised when an event has no registered handler and strict mode is enabled.
+
+    This error occurs in DeclarativeAggregate or DeclarativeProjection when:
+    - An event type is applied/processed that has no @handles decorator
+    - The class has unregistered_event_handling set to "error"
+
+    This helps catch bugs such as:
+    - Typos in handler names
+    - Missing @handles decorators
+    - State inconsistencies from silently ignored events
+
+    Attributes:
+        event_type: The name of the event type that wasn't handled
+        event_id: ID of the unhandled event
+        handler_class: Name of the aggregate/projection class
+        available_handlers: List of event type names that have handlers
+    """
+
+    def __init__(
+        self,
+        event_type: str,
+        event_id: UUID,
+        handler_class: str,
+        available_handlers: list[str],
+    ) -> None:
+        self.event_type = event_type
+        self.event_id = event_id
+        self.handler_class = handler_class
+        self.available_handlers = available_handlers
+        handlers_str = ", ".join(available_handlers) if available_handlers else "none"
+        super().__init__(
+            f"No handler registered for event type '{event_type}' "
+            f"in {handler_class}. "
+            f"Available handlers: {handlers_str}. "
+            f"Add @handles({event_type}) decorator or set "
+            f"unregistered_event_handling='ignore' or 'warn'."
+        )

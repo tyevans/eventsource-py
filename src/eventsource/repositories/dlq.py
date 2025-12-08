@@ -10,7 +10,9 @@ all retry attempts. This enables:
 
 import asyncio
 import traceback
-from dataclasses import dataclass
+import warnings
+from collections.abc import Iterator
+from dataclasses import dataclass, fields
 from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable
 from uuid import UUID
@@ -41,6 +43,10 @@ class DLQEntry:
         status: Current status (failed, retrying, resolved)
         resolved_at: When the entry was resolved (if applicable)
         resolved_by: Who resolved the entry (if applicable)
+
+    Note:
+        Dict-style access (entry["key"]) is deprecated. Use attribute access
+        (entry.key) instead. Dict access will be removed in version 0.3.0.
     """
 
     id: int | str
@@ -56,6 +62,63 @@ class DLQEntry:
     status: str = "failed"
     resolved_at: datetime | None = None
     resolved_by: str | None = None
+
+    def __getitem__(self, key: str) -> Any:
+        """
+        Dict-style access for backward compatibility.
+
+        .. deprecated:: 0.1.0
+            Use attribute access (entry.event_id) instead of
+            dict access (entry["event_id"]).
+        """
+        warnings.warn(
+            f"Dict-style access to DLQEntry is deprecated. "
+            f"Use 'entry.{key}' instead of 'entry[\"{key}\"]'. "
+            "Dict access will be removed in version 0.3.0.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        try:
+            return getattr(self, key)
+        except AttributeError:
+            raise KeyError(key) from None
+
+    def __contains__(self, key: str) -> bool:
+        """Support 'key in entry' for backward compatibility."""
+        return hasattr(self, key)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """
+        Dict-style get for backward compatibility.
+
+        .. deprecated:: 0.1.0
+            Use attribute access (entry.event_id) instead of
+            dict access (entry.get("event_id")).
+        """
+        warnings.warn(
+            f"Dict-style access to DLQEntry is deprecated. "
+            f"Use 'entry.{key}' instead of 'entry.get(\"{key}\")'. "
+            "Dict access will be removed in version 0.3.0.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return getattr(self, key, default)
+
+    def keys(self) -> list[str]:
+        """Return field names for backward compatibility."""
+        return [f.name for f in fields(self)]
+
+    def values(self) -> list[Any]:
+        """Return field values for backward compatibility."""
+        return [getattr(self, f.name) for f in fields(self)]
+
+    def items(self) -> list[tuple[str, Any]]:
+        """Return field items for backward compatibility."""
+        return [(f.name, getattr(self, f.name)) for f in fields(self)]
+
+    def __iter__(self) -> Iterator[str]:
+        """Allow iteration over field names for backward compatibility."""
+        return iter(self.keys())
 
 
 @dataclass(frozen=True)
@@ -133,7 +196,7 @@ class DLQRepository(Protocol):
         projection_name: str | None = None,
         status: str = "failed",
         limit: int = 100,
-    ) -> list[dict[str, Any]]:
+    ) -> list[DLQEntry]:
         """
         Get failed events from the DLQ.
 
@@ -143,11 +206,11 @@ class DLQRepository(Protocol):
             limit: Maximum number of events to return
 
         Returns:
-            List of failed event records as dictionaries
+            List of DLQEntry instances
         """
         ...
 
-    async def get_failed_event_by_id(self, dlq_id: int | str) -> dict[str, Any] | None:
+    async def get_failed_event_by_id(self, dlq_id: int | str) -> DLQEntry | None:
         """
         Get a specific failed event by its DLQ ID.
 
@@ -155,7 +218,7 @@ class DLQRepository(Protocol):
             dlq_id: DLQ record ID
 
         Returns:
-            Failed event record, or None if not found
+            DLQEntry instance, or None if not found
         """
         ...
 
@@ -270,7 +333,7 @@ class PostgreSQLDLQRepository:
         projection_name: str | None = None,
         status: str = "failed",
         limit: int = 100,
-    ) -> list[dict[str, Any]]:
+    ) -> list[DLQEntry]:
         """
         Get failed events from the DLQ.
 
@@ -280,7 +343,7 @@ class PostgreSQLDLQRepository:
             limit: Maximum number of events to return
 
         Returns:
-            List of failed event records
+            List of DLQEntry instances
         """
         # Build query dynamically based on filters
         where_clauses = ["status = :status"]
@@ -308,23 +371,23 @@ class PostgreSQLDLQRepository:
             rows = result.fetchall()
 
         return [
-            {
-                "id": row[0],
-                "event_id": str(row[1]),
-                "projection_name": row[2],
-                "event_type": row[3],
-                "event_data": row[4],
-                "error_message": row[5],
-                "error_stacktrace": row[6],
-                "retry_count": row[7],
-                "first_failed_at": row[8].isoformat() if row[8] else None,
-                "last_failed_at": row[9].isoformat() if row[9] else None,
-                "status": row[10],
-            }
+            DLQEntry(
+                id=row[0],
+                event_id=row[1],
+                projection_name=row[2],
+                event_type=row[3],
+                event_data=row[4],
+                error_message=row[5],
+                error_stacktrace=row[6],
+                retry_count=row[7],
+                first_failed_at=row[8],
+                last_failed_at=row[9],
+                status=row[10],
+            )
             for row in rows
         ]
 
-    async def get_failed_event_by_id(self, dlq_id: int | str) -> dict[str, Any] | None:
+    async def get_failed_event_by_id(self, dlq_id: int | str) -> DLQEntry | None:
         """
         Get a specific failed event by its DLQ ID.
 
@@ -332,7 +395,7 @@ class PostgreSQLDLQRepository:
             dlq_id: DLQ record ID
 
         Returns:
-            Failed event record, or None if not found
+            DLQEntry instance, or None if not found
         """
         query = text("""
             SELECT id, event_id, projection_name, event_type, event_data,
@@ -350,21 +413,21 @@ class PostgreSQLDLQRepository:
         if not row:
             return None
 
-        return {
-            "id": row[0],
-            "event_id": str(row[1]),
-            "projection_name": row[2],
-            "event_type": row[3],
-            "event_data": row[4],
-            "error_message": row[5],
-            "error_stacktrace": row[6],
-            "retry_count": row[7],
-            "first_failed_at": row[8].isoformat() if row[8] else None,
-            "last_failed_at": row[9].isoformat() if row[9] else None,
-            "status": row[10],
-            "resolved_at": row[11].isoformat() if row[11] else None,
-            "resolved_by": row[12],
-        }
+        return DLQEntry(
+            id=row[0],
+            event_id=row[1],
+            projection_name=row[2],
+            event_type=row[3],
+            event_data=row[4],
+            error_message=row[5],
+            error_stacktrace=row[6],
+            retry_count=row[7],
+            first_failed_at=row[8],
+            last_failed_at=row[9],
+            status=row[10],
+            resolved_at=row[11],
+            resolved_by=row[12],
+        )
 
     async def mark_resolved(self, dlq_id: int | str, resolved_by: str | UUID) -> None:
         """
@@ -573,7 +636,7 @@ class InMemoryDLQRepository:
         projection_name: str | None = None,
         status: str = "failed",
         limit: int = 100,
-    ) -> list[dict[str, Any]]:
+    ) -> list[DLQEntry]:
         """
         Get failed events from the DLQ.
 
@@ -583,7 +646,7 @@ class InMemoryDLQRepository:
             limit: Maximum number of events to return
 
         Returns:
-            List of failed event records
+            List of DLQEntry instances
         """
         async with self._lock:
             entries = list(self._entries.values())
@@ -599,26 +662,9 @@ class InMemoryDLQRepository:
             entries.sort(key=lambda e: e.first_failed_at or datetime.min, reverse=True)
 
             # Apply limit
-            entries = entries[:limit]
+            return entries[:limit]
 
-            return [
-                {
-                    "id": e.id,
-                    "event_id": str(e.event_id),
-                    "projection_name": e.projection_name,
-                    "event_type": e.event_type,
-                    "event_data": e.event_data,
-                    "error_message": e.error_message,
-                    "error_stacktrace": e.error_stacktrace,
-                    "retry_count": e.retry_count,
-                    "first_failed_at": e.first_failed_at.isoformat() if e.first_failed_at else None,
-                    "last_failed_at": e.last_failed_at.isoformat() if e.last_failed_at else None,
-                    "status": e.status,
-                }
-                for e in entries
-            ]
-
-    async def get_failed_event_by_id(self, dlq_id: int | str) -> dict[str, Any] | None:
+    async def get_failed_event_by_id(self, dlq_id: int | str) -> DLQEntry | None:
         """
         Get a specific failed event by its DLQ ID.
 
@@ -626,32 +672,12 @@ class InMemoryDLQRepository:
             dlq_id: DLQ record ID
 
         Returns:
-            Failed event record, or None if not found
+            DLQEntry instance, or None if not found
         """
         async with self._lock:
             for entry in self._entries.values():
                 if entry.id == dlq_id:
-                    return {
-                        "id": entry.id,
-                        "event_id": str(entry.event_id),
-                        "projection_name": entry.projection_name,
-                        "event_type": entry.event_type,
-                        "event_data": entry.event_data,
-                        "error_message": entry.error_message,
-                        "error_stacktrace": entry.error_stacktrace,
-                        "retry_count": entry.retry_count,
-                        "first_failed_at": (
-                            entry.first_failed_at.isoformat() if entry.first_failed_at else None
-                        ),
-                        "last_failed_at": (
-                            entry.last_failed_at.isoformat() if entry.last_failed_at else None
-                        ),
-                        "status": entry.status,
-                        "resolved_at": (
-                            entry.resolved_at.isoformat() if entry.resolved_at else None
-                        ),
-                        "resolved_by": entry.resolved_by,
-                    }
+                    return entry
             return None
 
     async def mark_resolved(self, dlq_id: int | str, resolved_by: str | UUID) -> None:

@@ -9,7 +9,6 @@ Tests cover:
 - ExpectedVersion constants
 - EventStore abstract methods (via mock implementation)
 - EventPublisher protocol
-- SyncEventStore abstract methods
 """
 
 from datetime import UTC, datetime
@@ -27,7 +26,6 @@ from eventsource.stores.interface import (
     ReadDirection,
     ReadOptions,
     StoredEvent,
-    SyncEventStore,
 )
 
 # --- Test Fixtures ---
@@ -648,155 +646,6 @@ class TestEventPublisher:
         assert len(publisher.published_events) == 3
 
 
-# --- SyncEventStore Abstract Base Class Tests ---
-
-
-class MockSyncEventStore(SyncEventStore):
-    """Mock SyncEventStore implementation for testing."""
-
-    def __init__(self) -> None:
-        self._events: dict[UUID, list[DomainEvent]] = {}
-        self._event_ids: set[UUID] = set()
-
-    def append_events(
-        self,
-        aggregate_id: UUID,
-        aggregate_type: str,
-        events: list[DomainEvent],
-        expected_version: int,
-    ) -> AppendResult:
-        if aggregate_id not in self._events:
-            self._events[aggregate_id] = []
-
-        for event in events:
-            self._events[aggregate_id].append(event)
-            self._event_ids.add(event.event_id)
-
-        return AppendResult.successful(new_version=len(self._events[aggregate_id]))
-
-    def get_events(
-        self,
-        aggregate_id: UUID,
-        aggregate_type: str | None = None,
-        from_version: int = 0,
-        from_timestamp: datetime | None = None,
-        to_timestamp: datetime | None = None,
-    ) -> EventStream:
-        events = self._events.get(aggregate_id, [])
-        if from_version > 0:
-            events = events[from_version:]
-        return EventStream(
-            aggregate_id=aggregate_id,
-            aggregate_type=aggregate_type or "Unknown",
-            events=events,
-            version=len(events),
-        )
-
-    def get_events_by_type(
-        self,
-        aggregate_type: str,
-        tenant_id: UUID | None = None,
-        from_timestamp: float | None = None,
-    ) -> list[DomainEvent]:
-        result: list[DomainEvent] = []
-        for events in self._events.values():
-            for event in events:
-                if event.aggregate_type == aggregate_type and (
-                    tenant_id is None or event.tenant_id == tenant_id
-                ):
-                    result.append(event)
-        return result
-
-    def event_exists(self, event_id: UUID) -> bool:
-        return event_id in self._event_ids
-
-
-class TestSyncEventStore:
-    """Tests for SyncEventStore abstract base class."""
-
-    @pytest.fixture
-    def store(self) -> MockSyncEventStore:
-        """Create a mock sync event store."""
-        return MockSyncEventStore()
-
-    def test_append_events(
-        self, store: MockSyncEventStore, sample_events: list[SampleTestEvent]
-    ) -> None:
-        """Test appending events synchronously."""
-        aggregate_id = sample_events[0].aggregate_id
-
-        result = store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="TestAggregate",
-            events=sample_events,
-            expected_version=0,
-        )
-
-        assert result.success is True
-        assert result.new_version == 3
-
-    def test_get_events(
-        self, store: MockSyncEventStore, sample_events: list[SampleTestEvent]
-    ) -> None:
-        """Test getting events synchronously."""
-        aggregate_id = sample_events[0].aggregate_id
-
-        # First append
-        store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="TestAggregate",
-            events=sample_events,
-            expected_version=0,
-        )
-
-        # Then get
-        stream = store.get_events(aggregate_id, "TestAggregate")
-
-        assert stream.aggregate_id == aggregate_id
-        assert len(stream.events) == 3
-        assert stream.version == 3
-
-    def test_get_stream_version(
-        self, store: MockSyncEventStore, sample_events: list[SampleTestEvent]
-    ) -> None:
-        """Test get_stream_version default implementation (sync)."""
-        aggregate_id = sample_events[0].aggregate_id
-
-        # First append
-        store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="TestAggregate",
-            events=sample_events,
-            expected_version=0,
-        )
-
-        # Check version
-        version = store.get_stream_version(aggregate_id, "TestAggregate")
-        assert version == 3
-
-    def test_event_exists(
-        self, store: MockSyncEventStore, sample_events: list[SampleTestEvent]
-    ) -> None:
-        """Test checking if event exists (sync)."""
-        aggregate_id = sample_events[0].aggregate_id
-
-        # First append
-        store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="TestAggregate",
-            events=sample_events,
-            expected_version=0,
-        )
-
-        # Check existing
-        exists = store.event_exists(sample_events[0].event_id)
-        assert exists is True
-
-        # Check non-existing
-        exists = store.event_exists(uuid4())
-        assert exists is False
-
-
 # --- Import Tests ---
 
 
@@ -814,7 +663,6 @@ class TestImports:
             ReadDirection,
             ReadOptions,
             StoredEvent,
-            SyncEventStore,
         )
 
         assert AppendResult is not None
@@ -825,7 +673,6 @@ class TestImports:
         assert ReadDirection is not None
         assert ReadOptions is not None
         assert StoredEvent is not None
-        assert SyncEventStore is not None
 
     def test_import_from_main_module(self) -> None:
         """Test importing from main eventsource module."""
@@ -838,7 +685,6 @@ class TestImports:
             ReadDirection,
             ReadOptions,
             StoredEvent,
-            SyncEventStore,
         )
 
         assert AppendResult is not None
@@ -849,4 +695,9 @@ class TestImports:
         assert ReadDirection is not None
         assert ReadOptions is not None
         assert StoredEvent is not None
-        assert SyncEventStore is not None
+
+    def test_sync_event_store_not_present(self) -> None:
+        """Verify SyncEventStore has been removed."""
+        import eventsource.stores.interface as interface
+
+        assert not hasattr(interface, "SyncEventStore")

@@ -209,7 +209,6 @@ Defines the contract for event persistence:
 | Class/Type | Purpose |
 |------------|---------|
 | `EventStore` | Abstract base for async event stores |
-| `SyncEventStore` | Abstract base for sync event stores |
 | `EventStream` | Container for an aggregate's events |
 | `StoredEvent` | Event with position metadata |
 | `AppendResult` | Result of append operation |
@@ -357,7 +356,6 @@ Read model building from events.
 | Class | Purpose |
 |-------|---------|
 | `Projection` | Abstract base for async projections |
-| `SyncProjection` | Abstract base for sync projections |
 | `EventHandlerBase` | Base for event handlers |
 | `CheckpointTrackingProjection` | Adds checkpoint, retry, DLQ |
 | `DeclarativeProjection` | Uses `@handles` decorator |
@@ -619,7 +617,7 @@ from eventsource import (
 ### Event Stores
 ```python
 from eventsource import (
-    EventStore, SyncEventStore, EventPublisher,
+    EventStore, EventPublisher,
     EventStream, AppendResult, StoredEvent,
     ReadOptions, ReadDirection, ExpectedVersion,
     InMemoryEventStore, PostgreSQLEventStore,

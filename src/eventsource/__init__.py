@@ -20,16 +20,14 @@ except PackageNotFoundError:
 
 # Exceptions - available immediately
 # Aggregates (Task 07, Task 08)
-from eventsource.aggregates.base import AggregateRoot, DeclarativeAggregate, handles
+from eventsource.aggregates.base import AggregateRoot, DeclarativeAggregate
 from eventsource.aggregates.repository import AggregateRepository
 
 # Event bus (Task 10)
 from eventsource.bus.interface import (
     AsyncEventHandler,
     EventBus,
-    EventHandler,
     EventHandlerFunc,
-    EventSubscriber,
 )
 from eventsource.bus.memory import InMemoryEventBus
 
@@ -74,6 +72,18 @@ from eventsource.projections.base import (
     Projection,
 )
 
+# Decorators - canonical location for @handles (TD-006)
+from eventsource.projections.decorators import handles
+
+# Protocols - canonical location (TD-007)
+from eventsource.protocols import (
+    EventHandler,
+    EventSubscriber,
+    FlexibleEventHandler,
+    FlexibleEventSubscriber,
+    SyncEventHandler,
+)
+
 # Repository infrastructure (Task 12)
 from eventsource.repositories import (
     CheckpointData,
@@ -108,7 +118,6 @@ from eventsource.stores.interface import (
     ReadDirection,
     ReadOptions,
     StoredEvent,
-    SyncEventStore,
 )
 from eventsource.stores.postgresql import PostgreSQLEventStore
 
@@ -157,7 +166,6 @@ __all__ = [
     "DuplicateEventTypeError",
     # Event Store Interface and Data Structures (Task 04)
     "EventStore",
-    "SyncEventStore",
     "EventPublisher",
     "EventStream",
     "AppendResult",
@@ -175,11 +183,15 @@ __all__ = [
     "handles",
     # Event Bus (Task 10)
     "EventBus",
-    "EventHandler",
-    "EventSubscriber",
     "EventHandlerFunc",
     "AsyncEventHandler",
     "InMemoryEventBus",
+    # Protocols (TD-007)
+    "EventHandler",
+    "SyncEventHandler",
+    "FlexibleEventHandler",
+    "EventSubscriber",
+    "FlexibleEventSubscriber",
     # Redis Event Bus (Task 11)
     "RedisEventBus",
     "RedisEventBusConfig",

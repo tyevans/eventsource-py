@@ -24,31 +24,51 @@ A production-ready event sourcing library for Python 3.11+.
 
 ## Installation
 
-```bash
-# Basic installation
-pip install eventsource-py
+### Basic Installation
 
-# With PostgreSQL support
+```bash
+pip install eventsource-py
+```
+
+### With Optional Dependencies
+
+eventsource uses optional dependencies to keep the core package lightweight. Install only what you need:
+
+```bash
+# PostgreSQL support - production event store with asyncpg
 pip install eventsource-py[postgresql]
 
-# With SQLite support
+# SQLite support - lightweight deployments
 pip install eventsource-py[sqlite]
 
-# With Redis support
+# Redis support - distributed event bus with Redis Streams
 pip install eventsource-py[redis]
 
-# With OpenTelemetry support
+# Telemetry support - OpenTelemetry tracing integration
 pip install eventsource-py[telemetry]
 
 # All optional dependencies
 pip install eventsource-py[all]
+
+# Multiple extras
+pip install eventsource-py[postgresql,redis,telemetry]
 ```
+
+| Extra | Enables | Dependencies |
+|-------|---------|--------------|
+| `postgresql` | `PostgreSQLEventStore`, checkpoint/outbox/DLQ repositories | asyncpg |
+| `redis` | `RedisEventBus` with consumer groups and DLQ | redis |
+| `telemetry` | Distributed tracing for event operations | opentelemetry-api, opentelemetry-sdk |
+| `all` | All of the above | All of the above |
+| `dev` | Development tools | pytest, mypy, ruff, pre-commit |
+
+For detailed installation instructions, troubleshooting, and version compatibility, see the [Installation Guide](docs/installation.md).
 
 ## Requirements
 
 - Python 3.11+
 - pydantic >= 2.0
-- sqlalchemy >= 2.0 (for PostgreSQL backend)
+- sqlalchemy >= 2.0
 
 ## Quick Start
 

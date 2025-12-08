@@ -10,6 +10,7 @@ These tests focus on:
 """
 
 import asyncio
+import warnings
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -71,7 +72,7 @@ class TestInMemoryEventStoreEdgeCases:
 
     @pytest.mark.asyncio
     async def test_get_events_by_type_with_timestamp_filter(self, store: InMemoryEventStore):
-        """Test get_events_by_type with timestamp filter."""
+        """Test get_events_by_type with timestamp filter (deprecated float usage)."""
         aggregate_id = uuid4()
         old_timestamp = datetime.now(UTC).timestamp() - 3600  # 1 hour ago
 
@@ -79,7 +80,10 @@ class TestInMemoryEventStoreEdgeCases:
         await store.append_events(aggregate_id, "Test", [event], 0)
 
         # Get events created after old timestamp
-        events = await store.get_events_by_type("Test", from_timestamp=old_timestamp)
+        # Use warnings.catch_warnings to suppress deprecation warning
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            events = await store.get_events_by_type("Test", from_timestamp=old_timestamp)
         assert len(events) == 1
 
     @pytest.mark.asyncio

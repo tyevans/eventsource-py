@@ -4,10 +4,14 @@ This guide will walk you through setting up eventsource-py and implementing your
 
 ## Installation
 
-### Basic Installation
+### Quick Start
 
 ```bash
+# Basic installation (in-memory stores only)
 pip install eventsource-py
+
+# Most common: with PostgreSQL support for production
+pip install eventsource-py[postgresql]
 ```
 
 ### With Optional Dependencies
@@ -16,21 +20,28 @@ pip install eventsource-py
 # SQLite support (development/testing/embedded)
 pip install eventsource-py[sqlite]
 
-# PostgreSQL support (production)
-pip install eventsource-py[postgresql]
-
 # Redis support (distributed event bus)
 pip install eventsource-py[redis]
 
 # OpenTelemetry support (observability)
 pip install eventsource-py[telemetry]
 
-# All database backends
-pip install eventsource-py[all-backends]
-
 # All optional dependencies
 pip install eventsource-py[all]
 ```
+
+### Optional Dependencies
+
+eventsource uses optional dependencies to keep the core package lightweight:
+
+| Extra | Purpose | Install Command |
+|-------|---------|-----------------|
+| `postgresql` | Production event store with asyncpg | `pip install eventsource-py[postgresql]` |
+| `redis` | Distributed event bus with Redis Streams | `pip install eventsource-py[redis]` |
+| `telemetry` | OpenTelemetry tracing integration | `pip install eventsource-py[telemetry]` |
+| `all` | All optional dependencies | `pip install eventsource-py[all]` |
+
+For detailed installation instructions, troubleshooting, and version compatibility information, see the [Installation Guide](installation.md).
 
 ## Core Concepts
 

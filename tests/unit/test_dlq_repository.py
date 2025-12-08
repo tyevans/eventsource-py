@@ -13,6 +13,7 @@ from uuid import uuid4
 import pytest
 
 from eventsource.repositories.dlq import (
+    DLQEntry,
     DLQRepository,
     InMemoryDLQRepository,
     SQLiteDLQRepository,
@@ -47,12 +48,12 @@ class TestInMemoryDLQRepository:
 
         failed_events = await repo.get_failed_events()
         assert len(failed_events) == 1
-        assert failed_events[0]["event_id"] == str(event_id)
-        assert failed_events[0]["projection_name"] == projection_name
-        assert failed_events[0]["event_type"] == event_type
-        assert failed_events[0]["retry_count"] == 1
-        assert failed_events[0]["status"] == "failed"
-        assert "Test error" in failed_events[0]["error_message"]
+        assert failed_events[0].event_id == event_id
+        assert failed_events[0].projection_name == projection_name
+        assert failed_events[0].event_type == event_type
+        assert failed_events[0].retry_count == 1
+        assert failed_events[0].status == "failed"
+        assert "Test error" in failed_events[0].error_message
 
     @pytest.mark.asyncio
     async def test_add_failed_event_upsert(self, repo: InMemoryDLQRepository):
@@ -178,14 +179,14 @@ class TestInMemoryDLQRepository:
 
         # Get the DLQ ID
         events = await repo.get_failed_events()
-        dlq_id = events[0]["id"]
+        dlq_id = events[0].id
 
         # Get by ID
         event = await repo.get_failed_event_by_id(dlq_id)
         assert event is not None
-        assert event["id"] == dlq_id
-        assert event["event_id"] == str(event_id)
-        assert event["retry_count"] == 2
+        assert event.id == dlq_id
+        assert event.event_id == event_id
+        assert event.retry_count == 2
 
     @pytest.mark.asyncio
     async def test_get_failed_event_by_id_not_found(self, repo: InMemoryDLQRepository):
@@ -610,6 +611,203 @@ class TestInMemoryDLQRepositoryConcurrency:
 
 
 # ============================================================================
+# DLQEntry Typed Returns Tests
+# ============================================================================
+
+
+class TestDLQEntryTypedReturns:
+    """Tests for typed returns and backward compatibility."""
+
+    @pytest.fixture
+    def repo(self) -> InMemoryDLQRepository:
+        """Create a fresh repository for each test."""
+        return InMemoryDLQRepository()
+
+    @pytest.mark.asyncio
+    async def test_get_failed_events_returns_dlq_entries(self, repo: InMemoryDLQRepository):
+        """get_failed_events returns list of DLQEntry instances."""
+        event_id = uuid4()
+        await repo.add_failed_event(
+            event_id=event_id,
+            projection_name="TestProjection",
+            event_type="TestEvent",
+            event_data={},
+            error=Exception("Test error"),
+        )
+
+        entries = await repo.get_failed_events()
+
+        assert len(entries) == 1
+        assert isinstance(entries[0], DLQEntry)
+        assert hasattr(entries[0], "event_id")
+        assert hasattr(entries[0], "projection_name")
+        assert hasattr(entries[0], "error_message")
+
+    @pytest.mark.asyncio
+    async def test_get_failed_event_by_id_returns_dlq_entry(self, repo: InMemoryDLQRepository):
+        """get_failed_event_by_id returns DLQEntry instance."""
+        event_id = uuid4()
+        await repo.add_failed_event(
+            event_id=event_id,
+            projection_name="TestProjection",
+            event_type="TestEvent",
+            event_data={},
+            error=Exception("Test error"),
+        )
+
+        events = await repo.get_failed_events()
+        dlq_id = events[0].id
+
+        entry = await repo.get_failed_event_by_id(dlq_id)
+
+        assert entry is not None
+        assert isinstance(entry, DLQEntry)
+        assert entry.event_id == event_id
+
+    @pytest.mark.asyncio
+    async def test_attribute_access_works(self, repo: InMemoryDLQRepository):
+        """Can access DLQEntry fields as attributes."""
+        event_id = uuid4()
+        await repo.add_failed_event(
+            event_id=event_id,
+            projection_name="TestProjection",
+            event_type="TestEvent",
+            event_data={},
+            error=Exception("Test error"),
+        )
+
+        entries = await repo.get_failed_events()
+        entry = entries[0]
+
+        assert entry.event_id == event_id
+        assert entry.projection_name == "TestProjection"
+        assert entry.event_type == "TestEvent"
+        assert entry.status == "failed"
+        assert "Test error" in entry.error_message
+
+    @pytest.mark.asyncio
+    async def test_dict_access_emits_deprecation_warning(self, repo: InMemoryDLQRepository):
+        """Dict-style access emits deprecation warning."""
+        from datetime import UTC, datetime
+
+        entry = DLQEntry(
+            id=1,
+            event_id=uuid4(),
+            projection_name="TestProjection",
+            event_type="TestEvent",
+            event_data="{}",
+            error_message="Test error",
+            error_stacktrace=None,
+            retry_count=0,
+            first_failed_at=datetime.now(UTC),
+            last_failed_at=datetime.now(UTC),
+            status="failed",
+            resolved_at=None,
+            resolved_by=None,
+        )
+
+        with pytest.warns(DeprecationWarning, match="Dict-style access"):
+            _ = entry["event_id"]
+
+    @pytest.mark.asyncio
+    async def test_dict_get_emits_deprecation_warning(self, repo: InMemoryDLQRepository):
+        """Dict-style get() emits deprecation warning."""
+        from datetime import UTC, datetime
+
+        entry = DLQEntry(
+            id=1,
+            event_id=uuid4(),
+            projection_name="TestProjection",
+            event_type="TestEvent",
+            event_data="{}",
+            error_message="Test error",
+            error_stacktrace=None,
+            retry_count=0,
+            first_failed_at=datetime.now(UTC),
+            last_failed_at=datetime.now(UTC),
+            status="failed",
+            resolved_at=None,
+            resolved_by=None,
+        )
+
+        with pytest.warns(DeprecationWarning, match="Dict-style access"):
+            _ = entry.get("event_id")
+
+    @pytest.mark.asyncio
+    async def test_missing_key_raises_key_error(self, repo: InMemoryDLQRepository):
+        """Accessing missing key raises KeyError with deprecation warning."""
+        from datetime import UTC, datetime
+
+        entry = DLQEntry(
+            id=1,
+            event_id=uuid4(),
+            projection_name="TestProjection",
+            event_type="TestEvent",
+            event_data="{}",
+            error_message="Test error",
+            error_stacktrace=None,
+            retry_count=0,
+            first_failed_at=datetime.now(UTC),
+            last_failed_at=datetime.now(UTC),
+            status="failed",
+            resolved_at=None,
+            resolved_by=None,
+        )
+
+        with pytest.warns(DeprecationWarning), pytest.raises(KeyError):
+            _ = entry["nonexistent_key"]
+
+    def test_contains_works(self):
+        """'in' operator works for field checking."""
+        from datetime import UTC, datetime
+
+        entry = DLQEntry(
+            id=1,
+            event_id=uuid4(),
+            projection_name="TestProjection",
+            event_type="TestEvent",
+            event_data="{}",
+            error_message="Test error",
+            error_stacktrace=None,
+            retry_count=0,
+            first_failed_at=datetime.now(UTC),
+            last_failed_at=datetime.now(UTC),
+            status="failed",
+            resolved_at=None,
+            resolved_by=None,
+        )
+
+        assert "event_id" in entry
+        assert "projection_name" in entry
+        assert "nonexistent_key" not in entry
+
+    def test_iteration_works(self):
+        """Can iterate over field names."""
+        from datetime import UTC, datetime
+
+        entry = DLQEntry(
+            id=1,
+            event_id=uuid4(),
+            projection_name="TestProjection",
+            event_type="TestEvent",
+            event_data="{}",
+            error_message="Test error",
+            error_stacktrace=None,
+            retry_count=0,
+            first_failed_at=datetime.now(UTC),
+            last_failed_at=datetime.now(UTC),
+            status="failed",
+            resolved_at=None,
+            resolved_by=None,
+        )
+
+        field_names = list(entry)
+        assert "event_id" in field_names
+        assert "projection_name" in field_names
+        assert "status" in field_names
+
+
+# ============================================================================
 # SQLiteDLQRepository Tests
 # ============================================================================
 
@@ -628,7 +826,7 @@ class TestSQLiteDLQRepository:
     """Tests for SQLiteDLQRepository using in-memory SQLite database."""
 
     @pytest.fixture
-    async def db_connection(self) -> aiosqlite.Connection:
+    async def db_connection(self) -> "aiosqlite.Connection":
         """Create an in-memory SQLite database with DLQ schema for each test."""
         conn = await aiosqlite.connect(":memory:")
 
@@ -660,7 +858,7 @@ class TestSQLiteDLQRepository:
         await conn.close()
 
     @pytest.fixture
-    def repo(self, db_connection: aiosqlite.Connection) -> SQLiteDLQRepository:
+    def repo(self, db_connection: "aiosqlite.Connection") -> SQLiteDLQRepository:
         """Create a SQLiteDLQRepository for each test."""
         return SQLiteDLQRepository(db_connection)
 
@@ -1112,7 +1310,7 @@ class TestSQLiteDLQRepositoryProtocol:
     """Tests to verify SQLiteDLQRepository implements the DLQRepository protocol."""
 
     @pytest.fixture
-    async def db_connection(self) -> aiosqlite.Connection:
+    async def db_connection(self) -> "aiosqlite.Connection":
         """Create an in-memory SQLite database with DLQ schema."""
         conn = await aiosqlite.connect(":memory:")
 
@@ -1141,7 +1339,7 @@ class TestSQLiteDLQRepositoryProtocol:
 
         await conn.close()
 
-    def test_implements_protocol(self, db_connection: aiosqlite.Connection):
+    def test_implements_protocol(self, db_connection: "aiosqlite.Connection"):
         """Test that SQLiteDLQRepository implements DLQRepository protocol."""
         repo = SQLiteDLQRepository(db_connection)
         # The protocol is runtime checkable

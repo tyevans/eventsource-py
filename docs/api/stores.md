@@ -10,7 +10,6 @@ Event stores are the source of truth in event sourcing architecture. They persis
 from eventsource import (
     # Interface
     EventStore,
-    SyncEventStore,
 
     # Implementations
     InMemoryEventStore,

@@ -15,6 +15,7 @@ import pytest
 from eventsource.events.base import DomainEvent
 from eventsource.repositories.outbox import (
     InMemoryOutboxRepository,
+    OutboxEntry,
     OutboxRepository,
     SQLiteOutboxRepository,
 )
@@ -246,7 +247,7 @@ class TestInMemoryOutboxRepository:
         await repo.add_event(event)
 
         pending = await repo.get_pending_events()
-        assert pending[0]["tenant_id"] == str(tenant_id)
+        assert pending[0].tenant_id == tenant_id
 
     @pytest.mark.asyncio
     async def test_event_without_tenant_id(self, repo: InMemoryOutboxRepository):
@@ -279,7 +280,7 @@ class TestInMemoryOutboxRepository:
 
         # All should have same aggregate_id
         for entry in pending:
-            assert entry["aggregate_id"] == str(aggregate_id)
+            assert entry.aggregate_id == aggregate_id
 
     @pytest.mark.asyncio
     async def test_mark_published_nonexistent(self, repo: InMemoryOutboxRepository):
@@ -448,6 +449,170 @@ class TestInMemoryOutboxRepositoryConcurrency:
         assert len(stats_results) == 10
         for stats in stats_results:
             assert "pending_count" in stats
+
+
+# ============================================================================
+# OutboxEntry Typed Returns Tests
+# ============================================================================
+
+
+class TestOutboxEntryTypedReturns:
+    """Tests for typed returns and backward compatibility."""
+
+    @pytest.fixture
+    def repo(self) -> InMemoryOutboxRepository:
+        """Create a fresh repository for each test."""
+        return InMemoryOutboxRepository()
+
+    @pytest.mark.asyncio
+    async def test_get_pending_events_returns_outbox_entries(self, repo: InMemoryOutboxRepository):
+        """get_pending_events returns list of OutboxEntry instances."""
+        event = SampleEvent(
+            aggregate_id=uuid4(),
+            test_field="test_data",
+        )
+        await repo.add_event(event)
+
+        entries = await repo.get_pending_events()
+
+        assert len(entries) == 1
+        assert isinstance(entries[0], OutboxEntry)
+        assert hasattr(entries[0], "event_id")
+        assert hasattr(entries[0], "event_type")
+        assert hasattr(entries[0], "status")
+
+    @pytest.mark.asyncio
+    async def test_attribute_access_works(self, repo: InMemoryOutboxRepository):
+        """Can access OutboxEntry fields as attributes."""
+        event = SampleEvent(
+            aggregate_id=uuid4(),
+            test_field="test_data",
+        )
+        await repo.add_event(event)
+
+        entries = await repo.get_pending_events()
+        entry = entries[0]
+
+        assert entry.event_id == event.event_id
+        assert entry.event_type == "SampleEvent"
+        assert entry.aggregate_type == "SampleAggregate"
+        assert entry.status == "pending"
+
+    @pytest.mark.asyncio
+    async def test_dict_access_emits_deprecation_warning(self, repo: InMemoryOutboxRepository):
+        """Dict-style access emits deprecation warning."""
+        from datetime import UTC, datetime
+
+        entry = OutboxEntry(
+            id=uuid4(),
+            event_id=uuid4(),
+            event_type="TestEvent",
+            aggregate_id=uuid4(),
+            aggregate_type="TestAggregate",
+            tenant_id=None,
+            event_data="{}",
+            created_at=datetime.now(UTC),
+            published_at=None,
+            retry_count=0,
+            last_error=None,
+            status="pending",
+        )
+
+        with pytest.warns(DeprecationWarning, match="Dict-style access"):
+            _ = entry["event_id"]
+
+    @pytest.mark.asyncio
+    async def test_dict_get_emits_deprecation_warning(self, repo: InMemoryOutboxRepository):
+        """Dict-style get() emits deprecation warning."""
+        from datetime import UTC, datetime
+
+        entry = OutboxEntry(
+            id=uuid4(),
+            event_id=uuid4(),
+            event_type="TestEvent",
+            aggregate_id=uuid4(),
+            aggregate_type="TestAggregate",
+            tenant_id=None,
+            event_data="{}",
+            created_at=datetime.now(UTC),
+            published_at=None,
+            retry_count=0,
+            last_error=None,
+            status="pending",
+        )
+
+        with pytest.warns(DeprecationWarning, match="Dict-style access"):
+            _ = entry.get("event_id")
+
+    @pytest.mark.asyncio
+    async def test_missing_key_raises_key_error(self, repo: InMemoryOutboxRepository):
+        """Accessing missing key raises KeyError with deprecation warning."""
+        from datetime import UTC, datetime
+
+        entry = OutboxEntry(
+            id=uuid4(),
+            event_id=uuid4(),
+            event_type="TestEvent",
+            aggregate_id=uuid4(),
+            aggregate_type="TestAggregate",
+            tenant_id=None,
+            event_data="{}",
+            created_at=datetime.now(UTC),
+            published_at=None,
+            retry_count=0,
+            last_error=None,
+            status="pending",
+        )
+
+        with pytest.warns(DeprecationWarning), pytest.raises(KeyError):
+            _ = entry["nonexistent_key"]
+
+    def test_contains_works(self):
+        """'in' operator works for field checking."""
+        from datetime import UTC, datetime
+
+        entry = OutboxEntry(
+            id=uuid4(),
+            event_id=uuid4(),
+            event_type="TestEvent",
+            aggregate_id=uuid4(),
+            aggregate_type="TestAggregate",
+            tenant_id=None,
+            event_data="{}",
+            created_at=datetime.now(UTC),
+            published_at=None,
+            retry_count=0,
+            last_error=None,
+            status="pending",
+        )
+
+        assert "event_id" in entry
+        assert "event_type" in entry
+        assert "nonexistent_key" not in entry
+
+    def test_iteration_works(self):
+        """Can iterate over field names."""
+        from datetime import UTC, datetime
+
+        entry = OutboxEntry(
+            id=uuid4(),
+            event_id=uuid4(),
+            event_type="TestEvent",
+            aggregate_id=uuid4(),
+            aggregate_type="TestAggregate",
+            tenant_id=None,
+            event_data="{}",
+            created_at=datetime.now(UTC),
+            published_at=None,
+            retry_count=0,
+            last_error=None,
+            status="pending",
+        )
+
+        field_names = list(entry)
+        assert "event_id" in field_names
+        assert "event_type" in field_names
+        assert "status" in field_names
 
 
 # ============================================================================

@@ -43,11 +43,13 @@ from typing import TYPE_CHECKING, Any
 
 from eventsource.bus.interface import (
     EventBus,
-    EventHandler,
     EventHandlerFunc,
-    EventSubscriber,
 )
 from eventsource.events.base import DomainEvent
+from eventsource.protocols import (
+    FlexibleEventHandler,
+    FlexibleEventSubscriber,
+)
 
 if TYPE_CHECKING:
     from eventsource.events.registry import EventRegistry
@@ -355,7 +357,9 @@ class RedisEventBus(EventBus):
                 logger.error(f"Failed to create consumer group: {e}")
                 raise
 
-    def _normalize_handler(self, handler: EventHandler | EventHandlerFunc) -> HandlerWrapper:
+    def _normalize_handler(
+        self, handler: FlexibleEventHandler | EventHandlerFunc
+    ) -> HandlerWrapper:
         """
         Normalize a handler to an async callable.
 
@@ -536,7 +540,7 @@ class RedisEventBus(EventBus):
     def subscribe(
         self,
         event_type: type[DomainEvent],
-        handler: EventHandler | EventHandlerFunc,
+        handler: FlexibleEventHandler | EventHandlerFunc,
     ) -> None:
         """
         Subscribe a handler to a specific event type.
@@ -566,7 +570,7 @@ class RedisEventBus(EventBus):
     def unsubscribe(
         self,
         event_type: type[DomainEvent],
-        handler: EventHandler | EventHandlerFunc,
+        handler: FlexibleEventHandler | EventHandlerFunc,
     ) -> bool:
         """
         Unsubscribe a handler from a specific event type.
@@ -602,9 +606,9 @@ class RedisEventBus(EventBus):
         )
         return False
 
-    def subscribe_all(self, subscriber: EventSubscriber) -> None:
+    def subscribe_all(self, subscriber: FlexibleEventSubscriber) -> None:
         """
-        Subscribe an EventSubscriber to all its declared event types.
+        Subscribe a FlexibleEventSubscriber to all its declared event types.
 
         Args:
             subscriber: The subscriber to register
@@ -615,7 +619,7 @@ class RedisEventBus(EventBus):
 
     def subscribe_to_all_events(
         self,
-        handler: EventHandler | EventHandlerFunc,
+        handler: FlexibleEventHandler | EventHandlerFunc,
     ) -> None:
         """
         Subscribe a handler to all event types (wildcard subscription).
@@ -638,7 +642,7 @@ class RedisEventBus(EventBus):
 
     def unsubscribe_from_all_events(
         self,
-        handler: EventHandler | EventHandlerFunc,
+        handler: FlexibleEventHandler | EventHandlerFunc,
     ) -> bool:
         """
         Unsubscribe a handler from the wildcard subscription.

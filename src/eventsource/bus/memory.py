@@ -15,11 +15,13 @@ from typing import Any
 
 from eventsource.bus.interface import (
     EventBus,
-    EventHandler,
     EventHandlerFunc,
-    EventSubscriber,
 )
 from eventsource.events.base import DomainEvent
+from eventsource.protocols import (
+    FlexibleEventHandler,
+    FlexibleEventSubscriber,
+)
 
 # Optional OpenTelemetry integration
 try:
@@ -81,7 +83,9 @@ class InMemoryEventBus(EventBus):
             "background_tasks_completed": 0,
         }
 
-    def _normalize_handler(self, handler: EventHandler | EventHandlerFunc) -> HandlerWrapper:
+    def _normalize_handler(
+        self, handler: FlexibleEventHandler | EventHandlerFunc
+    ) -> HandlerWrapper:
         """
         Normalize a handler to an async callable.
 
@@ -334,7 +338,7 @@ class InMemoryEventBus(EventBus):
     def subscribe(
         self,
         event_type: type[DomainEvent],
-        handler: EventHandler | EventHandlerFunc,
+        handler: FlexibleEventHandler | EventHandlerFunc,
     ) -> None:
         """
         Subscribe a handler to a specific event type.
@@ -362,7 +366,7 @@ class InMemoryEventBus(EventBus):
     def unsubscribe(
         self,
         event_type: type[DomainEvent],
-        handler: EventHandler | EventHandlerFunc,
+        handler: FlexibleEventHandler | EventHandlerFunc,
     ) -> bool:
         """
         Unsubscribe a handler from a specific event type.
@@ -401,21 +405,21 @@ class InMemoryEventBus(EventBus):
         )
         return False
 
-    def subscribe_all(self, subscriber: EventSubscriber) -> None:
+    def subscribe_all(self, subscriber: FlexibleEventSubscriber) -> None:
         """
-        Subscribe an EventSubscriber to all its declared event types.
+        Subscribe a FlexibleEventSubscriber to all its declared event types.
 
         Args:
             subscriber: The subscriber to register
         """
         event_types = subscriber.subscribed_to()
         for event_type in event_types:
-            # EventSubscriber has a handle method compatible with EventHandler
+            # FlexibleEventSubscriber has a handle method compatible with FlexibleEventHandler
             self.subscribe(event_type, subscriber)
 
     def subscribe_to_all_events(
         self,
-        handler: EventHandler | EventHandlerFunc,
+        handler: FlexibleEventHandler | EventHandlerFunc,
     ) -> None:
         """
         Subscribe a handler to all event types (wildcard subscription).
@@ -438,7 +442,7 @@ class InMemoryEventBus(EventBus):
 
     def unsubscribe_from_all_events(
         self,
-        handler: EventHandler | EventHandlerFunc,
+        handler: FlexibleEventHandler | EventHandlerFunc,
     ) -> bool:
         """
         Unsubscribe a handler from the wildcard subscription.

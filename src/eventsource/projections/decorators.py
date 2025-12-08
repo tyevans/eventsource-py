@@ -1,8 +1,17 @@
 """
-Projection decorators.
+Event handler decorators.
 
-This module contains the @handles decorator for declarative projections,
+This module contains the @handles decorator for declarative event handling,
 enabling automatic event routing based on decorated handler methods.
+
+The @handles decorator is the canonical location for marking methods as event
+handlers, and works with both:
+- DeclarativeAggregate: For sync handlers that apply events to aggregate state
+- DeclarativeProjection: For async handlers that build read models
+
+Example:
+    >>> from eventsource.projections.decorators import handles
+    >>> # or: from eventsource import handles
 """
 
 from collections.abc import Callable
@@ -10,7 +19,7 @@ from typing import Any, TypeVar
 
 from eventsource.events.base import DomainEvent
 
-# Type variable for handler functions
+# Type variable for handler functions - preserves the exact type of the decorated function
 F = TypeVar("F", bound=Callable[..., Any])
 
 
@@ -18,36 +27,55 @@ def handles(event_type: type[DomainEvent]) -> Callable[[F], F]:
     """
     Decorator to mark a method as an event handler for a specific event type.
 
-    Used by DeclarativeProjection to automatically route events to handler methods.
+    This is the canonical decorator for event handling in the eventsource library.
+    It works with both DeclarativeAggregate (for aggregates) and DeclarativeProjection
+    (for projections), enabling automatic event routing based on event type.
+
     The decorator attaches the event type to the function, which is then discovered
-    during projection initialization.
+    during class initialization by both aggregate and projection base classes.
 
     Args:
-        event_type: The event type this handler processes
+        event_type: The DomainEvent subclass this handler processes
 
     Returns:
-        A decorator function that marks the handler
+        A decorator function that marks the handler and preserves the original function
 
-    Example:
+    Example (Aggregate):
         >>> from eventsource.projections.decorators import handles
-        >>> from eventsource.projections.base import DeclarativeProjection
+        >>> from eventsource.aggregates import DeclarativeAggregate
         >>>
-        >>> class MyProjection(DeclarativeProjection):
+        >>> class OrderAggregate(DeclarativeAggregate[OrderState]):
+        ...     @handles(OrderCreated)
+        ...     def _on_order_created(self, event: OrderCreated) -> None:
+        ...         self._state = OrderState(
+        ...             order_id=self.aggregate_id,
+        ...             status="created",
+        ...         )
+        ...
+        ...     @handles(OrderShipped)
+        ...     def _on_order_shipped(self, event: OrderShipped) -> None:
+        ...         self._state = self._state.model_copy(
+        ...             update={"status": "shipped"}
+        ...         )
+
+    Example (Projection):
+        >>> from eventsource.projections.decorators import handles
+        >>> from eventsource.projections import DeclarativeProjection
+        >>>
+        >>> class OrderProjection(DeclarativeProjection):
         ...     @handles(OrderCreated)
         ...     async def _handle_order_created(self, conn, event: OrderCreated) -> None:
-        ...         # Handle the event
         ...         await conn.execute(...)
         ...
         ...     @handles(OrderShipped)
         ...     async def _handle_order_shipped(self, conn, event: OrderShipped) -> None:
-        ...         # Handle shipping event
-        ...         pass
+        ...         await conn.execute(...)
 
     Notes:
-        - Handler methods must be async functions
-        - Handler signature must be: (self, conn, event: EventType) -> None
-        - The event type in the @handles decorator should match the event parameter type annotation
-        - DeclarativeProjection will validate signatures at initialization time
+        - For aggregates: Handler signature is (self, event: EventType) -> None (sync)
+        - For projections: Handler signature is (self, conn, event: EventType) -> None (async)
+        - The event type in the @handles decorator should match the event parameter type
+        - Base classes will validate signatures and discover handlers at initialization
     """
 
     def decorator(func: F) -> F:

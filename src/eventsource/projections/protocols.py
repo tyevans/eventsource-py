@@ -1,106 +1,74 @@
 """
 Event subscriber and handler protocols.
 
+Note: Protocol definitions have been moved to eventsource.protocols.
+Imports from this module still work but emit deprecation warnings.
+Use `from eventsource.protocols import EventHandler` instead.
+
 Defines protocols for subscribing to and handling domain events.
 These protocols enable a clean separation between the event bus
 and the projection system.
 """
 
+import warnings
 from abc import ABC, abstractmethod
-from typing import Protocol, runtime_checkable
 
 from eventsource.events.base import DomainEvent
 
+# Import canonical protocols for re-export
+from eventsource.protocols import (
+    EventHandler as _EventHandler,
+)
+from eventsource.protocols import (
+    EventSubscriber as _EventSubscriber,
+)
+from eventsource.protocols import (
+    SyncEventHandler as _SyncEventHandler,
+)
 
-@runtime_checkable
-class EventHandler(Protocol):
+
+def __getattr__(name: str) -> type:
     """
-    Protocol for handling a specific event type.
+    Handle deprecated imports with warnings.
 
-    Event handlers are registered with the event bus and called
-    when matching events are published.
-
-    Example:
-        >>> class MyHandler:
-        ...     async def handle(self, event: DomainEvent) -> None:
-        ...         print(f"Handling {event.event_type}")
+    This enables deprecation warnings when importing protocols
+    from this module.
     """
-
-    async def handle(self, event: DomainEvent) -> None:
-        """
-        Handle a domain event.
-
-        Args:
-            event: The event to handle
-
-        Raises:
-            Exception: If handling fails (will be logged but not re-raised)
-        """
-        ...
-
-
-@runtime_checkable
-class SyncEventHandler(Protocol):
-    """
-    Protocol for synchronous event handlers.
-
-    Useful for projections that don't need async I/O or for
-    testing scenarios.
-    """
-
-    def handle(self, event: DomainEvent) -> None:
-        """
-        Handle a domain event synchronously.
-
-        Args:
-            event: The event to handle
-
-        Raises:
-            Exception: If handling fails
-        """
-        ...
+    if name == "EventHandler":
+        warnings.warn(
+            "Importing 'EventHandler' from eventsource.projections.protocols is deprecated. "
+            "Use 'from eventsource.protocols import EventHandler' instead. "
+            "This import will be removed in version 0.3.0.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return _EventHandler
+    elif name == "SyncEventHandler":
+        warnings.warn(
+            "Importing 'SyncEventHandler' from eventsource.projections.protocols is deprecated. "
+            "Use 'from eventsource.protocols import SyncEventHandler' instead. "
+            "This import will be removed in version 0.3.0.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return _SyncEventHandler
+    elif name == "EventSubscriber":
+        warnings.warn(
+            "Importing 'EventSubscriber' from eventsource.projections.protocols is deprecated. "
+            "Use 'from eventsource.protocols import EventSubscriber' instead. "
+            "This import will be removed in version 0.3.0.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return _EventSubscriber
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-class EventSubscriber(ABC):
-    """
-    Base class for event subscribers.
-
-    Subscribers register interest in specific event types and
-    provide handlers for processing them. This is the main interface
-    that projections implement to receive events from the event bus.
-
-    Example:
-        >>> class MyProjection(EventSubscriber):
-        ...     def subscribed_to(self) -> list[type[DomainEvent]]:
-        ...         return [OrderCreated, OrderShipped]
-        ...
-        ...     async def handle(self, event: DomainEvent) -> None:
-        ...         if isinstance(event, OrderCreated):
-        ...             await self._handle_order_created(event)
-    """
-
-    @abstractmethod
-    def subscribed_to(self) -> list[type[DomainEvent]]:
-        """
-        Return list of event types this subscriber handles.
-
-        Returns:
-            List of event classes this subscriber is interested in
-        """
-        pass
-
-    @abstractmethod
-    async def handle(self, event: DomainEvent) -> None:
-        """
-        Handle a domain event.
-
-        Args:
-            event: The event to handle
-
-        Raises:
-            Exception: If handling fails
-        """
-        pass
+# For internal use without deprecation warnings
+# These are re-exported for backward compatibility in internal code
+EventHandler = _EventHandler
+SyncEventHandler = _SyncEventHandler
+EventSubscriber = _EventSubscriber
 
 
 class AsyncEventHandler(ABC):
@@ -159,3 +127,11 @@ class AsyncEventHandler(ABC):
             List of event classes this handler can process
         """
         pass
+
+
+__all__ = [
+    "EventHandler",
+    "SyncEventHandler",
+    "EventSubscriber",
+    "AsyncEventHandler",
+]
