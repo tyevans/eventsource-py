@@ -36,6 +36,11 @@ This section provides comprehensive API documentation for the eventsource librar
 | | [`RedisEventBusConfig`](bus.md#configuration) | Configuration for Redis bus |
 | | [`EventHandler`](bus.md#eventhandler) | Protocol for event handlers |
 | | [`EventSubscriber`](bus.md#eventsubscriber) | Protocol for subscribers with declared types |
+| **Snapshots** | [`Snapshot`](snapshots.md#snapshot) | Point-in-time aggregate state capture |
+| | [`SnapshotStore`](snapshots.md#snapshotstore-interface) | Abstract interface for snapshot storage |
+| | [`InMemorySnapshotStore`](snapshots.md#inmemorysnapshotstore) | In-memory store for testing |
+| | [`PostgreSQLSnapshotStore`](snapshots.md#postgresqlsnapshotstore) | Production PostgreSQL store |
+| | [`SQLiteSnapshotStore`](snapshots.md#sqlitesnapshotstore) | SQLite store for dev/embedded |
 
 ---
 
@@ -293,6 +298,65 @@ repo = AggregateRepository(
 ```
 
 [Read the full Event Bus API documentation](bus.md)
+
+---
+
+### Snapshots Module
+
+Optimize aggregate loading with point-in-time state snapshots.
+
+```python
+from eventsource.snapshots import (
+    # Core types
+    Snapshot,
+    SnapshotStore,
+
+    # Implementations
+    InMemorySnapshotStore,
+    PostgreSQLSnapshotStore,
+    SQLiteSnapshotStore,
+
+    # Exceptions
+    SnapshotError,
+    SnapshotDeserializationError,
+    SnapshotSchemaVersionError,
+)
+```
+
+**Key Components:**
+
+- **`Snapshot`**: Immutable data structure representing captured aggregate state at a point in time.
+
+- **`SnapshotStore`**: Abstract interface for snapshot persistence with upsert semantics.
+
+- **`InMemorySnapshotStore`**: Thread-safe in-memory implementation for testing.
+
+- **`PostgreSQLSnapshotStore`**: Production-ready store with OpenTelemetry tracing.
+
+- **`SQLiteSnapshotStore`**: Lightweight implementation for embedded deployments.
+
+**Example:**
+
+```python
+from eventsource import AggregateRepository
+from eventsource.snapshots import PostgreSQLSnapshotStore
+
+snapshot_store = PostgreSQLSnapshotStore(session_factory)
+
+repo = AggregateRepository(
+    event_store=event_store,
+    aggregate_factory=OrderAggregate,
+    aggregate_type="Order",
+    snapshot_store=snapshot_store,
+    snapshot_threshold=100,  # Snapshot every 100 events
+    snapshot_mode="background",  # Non-blocking
+)
+
+# Load uses snapshot if available
+order = await repo.load(order_id)
+```
+
+[Read the full Snapshots API documentation](snapshots.md)
 
 ---
 
@@ -556,6 +620,8 @@ class MyHandler(EventHandler):
 
 - [Getting Started Guide](../getting-started.md) - Step-by-step tutorial for new users
 - [Architecture Overview](../architecture.md) - System design and data flow
+- [Snapshotting Guide](../guides/snapshotting.md) - Optimize aggregate load performance
+- [Snapshotting Migration Guide](../guides/snapshotting-migration.md) - Add snapshotting to existing projects
 - [Multi-Tenant Guide](../guides/multi-tenant.md) - Multi-tenancy support
 - [Error Handling Guide](../guides/error-handling.md) - Error handling patterns
 - [Production Guide](../guides/production.md) - Production deployment
@@ -563,6 +629,7 @@ class MyHandler(EventHandler):
 ### Examples
 
 - [Basic Order Example](../examples/basic-order.md) - Complete order management example
+- [Snapshotting Example](../examples/snapshotting.md) - Snapshot configuration and usage
 - [Projections Example](../examples/projections.md) - Building read models
 - [Multi-Tenant Example](../examples/multi-tenant.md) - Tenant isolation
 - [Testing Example](../examples/testing.md) - Testing strategies

@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Aggregate Snapshotting** - Performance optimization for long-lived aggregates with many events
+  - `Snapshot` dataclass for capturing point-in-time aggregate state
+  - `SnapshotStore` abstract interface with three implementations:
+    - `InMemorySnapshotStore` for testing and development
+    - `PostgreSQLSnapshotStore` for production with PostgreSQL (includes OpenTelemetry tracing)
+    - `SQLiteSnapshotStore` for embedded/lightweight deployments
+  - `AggregateRepository` enhanced with snapshot support via new parameters:
+    - `snapshot_store`: Optional snapshot store for state caching
+    - `snapshot_threshold`: Number of events between automatic snapshots
+    - `snapshot_mode`: "sync", "background", or "manual" snapshot creation
+  - `AggregateRoot.schema_version` class attribute for snapshot schema evolution
+  - Automatic snapshot invalidation when schema version changes
+  - `create_snapshot()` method for manual snapshot creation
+  - `await_pending_snapshots()` for testing background snapshot operations
+  - Snapshot-specific exceptions: `SnapshotError`, `SnapshotDeserializationError`, `SnapshotSchemaVersionError`, `SnapshotNotFoundError`
+  - Database schema migrations for `snapshots` table (PostgreSQL and SQLite)
+  - Comprehensive documentation: API reference, user guide, migration guide, and examples
 - Pre-commit hooks configuration with ruff, mypy, and bandit for automated code quality checks
 - GitHub Actions workflow for performance benchmarks with automatic baseline tracking and PR comparison
 - `DatabaseProjection` class for projections requiring raw database connection access

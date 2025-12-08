@@ -70,16 +70,20 @@ nav:
       - Events: api/events.md
       - Event Stores: api/stores.md
       - Aggregates: api/aggregates.md
+      - Snapshots: api/snapshots.md
       - Projections: api/projections.md
       - Event Bus: api/bus.md
   - Guides:
       - Multi-Tenancy: guides/multi-tenant.md
+      - Snapshotting: guides/snapshotting.md
+      - Snapshotting Migration: guides/snapshotting-migration.md
       - Error Handling: guides/error-handling.md
       - Authentication: guides/authentication.md
       - Production Deployment: guides/production.md
   - Examples:
       - Basic Order: examples/basic-order.md
       - Multi-Tenant: examples/multi-tenant.md
+      - Snapshotting: examples/snapshotting.md
       - Projections: examples/projections.md
       - Testing: examples/testing.md
   - ADRs:

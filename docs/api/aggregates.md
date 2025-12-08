@@ -28,6 +28,7 @@ class AggregateRoot(Generic[TState], ABC):
     """Base class for event-sourced aggregate roots."""
 
     aggregate_type: str = "Unknown"  # Override in subclasses
+    schema_version: int = 1  # Increment when state structure changes (for snapshotting)
 
     def __init__(self, aggregate_id: UUID) -> None: ...
 
@@ -305,12 +306,31 @@ repo = AggregateRepository(
 
 ### Constructor Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `event_store` | `EventStore` | Event store for persistence |
-| `aggregate_factory` | `type[TAggregate]` | Class to instantiate |
-| `aggregate_type` | `str` | Type name for events |
-| `event_publisher` | `EventPublisher \| None` | Optional event broadcaster |
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `event_store` | `EventStore` | Required | Event store for persistence |
+| `aggregate_factory` | `type[TAggregate]` | Required | Class to instantiate |
+| `aggregate_type` | `str` | Required | Type name for events |
+| `event_publisher` | `EventPublisher \| None` | `None` | Optional event broadcaster |
+| `snapshot_store` | `SnapshotStore \| None` | `None` | Optional snapshot store for state caching |
+| `snapshot_threshold` | `int \| None` | `None` | Events between automatic snapshots |
+| `snapshot_mode` | `"sync" \| "background" \| "manual"` | `"sync"` | When to create snapshots |
+
+### Snapshot-Enabled Repository
+
+```python
+from eventsource import AggregateRepository, PostgreSQLEventStore
+from eventsource.snapshots import PostgreSQLSnapshotStore
+
+repo = AggregateRepository(
+    event_store=PostgreSQLEventStore(session_factory),
+    aggregate_factory=OrderAggregate,
+    aggregate_type="Order",
+    snapshot_store=PostgreSQLSnapshotStore(session_factory),
+    snapshot_threshold=100,  # Snapshot every 100 events
+    snapshot_mode="background",  # Non-blocking snapshot creation
+)
+```
 
 ### Methods
 
@@ -373,6 +393,38 @@ order = repo.create_new(uuid4())
 order.create(customer_id=customer_id)
 await repo.save(order)
 ```
+
+#### `create_snapshot(aggregate)`
+
+Manually create a snapshot:
+
+```python
+order = await repo.load(order_id)
+snapshot = await repo.create_snapshot(order)
+print(f"Created snapshot at version {snapshot.version}")
+```
+
+**Note:** Requires `snapshot_store` to be configured.
+
+#### `await_pending_snapshots()`
+
+Wait for background snapshot tasks (useful for testing):
+
+```python
+await repo.save(aggregate)  # Triggers background snapshot
+count = await repo.await_pending_snapshots()
+print(f"Waited for {count} background snapshots")
+```
+
+### Snapshot Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `snapshot_store` | `SnapshotStore \| None` | The configured snapshot store |
+| `snapshot_threshold` | `int \| None` | Events between snapshots |
+| `snapshot_mode` | `str` | Current snapshot mode |
+| `has_snapshot_support` | `bool` | Whether snapshotting is enabled |
+| `pending_snapshot_count` | `int` | Background tasks not yet complete |
 
 ### Complete Example
 
@@ -512,3 +564,13 @@ Break large aggregates into smaller ones:
 # - OrderLineItemAggregate (individual items)
 # - ShippingAggregate (shipping details)
 ```
+
+---
+
+## See Also
+
+- [Snapshots API Reference](./snapshots.md) - Complete snapshot store documentation
+- [Snapshotting Guide](../guides/snapshotting.md) - How to enable and configure snapshotting
+- [Snapshotting Migration Guide](../guides/snapshotting-migration.md) - Adding snapshotting to existing projects
+- [Snapshotting Example](../examples/snapshotting.md) - Working code examples
+- [Event Stores API](./stores.md) - Event store implementations

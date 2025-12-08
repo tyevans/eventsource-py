@@ -16,6 +16,7 @@ A production-ready event sourcing library for Python 3.11+.
 - **Event Registry** - Thread-safe event type registration for serialization/deserialization
 - **Aggregate Pattern** - Base classes for event-sourced aggregates with state reconstruction
 - **Repository Pattern** - Clean abstractions for loading and saving aggregates
+- **Aggregate Snapshotting** - Optimize load performance for long-lived aggregates
 - **Projection System** - Checkpoint tracking, retry logic, and dead letter queue support
 - **Event Bus** - In-Memory, Redis Streams, RabbitMQ, and Kafka backends for event distribution
 - **Transactional Outbox** - Reliable event publishing pattern
