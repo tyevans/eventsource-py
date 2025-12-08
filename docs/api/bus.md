@@ -538,3 +538,239 @@ bus.subscribe_to_all_events(debug_handler)    # Development debugging
 # bus.subscribe_to_all_events(order_handler)  # Only handles OrderCreated anyway
 bus.subscribe(OrderCreated, order_handler)     # Better
 ```
+
+---
+
+## RabbitMQEventBus
+
+Distributed event bus using RabbitMQ with AMQP protocol.
+
+### Features
+
+- Durable event storage (events survive restarts)
+- Consumer groups via queue bindings
+- At-least-once delivery guarantees
+- Multiple exchange types (topic, direct, fanout, headers)
+- Dead letter queue for failed messages
+- Automatic reconnection
+- Optional OpenTelemetry tracing
+
+### Setup
+
+```python
+from eventsource.bus.rabbitmq import RabbitMQEventBus, RabbitMQEventBusConfig
+
+config = RabbitMQEventBusConfig(
+    rabbitmq_url="amqp://guest:guest@localhost:5672/",
+    exchange_name="events",
+    exchange_type="topic",  # or "direct", "fanout", "headers"
+    consumer_group="my-service",
+    prefetch_count=10,
+    enable_dlq=True,
+)
+
+bus = RabbitMQEventBus(config=config)
+await bus.connect()
+```
+
+### Configuration
+
+```python
+@dataclass
+class RabbitMQEventBusConfig:
+    rabbitmq_url: str = "amqp://guest:guest@localhost:5672/"
+    exchange_name: str = "events"
+    exchange_type: str = "topic"  # topic, direct, fanout, headers
+    consumer_group: str = "default"
+    consumer_name: str | None = None  # Auto-generated if not set
+    prefetch_count: int = 10
+    max_retries: int = 3
+    enable_dlq: bool = True
+    durable: bool = True
+    auto_delete: bool = False
+    routing_key_pattern: str | None = None  # Auto-determined by exchange type
+```
+
+### Exchange Types
+
+RabbitMQ supports multiple exchange types for different routing patterns:
+
+#### Topic Exchange (Default)
+
+Routes messages based on routing key patterns with wildcards.
+
+```python
+config = RabbitMQEventBusConfig(
+    exchange_type="topic",
+    # Default: receives all messages with routing_key_pattern="#"
+)
+
+# Messages are published with routing key: {aggregate_type}.{event_type}
+# e.g., "Order.OrderCreated", "User.UserRegistered"
+
+# Consumers can bind with patterns:
+# "Order.*" - all Order events
+# "*.OrderCreated" - all OrderCreated events from any aggregate
+# "#" - all events (default)
+```
+
+#### Direct Exchange
+
+Routes messages to queues with exact routing key match. Ideal for:
+- Work queue pattern (competing consumers)
+- Point-to-point messaging
+- Load balancing between workers
+
+```python
+config = RabbitMQEventBusConfig(
+    exchange_name="tasks",
+    exchange_type="direct",
+    consumer_group="workers",
+    # Default: binds with queue_name as routing key
+)
+
+# Multiple workers with same config share the queue
+# RabbitMQ load-balances messages between them
+```
+
+See [Work Queue Pattern](#work-queue-pattern-competing-consumers) below.
+
+#### Fanout Exchange
+
+Broadcasts messages to all bound queues (ignores routing key).
+
+```python
+config = RabbitMQEventBusConfig(
+    exchange_type="fanout",
+    # All bound queues receive all messages
+)
+```
+
+### Work Queue Pattern (Competing Consumers)
+
+The work queue pattern distributes tasks among multiple workers. Messages are
+load-balanced between consumers on the same queue.
+
+```python
+from eventsource.bus.rabbitmq import RabbitMQEventBus, RabbitMQEventBusConfig
+
+# All workers use the same configuration (same consumer_group)
+# Only consumer_name differs between workers
+
+def create_worker_config(worker_id: str) -> RabbitMQEventBusConfig:
+    return RabbitMQEventBusConfig(
+        rabbitmq_url="amqp://guest:guest@localhost:5672/",
+        exchange_name="tasks",
+        exchange_type="direct",
+        consumer_group="task-processors",  # Same for all workers
+        consumer_name=f"worker-{worker_id}",  # Unique per worker
+        prefetch_count=1,  # Process one task at a time for fair dispatch
+    )
+
+# Worker 1
+config1 = create_worker_config("1")
+worker1 = RabbitMQEventBus(config=config1)
+await worker1.connect()
+
+# Worker 2
+config2 = create_worker_config("2")
+worker2 = RabbitMQEventBus(config=config2)
+await worker2.connect()
+
+# Both workers share queue "tasks.task-processors"
+# Messages are distributed round-robin between them
+```
+
+### Custom Routing Key Binding
+
+For fine-grained control over which events a consumer receives:
+
+```python
+config = RabbitMQEventBusConfig(
+    exchange_type="direct",
+    routing_key_pattern="",  # No default binding
+)
+
+bus = RabbitMQEventBus(config=config)
+await bus.connect()
+
+# Bind only to specific event types
+await bus.bind_event_type(OrderCreated)
+await bus.bind_event_type(OrderShipped)
+
+# Or bind with custom routing keys
+await bus.bind_routing_key("Order.OrderCreated")
+await bus.bind_routing_key("Order.OrderCancelled")
+```
+
+### Usage
+
+```python
+bus = RabbitMQEventBus(config=config)
+
+# Subscribe handlers (same as other event bus implementations)
+bus.subscribe(OrderCreated, order_handler)
+bus.subscribe_all(order_projection)
+
+# Connect and start consuming
+await bus.connect()
+await bus.start_consuming()
+
+# Publish events
+await bus.publish([order_created_event])
+
+# Get statistics
+stats = bus.get_stats()
+print(f"Published: {stats.events_published}")
+print(f"Consumed: {stats.events_consumed}")
+
+# Graceful shutdown
+await bus.shutdown(timeout=30.0)
+```
+
+### Context Manager
+
+```python
+async with RabbitMQEventBus(config=config) as bus:
+    bus.subscribe(OrderCreated, handler)
+    await bus.start_consuming()
+    # ... use the bus
+# Automatic cleanup on exit
+```
+
+### Routing Key Generation
+
+When publishing events, routing keys are generated as:
+
+```
+{aggregate_type}.{event_type}
+```
+
+For example:
+- `Order.OrderCreated`
+- `User.UserRegistered`
+- `Payment.PaymentProcessed`
+
+This allows subscribers to:
+- Receive all events: bind with `#` (topic exchange default)
+- Receive aggregate events: bind with `Order.*`
+- Receive specific event type: bind with `*.OrderCreated`
+- Receive exact event: bind with `Order.OrderCreated`
+
+### Availability Check
+
+```python
+from eventsource.bus.rabbitmq import (
+    RABBITMQ_AVAILABLE,
+    RabbitMQNotAvailableError,
+)
+
+if not RABBITMQ_AVAILABLE:
+    print("RabbitMQ support not installed")
+    # pip install eventsource[rabbitmq]
+
+try:
+    bus = RabbitMQEventBus(config)
+except RabbitMQNotAvailableError:
+    print("aio-pika package not available")
+```

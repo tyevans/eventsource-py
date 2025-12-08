@@ -292,7 +292,8 @@ class RedisEventBus(EventBus):
             )
 
             # Test connection
-            assert self._redis is not None
+            if self._redis is None:
+                raise RuntimeError("Redis client not initialized")
             await self._redis.ping()
             logger.info(
                 "Connected to Redis",
@@ -696,7 +697,8 @@ class RedisEventBus(EventBus):
         await self._ensure_consumer_group_exists()
 
         actual_consumer_name = consumer_name or self._config.consumer_name
-        assert actual_consumer_name is not None, "Consumer name must be set"
+        if actual_consumer_name is None:
+            raise ValueError("Consumer name must be set")
         self._consuming = True
 
         logger.info(

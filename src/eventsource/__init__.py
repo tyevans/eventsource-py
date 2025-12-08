@@ -31,6 +31,15 @@ from eventsource.bus.interface import (
 )
 from eventsource.bus.memory import InMemoryEventBus
 
+# RabbitMQ Event bus
+from eventsource.bus.rabbitmq import (
+    RABBITMQ_AVAILABLE,
+    RabbitMQEventBus,
+    RabbitMQEventBusConfig,
+    RabbitMQEventBusStats,
+    RabbitMQNotAvailableError,
+)
+
 # Redis Event bus (Task 11)
 from eventsource.bus.redis import (
     REDIS_AVAILABLE,
@@ -198,6 +207,12 @@ __all__ = [
     "RedisEventBusStats",
     "RedisNotAvailableError",
     "REDIS_AVAILABLE",
+    # RabbitMQ Event Bus
+    "RabbitMQEventBus",
+    "RabbitMQEventBusConfig",
+    "RabbitMQEventBusStats",
+    "RabbitMQNotAvailableError",
+    "RABBITMQ_AVAILABLE",
     # Exceptions
     "AggregateNotFoundError",
     "EventNotFoundError",
