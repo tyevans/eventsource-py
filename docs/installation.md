@@ -103,6 +103,81 @@ event_bus = RedisEventBus(config=config)
 await event_bus.connect()
 ```
 
+### RabbitMQ (`[rabbitmq]`)
+
+**Enables:**
+- `RabbitMQEventBus` - Distributed event messaging with RabbitMQ AMQP
+- Multiple exchange types (topic, direct, fanout, headers)
+- Consumer groups via queue bindings
+- Dead letter queue for failed messages
+- Automatic reconnection
+
+**Install:**
+```bash
+pip install eventsource[rabbitmq]
+```
+
+**Dependencies added:**
+- `aio-pika >= 9.0.0` - Async RabbitMQ client
+
+**When to use:**
+- Distributed systems requiring flexible routing patterns
+- When you need topic-based message routing
+- Applications requiring message acknowledgments
+
+**Example:**
+```python
+from eventsource.bus.rabbitmq import RabbitMQEventBus, RabbitMQEventBusConfig
+
+config = RabbitMQEventBusConfig(
+    rabbitmq_url="amqp://guest:guest@localhost:5672/",
+    exchange_name="events",
+    exchange_type="topic",
+    consumer_group="projections",
+)
+bus = RabbitMQEventBus(config=config)
+await bus.connect()
+```
+
+### Kafka (`[kafka]`)
+
+**Enables:**
+- `KafkaEventBus` - Distributed event streaming with Apache Kafka
+- Consumer groups for horizontal scaling
+- Partition-based ordering by aggregate_id
+- Dead letter queue with replay capability
+- Optional OpenTelemetry tracing
+- TLS/SSL and SASL authentication support
+
+**Install:**
+```bash
+pip install eventsource[kafka]
+```
+
+**Dependencies added:**
+- `aiokafka >= 0.9.0, < 1.0.0` - Async Kafka client
+
+**When to use:**
+- High-throughput event streaming scenarios
+- Enterprise environments with existing Kafka infrastructure
+- When you need long-term event retention
+- Multi-datacenter deployments
+- When horizontal scaling of consumers is critical
+
+**Example:**
+```python
+from eventsource.bus.kafka import KafkaEventBus, KafkaEventBusConfig
+
+config = KafkaEventBusConfig(
+    bootstrap_servers="localhost:9092",
+    topic_prefix="myapp.events",
+    consumer_group="projections",
+)
+bus = KafkaEventBus(config=config)
+await bus.connect()
+await bus.publish([my_event])
+```
+
 ### Telemetry (`[telemetry]`)
 
 **Enables:**
@@ -204,6 +279,22 @@ except ImportError as e:
     print(f"Redis support: NOT INSTALLED")
     print(f"  Install with: pip install eventsource[redis]")
 
+# Check RabbitMQ support
+try:
+    from eventsource.bus.rabbitmq import RabbitMQEventBus
+    print("RabbitMQ support: INSTALLED")
+except ImportError as e:
+    print(f"RabbitMQ support: NOT INSTALLED")
+    print(f"  Install with: pip install eventsource[rabbitmq]")
+
+# Check Kafka support
+try:
+    from eventsource.bus.kafka import KafkaEventBus
+    print("Kafka support: INSTALLED")
+except ImportError as e:
+    print(f"Kafka support: NOT INSTALLED")
+    print(f"  Install with: pip install eventsource[kafka]")
+
 # Check telemetry support
 try:
     from opentelemetry import trace
@@ -279,28 +370,86 @@ config = RedisEventBusConfig(
 )
 ```
 
+### ImportError: aiokafka not found
+
+**Error:**
+```
+ImportError: aiokafka package is not installed.
+Install it with: pip install eventsource[kafka]
+```
+
+**Solution:**
+```bash
+pip install eventsource[kafka]
+```
+
+**Explanation:** The Kafka event bus requires the `aiokafka` package for async Kafka operations. This is an optional dependency to keep the core package lightweight.
+
+### Kafka Connection Refused
+
+**Error:**
+```
+KafkaConnectionError: Unable to bootstrap from kafka:9092
+```
+
+**Solution:**
+1. Verify Kafka is running and accessible
+2. Check bootstrap servers configuration:
+```python
+config = KafkaEventBusConfig(
+    bootstrap_servers="localhost:9092",  # Single broker
+    # Or multiple brokers:
+    # bootstrap_servers="broker1:9092,broker2:9092,broker3:9092",
+)
+```
+3. For Docker environments, ensure proper network configuration
+4. Check firewall rules allow port 9092
+
+### Kafka SASL Authentication Failed
+
+**Error:**
+```
+KafkaError: SASL Authentication failed
+```
+
+**Solution:**
+```python
+config = KafkaEventBusConfig(
+    bootstrap_servers="kafka:9093",
+    security_protocol="SASL_SSL",
+    sasl_mechanism="SCRAM-SHA-512",
+    sasl_username="your-username",
+    sasl_password="your-password",
+    ssl_cafile="/path/to/ca.crt",
+)
+```
+
 ## Version Compatibility
 
 | Extra | Min Python | Dependency Version |
 |-------|------------|-------------------|
 | postgresql | 3.11+ | asyncpg >= 0.27.0 |
+| sqlite | 3.11+ | aiosqlite >= 0.19.0 |
 | redis | 3.11+ | redis >= 5.0 |
+| rabbitmq | 3.11+ | aio-pika >= 9.0.0 |
+| kafka | 3.11+ | aiokafka >= 0.9.0 |
 | telemetry | 3.11+ | opentelemetry-* >= 1.0 |
 
 ## Feature Matrix
 
-| Feature | Core | +postgresql | +redis | +telemetry |
-|---------|------|-------------|--------|------------|
-| In-memory event store | Yes | Yes | Yes | Yes |
-| PostgreSQL event store | - | Yes | - | Yes |
-| In-memory event bus | Yes | Yes | Yes | Yes |
-| Redis event bus | - | - | Yes | Yes |
-| Aggregates | Yes | Yes | Yes | Yes |
-| Projections | Yes | Yes | Yes | Yes |
-| Checkpoints | Yes | Yes | Yes | Yes |
-| Outbox pattern | Yes | Yes | Yes | Yes |
-| Dead letter queue | Yes | Yes | Yes | Yes |
-| Distributed tracing | - | - | - | Yes |
+| Feature | Core | +postgresql | +sqlite | +redis | +rabbitmq | +kafka | +telemetry |
+|---------|------|-------------|---------|--------|-----------|--------|------------|
+| In-memory event store | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| PostgreSQL event store | - | Yes | - | - | - | - | Yes |
+| SQLite event store | - | - | Yes | - | - | - | Yes |
+| In-memory event bus | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Redis event bus | - | - | - | Yes | - | - | Yes |
+| RabbitMQ event bus | - | - | - | - | Yes | - | Yes |
+| Kafka event bus | - | - | - | - | - | Yes | Yes |
+| Consumer groups | - | - | - | Yes | Yes | Yes | - |
+| Dead letter queue | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| TLS/SASL security | - | - | - | - | Yes | Yes | - |
+| Distributed tracing | - | - | - | - | - | - | Yes |
 
 ## Next Steps
 

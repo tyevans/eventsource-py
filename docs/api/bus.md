@@ -20,6 +20,12 @@ from eventsource import (
     RedisEventBus,
     RedisEventBusConfig,
     RedisEventBusStats,
+    RabbitMQEventBus,
+    RabbitMQEventBusConfig,
+    RabbitMQEventBusStats,
+    KafkaEventBus,
+    KafkaEventBusConfig,
+    KafkaEventBusStats,
 )
 ```
 
@@ -774,3 +780,395 @@ try:
 except RabbitMQNotAvailableError:
     print("aio-pika package not available")
 ```
+
+---
+
+## KafkaEventBus
+
+Distributed event bus using Apache Kafka for high-throughput event streaming.
+
+### Features
+
+- High-throughput event publishing (10,000+ events/second)
+- Consumer groups for horizontal scaling
+- Partition-based ordering by aggregate_id
+- At-least-once delivery guarantees
+- Dead letter queue with replay capability
+- Configurable retry policies with exponential backoff
+- TLS/SSL and SASL authentication support
+- Optional OpenTelemetry tracing integration
+
+### Setup
+
+```python
+from eventsource.bus.kafka import KafkaEventBus, KafkaEventBusConfig
+
+config = KafkaEventBusConfig(
+    bootstrap_servers="localhost:9092",
+    topic_prefix="myapp.events",
+    consumer_group="projections",
+    consumer_name="worker-1",
+)
+
+bus = KafkaEventBus(config=config)
+await bus.connect()
+```
+
+### Configuration
+
+```python
+@dataclass
+class KafkaEventBusConfig:
+    # Connection
+    bootstrap_servers: str = "localhost:9092"      # Kafka broker addresses
+    topic_prefix: str = "events"                   # Prefix for topic names
+    consumer_group: str = "default"                # Consumer group ID
+    consumer_name: str | None = None               # Auto-generated if not set
+
+    # Producer settings
+    acks: str = "all"                              # "0", "1", or "all"
+    compression_type: str | None = "gzip"          # gzip, snappy, lz4, zstd
+    batch_size: int = 16384                        # Batch size in bytes
+    linger_ms: int = 5                             # Wait time for batching
+
+    # Consumer settings
+    auto_offset_reset: str = "earliest"            # "earliest" or "latest"
+    session_timeout_ms: int = 30000                # Session timeout
+    heartbeat_interval_ms: int = 10000             # Heartbeat interval
+    max_poll_interval_ms: int = 300000             # Max time between polls
+
+    # Error handling
+    max_retries: int = 3                           # Max retry attempts
+    retry_base_delay: float = 1.0                  # Base delay (seconds)
+    retry_max_delay: float = 60.0                  # Max delay (seconds)
+    retry_jitter: float = 0.1                      # Jitter fraction (0-1)
+
+    # Dead letter queue
+    enable_dlq: bool = True                        # Enable DLQ
+    dlq_topic_suffix: str = ".dlq"                 # DLQ topic suffix
+
+    # Security
+    security_protocol: str = "PLAINTEXT"           # PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL
+    sasl_mechanism: str | None = None              # PLAIN, SCRAM-SHA-256, SCRAM-SHA-512
+    sasl_username: str | None = None               # SASL username
+    sasl_password: str | None = None               # SASL password
+    ssl_cafile: str | None = None                  # CA certificate file
+    ssl_certfile: str | None = None                # Client certificate (mTLS)
+    ssl_keyfile: str | None = None                 # Client key (mTLS)
+    ssl_check_hostname: bool = True                # Verify hostname
+
+    # Observability
+    enable_tracing: bool = True                    # Enable OpenTelemetry
+
+    # Shutdown
+    shutdown_timeout: float = 30.0                 # Graceful shutdown timeout
+```
+
+### Topic Naming
+
+Topics are named using the following pattern:
+
+| Topic Type | Pattern | Example |
+|------------|---------|---------|
+| Main events | `{topic_prefix}.stream` | `myapp.events.stream` |
+| Dead letter queue | `{topic_prefix}.stream.dlq` | `myapp.events.stream.dlq` |
+
+### Usage
+
+```python
+from eventsource.bus.kafka import KafkaEventBus, KafkaEventBusConfig
+
+config = KafkaEventBusConfig(
+    bootstrap_servers="localhost:9092",
+    topic_prefix="orders",
+    consumer_group="order-projections",
+)
+
+bus = KafkaEventBus(config=config)
+
+# Subscribe handlers (before connecting)
+bus.subscribe(OrderCreated, order_handler)
+bus.subscribe_all(order_projection)
+
+# Connect and start consuming
+await bus.connect()
+task = bus.start_consuming_in_background()
+
+# Publish events
+await bus.publish([order_created_event])
+
+# Get statistics
+stats = bus.get_stats_dict()
+print(f"Published: {stats['events_published']}")
+print(f"Consumed: {stats['events_consumed']}")
+print(f"DLQ: {stats['messages_sent_to_dlq']}")
+
+# Graceful shutdown
+await bus.shutdown(timeout=30.0)
+```
+
+### Context Manager
+
+```python
+async with KafkaEventBus(config=config) as bus:
+    bus.subscribe(OrderCreated, handler)
+    task = bus.start_consuming_in_background()
+    await bus.publish([event])
+    # ... use the bus
+# Automatic cleanup on exit
+```
+
+### Consumer Groups
+
+Multiple consumers in the same group share partitions for load balancing:
+
+```python
+# Worker 1
+config1 = KafkaEventBusConfig(
+    bootstrap_servers="kafka:9092",
+    consumer_group="order-processors",  # Same group
+    consumer_name="worker-1",           # Unique name
+)
+worker1 = KafkaEventBus(config=config1)
+
+# Worker 2
+config2 = KafkaEventBusConfig(
+    bootstrap_servers="kafka:9092",
+    consumer_group="order-processors",  # Same group
+    consumer_name="worker-2",           # Unique name
+)
+worker2 = KafkaEventBus(config=config2)
+
+# Events are distributed between workers (one event = one worker)
+```
+
+### Partition Ordering
+
+Events are partitioned by `aggregate_id`, ensuring:
+
+- Events for the same aggregate are always processed in order
+- Different aggregates can be processed in parallel
+- Horizontal scaling respects aggregate consistency
+
+```python
+# All events for Order-123 go to the same partition
+await bus.publish([
+    OrderCreated(aggregate_id="Order-123", ...),
+    OrderShipped(aggregate_id="Order-123", ...),  # Same partition
+    OrderDelivered(aggregate_id="Order-123", ...), # Same partition
+])
+
+# Events for Order-456 may go to a different partition
+await bus.publish([
+    OrderCreated(aggregate_id="Order-456", ...),  # May be different partition
+])
+```
+
+### Dead Letter Queue
+
+Failed messages are sent to DLQ after max retries:
+
+```python
+config = KafkaEventBusConfig(
+    bootstrap_servers="kafka:9092",
+    topic_prefix="orders",
+    max_retries=3,              # Retry 3 times
+    retry_base_delay=1.0,       # 1s, 2s, 4s delays
+    enable_dlq=True,            # Enable DLQ
+    dlq_topic_suffix=".dlq",    # orders.stream.dlq
+)
+
+bus = KafkaEventBus(config=config)
+
+# Inspect DLQ messages
+dlq_messages = await bus.get_dlq_messages(limit=100)
+for msg in dlq_messages:
+    print(f"Event: {msg['headers']['event_type']}")
+    print(f"Error: {msg['headers']['dlq_error_message']}")
+    print(f"Retries: {msg['headers']['dlq_retry_count']}")
+
+# Get DLQ message count
+count = await bus.get_dlq_message_count()
+print(f"DLQ contains {count} messages")
+
+# Replay a specific message
+await bus.replay_dlq_message(partition=0, offset=42)
+```
+
+### Security Configuration
+
+#### Development (No Security)
+
+```python
+config = KafkaEventBusConfig(
+    bootstrap_servers="localhost:9092",
+    security_protocol="PLAINTEXT",
+)
+```
+
+#### TLS Only (Encryption)
+
+```python
+config = KafkaEventBusConfig(
+    bootstrap_servers="kafka:9093",
+    security_protocol="SSL",
+    ssl_cafile="/path/to/ca.crt",
+)
+```
+
+#### SASL/PLAIN with TLS
+
+```python
+config = KafkaEventBusConfig(
+    bootstrap_servers="kafka:9093",
+    security_protocol="SASL_SSL",
+    sasl_mechanism="PLAIN",
+    sasl_username="myuser",
+    sasl_password="mypassword",
+    ssl_cafile="/path/to/ca.crt",
+)
+```
+
+#### SASL/SCRAM-SHA-512 with TLS (Recommended)
+
+```python
+config = KafkaEventBusConfig(
+    bootstrap_servers="kafka:9093",
+    security_protocol="SASL_SSL",
+    sasl_mechanism="SCRAM-SHA-512",
+    sasl_username="myuser",
+    sasl_password="mypassword",
+    ssl_cafile="/path/to/ca.crt",
+)
+```
+
+#### Mutual TLS (mTLS)
+
+```python
+config = KafkaEventBusConfig(
+    bootstrap_servers="kafka:9093",
+    security_protocol="SSL",
+    ssl_cafile="/path/to/ca.crt",
+    ssl_certfile="/path/to/client.crt",
+    ssl_keyfile="/path/to/client.key",
+)
+```
+
+### OpenTelemetry Tracing
+
+When OpenTelemetry is installed and `enable_tracing=True`, the bus creates spans for:
+
+- **Publish operations**: `kafka.publish {event_type}`
+- **Consume operations**: `kafka.consume {event_type}`
+- **Handler invocations**: `handle {handler_name}`
+
+Trace context is propagated through Kafka message headers.
+
+```python
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+
+# Set up OpenTelemetry
+trace.set_tracer_provider(TracerProvider())
+trace.get_tracer_provider().add_span_processor(
+    BatchSpanProcessor(OTLPSpanExporter())
+)
+
+# Kafka bus with tracing
+config = KafkaEventBusConfig(
+    bootstrap_servers="kafka:9092",
+    topic_prefix="events",
+    enable_tracing=True,  # Default when OpenTelemetry is available
+)
+
+bus = KafkaEventBus(config=config)
+# Traces automatically created for all operations
+```
+
+### Statistics
+
+```python
+stats = bus.get_stats_dict()
+# Returns:
+{
+    "events_published": 1000,
+    "events_consumed": 950,
+    "events_processed_success": 940,
+    "events_processed_failed": 10,
+    "messages_sent_to_dlq": 3,
+    "handler_errors": 10,
+    "reconnections": 0,
+    "rebalance_count": 2,
+    "last_publish_at": "2025-12-07T10:30:00+00:00",
+    "last_consume_at": "2025-12-07T10:30:01+00:00",
+    "last_error_at": "2025-12-07T09:15:00+00:00",
+    "connected_at": "2025-12-07T08:00:00+00:00",
+}
+```
+
+### Availability Check
+
+```python
+from eventsource.bus.kafka import (
+    KAFKA_AVAILABLE,
+    KafkaNotAvailableError,
+)
+
+if not KAFKA_AVAILABLE:
+    print("Kafka support not installed")
+    # pip install eventsource[kafka]
+
+try:
+    bus = KafkaEventBus(config)
+except KafkaNotAvailableError:
+    print("aiokafka package not available")
+```
+
+### Migration from Redis/RabbitMQ
+
+KafkaEventBus implements the same `EventBus` interface, making migration straightforward:
+
+```python
+# Before (Redis)
+from eventsource.bus import RedisEventBus, RedisEventBusConfig
+
+config = RedisEventBusConfig(
+    redis_url="redis://localhost:6379",
+    stream_prefix="events",
+    consumer_group="projections",
+)
+bus = RedisEventBus(config=config)
+
+# After (Kafka) - only config changes
+from eventsource.bus import KafkaEventBus, KafkaEventBusConfig
+
+config = KafkaEventBusConfig(
+    bootstrap_servers="localhost:9092",
+    topic_prefix="events",
+    consumer_group="projections",
+)
+bus = KafkaEventBus(config=config)
+
+# Same interface - handlers work unchanged
+bus.subscribe(OrderCreated, my_handler)
+bus.subscribe_all(my_projection)
+await bus.publish([event])
+```
+
+### When to Choose Kafka
+
+Choose KafkaEventBus when:
+
+- **High throughput**: Need 10,000+ events/second
+- **Enterprise infrastructure**: Organization standardized on Kafka
+- **Long-term retention**: Need to replay events from weeks/months ago
+- **Multi-datacenter**: Need cross-datacenter replication
+- **Ecosystem integration**: Need Kafka Connect, Kafka Streams, or KSQL
+
+Choose Redis/RabbitMQ when:
+
+- **Simpler operations**: Lower operational complexity needed
+- **Real-time focus**: Sub-millisecond latency more important than throughput
+- **Existing infrastructure**: Already running Redis or RabbitMQ

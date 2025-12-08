@@ -35,6 +35,7 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line("markers", "postgres: marks tests that require PostgreSQL")
     config.addinivalue_line("markers", "redis: marks tests that require Redis")
     config.addinivalue_line("markers", "rabbitmq: marks tests that require RabbitMQ")
+    config.addinivalue_line("markers", "kafka: marks tests that require Kafka")
     config.addinivalue_line("markers", "e2e: marks tests as end-to-end integration tests")
 
 

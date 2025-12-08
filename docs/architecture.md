@@ -208,8 +208,10 @@ The event bus distributes events to subscribers.
 ```
 
 **Implementations:**
-- `InMemoryEventBus`: Single-process
-- `RedisEventBus`: Distributed systems
+- `InMemoryEventBus`: Single-process, development/testing
+- `RedisEventBus`: Distributed systems with Redis Streams
+- `RabbitMQEventBus`: Distributed systems with AMQP messaging
+- `KafkaEventBus`: High-throughput distributed streaming
 
 ## Data Flow
 
@@ -326,9 +328,11 @@ class MyProjection(CheckpointTrackingProjection):
 
 ### Event Bus Scaling
 
-- **Redis Streams**: Distributed processing
-- **Consumer Groups**: Horizontal scaling
-- **Backpressure**: Handle slow consumers
+- **Redis Streams**: Distributed processing with consumer groups
+- **RabbitMQ**: Exchange-based routing with competing consumers
+- **Kafka**: Partition-based scaling with consumer groups
+- **Consumer Groups**: Horizontal scaling across all distributed bus implementations
+- **Backpressure**: Handle slow consumers through acknowledgment mechanisms
 
 ## Multi-Tenancy
 

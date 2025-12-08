@@ -1,0 +1,2360 @@
+"""Kafka event bus implementation using aiokafka.
+
+This module provides a distributed event bus implementation using Apache Kafka
+for high-throughput event distribution across multiple processes and servers.
+
+Features:
+- High-throughput event publishing
+- Consumer groups for horizontal scaling
+- At-least-once delivery guarantees
+- Partition-based ordering by aggregate_id
+- Dead letter queue for unrecoverable failures
+- Configurable retry policies
+- Optional OpenTelemetry tracing
+
+Example:
+    >>> from eventsource.bus.kafka import KafkaEventBus, KafkaEventBusConfig
+    >>>
+    >>> config = KafkaEventBusConfig(
+    ...     bootstrap_servers="localhost:9092",
+    ...     topic_prefix="events",
+    ...     consumer_group="projections",
+    ... )
+    >>> bus = KafkaEventBus(config=config, event_registry=my_registry)
+    >>> await bus.connect()
+    >>> await bus.publish([MyEvent(...)])
+    >>> await bus.start_consuming()
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import logging
+import random
+import socket
+import ssl
+import uuid
+from collections import defaultdict
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from types import TracebackType
+from typing import TYPE_CHECKING, Any
+
+from eventsource.bus.interface import (
+    EventBus,
+    EventHandlerFunc,
+)
+from eventsource.events.base import DomainEvent
+from eventsource.protocols import (
+    FlexibleEventHandler,
+    FlexibleEventSubscriber,
+)
+
+if TYPE_CHECKING:
+    from eventsource.events.registry import EventRegistry
+
+# Optional aiokafka import - fail gracefully if not installed
+try:
+    from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
+    from aiokafka.errors import KafkaError
+
+    KAFKA_AVAILABLE = True
+except ImportError:
+    KAFKA_AVAILABLE = False
+    AIOKafkaProducer = None
+    AIOKafkaConsumer = None
+    KafkaError = Exception
+
+# Optional OpenTelemetry integration
+try:
+    from opentelemetry import trace
+    from opentelemetry.propagate import extract, inject
+    from opentelemetry.trace import SpanKind, Status, StatusCode
+
+    OTEL_AVAILABLE = True
+except ImportError:
+    OTEL_AVAILABLE = False
+    trace = None  # type: ignore[assignment]
+    extract = None  # type: ignore[assignment]
+    inject = None  # type: ignore[assignment]
+    SpanKind = None  # type: ignore[assignment, misc]
+    Status = None  # type: ignore[assignment, misc]
+    StatusCode = None  # type: ignore[assignment, misc]
+
+logger = logging.getLogger(__name__)
+
+# Module-level tracer cache for lazy initialization
+_tracer: Any = None
+
+
+def _get_tracer() -> Any:
+    """Get or create the OpenTelemetry tracer.
+
+    Returns a tracer instance for creating spans. The tracer is lazily
+    initialized on first use and cached for subsequent calls.
+
+    Returns:
+        The tracer instance, or None if OpenTelemetry is not available.
+    """
+    global _tracer
+    if not OTEL_AVAILABLE:
+        return None
+    if _tracer is None:
+        _tracer = trace.get_tracer("eventsource.bus.kafka")
+    return _tracer
+
+
+class KafkaNotAvailableError(ImportError):
+    """Raised when aiokafka package is not installed.
+
+    This exception is raised when attempting to use Kafka functionality
+    without having the aiokafka package installed. The error message includes
+    the installation command to help users resolve the issue.
+
+    Example:
+        >>> from eventsource.bus.kafka import KafkaEventBus
+        >>> bus = KafkaEventBus()  # Raises if aiokafka not installed
+        KafkaNotAvailableError: aiokafka package is not installed. ...
+    """
+
+    def __init__(self) -> None:
+        """Initialize the error with a helpful installation message."""
+        super().__init__(
+            "aiokafka package is not installed. Install it with: pip install eventsource[kafka]"
+        )
+
+
+@dataclass
+class KafkaEventBusConfig:
+    """Configuration for Kafka event bus.
+
+    This configuration class provides all settings needed for connecting to
+    Apache Kafka and managing producer/consumer behavior. It follows the same
+    patterns as RabbitMQEventBusConfig for consistency across the eventsource
+    library.
+
+    Attributes:
+        bootstrap_servers: Kafka broker addresses (comma-separated).
+            Format: host1:port1,host2:port2
+        topic_prefix: Prefix for topic names. The main topic will be
+            {topic_prefix}.stream and DLQ will be {topic_prefix}.stream.dlq
+        consumer_group: Consumer group ID for coordinated consumption.
+            Multiple consumers in the same group share partitions.
+        consumer_name: Unique name for this consumer instance. Auto-generated
+            from hostname and UUID if not provided.
+        acks: Producer acknowledgment level. Options:
+            - "0": No acknowledgment (fire and forget)
+            - "1": Leader acknowledgment only
+            - "all": All in-sync replicas (default, most durable)
+        compression_type: Compression for messages. Options:
+            - None: No compression
+            - "gzip": Good compression ratio (default)
+            - "snappy": Fast compression
+            - "lz4": Balanced compression
+            - "zstd": Best compression ratio
+        batch_size: Maximum size in bytes for batching messages.
+        linger_ms: Time to wait for additional messages before sending batch.
+        auto_offset_reset: Where to start consuming when no offset exists:
+            - "earliest": Start from beginning (default)
+            - "latest": Start from end
+        session_timeout_ms: Consumer session timeout in milliseconds.
+        heartbeat_interval_ms: Consumer heartbeat interval in milliseconds.
+        max_poll_interval_ms: Maximum time between poll calls before consumer
+            is considered failed.
+        max_retries: Maximum retry attempts before sending to DLQ.
+        retry_base_delay: Base delay in seconds for exponential backoff.
+        retry_max_delay: Maximum delay in seconds between retries.
+        retry_jitter: Fraction of delay to randomize (0.0 to 1.0).
+        enable_dlq: Whether to enable dead letter queue.
+        dlq_topic_suffix: Suffix for DLQ topic name.
+        security_protocol: Security protocol for broker connection:
+            - "PLAINTEXT": No security (development only)
+            - "SSL": TLS encryption
+            - "SASL_PLAINTEXT": SASL auth without encryption
+            - "SASL_SSL": SASL auth with TLS (production recommended)
+        sasl_mechanism: SASL mechanism when using SASL_* protocol:
+            - "PLAIN": Simple username/password
+            - "SCRAM-SHA-256": SCRAM with SHA-256
+            - "SCRAM-SHA-512": SCRAM with SHA-512
+        sasl_username: Username for SASL authentication.
+        sasl_password: Password for SASL authentication.
+        ssl_cafile: Path to CA certificate file.
+        ssl_certfile: Path to client certificate for mTLS.
+        ssl_keyfile: Path to client private key for mTLS.
+        ssl_check_hostname: Whether to verify server hostname.
+        enable_tracing: Enable OpenTelemetry tracing if available.
+        shutdown_timeout: Timeout in seconds for graceful shutdown.
+
+    Security Configuration Examples:
+
+        Development (no security - NOT for production):
+
+        >>> config = KafkaEventBusConfig(
+        ...     bootstrap_servers="localhost:9092",
+        ...     security_protocol="PLAINTEXT",
+        ... )
+
+        TLS only (encryption, no authentication):
+
+        >>> config = KafkaEventBusConfig(
+        ...     bootstrap_servers="kafka:9093",
+        ...     security_protocol="SSL",
+        ...     ssl_cafile="/path/to/ca.crt",
+        ... )
+
+        SASL/PLAIN with TLS (recommended for production):
+
+        >>> config = KafkaEventBusConfig(
+        ...     bootstrap_servers="kafka:9093",
+        ...     security_protocol="SASL_SSL",
+        ...     sasl_mechanism="PLAIN",
+        ...     sasl_username="myuser",
+        ...     sasl_password="mypassword",
+        ...     ssl_cafile="/path/to/ca.crt",
+        ... )
+
+        SASL/SCRAM-SHA-512 with TLS (most secure):
+
+        >>> config = KafkaEventBusConfig(
+        ...     bootstrap_servers="kafka:9093",
+        ...     security_protocol="SASL_SSL",
+        ...     sasl_mechanism="SCRAM-SHA-512",
+        ...     sasl_username="myuser",
+        ...     sasl_password="mypassword",
+        ...     ssl_cafile="/path/to/ca.crt",
+        ... )
+
+        Mutual TLS (mTLS) - client certificate authentication:
+
+        >>> config = KafkaEventBusConfig(
+        ...     bootstrap_servers="kafka:9093",
+        ...     security_protocol="SSL",
+        ...     ssl_cafile="/path/to/ca.crt",
+        ...     ssl_certfile="/path/to/client.crt",
+        ...     ssl_keyfile="/path/to/client.key",
+        ... )
+
+    Raises:
+        ValueError: If security configuration is invalid (e.g., SASL protocol
+            without credentials, mismatched SSL cert/key files).
+    """
+
+    # Connection
+    bootstrap_servers: str = "localhost:9092"
+    topic_prefix: str = "events"
+    consumer_group: str = "default"
+    consumer_name: str | None = None
+
+    # Producer settings
+    acks: str = "all"
+    compression_type: str | None = "gzip"
+    batch_size: int = 16384
+    linger_ms: int = 5
+
+    # Consumer settings
+    auto_offset_reset: str = "earliest"
+    session_timeout_ms: int = 30000
+    heartbeat_interval_ms: int = 10000
+    max_poll_interval_ms: int = 300000
+
+    # Error handling
+    max_retries: int = 3
+    retry_base_delay: float = 1.0
+    retry_max_delay: float = 60.0
+    retry_jitter: float = 0.1
+
+    # DLQ settings
+    enable_dlq: bool = True
+    dlq_topic_suffix: str = ".dlq"
+
+    # Security
+    security_protocol: str = "PLAINTEXT"
+    sasl_mechanism: str | None = None
+    sasl_username: str | None = None
+    sasl_password: str | None = None
+    ssl_cafile: str | None = None
+    ssl_certfile: str | None = None
+    ssl_keyfile: str | None = None
+    ssl_check_hostname: bool = True
+
+    # Observability
+    enable_tracing: bool = True
+
+    # Shutdown
+    shutdown_timeout: float = 30.0
+
+    def __post_init__(self) -> None:
+        """Auto-generate consumer_name if not provided and validate configuration.
+
+        Raises:
+            ValueError: If security configuration is invalid.
+        """
+        if self.consumer_name is None:
+            hostname = socket.gethostname()
+            unique_id = uuid.uuid4().hex[:8]
+            self.consumer_name = f"{hostname}-{unique_id}"
+
+        # Validate security configuration
+        self._validate_security_config()
+
+    def _validate_security_config(self) -> None:
+        """Validate security configuration consistency.
+
+        Validates that the security protocol, SASL mechanism, and SSL/TLS
+        configuration are consistent and complete. Logs warnings for insecure
+        configurations that may be acceptable for development but not production.
+
+        Raises:
+            ValueError: If security configuration is invalid.
+        """
+        valid_protocols = {"PLAINTEXT", "SSL", "SASL_PLAINTEXT", "SASL_SSL"}
+        if self.security_protocol not in valid_protocols:
+            raise ValueError(
+                f"Invalid security_protocol: {self.security_protocol}. "
+                f"Must be one of: {valid_protocols}"
+            )
+
+        # SASL validation
+        if self.security_protocol.startswith("SASL_"):
+            valid_mechanisms = {"PLAIN", "SCRAM-SHA-256", "SCRAM-SHA-512"}
+            if not self.sasl_mechanism:
+                raise ValueError(f"sasl_mechanism required for {self.security_protocol}")
+            if self.sasl_mechanism not in valid_mechanisms:
+                raise ValueError(
+                    f"Invalid sasl_mechanism: {self.sasl_mechanism}. "
+                    f"Must be one of: {valid_mechanisms}"
+                )
+            if not self.sasl_username or not self.sasl_password:
+                raise ValueError("sasl_username and sasl_password required for SASL authentication")
+
+        # SSL file validation for mTLS
+        if self.security_protocol in ("SSL", "SASL_SSL"):
+            if self.ssl_certfile and not self.ssl_keyfile:
+                raise ValueError("ssl_keyfile required when ssl_certfile is provided (mTLS)")
+            if self.ssl_keyfile and not self.ssl_certfile:
+                raise ValueError("ssl_certfile required when ssl_keyfile is provided (mTLS)")
+
+        # Warn about insecure configurations
+        if self.security_protocol == "PLAINTEXT":
+            logger.warning("Using PLAINTEXT security protocol - not recommended for production")
+        if self.security_protocol == "SASL_PLAINTEXT":
+            logger.warning("Using SASL without SSL - credentials sent in plain text")
+        if "SSL" in self.security_protocol and not self.ssl_check_hostname:
+            logger.warning("SSL hostname verification disabled - vulnerable to MITM attacks")
+
+    @property
+    def topic_name(self) -> str:
+        """Get the main topic name."""
+        return f"{self.topic_prefix}.stream"
+
+    @property
+    def dlq_topic_name(self) -> str:
+        """Get the dead letter queue topic name."""
+        return f"{self.topic_name}{self.dlq_topic_suffix}"
+
+    def get_producer_config(self) -> dict[str, Any]:
+        """Get aiokafka producer configuration dict.
+
+        Returns:
+            Dictionary of producer configuration for AIOKafkaProducer.
+        """
+        config: dict[str, Any] = {
+            "bootstrap_servers": self.bootstrap_servers,
+            "acks": self.acks,
+            "compression_type": self.compression_type,
+            "max_batch_size": self.batch_size,
+            "linger_ms": self.linger_ms,
+        }
+        self._add_security_config(config)
+        return config
+
+    def get_consumer_config(self) -> dict[str, Any]:
+        """Get aiokafka consumer configuration dict.
+
+        Returns:
+            Dictionary of consumer configuration for AIOKafkaConsumer.
+        """
+        config: dict[str, Any] = {
+            "bootstrap_servers": self.bootstrap_servers,
+            "group_id": self.consumer_group,
+            "client_id": self.consumer_name,
+            "auto_offset_reset": self.auto_offset_reset,
+            "session_timeout_ms": self.session_timeout_ms,
+            "heartbeat_interval_ms": self.heartbeat_interval_ms,
+            "max_poll_interval_ms": self.max_poll_interval_ms,
+            "enable_auto_commit": False,  # Manual commit for at-least-once
+        }
+        self._add_security_config(config)
+        return config
+
+    def _add_security_config(self, config: dict[str, Any]) -> None:
+        """Add security configuration to a config dict.
+
+        Args:
+            config: The configuration dictionary to add security settings to.
+        """
+        config["security_protocol"] = self.security_protocol
+
+        if self.sasl_mechanism:
+            config["sasl_mechanism"] = self.sasl_mechanism
+        if self.sasl_username:
+            config["sasl_plain_username"] = self.sasl_username
+        if self.sasl_password:
+            config["sasl_plain_password"] = self.sasl_password
+        if self.ssl_cafile:
+            config["ssl_cafile"] = self.ssl_cafile
+        if self.ssl_certfile:
+            config["ssl_certfile"] = self.ssl_certfile
+        if self.ssl_keyfile:
+            config["ssl_keyfile"] = self.ssl_keyfile
+
+        # Only set ssl_check_hostname if using SSL
+        if "SSL" in self.security_protocol:
+            config["ssl_check_hostname"] = self.ssl_check_hostname
+
+    def create_ssl_context(self) -> ssl.SSLContext | None:
+        """Create an SSL context from configuration.
+
+        Creates and configures an SSLContext based on the security settings.
+        This is useful when you need to customize the SSL context beyond what
+        aiokafka provides by default, or for testing SSL configurations.
+
+        Returns:
+            Configured SSLContext if using SSL/TLS, None otherwise.
+
+        Raises:
+            ssl.SSLError: If certificate files are invalid or cannot be loaded.
+            FileNotFoundError: If specified certificate files do not exist.
+
+        Example:
+            >>> config = KafkaEventBusConfig(
+            ...     security_protocol="SSL",
+            ...     ssl_cafile="/path/to/ca.crt",
+            ... )
+            >>> context = config.create_ssl_context()
+            >>> assert context is not None
+        """
+        if "SSL" not in self.security_protocol:
+            return None
+
+        context = ssl.create_default_context()
+
+        # Load CA certificates
+        if self.ssl_cafile:
+            context.load_verify_locations(self.ssl_cafile)
+
+        # Load client certificate for mTLS
+        if self.ssl_certfile and self.ssl_keyfile:
+            context.load_cert_chain(
+                certfile=self.ssl_certfile,
+                keyfile=self.ssl_keyfile,
+            )
+
+        # Configure hostname verification
+        if not self.ssl_check_hostname:
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+        else:
+            context.check_hostname = True
+            context.verify_mode = ssl.CERT_REQUIRED
+
+        return context
+
+    def get_sanitized_config(self) -> dict[str, Any]:
+        """Get configuration with sensitive values redacted.
+
+        Returns a copy of the configuration suitable for logging and debugging,
+        with passwords and private key paths replaced with placeholder values.
+        This prevents accidental credential exposure in logs.
+
+        Returns:
+            Configuration dictionary safe for logging. Sensitive values
+            (sasl_password, ssl_keyfile) are redacted with "***".
+
+        Example:
+            >>> config = KafkaEventBusConfig(
+            ...     sasl_password="secret123",
+            ...     ssl_keyfile="/path/to/key",
+            ... )
+            >>> sanitized = config.get_sanitized_config()
+            >>> assert sanitized["sasl_password"] == "***"
+            >>> assert sanitized["ssl_keyfile"] == "***"
+        """
+        return {
+            "bootstrap_servers": self.bootstrap_servers,
+            "topic_prefix": self.topic_prefix,
+            "consumer_group": self.consumer_group,
+            "consumer_name": self.consumer_name,
+            "security_protocol": self.security_protocol,
+            "sasl_mechanism": self.sasl_mechanism,
+            "sasl_username": self.sasl_username,
+            "sasl_password": "***" if self.sasl_password else None,
+            "ssl_cafile": self.ssl_cafile,
+            "ssl_certfile": self.ssl_certfile,
+            "ssl_keyfile": "***" if self.ssl_keyfile else None,
+            "ssl_check_hostname": self.ssl_check_hostname,
+            "enable_dlq": self.enable_dlq,
+            "enable_tracing": self.enable_tracing,
+        }
+
+
+@dataclass
+class KafkaEventBusStats:
+    """Statistics for Kafka event bus operations.
+
+    Tracks operational metrics for monitoring and debugging. Statistics are
+    updated atomically during publish and consume operations.
+
+    Attributes:
+        events_published: Total number of events successfully published.
+        events_consumed: Total number of events consumed from Kafka.
+        events_processed_success: Events successfully processed by handlers.
+        events_processed_failed: Events that failed handler processing.
+        messages_sent_to_dlq: Events sent to dead letter queue.
+        handler_errors: Total handler exceptions caught.
+        reconnections: Number of reconnection attempts.
+        rebalance_count: Number of consumer group rebalances.
+        last_publish_at: Timestamp of last successful publish.
+        last_consume_at: Timestamp of last successful consume.
+        last_error_at: Timestamp of last error.
+        connected_at: Timestamp when connection was established.
+    """
+
+    # Counters
+    events_published: int = 0
+    events_consumed: int = 0
+    events_processed_success: int = 0
+    events_processed_failed: int = 0
+    messages_sent_to_dlq: int = 0
+    handler_errors: int = 0
+    reconnections: int = 0
+
+    # Kafka-specific
+    rebalance_count: int = 0
+
+    # Timing
+    last_publish_at: datetime | None = None
+    last_consume_at: datetime | None = None
+    last_error_at: datetime | None = None
+    connected_at: datetime | None = None
+
+    def get_stats_dict(self) -> dict[str, Any]:
+        """Return statistics as a JSON-serializable dictionary.
+
+        Returns:
+            Dictionary with all statistics, datetimes converted to ISO format.
+        """
+        return {
+            "events_published": self.events_published,
+            "events_consumed": self.events_consumed,
+            "events_processed_success": self.events_processed_success,
+            "events_processed_failed": self.events_processed_failed,
+            "messages_sent_to_dlq": self.messages_sent_to_dlq,
+            "handler_errors": self.handler_errors,
+            "reconnections": self.reconnections,
+            "rebalance_count": self.rebalance_count,
+            "last_publish_at": (self.last_publish_at.isoformat() if self.last_publish_at else None),
+            "last_consume_at": (self.last_consume_at.isoformat() if self.last_consume_at else None),
+            "last_error_at": (self.last_error_at.isoformat() if self.last_error_at else None),
+            "connected_at": (self.connected_at.isoformat() if self.connected_at else None),
+        }
+
+
+# Type alias for handler storage (follows Redis/RabbitMQ pattern)
+HandlerWrapper = tuple[Any, Callable[[DomainEvent], Any]]
+
+
+class KafkaEventBus(EventBus):
+    """Kafka implementation of the EventBus interface.
+
+    Provides a distributed event bus using Apache Kafka for high-throughput
+    event distribution. Supports consumer groups, dead letter queues, and
+    optional OpenTelemetry tracing.
+
+    The bus creates events on a single topic ({topic_prefix}.stream) and uses
+    the aggregate_id as the partition key to ensure ordering within aggregates.
+
+    Thread Safety:
+        - Subscription methods are thread-safe
+        - Publishing and consuming should only be called from async context
+
+    Example:
+        >>> config = KafkaEventBusConfig(
+        ...     bootstrap_servers="localhost:9092",
+        ...     topic_prefix="myapp.events",
+        ...     consumer_group="projections",
+        ... )
+        >>> async with KafkaEventBus(config=config) as bus:
+        ...     await bus.publish([event])
+        ...     bus.subscribe(OrderCreated, handler)
+        ...     await bus.start_consuming()
+    """
+
+    def __init__(
+        self,
+        config: KafkaEventBusConfig | None = None,
+        event_registry: EventRegistry | None = None,
+    ) -> None:
+        """Initialize the Kafka event bus.
+
+        Args:
+            config: Configuration for Kafka connection. Uses defaults if None.
+            event_registry: Registry for event type resolution. Uses global
+                registry if None.
+
+        Raises:
+            KafkaNotAvailableError: If aiokafka is not installed.
+        """
+        if not KAFKA_AVAILABLE:
+            raise KafkaNotAvailableError()
+
+        self._config = config or KafkaEventBusConfig()
+        self._event_registry = event_registry
+
+        # Connection state
+        self._producer: AIOKafkaProducer | None = None
+        self._consumer: AIOKafkaConsumer | None = None
+        self._connected = False
+        self._consuming = False
+        self._consume_task: asyncio.Task[None] | None = None
+
+        # Handler storage (follows Redis/RabbitMQ pattern)
+        self._handlers: dict[str, list[HandlerWrapper]] = defaultdict(list)
+        self._wildcard_handlers: list[HandlerWrapper] = []
+
+        # Statistics
+        self._stats = KafkaEventBusStats()
+
+        # Shutdown coordination
+        self._shutdown_event = asyncio.Event()
+
+        logger.debug(
+            "KafkaEventBus initialized",
+            extra=self._config.get_sanitized_config(),
+        )
+
+    # =========================================================================
+    # Properties
+    # =========================================================================
+
+    @property
+    def is_connected(self) -> bool:
+        """Check if connected to Kafka.
+
+        Returns:
+            True if producer and consumer are connected.
+        """
+        return self._connected
+
+    @property
+    def is_consuming(self) -> bool:
+        """Check if actively consuming messages.
+
+        Returns:
+            True if consume loop is running.
+        """
+        return self._consuming
+
+    @property
+    def config(self) -> KafkaEventBusConfig:
+        """Get the configuration.
+
+        Returns:
+            The KafkaEventBusConfig instance.
+        """
+        return self._config
+
+    @property
+    def stats(self) -> KafkaEventBusStats:
+        """Get current statistics.
+
+        Returns:
+            The KafkaEventBusStats instance.
+        """
+        return self._stats
+
+    # =========================================================================
+    # Connection Lifecycle Methods
+    # =========================================================================
+
+    async def connect(self) -> None:
+        """Connect to Kafka cluster.
+
+        Creates and starts the producer and consumer clients. The consumer
+        subscribes to the configured topic.
+
+        Raises:
+            KafkaError: If connection to Kafka fails.
+        """
+        if self._connected:
+            logger.warning("KafkaEventBus already connected")
+            return
+
+        logger.info(
+            "Connecting to Kafka",
+            extra=self._config.get_sanitized_config(),
+        )
+
+        try:
+            # Create and start producer
+            self._producer = AIOKafkaProducer(**self._config.get_producer_config())
+            await self._producer.start()
+
+            # Create and start consumer
+            self._consumer = AIOKafkaConsumer(
+                self._config.topic_name,
+                **self._config.get_consumer_config(),
+            )
+            await self._consumer.start()
+
+            self._connected = True
+            self._stats.connected_at = datetime.now(UTC)
+
+            logger.info(
+                "Connected to Kafka",
+                extra={
+                    "topic": self._config.topic_name,
+                    "consumer_group": self._config.consumer_group,
+                },
+            )
+
+        except Exception as e:
+            logger.error(
+                "Failed to connect to Kafka",
+                extra={"error": str(e)},
+                exc_info=True,
+            )
+            # Clean up partial connection
+            await self._cleanup_connections()
+            raise
+
+    async def disconnect(self) -> None:
+        """Disconnect from Kafka cluster.
+
+        Stops consuming if active and closes producer/consumer connections.
+        Safe to call multiple times.
+        """
+        if not self._connected:
+            logger.debug("KafkaEventBus not connected, nothing to disconnect")
+            return
+
+        logger.info("Disconnecting from Kafka")
+
+        # Stop consuming first
+        if self._consuming:
+            await self.stop_consuming()
+
+        await self._cleanup_connections()
+        self._connected = False
+
+        logger.info("Disconnected from Kafka")
+
+    async def _cleanup_connections(self) -> None:
+        """Clean up producer and consumer connections."""
+        if self._producer:
+            try:
+                await self._producer.stop()
+            except Exception as e:
+                logger.warning(f"Error stopping producer: {e}")
+            self._producer = None
+
+        if self._consumer:
+            try:
+                await self._consumer.stop()
+            except Exception as e:
+                logger.warning(f"Error stopping consumer: {e}")
+            self._consumer = None
+
+    # =========================================================================
+    # Context Manager Support
+    # =========================================================================
+
+    async def __aenter__(self) -> KafkaEventBus:
+        """Enter async context manager.
+
+        Connects to Kafka and returns the bus instance.
+
+        Returns:
+            The connected KafkaEventBus instance.
+        """
+        await self.connect()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        """Exit async context manager.
+
+        Gracefully shuts down the bus with configured timeout.
+        """
+        await self.shutdown(timeout=self._config.shutdown_timeout)
+
+    # =========================================================================
+    # Shutdown
+    # =========================================================================
+
+    async def shutdown(self, timeout: float | None = None) -> None:
+        """Gracefully shutdown the event bus.
+
+        Stops consuming, waits for in-flight messages, and disconnects.
+
+        Args:
+            timeout: Maximum time to wait for shutdown. Uses config default
+                if None.
+        """
+        timeout = timeout or self._config.shutdown_timeout
+
+        logger.info("Shutting down KafkaEventBus", extra={"timeout": timeout})
+
+        # Signal shutdown
+        self._shutdown_event.set()
+
+        # Wait for consume task to finish
+        if self._consume_task and not self._consume_task.done():
+            try:
+                await asyncio.wait_for(self._consume_task, timeout=timeout)
+            except TimeoutError:
+                logger.warning("Shutdown timed out, cancelling consume task")
+                self._consume_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._consume_task
+
+        # Disconnect
+        await self.disconnect()
+
+        logger.info("KafkaEventBus shutdown complete")
+
+    async def stop_consuming(self) -> None:
+        """Stop the consumer loop gracefully.
+
+        Sets the consuming flag to False which will cause the consume loop
+        to exit on its next iteration.
+        """
+        self._consuming = False
+        logger.info("Stop consuming requested")
+
+    # =========================================================================
+    # Helper Methods
+    # =========================================================================
+
+    def get_stats_dict(self) -> dict[str, Any]:
+        """Get statistics as a dictionary.
+
+        Returns:
+            JSON-serializable dictionary of statistics.
+        """
+        return self._stats.get_stats_dict()
+
+    async def get_topic_info(self) -> dict[str, Any]:
+        """Get information about the configured topic.
+
+        Returns:
+            Dictionary with topic metadata.
+
+        Raises:
+            RuntimeError: If not connected.
+        """
+        if not self._connected or not self._consumer:
+            raise RuntimeError("Not connected to Kafka")
+
+        partitions = self._consumer.partitions_for_topic(self._config.topic_name)
+
+        return {
+            "topic": self._config.topic_name,
+            "partitions": list(partitions) if partitions else [],
+            "consumer_group": self._config.consumer_group,
+            "connected": self._connected,
+            "consuming": self._consuming,
+        }
+
+    # =========================================================================
+    # Publish Methods
+    # =========================================================================
+
+    async def publish(
+        self,
+        events: list[DomainEvent],
+        background: bool = False,
+    ) -> None:
+        """Publish events to Kafka.
+
+        Events are published to the configured topic with the aggregate_id as
+        the partition key. This ensures events for the same aggregate are
+        processed in order.
+
+        When tracing is enabled, creates OpenTelemetry spans for each publish
+        operation and injects trace context into Kafka message headers for
+        distributed tracing correlation.
+
+        Args:
+            events: List of domain events to publish.
+            background: If True, don't wait for broker acknowledgment.
+                Faster but less reliable.
+
+        Raises:
+            RuntimeError: If not connected to Kafka.
+            KafkaError: If publishing fails.
+        """
+        if not self._connected or not self._producer:
+            raise RuntimeError("Not connected to Kafka. Call connect() first.")
+
+        if not events:
+            return
+
+        logger.debug(
+            "Publishing events to Kafka",
+            extra={
+                "event_count": len(events),
+                "topic": self._config.topic_name,
+                "background": background,
+            },
+        )
+
+        # Get tracer if tracing is enabled
+        tracer = _get_tracer() if self._config.enable_tracing else None
+
+        for event in events:
+            await self._publish_single_event(event, background, tracer)
+
+        # Update statistics
+        self._stats.events_published += len(events)
+        self._stats.last_publish_at = datetime.now(UTC)
+
+        logger.debug(
+            "Events published successfully",
+            extra={"event_count": len(events)},
+        )
+
+    async def _publish_single_event(
+        self,
+        event: DomainEvent,
+        background: bool,
+        tracer: Any,
+    ) -> None:
+        """Publish a single event with optional tracing span.
+
+        Creates an OpenTelemetry span for the publish operation if tracing
+        is enabled. The span includes messaging semantic attributes and
+        event metadata for distributed tracing correlation.
+
+        Args:
+            event: The event to publish.
+            background: Whether to wait for acknowledgment.
+            tracer: The OpenTelemetry tracer, or None if disabled.
+        """
+        if not self._producer:
+            raise RuntimeError("Producer not connected")
+
+        # Serialize event
+        key = self._get_partition_key(event)
+        value = self._serialize_event(event)
+        headers = self._create_headers(event)
+
+        if tracer:
+            # Create span for publish
+            with tracer.start_as_current_span(
+                name=f"kafka.publish {event.event_type}",
+                kind=SpanKind.PRODUCER,
+                attributes={
+                    "messaging.system": "kafka",
+                    "messaging.destination": self._config.topic_name,
+                    "messaging.destination_kind": "topic",
+                    "messaging.operation": "publish",
+                    "event.type": event.event_type,
+                    "event.id": str(event.event_id),
+                    "aggregate.id": str(event.aggregate_id),
+                    "aggregate.type": event.aggregate_type,
+                },
+            ) as span:
+                # Inject trace context into headers
+                carrier: dict[str, str] = {}
+                inject(carrier)
+                for trace_key, trace_value in carrier.items():
+                    headers.append((trace_key, trace_value.encode("utf-8")))
+
+                await self._send_to_kafka(key, value, headers, background, span)
+        else:
+            await self._send_to_kafka(key, value, headers, background, None)
+
+    async def _send_to_kafka(
+        self,
+        key: bytes,
+        value: bytes,
+        headers: list[tuple[str, bytes]],
+        background: bool,
+        span: Any,
+    ) -> None:
+        """Send message to Kafka.
+
+        Args:
+            key: Message key.
+            value: Message value.
+            headers: Message headers.
+            background: Whether to wait for acknowledgment.
+            span: The current tracing span, or None.
+        """
+        if not self._producer:
+            raise RuntimeError("Producer not connected")
+
+        try:
+            future = await self._producer.send(
+                topic=self._config.topic_name,
+                key=key,
+                value=value,
+                headers=headers,
+            )
+
+            if not background:
+                record_metadata = await future
+
+                if span:
+                    span.set_attribute("messaging.kafka.partition", record_metadata.partition)
+                    span.set_attribute("messaging.kafka.offset", record_metadata.offset)
+
+                logger.debug(
+                    "Event published",
+                    extra={
+                        "topic": record_metadata.topic,
+                        "partition": record_metadata.partition,
+                        "offset": record_metadata.offset,
+                    },
+                )
+
+        except Exception as e:
+            if span:
+                span.set_status(Status(StatusCode.ERROR, str(e)))
+                span.record_exception(e)
+
+            logger.error(
+                "Failed to publish event",
+                extra={"error": str(e)},
+                exc_info=True,
+            )
+            self._stats.last_error_at = datetime.now(UTC)
+            raise
+
+    def _get_partition_key(self, event: DomainEvent) -> bytes:
+        """Get the partition key for an event.
+
+        Uses aggregate_id to ensure events for the same aggregate
+        are sent to the same partition, preserving order.
+
+        Args:
+            event: The domain event.
+
+        Returns:
+            Partition key as bytes.
+        """
+        return str(event.aggregate_id).encode("utf-8")
+
+    def _serialize_event(self, event: DomainEvent) -> bytes:
+        """Serialize an event to JSON bytes.
+
+        Args:
+            event: The domain event to serialize.
+
+        Returns:
+            JSON-encoded event as bytes.
+        """
+        return event.model_dump_json().encode("utf-8")
+
+    def _create_headers(self, event: DomainEvent) -> list[tuple[str, bytes]]:
+        """Create Kafka headers from event metadata.
+
+        Headers enable routing and filtering without deserializing the
+        message body.
+
+        Args:
+            event: The domain event.
+
+        Returns:
+            List of header tuples (name, value).
+        """
+        headers: list[tuple[str, bytes]] = [
+            ("event_id", str(event.event_id).encode("utf-8")),
+            ("event_type", event.event_type.encode("utf-8")),
+            ("aggregate_id", str(event.aggregate_id).encode("utf-8")),
+            ("aggregate_type", event.aggregate_type.encode("utf-8")),
+            ("aggregate_version", str(event.aggregate_version).encode("utf-8")),
+            ("occurred_at", event.occurred_at.isoformat().encode("utf-8")),
+            ("correlation_id", str(event.correlation_id).encode("utf-8")),
+        ]
+
+        # Optional headers
+        if event.tenant_id:
+            headers.append(("tenant_id", str(event.tenant_id).encode("utf-8")))
+        if event.causation_id:
+            headers.append(("causation_id", str(event.causation_id).encode("utf-8")))
+        if event.actor_id:
+            headers.append(("actor_id", str(event.actor_id).encode("utf-8")))
+
+        return headers
+
+    # =========================================================================
+    # Handler Normalization
+    # =========================================================================
+
+    def _normalize_handler(
+        self,
+        handler: FlexibleEventHandler | EventHandlerFunc,
+    ) -> HandlerWrapper:
+        """Normalize a handler to a consistent async callable format.
+
+        Converts both sync and async handlers to a unified format for
+        internal storage and invocation. This allows the bus to handle
+        any type of handler uniformly during event dispatch.
+
+        Args:
+            handler: The handler to normalize. Can be:
+                - An EventHandler instance with handle() method
+                - A sync callable (function or lambda)
+                - An async callable (coroutine function)
+
+        Returns:
+            Tuple of (original_handler, normalized_async_callable).
+            The original handler is preserved for identity comparison
+            during unsubscribe operations.
+
+        Raises:
+            TypeError: If handler is not a valid handler type.
+        """
+        # If it's an object with a handle method (EventHandler pattern)
+        if hasattr(handler, "handle"):
+            original = handler
+            method = handler.handle
+
+            if asyncio.iscoroutinefunction(method):
+                return (original, method)
+            else:
+                # Wrap sync method to be async
+                async def async_method_wrapper(event: DomainEvent) -> Any:
+                    result = method(event)
+                    # Handle case where method returns a coroutine unexpectedly
+                    if asyncio.iscoroutine(result):
+                        return await result
+                    return result
+
+                return (original, async_method_wrapper)
+
+        # It's a callable (function, lambda, or callable object)
+        elif callable(handler):
+            original = handler
+
+            if asyncio.iscoroutinefunction(handler):
+                return (original, handler)
+            else:
+                # Wrap sync callable to be async
+                callable_handler = handler
+
+                async def async_callable_wrapper(event: DomainEvent) -> Any:
+                    result = callable_handler(event)
+                    # Handle case where callable returns a coroutine unexpectedly
+                    if asyncio.iscoroutine(result):
+                        return await result
+                    return result
+
+                return (original, async_callable_wrapper)
+        else:
+            raise TypeError(
+                f"Handler must have a handle() method or be callable, got {type(handler)}"
+            )
+
+    def _get_handler_name(self, handler: Any) -> str:
+        """Get a descriptive name for a handler for logging.
+
+        Extracts the most meaningful name from a handler for use in
+        log messages and debugging.
+
+        Args:
+            handler: The handler to describe.
+
+        Returns:
+            A string name for the handler.
+        """
+        if hasattr(handler, "__name__"):
+            return str(handler.__name__)
+        if hasattr(handler, "__class__"):
+            return str(handler.__class__.__name__)
+        return repr(handler)
+
+    # =========================================================================
+    # Subscribe Methods
+    # =========================================================================
+
+    def subscribe(
+        self,
+        event_type: type[DomainEvent],
+        handler: FlexibleEventHandler | EventHandlerFunc,
+    ) -> None:
+        """Subscribe a handler to a specific event type.
+
+        The handler will be called when events of the specified type are
+        consumed. Handlers are stored in memory and not persisted to Kafka.
+
+        Both sync and async handlers are supported. Sync handlers are
+        automatically wrapped to be async internally.
+
+        Args:
+            event_type: The event class to subscribe to.
+            handler: The handler to invoke. Can be:
+                - An EventHandler instance with handle() method
+                - A sync callable taking a DomainEvent
+                - An async callable taking a DomainEvent
+
+        Example:
+            >>> bus.subscribe(OrderCreated, my_handler)
+            >>> bus.subscribe(OrderCreated, lambda e: print(e))
+            >>> bus.subscribe(OrderCreated, MyEventHandler())
+        """
+        event_type_name = event_type.__name__
+        wrapped = self._normalize_handler(handler)
+        self._handlers[event_type_name].append(wrapped)
+
+        logger.debug(
+            "Handler subscribed",
+            extra={
+                "event_type": event_type_name,
+                "handler": self._get_handler_name(handler),
+                "total_handlers": len(self._handlers[event_type_name]),
+            },
+        )
+
+    def unsubscribe(
+        self,
+        event_type: type[DomainEvent],
+        handler: FlexibleEventHandler | EventHandlerFunc,
+    ) -> bool:
+        """Unsubscribe a handler from a specific event type.
+
+        Handlers are compared by identity (using 'is'), not equality.
+        This means you must pass the exact same handler object that
+        was used in subscribe().
+
+        Args:
+            event_type: The event class to unsubscribe from.
+            handler: The handler to remove.
+
+        Returns:
+            True if the handler was found and removed, False otherwise.
+
+        Example:
+            >>> handler = lambda e: print(e)
+            >>> bus.subscribe(OrderCreated, handler)
+            >>> bus.unsubscribe(OrderCreated, handler)  # Returns True
+            >>> bus.unsubscribe(OrderCreated, handler)  # Returns False
+        """
+        event_type_name = event_type.__name__
+
+        if event_type_name not in self._handlers:
+            logger.debug(
+                "No handlers registered for event type",
+                extra={"event_type": event_type_name},
+            )
+            return False
+
+        # Find and remove the handler by identity
+        handlers = self._handlers[event_type_name]
+        for i, (original, _) in enumerate(handlers):
+            if original is handler:
+                handlers.pop(i)
+                logger.debug(
+                    "Handler unsubscribed",
+                    extra={
+                        "event_type": event_type_name,
+                        "handler": self._get_handler_name(handler),
+                        "remaining_handlers": len(handlers),
+                    },
+                )
+                return True
+
+        logger.debug(
+            "Handler not found for event type",
+            extra={
+                "event_type": event_type_name,
+                "handler": self._get_handler_name(handler),
+            },
+        )
+        return False
+
+    def subscribe_all(self, subscriber: FlexibleEventSubscriber) -> None:
+        """Subscribe an EventSubscriber to all its declared event types.
+
+        Calls subscriber.subscribed_to() to get the list of event types,
+        then registers subscriber.handle() for each type. This is a
+        convenience method for subscribers that handle multiple event types.
+
+        Args:
+            subscriber: An EventSubscriber instance with subscribed_to()
+                and handle() methods.
+
+        Example:
+            >>> class OrderProjection:
+            ...     def subscribed_to(self) -> list[type[DomainEvent]]:
+            ...         return [OrderCreated, OrderShipped]
+            ...     async def handle(self, event: DomainEvent) -> None:
+            ...         await update_projection(event)
+            >>> bus.subscribe_all(OrderProjection())
+        """
+        event_types = subscriber.subscribed_to()
+
+        for event_type in event_types:
+            self.subscribe(event_type, subscriber)
+
+        logger.info(
+            "Subscriber registered for all event types",
+            extra={
+                "subscriber": self._get_handler_name(subscriber),
+                "event_types": [et.__name__ for et in event_types],
+                "event_count": len(event_types),
+            },
+        )
+
+    def subscribe_to_all_events(
+        self,
+        handler: FlexibleEventHandler | EventHandlerFunc,
+    ) -> None:
+        """Subscribe a handler to all event types (wildcard subscription).
+
+        The handler will receive every event regardless of type. This is
+        useful for cross-cutting concerns such as:
+        - Audit logging
+        - Metrics collection
+        - Debugging and tracing
+        - Event replay recording
+
+        Wildcard handlers are invoked after type-specific handlers.
+
+        Args:
+            handler: The handler to invoke for all events.
+
+        Example:
+            >>> async def audit_log(event: DomainEvent) -> None:
+            ...     await log_event(event)
+            >>> bus.subscribe_to_all_events(audit_log)
+        """
+        wrapped = self._normalize_handler(handler)
+        self._wildcard_handlers.append(wrapped)
+
+        logger.debug(
+            "Wildcard handler subscribed",
+            extra={
+                "handler": self._get_handler_name(handler),
+                "total_wildcard_handlers": len(self._wildcard_handlers),
+            },
+        )
+
+    def unsubscribe_from_all_events(
+        self,
+        handler: FlexibleEventHandler | EventHandlerFunc,
+    ) -> bool:
+        """Unsubscribe a handler from the wildcard subscription.
+
+        Handlers are compared by identity (using 'is'), not equality.
+
+        Args:
+            handler: The handler to remove.
+
+        Returns:
+            True if the handler was found and removed, False otherwise.
+
+        Example:
+            >>> bus.subscribe_to_all_events(audit_handler)
+            >>> bus.unsubscribe_from_all_events(audit_handler)  # Returns True
+        """
+        for i, (original, _) in enumerate(self._wildcard_handlers):
+            if original is handler:
+                self._wildcard_handlers.pop(i)
+                logger.debug(
+                    "Wildcard handler unsubscribed",
+                    extra={
+                        "handler": self._get_handler_name(handler),
+                        "remaining_wildcard_handlers": len(self._wildcard_handlers),
+                    },
+                )
+                return True
+
+        logger.debug(
+            "Wildcard handler not found",
+            extra={"handler": self._get_handler_name(handler)},
+        )
+        return False
+
+    # =========================================================================
+    # Handler Management Helpers
+    # =========================================================================
+
+    def clear_subscribers(self) -> None:
+        """Clear all registered handlers.
+
+        Removes all type-specific and wildcard handlers. This is useful
+        for testing or reconfiguration scenarios.
+
+        Example:
+            >>> bus.subscribe(OrderCreated, handler1)
+            >>> bus.subscribe_to_all_events(handler2)
+            >>> bus.clear_subscribers()
+            >>> assert bus.get_subscriber_count() == 0
+        """
+        self._handlers.clear()
+        self._wildcard_handlers.clear()
+        logger.debug("All subscribers cleared")
+
+    def get_subscriber_count(self, event_type: type[DomainEvent] | None = None) -> int:
+        """Get the number of type-specific handlers.
+
+        Args:
+            event_type: If provided, count handlers for this specific event
+                type only. If None, count all type-specific handlers.
+
+        Returns:
+            Total count of handlers. Does not include wildcard handlers.
+
+        Example:
+            >>> bus.subscribe(OrderCreated, handler1)
+            >>> bus.subscribe(OrderCreated, handler2)
+            >>> bus.subscribe(OrderShipped, handler3)
+            >>> bus.get_subscriber_count()  # Returns 3
+            >>> bus.get_subscriber_count(OrderCreated)  # Returns 2
+        """
+        if event_type is not None:
+            event_type_name = event_type.__name__
+            return len(self._handlers.get(event_type_name, []))
+        return sum(len(handlers) for handlers in self._handlers.values())
+
+    def get_wildcard_subscriber_count(self) -> int:
+        """Get the number of wildcard handlers.
+
+        Returns:
+            Number of handlers subscribed to all events.
+
+        Example:
+            >>> bus.subscribe_to_all_events(handler1)
+            >>> bus.subscribe_to_all_events(handler2)
+            >>> bus.get_wildcard_subscriber_count()  # Returns 2
+        """
+        return len(self._wildcard_handlers)
+
+    def get_handlers_for_event(self, event_type_name: str) -> list[HandlerWrapper]:
+        """Get all handlers that should process an event type.
+
+        Includes both type-specific handlers and wildcard handlers.
+        This is used internally during event dispatch.
+
+        Args:
+            event_type_name: The event type name (e.g., "OrderCreated").
+
+        Returns:
+            List of handler wrappers to invoke. Type-specific handlers
+            come first, followed by wildcard handlers.
+
+        Example:
+            >>> handlers = bus.get_handlers_for_event("OrderCreated")
+            >>> for original, async_handler in handlers:
+            ...     await async_handler(event)
+        """
+        handlers = list(self._handlers.get(event_type_name, []))
+        handlers.extend(self._wildcard_handlers)
+        return handlers
+
+    # =========================================================================
+    # Consumer Methods
+    # =========================================================================
+
+    async def start_consuming(self) -> None:
+        """Start consuming events from Kafka.
+
+        This method blocks and continuously polls for messages, dispatching
+        them to registered handlers. Use stop_consuming() from another
+        coroutine to stop.
+
+        Events are processed sequentially within each partition. Offsets are
+        committed after successful handler execution (at-least-once delivery).
+
+        Raises:
+            RuntimeError: If not connected or already consuming.
+        """
+        if not self._connected or not self._consumer:
+            raise RuntimeError("Not connected to Kafka. Call connect() first.")
+
+        if self._consuming:
+            logger.warning("Already consuming events")
+            return
+
+        self._consuming = True
+        self._shutdown_event.clear()
+
+        logger.info(
+            "Starting Kafka consumer",
+            extra={
+                "topic": self._config.topic_name,
+                "consumer_group": self._config.consumer_group,
+            },
+        )
+
+        try:
+            async for message in self._consumer:
+                if self._shutdown_event.is_set() or not self._consuming:
+                    break
+
+                await self._process_message(message)
+
+        except asyncio.CancelledError:
+            logger.info("Consumer cancelled")
+            raise
+        except Exception as e:
+            logger.error(
+                "Consumer error",
+                extra={"error": str(e)},
+                exc_info=True,
+            )
+            raise
+        finally:
+            self._consuming = False
+            logger.info("Consumer stopped")
+
+    def start_consuming_in_background(self) -> asyncio.Task[None]:
+        """Start consuming in a background task.
+
+        Returns:
+            The background task running the consumer.
+
+        Raises:
+            RuntimeError: If consumer is already running in background.
+
+        Usage:
+            task = bus.start_consuming_in_background()
+            # ... do other work ...
+            await bus.stop_consuming()
+            await task
+        """
+        if self._consume_task is not None and not self._consume_task.done():
+            raise RuntimeError("Consumer already running in background")
+
+        self._consume_task = asyncio.create_task(
+            self.start_consuming(),
+            name=f"kafka-consumer-{self._config.consumer_name}",
+        )
+        return self._consume_task
+
+    async def _process_message(self, message: Any) -> None:
+        """Process a single Kafka message with optional tracing.
+
+        Deserializes the event, dispatches to handlers, and commits offset
+        on success. Implements retry logic on failure.
+
+        When tracing is enabled, creates OpenTelemetry spans for the consume
+        operation and extracts trace context from Kafka message headers for
+        distributed tracing correlation.
+
+        Args:
+            message: The Kafka ConsumerRecord to process.
+        """
+        self._stats.events_consumed += 1
+        self._stats.last_consume_at = datetime.now(UTC)
+
+        # Extract event type from headers for routing
+        event_type_name = self._get_header_value(message.headers, "event_type")
+        if not event_type_name:
+            logger.error(
+                "Message missing event_type header",
+                extra={
+                    "topic": message.topic,
+                    "partition": message.partition,
+                    "offset": message.offset,
+                },
+            )
+            # Commit to avoid reprocessing malformed message
+            if self._consumer:
+                await self._consumer.commit()
+            return
+
+        logger.debug(
+            "Processing message",
+            extra={
+                "event_type": event_type_name,
+                "partition": message.partition,
+                "offset": message.offset,
+            },
+        )
+
+        # Get tracer if tracing is enabled
+        tracer = _get_tracer() if self._config.enable_tracing else None
+
+        if tracer:
+            # Extract trace context from headers
+            carrier = self._extract_trace_context(message.headers)
+            context = extract(carrier)
+
+            # Create span for consume
+            with tracer.start_as_current_span(
+                name=f"kafka.consume {event_type_name}",
+                context=context,
+                kind=SpanKind.CONSUMER,
+                attributes={
+                    "messaging.system": "kafka",
+                    "messaging.source": message.topic,
+                    "messaging.source_kind": "topic",
+                    "messaging.operation": "receive",
+                    "messaging.kafka.partition": message.partition,
+                    "messaging.kafka.offset": message.offset,
+                    "messaging.kafka.consumer_group": self._config.consumer_group,
+                    "event.type": event_type_name,
+                },
+            ) as span:
+                await self._process_message_with_span(message, event_type_name, span)
+        else:
+            await self._process_message_with_span(message, event_type_name, None)
+
+    def _extract_trace_context(
+        self,
+        headers: list[tuple[str, bytes]] | None,
+    ) -> dict[str, str]:
+        """Extract OpenTelemetry trace context from message headers.
+
+        Extracts W3C Trace Context headers (traceparent, tracestate, baggage)
+        from Kafka message headers for distributed tracing correlation.
+
+        Args:
+            headers: Kafka message headers.
+
+        Returns:
+            Dictionary of trace context headers suitable for OpenTelemetry
+            propagator extraction.
+        """
+        carrier: dict[str, str] = {}
+        if headers:
+            for key, value in headers:
+                # OpenTelemetry headers typically start with 'traceparent' or 'tracestate'
+                if key in ("traceparent", "tracestate", "baggage"):
+                    carrier[key] = value.decode("utf-8")
+        return carrier
+
+    async def _process_message_with_span(
+        self,
+        message: Any,
+        event_type_name: str,
+        span: Any,
+    ) -> None:
+        """Process message with optional span updates.
+
+        This method contains the core message processing logic, optionally
+        updating the provided tracing span with event metadata and status.
+
+        Args:
+            message: The Kafka message.
+            event_type_name: The event type name.
+            span: The current tracing span, or None.
+        """
+        # Get retry count from headers (for retried messages)
+        retry_count = self._get_retry_count(message.headers)
+
+        try:
+            # Deserialize event
+            event = self._deserialize_message(message)
+
+            if span:
+                span.set_attribute("event.id", str(event.event_id))
+                span.set_attribute("aggregate.id", str(event.aggregate_id))
+                span.set_attribute("aggregate.type", event.aggregate_type)
+
+            # Get handlers for this event type
+            handlers = self.get_handlers_for_event(event_type_name)
+
+            if not handlers:
+                logger.debug(
+                    "No handlers for event type",
+                    extra={"event_type": event_type_name},
+                )
+            else:
+                # Dispatch to all handlers
+                await self._dispatch_to_handlers(event, handlers)
+
+            # Commit offset on success
+            if self._consumer:
+                await self._consumer.commit()
+            self._stats.events_processed_success += 1
+
+            if span:
+                span.set_status(Status(StatusCode.OK))
+
+        except Exception as e:
+            if span:
+                span.set_status(Status(StatusCode.ERROR, str(e)))
+                span.record_exception(e)
+            await self._handle_processing_error(message, e, retry_count)
+
+    def _deserialize_message(self, message: Any) -> DomainEvent:
+        """Deserialize a Kafka message to a DomainEvent.
+
+        Args:
+            message: The Kafka ConsumerRecord to deserialize.
+
+        Returns:
+            The deserialized DomainEvent.
+
+        Raises:
+            ValueError: If event type is unknown or deserialization fails.
+        """
+        event_type_name = self._get_header_value(message.headers, "event_type")
+
+        if not event_type_name:
+            raise ValueError("Message missing event_type header")
+
+        # Get event class from registry
+        event_class = self._get_event_class(event_type_name)
+
+        if not event_class:
+            raise ValueError(f"Unknown event type: {event_type_name}")
+
+        # Deserialize from JSON
+        return event_class.model_validate_json(message.value)
+
+    def _get_event_class(self, event_type_name: str) -> type[DomainEvent] | None:
+        """Get event class by name from registry.
+
+        Args:
+            event_type_name: Name of the event class to look up.
+
+        Returns:
+            The event class if found, None otherwise.
+        """
+        if self._event_registry:
+            return self._event_registry.get_or_none(event_type_name)
+
+        # Fallback to default registry
+        from eventsource.events.registry import default_registry
+
+        return default_registry.get_or_none(event_type_name)
+
+    def _get_header_value(
+        self,
+        headers: list[tuple[str, bytes]] | None,
+        key: str,
+    ) -> str | None:
+        """Get a header value by key.
+
+        Args:
+            headers: List of header tuples.
+            key: The header key to find.
+
+        Returns:
+            The decoded header value, or None if not found.
+        """
+        if not headers:
+            return None
+
+        for header_key, header_value in headers:
+            if header_key == key:
+                return header_value.decode("utf-8")
+
+        return None
+
+    def _get_retry_count(self, headers: list[tuple[str, bytes]] | None) -> int:
+        """Get the retry count from message headers.
+
+        Args:
+            headers: Message headers.
+
+        Returns:
+            The retry count, or 0 if not present.
+        """
+        value = self._get_header_value(headers, "retry_count")
+        if value:
+            try:
+                return int(value)
+            except ValueError:
+                return 0
+        return 0
+
+    async def _dispatch_to_handlers(
+        self,
+        event: DomainEvent,
+        handlers: list[HandlerWrapper],
+    ) -> None:
+        """Dispatch an event to all registered handlers with optional tracing.
+
+        When tracing is enabled, creates child spans for each handler
+        invocation to provide detailed visibility into handler execution.
+
+        Args:
+            event: The event to dispatch.
+            handlers: List of handler wrappers to invoke.
+
+        Raises:
+            Exception: Re-raises any handler exception.
+        """
+        # Get tracer if tracing is enabled
+        tracer = _get_tracer() if self._config.enable_tracing else None
+
+        for original, handler_func in handlers:
+            handler_name = self._get_handler_name(original)
+
+            if tracer:
+                with tracer.start_as_current_span(
+                    name=f"handle {handler_name}",
+                    kind=SpanKind.INTERNAL,
+                    attributes={
+                        "handler.name": handler_name,
+                        "event.type": event.event_type,
+                        "event.id": str(event.event_id),
+                    },
+                ) as span:
+                    try:
+                        logger.debug(
+                            "Dispatching to handler",
+                            extra={
+                                "event_type": event.event_type,
+                                "event_id": str(event.event_id),
+                                "handler": handler_name,
+                            },
+                        )
+
+                        await handler_func(event)
+
+                        logger.debug(
+                            "Handler completed",
+                            extra={
+                                "event_type": event.event_type,
+                                "handler": handler_name,
+                            },
+                        )
+
+                    except Exception as e:
+                        span.set_status(Status(StatusCode.ERROR, str(e)))
+                        span.record_exception(e)
+                        self._stats.handler_errors += 1
+                        logger.error(
+                            "Handler error",
+                            extra={
+                                "event_type": event.event_type,
+                                "event_id": str(event.event_id),
+                                "handler": handler_name,
+                                "error": str(e),
+                            },
+                            exc_info=True,
+                        )
+                        raise
+            else:
+                try:
+                    logger.debug(
+                        "Dispatching to handler",
+                        extra={
+                            "event_type": event.event_type,
+                            "event_id": str(event.event_id),
+                            "handler": handler_name,
+                        },
+                    )
+
+                    await handler_func(event)
+
+                    logger.debug(
+                        "Handler completed",
+                        extra={
+                            "event_type": event.event_type,
+                            "handler": handler_name,
+                        },
+                    )
+
+                except Exception as e:
+                    self._stats.handler_errors += 1
+                    logger.error(
+                        "Handler error",
+                        extra={
+                            "event_type": event.event_type,
+                            "event_id": str(event.event_id),
+                            "handler": handler_name,
+                            "error": str(e),
+                        },
+                        exc_info=True,
+                    )
+                    raise
+
+    async def _handle_processing_error(
+        self,
+        message: Any,
+        error: Exception,
+        retry_count: int,
+    ) -> None:
+        """Handle a message processing error.
+
+        Implements retry with exponential backoff. After max_retries,
+        the message is sent to DLQ.
+
+        Args:
+            message: The failed message.
+            error: The exception that occurred.
+            retry_count: Current retry attempt number.
+        """
+        self._stats.events_processed_failed += 1
+        self._stats.last_error_at = datetime.now(UTC)
+
+        event_type = self._get_header_value(message.headers, "event_type")
+        event_id = self._get_header_value(message.headers, "event_id")
+
+        if retry_count >= self._config.max_retries:
+            logger.error(
+                "Max retries exceeded, message will be sent to DLQ",
+                extra={
+                    "event_type": event_type,
+                    "event_id": event_id,
+                    "retry_count": retry_count,
+                    "max_retries": self._config.max_retries,
+                    "error": str(error),
+                },
+            )
+            # Send to DLQ
+            await self._send_to_dlq(message, error, retry_count)
+            # Commit to avoid infinite loop
+            if self._consumer:
+                await self._consumer.commit()
+            return
+
+        # Calculate retry delay with exponential backoff and jitter
+        delay = self._calculate_retry_delay(retry_count)
+
+        logger.warning(
+            "Message processing failed, will retry",
+            extra={
+                "event_type": event_type,
+                "event_id": event_id,
+                "retry_count": retry_count + 1,
+                "max_retries": self._config.max_retries,
+                "delay_seconds": delay,
+                "error": str(error),
+            },
+        )
+
+        # Wait before retry
+        await asyncio.sleep(delay)
+
+        # Re-process the message (recursive retry)
+        # Note: In production, consider republishing with incremented retry_count
+        # For simplicity, we use in-memory retry here
+        try:
+            event = self._deserialize_message(message)
+            handlers = self.get_handlers_for_event(event.event_type)
+            await self._dispatch_to_handlers(event, handlers)
+            if self._consumer:
+                await self._consumer.commit()
+            self._stats.events_processed_success += 1
+        except Exception as e:
+            await self._handle_processing_error(message, e, retry_count + 1)
+
+    def _calculate_retry_delay(self, retry_count: int) -> float:
+        """Calculate delay for retry with exponential backoff and jitter.
+
+        Args:
+            retry_count: The current retry attempt (0-based).
+
+        Returns:
+            Delay in seconds before next retry.
+        """
+        # Exponential backoff: base_delay * 2^retry_count
+        delay: float = self._config.retry_base_delay * (2**retry_count)
+
+        # Cap at max delay
+        delay = min(delay, self._config.retry_max_delay)
+
+        # Add jitter (using random for non-cryptographic retry timing)
+        jitter: float = delay * self._config.retry_jitter * random.random()  # nosec B311
+        delay += jitter
+
+        return delay
+
+    async def _send_to_dlq(
+        self,
+        message: Any,
+        error: Exception,
+        retry_count: int,
+        reason: str = "max_retries_exceeded",
+    ) -> None:
+        """Send a failed message to the dead letter queue.
+
+        Preserves the original message and adds DLQ-specific metadata
+        in headers for debugging and replay.
+
+        Args:
+            message: The failed Kafka message.
+            error: The exception that caused the failure.
+            retry_count: Number of retry attempts made.
+            reason: Reason for DLQ routing. Options:
+                - "max_retries_exceeded": Handler failed after max retries
+                - "deserialization_error": Message could not be deserialized
+                - "handler_error": Handler raised an unrecoverable error
+        """
+        if not self._config.enable_dlq:
+            logger.warning(
+                "DLQ disabled, dropping failed message",
+                extra={
+                    "event_type": self._get_header_value(message.headers, "event_type"),
+                    "error": str(error),
+                },
+            )
+            return
+
+        if not self._producer:
+            logger.error(
+                "Cannot send to DLQ: producer not connected",
+                extra={
+                    "event_type": self._get_header_value(message.headers, "event_type"),
+                },
+            )
+            return
+
+        # Create DLQ headers with failure metadata
+        dlq_headers = self._create_dlq_headers(message, error, retry_count, reason)
+
+        # Combine original headers with DLQ headers
+        original_headers = list(message.headers) if message.headers else []
+        all_headers = original_headers + dlq_headers
+
+        try:
+            # Send to DLQ topic
+            await self._producer.send(
+                topic=self._config.dlq_topic_name,
+                key=message.key,
+                value=message.value,
+                headers=all_headers,
+            )
+
+            self._stats.messages_sent_to_dlq += 1
+
+            logger.info(
+                "Message sent to DLQ",
+                extra={
+                    "dlq_topic": self._config.dlq_topic_name,
+                    "event_type": self._get_header_value(message.headers, "event_type"),
+                    "event_id": self._get_header_value(message.headers, "event_id"),
+                    "reason": reason,
+                    "error": str(error)[:200],
+                },
+            )
+
+        except Exception as e:
+            logger.error(
+                "Failed to send message to DLQ",
+                extra={
+                    "error": str(e),
+                    "original_error": str(error),
+                },
+                exc_info=True,
+            )
+            raise
+
+    def _create_dlq_headers(
+        self,
+        message: Any,
+        error: Exception,
+        retry_count: int,
+        reason: str,
+    ) -> list[tuple[str, bytes]]:
+        """Create DLQ-specific headers.
+
+        Args:
+            message: The failed message.
+            error: The exception that caused the failure.
+            retry_count: Number of retry attempts.
+            reason: Reason for DLQ routing.
+
+        Returns:
+            List of DLQ header tuples.
+        """
+        error_message = str(error)[:1000]  # Truncate to avoid huge headers
+
+        return [
+            ("dlq_reason", reason.encode("utf-8")),
+            ("dlq_error_type", type(error).__name__.encode("utf-8")),
+            ("dlq_error_message", error_message.encode("utf-8")),
+            ("dlq_retry_count", str(retry_count).encode("utf-8")),
+            ("dlq_timestamp", datetime.now(UTC).isoformat().encode("utf-8")),
+            ("dlq_original_topic", message.topic.encode("utf-8")),
+            ("dlq_original_partition", str(message.partition).encode("utf-8")),
+            ("dlq_original_offset", str(message.offset).encode("utf-8")),
+            ("dlq_consumer_group", self._config.consumer_group.encode("utf-8")),
+        ]
+
+    def _get_security_config(self) -> dict[str, Any]:
+        """Get security configuration for additional consumers.
+
+        Creates a dictionary of security settings suitable for creating
+        additional Kafka consumers (e.g., for DLQ inspection).
+
+        Returns:
+            Dictionary of security settings.
+        """
+        config: dict[str, Any] = {
+            "security_protocol": self._config.security_protocol,
+        }
+
+        if self._config.sasl_mechanism:
+            config["sasl_mechanism"] = self._config.sasl_mechanism
+        if self._config.sasl_username:
+            config["sasl_plain_username"] = self._config.sasl_username
+        if self._config.sasl_password:
+            config["sasl_plain_password"] = self._config.sasl_password
+        if self._config.ssl_cafile:
+            config["ssl_cafile"] = self._config.ssl_cafile
+        if self._config.ssl_certfile:
+            config["ssl_certfile"] = self._config.ssl_certfile
+        if self._config.ssl_keyfile:
+            config["ssl_keyfile"] = self._config.ssl_keyfile
+
+        return config
+
+    # =========================================================================
+    # DLQ Inspection and Replay Methods
+    # =========================================================================
+
+    async def get_dlq_messages(
+        self,
+        limit: int = 100,
+        timeout_ms: int = 5000,
+    ) -> list[dict[str, Any]]:
+        """Retrieve messages from the dead letter queue.
+
+        Creates a temporary consumer to read DLQ messages without committing
+        offsets. Messages remain in the DLQ for replay.
+
+        Args:
+            limit: Maximum number of messages to retrieve.
+            timeout_ms: Timeout for polling in milliseconds.
+
+        Returns:
+            List of DLQ message dictionaries with headers and payload.
+            Each message contains:
+            - topic: DLQ topic name
+            - partition: Partition number
+            - offset: Message offset
+            - key: Message key (decoded)
+            - timestamp: Message timestamp
+            - headers: All headers as string dict
+            - payload: Deserialized JSON payload or hex-encoded bytes
+
+        Raises:
+            RuntimeError: If not connected to Kafka.
+        """
+        if not self._connected:
+            raise RuntimeError("Not connected to Kafka")
+
+        # Create a separate consumer for DLQ inspection
+        dlq_consumer = AIOKafkaConsumer(
+            self._config.dlq_topic_name,
+            bootstrap_servers=self._config.bootstrap_servers,
+            group_id=None,  # No consumer group - just inspect
+            auto_offset_reset="earliest",
+            enable_auto_commit=False,
+            consumer_timeout_ms=timeout_ms,
+            **self._get_security_config(),
+        )
+
+        messages: list[dict[str, Any]] = []
+
+        try:
+            await dlq_consumer.start()
+
+            count = 0
+            async for message in dlq_consumer:
+                if count >= limit:
+                    break
+
+                # Parse headers into dict
+                headers: dict[str, str] = {}
+                if message.headers:
+                    for key, value in message.headers:
+                        headers[key] = value.decode("utf-8")
+
+                # Try to decode value as JSON
+                try:
+                    import json
+
+                    payload = json.loads(message.value.decode("utf-8"))
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    payload = message.value.hex() if message.value else None
+
+                messages.append(
+                    {
+                        "topic": message.topic,
+                        "partition": message.partition,
+                        "offset": message.offset,
+                        "key": message.key.decode("utf-8") if message.key else None,
+                        "timestamp": message.timestamp,
+                        "headers": headers,
+                        "payload": payload,
+                    }
+                )
+
+                count += 1
+
+        except TimeoutError:
+            # Consumer timed out - this is expected when no more messages
+            pass
+        finally:
+            await dlq_consumer.stop()
+
+        logger.debug(
+            "Retrieved DLQ messages",
+            extra={"count": len(messages), "limit": limit},
+        )
+
+        return messages
+
+    async def replay_dlq_message(
+        self,
+        partition: int,
+        offset: int,
+    ) -> bool:
+        """Replay a specific message from the dead letter queue.
+
+        Reads the message from DLQ and republishes it to the main topic
+        for reprocessing. The DLQ message is not deleted (Kafka limitation).
+
+        The replayed message:
+        - Has all DLQ-specific headers removed
+        - Has retry_count reset to 0
+        - Maintains original event headers
+
+        Args:
+            partition: The DLQ partition containing the message.
+            offset: The offset of the message to replay.
+
+        Returns:
+            True if message was successfully republished.
+
+        Raises:
+            RuntimeError: If not connected to Kafka.
+            ValueError: If message not found at specified location.
+        """
+        if not self._connected or not self._producer:
+            raise RuntimeError("Not connected to Kafka")
+
+        # Import TopicPartition here to avoid issues if aiokafka isn't installed
+        from aiokafka import TopicPartition
+
+        dlq_consumer = AIOKafkaConsumer(
+            bootstrap_servers=self._config.bootstrap_servers,
+            group_id=None,
+            enable_auto_commit=False,
+            **self._get_security_config(),
+        )
+
+        try:
+            await dlq_consumer.start()
+
+            # Assign to specific partition
+            tp = TopicPartition(self._config.dlq_topic_name, partition)
+            dlq_consumer.assign([tp])
+
+            # Seek to specific offset
+            dlq_consumer.seek(tp, offset)
+
+            # Read the message
+            message = await asyncio.wait_for(
+                dlq_consumer.getone(),
+                timeout=5.0,
+            )
+
+            if message.offset != offset:
+                raise ValueError(f"Message not found at offset {offset}")
+
+            # Remove DLQ-specific headers for republish
+            original_headers: list[tuple[str, bytes]] = []
+            if message.headers:
+                for key, value in message.headers:
+                    if not key.startswith("dlq_"):
+                        original_headers.append((key, value))
+
+            # Add retry_count header (reset to 0 for fresh attempt)
+            original_headers.append(("retry_count", b"0"))
+
+            # Republish to main topic
+            await self._producer.send(
+                topic=self._config.topic_name,
+                key=message.key,
+                value=message.value,
+                headers=original_headers,
+            )
+
+            logger.info(
+                "DLQ message replayed",
+                extra={
+                    "dlq_partition": partition,
+                    "dlq_offset": offset,
+                    "target_topic": self._config.topic_name,
+                    "event_type": self._get_header_value(original_headers, "event_type"),
+                },
+            )
+
+            return True
+
+        except TimeoutError as err:
+            raise ValueError(
+                f"Timeout reading message at partition {partition}, offset {offset}"
+            ) from err
+        finally:
+            await dlq_consumer.stop()
+
+    async def get_dlq_message_count(self) -> int:
+        """Get the approximate number of messages in the DLQ.
+
+        Uses consumer lag calculation to estimate DLQ size by comparing
+        beginning and end offsets for each partition.
+
+        Returns:
+            Approximate count of DLQ messages across all partitions.
+
+        Raises:
+            RuntimeError: If not connected to Kafka.
+        """
+        if not self._connected:
+            raise RuntimeError("Not connected to Kafka")
+
+        # Import TopicPartition here to avoid issues if aiokafka isn't installed
+        from aiokafka import TopicPartition
+
+        dlq_consumer = AIOKafkaConsumer(
+            self._config.dlq_topic_name,
+            bootstrap_servers=self._config.bootstrap_servers,
+            group_id=None,
+            **self._get_security_config(),
+        )
+
+        total_count = 0
+
+        try:
+            await dlq_consumer.start()
+
+            partitions = dlq_consumer.partitions_for_topic(self._config.dlq_topic_name)
+            if not partitions:
+                return 0
+
+            for partition_id in partitions:
+                tp = TopicPartition(self._config.dlq_topic_name, partition_id)
+                dlq_consumer.assign([tp])
+
+                # Get beginning and end offsets
+                beginning = await dlq_consumer.beginning_offsets([tp])
+                end = await dlq_consumer.end_offsets([tp])
+
+                start_offset = beginning.get(tp, 0)
+                end_offset = end.get(tp, 0)
+                total_count += max(0, end_offset - start_offset)
+
+        finally:
+            await dlq_consumer.stop()
+
+        return total_count
+
+
+__all__ = [
+    "HandlerWrapper",
+    "KAFKA_AVAILABLE",
+    "KafkaEventBus",
+    "KafkaEventBusConfig",
+    "KafkaEventBusStats",
+    "KafkaNotAvailableError",
+]
