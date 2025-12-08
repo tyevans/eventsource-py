@@ -8,6 +8,7 @@
 --   2. event_outbox - Transactional outbox for reliable publishing
 --   3. projection_checkpoints - Projection position tracking
 --   4. dead_letter_queue - Failed event processing storage
+--   5. snapshots - Aggregate state snapshots for fast loading
 --
 -- SQLite-specific adaptations:
 --   - UUID stored as TEXT (36 characters, hyphenated format)
@@ -142,6 +143,29 @@ CREATE INDEX IF NOT EXISTS idx_dlq_active_failures ON dead_letter_queue (first_f
 CREATE INDEX IF NOT EXISTS idx_dlq_resolved_at ON dead_letter_queue (resolved_at) WHERE status = 'resolved';
 
 -- =============================================================================
+-- 5. Snapshots Table
+-- =============================================================================
+-- Stores aggregate state snapshots for performance optimization.
+-- Instead of replaying all events, aggregates can be restored from a snapshot.
+
+CREATE TABLE IF NOT EXISTS snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    aggregate_id TEXT NOT NULL,
+    aggregate_type TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    schema_version INTEGER NOT NULL DEFAULT 1,
+    state TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE (aggregate_id, aggregate_type)
+);
+
+-- Snapshots indexes
+CREATE INDEX IF NOT EXISTS idx_snapshots_aggregate_lookup ON snapshots(aggregate_id, aggregate_type);
+CREATE INDEX IF NOT EXISTS idx_snapshots_aggregate_type ON snapshots(aggregate_type);
+CREATE INDEX IF NOT EXISTS idx_snapshots_schema_version ON snapshots(aggregate_type, schema_version);
+CREATE INDEX IF NOT EXISTS idx_snapshots_created_at ON snapshots(created_at);
+
+-- =============================================================================
 -- Verification Query
 -- =============================================================================
 -- Run this to verify all tables were created correctly:
@@ -149,6 +173,6 @@ CREATE INDEX IF NOT EXISTS idx_dlq_resolved_at ON dead_letter_queue (resolved_at
 SELECT name, type
 FROM sqlite_master
 WHERE type = 'table'
-  AND name IN ('events', 'event_outbox', 'projection_checkpoints', 'dead_letter_queue')
+  AND name IN ('events', 'event_outbox', 'projection_checkpoints', 'dead_letter_queue', 'snapshots')
 ORDER BY name;
 */

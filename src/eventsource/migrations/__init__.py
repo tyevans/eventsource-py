@@ -47,6 +47,7 @@ SchemaName = Literal[
     "outbox",
     "checkpoints",
     "dlq",
+    "snapshots",
     "all",
 ]
 
@@ -300,6 +301,7 @@ EVENTS_PARTITIONED_SCHEMA = "events_partitioned"
 OUTBOX_SCHEMA = "outbox"
 CHECKPOINTS_SCHEMA = "checkpoints"
 DLQ_SCHEMA = "dlq"
+SNAPSHOTS_SCHEMA = "snapshots"
 
 __all__ = [
     "get_schema",
@@ -314,6 +316,7 @@ __all__ = [
     "OUTBOX_SCHEMA",
     "CHECKPOINTS_SCHEMA",
     "DLQ_SCHEMA",
+    "SNAPSHOTS_SCHEMA",
     "SchemaName",
     "BackendName",
 ]
