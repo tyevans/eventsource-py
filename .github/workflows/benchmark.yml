@@ -69,6 +69,8 @@ jobs:
           comment-on-alert: true
           fail-on-alert: false
           benchmark-data-dir-path: 'dev/bench'
+          # Skip fetching gh-pages if it doesn't exist (first run)
+          skip-fetch-gh-pages: true
 
       # Comment on PR with benchmark comparison
       - name: Comment benchmark results on PR
@@ -82,3 +84,5 @@ jobs:
           alert-threshold: '150%'
           fail-on-alert: false
           benchmark-data-dir-path: 'dev/bench'
+          # Skip fetching gh-pages if it doesn't exist (first run)
+          skip-fetch-gh-pages: true

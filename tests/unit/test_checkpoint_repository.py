@@ -361,7 +361,7 @@ class TestSQLiteCheckpointRepository:
     """Tests for SQLiteCheckpointRepository using in-memory SQLite database."""
 
     @pytest.fixture
-    async def db_connection(self) -> aiosqlite.Connection:
+    async def db_connection(self) -> "aiosqlite.Connection":
         """Create an in-memory SQLite database with schema for each test."""
         conn = await aiosqlite.connect(":memory:")
 
@@ -402,7 +402,7 @@ class TestSQLiteCheckpointRepository:
         await conn.close()
 
     @pytest.fixture
-    def repo(self, db_connection: aiosqlite.Connection) -> SQLiteCheckpointRepository:
+    def repo(self, db_connection: "aiosqlite.Connection") -> SQLiteCheckpointRepository:
         """Create a SQLiteCheckpointRepository for each test."""
         return SQLiteCheckpointRepository(db_connection)
 
@@ -654,7 +654,7 @@ class TestSQLiteCheckpointRepositoryProtocol:
     """Tests to verify SQLiteCheckpointRepository implements the protocol."""
 
     @pytest.fixture
-    async def db_connection(self) -> aiosqlite.Connection:
+    async def db_connection(self) -> "aiosqlite.Connection":
         """Create an in-memory SQLite database with schema."""
         conn = await aiosqlite.connect(":memory:")
 
@@ -675,7 +675,7 @@ class TestSQLiteCheckpointRepositoryProtocol:
 
         await conn.close()
 
-    def test_implements_protocol(self, db_connection: aiosqlite.Connection):
+    def test_implements_protocol(self, db_connection: "aiosqlite.Connection"):
         """Test that SQLiteCheckpointRepository implements CheckpointRepository protocol."""
         repo = SQLiteCheckpointRepository(db_connection)
         # The protocol is runtime checkable

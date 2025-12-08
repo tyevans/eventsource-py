@@ -826,7 +826,7 @@ class TestSQLiteDLQRepository:
     """Tests for SQLiteDLQRepository using in-memory SQLite database."""
 
     @pytest.fixture
-    async def db_connection(self) -> aiosqlite.Connection:
+    async def db_connection(self) -> "aiosqlite.Connection":
         """Create an in-memory SQLite database with DLQ schema for each test."""
         conn = await aiosqlite.connect(":memory:")
 
@@ -858,7 +858,7 @@ class TestSQLiteDLQRepository:
         await conn.close()
 
     @pytest.fixture
-    def repo(self, db_connection: aiosqlite.Connection) -> SQLiteDLQRepository:
+    def repo(self, db_connection: "aiosqlite.Connection") -> SQLiteDLQRepository:
         """Create a SQLiteDLQRepository for each test."""
         return SQLiteDLQRepository(db_connection)
 
@@ -1310,7 +1310,7 @@ class TestSQLiteDLQRepositoryProtocol:
     """Tests to verify SQLiteDLQRepository implements the DLQRepository protocol."""
 
     @pytest.fixture
-    async def db_connection(self) -> aiosqlite.Connection:
+    async def db_connection(self) -> "aiosqlite.Connection":
         """Create an in-memory SQLite database with DLQ schema."""
         conn = await aiosqlite.connect(":memory:")
 
@@ -1339,7 +1339,7 @@ class TestSQLiteDLQRepositoryProtocol:
 
         await conn.close()
 
-    def test_implements_protocol(self, db_connection: aiosqlite.Connection):
+    def test_implements_protocol(self, db_connection: "aiosqlite.Connection"):
         """Test that SQLiteDLQRepository implements DLQRepository protocol."""
         repo = SQLiteDLQRepository(db_connection)
         # The protocol is runtime checkable
