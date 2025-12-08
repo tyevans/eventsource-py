@@ -320,5 +320,3 @@ Consider using topic exchanges with selective subscriptions if you only need eve
 ## Related Documentation
 
 - [RabbitMQ Exchange Types](https://www.rabbitmq.com/tutorials/amqp-concepts.html#exchanges)
-- [Direct Exchange Guide](./direct-exchange.md)
-- [Topic Exchange Guide](./topic-exchange.md)
