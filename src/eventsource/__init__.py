@@ -10,7 +10,13 @@ This library provides:
 - Transactional Outbox pattern
 """
 
-__version__ = "0.1.0"
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("eventsource-py")
+except PackageNotFoundError:
+    # Package not installed (running from source without install)
+    __version__ = "0.0.0.dev0"
 
 # Exceptions - available immediately
 # Aggregates (Task 07, Task 08)
@@ -115,6 +121,17 @@ from eventsource.stores.interface import (
 )
 from eventsource.stores.postgresql import PostgreSQLEventStore
 
+# SQLite Event Store and Repositories (optional - requires aiosqlite)
+try:
+    from eventsource.repositories.checkpoint import SQLiteCheckpointRepository  # noqa: F401
+    from eventsource.repositories.dlq import SQLiteDLQRepository  # noqa: F401
+    from eventsource.repositories.outbox import SQLiteOutboxRepository  # noqa: F401
+    from eventsource.stores.sqlite import SQLiteEventStore  # noqa: F401
+
+    SQLITE_AVAILABLE = True
+except ImportError:
+    SQLITE_AVAILABLE = False
+
 # Types - available immediately
 from eventsource.types import (
     AggregateId,
@@ -212,3 +229,15 @@ __all__ = [
     "DeclarativeProjection",
     "DatabaseProjection",
 ]
+
+# Conditionally add SQLite exports when aiosqlite is available
+if SQLITE_AVAILABLE:
+    __all__.extend(
+        [
+            "SQLITE_AVAILABLE",
+            "SQLiteEventStore",
+            "SQLiteCheckpointRepository",
+            "SQLiteOutboxRepository",
+            "SQLiteDLQRepository",
+        ]
+    )

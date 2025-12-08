@@ -17,6 +17,7 @@ This section provides comprehensive API documentation for the eventsource librar
 | **Stores** | [`EventStore`](stores.md#eventstore-interface) | Abstract interface for event persistence |
 | | [`InMemoryEventStore`](stores.md#inmemoryeventstore) | In-memory store for testing |
 | | [`PostgreSQLEventStore`](stores.md#postgresqleventstore) | Production PostgreSQL store |
+| | [`SQLiteEventStore`](stores.md#sqliteeventstore) | SQLite store for dev/testing/embedded |
 | | [`EventStream`](stores.md#eventstream) | Container for aggregate events |
 | | [`AppendResult`](stores.md#appendresult) | Result of appending events |
 | | [`StoredEvent`](stores.md#storedevent) | Wrapper for persisted events |
@@ -91,6 +92,7 @@ from eventsource import (
     # Implementations
     InMemoryEventStore,
     PostgreSQLEventStore,
+    SQLiteEventStore,
 
     # Data structures
     EventStream,
@@ -108,15 +110,22 @@ from eventsource import (
 
 - **`InMemoryEventStore`**: Thread-safe in-memory implementation for testing and development.
 
+- **`SQLiteEventStore`**: Lightweight SQLite implementation for development, testing, and embedded applications.
+
 - **`PostgreSQLEventStore`**: Production-ready store with optimistic locking, transactional outbox, and OpenTelemetry tracing.
 
 **Example:**
 
 ```python
-# Development
+# Development (no persistence)
 store = InMemoryEventStore()
 
-# Production
+# Development/Testing (SQLite)
+async with SQLiteEventStore("./events.db") as store:
+    await store.initialize()
+    # ... use store
+
+# Production (PostgreSQL)
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 engine = create_async_engine("postgresql+asyncpg://user:pass@localhost/db")
@@ -385,6 +394,9 @@ from eventsource.repositories import (
     DLQRepository,
     PostgreSQLCheckpointRepository,
     PostgreSQLDLQRepository,
+    SQLiteCheckpointRepository,
+    SQLiteOutboxRepository,
+    SQLiteDLQRepository,
     InMemoryCheckpointRepository,
     InMemoryDLQRepository,
 )

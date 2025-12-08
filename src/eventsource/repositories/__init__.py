@@ -27,6 +27,7 @@ from eventsource.repositories.checkpoint import (
     InMemoryCheckpointRepository,
     LagMetrics,
     PostgreSQLCheckpointRepository,
+    SQLiteCheckpointRepository,
 )
 
 # DLQ repository
@@ -38,6 +39,7 @@ from eventsource.repositories.dlq import (
     InMemoryDLQRepository,
     PostgreSQLDLQRepository,
     ProjectionFailureCount,
+    SQLiteDLQRepository,
 )
 
 # Outbox repository
@@ -48,6 +50,7 @@ from eventsource.repositories.outbox import (
     OutboxRepositoryProtocol,
     OutboxStats,
     PostgreSQLOutboxRepository,
+    SQLiteOutboxRepository,
 )
 
 __all__ = [
@@ -55,6 +58,7 @@ __all__ = [
     "CheckpointRepository",
     "CheckpointRepositoryProtocol",
     "PostgreSQLCheckpointRepository",
+    "SQLiteCheckpointRepository",
     "InMemoryCheckpointRepository",
     "CheckpointData",
     "LagMetrics",
@@ -62,6 +66,7 @@ __all__ = [
     "DLQRepository",
     "DLQRepositoryProtocol",
     "PostgreSQLDLQRepository",
+    "SQLiteDLQRepository",
     "InMemoryDLQRepository",
     "DLQEntry",
     "DLQStats",
@@ -70,6 +75,7 @@ __all__ = [
     "OutboxRepository",
     "OutboxRepositoryProtocol",
     "PostgreSQLOutboxRepository",
+    "SQLiteOutboxRepository",
     "InMemoryOutboxRepository",
     "OutboxEntry",
     "OutboxStats",
