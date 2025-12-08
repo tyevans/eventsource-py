@@ -78,9 +78,9 @@ class TestPostgreSQLOutboxRepositoryBasics:
 
         # Verify it can be retrieved
         pending = await postgres_outbox_repo.get_pending_events(limit=10)
-        matching = [e for e in pending if e["event_id"] == str(event.event_id)]
+        matching = [e for e in pending if e.event_id == event.event_id]
         assert len(matching) == 1
-        assert matching[0]["tenant_id"] is None
+        assert matching[0].tenant_id is None
 
 
 class TestPostgreSQLOutboxRepositoryPending:
@@ -116,7 +116,7 @@ class TestPostgreSQLOutboxRepositoryPending:
         pending = await postgres_outbox_repo.get_pending_events()
 
         # Should be in creation order (oldest first)
-        pending_event_ids = [e["event_id"] for e in pending]
+        pending_event_ids = [str(e.event_id) for e in pending]
         assert pending_event_ids == event_ids
 
     async def test_get_pending_events_with_limit(
@@ -159,15 +159,15 @@ class TestPostgreSQLOutboxRepositoryPending:
         assert len(pending) == 1
 
         entry = pending[0]
-        assert "id" in entry
-        assert entry["event_id"] == str(event.event_id)
-        assert entry["event_type"] == "TestItemCreated"
-        assert entry["aggregate_id"] == str(sample_aggregate_id)
-        assert entry["aggregate_type"] == "TestItem"
-        assert entry["tenant_id"] == str(sample_tenant_id)
-        assert "event_data" in entry
-        assert "created_at" in entry
-        assert entry["retry_count"] == 0
+        assert entry.id is not None
+        assert entry.event_id == event.event_id
+        assert entry.event_type == "TestItemCreated"
+        assert entry.aggregate_id == sample_aggregate_id
+        assert entry.aggregate_type == "TestItem"
+        assert entry.tenant_id == sample_tenant_id
+        assert entry.event_data is not None
+        assert entry.created_at is not None
+        assert entry.retry_count == 0
 
 
 class TestPostgreSQLOutboxRepositoryPublishing:
@@ -222,7 +222,7 @@ class TestPostgreSQLOutboxRepositoryPublishing:
         # Only second should be pending
         pending = await postgres_outbox_repo.get_pending_events()
         assert len(pending) == 1
-        assert pending[0]["event_id"] == str(event2.event_id)
+        assert pending[0].event_id == event2.event_id
 
 
 class TestPostgreSQLOutboxRepositoryRetries:
@@ -248,7 +248,7 @@ class TestPostgreSQLOutboxRepositoryRetries:
         # Check retry count
         pending = await postgres_outbox_repo.get_pending_events()
         assert len(pending) == 1
-        assert pending[0]["retry_count"] == 1
+        assert pending[0].retry_count == 1
 
     async def test_increment_retry_multiple_times(
         self,
@@ -271,7 +271,7 @@ class TestPostgreSQLOutboxRepositoryRetries:
         # Check retry count
         pending = await postgres_outbox_repo.get_pending_events()
         assert len(pending) == 1
-        assert pending[0]["retry_count"] == 3
+        assert pending[0].retry_count == 3
 
     async def test_mark_failed(
         self,
@@ -469,10 +469,10 @@ class TestPostgreSQLOutboxRepositoryMultipleEventTypes:
 
         assert len(pending) == 2
 
-        event_types = {e["event_type"] for e in pending}
+        event_types = {e.event_type for e in pending}
         assert "TestItemCreated" in event_types
         assert "TestOrderCreated" in event_types
 
-        aggregate_types = {e["aggregate_type"] for e in pending}
+        aggregate_types = {e.aggregate_type for e in pending}
         assert "TestItem" in aggregate_types
         assert "TestOrder" in aggregate_types

@@ -18,7 +18,7 @@ from typing import Any
 
 from eventsource.events.base import DomainEvent
 from eventsource.projections.base import EventHandlerBase, Projection
-from eventsource.projections.protocols import EventSubscriber
+from eventsource.protocols import EventSubscriber
 
 logger = logging.getLogger(__name__)
 

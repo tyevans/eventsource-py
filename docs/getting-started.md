@@ -4,27 +4,28 @@ This guide will walk you through setting up eventsource and implementing your fi
 
 ## Installation
 
-### Basic Installation
+### Quick Start
 
 ```bash
+# Basic installation (in-memory stores only)
 pip install eventsource
-```
 
-### With Optional Dependencies
-
-```bash
-# PostgreSQL support (production)
+# Most common: with PostgreSQL support for production
 pip install eventsource[postgresql]
-
-# Redis support (distributed event bus)
-pip install eventsource[redis]
-
-# OpenTelemetry support (observability)
-pip install eventsource[telemetry]
-
-# All optional dependencies
-pip install eventsource[all]
 ```
+
+### Optional Dependencies
+
+eventsource uses optional dependencies to keep the core package lightweight:
+
+| Extra | Purpose | Install Command |
+|-------|---------|-----------------|
+| `postgresql` | Production event store with asyncpg | `pip install eventsource[postgresql]` |
+| `redis` | Distributed event bus with Redis Streams | `pip install eventsource[redis]` |
+| `telemetry` | OpenTelemetry tracing integration | `pip install eventsource[telemetry]` |
+| `all` | All optional dependencies | `pip install eventsource[all]` |
+
+For detailed installation instructions, troubleshooting, and version compatibility information, see the [Installation Guide](installation.md).
 
 ## Core Concepts
 

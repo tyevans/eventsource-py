@@ -10,7 +10,6 @@ from eventsource.stores.interface import (
     ReadDirection,
     ReadOptions,
     StoredEvent,
-    SyncEventStore,
 )
 from eventsource.stores.postgresql import PostgreSQLEventStore
 
@@ -24,7 +23,6 @@ __all__ = [
     "ExpectedVersion",
     # Abstract base classes
     "EventStore",
-    "SyncEventStore",
     # Concrete implementations
     "InMemoryEventStore",
     "PostgreSQLEventStore",

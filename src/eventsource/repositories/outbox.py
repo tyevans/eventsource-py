@@ -13,7 +13,9 @@ This enables:
 
 import asyncio
 import json
-from dataclasses import dataclass
+import warnings
+from collections.abc import Iterator
+from dataclasses import dataclass, fields
 from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable
 from uuid import UUID, uuid4
@@ -44,6 +46,10 @@ class OutboxEntry:
         published_at: When the event was published (if applicable)
         retry_count: Number of publish retry attempts
         last_error: Last error message (if any)
+
+    Note:
+        Dict-style access (entry["key"]) is deprecated. Use attribute access
+        (entry.key) instead. Dict access will be removed in version 0.3.0.
     """
 
     id: UUID
@@ -58,6 +64,63 @@ class OutboxEntry:
     published_at: datetime | None = None
     retry_count: int = 0
     last_error: str | None = None
+
+    def __getitem__(self, key: str) -> Any:
+        """
+        Dict-style access for backward compatibility.
+
+        .. deprecated:: 0.1.0
+            Use attribute access (entry.event_id) instead of
+            dict access (entry["event_id"]).
+        """
+        warnings.warn(
+            f"Dict-style access to OutboxEntry is deprecated. "
+            f"Use 'entry.{key}' instead of 'entry[\"{key}\"]'. "
+            "Dict access will be removed in version 0.3.0.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        try:
+            return getattr(self, key)
+        except AttributeError:
+            raise KeyError(key) from None
+
+    def __contains__(self, key: str) -> bool:
+        """Support 'key in entry' for backward compatibility."""
+        return hasattr(self, key)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """
+        Dict-style get for backward compatibility.
+
+        .. deprecated:: 0.1.0
+            Use attribute access (entry.event_id) instead of
+            dict access (entry.get("event_id")).
+        """
+        warnings.warn(
+            f"Dict-style access to OutboxEntry is deprecated. "
+            f"Use 'entry.{key}' instead of 'entry.get(\"{key}\")'. "
+            "Dict access will be removed in version 0.3.0.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return getattr(self, key, default)
+
+    def keys(self) -> list[str]:
+        """Return field names for backward compatibility."""
+        return [f.name for f in fields(self)]
+
+    def values(self) -> list[Any]:
+        """Return field values for backward compatibility."""
+        return [getattr(self, f.name) for f in fields(self)]
+
+    def items(self) -> list[tuple[str, Any]]:
+        """Return field items for backward compatibility."""
+        return [(f.name, getattr(self, f.name)) for f in fields(self)]
+
+    def __iter__(self) -> Iterator[str]:
+        """Allow iteration over field names for backward compatibility."""
+        return iter(self.keys())
 
 
 @dataclass(frozen=True)
@@ -105,7 +168,7 @@ class OutboxRepository(Protocol):
         """
         ...
 
-    async def get_pending_events(self, limit: int = 100) -> list[dict[str, Any]]:
+    async def get_pending_events(self, limit: int = 100) -> list[OutboxEntry]:
         """
         Get pending events that need to be published.
 
@@ -113,7 +176,7 @@ class OutboxRepository(Protocol):
             limit: Maximum number of events to return
 
         Returns:
-            List of pending outbox records
+            List of OutboxEntry instances
         """
         ...
 
@@ -152,7 +215,7 @@ class PostgreSQLOutboxRepository:
         >>> pending = await repo.get_pending_events(limit=100)
         >>> for entry in pending:
         ...     # Publish to event bus
-        ...     await repo.mark_published(entry["id"])
+        ...     await repo.mark_published(entry.id)
     """
 
     def __init__(self, conn: AsyncConnection | AsyncEngine):
@@ -211,7 +274,7 @@ class PostgreSQLOutboxRepository:
 
         return outbox_id
 
-    async def get_pending_events(self, limit: int = 100) -> list[dict[str, Any]]:
+    async def get_pending_events(self, limit: int = 100) -> list[OutboxEntry]:
         """
         Get pending events that need to be published.
 
@@ -219,7 +282,7 @@ class PostgreSQLOutboxRepository:
             limit: Maximum number of events to return
 
         Returns:
-            List of pending outbox records
+            List of OutboxEntry instances
         """
         query = text("""
             SELECT id, event_id, event_type, aggregate_id, aggregate_type,
@@ -235,17 +298,18 @@ class PostgreSQLOutboxRepository:
             rows = result.fetchall()
 
         return [
-            {
-                "id": str(row[0]),
-                "event_id": str(row[1]),
-                "event_type": row[2],
-                "aggregate_id": str(row[3]),
-                "aggregate_type": row[4],
-                "tenant_id": str(row[5]) if row[5] else None,
-                "event_data": row[6],
-                "created_at": row[7],
-                "retry_count": row[8],
-            }
+            OutboxEntry(
+                id=row[0],
+                event_id=row[1],
+                event_type=row[2],
+                aggregate_id=row[3],
+                aggregate_type=row[4],
+                tenant_id=row[5],
+                event_data=row[6],
+                created_at=row[7],
+                status="pending",
+                retry_count=row[8],
+            )
             for row in rows
         ]
 
@@ -374,7 +438,7 @@ class InMemoryOutboxRepository:
         >>> repo = InMemoryOutboxRepository()
         >>> outbox_id = await repo.add_event(event)
         >>> pending = await repo.get_pending_events()
-        >>> await repo.mark_published(UUID(pending[0]["id"]))
+        >>> await repo.mark_published(pending[0].id)
     """
 
     def __init__(self) -> None:
@@ -420,7 +484,7 @@ class InMemoryOutboxRepository:
 
         return outbox_id
 
-    async def get_pending_events(self, limit: int = 100) -> list[dict[str, Any]]:
+    async def get_pending_events(self, limit: int = 100) -> list[OutboxEntry]:
         """
         Get pending events that need to be published.
 
@@ -428,28 +492,13 @@ class InMemoryOutboxRepository:
             limit: Maximum number of events to return
 
         Returns:
-            List of pending outbox records
+            List of OutboxEntry instances
         """
         async with self._lock:
             pending = [e for e in self._entries.values() if e.status == "pending"]
             # Sort by created_at ascending (oldest first)
             pending.sort(key=lambda e: e.created_at)
-            pending = pending[:limit]
-
-            return [
-                {
-                    "id": str(e.id),
-                    "event_id": str(e.event_id),
-                    "event_type": e.event_type,
-                    "aggregate_id": str(e.aggregate_id),
-                    "aggregate_type": e.aggregate_type,
-                    "tenant_id": str(e.tenant_id) if e.tenant_id else None,
-                    "event_data": e.event_data,
-                    "created_at": e.created_at,
-                    "retry_count": e.retry_count,
-                }
-                for e in pending
-            ]
+            return pending[:limit]
 
     async def mark_published(self, outbox_id: UUID) -> None:
         """

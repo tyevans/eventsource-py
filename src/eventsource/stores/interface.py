@@ -410,7 +410,7 @@ class EventStore(ABC):
         self,
         aggregate_type: str,
         tenant_id: UUID | None = None,
-        from_timestamp: float | None = None,
+        from_timestamp: datetime | None = None,
     ) -> list[DomainEvent]:
         """
         Get all events for a specific aggregate type.
@@ -421,7 +421,8 @@ class EventStore(ABC):
         Args:
             aggregate_type: Type of aggregate (e.g., 'Order')
             tenant_id: Filter by tenant (optional, for multi-tenant systems)
-            from_timestamp: Only get events after this timestamp (optional)
+            from_timestamp: Only get events after this datetime (optional).
+                Previously accepted float (Unix timestamp) which is now deprecated.
 
         Returns:
             List of events in chronological order
@@ -432,10 +433,12 @@ class EventStore(ABC):
             checkpoint tracking.
 
         Example:
+            >>> from datetime import datetime, UTC, timedelta
+            >>> one_hour_ago = datetime.now(UTC) - timedelta(hours=1)
             >>> order_events = await store.get_events_by_type(
             ...     "Order",
             ...     tenant_id=my_tenant_id,
-            ...     from_timestamp=last_processed_time,
+            ...     from_timestamp=one_hour_ago,
             ... )
         """
         pass
@@ -614,83 +617,3 @@ class EventPublisher(Protocol):
             Exception: If publishing fails (implementation-specific)
         """
         ...
-
-
-class SyncEventStore(ABC):
-    """
-    Synchronous version of EventStore for non-async contexts.
-
-    This abstract class provides a synchronous interface for event stores,
-    useful when async is not available or not desired. The API mirrors
-    the async EventStore but uses blocking calls.
-
-    Note:
-        Prefer the async EventStore when possible for better performance.
-    """
-
-    @abstractmethod
-    def append_events(
-        self,
-        aggregate_id: UUID,
-        aggregate_type: str,
-        events: list[DomainEvent],
-        expected_version: int,
-    ) -> AppendResult:
-        """
-        Append events to an aggregate's event stream (synchronous).
-
-        See EventStore.append_events() for full documentation.
-        """
-        pass
-
-    @abstractmethod
-    def get_events(
-        self,
-        aggregate_id: UUID,
-        aggregate_type: str | None = None,
-        from_version: int = 0,
-        from_timestamp: datetime | None = None,
-        to_timestamp: datetime | None = None,
-    ) -> EventStream:
-        """
-        Get all events for an aggregate (synchronous).
-
-        See EventStore.get_events() for full documentation.
-        """
-        pass
-
-    @abstractmethod
-    def get_events_by_type(
-        self,
-        aggregate_type: str,
-        tenant_id: UUID | None = None,
-        from_timestamp: float | None = None,
-    ) -> list[DomainEvent]:
-        """
-        Get all events for a specific aggregate type (synchronous).
-
-        See EventStore.get_events_by_type() for full documentation.
-        """
-        pass
-
-    @abstractmethod
-    def event_exists(self, event_id: UUID) -> bool:
-        """
-        Check if an event exists (synchronous).
-
-        See EventStore.event_exists() for full documentation.
-        """
-        pass
-
-    def get_stream_version(
-        self,
-        aggregate_id: UUID,
-        aggregate_type: str,
-    ) -> int:
-        """
-        Get the current version of an aggregate (synchronous).
-
-        See EventStore.get_stream_version() for full documentation.
-        """
-        stream = self.get_events(aggregate_id, aggregate_type)
-        return stream.version

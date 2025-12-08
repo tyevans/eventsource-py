@@ -5,99 +5,63 @@ for publishing and subscribing to domain events.
 
 The event bus decouples event producers from consumers, allowing projections
 and other handlers to react to events independently.
+
+Note: Protocol definitions (EventHandler, EventSubscriber) have been moved to
+eventsource.protocols. Imports from this module still work but emit deprecation
+warnings. Use `from eventsource.protocols import EventHandler` instead.
 """
 
+import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
-from typing import Protocol, runtime_checkable
 
 from eventsource.events.base import DomainEvent
 
-
-@runtime_checkable
-class EventHandler(Protocol):
-    """
-    Protocol for handling domain events.
-
-    Event handlers are registered with the event bus and called
-    when matching events are published. Handlers can be sync or async.
-
-    Example:
-        >>> class MyHandler:
-        ...     async def handle(self, event: DomainEvent) -> None:
-        ...         print(f"Handling {event.event_type}")
-        ...
-        >>> handler = MyHandler()
-        >>> event_bus.subscribe(OrderCreated, handler)
-    """
-
-    def handle(self, event: DomainEvent) -> Awaitable[None] | None:
-        """
-        Handle a domain event.
-
-        Can be synchronous (return None) or asynchronous (return Awaitable).
-        Implementations should be idempotent when possible, as events may
-        be delivered more than once in some scenarios.
-
-        Args:
-            event: The domain event to handle
-
-        Raises:
-            Exception: If handling fails (will be logged but not re-raised
-                      to allow other handlers to continue)
-        """
-        ...
-
-
-@runtime_checkable
-class EventSubscriber(Protocol):
-    """
-    Protocol for event subscribers (e.g., projections).
-
-    Subscribers declare which event types they're interested in and
-    provide a handler for processing them. This is useful for projections
-    that need to handle multiple event types.
-
-    Example:
-        >>> class OrderProjection:
-        ...     def subscribed_to(self) -> list[type[DomainEvent]]:
-        ...         return [OrderCreated, OrderShipped, OrderCancelled]
-        ...
-        ...     async def handle(self, event: DomainEvent) -> None:
-        ...         if isinstance(event, OrderCreated):
-        ...             self.create_order(event)
-        ...         # ...
-        ...
-        >>> projection = OrderProjection()
-        >>> event_bus.subscribe_all(projection)
-    """
-
-    def subscribed_to(self) -> list[type[DomainEvent]]:
-        """
-        Return list of event types this subscriber handles.
-
-        Returns:
-            List of event classes this subscriber is interested in
-        """
-        ...
-
-    def handle(self, event: DomainEvent) -> Awaitable[None] | None:
-        """
-        Handle a domain event.
-
-        Can be synchronous (return None) or asynchronous (return Awaitable).
-
-        Args:
-            event: The domain event to handle
-
-        Raises:
-            Exception: If handling fails
-        """
-        ...
-
+# Import canonical protocols for re-export
+from eventsource.protocols import (
+    FlexibleEventHandler as _FlexibleEventHandler,
+)
+from eventsource.protocols import (
+    FlexibleEventSubscriber as _FlexibleEventSubscriber,
+)
 
 # Type alias for simple function-based handlers
 EventHandlerFunc = Callable[[DomainEvent], Awaitable[None] | None]
+
+
+def __getattr__(name: str) -> type:
+    """
+    Handle deprecated imports with warnings.
+
+    This enables deprecation warnings when importing EventHandler or
+    EventSubscriber from this module.
+    """
+    if name == "EventHandler":
+        warnings.warn(
+            "Importing 'EventHandler' from eventsource.bus.interface is deprecated. "
+            "Use 'from eventsource.protocols import FlexibleEventHandler' instead "
+            "(or EventHandler for async-only handlers). "
+            "This import will be removed in version 0.3.0.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return _FlexibleEventHandler
+    elif name == "EventSubscriber":
+        warnings.warn(
+            "Importing 'EventSubscriber' from eventsource.bus.interface is deprecated. "
+            "Use 'from eventsource.protocols import EventSubscriber' instead. "
+            "This import will be removed in version 0.3.0.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return _FlexibleEventSubscriber
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+# For internal use without deprecation warnings (used by bus implementations)
+# These are the flexible versions that support both sync and async
+EventHandler = _FlexibleEventHandler
+EventSubscriber = _FlexibleEventSubscriber
 
 
 class EventBus(ABC):
@@ -148,7 +112,7 @@ class EventBus(ABC):
     def subscribe(
         self,
         event_type: type[DomainEvent],
-        handler: EventHandler | EventHandlerFunc,
+        handler: _FlexibleEventHandler | EventHandlerFunc,
     ) -> None:
         """
         Subscribe a handler to a specific event type.
@@ -170,7 +134,7 @@ class EventBus(ABC):
     def unsubscribe(
         self,
         event_type: type[DomainEvent],
-        handler: EventHandler | EventHandlerFunc,
+        handler: _FlexibleEventHandler | EventHandlerFunc,
     ) -> bool:
         """
         Unsubscribe a handler from a specific event type.
@@ -185,7 +149,7 @@ class EventBus(ABC):
         pass
 
     @abstractmethod
-    def subscribe_all(self, subscriber: EventSubscriber) -> None:
+    def subscribe_all(self, subscriber: _FlexibleEventSubscriber) -> None:
         """
         Subscribe an EventSubscriber to all its declared event types.
 
@@ -203,7 +167,7 @@ class EventBus(ABC):
     @abstractmethod
     def subscribe_to_all_events(
         self,
-        handler: EventHandler | EventHandlerFunc,
+        handler: _FlexibleEventHandler | EventHandlerFunc,
     ) -> None:
         """
         Subscribe a handler to all event types (wildcard subscription).
@@ -223,7 +187,7 @@ class EventBus(ABC):
     @abstractmethod
     def unsubscribe_from_all_events(
         self,
-        handler: EventHandler | EventHandlerFunc,
+        handler: _FlexibleEventHandler | EventHandlerFunc,
     ) -> bool:
         """
         Unsubscribe a handler from the wildcard subscription.

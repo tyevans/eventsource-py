@@ -22,10 +22,12 @@ from pydantic import BaseModel, Field
 from eventsource.aggregates.base import (
     AggregateRoot,
     DeclarativeAggregate,
-    handles,
 )
 from eventsource.events.base import DomainEvent
-from eventsource.exceptions import EventVersionError
+from eventsource.exceptions import EventVersionError, UnhandledEventError
+
+# Use canonical import for @handles (TD-006)
+from eventsource.projections.decorators import handles
 
 # =============================================================================
 # Test fixtures: State models and Events
@@ -1343,6 +1345,336 @@ class TestEventVersionErrorException:
             actual_version=2,
             event_id=uuid4(),
             aggregate_id=uuid4(),
+        )
+
+        assert isinstance(error, EventSourceError)
+        assert isinstance(error, Exception)
+
+
+# =============================================================================
+# TD-012: Unregistered Event Handling Tests
+# =============================================================================
+
+
+class TestUnregisteredEventHandling:
+    """Tests for configurable unregistered event handling feature (TD-012).
+
+    These tests verify:
+    - AC1: Unhandled events raise UnhandledEventError when mode is "error"
+    - AC2: Setting unregistered_event_handling="ignore" silently ignores events
+    - AC3: Setting unregistered_event_handling="warn" logs warning
+    - AC4: Error message lists available handlers
+    - AC5: Default mode is "ignore" for backwards compatibility
+    """
+
+    def test_default_mode_is_ignore(self) -> None:
+        """AC5: Default mode should be 'ignore' for backwards compatibility."""
+        assert DeclarativeCounterAggregate.unregistered_event_handling == "ignore"
+
+    def test_ignore_mode_silently_accepts_unknown_events(self) -> None:
+        """AC2: ignore mode allows unknown events without raising or logging."""
+
+        class IgnoreAggregate(DeclarativeAggregate[CounterState]):
+            unregistered_event_handling = "ignore"
+
+            def _get_initial_state(self) -> CounterState:
+                return CounterState(counter_id=self.aggregate_id)
+
+            @handles(CounterIncremented)
+            def _on_counter_incremented(self, event: CounterIncremented) -> None:
+                if self._state is None:
+                    self._state = self._get_initial_state()
+                self._state = self._state.model_copy(
+                    update={"value": self._state.value + event.increment}
+                )
+
+        aggregate = IgnoreAggregate(uuid4())
+
+        # Create an event type with no handler
+        class UnknownEvent(DomainEvent):
+            event_type: str = "UnknownEvent"
+            aggregate_type: str = "Counter"
+
+        event = UnknownEvent(
+            aggregate_id=aggregate.aggregate_id,
+            aggregate_type="Counter",
+            aggregate_version=1,
+        )
+
+        # Should not raise - just silently ignore
+        aggregate.apply_event(event)
+        assert aggregate.version == 1
+
+    def test_error_mode_raises_unhandled_event_error(self) -> None:
+        """AC1: error mode raises UnhandledEventError for unhandled events."""
+
+        class StrictAggregate(DeclarativeAggregate[CounterState]):
+            unregistered_event_handling = "error"
+
+            def _get_initial_state(self) -> CounterState:
+                return CounterState(counter_id=self.aggregate_id)
+
+            @handles(CounterIncremented)
+            def _on_counter_incremented(self, event: CounterIncremented) -> None:
+                if self._state is None:
+                    self._state = self._get_initial_state()
+                self._state = self._state.model_copy(
+                    update={"value": self._state.value + event.increment}
+                )
+
+        aggregate = StrictAggregate(uuid4())
+
+        # Create an event type with no handler
+        class UnhandledEvent(DomainEvent):
+            event_type: str = "UnhandledEvent"
+            aggregate_type: str = "Counter"
+
+        event = UnhandledEvent(
+            aggregate_id=aggregate.aggregate_id,
+            aggregate_type="Counter",
+            aggregate_version=1,
+        )
+
+        with pytest.raises(UnhandledEventError) as exc_info:
+            aggregate.apply_event(event)
+
+        assert "UnhandledEvent" in str(exc_info.value)
+        assert "StrictAggregate" in str(exc_info.value)
+
+    def test_warn_mode_logs_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+        """AC3: warn mode logs warning for unhandled events."""
+
+        class WarnAggregate(DeclarativeAggregate[CounterState]):
+            unregistered_event_handling = "warn"
+
+            def _get_initial_state(self) -> CounterState:
+                return CounterState(counter_id=self.aggregate_id)
+
+            @handles(CounterIncremented)
+            def _on_counter_incremented(self, event: CounterIncremented) -> None:
+                if self._state is None:
+                    self._state = self._get_initial_state()
+                self._state = self._state.model_copy(
+                    update={"value": self._state.value + event.increment}
+                )
+
+        aggregate = WarnAggregate(uuid4())
+
+        class UnknownEvent(DomainEvent):
+            event_type: str = "UnknownEvent"
+            aggregate_type: str = "Counter"
+
+        event = UnknownEvent(
+            aggregate_id=aggregate.aggregate_id,
+            aggregate_type="Counter",
+            aggregate_version=1,
+        )
+
+        with caplog.at_level(logging.WARNING):
+            aggregate.apply_event(event)
+
+        # Check warning was logged
+        assert "No handler registered" in caplog.text
+        assert "UnknownEvent" in caplog.text
+        assert "WarnAggregate" in caplog.text
+        # Event should still be applied (version updated)
+        assert aggregate.version == 1
+
+    def test_error_message_includes_available_handlers(self) -> None:
+        """AC4: Error message lists handlers that ARE available."""
+
+        class MultiHandlerAggregate(DeclarativeAggregate[CounterState]):
+            unregistered_event_handling = "error"
+
+            def _get_initial_state(self) -> CounterState:
+                return CounterState(counter_id=self.aggregate_id)
+
+            @handles(CounterIncremented)
+            def _on_counter_incremented(self, event: CounterIncremented) -> None:
+                pass
+
+            @handles(CounterDecremented)
+            def _on_counter_decremented(self, event: CounterDecremented) -> None:
+                pass
+
+        aggregate = MultiHandlerAggregate(uuid4())
+
+        class UnknownEvent(DomainEvent):
+            event_type: str = "UnknownEvent"
+            aggregate_type: str = "Counter"
+
+        event = UnknownEvent(
+            aggregate_id=aggregate.aggregate_id,
+            aggregate_type="Counter",
+            aggregate_version=1,
+        )
+
+        with pytest.raises(UnhandledEventError) as exc_info:
+            aggregate.apply_event(event)
+
+        error = exc_info.value
+        assert "CounterIncremented" in error.available_handlers
+        assert "CounterDecremented" in error.available_handlers
+        assert error.event_type == "UnknownEvent"
+        assert error.handler_class == "MultiHandlerAggregate"
+
+        # Check error message format
+        error_msg = str(error)
+        assert "CounterIncremented" in error_msg
+        assert "CounterDecremented" in error_msg
+
+    def test_error_message_shows_no_handlers_when_empty(self) -> None:
+        """Error message shows 'none' when no handlers are registered."""
+
+        class EmptyAggregate(DeclarativeAggregate[CounterState]):
+            unregistered_event_handling = "error"
+
+            def _get_initial_state(self) -> CounterState:
+                return CounterState(counter_id=self.aggregate_id)
+
+        aggregate = EmptyAggregate(uuid4())
+
+        class UnknownEvent(DomainEvent):
+            event_type: str = "UnknownEvent"
+            aggregate_type: str = "Counter"
+
+        event = UnknownEvent(
+            aggregate_id=aggregate.aggregate_id,
+            aggregate_type="Counter",
+            aggregate_version=1,
+        )
+
+        with pytest.raises(UnhandledEventError) as exc_info:
+            aggregate.apply_event(event)
+
+        error = exc_info.value
+        assert error.available_handlers == []
+        assert "none" in str(error)
+
+    def test_subclass_can_override_handling_mode(self) -> None:
+        """Subclasses can override the handling mode."""
+
+        class BaseAggregate(DeclarativeAggregate[CounterState]):
+            unregistered_event_handling = "ignore"
+
+            def _get_initial_state(self) -> CounterState:
+                return CounterState(counter_id=self.aggregate_id)
+
+        class StrictSubclass(BaseAggregate):
+            unregistered_event_handling = "error"
+
+        assert BaseAggregate.unregistered_event_handling == "ignore"
+        assert StrictSubclass.unregistered_event_handling == "error"
+
+    def test_handled_event_is_not_affected_by_mode(self) -> None:
+        """Events with handlers work regardless of handling mode."""
+
+        class StrictAggregate(DeclarativeAggregate[CounterState]):
+            unregistered_event_handling = "error"
+
+            def _get_initial_state(self) -> CounterState:
+                return CounterState(counter_id=self.aggregate_id)
+
+            @handles(CounterIncremented)
+            def _on_counter_incremented(self, event: CounterIncremented) -> None:
+                if self._state is None:
+                    self._state = self._get_initial_state()
+                self._state = self._state.model_copy(
+                    update={"value": self._state.value + event.increment}
+                )
+
+        aggregate = StrictAggregate(uuid4())
+        event = CounterIncremented(
+            aggregate_id=aggregate.aggregate_id,
+            aggregate_type="Counter",
+            aggregate_version=1,
+            increment=5,
+        )
+
+        # Should work fine - handler exists
+        aggregate.apply_event(event)
+        assert aggregate.state is not None
+        assert aggregate.state.value == 5
+
+    def test_backwards_compatibility_with_existing_code(self) -> None:
+        """Existing code should work without changes (ignore mode is default)."""
+        # DeclarativeCounterAggregate is defined without explicit mode setting
+        aggregate = DeclarativeCounterAggregate(uuid4())
+
+        # Create an event type with no handler
+        class FutureEvent(DomainEvent):
+            event_type: str = "FutureEvent"
+            aggregate_type: str = "Counter"
+
+        event = FutureEvent(
+            aggregate_id=aggregate.aggregate_id,
+            aggregate_type="Counter",
+            aggregate_version=1,
+        )
+
+        # Should not raise - backwards compatible behavior
+        aggregate.apply_event(event)
+        assert aggregate.version == 1
+
+
+class TestUnhandledEventErrorException:
+    """Tests for UnhandledEventError exception class."""
+
+    def test_exception_attributes(self) -> None:
+        """UnhandledEventError should have all expected attributes."""
+        event_id = uuid4()
+
+        error = UnhandledEventError(
+            event_type="OrderShipped",
+            event_id=event_id,
+            handler_class="OrderAggregate",
+            available_handlers=["OrderCreated", "OrderCancelled"],
+        )
+
+        assert error.event_type == "OrderShipped"
+        assert error.event_id == event_id
+        assert error.handler_class == "OrderAggregate"
+        assert error.available_handlers == ["OrderCreated", "OrderCancelled"]
+
+    def test_exception_message_format(self) -> None:
+        """UnhandledEventError message should be informative."""
+        event_id = uuid4()
+
+        error = UnhandledEventError(
+            event_type="OrderShipped",
+            event_id=event_id,
+            handler_class="OrderAggregate",
+            available_handlers=["OrderCreated", "OrderCancelled"],
+        )
+
+        message = str(error)
+        assert "OrderShipped" in message
+        assert "OrderAggregate" in message
+        assert "OrderCreated" in message
+        assert "OrderCancelled" in message
+        assert "@handles" in message
+
+    def test_exception_message_with_no_handlers(self) -> None:
+        """UnhandledEventError message handles empty handler list."""
+        error = UnhandledEventError(
+            event_type="OrderShipped",
+            event_id=uuid4(),
+            handler_class="OrderAggregate",
+            available_handlers=[],
+        )
+
+        message = str(error)
+        assert "none" in message
+
+    def test_exception_is_subclass_of_eventsource_error(self) -> None:
+        """UnhandledEventError should be a subclass of EventSourceError."""
+        from eventsource.exceptions import EventSourceError
+
+        error = UnhandledEventError(
+            event_type="OrderShipped",
+            event_id=uuid4(),
+            handler_class="OrderAggregate",
+            available_handlers=[],
         )
 
         assert isinstance(error, EventSourceError)

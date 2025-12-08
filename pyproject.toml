@@ -41,10 +41,14 @@ telemetry = [
 all = [
     "eventsource[postgresql,redis,telemetry]",
 ]
+benchmark = [
+    "pytest-benchmark>=4.0.0",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "pytest-cov>=4.0",
+    "pytest-benchmark>=4.0.0",
     "mypy>=1.8",
     "ruff>=0.3",
     "testcontainers>=4.0",
@@ -80,6 +84,7 @@ markers = [
     "postgres: marks tests that require PostgreSQL",
     "redis: marks tests that require Redis",
     "e2e: marks tests as end-to-end integration tests",
+    "benchmark: marks tests as performance benchmarks",
 ]
 
 [tool.coverage.run]

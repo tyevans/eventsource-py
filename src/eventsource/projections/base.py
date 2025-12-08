@@ -20,8 +20,9 @@ from collections.abc import Callable, Coroutine
 from typing import Any
 
 from eventsource.events.base import DomainEvent
+from eventsource.exceptions import UnhandledEventError
 from eventsource.projections.decorators import get_handled_event_type
-from eventsource.projections.protocols import EventSubscriber
+from eventsource.protocols import EventSubscriber
 from eventsource.repositories.checkpoint import (
     CheckpointRepository,
     InMemoryCheckpointRepository,
@@ -29,6 +30,9 @@ from eventsource.repositories.checkpoint import (
 from eventsource.repositories.dlq import DLQRepository, InMemoryDLQRepository
 
 logger = logging.getLogger(__name__)
+
+# Type alias for unregistered event handling mode
+UnregisteredEventHandling = str  # "ignore" | "warn" | "error"
 
 
 class Projection(ABC):
@@ -407,6 +411,14 @@ class DeclarativeProjection(CheckpointTrackingProjection):
     1. Implement handler methods decorated with @handles(EventType)
     2. Optionally override _truncate_read_models() for reset support
 
+    Attributes:
+        unregistered_event_handling: Controls behavior when an event has no
+            registered handler. Options:
+            - "ignore": Silently ignore unhandled events (default, for backwards
+              compatibility and forward compatibility with new event types)
+            - "warn": Log a warning for unhandled events
+            - "error": Raise UnhandledEventError for unhandled events
+
     Handler Signature:
         Handler methods must be async and accept exactly 2 parameters:
         - conn: Database connection (if using database)
@@ -429,7 +441,16 @@ class DeclarativeProjection(CheckpointTrackingProjection):
         ...
         ...     async def _truncate_read_models(self, conn) -> None:
         ...         await conn.execute(text("TRUNCATE TABLE orders"))
+
+        >>> # For strict mode (raises error on unhandled events):
+        >>> class StrictOrderProjection(DeclarativeProjection):
+        ...     unregistered_event_handling = "error"
+        ...     # ... handlers ...
     """
+
+    # Class-level configuration for unregistered event handling
+    # Options: "ignore" (default), "warn", "error"
+    unregistered_event_handling: UnregisteredEventHandling = "ignore"
 
     def __init__(
         self,
@@ -571,33 +592,19 @@ class DeclarativeProjection(CheckpointTrackingProjection):
         Route event to appropriate handler method.
 
         Called by CheckpointTrackingProjection.handle() within a transaction.
+        Behavior for unhandled events depends on unregistered_event_handling setting.
 
         Args:
             event: The domain event to process
+
+        Raises:
+            UnhandledEventError: If unregistered_event_handling="error" and no handler found
         """
         event_type = type(event)
 
         if event_type not in self._handlers:
-            # Build list of available handlers for helpful error message
-            available_handlers = (
-                ", ".join(et.__name__ for et in self._handlers) if self._handlers else "none"
-            )
-
-            logger.warning(
-                "No handler registered for event type %s in %s. "
-                "Available handlers: %s. "
-                "Add @handles(%s) decorator to handle this event.",
-                event_type.__name__,
-                self._projection_name,
-                available_handlers,
-                event_type.__name__,
-                extra={
-                    "projection": self._projection_name,
-                    "event_type": event_type.__name__,
-                    "event_id": str(event.event_id),
-                    "available_handlers": [et.__name__ for et in self._handlers],
-                },
-            )
+            # No handler found - handle based on configuration
+            self._handle_unregistered_event(event)
             return
 
         handler = self._handlers[event_type]
@@ -614,6 +621,49 @@ class DeclarativeProjection(CheckpointTrackingProjection):
             # Pass None for conn since we don't have a database connection in base class
             # Subclasses that need database access should override _process_event
             await handler(None, event)
+
+    def _handle_unregistered_event(self, event: DomainEvent) -> None:
+        """
+        Handle an event that has no registered handler.
+
+        Behavior depends on the unregistered_event_handling class attribute:
+        - "ignore": Do nothing (silent)
+        - "warn": Log a warning
+        - "error": Raise UnhandledEventError
+
+        Args:
+            event: The event that has no handler
+
+        Raises:
+            UnhandledEventError: If unregistered_event_handling="error"
+        """
+        event_type = type(event)
+        available_handlers = [et.__name__ for et in self._handlers]
+
+        if self.unregistered_event_handling == "error":
+            raise UnhandledEventError(
+                event_type=event_type.__name__,
+                event_id=event.event_id,
+                handler_class=self.__class__.__name__,
+                available_handlers=available_handlers,
+            )
+        elif self.unregistered_event_handling == "warn":
+            logger.warning(
+                "No handler registered for event type %s in %s. "
+                "Available handlers: %s. "
+                "Add @handles(%s) decorator to handle this event.",
+                event_type.__name__,
+                self._projection_name,
+                ", ".join(available_handlers) if available_handlers else "none",
+                event_type.__name__,
+                extra={
+                    "projection": self._projection_name,
+                    "event_type": event_type.__name__,
+                    "event_id": str(event.event_id),
+                    "available_handlers": available_handlers,
+                },
+            )
+        # "ignore" mode: do nothing (silent)
 
 
 class DatabaseProjection(DeclarativeProjection):

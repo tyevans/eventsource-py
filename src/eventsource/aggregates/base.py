@@ -13,8 +13,11 @@ from typing import Generic
 from uuid import UUID
 
 from eventsource.events.base import DomainEvent
-from eventsource.exceptions import EventVersionError
+from eventsource.exceptions import EventVersionError, UnhandledEventError
 from eventsource.types import TState
+
+# Type alias for unregistered event handling mode
+UnregisteredEventHandling = str  # "ignore" | "warn" | "error"
 
 logger = logging.getLogger(__name__)
 
@@ -353,6 +356,14 @@ class DeclarativeAggregate(AggregateRoot[TState], ABC):
     uses a declarative pattern with the @handles decorator to register
     event handlers, reducing boilerplate in the _apply method.
 
+    Attributes:
+        unregistered_event_handling: Controls behavior when an event has no
+            registered handler. Options:
+            - "ignore": Silently ignore unhandled events (default, for backwards
+              compatibility and forward compatibility with new event types)
+            - "warn": Log a warning for unhandled events
+            - "error": Raise UnhandledEventError for unhandled events
+
     Example:
         >>> class OrderAggregate(DeclarativeAggregate[OrderState]):
         ...     aggregate_type = "Order"
@@ -374,7 +385,16 @@ class DeclarativeAggregate(AggregateRoot[TState], ABC):
         ...             self._state = self._state.model_copy(
         ...                 update={"status": "shipped"}
         ...             )
+
+        >>> # For strict mode (raises error on unhandled events):
+        >>> class StrictOrderAggregate(DeclarativeAggregate[OrderState]):
+        ...     unregistered_event_handling = "error"
+        ...     # ... handlers ...
     """
+
+    # Class-level configuration for unregistered event handling
+    # Options: "ignore" (default), "warn", "error"
+    unregistered_event_handling: UnregisteredEventHandling = "ignore"
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         """Initialize handler registry for each subclass."""
@@ -397,20 +417,68 @@ class DeclarativeAggregate(AggregateRoot[TState], ABC):
         Apply event using registered handlers.
 
         Looks up the handler for the event type and calls it.
-        If no handler is found, raises a warning but doesn't fail.
+        Behavior for unhandled events depends on unregistered_event_handling setting.
+
+        Raises:
+            UnhandledEventError: If unregistered_event_handling="error" and no handler found
         """
         event_type = type(event)
         handler_name = self._event_handlers.get(event_type)
         if handler_name:
             handler = getattr(self, handler_name)
             handler(event)
-        # If no handler found, event is silently ignored
-        # This allows for forward compatibility when new events are added
+        else:
+            # No handler found - handle based on configuration
+            self._handle_unregistered_event(event)
+
+    def _handle_unregistered_event(self, event: DomainEvent) -> None:
+        """
+        Handle an event that has no registered handler.
+
+        Behavior depends on the unregistered_event_handling class attribute:
+        - "ignore": Do nothing (silent)
+        - "warn": Log a warning
+        - "error": Raise UnhandledEventError
+
+        Args:
+            event: The event that has no handler
+
+        Raises:
+            UnhandledEventError: If unregistered_event_handling="error"
+        """
+        event_type = type(event)
+        available_handlers = [et.__name__ for et in self._event_handlers]
+
+        if self.unregistered_event_handling == "error":
+            raise UnhandledEventError(
+                event_type=event_type.__name__,
+                event_id=event.event_id,
+                handler_class=self.__class__.__name__,
+                available_handlers=available_handlers,
+            )
+        elif self.unregistered_event_handling == "warn":
+            logger.warning(
+                "No handler registered for event type %s in %s. Available handlers: %s.",
+                event_type.__name__,
+                self.__class__.__name__,
+                ", ".join(available_handlers) if available_handlers else "none",
+                extra={
+                    "event_type": event_type.__name__,
+                    "event_id": str(event.event_id),
+                    "handler_class": self.__class__.__name__,
+                    "available_handlers": available_handlers,
+                },
+            )
+        # "ignore" mode: do nothing (silent)
 
 
 def handles(event_type: type[DomainEvent]) -> Callable[[Callable[..., None]], Callable[..., None]]:
     """
     Decorator to register an event handler method.
+
+    .. deprecated:: 0.1.0
+        Import from `eventsource.projections.decorators` or `eventsource` instead.
+        This location will be removed in version 0.3.0.
 
     Use this decorator on methods in a DeclarativeAggregate subclass
     to automatically register them as handlers for specific event types.
@@ -422,17 +490,27 @@ def handles(event_type: type[DomainEvent]) -> Callable[[Callable[..., None]], Ca
         Decorator function that marks the method as a handler
 
     Example:
+        >>> from eventsource.projections.decorators import handles  # Preferred import
+        >>> # or: from eventsource import handles
+        >>>
         >>> class OrderAggregate(DeclarativeAggregate[OrderState]):
         ...     @handles(OrderCreated)
         ...     def _on_order_created(self, event: OrderCreated) -> None:
         ...         self._state = OrderState(...)
     """
+    import warnings
 
-    def decorator(func: Callable[..., None]) -> Callable[..., None]:
-        func._handles_event_type = event_type  # type: ignore[attr-defined]
-        return func
+    from eventsource.projections.decorators import handles as _canonical_handles
 
-    return decorator
+    warnings.warn(
+        "Importing 'handles' from eventsource.aggregates.base is deprecated. "
+        "Use 'from eventsource.projections.decorators import handles' or "
+        "'from eventsource import handles' instead. "
+        "This import will be removed in version 0.3.0.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return _canonical_handles(event_type)
 
 
 __all__ = [
@@ -440,4 +518,5 @@ __all__ = [
     "DeclarativeAggregate",
     "handles",
     "TState",
+    "UnregisteredEventHandling",
 ]

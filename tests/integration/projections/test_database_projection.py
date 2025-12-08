@@ -582,5 +582,5 @@ class TestDatabaseProjectionIntegration:
         # Event should be in DLQ
         failed_events = await dlq_repo.get_failed_events()
         assert len(failed_events) == 1
-        assert failed_events[0]["event_id"] == str(event.event_id)
-        assert "Persistent handler failure" in failed_events[0]["error_message"]
+        assert failed_events[0].event_id == event.event_id
+        assert "Persistent handler failure" in failed_events[0].error_message

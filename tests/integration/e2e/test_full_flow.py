@@ -543,6 +543,6 @@ class TestOutboxIntegration:
 
         # Verify event is in outbox
         pending = await postgres_outbox_repo.get_pending_events()
-        matching = [e for e in pending if e["event_id"] == str(event.event_id)]
+        matching = [e for e in pending if e.event_id == event.event_id]
         assert len(matching) == 1
-        assert matching[0]["event_type"] == "TestOrderCreated"
+        assert matching[0].event_type == "TestOrderCreated"

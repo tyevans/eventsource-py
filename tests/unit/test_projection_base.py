@@ -16,6 +16,7 @@ import pytest
 from pydantic import Field
 
 from eventsource.events.base import DomainEvent
+from eventsource.exceptions import UnhandledEventError
 from eventsource.projections.base import (
     CheckpointTrackingProjection,
     DeclarativeProjection,
@@ -278,8 +279,8 @@ class TestCheckpointTrackingProjection:
         # Check DLQ
         failed_events = await dlq_repo.get_failed_events()
         assert len(failed_events) == 1
-        assert failed_events[0]["event_id"] == str(event.event_id)
-        assert failed_events[0]["projection_name"] == "FailingProjection"
+        assert failed_events[0].event_id == event.event_id
+        assert failed_events[0].projection_name == "FailingProjection"
 
     @pytest.mark.asyncio
     async def test_get_checkpoint_returns_last_processed(
@@ -502,12 +503,13 @@ class TestDeclarativeProjection:
             BadProjection(checkpoint_repo=checkpoint_repo)
 
     @pytest.mark.asyncio
-    async def test_unhandled_event_logs_warning(
+    async def test_unhandled_event_ignored_by_default(
         self,
         checkpoint_repo: InMemoryCheckpointRepository,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Unhandled event type logs a warning."""
+        """Unhandled event type is silently ignored by default (backwards compatible)."""
+        import logging
 
         class TestProjection(DeclarativeProjection):
             @handles(OrderCreated)
@@ -518,10 +520,12 @@ class TestDeclarativeProjection:
 
         # Try to handle an event type with no handler
         event = OrderShipped(aggregate_id=uuid4(), tracking_number="TRK-001")
-        await projection.handle(event)
 
-        # Should log warning about no handler
-        assert any("No handler registered" in rec.message for rec in caplog.records)
+        with caplog.at_level(logging.WARNING):
+            await projection.handle(event)
+
+        # Default mode is "ignore" - no warning should be logged
+        assert not any("No handler registered" in rec.message for rec in caplog.records)
 
     @pytest.mark.asyncio
     async def test_public_handler_method_discovered(
@@ -585,7 +589,7 @@ class TestDeclarativeProjectionWithDLQ:
 
         failed_events = await dlq_repo.get_failed_events()
         assert len(failed_events) == 1
-        assert "Handler error" in failed_events[0]["error_message"]
+        assert "Handler error" in failed_events[0].error_message
 
 
 class TestLagMetrics:
@@ -931,13 +935,15 @@ class TestDatabaseProjection:
             await projection._process_event(event)
 
     @pytest.mark.asyncio
-    async def test_unhandled_event_logs_warning(
+    async def test_unhandled_event_ignored_by_default(
         self,
         checkpoint_repo: InMemoryCheckpointRepository,
         mock_session_factory,
         caplog: "pytest.LogCaptureFixture",
     ) -> None:
-        """Unhandled event type logs a warning."""
+        """Unhandled event type is silently ignored by default (backwards compatible)."""
+        import logging
+
         from eventsource.projections.base import DatabaseProjection
 
         factory, session, mock_conn = mock_session_factory
@@ -954,10 +960,12 @@ class TestDatabaseProjection:
 
         # Try to handle an event type with no handler
         event = OrderShipped(aggregate_id=uuid4(), tracking_number="TRK-001")
-        await projection.handle(event)
 
-        # Should log warning about no handler
-        assert any("No handler registered" in rec.message for rec in caplog.records)
+        with caplog.at_level(logging.WARNING):
+            await projection.handle(event)
+
+        # Default mode is "ignore" - no warning should be logged
+        assert not any("No handler registered" in rec.message for rec in caplog.records)
 
     @pytest.mark.asyncio
     async def test_connection_is_none_after_handle_completes(
@@ -1074,3 +1082,334 @@ class TestDatabaseProjection:
         from eventsource import DatabaseProjection as DBProjection
 
         assert DBProjection is not None
+
+
+# =============================================================================
+# TD-012: Unregistered Event Handling Tests for Projections
+# =============================================================================
+
+
+class TestProjectionUnregisteredEventHandling:
+    """Tests for configurable unregistered event handling in projections (TD-012).
+
+    These tests verify:
+    - AC1: Unhandled events raise UnhandledEventError when mode is "error"
+    - AC2: Setting unregistered_event_handling="ignore" silently ignores events
+    - AC3: Setting unregistered_event_handling="warn" logs warning
+    - AC4: Error message lists available handlers
+    - AC5: Default mode is "ignore" for backwards compatibility
+    """
+
+    @pytest.fixture
+    def checkpoint_repo(self) -> InMemoryCheckpointRepository:
+        """Create an in-memory checkpoint repository."""
+        return InMemoryCheckpointRepository()
+
+    @pytest.fixture
+    def dlq_repo(self) -> InMemoryDLQRepository:
+        """Create an in-memory DLQ repository."""
+        return InMemoryDLQRepository()
+
+    def test_default_mode_is_ignore(self, checkpoint_repo: InMemoryCheckpointRepository) -> None:
+        """AC5: Default mode should be 'ignore' for backwards compatibility."""
+
+        class TestProjection(DeclarativeProjection):
+            @handles(OrderCreated)
+            async def _handle_order_created(self, event: OrderCreated) -> None:
+                pass
+
+        projection = TestProjection(checkpoint_repo=checkpoint_repo)
+        assert projection.unregistered_event_handling == "ignore"
+
+    @pytest.mark.asyncio
+    async def test_ignore_mode_silently_accepts_unknown_events(
+        self, checkpoint_repo: InMemoryCheckpointRepository
+    ) -> None:
+        """AC2: ignore mode allows unknown events without raising."""
+
+        class IgnoreProjection(DeclarativeProjection):
+            unregistered_event_handling = "ignore"
+
+            @handles(OrderCreated)
+            async def _handle_order_created(self, event: OrderCreated) -> None:
+                pass
+
+        projection = IgnoreProjection(checkpoint_repo=checkpoint_repo)
+
+        # Handle an event with no handler - should not raise
+        event = OrderShipped(aggregate_id=uuid4(), tracking_number="TRK-001")
+        await projection.handle(event)
+
+        # Checkpoint should still be updated even for ignored events
+        checkpoint = await projection.get_checkpoint()
+        assert checkpoint == str(event.event_id)
+
+    @pytest.mark.asyncio
+    async def test_error_mode_raises_unhandled_event_error(
+        self,
+        checkpoint_repo: InMemoryCheckpointRepository,
+        dlq_repo: InMemoryDLQRepository,
+    ) -> None:
+        """AC1: error mode raises UnhandledEventError for unhandled events."""
+
+        class StrictProjection(DeclarativeProjection):
+            unregistered_event_handling = "error"
+            MAX_RETRIES = 1
+            RETRY_BACKOFF_BASE = 0
+
+            @handles(OrderCreated)
+            async def _handle_order_created(self, event: OrderCreated) -> None:
+                pass
+
+        projection = StrictProjection(
+            checkpoint_repo=checkpoint_repo,
+            dlq_repo=dlq_repo,
+        )
+
+        # Handle an event with no handler - should raise
+        event = OrderShipped(aggregate_id=uuid4(), tracking_number="TRK-001")
+
+        with pytest.raises(UnhandledEventError) as exc_info:
+            await projection.handle(event)
+
+        assert "OrderShipped" in str(exc_info.value)
+        assert "StrictProjection" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_warn_mode_logs_warning(
+        self,
+        checkpoint_repo: InMemoryCheckpointRepository,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """AC3: warn mode logs warning for unhandled events."""
+        import logging
+
+        class WarnProjection(DeclarativeProjection):
+            unregistered_event_handling = "warn"
+
+            @handles(OrderCreated)
+            async def _handle_order_created(self, event: OrderCreated) -> None:
+                pass
+
+        projection = WarnProjection(checkpoint_repo=checkpoint_repo)
+
+        event = OrderShipped(aggregate_id=uuid4(), tracking_number="TRK-001")
+
+        with caplog.at_level(logging.WARNING):
+            await projection.handle(event)
+
+        # Check warning was logged
+        assert "No handler registered" in caplog.text
+        assert "OrderShipped" in caplog.text
+
+        # Checkpoint should still be updated
+        checkpoint = await projection.get_checkpoint()
+        assert checkpoint == str(event.event_id)
+
+    @pytest.mark.asyncio
+    async def test_error_message_includes_available_handlers(
+        self,
+        checkpoint_repo: InMemoryCheckpointRepository,
+        dlq_repo: InMemoryDLQRepository,
+    ) -> None:
+        """AC4: Error message lists handlers that ARE available."""
+
+        class MultiHandlerProjection(DeclarativeProjection):
+            unregistered_event_handling = "error"
+            MAX_RETRIES = 1
+            RETRY_BACKOFF_BASE = 0
+
+            @handles(OrderCreated)
+            async def _handle_order_created(self, event: OrderCreated) -> None:
+                pass
+
+            @handles(OrderCancelled)
+            async def _handle_order_cancelled(self, event: OrderCancelled) -> None:
+                pass
+
+        projection = MultiHandlerProjection(
+            checkpoint_repo=checkpoint_repo,
+            dlq_repo=dlq_repo,
+        )
+
+        event = OrderShipped(aggregate_id=uuid4(), tracking_number="TRK-001")
+
+        with pytest.raises(UnhandledEventError) as exc_info:
+            await projection.handle(event)
+
+        error = exc_info.value
+        assert "OrderCreated" in error.available_handlers
+        assert "OrderCancelled" in error.available_handlers
+        assert error.event_type == "OrderShipped"
+        assert error.handler_class == "MultiHandlerProjection"
+
+    @pytest.mark.asyncio
+    async def test_handled_event_is_not_affected_by_mode(
+        self, checkpoint_repo: InMemoryCheckpointRepository
+    ) -> None:
+        """Events with handlers work regardless of handling mode."""
+        events_handled = []
+
+        class StrictProjection(DeclarativeProjection):
+            unregistered_event_handling = "error"
+
+            @handles(OrderCreated)
+            async def _handle_order_created(self, event: OrderCreated) -> None:
+                events_handled.append(event)
+
+        projection = StrictProjection(checkpoint_repo=checkpoint_repo)
+        event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
+
+        # Should work fine - handler exists
+        await projection.handle(event)
+        assert len(events_handled) == 1
+
+    def test_subclass_can_override_handling_mode(
+        self, checkpoint_repo: InMemoryCheckpointRepository
+    ) -> None:
+        """Subclasses can override the handling mode."""
+
+        class BaseProjection(DeclarativeProjection):
+            unregistered_event_handling = "ignore"
+
+            @handles(OrderCreated)
+            async def _handle_order_created(self, event: OrderCreated) -> None:
+                pass
+
+        class StrictSubclass(BaseProjection):
+            unregistered_event_handling = "error"
+
+        base = BaseProjection(checkpoint_repo=checkpoint_repo)
+        strict = StrictSubclass(checkpoint_repo=checkpoint_repo)
+
+        assert base.unregistered_event_handling == "ignore"
+        assert strict.unregistered_event_handling == "error"
+
+    @pytest.mark.asyncio
+    async def test_backwards_compatibility_existing_warning_behavior(
+        self,
+        checkpoint_repo: InMemoryCheckpointRepository,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Existing code with default mode should work (no exception raised)."""
+        import logging
+
+        class LegacyProjection(DeclarativeProjection):
+            # No explicit mode set - uses default "ignore"
+            @handles(OrderCreated)
+            async def _handle_order_created(self, event: OrderCreated) -> None:
+                pass
+
+        projection = LegacyProjection(checkpoint_repo=checkpoint_repo)
+
+        # Handle an event with no handler
+        event = OrderShipped(aggregate_id=uuid4(), tracking_number="TRK-001")
+
+        with caplog.at_level(logging.WARNING):
+            # Should not raise - backwards compatible
+            await projection.handle(event)
+
+        # No warning should be logged in ignore mode
+        assert "No handler registered" not in caplog.text
+
+
+class TestDatabaseProjectionUnregisteredEventHandling:
+    """Tests for unregistered event handling in DatabaseProjection."""
+
+    @pytest.fixture
+    def checkpoint_repo(self) -> InMemoryCheckpointRepository:
+        return InMemoryCheckpointRepository()
+
+    @pytest.fixture
+    def dlq_repo(self) -> InMemoryDLQRepository:
+        return InMemoryDLQRepository()
+
+    @pytest.fixture
+    def mock_session_factory(self):
+        """Create a mock async session factory."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        mock_conn = AsyncMock()
+        mock_conn.execute = AsyncMock()
+
+        mock_session = AsyncMock()
+        mock_session.connection = AsyncMock(return_value=mock_conn)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        mock_begin = MagicMock()
+        mock_begin.__aenter__ = AsyncMock(return_value=None)
+        mock_begin.__aexit__ = AsyncMock(return_value=None)
+        mock_session.begin = MagicMock(return_value=mock_begin)
+
+        mock_factory = MagicMock()
+        mock_factory.return_value = mock_session
+        mock_factory.__call__ = MagicMock(return_value=mock_session)
+
+        return mock_factory, mock_session, mock_conn
+
+    @pytest.mark.asyncio
+    async def test_database_projection_error_mode(
+        self,
+        checkpoint_repo: InMemoryCheckpointRepository,
+        dlq_repo: InMemoryDLQRepository,
+        mock_session_factory,
+    ) -> None:
+        """DatabaseProjection respects unregistered_event_handling='error'."""
+        from eventsource.projections.base import DatabaseProjection
+
+        factory, session, mock_conn = mock_session_factory
+
+        class StrictDBProjection(DatabaseProjection):
+            unregistered_event_handling = "error"
+            MAX_RETRIES = 1
+            RETRY_BACKOFF_BASE = 0
+
+            @handles(OrderCreated)
+            async def _handle_order_created(self, conn, event: OrderCreated) -> None:
+                pass
+
+        projection = StrictDBProjection(
+            session_factory=factory,
+            checkpoint_repo=checkpoint_repo,
+            dlq_repo=dlq_repo,
+        )
+
+        event = OrderShipped(aggregate_id=uuid4(), tracking_number="TRK-001")
+
+        with pytest.raises(UnhandledEventError) as exc_info:
+            await projection.handle(event)
+
+        assert "OrderShipped" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_database_projection_ignore_mode(
+        self,
+        checkpoint_repo: InMemoryCheckpointRepository,
+        mock_session_factory,
+    ) -> None:
+        """DatabaseProjection respects unregistered_event_handling='ignore'."""
+        from eventsource.projections.base import DatabaseProjection
+
+        factory, session, mock_conn = mock_session_factory
+
+        class IgnoreDBProjection(DatabaseProjection):
+            unregistered_event_handling = "ignore"
+
+            @handles(OrderCreated)
+            async def _handle_order_created(self, conn, event: OrderCreated) -> None:
+                pass
+
+        projection = IgnoreDBProjection(
+            session_factory=factory,
+            checkpoint_repo=checkpoint_repo,
+        )
+
+        event = OrderShipped(aggregate_id=uuid4(), tracking_number="TRK-001")
+
+        # Should not raise
+        await projection.handle(event)
+
+        # Checkpoint should still be updated
+        checkpoint = await projection.get_checkpoint()
+        assert checkpoint == str(event.event_id)

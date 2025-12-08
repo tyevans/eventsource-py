@@ -4,7 +4,8 @@ Welcome to the eventsource documentation. This library provides a production-rea
 
 ## Quick Links
 
-- [Getting Started](getting-started.md) - Installation and first steps
+- [Installation Guide](installation.md) - Installation with optional dependencies
+- [Getting Started](getting-started.md) - Build your first event-sourced application
 - [Architecture Overview](architecture.md) - Understanding the system design
 
 ## API Reference
@@ -66,21 +67,23 @@ Command Query Responsibility Segregation separates reads from writes:
 ## Installation
 
 ```bash
-# Basic
+# Basic installation (in-memory stores only)
 pip install eventsource
 
-# With PostgreSQL
+# With PostgreSQL support (production)
 pip install eventsource[postgresql]
 
-# With Redis
+# With Redis support (distributed event bus)
 pip install eventsource[redis]
 
-# With OpenTelemetry
+# With OpenTelemetry support (observability)
 pip install eventsource[telemetry]
 
-# All extras
+# All optional dependencies
 pip install eventsource[all]
 ```
+
+For detailed installation instructions, troubleshooting, and version compatibility, see the [Installation Guide](installation.md).
 
 ## Quick Example
 

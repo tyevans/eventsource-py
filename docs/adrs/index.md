@@ -24,6 +24,7 @@ ADRs help teams:
 | [ADR-0004](0004-projection-error-handling.md) | Projection Error Handling | Accepted | 2025-12-06 |
 | [ADR-0005](0005-api-design-patterns.md) | API Design Patterns | Accepted | 2025-12-06 |
 | [ADR-0006](0006-event-registry-serialization.md) | Event Registry and Serialization | Accepted | 2025-12-06 |
+| [ADR-0007](0007-remove-sync-event-store.md) | Remove SyncEventStore Interface | Accepted | 2025-12-07 |
 
 ## Status Definitions
 

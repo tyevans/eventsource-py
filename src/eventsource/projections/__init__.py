@@ -57,8 +57,10 @@ from eventsource.projections.decorators import (
     handles,
     is_event_handler,
 )
-from eventsource.projections.protocols import (
-    AsyncEventHandler,
+
+# Protocols from canonical location (TD-007)
+from eventsource.projections.protocols import AsyncEventHandler
+from eventsource.protocols import (
     EventHandler,
     EventSubscriber,
     SyncEventHandler,
