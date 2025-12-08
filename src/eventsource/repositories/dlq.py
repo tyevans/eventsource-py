@@ -8,16 +8,19 @@ all retry attempts. This enables:
 - Failure monitoring and alerting
 """
 
+import asyncio
 import traceback
-from dataclasses import dataclass
+import warnings
+from collections.abc import Iterator
+from dataclasses import dataclass, fields
 from datetime import UTC, datetime
-from threading import Lock
 from typing import Any, Protocol, runtime_checkable
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from eventsource.repositories._connection import execute_with_connection
 from eventsource.repositories._json import json_dumps
 
 
@@ -40,6 +43,10 @@ class DLQEntry:
         status: Current status (failed, retrying, resolved)
         resolved_at: When the entry was resolved (if applicable)
         resolved_by: Who resolved the entry (if applicable)
+
+    Note:
+        Dict-style access (entry["key"]) is deprecated. Use attribute access
+        (entry.key) instead. Dict access will be removed in version 0.3.0.
     """
 
     id: int | str
@@ -55,6 +62,63 @@ class DLQEntry:
     status: str = "failed"
     resolved_at: datetime | None = None
     resolved_by: str | None = None
+
+    def __getitem__(self, key: str) -> Any:
+        """
+        Dict-style access for backward compatibility.
+
+        .. deprecated:: 0.1.0
+            Use attribute access (entry.event_id) instead of
+            dict access (entry["event_id"]).
+        """
+        warnings.warn(
+            f"Dict-style access to DLQEntry is deprecated. "
+            f"Use 'entry.{key}' instead of 'entry[\"{key}\"]'. "
+            "Dict access will be removed in version 0.3.0.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        try:
+            return getattr(self, key)
+        except AttributeError:
+            raise KeyError(key) from None
+
+    def __contains__(self, key: str) -> bool:
+        """Support 'key in entry' for backward compatibility."""
+        return hasattr(self, key)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """
+        Dict-style get for backward compatibility.
+
+        .. deprecated:: 0.1.0
+            Use attribute access (entry.event_id) instead of
+            dict access (entry.get("event_id")).
+        """
+        warnings.warn(
+            f"Dict-style access to DLQEntry is deprecated. "
+            f"Use 'entry.{key}' instead of 'entry.get(\"{key}\")'. "
+            "Dict access will be removed in version 0.3.0.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return getattr(self, key, default)
+
+    def keys(self) -> list[str]:
+        """Return field names for backward compatibility."""
+        return [f.name for f in fields(self)]
+
+    def values(self) -> list[Any]:
+        """Return field values for backward compatibility."""
+        return [getattr(self, f.name) for f in fields(self)]
+
+    def items(self) -> list[tuple[str, Any]]:
+        """Return field items for backward compatibility."""
+        return [(f.name, getattr(self, f.name)) for f in fields(self)]
+
+    def __iter__(self) -> Iterator[str]:
+        """Allow iteration over field names for backward compatibility."""
+        return iter(self.keys())
 
 
 @dataclass(frozen=True)
@@ -132,7 +196,7 @@ class DLQRepository(Protocol):
         projection_name: str | None = None,
         status: str = "failed",
         limit: int = 100,
-    ) -> list[dict[str, Any]]:
+    ) -> list[DLQEntry]:
         """
         Get failed events from the DLQ.
 
@@ -142,11 +206,11 @@ class DLQRepository(Protocol):
             limit: Maximum number of events to return
 
         Returns:
-            List of failed event records as dictionaries
+            List of DLQEntry instances
         """
         ...
 
-    async def get_failed_event_by_id(self, dlq_id: int | str) -> dict[str, Any] | None:
+    async def get_failed_event_by_id(self, dlq_id: int | str) -> DLQEntry | None:
         """
         Get a specific failed event by its DLQ ID.
 
@@ -154,7 +218,7 @@ class DLQRepository(Protocol):
             dlq_id: DLQ record ID
 
         Returns:
-            Failed event record, or None if not found
+            DLQEntry instance, or None if not found
         """
         ...
 
@@ -261,18 +325,15 @@ class PostgreSQLDLQRepository:
             "now": now,
         }
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.begin() as conn:
-                await conn.execute(query, params)
-        else:
-            await self.conn.execute(query, params)
+        async with execute_with_connection(self.conn, transactional=True) as conn:
+            await conn.execute(query, params)
 
     async def get_failed_events(
         self,
         projection_name: str | None = None,
         status: str = "failed",
         limit: int = 100,
-    ) -> list[dict[str, Any]]:
+    ) -> list[DLQEntry]:
         """
         Get failed events from the DLQ.
 
@@ -282,7 +343,7 @@ class PostgreSQLDLQRepository:
             limit: Maximum number of events to return
 
         Returns:
-            List of failed event records
+            List of DLQEntry instances
         """
         # Build query dynamically based on filters
         where_clauses = ["status = :status"]
@@ -305,32 +366,28 @@ class PostgreSQLDLQRepository:
             LIMIT :limit
         """)  # nosec B608
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.connect() as conn:
-                result = await conn.execute(query, params)
-                rows = result.fetchall()
-        else:
-            result = await self.conn.execute(query, params)
+        async with execute_with_connection(self.conn, transactional=False) as conn:
+            result = await conn.execute(query, params)
             rows = result.fetchall()
 
         return [
-            {
-                "id": row[0],
-                "event_id": str(row[1]),
-                "projection_name": row[2],
-                "event_type": row[3],
-                "event_data": row[4],
-                "error_message": row[5],
-                "error_stacktrace": row[6],
-                "retry_count": row[7],
-                "first_failed_at": row[8].isoformat() if row[8] else None,
-                "last_failed_at": row[9].isoformat() if row[9] else None,
-                "status": row[10],
-            }
+            DLQEntry(
+                id=row[0],
+                event_id=row[1],
+                projection_name=row[2],
+                event_type=row[3],
+                event_data=row[4],
+                error_message=row[5],
+                error_stacktrace=row[6],
+                retry_count=row[7],
+                first_failed_at=row[8],
+                last_failed_at=row[9],
+                status=row[10],
+            )
             for row in rows
         ]
 
-    async def get_failed_event_by_id(self, dlq_id: int | str) -> dict[str, Any] | None:
+    async def get_failed_event_by_id(self, dlq_id: int | str) -> DLQEntry | None:
         """
         Get a specific failed event by its DLQ ID.
 
@@ -338,7 +395,7 @@ class PostgreSQLDLQRepository:
             dlq_id: DLQ record ID
 
         Returns:
-            Failed event record, or None if not found
+            DLQEntry instance, or None if not found
         """
         query = text("""
             SELECT id, event_id, projection_name, event_type, event_data,
@@ -349,32 +406,28 @@ class PostgreSQLDLQRepository:
             WHERE id = :dlq_id
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.connect() as conn:
-                result = await conn.execute(query, {"dlq_id": dlq_id})
-                row = result.fetchone()
-        else:
-            result = await self.conn.execute(query, {"dlq_id": dlq_id})
+        async with execute_with_connection(self.conn, transactional=False) as conn:
+            result = await conn.execute(query, {"dlq_id": dlq_id})
             row = result.fetchone()
 
         if not row:
             return None
 
-        return {
-            "id": row[0],
-            "event_id": str(row[1]),
-            "projection_name": row[2],
-            "event_type": row[3],
-            "event_data": row[4],
-            "error_message": row[5],
-            "error_stacktrace": row[6],
-            "retry_count": row[7],
-            "first_failed_at": row[8].isoformat() if row[8] else None,
-            "last_failed_at": row[9].isoformat() if row[9] else None,
-            "status": row[10],
-            "resolved_at": row[11].isoformat() if row[11] else None,
-            "resolved_by": row[12],
-        }
+        return DLQEntry(
+            id=row[0],
+            event_id=row[1],
+            projection_name=row[2],
+            event_type=row[3],
+            event_data=row[4],
+            error_message=row[5],
+            error_stacktrace=row[6],
+            retry_count=row[7],
+            first_failed_at=row[8],
+            last_failed_at=row[9],
+            status=row[10],
+            resolved_at=row[11],
+            resolved_by=row[12],
+        )
 
     async def mark_resolved(self, dlq_id: int | str, resolved_by: str | UUID) -> None:
         """
@@ -395,14 +448,8 @@ class PostgreSQLDLQRepository:
             WHERE id = :dlq_id
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.begin() as conn:
-                await conn.execute(
-                    query,
-                    {"now": now, "resolved_by": resolved_by_str, "dlq_id": dlq_id},
-                )
-        else:
-            await self.conn.execute(
+        async with execute_with_connection(self.conn, transactional=True) as conn:
+            await conn.execute(
                 query,
                 {"now": now, "resolved_by": resolved_by_str, "dlq_id": dlq_id},
             )
@@ -420,11 +467,8 @@ class PostgreSQLDLQRepository:
             WHERE id = :dlq_id
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.begin() as conn:
-                await conn.execute(query, {"dlq_id": dlq_id})
-        else:
-            await self.conn.execute(query, {"dlq_id": dlq_id})
+        async with execute_with_connection(self.conn, transactional=True) as conn:
+            await conn.execute(query, {"dlq_id": dlq_id})
 
     async def get_failure_stats(self) -> dict[str, Any]:
         """
@@ -443,12 +487,8 @@ class PostgreSQLDLQRepository:
             WHERE status IN ('failed', 'retrying')
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.connect() as conn:
-                result = await conn.execute(query)
-                row = result.fetchone()
-        else:
-            result = await self.conn.execute(query)
+        async with execute_with_connection(self.conn, transactional=False) as conn:
+            result = await conn.execute(query)
             row = result.fetchone()
 
         return {
@@ -477,12 +517,8 @@ class PostgreSQLDLQRepository:
             ORDER BY failure_count DESC
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.connect() as conn:
-                result = await conn.execute(query)
-                rows = result.fetchall()
-        else:
-            result = await self.conn.execute(query)
+        async with execute_with_connection(self.conn, transactional=False) as conn:
+            result = await conn.execute(query)
             rows = result.fetchall()
 
         return [
@@ -514,12 +550,8 @@ class PostgreSQLDLQRepository:
             RETURNING id
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.begin() as conn:
-                result = await conn.execute(query, {"days": older_than_days})
-                return len(result.fetchall())
-        else:
-            result = await self.conn.execute(query, {"days": older_than_days})
+        async with execute_with_connection(self.conn, transactional=True) as conn:
+            result = await conn.execute(query, {"days": older_than_days})
             return len(result.fetchall())
 
 
@@ -544,7 +576,7 @@ class InMemoryDLQRepository:
         """Initialize an empty in-memory DLQ repository."""
         self._entries: dict[str, DLQEntry] = {}  # key: "{event_id}:{projection_name}"
         self._id_counter: int = 0
-        self._lock = Lock()
+        self._lock: asyncio.Lock = asyncio.Lock()
 
     def _make_key(self, event_id: UUID, projection_name: str) -> str:
         """Create a unique key for event_id + projection_name combination."""
@@ -573,7 +605,7 @@ class InMemoryDLQRepository:
         now = datetime.now(UTC)
         key = self._make_key(event_id, projection_name)
 
-        with self._lock:
+        async with self._lock:
             existing = self._entries.get(key)
             if existing:
                 # Update existing entry
@@ -604,7 +636,7 @@ class InMemoryDLQRepository:
         projection_name: str | None = None,
         status: str = "failed",
         limit: int = 100,
-    ) -> list[dict[str, Any]]:
+    ) -> list[DLQEntry]:
         """
         Get failed events from the DLQ.
 
@@ -614,9 +646,9 @@ class InMemoryDLQRepository:
             limit: Maximum number of events to return
 
         Returns:
-            List of failed event records
+            List of DLQEntry instances
         """
-        with self._lock:
+        async with self._lock:
             entries = list(self._entries.values())
 
             # Filter by status
@@ -630,26 +662,9 @@ class InMemoryDLQRepository:
             entries.sort(key=lambda e: e.first_failed_at or datetime.min, reverse=True)
 
             # Apply limit
-            entries = entries[:limit]
+            return entries[:limit]
 
-            return [
-                {
-                    "id": e.id,
-                    "event_id": str(e.event_id),
-                    "projection_name": e.projection_name,
-                    "event_type": e.event_type,
-                    "event_data": e.event_data,
-                    "error_message": e.error_message,
-                    "error_stacktrace": e.error_stacktrace,
-                    "retry_count": e.retry_count,
-                    "first_failed_at": e.first_failed_at.isoformat() if e.first_failed_at else None,
-                    "last_failed_at": e.last_failed_at.isoformat() if e.last_failed_at else None,
-                    "status": e.status,
-                }
-                for e in entries
-            ]
-
-    async def get_failed_event_by_id(self, dlq_id: int | str) -> dict[str, Any] | None:
+    async def get_failed_event_by_id(self, dlq_id: int | str) -> DLQEntry | None:
         """
         Get a specific failed event by its DLQ ID.
 
@@ -657,32 +672,12 @@ class InMemoryDLQRepository:
             dlq_id: DLQ record ID
 
         Returns:
-            Failed event record, or None if not found
+            DLQEntry instance, or None if not found
         """
-        with self._lock:
+        async with self._lock:
             for entry in self._entries.values():
                 if entry.id == dlq_id:
-                    return {
-                        "id": entry.id,
-                        "event_id": str(entry.event_id),
-                        "projection_name": entry.projection_name,
-                        "event_type": entry.event_type,
-                        "event_data": entry.event_data,
-                        "error_message": entry.error_message,
-                        "error_stacktrace": entry.error_stacktrace,
-                        "retry_count": entry.retry_count,
-                        "first_failed_at": (
-                            entry.first_failed_at.isoformat() if entry.first_failed_at else None
-                        ),
-                        "last_failed_at": (
-                            entry.last_failed_at.isoformat() if entry.last_failed_at else None
-                        ),
-                        "status": entry.status,
-                        "resolved_at": (
-                            entry.resolved_at.isoformat() if entry.resolved_at else None
-                        ),
-                        "resolved_by": entry.resolved_by,
-                    }
+                    return entry
             return None
 
     async def mark_resolved(self, dlq_id: int | str, resolved_by: str | UUID) -> None:
@@ -694,7 +689,7 @@ class InMemoryDLQRepository:
             resolved_by: User ID or identifier of resolver
         """
         now = datetime.now(UTC)
-        with self._lock:
+        async with self._lock:
             for entry in self._entries.values():
                 if entry.id == dlq_id:
                     entry.status = "resolved"
@@ -709,7 +704,7 @@ class InMemoryDLQRepository:
         Args:
             dlq_id: DLQ record ID
         """
-        with self._lock:
+        async with self._lock:
             for entry in self._entries.values():
                 if entry.id == dlq_id:
                     entry.status = "retrying"
@@ -722,7 +717,7 @@ class InMemoryDLQRepository:
         Returns:
             Dictionary with failure statistics
         """
-        with self._lock:
+        async with self._lock:
             active_entries = [
                 e for e in self._entries.values() if e.status in ("failed", "retrying")
             ]
@@ -753,7 +748,7 @@ class InMemoryDLQRepository:
         Returns:
             List of projection failure statistics
         """
-        with self._lock:
+        async with self._lock:
             active_entries = [
                 e for e in self._entries.values() if e.status in ("failed", "retrying")
             ]
@@ -809,7 +804,7 @@ class InMemoryDLQRepository:
         cutoff = cutoff - timedelta(days=older_than_days)
 
         deleted = 0
-        with self._lock:
+        async with self._lock:
             keys_to_delete = []
             for key, entry in self._entries.items():
                 if entry.status == "resolved" and entry.resolved_at and entry.resolved_at < cutoff:
@@ -821,11 +816,334 @@ class InMemoryDLQRepository:
 
         return deleted
 
-    def clear(self) -> None:
+    async def clear(self) -> None:
         """Clear all entries. Useful for test setup/teardown."""
-        with self._lock:
+        async with self._lock:
             self._entries.clear()
             self._id_counter = 0
+
+
+class SQLiteDLQRepository:
+    """
+    SQLite implementation of DLQ repository.
+
+    Stores failed events in the `dead_letter_queue` table.
+
+    SQLite-specific notes:
+    - UUID stored as TEXT (36 characters, hyphenated format)
+    - Timestamps stored as TEXT in ISO 8601 format
+    - JSON stored as TEXT (no native JSONB support)
+    - Uses ? positional parameters instead of named parameters
+    - Uses SUM(CASE WHEN...) instead of COUNT(*) FILTER
+
+    Example:
+        >>> import aiosqlite
+        >>> async with aiosqlite.connect("events.db") as db:
+        ...     repo = SQLiteDLQRepository(db)
+        ...     await repo.add_failed_event(
+        ...         event_id=event.event_id,
+        ...         projection_name="MyProjection",
+        ...         event_type="MyEvent",
+        ...         event_data=event.to_dict(),
+        ...         error=exc,
+        ...     )
+    """
+
+    def __init__(self, connection: Any) -> None:
+        """
+        Initialize the DLQ repository.
+
+        Args:
+            connection: aiosqlite database connection
+        """
+        self._connection = connection
+
+    async def add_failed_event(
+        self,
+        event_id: UUID,
+        projection_name: str,
+        event_type: str,
+        event_data: dict[str, Any],
+        error: Exception,
+        retry_count: int = 0,
+    ) -> None:
+        """
+        Add or update a failed event in the DLQ.
+
+        Uses UPSERT pattern - if event already exists for this projection,
+        updates the retry count and error information.
+
+        Args:
+            event_id: Event ID that failed
+            projection_name: Name of projection that failed to process it
+            event_type: Type of event
+            event_data: Event data as dict
+            error: Exception that occurred
+            retry_count: Number of retry attempts
+        """
+        now = datetime.now(UTC).isoformat()
+        await self._connection.execute(
+            """
+            INSERT INTO dead_letter_queue
+                (event_id, projection_name, event_type, event_data,
+                 error_message, error_stacktrace, retry_count,
+                 first_failed_at, last_failed_at, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'failed')
+            ON CONFLICT (event_id, projection_name) DO UPDATE
+            SET retry_count = excluded.retry_count,
+                last_failed_at = excluded.last_failed_at,
+                error_message = excluded.error_message,
+                error_stacktrace = excluded.error_stacktrace,
+                status = 'failed'
+            """,
+            (
+                str(event_id),
+                projection_name,
+                event_type,
+                json_dumps(event_data),
+                str(error),
+                traceback.format_exc(),
+                retry_count,
+                now,
+                now,
+            ),
+        )
+        await self._connection.commit()
+
+    async def get_failed_events(
+        self,
+        projection_name: str | None = None,
+        status: str = "failed",
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """
+        Get failed events from the DLQ.
+
+        Args:
+            projection_name: Filter by projection name (optional)
+            status: Filter by status (default: "failed")
+            limit: Maximum number of events to return
+
+        Returns:
+            List of failed event records
+        """
+        # Build query dynamically based on filters
+        where_clauses = ["status = ?"]
+        params: list[Any] = [status]
+
+        if projection_name:
+            where_clauses.append("projection_name = ?")
+            params.append(projection_name)
+
+        params.append(limit)
+        where_clause = " AND ".join(where_clauses)
+
+        # where_clause is built from safe static strings only
+        cursor = await self._connection.execute(
+            f"""
+            SELECT id, event_id, projection_name, event_type, event_data,
+                   error_message, error_stacktrace, retry_count,
+                   first_failed_at, last_failed_at, status
+            FROM dead_letter_queue
+            WHERE {where_clause}
+            ORDER BY first_failed_at DESC
+            LIMIT ?
+            """,  # nosec B608
+            params,
+        )
+        rows = await cursor.fetchall()
+
+        return [
+            {
+                "id": row[0],
+                "event_id": str(row[1]),
+                "projection_name": row[2],
+                "event_type": row[3],
+                "event_data": row[4],
+                "error_message": row[5],
+                "error_stacktrace": row[6],
+                "retry_count": row[7],
+                "first_failed_at": row[8],
+                "last_failed_at": row[9],
+                "status": row[10],
+            }
+            for row in rows
+        ]
+
+    async def get_failed_event_by_id(self, dlq_id: int | str) -> dict[str, Any] | None:
+        """
+        Get a specific failed event by its DLQ ID.
+
+        Args:
+            dlq_id: DLQ record ID
+
+        Returns:
+            Failed event record, or None if not found
+        """
+        cursor = await self._connection.execute(
+            """
+            SELECT id, event_id, projection_name, event_type, event_data,
+                   error_message, error_stacktrace, retry_count,
+                   first_failed_at, last_failed_at, status,
+                   resolved_at, resolved_by
+            FROM dead_letter_queue
+            WHERE id = ?
+            """,
+            (dlq_id,),
+        )
+        row = await cursor.fetchone()
+
+        if not row:
+            return None
+
+        return {
+            "id": row[0],
+            "event_id": str(row[1]),
+            "projection_name": row[2],
+            "event_type": row[3],
+            "event_data": row[4],
+            "error_message": row[5],
+            "error_stacktrace": row[6],
+            "retry_count": row[7],
+            "first_failed_at": row[8],
+            "last_failed_at": row[9],
+            "status": row[10],
+            "resolved_at": row[11],
+            "resolved_by": row[12],
+        }
+
+    async def mark_resolved(self, dlq_id: int | str, resolved_by: str | UUID) -> None:
+        """
+        Mark a DLQ entry as resolved.
+
+        Args:
+            dlq_id: DLQ record ID
+            resolved_by: User ID or identifier of resolver
+        """
+        now = datetime.now(UTC).isoformat()
+        resolved_by_str = str(resolved_by) if resolved_by else None
+
+        await self._connection.execute(
+            """
+            UPDATE dead_letter_queue
+            SET status = 'resolved',
+                resolved_at = ?,
+                resolved_by = ?
+            WHERE id = ?
+            """,
+            (now, resolved_by_str, dlq_id),
+        )
+        await self._connection.commit()
+
+    async def mark_retrying(self, dlq_id: int | str) -> None:
+        """
+        Mark a DLQ entry as being retried.
+
+        Args:
+            dlq_id: DLQ record ID
+        """
+        await self._connection.execute(
+            """
+            UPDATE dead_letter_queue
+            SET status = 'retrying'
+            WHERE id = ?
+            """,
+            (dlq_id,),
+        )
+        await self._connection.commit()
+
+    async def get_failure_stats(self) -> dict[str, Any]:
+        """
+        Get aggregate statistics about DLQ health.
+
+        Returns:
+            Dictionary with failure statistics:
+            - total_failed: Number of entries in 'failed' status
+            - total_retrying: Number of entries in 'retrying' status
+            - affected_projections: Number of unique projections with failures
+            - oldest_failure: ISO timestamp of oldest failure, or None
+        """
+        # SQLite uses CASE WHEN instead of FILTER clause
+        cursor = await self._connection.execute(
+            """
+            SELECT
+                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as total_failed,
+                SUM(CASE WHEN status = 'retrying' THEN 1 ELSE 0 END) as total_retrying,
+                COUNT(DISTINCT projection_name) as affected_projections,
+                MIN(first_failed_at) as oldest_failure
+            FROM dead_letter_queue
+            WHERE status IN ('failed', 'retrying')
+            """
+        )
+        row = await cursor.fetchone()
+
+        return {
+            "total_failed": row[0] if row and row[0] else 0,
+            "total_retrying": row[1] if row and row[1] else 0,
+            "affected_projections": row[2] if row and row[2] else 0,
+            "oldest_failure": row[3] if row else None,
+        }
+
+    async def get_projection_failure_counts(self) -> list[dict[str, Any]]:
+        """
+        Get failure counts grouped by projection.
+
+        Returns:
+            List of projection failure statistics, sorted by failure count descending.
+            Each entry contains:
+            - projection_name: Name of the projection
+            - failure_count: Number of failures for this projection
+            - oldest_failure: ISO timestamp of oldest failure
+            - most_recent_failure: ISO timestamp of most recent failure
+        """
+        cursor = await self._connection.execute(
+            """
+            SELECT
+                projection_name,
+                COUNT(*) as failure_count,
+                MIN(first_failed_at) as oldest_failure,
+                MAX(last_failed_at) as most_recent_failure
+            FROM dead_letter_queue
+            WHERE status IN ('failed', 'retrying')
+            GROUP BY projection_name
+            ORDER BY failure_count DESC
+            """
+        )
+        rows = await cursor.fetchall()
+
+        return [
+            {
+                "projection_name": row[0],
+                "failure_count": row[1],
+                "oldest_failure": row[2],
+                "most_recent_failure": row[3],
+            }
+            for row in rows
+        ]
+
+    async def delete_resolved_events(self, older_than_days: int = 30) -> int:
+        """
+        Delete resolved events older than specified days.
+
+        Useful for periodic cleanup to prevent DLQ table growth.
+
+        Args:
+            older_than_days: Delete resolved events older than this many days
+
+        Returns:
+            Number of events deleted
+        """
+        cursor = await self._connection.execute(
+            """
+            DELETE FROM dead_letter_queue
+            WHERE status = 'resolved'
+            AND resolved_at < datetime('now', '-' || ? || ' days')
+            """,
+            (older_than_days,),
+        )
+        await self._connection.commit()
+        rowcount: int = cursor.rowcount
+        return rowcount
 
 
 # Type alias for backwards compatibility

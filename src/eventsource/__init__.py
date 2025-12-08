@@ -10,20 +10,24 @@ This library provides:
 - Transactional Outbox pattern
 """
 
-__version__ = "0.1.0"
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("eventsource-py")
+except PackageNotFoundError:
+    # Package not installed (running from source without install)
+    __version__ = "0.0.0.dev0"
 
 # Exceptions - available immediately
 # Aggregates (Task 07, Task 08)
-from eventsource.aggregates.base import AggregateRoot, DeclarativeAggregate, handles
+from eventsource.aggregates.base import AggregateRoot, DeclarativeAggregate
 from eventsource.aggregates.repository import AggregateRepository
 
 # Event bus (Task 10)
 from eventsource.bus.interface import (
     AsyncEventHandler,
     EventBus,
-    EventHandler,
     EventHandlerFunc,
-    EventSubscriber,
 )
 from eventsource.bus.memory import InMemoryEventBus
 
@@ -64,8 +68,29 @@ from eventsource.exceptions import (
     AggregateNotFoundError,
     EventNotFoundError,
     EventSourceError,
+    EventVersionError,
     OptimisticLockError,
     ProjectionError,
+)
+
+# Projections (Task 09)
+from eventsource.projections.base import (
+    CheckpointTrackingProjection,
+    DatabaseProjection,
+    DeclarativeProjection,
+    Projection,
+)
+
+# Decorators - canonical location for @handles (TD-006)
+from eventsource.projections.decorators import handles
+
+# Protocols - canonical location (TD-007)
+from eventsource.protocols import (
+    EventHandler,
+    EventSubscriber,
+    FlexibleEventHandler,
+    FlexibleEventSubscriber,
+    SyncEventHandler,
 )
 
 # Repository infrastructure (Task 12)
@@ -102,9 +127,19 @@ from eventsource.stores.interface import (
     ReadDirection,
     ReadOptions,
     StoredEvent,
-    SyncEventStore,
 )
 from eventsource.stores.postgresql import PostgreSQLEventStore
+
+# SQLite Event Store and Repositories (optional - requires aiosqlite)
+try:
+    from eventsource.repositories.checkpoint import SQLiteCheckpointRepository  # noqa: F401
+    from eventsource.repositories.dlq import SQLiteDLQRepository  # noqa: F401
+    from eventsource.repositories.outbox import SQLiteOutboxRepository  # noqa: F401
+    from eventsource.stores.sqlite import SQLiteEventStore  # noqa: F401
+
+    SQLITE_AVAILABLE = True
+except ImportError:
+    SQLITE_AVAILABLE = False
 
 # Types - available immediately
 from eventsource.types import (
@@ -115,17 +150,6 @@ from eventsource.types import (
     TenantId,
     TState,
 )
-
-# The following imports will be added as modules are implemented:
-#
-# Projections (Task 09)
-# from eventsource.projections.base import (
-#     Projection,
-#     CheckpointTrackingProjection,
-#     DeclarativeProjection,
-#     ProjectionRegistry,
-# )
-# from eventsource.projections.decorators import handles
 
 __all__ = [
     # Version
@@ -151,7 +175,6 @@ __all__ = [
     "DuplicateEventTypeError",
     # Event Store Interface and Data Structures (Task 04)
     "EventStore",
-    "SyncEventStore",
     "EventPublisher",
     "EventStream",
     "AppendResult",
@@ -169,11 +192,15 @@ __all__ = [
     "handles",
     # Event Bus (Task 10)
     "EventBus",
-    "EventHandler",
-    "EventSubscriber",
     "EventHandlerFunc",
     "AsyncEventHandler",
     "InMemoryEventBus",
+    # Protocols (TD-007)
+    "EventHandler",
+    "SyncEventHandler",
+    "FlexibleEventHandler",
+    "EventSubscriber",
+    "FlexibleEventSubscriber",
     # Redis Event Bus (Task 11)
     "RedisEventBus",
     "RedisEventBusConfig",
@@ -190,6 +217,7 @@ __all__ = [
     "AggregateNotFoundError",
     "EventNotFoundError",
     "EventSourceError",
+    "EventVersionError",
     "OptimisticLockError",
     "ProjectionError",
     # Repository infrastructure (Task 12)
@@ -210,4 +238,21 @@ __all__ = [
     "OutboxEntry",
     "OutboxStats",
     "EventSourceJSONEncoder",
+    # Projections (Task 09)
+    "Projection",
+    "CheckpointTrackingProjection",
+    "DeclarativeProjection",
+    "DatabaseProjection",
 ]
+
+# Conditionally add SQLite exports when aiosqlite is available
+if SQLITE_AVAILABLE:
+    __all__.extend(
+        [
+            "SQLITE_AVAILABLE",
+            "SQLiteEventStore",
+            "SQLiteCheckpointRepository",
+            "SQLiteOutboxRepository",
+            "SQLiteDLQRepository",
+        ]
+    )

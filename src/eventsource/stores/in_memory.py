@@ -5,14 +5,15 @@ Useful for testing and development. Not suitable for production
 as all events are lost when the process terminates.
 """
 
+import asyncio
 from collections import defaultdict
 from collections.abc import AsyncIterator
 from datetime import datetime
-from threading import Lock
 from uuid import UUID
 
 from eventsource.events.base import DomainEvent
 from eventsource.exceptions import OptimisticLockError
+from eventsource.stores._compat import normalize_timestamp
 from eventsource.stores.interface import (
     AppendResult,
     EventStore,
@@ -76,8 +77,8 @@ class InMemoryEventStore(EventStore):
         self._global_events: list[tuple[DomainEvent, int, str]] = []  # (event, position, stream_id)
         # Global position counter
         self._global_position: int = 0
-        # Lock for thread safety
-        self._lock: Lock = Lock()
+        # Lock for async concurrency safety
+        self._lock: asyncio.Lock = asyncio.Lock()
 
     async def append_events(
         self,
@@ -122,7 +123,7 @@ class InMemoryEventStore(EventStore):
         if not events:
             return AppendResult.successful(expected_version)
 
-        with self._lock:
+        async with self._lock:
             # Get current version for this aggregate type
             all_events = self._events[aggregate_id]
             current_events = [e for e in all_events if e.aggregate_type == aggregate_type]
@@ -207,7 +208,7 @@ class InMemoryEventStore(EventStore):
             >>> for event in stream.events:
             ...     aggregate.apply_event(event, is_new=False)
         """
-        with self._lock:
+        async with self._lock:
             all_events = list(self._events[aggregate_id])
             stored_aggregate_type = self._aggregate_types.get(aggregate_id, "Unknown")
 
@@ -237,7 +238,7 @@ class InMemoryEventStore(EventStore):
         self,
         aggregate_type: str,
         tenant_id: UUID | None = None,
-        from_timestamp: float | None = None,
+        from_timestamp: datetime | float | None = None,
     ) -> list[DomainEvent]:
         """
         Get all events for a specific aggregate type.
@@ -248,18 +249,24 @@ class InMemoryEventStore(EventStore):
         Args:
             aggregate_type: Type of aggregate (e.g., 'Order')
             tenant_id: Filter by tenant ID (optional, for multi-tenant systems)
-            from_timestamp: Only get events after this Unix timestamp (optional)
+            from_timestamp: Only get events after this datetime (optional).
+                Float (Unix timestamp) is deprecated and will emit a warning.
 
         Returns:
             List of events in chronological order
 
         Example:
+            >>> from datetime import datetime, UTC, timedelta
             >>> order_events = await store.get_events_by_type(
             ...     "Order",
             ...     tenant_id=tenant_uuid,
+            ...     from_timestamp=datetime.now(UTC) - timedelta(hours=1),
             ... )
         """
-        with self._lock:
+        # Normalize timestamp (handles deprecation warning for float)
+        normalized_timestamp = normalize_timestamp(from_timestamp, "from_timestamp")
+
+        async with self._lock:
             all_events: list[DomainEvent] = []
 
             # Iterate through all aggregates
@@ -273,10 +280,10 @@ class InMemoryEventStore(EventStore):
                     if tenant_id is not None and event.tenant_id != tenant_id:
                         continue
 
-                    # Filter by timestamp if specified
+                    # Filter by timestamp if specified (using normalized datetime)
                     if (
-                        from_timestamp is not None
-                        and event.occurred_at.timestamp() <= from_timestamp
+                        normalized_timestamp is not None
+                        and event.occurred_at <= normalized_timestamp
                     ):
                         continue
 
@@ -296,7 +303,7 @@ class InMemoryEventStore(EventStore):
         Returns:
             True if event exists, False otherwise
         """
-        with self._lock:
+        async with self._lock:
             return event_id in self._event_ids
 
     async def get_stream_version(
@@ -317,7 +324,7 @@ class InMemoryEventStore(EventStore):
         Returns:
             Current version (0 if aggregate doesn't exist)
         """
-        with self._lock:
+        async with self._lock:
             all_events = self._events[aggregate_id]
             current_events = [e for e in all_events if e.aggregate_type == aggregate_type]
             return len(current_events)
@@ -357,7 +364,7 @@ class InMemoryEventStore(EventStore):
             aggregate_id = UUID(parts[0])
             aggregate_type = parts[1]
 
-        with self._lock:
+        async with self._lock:
             # Get events for this aggregate
             all_events = list(self._events[aggregate_id])
 
@@ -438,7 +445,7 @@ class InMemoryEventStore(EventStore):
         if options is None:
             options = ReadOptions()
 
-        with self._lock:
+        async with self._lock:
             # Get all global events
             all_global = list(self._global_events)
 
@@ -509,24 +516,24 @@ class InMemoryEventStore(EventStore):
 
     # Additional methods for testing support
 
-    def clear(self) -> None:
+    async def clear(self) -> None:
         """
         Clear all events from the store.
 
         Useful for resetting state between tests.
 
         Example:
-            >>> store.clear()
+            >>> await store.clear()
             >>> assert store.get_event_count() == 0
         """
-        with self._lock:
+        async with self._lock:
             self._events.clear()
             self._aggregate_types.clear()
             self._event_ids.clear()
             self._global_events.clear()
             self._global_position = 0
 
-    def get_all_events(self) -> list[DomainEvent]:
+    async def get_all_events(self) -> list[DomainEvent]:
         """
         Get all events from all aggregates.
 
@@ -535,39 +542,39 @@ class InMemoryEventStore(EventStore):
         Returns:
             List of all events in chronological order
         """
-        with self._lock:
+        async with self._lock:
             all_events: list[DomainEvent] = []
             for events in self._events.values():
                 all_events.extend(events)
             all_events.sort(key=lambda e: e.occurred_at)
             return all_events
 
-    def get_event_count(self) -> int:
+    async def get_event_count(self) -> int:
         """
         Get total number of events stored.
 
         Returns:
             Total event count across all aggregates
         """
-        with self._lock:
+        async with self._lock:
             return len(self._event_ids)
 
-    def get_aggregate_ids(self) -> list[UUID]:
+    async def get_aggregate_ids(self) -> list[UUID]:
         """
         Get all aggregate IDs that have events.
 
         Returns:
             List of aggregate IDs
         """
-        with self._lock:
+        async with self._lock:
             return list(self._aggregate_types.keys())
 
-    def get_global_position(self) -> int:
+    async def get_global_position(self) -> int:
         """
         Get the current global position counter.
 
         Returns:
             Current global position (highest assigned position)
         """
-        with self._lock:
+        async with self._lock:
             return self._global_position

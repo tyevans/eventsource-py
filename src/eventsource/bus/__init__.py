@@ -56,9 +56,7 @@ For RabbitMQ-based distributed event bus:
 from eventsource.bus.interface import (
     AsyncEventHandler,
     EventBus,
-    EventHandler,
     EventHandlerFunc,
-    EventSubscriber,
 )
 from eventsource.bus.memory import InMemoryEventBus
 
@@ -80,13 +78,24 @@ from eventsource.bus.redis import (
     RedisNotAvailableError,
 )
 
+# Protocols from canonical location
+from eventsource.protocols import (
+    EventHandler,
+    EventSubscriber,
+    FlexibleEventHandler,
+    FlexibleEventSubscriber,
+)
+
 __all__ = [
-    # Interface and protocols
+    # Interface and ABCs
     "EventBus",
-    "EventHandler",
-    "EventSubscriber",
     "EventHandlerFunc",
     "AsyncEventHandler",
+    # Protocols (from canonical location)
+    "EventHandler",
+    "EventSubscriber",
+    "FlexibleEventHandler",
+    "FlexibleEventSubscriber",
     # Implementations
     "InMemoryEventBus",
     # Redis event bus (Task 11)

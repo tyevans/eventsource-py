@@ -59,11 +59,11 @@ class TestPostgreSQLDLQRepositoryBasics:
         failed_events = await postgres_dlq_repo.get_failed_events(projection_name=projection_name)
 
         assert len(failed_events) == 1
-        assert failed_events[0]["event_id"] == str(event_id)
-        assert failed_events[0]["projection_name"] == projection_name
-        assert failed_events[0]["event_type"] == event_type
-        assert failed_events[0]["error_message"] == "Test error message"
-        assert failed_events[0]["status"] == "failed"
+        assert failed_events[0].event_id == event_id
+        assert failed_events[0].projection_name == projection_name
+        assert failed_events[0].event_type == event_type
+        assert failed_events[0].error_message == "Test error message"
+        assert failed_events[0].status == "failed"
 
     async def test_add_failed_event_with_stacktrace(
         self,
@@ -89,8 +89,9 @@ class TestPostgreSQLDLQRepositoryBasics:
         )
 
         assert len(failed_events) == 1
-        assert "RuntimeError" in failed_events[0]["error_stacktrace"]
-        assert "Intentional error for test" in failed_events[0]["error_stacktrace"]
+        assert failed_events[0].error_stacktrace is not None
+        assert "RuntimeError" in failed_events[0].error_stacktrace
+        assert "Intentional error for test" in failed_events[0].error_stacktrace
 
     async def test_add_failed_event_upsert_on_retry(
         self,
@@ -124,8 +125,8 @@ class TestPostgreSQLDLQRepositoryBasics:
         failed_events = await postgres_dlq_repo.get_failed_events(projection_name=projection_name)
 
         assert len(failed_events) == 1
-        assert failed_events[0]["retry_count"] == 1
-        assert failed_events[0]["error_message"] == "Second failure"
+        assert failed_events[0].retry_count == 1
+        assert failed_events[0].error_message == "Second failure"
 
 
 class TestPostgreSQLDLQRepositoryRetrieval:
@@ -176,12 +177,12 @@ class TestPostgreSQLDLQRepositoryRetrieval:
         assert len(failed) >= 1
 
         # Mark as retrying
-        dlq_id = failed[0]["id"]
+        dlq_id = failed[0].id
         await postgres_dlq_repo.mark_retrying(dlq_id)
 
         # Get retrying events
         retrying = await postgres_dlq_repo.get_failed_events(status="retrying")
-        assert any(e["id"] == dlq_id for e in retrying)
+        assert any(e.id == dlq_id for e in retrying)
 
     async def test_get_failed_events_with_limit(
         self,
@@ -223,14 +224,14 @@ class TestPostgreSQLDLQRepositoryRetrieval:
 
         # Get all to find the ID
         all_events = await postgres_dlq_repo.get_failed_events(projection_name="ByIdProjection")
-        dlq_id = all_events[0]["id"]
+        dlq_id = all_events[0].id
 
         # Get by ID
         result = await postgres_dlq_repo.get_failed_event_by_id(dlq_id)
 
         assert result is not None
-        assert result["event_id"] == str(event_id)
-        assert result["projection_name"] == "ByIdProjection"
+        assert result.event_id == event_id
+        assert result.projection_name == "ByIdProjection"
 
     async def test_get_failed_event_by_id_nonexistent(
         self,
@@ -262,16 +263,17 @@ class TestPostgreSQLDLQRepositoryStatusTransitions:
 
         # Get ID
         events = await postgres_dlq_repo.get_failed_events(projection_name="ResolveProjection")
-        dlq_id = events[0]["id"]
+        dlq_id = events[0].id
 
         # Mark resolved
         await postgres_dlq_repo.mark_resolved(dlq_id, resolver_id)
 
         # Verify
         result = await postgres_dlq_repo.get_failed_event_by_id(dlq_id)
-        assert result["status"] == "resolved"
-        assert result["resolved_by"] == resolver_id
-        assert result["resolved_at"] is not None
+        assert result is not None
+        assert result.status == "resolved"
+        assert result.resolved_by == resolver_id
+        assert result.resolved_at is not None
 
     async def test_mark_retrying(
         self,
@@ -290,14 +292,15 @@ class TestPostgreSQLDLQRepositoryStatusTransitions:
 
         # Get ID
         events = await postgres_dlq_repo.get_failed_events(projection_name="RetryingProjection")
-        dlq_id = events[0]["id"]
+        dlq_id = events[0].id
 
         # Mark retrying
         await postgres_dlq_repo.mark_retrying(dlq_id)
 
         # Verify
         result = await postgres_dlq_repo.get_failed_event_by_id(dlq_id)
-        assert result["status"] == "retrying"
+        assert result is not None
+        assert result.status == "retrying"
 
 
 class TestPostgreSQLDLQRepositoryStatistics:
@@ -332,7 +335,7 @@ class TestPostgreSQLDLQRepositoryStatistics:
 
         # Mark one as retrying
         events = await postgres_dlq_repo.get_failed_events(projection_name="Stats1")
-        await postgres_dlq_repo.mark_retrying(events[0]["id"])
+        await postgres_dlq_repo.mark_retrying(events[0].id)
 
         stats = await postgres_dlq_repo.get_failure_stats()
 
@@ -404,7 +407,7 @@ class TestPostgreSQLDLQRepositoryCleanup:
         )
 
         events = await postgres_dlq_repo.get_failed_events(projection_name="CleanupProjection")
-        dlq_id = events[0]["id"]
+        dlq_id = events[0].id
 
         await postgres_dlq_repo.mark_resolved(dlq_id, "user")
 
@@ -446,7 +449,7 @@ class TestPostgreSQLDLQRepositoryCleanup:
         )
 
         events = await postgres_dlq_repo.get_failed_events(projection_name="RecentProjection")
-        dlq_id = events[0]["id"]
+        dlq_id = events[0].id
 
         await postgres_dlq_repo.mark_resolved(dlq_id, "user")
 

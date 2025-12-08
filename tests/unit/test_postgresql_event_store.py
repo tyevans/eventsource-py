@@ -15,6 +15,7 @@ Tests cover:
 All database interactions are mocked using unittest.mock.
 """
 
+import warnings
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -688,7 +689,7 @@ class TestEventFiltering:
         store: PostgreSQLEventStore,
         mock_session: AsyncMock,
     ) -> None:
-        """Test get_events_by_type with Unix timestamp filter."""
+        """Test get_events_by_type with Unix timestamp filter (deprecated)."""
         now = datetime.now(UTC)
         agg_id = uuid4()
         event = SampleEvent(aggregate_id=agg_id, data="new")
@@ -696,8 +697,12 @@ class TestEventFiltering:
 
         mock_session.execute.return_value = create_mock_result([create_event_row(event, version=1)])
 
+        # Use warnings.catch_warnings to suppress the deprecation warning
+        # since we're intentionally testing backward compatibility
         from_ts = (now - timedelta(hours=1)).timestamp()
-        events = await store.get_events_by_type("TestAggregate", from_timestamp=from_ts)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            events = await store.get_events_by_type("TestAggregate", from_timestamp=from_ts)
 
         assert len(events) == 1
 
@@ -1246,3 +1251,221 @@ class TestTypeConversion:
 
         assert isinstance(result["occurred_at"], datetime)
         assert result["occurred_at"].tzinfo is not None
+
+
+# --- Configurable UUID Detection Tests ---
+
+
+class TestConfigurableUUIDDetection:
+    """Tests for configurable UUID field detection."""
+
+    def test_default_uuid_fields_detected(
+        self,
+        mock_session_factory: MagicMock,
+        event_registry: EventRegistry,
+    ) -> None:
+        """Default UUID fields are always detected."""
+        store = PostgreSQLEventStore(
+            session_factory=mock_session_factory,
+            event_registry=event_registry,
+            enable_tracing=False,
+        )
+
+        assert store._is_uuid_field("event_id") is True
+        assert store._is_uuid_field("aggregate_id") is True
+        assert store._is_uuid_field("tenant_id") is True
+        assert store._is_uuid_field("correlation_id") is True
+        assert store._is_uuid_field("causation_id") is True
+
+    def test_default_string_fields_excluded(
+        self,
+        mock_session_factory: MagicMock,
+        event_registry: EventRegistry,
+    ) -> None:
+        """Default string ID fields are excluded."""
+        store = PostgreSQLEventStore(
+            session_factory=mock_session_factory,
+            event_registry=event_registry,
+            enable_tracing=False,
+        )
+
+        assert store._is_uuid_field("actor_id") is False
+        assert store._is_uuid_field("issuer_id") is False
+        assert store._is_uuid_field("recipient_id") is False
+        assert store._is_uuid_field("invited_by") is False
+
+    def test_custom_uuid_field_added(
+        self,
+        mock_session_factory: MagicMock,
+        event_registry: EventRegistry,
+    ) -> None:
+        """Custom UUID fields are detected."""
+        store = PostgreSQLEventStore(
+            session_factory=mock_session_factory,
+            event_registry=event_registry,
+            enable_tracing=False,
+            uuid_fields={"custom_reference_id", "special_field"},
+        )
+
+        # Custom fields should be detected
+        assert store._is_uuid_field("custom_reference_id") is True
+        assert store._is_uuid_field("special_field") is True
+        # Default fields still work
+        assert store._is_uuid_field("event_id") is True
+
+    def test_custom_string_field_excluded(
+        self,
+        mock_session_factory: MagicMock,
+        event_registry: EventRegistry,
+    ) -> None:
+        """Custom string fields are excluded from auto-detection."""
+        store = PostgreSQLEventStore(
+            session_factory=mock_session_factory,
+            event_registry=event_registry,
+            enable_tracing=False,
+            string_id_fields={"stripe_customer_id", "external_api_id"},
+        )
+
+        # Custom exclusions should work
+        # (would normally match _id suffix, but excluded)
+        assert store._is_uuid_field("stripe_customer_id") is False
+        assert store._is_uuid_field("external_api_id") is False
+        # Default exclusions still work
+        assert store._is_uuid_field("actor_id") is False
+
+    def test_auto_detect_disabled(
+        self,
+        mock_session_factory: MagicMock,
+        event_registry: EventRegistry,
+    ) -> None:
+        """auto_detect_uuid=False disables suffix detection."""
+        store = PostgreSQLEventStore(
+            session_factory=mock_session_factory,
+            event_registry=event_registry,
+            enable_tracing=False,
+            auto_detect_uuid=False,
+        )
+
+        # Not in explicit list, suffix detection disabled
+        assert store._is_uuid_field("some_random_id") is False
+        assert store._is_uuid_field("custom_entity_id") is False
+        # But explicit UUID fields still work
+        assert store._is_uuid_field("event_id") is True
+        assert store._is_uuid_field("aggregate_id") is True
+
+    def test_auto_detect_enabled_by_default(
+        self,
+        mock_session_factory: MagicMock,
+        event_registry: EventRegistry,
+    ) -> None:
+        """Auto-detection is enabled by default."""
+        store = PostgreSQLEventStore(
+            session_factory=mock_session_factory,
+            event_registry=event_registry,
+            enable_tracing=False,
+        )
+
+        # Fields ending in _id should be detected
+        assert store._is_uuid_field("order_id") is True
+        assert store._is_uuid_field("customer_id") is True
+        assert store._is_uuid_field("product_id") is True
+
+    def test_strict_uuid_detection(
+        self,
+        mock_session_factory: MagicMock,
+        event_registry: EventRegistry,
+    ) -> None:
+        """with_strict_uuid_detection uses only explicit fields."""
+        store = PostgreSQLEventStore.with_strict_uuid_detection(
+            session_factory=mock_session_factory,
+            event_registry=event_registry,
+            uuid_fields={"event_id", "aggregate_id"},
+            enable_tracing=False,
+        )
+
+        # Only explicitly listed fields are UUIDs
+        assert store._is_uuid_field("event_id") is True
+        assert store._is_uuid_field("aggregate_id") is True
+        # Default UUID fields NOT in the explicit list
+        assert store._is_uuid_field("tenant_id") is False
+        assert store._is_uuid_field("correlation_id") is False
+        # Auto-detection is disabled
+        assert store._is_uuid_field("any_other_id") is False
+        assert store._is_uuid_field("customer_id") is False
+
+    def test_strict_uuid_detection_with_outbox(
+        self,
+        mock_session_factory: MagicMock,
+        event_registry: EventRegistry,
+    ) -> None:
+        """with_strict_uuid_detection passes through other options."""
+        store = PostgreSQLEventStore.with_strict_uuid_detection(
+            session_factory=mock_session_factory,
+            event_registry=event_registry,
+            uuid_fields={"event_id"},
+            outbox_enabled=True,
+            enable_tracing=False,
+        )
+
+        assert store.outbox_enabled is True
+        assert store._is_uuid_field("event_id") is True
+
+    def test_exclusion_takes_precedence_over_auto_detect(
+        self,
+        mock_session_factory: MagicMock,
+        event_registry: EventRegistry,
+    ) -> None:
+        """String ID exclusions take precedence over auto-detection."""
+        store = PostgreSQLEventStore(
+            session_factory=mock_session_factory,
+            event_registry=event_registry,
+            enable_tracing=False,
+            string_id_fields={"external_order_id"},  # Explicitly exclude
+            auto_detect_uuid=True,
+        )
+
+        # Would match _id suffix, but explicitly excluded
+        assert store._is_uuid_field("external_order_id") is False
+
+    def test_explicit_uuid_takes_precedence_over_exclusion(
+        self,
+        mock_session_factory: MagicMock,
+        event_registry: EventRegistry,
+    ) -> None:
+        """Explicit UUID fields take precedence over exclusions."""
+        store = PostgreSQLEventStore(
+            session_factory=mock_session_factory,
+            event_registry=event_registry,
+            enable_tracing=False,
+            uuid_fields={"special_id"},
+            string_id_fields={"special_id"},  # Also in exclusions
+        )
+
+        # Explicit UUID takes precedence
+        assert store._is_uuid_field("special_id") is True
+
+    def test_class_attributes_are_frozen(
+        self,
+        mock_session_factory: MagicMock,
+        event_registry: EventRegistry,
+    ) -> None:
+        """Class default sets are frozensets (immutable)."""
+        assert isinstance(PostgreSQLEventStore.DEFAULT_UUID_FIELDS, frozenset)
+        assert isinstance(PostgreSQLEventStore.DEFAULT_STRING_ID_FIELDS, frozenset)
+
+    def test_instance_sets_are_frozen(
+        self,
+        mock_session_factory: MagicMock,
+        event_registry: EventRegistry,
+    ) -> None:
+        """Instance UUID/string field sets are frozensets (immutable)."""
+        store = PostgreSQLEventStore(
+            session_factory=mock_session_factory,
+            event_registry=event_registry,
+            enable_tracing=False,
+            uuid_fields={"custom_id"},
+            string_id_fields={"external_id"},
+        )
+
+        assert isinstance(store._uuid_fields, frozenset)
+        assert isinstance(store._string_id_fields, frozenset)

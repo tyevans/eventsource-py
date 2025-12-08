@@ -11,18 +11,24 @@ This enables:
 - Decoupled publishing from the main request path
 """
 
+import asyncio
 import json
-from dataclasses import dataclass
+import warnings
+from collections.abc import Iterator
+from dataclasses import dataclass, fields
 from datetime import UTC, datetime
-from threading import Lock
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 from uuid import UUID, uuid4
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from eventsource.events.base import DomainEvent
+from eventsource.repositories._connection import execute_with_connection
 from eventsource.repositories._json import EventSourceJSONEncoder, json_dumps
+
+if TYPE_CHECKING:
+    import aiosqlite
 
 
 @dataclass
@@ -43,6 +49,10 @@ class OutboxEntry:
         published_at: When the event was published (if applicable)
         retry_count: Number of publish retry attempts
         last_error: Last error message (if any)
+
+    Note:
+        Dict-style access (entry["key"]) is deprecated. Use attribute access
+        (entry.key) instead. Dict access will be removed in version 0.3.0.
     """
 
     id: UUID
@@ -57,6 +67,63 @@ class OutboxEntry:
     published_at: datetime | None = None
     retry_count: int = 0
     last_error: str | None = None
+
+    def __getitem__(self, key: str) -> Any:
+        """
+        Dict-style access for backward compatibility.
+
+        .. deprecated:: 0.1.0
+            Use attribute access (entry.event_id) instead of
+            dict access (entry["event_id"]).
+        """
+        warnings.warn(
+            f"Dict-style access to OutboxEntry is deprecated. "
+            f"Use 'entry.{key}' instead of 'entry[\"{key}\"]'. "
+            "Dict access will be removed in version 0.3.0.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        try:
+            return getattr(self, key)
+        except AttributeError:
+            raise KeyError(key) from None
+
+    def __contains__(self, key: str) -> bool:
+        """Support 'key in entry' for backward compatibility."""
+        return hasattr(self, key)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """
+        Dict-style get for backward compatibility.
+
+        .. deprecated:: 0.1.0
+            Use attribute access (entry.event_id) instead of
+            dict access (entry.get("event_id")).
+        """
+        warnings.warn(
+            f"Dict-style access to OutboxEntry is deprecated. "
+            f"Use 'entry.{key}' instead of 'entry.get(\"{key}\")'. "
+            "Dict access will be removed in version 0.3.0.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return getattr(self, key, default)
+
+    def keys(self) -> list[str]:
+        """Return field names for backward compatibility."""
+        return [f.name for f in fields(self)]
+
+    def values(self) -> list[Any]:
+        """Return field values for backward compatibility."""
+        return [getattr(self, f.name) for f in fields(self)]
+
+    def items(self) -> list[tuple[str, Any]]:
+        """Return field items for backward compatibility."""
+        return [(f.name, getattr(self, f.name)) for f in fields(self)]
+
+    def __iter__(self) -> Iterator[str]:
+        """Allow iteration over field names for backward compatibility."""
+        return iter(self.keys())
 
 
 @dataclass(frozen=True)
@@ -104,7 +171,7 @@ class OutboxRepository(Protocol):
         """
         ...
 
-    async def get_pending_events(self, limit: int = 100) -> list[dict[str, Any]]:
+    async def get_pending_events(self, limit: int = 100) -> list[OutboxEntry]:
         """
         Get pending events that need to be published.
 
@@ -112,7 +179,7 @@ class OutboxRepository(Protocol):
             limit: Maximum number of events to return
 
         Returns:
-            List of pending outbox records
+            List of OutboxEntry instances
         """
         ...
 
@@ -151,7 +218,7 @@ class PostgreSQLOutboxRepository:
         >>> pending = await repo.get_pending_events(limit=100)
         >>> for entry in pending:
         ...     # Publish to event bus
-        ...     await repo.mark_published(entry["id"])
+        ...     await repo.mark_published(entry.id)
     """
 
     def __init__(self, conn: AsyncConnection | AsyncEngine):
@@ -205,15 +272,12 @@ class PostgreSQLOutboxRepository:
             "created_at": now,
         }
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.begin() as conn:
-                await conn.execute(query, params)
-        else:
-            await self.conn.execute(query, params)
+        async with execute_with_connection(self.conn, transactional=True) as conn:
+            await conn.execute(query, params)
 
         return outbox_id
 
-    async def get_pending_events(self, limit: int = 100) -> list[dict[str, Any]]:
+    async def get_pending_events(self, limit: int = 100) -> list[OutboxEntry]:
         """
         Get pending events that need to be published.
 
@@ -221,7 +285,7 @@ class PostgreSQLOutboxRepository:
             limit: Maximum number of events to return
 
         Returns:
-            List of pending outbox records
+            List of OutboxEntry instances
         """
         query = text("""
             SELECT id, event_id, event_type, aggregate_id, aggregate_type,
@@ -232,26 +296,23 @@ class PostgreSQLOutboxRepository:
             LIMIT :limit
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.connect() as conn:
-                result = await conn.execute(query, {"limit": limit})
-                rows = result.fetchall()
-        else:
-            result = await self.conn.execute(query, {"limit": limit})
+        async with execute_with_connection(self.conn, transactional=False) as conn:
+            result = await conn.execute(query, {"limit": limit})
             rows = result.fetchall()
 
         return [
-            {
-                "id": str(row[0]),
-                "event_id": str(row[1]),
-                "event_type": row[2],
-                "aggregate_id": str(row[3]),
-                "aggregate_type": row[4],
-                "tenant_id": str(row[5]) if row[5] else None,
-                "event_data": row[6],
-                "created_at": row[7],
-                "retry_count": row[8],
-            }
+            OutboxEntry(
+                id=row[0],
+                event_id=row[1],
+                event_type=row[2],
+                aggregate_id=row[3],
+                aggregate_type=row[4],
+                tenant_id=row[5],
+                event_data=row[6],
+                created_at=row[7],
+                status="pending",
+                retry_count=row[8],
+            )
             for row in rows
         ]
 
@@ -270,11 +331,8 @@ class PostgreSQLOutboxRepository:
             WHERE id = :id
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.begin() as conn:
-                await conn.execute(query, {"id": outbox_id, "published_at": now})
-        else:
-            await self.conn.execute(query, {"id": outbox_id, "published_at": now})
+        async with execute_with_connection(self.conn, transactional=True) as conn:
+            await conn.execute(query, {"id": outbox_id, "published_at": now})
 
     async def increment_retry(self, outbox_id: UUID, error: str | None = None) -> None:
         """
@@ -291,11 +349,8 @@ class PostgreSQLOutboxRepository:
             WHERE id = :id
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.begin() as conn:
-                await conn.execute(query, {"id": outbox_id, "error": error})
-        else:
-            await self.conn.execute(query, {"id": outbox_id, "error": error})
+        async with execute_with_connection(self.conn, transactional=True) as conn:
+            await conn.execute(query, {"id": outbox_id, "error": error})
 
     async def mark_failed(self, outbox_id: UUID, error: str) -> None:
         """
@@ -312,11 +367,8 @@ class PostgreSQLOutboxRepository:
             WHERE id = :id
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.begin() as conn:
-                await conn.execute(query, {"id": outbox_id, "error": error})
-        else:
-            await self.conn.execute(query, {"id": outbox_id, "error": error})
+        async with execute_with_connection(self.conn, transactional=True) as conn:
+            await conn.execute(query, {"id": outbox_id, "error": error})
 
     async def cleanup_published(self, days: int = 7) -> int:
         """
@@ -335,12 +387,8 @@ class PostgreSQLOutboxRepository:
             RETURNING id
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.begin() as conn:
-                result = await conn.execute(query, {"days": days})
-                return len(result.fetchall())
-        else:
-            result = await self.conn.execute(query, {"days": days})
+        async with execute_with_connection(self.conn, transactional=True) as conn:
+            result = await conn.execute(query, {"days": days})
             return len(result.fetchall())
 
     async def get_stats(self) -> dict[str, Any]:
@@ -360,12 +408,8 @@ class PostgreSQLOutboxRepository:
             FROM event_outbox
         """)
 
-        if isinstance(self.conn, AsyncEngine):
-            async with self.conn.connect() as conn:
-                result = await conn.execute(query)
-                row = result.fetchone()
-        else:
-            result = await self.conn.execute(query)
+        async with execute_with_connection(self.conn, transactional=False) as conn:
+            result = await conn.execute(query)
             row = result.fetchone()
 
         # Aggregate query always returns a row
@@ -397,13 +441,13 @@ class InMemoryOutboxRepository:
         >>> repo = InMemoryOutboxRepository()
         >>> outbox_id = await repo.add_event(event)
         >>> pending = await repo.get_pending_events()
-        >>> await repo.mark_published(UUID(pending[0]["id"]))
+        >>> await repo.mark_published(pending[0].id)
     """
 
     def __init__(self) -> None:
         """Initialize an empty in-memory outbox repository."""
         self._entries: dict[UUID, OutboxEntry] = {}
-        self._lock = Lock()
+        self._lock: asyncio.Lock = asyncio.Lock()
 
     async def add_event(self, event: DomainEvent) -> UUID:
         """
@@ -428,7 +472,7 @@ class InMemoryOutboxRepository:
             "payload": json.loads(event.model_dump_json()),
         }
 
-        with self._lock:
+        async with self._lock:
             self._entries[outbox_id] = OutboxEntry(
                 id=outbox_id,
                 event_id=event.event_id,
@@ -443,7 +487,7 @@ class InMemoryOutboxRepository:
 
         return outbox_id
 
-    async def get_pending_events(self, limit: int = 100) -> list[dict[str, Any]]:
+    async def get_pending_events(self, limit: int = 100) -> list[OutboxEntry]:
         """
         Get pending events that need to be published.
 
@@ -451,28 +495,13 @@ class InMemoryOutboxRepository:
             limit: Maximum number of events to return
 
         Returns:
-            List of pending outbox records
+            List of OutboxEntry instances
         """
-        with self._lock:
+        async with self._lock:
             pending = [e for e in self._entries.values() if e.status == "pending"]
             # Sort by created_at ascending (oldest first)
             pending.sort(key=lambda e: e.created_at)
-            pending = pending[:limit]
-
-            return [
-                {
-                    "id": str(e.id),
-                    "event_id": str(e.event_id),
-                    "event_type": e.event_type,
-                    "aggregate_id": str(e.aggregate_id),
-                    "aggregate_type": e.aggregate_type,
-                    "tenant_id": str(e.tenant_id) if e.tenant_id else None,
-                    "event_data": e.event_data,
-                    "created_at": e.created_at,
-                    "retry_count": e.retry_count,
-                }
-                for e in pending
-            ]
+            return pending[:limit]
 
     async def mark_published(self, outbox_id: UUID) -> None:
         """
@@ -482,7 +511,7 @@ class InMemoryOutboxRepository:
             outbox_id: Outbox record ID
         """
         now = datetime.now(UTC)
-        with self._lock:
+        async with self._lock:
             if outbox_id in self._entries:
                 entry = self._entries[outbox_id]
                 entry.status = "published"
@@ -496,7 +525,7 @@ class InMemoryOutboxRepository:
             outbox_id: Outbox record ID
             error: Error message (optional)
         """
-        with self._lock:
+        async with self._lock:
             if outbox_id in self._entries:
                 entry = self._entries[outbox_id]
                 entry.retry_count += 1
@@ -510,7 +539,7 @@ class InMemoryOutboxRepository:
             outbox_id: Outbox record ID
             error: Error message
         """
-        with self._lock:
+        async with self._lock:
             if outbox_id in self._entries:
                 entry = self._entries[outbox_id]
                 entry.status = "failed"
@@ -531,7 +560,7 @@ class InMemoryOutboxRepository:
         cutoff = datetime.now(UTC) - timedelta(days=days)
 
         deleted = 0
-        with self._lock:
+        async with self._lock:
             ids_to_delete = []
             for id_, entry in self._entries.items():
                 if (
@@ -554,7 +583,7 @@ class InMemoryOutboxRepository:
         Returns:
             Dictionary with outbox metrics
         """
-        with self._lock:
+        async with self._lock:
             entries = list(self._entries.values())
 
             pending = [e for e in entries if e.status == "pending"]
@@ -577,10 +606,259 @@ class InMemoryOutboxRepository:
                 "avg_retries": avg_retries,
             }
 
-    def clear(self) -> None:
+    async def clear(self) -> None:
         """Clear all entries. Useful for test setup/teardown."""
-        with self._lock:
+        async with self._lock:
             self._entries.clear()
+
+
+class SQLiteOutboxRepository:
+    """
+    SQLite implementation of outbox repository.
+
+    Stores outbox events in the `event_outbox` table.
+
+    SQLite-specific adaptations:
+    - UUIDs stored as TEXT (36 characters, hyphenated format)
+    - Timestamps stored as TEXT in ISO 8601 format
+    - Uses `?` positional parameters instead of named parameters
+    - Uses `datetime('now', '-' || ? || ' days')` for interval arithmetic
+    - Uses `SUM(CASE WHEN ... THEN 1 ELSE 0 END)` instead of `COUNT(*) FILTER`
+    - Uses `cursor.lastrowid` for inserted row ID
+
+    Example:
+        >>> async with aiosqlite.connect("events.db") as db:
+        ...     repo = SQLiteOutboxRepository(db)
+        ...     outbox_id = await repo.add_event(event)
+        ...
+        >>> # Later, in the publisher worker:
+        >>> pending = await repo.get_pending_events(limit=100)
+        >>> for entry in pending:
+        ...     # Publish to event bus
+        ...     await repo.mark_published(UUID(entry["id"]))
+    """
+
+    def __init__(self, connection: "aiosqlite.Connection") -> None:
+        """
+        Initialize the outbox repository.
+
+        Args:
+            connection: aiosqlite database connection
+        """
+        self._connection = connection
+
+    async def add_event(self, event: DomainEvent) -> UUID:
+        """
+        Add an event to the outbox for publishing.
+
+        Args:
+            event: Domain event to publish
+
+        Returns:
+            Outbox record ID (generated UUID)
+        """
+        outbox_id = uuid4()
+        now = datetime.now(UTC)
+
+        # Serialize event data
+        event_data = {
+            "event_id": str(event.event_id),
+            "aggregate_id": str(event.aggregate_id),
+            "aggregate_type": event.aggregate_type,
+            "tenant_id": str(event.tenant_id) if event.tenant_id else None,
+            "occurred_at": event.occurred_at.isoformat(),
+            "payload": json.loads(event.model_dump_json()),
+        }
+
+        await self._connection.execute(
+            """
+            INSERT INTO event_outbox
+                (event_id, event_type, aggregate_id, aggregate_type,
+                 tenant_id, event_data, created_at, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
+            """,
+            (
+                str(event.event_id),
+                event.event_type,
+                str(event.aggregate_id),
+                event.aggregate_type,
+                str(event.tenant_id) if event.tenant_id else None,
+                json.dumps(event_data, cls=EventSourceJSONEncoder),
+                now.isoformat(),
+            ),
+        )
+        await self._connection.commit()
+
+        return outbox_id
+
+    async def get_pending_events(self, limit: int = 100) -> list[dict[str, Any]]:
+        """
+        Get pending events that need to be published.
+
+        Args:
+            limit: Maximum number of events to return
+
+        Returns:
+            List of pending outbox records
+        """
+        cursor = await self._connection.execute(
+            """
+            SELECT id, event_id, event_type, aggregate_id, aggregate_type,
+                   tenant_id, event_data, created_at, retry_count
+            FROM event_outbox
+            WHERE status = 'pending'
+            ORDER BY created_at ASC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+
+        return [
+            {
+                "id": str(row[0]),
+                "event_id": str(row[1]),
+                "event_type": row[2],
+                "aggregate_id": str(row[3]),
+                "aggregate_type": row[4],
+                "tenant_id": str(row[5]) if row[5] else None,
+                "event_data": row[6],
+                "created_at": row[7],
+                "retry_count": row[8],
+            }
+            for row in rows
+        ]
+
+    async def mark_published(self, outbox_id: UUID | int) -> None:
+        """
+        Mark an outbox event as successfully published.
+
+        Args:
+            outbox_id: Outbox record ID (UUID or integer for SQLite)
+        """
+        now = datetime.now(UTC)
+        await self._connection.execute(
+            """
+            UPDATE event_outbox
+            SET status = 'published',
+                published_at = ?
+            WHERE id = ?
+            """,
+            (now.isoformat(), str(outbox_id) if isinstance(outbox_id, UUID) else outbox_id),
+        )
+        await self._connection.commit()
+
+    async def increment_retry(self, outbox_id: UUID | int, error: str | None = None) -> None:
+        """
+        Increment retry count for a failed publishing attempt.
+
+        Args:
+            outbox_id: Outbox record ID (UUID or integer for SQLite)
+            error: Error message (optional)
+        """
+        await self._connection.execute(
+            """
+            UPDATE event_outbox
+            SET retry_count = retry_count + 1,
+                last_error = ?
+            WHERE id = ?
+            """,
+            (error, str(outbox_id) if isinstance(outbox_id, UUID) else outbox_id),
+        )
+        await self._connection.commit()
+
+    async def mark_failed(self, outbox_id: UUID | int, error: str) -> None:
+        """
+        Mark an outbox event as permanently failed.
+
+        Args:
+            outbox_id: Outbox record ID (UUID or integer for SQLite)
+            error: Error message
+        """
+        await self._connection.execute(
+            """
+            UPDATE event_outbox
+            SET status = 'failed',
+                last_error = ?
+            WHERE id = ?
+            """,
+            (error, str(outbox_id) if isinstance(outbox_id, UUID) else outbox_id),
+        )
+        await self._connection.commit()
+
+    async def cleanup_published(self, days: int = 7) -> int:
+        """
+        Clean up published events older than specified days.
+
+        Args:
+            days: Number of days to retain published events
+
+        Returns:
+            Number of records deleted
+        """
+        # SQLite uses different date arithmetic syntax
+        cursor = await self._connection.execute(
+            """
+            DELETE FROM event_outbox
+            WHERE status = 'published'
+              AND published_at < datetime('now', '-' || ? || ' days')
+            """,
+            (days,),
+        )
+        await self._connection.commit()
+        return cursor.rowcount if cursor.rowcount is not None else 0
+
+    async def get_stats(self) -> dict[str, Any]:
+        """
+        Get outbox statistics.
+
+        Returns:
+            Dictionary with outbox metrics including:
+            - pending_count: Number of pending events
+            - published_count: Number of published events
+            - failed_count: Number of failed events
+            - oldest_pending: Timestamp of oldest pending event
+            - avg_retries: Average retry count for pending events
+        """
+        # SQLite doesn't support FILTER clause, use CASE WHEN instead
+        cursor = await self._connection.execute(
+            """
+            SELECT
+                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending_count,
+                SUM(CASE WHEN status = 'published' THEN 1 ELSE 0 END) as published_count,
+                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed_count,
+                MIN(CASE WHEN status = 'pending' THEN created_at END) as oldest_pending,
+                AVG(CASE WHEN status = 'pending' THEN retry_count END) as avg_retries
+            FROM event_outbox
+            """
+        )
+        row = await cursor.fetchone()
+
+        # Aggregate query always returns a row, but values may be NULL
+        if row is None:
+            return {
+                "pending_count": 0,
+                "published_count": 0,
+                "failed_count": 0,
+                "oldest_pending": None,
+                "avg_retries": 0.0,
+            }
+
+        # Parse oldest_pending from ISO 8601 string to datetime
+        oldest_pending = None
+        if row[3]:
+            try:
+                oldest_pending = datetime.fromisoformat(row[3].replace("Z", "+00:00"))
+            except (ValueError, TypeError):
+                oldest_pending = None
+
+        return {
+            "pending_count": row[0] or 0,
+            "published_count": row[1] or 0,
+            "failed_count": row[2] or 0,
+            "oldest_pending": oldest_pending,
+            "avg_retries": float(row[4]) if row[4] else 0.0,
+        }
 
 
 # Type alias for backwards compatibility

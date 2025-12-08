@@ -10,6 +10,7 @@ These tests focus on:
 """
 
 import asyncio
+import warnings
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -71,7 +72,7 @@ class TestInMemoryEventStoreEdgeCases:
 
     @pytest.mark.asyncio
     async def test_get_events_by_type_with_timestamp_filter(self, store: InMemoryEventStore):
-        """Test get_events_by_type with timestamp filter."""
+        """Test get_events_by_type with timestamp filter (deprecated float usage)."""
         aggregate_id = uuid4()
         old_timestamp = datetime.now(UTC).timestamp() - 3600  # 1 hour ago
 
@@ -79,7 +80,10 @@ class TestInMemoryEventStoreEdgeCases:
         await store.append_events(aggregate_id, "Test", [event], 0)
 
         # Get events created after old timestamp
-        events = await store.get_events_by_type("Test", from_timestamp=old_timestamp)
+        # Use warnings.catch_warnings to suppress deprecation warning
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            events = await store.get_events_by_type("Test", from_timestamp=old_timestamp)
         assert len(events) == 1
 
     @pytest.mark.asyncio
@@ -503,6 +507,70 @@ class TestConcurrentAccess:
 
         # All events should be received
         assert len(received) == 10
+
+    @pytest.mark.asyncio
+    async def test_concurrent_outbox_operations(self):
+        """Test concurrent outbox add and get operations."""
+        repo = InMemoryOutboxRepository()
+
+        async def add_event(i: int):
+            event = EdgeTestEvent(aggregate_id=uuid4(), data=f"outbox_{i}")
+            await repo.add_event(event)
+
+        # Add 20 events concurrently
+        await asyncio.gather(*[add_event(i) for i in range(20)])
+
+        # Verify all events were added
+        stats = await repo.get_stats()
+        assert stats["pending_count"] == 20
+
+    @pytest.mark.asyncio
+    async def test_concurrent_outbox_mark_published(self):
+        """Test concurrent mark_published operations."""
+        repo = InMemoryOutboxRepository()
+
+        # Add events first
+        outbox_ids = []
+        for i in range(10):
+            event = EdgeTestEvent(aggregate_id=uuid4(), data=f"event_{i}")
+            outbox_id = await repo.add_event(event)
+            outbox_ids.append(outbox_id)
+
+        # Mark published concurrently
+        await asyncio.gather(*[repo.mark_published(oid) for oid in outbox_ids])
+
+        # All should be published
+        stats = await repo.get_stats()
+        assert stats["pending_count"] == 0
+        assert stats["published_count"] == 10
+
+    @pytest.mark.asyncio
+    async def test_concurrent_event_store_reads_writes(self):
+        """Test concurrent reads and writes to event store with asyncio.Lock."""
+        store = InMemoryEventStore()
+        aggregate_ids = [uuid4() for _ in range(5)]
+
+        async def write_events(agg_id: uuid4):
+            for i in range(5):
+                event = EdgeTestEvent(aggregate_id=agg_id, data=f"event_{i}")
+                await store.append_events(agg_id, "Test", [event], expected_version=-1)  # ANY
+
+        async def read_events(agg_id: uuid4):
+            for _ in range(5):
+                await store.get_events(agg_id, "Test")
+
+        # Mix reads and writes
+        tasks = []
+        for agg_id in aggregate_ids:
+            tasks.append(write_events(agg_id))
+            tasks.append(read_events(agg_id))
+
+        await asyncio.gather(*tasks)
+
+        # Each aggregate should have 5 events
+        for agg_id in aggregate_ids:
+            stream = await store.get_events(agg_id, "Test")
+            assert len(stream.events) == 5
 
 
 # --- Serialization Edge Cases ---

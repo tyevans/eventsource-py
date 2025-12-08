@@ -227,3 +227,132 @@ class TestDecoratorEdgeCases:
 
         assert is_event_handler(static_like_handler) is True
         assert get_handled_event_type(static_like_handler) is OrderCreated
+
+
+# =============================================================================
+# TD-006: Decorator Consolidation Tests
+# =============================================================================
+
+
+class TestHandlesDecoratorConsolidation:
+    """Tests for consolidated @handles decorator (TD-006).
+
+    These tests verify:
+    - AC1: @handles from projections.decorators works for aggregates
+    - AC2: @handles from aggregates.base emits deprecation warning
+    - AC3: Warning message includes correct import path
+    - AC4: IDE autocomplete suggests canonical import (verified via __all__)
+    - AC5: Both imports functionally equivalent
+    """
+
+    def test_canonical_import_from_projections_decorators(self) -> None:
+        """@handles from projections.decorators is the canonical import."""
+        from eventsource.projections.decorators import handles as canonical_handles
+
+        @canonical_handles(OrderCreated)
+        def handler(self, event: OrderCreated) -> None:
+            pass
+
+        assert hasattr(handler, "_handles_event_type")
+        assert handler._handles_event_type is OrderCreated
+
+    def test_canonical_import_from_eventsource(self) -> None:
+        """@handles from eventsource package is the canonical re-export."""
+        from eventsource import handles as main_handles
+
+        @main_handles(OrderShipped)
+        def handler(self, event: OrderShipped) -> None:
+            pass
+
+        assert hasattr(handler, "_handles_event_type")
+        assert handler._handles_event_type is OrderShipped
+
+    def test_canonical_import_from_projections_module(self) -> None:
+        """@handles from eventsource.projections module is canonical."""
+        from eventsource.projections import handles as projections_handles
+
+        @projections_handles(OrderCreated)
+        async def handler(self, conn, event: OrderCreated) -> None:
+            pass
+
+        assert hasattr(handler, "_handles_event_type")
+        assert handler._handles_event_type is OrderCreated
+
+    def test_deprecated_import_emits_warning(self) -> None:
+        """@handles from aggregates.base emits DeprecationWarning."""
+        import warnings
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            from eventsource.aggregates.base import handles as deprecated_handles
+
+            # Call it to trigger the warning (the warning is emitted when called)
+            deprecated_handles(OrderCreated)
+
+            # Check warning was issued
+            assert len(w) >= 1
+            deprecation_warnings = [
+                warning for warning in w if issubclass(warning.category, DeprecationWarning)
+            ]
+            assert len(deprecation_warnings) >= 1
+            warning_msg = str(deprecation_warnings[0].message)
+            assert "eventsource.aggregates.base" in warning_msg
+            assert "eventsource.projections.decorators" in warning_msg
+            assert "0.3.0" in warning_msg
+
+    def test_deprecated_import_still_functions(self) -> None:
+        """Deprecated import still works correctly."""
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            from eventsource.aggregates.base import handles as deprecated_handles
+
+            @deprecated_handles(OrderCreated)
+            def handler(self, event: OrderCreated) -> None:
+                pass
+
+            assert hasattr(handler, "_handles_event_type")
+            assert handler._handles_event_type is OrderCreated
+
+    def test_handles_in_main_package_all(self) -> None:
+        """'handles' is in eventsource.__all__ for IDE autocomplete."""
+        import eventsource
+
+        assert "handles" in eventsource.__all__
+
+    def test_handles_in_projections_all(self) -> None:
+        """'handles' is in eventsource.projections.__all__ for IDE autocomplete."""
+        from eventsource import projections
+
+        assert "handles" in projections.__all__
+
+    def test_handles_in_projections_decorators_module(self) -> None:
+        """'handles' is accessible from eventsource.projections.decorators."""
+        from eventsource.projections import decorators
+
+        assert hasattr(decorators, "handles")
+
+    def test_canonical_and_deprecated_produce_same_result(self) -> None:
+        """Both canonical and deprecated imports produce equivalent results."""
+        import warnings
+
+        from eventsource.projections.decorators import handles as canonical_handles
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            from eventsource.aggregates.base import handles as deprecated_handles
+
+            @canonical_handles(OrderCreated)
+            def handler1(self, event: OrderCreated) -> None:
+                pass
+
+            @deprecated_handles(OrderShipped)
+            def handler2(self, event: OrderShipped) -> None:
+                pass
+
+            # Both should have the same attribute structure
+            assert hasattr(handler1, "_handles_event_type")
+            assert hasattr(handler2, "_handles_event_type")
+            assert handler1._handles_event_type is OrderCreated
+            assert handler2._handles_event_type is OrderShipped

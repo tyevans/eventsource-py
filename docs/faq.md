@@ -1,6 +1,6 @@
 # Frequently Asked Questions
 
-Common questions about using eventsource.
+Common questions about using eventsource-py.
 
 ---
 
@@ -24,11 +24,11 @@ The current state is derived by replaying events in order. This provides:
 
 See the [Architecture Overview](architecture.md) for more details.
 
-### Why use eventsource over other libraries?
+### Why use eventsource-py over other libraries?
 
-eventsource is designed specifically for Python 3.11+ with these key advantages:
+eventsource-py is designed specifically for Python 3.11+ with these key advantages:
 
-| Feature | eventsource | Other Libraries |
+| Feature | eventsource-py | Other Libraries |
 |---------|-------------|-----------------|
 | Async-first | Native async/await | Often sync with async wrappers |
 | Type safety | Full type hints, Pydantic validation | Varies |
@@ -45,20 +45,21 @@ The library follows Python best practices with clean abstractions that work well
 | Backend | Use Case | Installation |
 |---------|----------|--------------|
 | `InMemoryEventStore` | Development, testing | Included |
-| `PostgreSQLEventStore` | Production | `pip install eventsource[postgresql]` |
+| `SQLiteEventStore` | Lightweight deployments | `pip install eventsource-py[sqlite]` |
+| `PostgreSQLEventStore` | Production | `pip install eventsource-py[postgresql]` |
 
 **Event Bus:**
 
 | Backend | Use Case | Installation |
 |---------|----------|--------------|
 | `InMemoryEventBus` | Single-process | Included |
-| `RedisEventBus` | Distributed systems | `pip install eventsource[redis]` |
+| `RedisEventBus` | Distributed systems | `pip install eventsource-py[redis]` |
 
 PostgreSQL is the recommended production database. The library uses async SQLAlchemy with asyncpg for optimal performance.
 
-### Is eventsource production-ready?
+### Is eventsource-py production-ready?
 
-Yes. eventsource is designed for production use with:
+Yes. eventsource-py is designed for production use with:
 
 - **PostgreSQL backend** with proper indexing and partitioning support
 - **Optimistic locking** for consistent concurrent access
@@ -77,24 +78,27 @@ See the [Production Deployment Guide](guides/production.md) for configuration de
 
 ```bash
 # Basic installation (in-memory only)
-pip install eventsource
+pip install eventsource-py
 
 # With PostgreSQL support (production)
-pip install eventsource[postgresql]
+pip install eventsource-py[postgresql]
+
+# With SQLite support
+pip install eventsource-py[sqlite]
 
 # With Redis event bus
-pip install eventsource[redis]
+pip install eventsource-py[redis]
 
 # With OpenTelemetry tracing
-pip install eventsource[telemetry]
+pip install eventsource-py[telemetry]
 
 # All optional dependencies
-pip install eventsource[all]
+pip install eventsource-py[all]
 ```
 
 ### What Python versions are supported?
 
-eventsource requires **Python 3.11+**. We recommend Python 3.12+ for best performance.
+eventsource-py requires **Python 3.11+**. We recommend Python 3.12+ for best performance.
 
 Key dependencies:
 - pydantic >= 2.0

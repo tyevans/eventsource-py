@@ -1,30 +1,47 @@
 # Getting Started Guide
 
-This guide will walk you through setting up eventsource and implementing your first event-sourced application.
+This guide will walk you through setting up eventsource-py and implementing your first event-sourced application.
 
 ## Installation
 
-### Basic Installation
+### Quick Start
 
 ```bash
-pip install eventsource
+# Basic installation (in-memory stores only)
+pip install eventsource-py
+
+# Most common: with PostgreSQL support for production
+pip install eventsource-py[postgresql]
 ```
 
 ### With Optional Dependencies
 
 ```bash
-# PostgreSQL support (production)
-pip install eventsource[postgresql]
+# SQLite support (development/testing/embedded)
+pip install eventsource-py[sqlite]
 
 # Redis support (distributed event bus)
-pip install eventsource[redis]
+pip install eventsource-py[redis]
 
 # OpenTelemetry support (observability)
-pip install eventsource[telemetry]
+pip install eventsource-py[telemetry]
 
 # All optional dependencies
-pip install eventsource[all]
+pip install eventsource-py[all]
 ```
+
+### Optional Dependencies
+
+eventsource uses optional dependencies to keep the core package lightweight:
+
+| Extra | Purpose | Install Command |
+|-------|---------|-----------------|
+| `postgresql` | Production event store with asyncpg | `pip install eventsource-py[postgresql]` |
+| `redis` | Distributed event bus with Redis Streams | `pip install eventsource-py[redis]` |
+| `telemetry` | OpenTelemetry tracing integration | `pip install eventsource-py[telemetry]` |
+| `all` | All optional dependencies | `pip install eventsource-py[all]` |
+
+For detailed installation instructions, troubleshooting, and version compatibility information, see the [Installation Guide](installation.md).
 
 ## Core Concepts
 
@@ -182,13 +199,26 @@ class TaskAggregate(AggregateRoot[TaskState]):
 
 ## Step 4: Set Up the Event Store
 
-For development, use the in-memory store. For production, use PostgreSQL.
+Choose an event store based on your needs:
 
 ```python
 from eventsource import InMemoryEventStore, AggregateRepository
 
-# Development: In-memory store
+# Development: In-memory store (no persistence)
 event_store = InMemoryEventStore()
+
+# Development/Testing: SQLite store (file-based or in-memory)
+# from eventsource import SQLiteEventStore
+#
+# # File-based (persistent)
+# async with SQLiteEventStore("./events.db") as store:
+#     await store.initialize()
+#     event_store = store
+#
+# # In-memory (fast tests)
+# async with SQLiteEventStore(":memory:") as store:
+#     await store.initialize()
+#     event_store = store
 
 # Production: PostgreSQL store
 # from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
@@ -198,6 +228,12 @@ event_store = InMemoryEventStore()
 # session_factory = async_sessionmaker(engine, expire_on_commit=False)
 # event_store = PostgreSQLEventStore(session_factory)
 ```
+
+| Store | Use Case | Persistence | Concurrency |
+|-------|----------|-------------|-------------|
+| `InMemoryEventStore` | Unit tests, prototyping | None | Single process |
+| `SQLiteEventStore` | Dev, testing, embedded | File or memory | Single writer |
+| `PostgreSQLEventStore` | Production | Full | Multiple writers |
 
 ## Step 5: Create the Repository
 
@@ -332,6 +368,8 @@ print(projection.get_pending_tasks())
 - Read the [Architecture Overview](architecture.md) to understand the full system
 - Explore the [API Reference](api/index.md) for detailed documentation
 - Check out [Examples](examples/basic-order.md) for more complex scenarios
+- Use [SQLite Backend](guides/sqlite-backend.md) for development and testing
+- Set up [Production Deployment](guides/production.md) with PostgreSQL
 
 ## Complete Example
 

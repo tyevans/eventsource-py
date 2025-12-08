@@ -17,6 +17,7 @@ This section provides comprehensive API documentation for the eventsource librar
 | **Stores** | [`EventStore`](stores.md#eventstore-interface) | Abstract interface for event persistence |
 | | [`InMemoryEventStore`](stores.md#inmemoryeventstore) | In-memory store for testing |
 | | [`PostgreSQLEventStore`](stores.md#postgresqleventstore) | Production PostgreSQL store |
+| | [`SQLiteEventStore`](stores.md#sqliteeventstore) | SQLite store for dev/testing/embedded |
 | | [`EventStream`](stores.md#eventstream) | Container for aggregate events |
 | | [`AppendResult`](stores.md#appendresult) | Result of appending events |
 | | [`StoredEvent`](stores.md#storedevent) | Wrapper for persisted events |
@@ -25,7 +26,6 @@ This section provides comprehensive API documentation for the eventsource librar
 | | [`DeclarativeAggregate`](aggregates.md#declarativeaggregate) | Aggregate with decorator-based handlers |
 | | [`AggregateRepository`](aggregates.md#aggregaterepository) | Repository pattern for aggregates |
 | **Projections** | [`Projection`](projections.md#projection) | Simple async projection base class |
-| | [`SyncProjection`](projections.md#syncprojection) | Synchronous projection base class |
 | | [`DeclarativeProjection`](projections.md#declarativeprojection) | Projection with `@handles` decorators |
 | | [`CheckpointTrackingProjection`](projections.md#checkpointtrackingprojection) | Projection with checkpoints and DLQ |
 | | [`@handles`](projections.md#declarativeprojection) | Decorator for event handlers |
@@ -88,11 +88,11 @@ Persistent storage for events with optimistic locking and streaming support.
 from eventsource import (
     # Interface
     EventStore,
-    SyncEventStore,
 
     # Implementations
     InMemoryEventStore,
     PostgreSQLEventStore,
+    SQLiteEventStore,
 
     # Data structures
     EventStream,
@@ -110,15 +110,22 @@ from eventsource import (
 
 - **`InMemoryEventStore`**: Thread-safe in-memory implementation for testing and development.
 
+- **`SQLiteEventStore`**: Lightweight SQLite implementation for development, testing, and embedded applications.
+
 - **`PostgreSQLEventStore`**: Production-ready store with optimistic locking, transactional outbox, and OpenTelemetry tracing.
 
 **Example:**
 
 ```python
-# Development
+# Development (no persistence)
 store = InMemoryEventStore()
 
-# Production
+# Development/Testing (SQLite)
+async with SQLiteEventStore("./events.db") as store:
+    await store.initialize()
+    # ... use store
+
+# Production (PostgreSQL)
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 engine = create_async_engine("postgresql+asyncpg://user:pass@localhost/db")
@@ -190,7 +197,6 @@ Build read-optimized views from event streams.
 from eventsource.projections import (
     # Base classes
     Projection,
-    SyncProjection,
     DeclarativeProjection,
     CheckpointTrackingProjection,
 
@@ -388,6 +394,9 @@ from eventsource.repositories import (
     DLQRepository,
     PostgreSQLCheckpointRepository,
     PostgreSQLDLQRepository,
+    SQLiteCheckpointRepository,
+    SQLiteOutboxRepository,
+    SQLiteDLQRepository,
     InMemoryCheckpointRepository,
     InMemoryDLQRepository,
 )

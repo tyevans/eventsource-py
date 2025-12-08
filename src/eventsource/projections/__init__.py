@@ -10,6 +10,7 @@ Public API:
 - EventHandlerBase: Base class for event handlers
 - CheckpointTrackingProjection: Projection with checkpoint, retry, and DLQ support
 - DeclarativeProjection: Projection with @handles decorator support
+- DatabaseProjection: Projection with database connection support for handlers
 - handles: Decorator for marking event handler methods
 - get_handled_event_type: Utility to get event type from decorated handler
 - is_event_handler: Check if a function is decorated with @handles
@@ -23,24 +24,24 @@ Public API:
 
 Example:
     >>> from eventsource.projections import (
-    ...     DeclarativeProjection,
+    ...     DatabaseProjection,
     ...     handles,
     ...     ProjectionRegistry,
     ... )
     >>>
-    >>> class OrderProjection(DeclarativeProjection):
+    >>> class OrderProjection(DatabaseProjection):
     ...     @handles(OrderCreated)
     ...     async def _handle_order_created(self, conn, event: OrderCreated):
-    ...         # Handle the event
-    ...         pass
+    ...         # Handle the event with database connection
+    ...         await conn.execute(text("INSERT INTO orders ..."))
     >>>
-    >>> registry = ProjectionRegistry()
-    >>> registry.register_projection(OrderProjection())
-    >>> await registry.dispatch(event)
+    >>> projection = OrderProjection(session_factory=async_session_factory)
+    >>> await projection.handle(event)
 """
 
 from eventsource.projections.base import (
     CheckpointTrackingProjection,
+    DatabaseProjection,
     DeclarativeProjection,
     EventHandlerBase,
     Projection,
@@ -56,8 +57,10 @@ from eventsource.projections.decorators import (
     handles,
     is_event_handler,
 )
-from eventsource.projections.protocols import (
-    AsyncEventHandler,
+
+# Protocols from canonical location (TD-007)
+from eventsource.projections.protocols import AsyncEventHandler
+from eventsource.protocols import (
     EventHandler,
     EventSubscriber,
     SyncEventHandler,
@@ -70,6 +73,7 @@ __all__ = [
     "EventHandlerBase",
     "CheckpointTrackingProjection",
     "DeclarativeProjection",
+    "DatabaseProjection",
     # Decorators
     "handles",
     "get_handled_event_type",
