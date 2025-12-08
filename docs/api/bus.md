@@ -167,8 +167,24 @@ In-memory implementation for single-process deployments.
 - Support for sync and async handlers
 - Wildcard subscriptions
 - Error isolation (handler failures don't stop other handlers)
-- Optional OpenTelemetry tracing
+- Optional OpenTelemetry tracing (via `TracingMixin`)
 - Background task management
+
+### Constructor
+
+```python
+from eventsource import InMemoryEventBus
+
+# Default - tracing enabled when OpenTelemetry is available
+bus = InMemoryEventBus()
+
+# Explicitly disable tracing (useful for testing)
+bus = InMemoryEventBus(enable_tracing=False)
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enable_tracing` | `bool` | `True` | Enable OpenTelemetry tracing when available |
 
 ### Usage
 

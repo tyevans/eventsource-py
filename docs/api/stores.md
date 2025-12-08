@@ -305,6 +305,11 @@ async with SQLiteEventStore("./events.db") as store:
 async with SQLiteEventStore(":memory:") as store:
     await store.initialize()
     # ... use store
+
+# With tracing disabled (useful for testing without OpenTelemetry overhead)
+async with SQLiteEventStore("./events.db", enable_tracing=False) as store:
+    await store.initialize()
+    # ... use store
 ```
 
 ### Constructor Parameters
@@ -315,6 +320,7 @@ async with SQLiteEventStore(":memory:") as store:
 | `event_registry` | `EventRegistry` | Default registry | Event type lookup |
 | `wal_mode` | `bool` | `True` | Enable WAL journal mode |
 | `busy_timeout` | `int` | `5000` | Timeout in ms for locked database |
+| `enable_tracing` | `bool` | `True` | OpenTelemetry tracing |
 
 ### Features
 
@@ -322,6 +328,7 @@ async with SQLiteEventStore(":memory:") as store:
 - **Idempotent writes**: Duplicate events are skipped
 - **WAL mode**: Better concurrent read performance (optional)
 - **Multi-tenancy**: Built-in tenant isolation
+- **OpenTelemetry tracing**: Optional performance monitoring (consistent with PostgreSQLEventStore)
 - **Full EventStore interface**: Drop-in replacement for other stores
 
 ### SQLite-Specific Adaptations

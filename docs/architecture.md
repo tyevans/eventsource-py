@@ -347,6 +347,8 @@ events = await store.get_events_by_type("Order", tenant_id=tenant_id)
 
 ## Observability
 
+eventsource provides comprehensive observability support through the `eventsource.observability` module.
+
 ### Logging
 
 - Structured logging throughout
@@ -355,9 +357,55 @@ events = await store.get_events_by_type("Order", tenant_id=tenant_id)
 
 ### Tracing (OpenTelemetry)
 
-- Spans for event store operations
-- Spans for event bus dispatch
-- Correlation across services
+OpenTelemetry integration is provided through reusable utilities that ensure consistent tracing across all components:
+
+```python
+from eventsource.observability import (
+    OTEL_AVAILABLE,   # Single source of truth for availability
+    get_tracer,       # Safe tracer acquisition
+    traced,           # Decorator for method tracing
+    TracingMixin,     # Mixin for tracing support
+)
+```
+
+**Components with Tracing Support:**
+
+| Component | Configuration | Spans Created |
+|-----------|---------------|---------------|
+| `PostgreSQLEventStore` | `enable_tracing=True` | `event_store.append_events`, `event_store.get_events` |
+| `SQLiteEventStore` | `enable_tracing=True` | `event_store.append_events`, `event_store.get_events` |
+| `InMemoryEventBus` | `enable_tracing=True` | `event.dispatch.{EventType}`, `event_handler.{HandlerName}` |
+| `RedisEventBus` | `config.enable_tracing=True` | `event_bus.publish`, `event_bus.process_message` |
+| `RabbitMQEventBus` | `config.enable_tracing=True` | `event_bus.publish`, `event_bus.consume` |
+| `PostgreSQLSnapshotStore` | `enable_tracing=True` | `snapshot_store.save`, `snapshot_store.get` |
+
+**Tracing Patterns:**
+
+```python
+# Pattern 1: @traced decorator (for static attributes)
+class MyStore(TracingMixin):
+    @traced("my_store.operation")
+    async def operation(self) -> None:
+        pass
+
+# Pattern 2: _create_span_context (for dynamic attributes)
+class MyStore(TracingMixin):
+    async def save(self, item_id: str) -> None:
+        with self._create_span_context(
+            "my_store.save",
+            {"item.id": item_id},
+        ):
+            await self._do_save(item_id)
+```
+
+**Disabling Tracing:**
+
+Tracing can be disabled per-component for testing or performance reasons:
+
+```python
+store = SQLiteEventStore(":memory:", enable_tracing=False)
+bus = InMemoryEventBus(enable_tracing=False)
+```
 
 ### Metrics
 

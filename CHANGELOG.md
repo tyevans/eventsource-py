@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Observability Module** - New `eventsource.observability` module providing reusable OpenTelemetry tracing utilities
+  - `OTEL_AVAILABLE` constant as single source of truth for OpenTelemetry availability
+  - `get_tracer()` helper function for safely obtaining tracers
+  - `should_trace()` helper for combining component and global tracing settings
+  - `@traced` decorator for method-level tracing with minimal boilerplate
+  - `TracingMixin` class providing `_init_tracing()` and `_create_span_context()` methods
+- **SQLiteEventStore OpenTelemetry Tracing** - Added `enable_tracing` parameter (default: True)
+  - Traces `append_events` and `get_events` operations with span attributes
+  - Consistent with PostgreSQLEventStore tracing behavior
+- **InMemoryEventBus OpenTelemetry Tracing** - Added `enable_tracing` parameter (default: True)
+  - Traces event dispatch and handler execution
+  - Refactored to use `TracingMixin` for reduced code duplication
 - **Aggregate Snapshotting** - Performance optimization for long-lived aggregates with many events
   - `Snapshot` dataclass for capturing point-in-time aggregate state
   - `SnapshotStore` abstract interface with three implementations:
