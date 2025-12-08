@@ -59,7 +59,7 @@ dev = [
     "pytest-cov>=4.0",
     "pytest-benchmark>=4.0.0",
     "mypy>=1.8",
-    "ruff>=0.3",
+    "ruff>=0.8.2",
     "testcontainers>=4.0",
     "pre-commit>=4.0",
 ]
