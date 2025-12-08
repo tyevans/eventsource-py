@@ -247,7 +247,7 @@ class TestInMemoryOutboxRepository:
         await repo.add_event(event)
 
         pending = await repo.get_pending_events()
-        assert pending[0]["tenant_id"] == str(tenant_id)
+        assert pending[0].tenant_id == tenant_id
 
     @pytest.mark.asyncio
     async def test_event_without_tenant_id(self, repo: InMemoryOutboxRepository):
@@ -280,7 +280,7 @@ class TestInMemoryOutboxRepository:
 
         # All should have same aggregate_id
         for entry in pending:
-            assert entry["aggregate_id"] == str(aggregate_id)
+            assert entry.aggregate_id == aggregate_id
 
     @pytest.mark.asyncio
     async def test_mark_published_nonexistent(self, repo: InMemoryOutboxRepository):

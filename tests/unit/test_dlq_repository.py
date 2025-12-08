@@ -48,12 +48,12 @@ class TestInMemoryDLQRepository:
 
         failed_events = await repo.get_failed_events()
         assert len(failed_events) == 1
-        assert failed_events[0]["event_id"] == str(event_id)
-        assert failed_events[0]["projection_name"] == projection_name
-        assert failed_events[0]["event_type"] == event_type
-        assert failed_events[0]["retry_count"] == 1
-        assert failed_events[0]["status"] == "failed"
-        assert "Test error" in failed_events[0]["error_message"]
+        assert failed_events[0].event_id == event_id
+        assert failed_events[0].projection_name == projection_name
+        assert failed_events[0].event_type == event_type
+        assert failed_events[0].retry_count == 1
+        assert failed_events[0].status == "failed"
+        assert "Test error" in failed_events[0].error_message
 
     @pytest.mark.asyncio
     async def test_add_failed_event_upsert(self, repo: InMemoryDLQRepository):
@@ -179,14 +179,14 @@ class TestInMemoryDLQRepository:
 
         # Get the DLQ ID
         events = await repo.get_failed_events()
-        dlq_id = events[0]["id"]
+        dlq_id = events[0].id
 
         # Get by ID
         event = await repo.get_failed_event_by_id(dlq_id)
         assert event is not None
-        assert event["id"] == dlq_id
-        assert event["event_id"] == str(event_id)
-        assert event["retry_count"] == 2
+        assert event.id == dlq_id
+        assert event.event_id == event_id
+        assert event.retry_count == 2
 
     @pytest.mark.asyncio
     async def test_get_failed_event_by_id_not_found(self, repo: InMemoryDLQRepository):
