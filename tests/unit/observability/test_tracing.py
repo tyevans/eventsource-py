@@ -1,0 +1,452 @@
+"""
+Unit tests for observability tracing utilities.
+
+Tests for:
+- OTEL_AVAILABLE constant
+- get_tracer() function
+- should_trace() function
+- @traced decorator
+- TracingMixin class
+"""
+
+from __future__ import annotations
+
+from unittest.mock import MagicMock, Mock
+
+import pytest
+
+
+class TestOTELAvailable:
+    """Tests for OTEL_AVAILABLE constant."""
+
+    def test_otel_available_is_boolean(self):
+        """OTEL_AVAILABLE is a boolean."""
+        from eventsource.observability import OTEL_AVAILABLE
+
+        assert isinstance(OTEL_AVAILABLE, bool)
+
+    def test_otel_available_reflects_import(self):
+        """OTEL_AVAILABLE is True when opentelemetry is installed."""
+        from eventsource.observability import OTEL_AVAILABLE
+
+        # In test environment, OpenTelemetry should be available
+        assert OTEL_AVAILABLE is True
+
+
+class TestGetTracer:
+    """Tests for get_tracer function."""
+
+    def test_returns_tracer_when_available(self):
+        """Returns tracer when OpenTelemetry is available."""
+        from eventsource.observability import get_tracer
+
+        tracer = get_tracer("test_module")
+        assert tracer is not None
+
+    def test_returns_none_when_unavailable(self, monkeypatch):
+        """Returns None when OpenTelemetry is not available."""
+        monkeypatch.setattr("eventsource.observability.tracing.OTEL_AVAILABLE", False)
+
+        from eventsource.observability.tracing import get_tracer
+
+        result = get_tracer("test_module")
+        assert result is None
+
+
+class TestShouldTrace:
+    """Tests for should_trace function."""
+
+    def test_true_when_enabled_and_available(self):
+        """Returns True when tracing enabled and OTEL available."""
+        from eventsource.observability import should_trace
+
+        # OTEL is available in test environment
+        assert should_trace(True) is True
+
+    def test_false_when_disabled(self):
+        """Returns False when tracing disabled."""
+        from eventsource.observability import should_trace
+
+        assert should_trace(False) is False
+
+    def test_false_when_unavailable(self, monkeypatch):
+        """Returns False when OTEL not available."""
+        monkeypatch.setattr("eventsource.observability.tracing.OTEL_AVAILABLE", False)
+
+        from eventsource.observability.tracing import should_trace
+
+        assert should_trace(True) is False
+
+
+class TestTracedDecorator:
+    """Tests for @traced decorator."""
+
+    @pytest.fixture
+    def mock_tracer(self):
+        """Create mock tracer with span context manager."""
+        tracer = Mock()
+        span = MagicMock()
+        tracer.start_as_current_span.return_value.__enter__ = Mock(return_value=span)
+        tracer.start_as_current_span.return_value.__exit__ = Mock(return_value=None)
+        return tracer
+
+    @pytest.mark.asyncio
+    async def test_async_method_traced(self, mock_tracer):
+        """Async method creates span when tracing enabled."""
+        from eventsource.observability import traced
+
+        class MyClass:
+            _tracer = mock_tracer
+            _enable_tracing = True
+
+            @traced("test.operation")
+            async def operation(self) -> str:
+                return "result"
+
+        obj = MyClass()
+        result = await obj.operation()
+
+        assert result == "result"
+        mock_tracer.start_as_current_span.assert_called_once_with("test.operation", attributes={})
+
+    def test_sync_method_traced(self, mock_tracer):
+        """Sync method creates span when tracing enabled."""
+        from eventsource.observability import traced
+
+        class MyClass:
+            _tracer = mock_tracer
+            _enable_tracing = True
+
+            @traced("test.operation")
+            def operation(self) -> str:
+                return "result"
+
+        obj = MyClass()
+        result = obj.operation()
+
+        assert result == "result"
+        mock_tracer.start_as_current_span.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_no_span_when_disabled(self, mock_tracer):
+        """No span created when tracing disabled."""
+        from eventsource.observability import traced
+
+        class MyClass:
+            _tracer = mock_tracer
+            _enable_tracing = False
+
+            @traced("test.operation")
+            async def operation(self) -> str:
+                return "result"
+
+        obj = MyClass()
+        result = await obj.operation()
+
+        assert result == "result"
+        mock_tracer.start_as_current_span.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_span_when_tracer_none(self):
+        """No span created when tracer is None."""
+        from eventsource.observability import traced
+
+        class MyClass:
+            _tracer = None
+            _enable_tracing = True
+
+            @traced("test.operation")
+            async def operation(self) -> str:
+                return "result"
+
+        obj = MyClass()
+        result = await obj.operation()
+
+        assert result == "result"  # Method still executes
+
+    @pytest.mark.asyncio
+    async def test_static_attributes_included(self, mock_tracer):
+        """Static attributes are passed to span."""
+        from eventsource.observability import traced
+
+        class MyClass:
+            _tracer = mock_tracer
+            _enable_tracing = True
+
+            @traced("test.operation", attributes={"key": "value", "count": 42})
+            async def operation(self) -> None:
+                pass
+
+        obj = MyClass()
+        await obj.operation()
+
+        mock_tracer.start_as_current_span.assert_called_once_with(
+            "test.operation", attributes={"key": "value", "count": 42}
+        )
+
+    @pytest.mark.asyncio
+    async def test_exception_propagates(self, mock_tracer):
+        """Exceptions from method propagate through decorator."""
+        from eventsource.observability import traced
+
+        class MyClass:
+            _tracer = mock_tracer
+            _enable_tracing = True
+
+            @traced("test.operation")
+            async def operation(self) -> None:
+                raise ValueError("test error")
+
+        obj = MyClass()
+        with pytest.raises(ValueError, match="test error"):
+            await obj.operation()
+
+    @pytest.mark.asyncio
+    async def test_missing_tracer_attribute(self):
+        """Method works when class lacks _tracer attribute."""
+        from eventsource.observability import traced
+
+        class MyClass:
+            # No _tracer or _enable_tracing
+
+            @traced("test.operation")
+            async def operation(self) -> str:
+                return "result"
+
+        obj = MyClass()
+        result = await obj.operation()
+
+        assert result == "result"
+
+    def test_preserves_function_metadata(self):
+        """Decorator preserves function name and docstring."""
+        from eventsource.observability import traced
+
+        class MyClass:
+            _tracer = None
+            _enable_tracing = False
+
+            @traced("test.operation")
+            async def my_method(self) -> None:
+                """My docstring."""
+                pass
+
+        obj = MyClass()
+        assert obj.my_method.__name__ == "my_method"
+        assert obj.my_method.__doc__ == "My docstring."
+
+
+class TestTracingMixin:
+    """Tests for TracingMixin class."""
+
+    def test_init_tracing_enabled(self):
+        """_init_tracing sets up tracer when enabled."""
+        from eventsource.observability import TracingMixin
+
+        class MyClass(TracingMixin):
+            def __init__(self):
+                self._init_tracing("test.module", enable_tracing=True)
+
+        obj = MyClass()
+
+        assert obj._enable_tracing is True
+        assert obj._tracer is not None
+
+    def test_init_tracing_disabled(self):
+        """_init_tracing sets tracer to None when disabled."""
+        from eventsource.observability import TracingMixin
+
+        class MyClass(TracingMixin):
+            def __init__(self):
+                self._init_tracing("test.module", enable_tracing=False)
+
+        obj = MyClass()
+
+        assert obj._enable_tracing is False
+        assert obj._tracer is None
+
+    def test_init_tracing_otel_unavailable(self, monkeypatch):
+        """_init_tracing handles OTEL unavailable."""
+        monkeypatch.setattr("eventsource.observability.tracing.OTEL_AVAILABLE", False)
+
+        from eventsource.observability.tracing import TracingMixin
+
+        class MyClass(TracingMixin):
+            def __init__(self):
+                self._init_tracing("test.module", enable_tracing=True)
+
+        obj = MyClass()
+
+        assert obj._enable_tracing is False
+        assert obj._tracer is None
+
+    def test_create_span_context_enabled(self):
+        """_create_span_context returns span context when enabled."""
+        from eventsource.observability import TracingMixin
+
+        mock_tracer = Mock()
+        mock_span_context = MagicMock()
+        mock_tracer.start_as_current_span.return_value = mock_span_context
+
+        class MyClass(TracingMixin):
+            pass
+
+        obj = MyClass()
+        obj._enable_tracing = True
+        obj._tracer = mock_tracer
+
+        ctx = obj._create_span_context("test.op", {"key": "value"})
+
+        mock_tracer.start_as_current_span.assert_called_once_with(
+            "test.op", attributes={"key": "value"}
+        )
+        assert ctx is mock_span_context
+
+    def test_create_span_context_disabled(self):
+        """_create_span_context returns nullcontext when disabled."""
+        from eventsource.observability import TracingMixin
+
+        class MyClass(TracingMixin):
+            pass
+
+        obj = MyClass()
+        obj._enable_tracing = False
+        obj._tracer = None
+
+        ctx = obj._create_span_context("test.op")
+
+        # nullcontext doesn't yield anything meaningful
+        with ctx as span:
+            assert span is None
+
+    def test_create_span_context_empty_attributes(self):
+        """_create_span_context handles None attributes."""
+        from eventsource.observability import TracingMixin
+
+        mock_tracer = Mock()
+
+        class MyClass(TracingMixin):
+            pass
+
+        obj = MyClass()
+        obj._enable_tracing = True
+        obj._tracer = mock_tracer
+
+        obj._create_span_context("test.op")
+
+        mock_tracer.start_as_current_span.assert_called_once_with("test.op", attributes={})
+
+    def test_tracing_enabled_property_true(self):
+        """tracing_enabled returns True when fully enabled."""
+        from eventsource.observability import TracingMixin
+
+        mock_tracer = Mock()
+
+        class MyClass(TracingMixin):
+            pass
+
+        obj = MyClass()
+        obj._enable_tracing = True
+        obj._tracer = mock_tracer
+
+        assert obj.tracing_enabled is True
+
+    def test_tracing_enabled_property_false_disabled(self):
+        """tracing_enabled returns False when enable_tracing is False."""
+        from eventsource.observability import TracingMixin
+
+        class MyClass(TracingMixin):
+            pass
+
+        obj = MyClass()
+        obj._enable_tracing = False
+        obj._tracer = Mock()
+
+        assert obj.tracing_enabled is False
+
+    def test_tracing_enabled_property_false_no_tracer(self):
+        """tracing_enabled returns False when tracer is None."""
+        from eventsource.observability import TracingMixin
+
+        class MyClass(TracingMixin):
+            pass
+
+        obj = MyClass()
+        obj._enable_tracing = True
+        obj._tracer = None
+
+        assert obj.tracing_enabled is False
+
+
+class TestTracingMixinIntegration:
+    """Integration tests for TracingMixin."""
+
+    def test_usage_with_dynamic_attributes(self):
+        """Demonstrates dynamic attribute usage."""
+        from eventsource.observability import TracingMixin
+
+        mock_tracer = Mock()
+        mock_span = MagicMock()
+        mock_tracer.start_as_current_span.return_value.__enter__ = Mock(return_value=mock_span)
+        mock_tracer.start_as_current_span.return_value.__exit__ = Mock(return_value=None)
+
+        class MyStore(TracingMixin):
+            def __init__(self):
+                self._enable_tracing = True
+                self._tracer = mock_tracer
+
+            def save(self, item_id: str, data: dict) -> str:
+                with self._create_span_context(
+                    "store.save",
+                    {"item.id": item_id, "data.size": len(data)},
+                ) as span:
+                    # Simulate operation
+                    if span:
+                        span.set_attribute("result", "success")
+                    return "saved"
+
+        store = MyStore()
+        result = store.save("item-123", {"key": "value"})
+
+        assert result == "saved"
+        mock_tracer.start_as_current_span.assert_called_once_with(
+            "store.save",
+            attributes={"item.id": "item-123", "data.size": 1},
+        )
+        mock_span.set_attribute.assert_called_once_with("result", "success")
+
+
+class TestImports:
+    """Test module imports work correctly."""
+
+    def test_import_from_observability(self):
+        """All exports are importable from observability."""
+        from eventsource.observability import (
+            OTEL_AVAILABLE,
+            TracingMixin,
+            get_tracer,
+            should_trace,
+            traced,
+        )
+
+        assert OTEL_AVAILABLE is not None
+        assert TracingMixin is not None
+        assert get_tracer is not None
+        assert should_trace is not None
+        assert traced is not None
+
+    def test_import_from_tracing(self):
+        """All exports are importable from tracing module."""
+        from eventsource.observability.tracing import (
+            OTEL_AVAILABLE,
+            TracingMixin,
+            get_tracer,
+            should_trace,
+            traced,
+        )
+
+        assert OTEL_AVAILABLE is not None
+        assert TracingMixin is not None
+        assert get_tracer is not None
+        assert should_trace is not None
+        assert traced is not None

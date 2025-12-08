@@ -1192,7 +1192,7 @@ class TestSQLiteDLQRepository:
 
     @pytest.mark.asyncio
     async def test_delete_resolved_events(
-        self, repo: SQLiteDLQRepository, db_connection: aiosqlite.Connection
+        self, repo: "SQLiteDLQRepository", db_connection: "aiosqlite.Connection"
     ):
         """Test deleting resolved events older than specified days."""
         event_id = uuid4()

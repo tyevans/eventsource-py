@@ -17,12 +17,12 @@ from uuid import uuid4
 
 import pytest
 
+from eventsource.events.base import DomainEvent
 from tests.conftest import AIOSQLITE_AVAILABLE, skip_if_no_aiosqlite
 
 if AIOSQLITE_AVAILABLE:
     import aiosqlite
 
-    from eventsource.events.base import DomainEvent
     from eventsource.repositories.checkpoint import (
         CheckpointRepository,
         SQLiteCheckpointRepository,

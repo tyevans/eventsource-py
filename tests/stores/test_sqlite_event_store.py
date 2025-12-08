@@ -23,10 +23,10 @@ from uuid import uuid4
 
 import pytest
 
+from eventsource import DomainEvent, EventRegistry, register_event
 from tests.conftest import AIOSQLITE_AVAILABLE, skip_if_no_aiosqlite
 
 if AIOSQLITE_AVAILABLE:
-    from eventsource import DomainEvent, EventRegistry, register_event
     from eventsource.exceptions import OptimisticLockError
     from eventsource.stores.interface import (
         ExpectedVersion,
