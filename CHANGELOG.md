@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] - 2025-12-07
+
+### Documentation
+
+- Added documentation badge linking to GitHub Pages
+- Updated all documentation URLs to point to https://tyevans.github.io/eventsource-py
+- Fixed mkdocs.yml site configuration with correct repository URLs
+- Simplified README documentation section with links to hosted docs
+
 ## [0.1.2] - 2025-12-07
 
 ### Fixed
@@ -48,7 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Automatic schema creation and migrations
 - GitHub Actions CI/CD pipeline
 
-[Unreleased]: https://github.com/tyevans/eventsource-py/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/tyevans/eventsource-py/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/tyevans/eventsource-py/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/tyevans/eventsource-py/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/tyevans/eventsource-py/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/tyevans/eventsource-py/releases/tag/v0.1.0
