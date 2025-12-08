@@ -459,7 +459,7 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0" },
     { name = "redis", specifier = ">=5.0" },
     { name = "redis", marker = "extra == 'redis'", specifier = ">=5.0,<6.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.2" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.14.8" },
     { name = "sqlalchemy", specifier = ">=2.0,<3.0" },
     { name = "testcontainers", marker = "extra == 'dev'", specifier = ">=4.0" },
 ]

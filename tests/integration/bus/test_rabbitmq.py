@@ -2708,17 +2708,17 @@ class TestAdvancedMultipleConsumers:
 
             # Each group should have received all events
             for idx, received in enumerate(received_per_group):
-                assert (
-                    len(received) == event_count
-                ), f"Group {idx} received {len(received)} events, expected {event_count}"
+                assert len(received) == event_count, (
+                    f"Group {idx} received {len(received)} events, expected {event_count}"
+                )
 
             # Verify all groups received the same events (by event_id)
             event_ids_per_group = [
                 {e.event_id for e in received} for received in received_per_group
             ]
-            assert (
-                event_ids_per_group[0] == event_ids_per_group[1] == event_ids_per_group[2]
-            ), "Consumer groups received different events"
+            assert event_ids_per_group[0] == event_ids_per_group[1] == event_ids_per_group[2], (
+                "Consumer groups received different events"
+            )
 
         finally:
             for bus in buses:
@@ -2930,9 +2930,9 @@ class TestAdvancedBatchPublishing:
             consume_task.cancel()
 
         # Verify all events received
-        assert (
-            len(received_events) == batch_size
-        ), f"Expected {batch_size} events, received {len(received_events)}"
+        assert len(received_events) == batch_size, (
+            f"Expected {batch_size} events, received {len(received_events)}"
+        )
 
         # Verify event IDs match
         received_ids = {e.event_id for e in received_events}
