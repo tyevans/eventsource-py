@@ -395,6 +395,44 @@ Consume spans include:
 - `messaging.kafka.offset`: message offset
 - `messaging.kafka.consumer_group`: consumer group ID
 
+## OpenTelemetry Metrics
+
+The Kafka event bus emits comprehensive OpenTelemetry metrics for production monitoring when `enable_metrics=True` (default).
+
+### Quick Setup
+
+```python
+from opentelemetry import metrics
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+
+# Configure metrics export
+reader = PeriodicExportingMetricReader(OTLPMetricExporter())
+metrics.set_meter_provider(MeterProvider(metric_readers=[reader]))
+
+# Kafka bus with metrics enabled
+config = KafkaEventBusConfig(
+    bootstrap_servers="kafka:9092",
+    topic_prefix="orders",
+    enable_metrics=True,  # Default
+)
+
+bus = KafkaEventBus(config=config)
+```
+
+### Available Metrics
+
+| Category | Metrics |
+|----------|---------|
+| **Counters** | `messages.published`, `messages.consumed`, `handler.invocations`, `handler.errors`, `messages.dlq`, `publish.errors`, `reconnections`, `rebalances` |
+| **Histograms** | `publish.duration`, `consume.duration`, `handler.duration`, `batch.size` |
+| **Gauges** | `connections.active`, `consumer.lag` |
+
+All metrics use the `kafka.eventbus.` prefix (e.g., `kafka.eventbus.messages.published`).
+
+For detailed PromQL queries, alerting recommendations, and Grafana dashboard examples, see the [Kafka Metrics Guide](kafka-metrics.md).
+
 ## Monitoring and Statistics
 
 ### Getting Statistics
@@ -613,6 +651,7 @@ services:
 
 ## See Also
 
+- [Kafka Metrics Guide](kafka-metrics.md) - OpenTelemetry metrics, PromQL queries, and alerting
 - [Event Bus API Reference](../api/bus.md#kafkaeventbus)
 - [Installation Guide](../installation.md)
 - [Architecture Overview](../architecture.md)

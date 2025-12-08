@@ -11,6 +11,36 @@ Features:
 - Dead letter queue for unrecoverable failures
 - Configurable retry policies
 - Optional OpenTelemetry tracing
+- Optional OpenTelemetry metrics
+
+OpenTelemetry Metrics:
+    When ``enable_metrics=True`` (default) and the OpenTelemetry SDK is installed,
+    the Kafka event bus emits comprehensive metrics for monitoring throughput,
+    latency, and health of your event processing pipeline.
+
+    Counter Metrics:
+        - ``kafka.eventbus.messages.published``: Total messages published
+        - ``kafka.eventbus.messages.consumed``: Total messages consumed
+        - ``kafka.eventbus.handler.invocations``: Handler invocation count
+        - ``kafka.eventbus.handler.errors``: Handler error count
+        - ``kafka.eventbus.messages.dlq``: Messages sent to dead letter queue
+        - ``kafka.eventbus.connection.errors``: Connection error count
+        - ``kafka.eventbus.reconnections``: Reconnection attempt count
+        - ``kafka.eventbus.rebalances``: Consumer rebalance count
+        - ``kafka.eventbus.publish.errors``: Publish error count
+
+    Histogram Metrics:
+        - ``kafka.eventbus.publish.duration``: Publish latency in milliseconds
+        - ``kafka.eventbus.consume.duration``: Message processing latency in ms
+        - ``kafka.eventbus.handler.duration``: Handler execution time in ms
+        - ``kafka.eventbus.batch.size``: Publish batch sizes
+
+    Observable Gauge Metrics:
+        - ``kafka.eventbus.connections.active``: Connection status (1=connected, 0=disconnected)
+        - ``kafka.eventbus.consumer.lag``: Messages behind per partition
+
+    See the Kafka Metrics Guide (docs/guides/kafka-metrics.md) for PromQL
+    queries, alerting recommendations, and Grafana dashboard examples.
 
 Example:
     >>> from eventsource.bus.kafka import KafkaEventBus, KafkaEventBusConfig
@@ -19,6 +49,7 @@ Example:
     ...     bootstrap_servers="localhost:9092",
     ...     topic_prefix="events",
     ...     consumer_group="projections",
+    ...     enable_metrics=True,  # Enable OpenTelemetry metrics (default)
     ... )
     >>> bus = KafkaEventBus(config=config, event_registry=my_registry)
     >>> await bus.connect()
@@ -34,9 +65,10 @@ import logging
 import random
 import socket
 import ssl
+import time
 import uuid
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import TracebackType
@@ -69,7 +101,9 @@ except ImportError:
 
 # Optional OpenTelemetry integration
 try:
+    from opentelemetry import metrics as otel_metrics
     from opentelemetry import trace
+    from opentelemetry.metrics import CallbackOptions, Observation
     from opentelemetry.propagate import extract, inject
     from opentelemetry.trace import SpanKind, Status, StatusCode
 
@@ -77,6 +111,9 @@ try:
 except ImportError:
     OTEL_AVAILABLE = False
     trace = None  # type: ignore[assignment]
+    otel_metrics = None  # type: ignore[assignment]
+    CallbackOptions = None  # type: ignore[assignment, misc]
+    Observation = None  # type: ignore[assignment, misc]
     extract = None  # type: ignore[assignment]
     inject = None  # type: ignore[assignment]
     SpanKind = None  # type: ignore[assignment, misc]
@@ -104,6 +141,153 @@ def _get_tracer() -> Any:
     if _tracer is None:
         _tracer = trace.get_tracer("eventsource.bus.kafka")
     return _tracer
+
+
+# Module-level meter cache for lazy initialization
+_meter: Any = None
+
+
+def _get_meter() -> Any:
+    """Get or create the OpenTelemetry meter.
+
+    Returns a meter instance for creating metric instruments. The meter is
+    lazily initialized on first use and cached for subsequent calls.
+
+    Returns:
+        The meter instance, or None if OpenTelemetry is not available.
+    """
+    global _meter
+    if not OTEL_AVAILABLE:
+        return None
+    if _meter is None:
+        _meter = otel_metrics.get_meter("eventsource.bus.kafka")
+    return _meter
+
+
+class KafkaEventBusMetrics:
+    """Container for Kafka event bus OpenTelemetry metric instruments.
+
+    This class creates and holds all metric instruments used by the
+    KafkaEventBus for observability. Instruments are created once at
+    initialization and reused throughout the bus lifecycle.
+
+    The metrics follow OpenTelemetry semantic conventions for messaging systems
+    and use consistent attribute names across all instruments.
+
+    Attributes:
+        messages_published: Counter for messages published to Kafka.
+            Attributes: messaging.system, messaging.destination, event.type
+        messages_consumed: Counter for messages consumed from Kafka.
+            Attributes: messaging.system, messaging.destination,
+            messaging.kafka.partition, event.type
+        handler_invocations: Counter for handler invocations.
+            Attributes: handler.name, event.type
+        handler_errors: Counter for handler errors.
+            Attributes: handler.name, event.type, error.type
+        dlq_messages: Counter for messages sent to dead letter queue.
+            Attributes: dlq.reason, error.type
+        connection_errors: Counter for connection errors.
+            Attributes: error.type
+        reconnections: Counter for reconnection attempts. No attributes.
+        rebalances: Counter for consumer rebalances.
+            Attributes: messaging.kafka.consumer_group
+        publish_errors: Counter for publish errors.
+            Attributes: messaging.system, messaging.destination,
+            event.type, error.type
+        publish_duration: Histogram for publish latency in milliseconds.
+            Attributes: messaging.destination
+        consume_duration: Histogram for consume/process latency in ms.
+            Attributes: messaging.destination
+        handler_duration: Histogram for handler execution time in ms.
+            Attributes: handler.name, event.type
+        batch_size: Histogram for publish batch sizes. No attributes.
+
+    Note:
+        Observable gauges (connections.active, consumer.lag) are registered
+        separately on the KafkaEventBus instance via callback functions,
+        not stored in this class.
+
+    Example:
+        >>> meter = _get_meter()
+        >>> if meter:
+        ...     metrics = KafkaEventBusMetrics(meter)
+        ...     metrics.messages_published.add(1, {"event.type": "OrderCreated"})
+    """
+
+    def __init__(self, meter: Any) -> None:
+        """Initialize metric instruments.
+
+        Args:
+            meter: OpenTelemetry meter instance for creating instruments.
+        """
+        # Counters
+        self.messages_published = meter.create_counter(
+            name="kafka.eventbus.messages.published",
+            description="Total messages published to Kafka",
+            unit="messages",
+        )
+        self.messages_consumed = meter.create_counter(
+            name="kafka.eventbus.messages.consumed",
+            description="Total messages consumed from Kafka",
+            unit="messages",
+        )
+        self.handler_invocations = meter.create_counter(
+            name="kafka.eventbus.handler.invocations",
+            description="Total handler invocations",
+            unit="invocations",
+        )
+        self.handler_errors = meter.create_counter(
+            name="kafka.eventbus.handler.errors",
+            description="Total handler errors",
+            unit="errors",
+        )
+        self.dlq_messages = meter.create_counter(
+            name="kafka.eventbus.messages.dlq",
+            description="Total messages sent to dead letter queue",
+            unit="messages",
+        )
+        self.connection_errors = meter.create_counter(
+            name="kafka.eventbus.connection.errors",
+            description="Total connection errors",
+            unit="errors",
+        )
+        self.reconnections = meter.create_counter(
+            name="kafka.eventbus.reconnections",
+            description="Total reconnection attempts",
+            unit="reconnections",
+        )
+        self.rebalances = meter.create_counter(
+            name="kafka.eventbus.rebalances",
+            description="Total consumer rebalances",
+            unit="rebalances",
+        )
+        self.publish_errors = meter.create_counter(
+            name="kafka.eventbus.publish.errors",
+            description="Total publish errors",
+            unit="errors",
+        )
+
+        # Histograms
+        self.publish_duration = meter.create_histogram(
+            name="kafka.eventbus.publish.duration",
+            description="Time to publish messages to Kafka",
+            unit="ms",
+        )
+        self.consume_duration = meter.create_histogram(
+            name="kafka.eventbus.consume.duration",
+            description="Time to process consumed messages",
+            unit="ms",
+        )
+        self.handler_duration = meter.create_histogram(
+            name="kafka.eventbus.handler.duration",
+            description="Handler execution time",
+            unit="ms",
+        )
+        self.batch_size = meter.create_histogram(
+            name="kafka.eventbus.batch.size",
+            description="Publish batch size",
+            unit="messages",
+        )
 
 
 class KafkaNotAvailableError(ImportError):
@@ -185,6 +369,7 @@ class KafkaEventBusConfig:
         ssl_keyfile: Path to client private key for mTLS.
         ssl_check_hostname: Whether to verify server hostname.
         enable_tracing: Enable OpenTelemetry tracing if available.
+        enable_metrics: Enable OpenTelemetry metrics if available.
         shutdown_timeout: Timeout in seconds for graceful shutdown.
 
     Security Configuration Examples:
@@ -281,6 +466,7 @@ class KafkaEventBusConfig:
 
     # Observability
     enable_tracing: bool = True
+    enable_metrics: bool = True
 
     # Shutdown
     shutdown_timeout: float = 30.0
@@ -497,6 +683,7 @@ class KafkaEventBusConfig:
             "ssl_check_hostname": self.ssl_check_hostname,
             "enable_dlq": self.enable_dlq,
             "enable_tracing": self.enable_tracing,
+            "enable_metrics": self.enable_metrics,
         }
 
 
@@ -627,6 +814,18 @@ class KafkaEventBus(EventBus):
         # Statistics
         self._stats = KafkaEventBusStats()
 
+        # Initialize metrics (lazy initialization like tracing)
+        self._metrics: KafkaEventBusMetrics | None = None
+        self._meter: Any = None  # Store meter for gauge registration
+        if self._config.enable_metrics:
+            self._meter = _get_meter()
+            if self._meter:
+                self._metrics = KafkaEventBusMetrics(self._meter)
+
+        # Track if gauges are registered (gauges can only be registered once)
+        self._connection_gauge_registered = False
+        self._lag_gauge_registered = False
+
         # Shutdown coordination
         self._shutdown_event = asyncio.Event()
 
@@ -712,6 +911,9 @@ class KafkaEventBus(EventBus):
             self._connected = True
             self._stats.connected_at = datetime.now(UTC)
 
+            # Register connection status gauge (only once)
+            self._register_connection_gauge()
+
             logger.info(
                 "Connected to Kafka",
                 extra={
@@ -721,6 +923,15 @@ class KafkaEventBus(EventBus):
             )
 
         except Exception as e:
+            # Increment connection_errors counter
+            if self._metrics:
+                self._metrics.connection_errors.add(
+                    1,
+                    attributes={
+                        "error.type": type(e).__name__,
+                    },
+                )
+
             logger.error(
                 "Failed to connect to Kafka",
                 extra={"error": str(e)},
@@ -872,6 +1083,178 @@ class KafkaEventBus(EventBus):
             "consuming": self._consuming,
         }
 
+    def record_reconnection(self) -> None:
+        """Record a reconnection event for metrics.
+
+        Call this method when a reconnection to Kafka occurs. Updates both
+        the internal stats counter and the OpenTelemetry metrics counter.
+
+        This method is safe to call even if metrics are disabled.
+
+        Example:
+            >>> # In reconnection logic
+            >>> await self._reconnect_to_kafka()
+            >>> self.record_reconnection()
+        """
+        self._stats.reconnections += 1
+
+        if self._metrics:
+            self._metrics.reconnections.add(1)
+
+        logger.debug("Reconnection recorded")
+
+    def record_rebalance(self) -> None:
+        """Record a consumer rebalance event for metrics.
+
+        Call this method when a consumer group rebalance occurs. Updates both
+        the internal stats counter and the OpenTelemetry metrics counter.
+
+        This method is safe to call even if metrics are disabled.
+
+        Example:
+            >>> # In rebalance callback
+            >>> def on_rebalance(revoked, assigned):
+            ...     self.record_rebalance()
+        """
+        self._stats.rebalance_count += 1
+
+        if self._metrics:
+            self._metrics.rebalances.add(
+                1,
+                attributes={
+                    "messaging.kafka.consumer_group": self._config.consumer_group,
+                },
+            )
+
+        logger.debug(
+            "Rebalance recorded",
+            extra={"consumer_group": self._config.consumer_group},
+        )
+
+    # =========================================================================
+    # Observable Gauge Methods
+    # =========================================================================
+
+    def _register_connection_gauge(self) -> None:
+        """Register connection status as an observable gauge.
+
+        Reports 1 when connected, 0 when disconnected. This provides
+        visibility into connection uptime and disconnection events.
+
+        The gauge is registered once and the callback is invoked by the
+        OpenTelemetry SDK at its configured collection interval.
+        """
+        if not self._meter or not self._config.enable_metrics:
+            return
+
+        if self._connection_gauge_registered:
+            return  # Gauges can only be registered once
+
+        # Capture self reference for closure
+        bus = self
+
+        def connection_callback(options: CallbackOptions) -> Iterable[Observation]:
+            """Callback to report connection status.
+
+            Args:
+                options: Callback options from OpenTelemetry SDK.
+
+            Yields:
+                Observation with connection status (0 or 1).
+            """
+            yield Observation(
+                1 if bus._connected else 0,
+                attributes={
+                    "messaging.kafka.consumer_group": bus._config.consumer_group,
+                },
+            )
+
+        self._meter.create_observable_gauge(
+            name="kafka.eventbus.connections.active",
+            callbacks=[connection_callback],
+            description="Connection status (1=connected, 0=disconnected)",
+            unit="connections",
+        )
+
+        self._connection_gauge_registered = True
+        logger.debug("Connection status gauge registered")
+
+    def _register_consumer_lag_gauge(self) -> None:
+        """Register consumer lag as an observable gauge.
+
+        The gauge reports lag per partition, calculated as the difference
+        between the high watermark (latest offset) and the current position.
+        This callback is invoked by the OpenTelemetry SDK at its configured
+        collection interval (default: 60 seconds).
+
+        Should be called after consumer starts and has partition assignments.
+        """
+        if not self._meter or not self._config.enable_metrics:
+            return
+
+        if self._lag_gauge_registered:
+            return  # Gauges can only be registered once
+
+        # Capture self reference for closure
+        bus = self
+
+        def lag_callback(options: CallbackOptions) -> Iterable[Observation]:
+            """Callback to report consumer lag per partition.
+
+            Args:
+                options: Callback options from OpenTelemetry SDK.
+
+            Yields:
+                Observation objects with lag values and partition attributes.
+            """
+            # Only report when consuming and have a valid consumer
+            if not bus._consuming or not bus._consumer or not bus._connected:
+                return
+
+            try:
+                assignment = bus._consumer.assignment()
+                if not assignment:
+                    return
+
+                for tp in assignment:
+                    try:
+                        # Get high watermark (latest offset in partition)
+                        highwater = bus._consumer.highwater(tp)
+                        # Get current position (next offset to be consumed)
+                        position = bus._consumer.position(tp)
+
+                        if highwater is not None and position is not None:
+                            # Lag is the difference, clamped to >= 0
+                            lag = max(0, highwater - position)
+                            yield Observation(
+                                lag,
+                                attributes={
+                                    "messaging.kafka.partition": tp.partition,
+                                    "messaging.kafka.consumer_group": bus._config.consumer_group,
+                                    "messaging.destination": tp.topic,
+                                },
+                            )
+                    except Exception as e:
+                        # Skip partitions with errors (e.g., during rebalance)
+                        logger.debug(
+                            "Skipping partition %s lag metric due to error: %s",
+                            tp,
+                            e,
+                        )
+            except Exception as e:
+                # Skip if consumer is in invalid state
+                logger.debug("Unable to collect consumer lag metrics: %s", e)
+
+        self._meter.create_observable_gauge(
+            name="kafka.eventbus.consumer.lag",
+            callbacks=[lag_callback],
+            description="Consumer lag per partition (messages behind)",
+            unit="messages",
+        )
+
+        self._lag_gauge_registered = True
+        logger.debug("Consumer lag gauge registered")
+
     # =========================================================================
     # Publish Methods
     # =========================================================================
@@ -906,6 +1289,9 @@ class KafkaEventBus(EventBus):
         if not events:
             return
 
+        # Start timing for publish duration histogram
+        start_time = time.perf_counter()
+
         logger.debug(
             "Publishing events to Kafka",
             extra={
@@ -924,6 +1310,17 @@ class KafkaEventBus(EventBus):
         # Update statistics
         self._stats.events_published += len(events)
         self._stats.last_publish_at = datetime.now(UTC)
+
+        # Record publish duration and batch size histograms
+        if self._metrics:
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            self._metrics.publish_duration.record(
+                duration_ms,
+                attributes={
+                    "messaging.destination": self._config.topic_name,
+                },
+            )
+            self._metrics.batch_size.record(len(events))
 
         logger.debug(
             "Events published successfully",
@@ -977,9 +1374,9 @@ class KafkaEventBus(EventBus):
                 for trace_key, trace_value in carrier.items():
                     headers.append((trace_key, trace_value.encode("utf-8")))
 
-                await self._send_to_kafka(key, value, headers, background, span)
+                await self._send_to_kafka(key, value, headers, background, span, event)
         else:
-            await self._send_to_kafka(key, value, headers, background, None)
+            await self._send_to_kafka(key, value, headers, background, None, event)
 
     async def _send_to_kafka(
         self,
@@ -988,6 +1385,7 @@ class KafkaEventBus(EventBus):
         headers: list[tuple[str, bytes]],
         background: bool,
         span: Any,
+        event: DomainEvent,
     ) -> None:
         """Send message to Kafka.
 
@@ -997,6 +1395,7 @@ class KafkaEventBus(EventBus):
             headers: Message headers.
             background: Whether to wait for acknowledgment.
             span: The current tracing span, or None.
+            event: The domain event being published (for metrics).
         """
         if not self._producer:
             raise RuntimeError("Producer not connected")
@@ -1025,10 +1424,33 @@ class KafkaEventBus(EventBus):
                     },
                 )
 
+            # Increment messages_published counter on success
+            if self._metrics:
+                self._metrics.messages_published.add(
+                    1,
+                    attributes={
+                        "messaging.system": "kafka",
+                        "messaging.destination": self._config.topic_name,
+                        "event.type": event.event_type,
+                    },
+                )
+
         except Exception as e:
             if span:
                 span.set_status(Status(StatusCode.ERROR, str(e)))
                 span.record_exception(e)
+
+            # Increment publish_errors counter
+            if self._metrics:
+                self._metrics.publish_errors.add(
+                    1,
+                    attributes={
+                        "messaging.system": "kafka",
+                        "messaging.destination": self._config.topic_name,
+                        "event.type": event.event_type,
+                        "error.type": type(e).__name__,
+                    },
+                )
 
             logger.error(
                 "Failed to publish event",
@@ -1488,6 +1910,9 @@ class KafkaEventBus(EventBus):
         self._consuming = True
         self._shutdown_event.clear()
 
+        # Register consumer lag gauge (only once)
+        self._register_consumer_lag_gauge()
+
         logger.info(
             "Starting Kafka consumer",
             extra={
@@ -1507,6 +1932,15 @@ class KafkaEventBus(EventBus):
             logger.info("Consumer cancelled")
             raise
         except Exception as e:
+            # Increment connection_errors counter for consumer errors
+            if self._metrics:
+                self._metrics.connection_errors.add(
+                    1,
+                    attributes={
+                        "error.type": type(e).__name__,
+                    },
+                )
+
             logger.error(
                 "Consumer error",
                 extra={"error": str(e)},
@@ -1559,6 +1993,19 @@ class KafkaEventBus(EventBus):
 
         # Extract event type from headers for routing
         event_type_name = self._get_header_value(message.headers, "event_type")
+
+        # Increment messages_consumed counter
+        if self._metrics and event_type_name:
+            self._metrics.messages_consumed.add(
+                1,
+                attributes={
+                    "messaging.system": "kafka",
+                    "messaging.destination": message.topic,
+                    "messaging.kafka.partition": message.partition,
+                    "event.type": event_type_name,
+                },
+            )
+
         if not event_type_name:
             logger.error(
                 "Message missing event_type header",
@@ -1650,6 +2097,9 @@ class KafkaEventBus(EventBus):
             event_type_name: The event type name.
             span: The current tracing span, or None.
         """
+        # Start timing for consume duration histogram
+        start_time = time.perf_counter()
+
         # Get retry count from headers (for retried messages)
         retry_count = self._get_retry_count(message.headers)
 
@@ -1682,7 +2132,27 @@ class KafkaEventBus(EventBus):
             if span:
                 span.set_status(Status(StatusCode.OK))
 
+            # Record consume duration histogram - success path
+            if self._metrics:
+                duration_ms = (time.perf_counter() - start_time) * 1000
+                self._metrics.consume_duration.record(
+                    duration_ms,
+                    attributes={
+                        "messaging.destination": message.topic,
+                    },
+                )
+
         except Exception as e:
+            # Record consume duration histogram - error path
+            if self._metrics:
+                duration_ms = (time.perf_counter() - start_time) * 1000
+                self._metrics.consume_duration.record(
+                    duration_ms,
+                    attributes={
+                        "messaging.destination": message.topic,
+                    },
+                )
+
             if span:
                 span.set_status(Status(StatusCode.ERROR, str(e)))
                 span.record_exception(e)
@@ -1794,6 +2264,9 @@ class KafkaEventBus(EventBus):
         for original, handler_func in handlers:
             handler_name = self._get_handler_name(original)
 
+            # Start timing for handler duration histogram
+            handler_start_time = time.perf_counter()
+
             if tracer:
                 with tracer.start_as_current_span(
                     name=f"handle {handler_name}",
@@ -1816,6 +2289,24 @@ class KafkaEventBus(EventBus):
 
                         await handler_func(event)
 
+                        # Record handler duration and increment counter on success
+                        if self._metrics:
+                            handler_duration_ms = (time.perf_counter() - handler_start_time) * 1000
+                            self._metrics.handler_duration.record(
+                                handler_duration_ms,
+                                attributes={
+                                    "handler.name": handler_name,
+                                    "event.type": event.event_type,
+                                },
+                            )
+                            self._metrics.handler_invocations.add(
+                                1,
+                                attributes={
+                                    "handler.name": handler_name,
+                                    "event.type": event.event_type,
+                                },
+                            )
+
                         logger.debug(
                             "Handler completed",
                             extra={
@@ -1825,9 +2316,29 @@ class KafkaEventBus(EventBus):
                         )
 
                     except Exception as e:
+                        # Record handler duration on error path
+                        if self._metrics:
+                            handler_duration_ms = (time.perf_counter() - handler_start_time) * 1000
+                            self._metrics.handler_duration.record(
+                                handler_duration_ms,
+                                attributes={
+                                    "handler.name": handler_name,
+                                    "event.type": event.event_type,
+                                },
+                            )
+                            self._metrics.handler_errors.add(
+                                1,
+                                attributes={
+                                    "handler.name": handler_name,
+                                    "event.type": event.event_type,
+                                    "error.type": type(e).__name__,
+                                },
+                            )
+
                         span.set_status(Status(StatusCode.ERROR, str(e)))
                         span.record_exception(e)
                         self._stats.handler_errors += 1
+
                         logger.error(
                             "Handler error",
                             extra={
@@ -1852,6 +2363,24 @@ class KafkaEventBus(EventBus):
 
                     await handler_func(event)
 
+                    # Record handler duration and increment counter on success
+                    if self._metrics:
+                        handler_duration_ms = (time.perf_counter() - handler_start_time) * 1000
+                        self._metrics.handler_duration.record(
+                            handler_duration_ms,
+                            attributes={
+                                "handler.name": handler_name,
+                                "event.type": event.event_type,
+                            },
+                        )
+                        self._metrics.handler_invocations.add(
+                            1,
+                            attributes={
+                                "handler.name": handler_name,
+                                "event.type": event.event_type,
+                            },
+                        )
+
                     logger.debug(
                         "Handler completed",
                         extra={
@@ -1861,7 +2390,27 @@ class KafkaEventBus(EventBus):
                     )
 
                 except Exception as e:
+                    # Record handler duration on error path
+                    if self._metrics:
+                        handler_duration_ms = (time.perf_counter() - handler_start_time) * 1000
+                        self._metrics.handler_duration.record(
+                            handler_duration_ms,
+                            attributes={
+                                "handler.name": handler_name,
+                                "event.type": event.event_type,
+                            },
+                        )
+                        self._metrics.handler_errors.add(
+                            1,
+                            attributes={
+                                "handler.name": handler_name,
+                                "event.type": event.event_type,
+                                "error.type": type(e).__name__,
+                            },
+                        )
+
                     self._stats.handler_errors += 1
+
                     logger.error(
                         "Handler error",
                         extra={
@@ -2023,6 +2572,16 @@ class KafkaEventBus(EventBus):
             )
 
             self._stats.messages_sent_to_dlq += 1
+
+            # Increment dlq_messages counter
+            if self._metrics:
+                self._metrics.dlq_messages.add(
+                    1,
+                    attributes={
+                        "dlq.reason": reason,
+                        "error.type": type(error).__name__,
+                    },
+                )
 
             logger.info(
                 "Message sent to DLQ",
@@ -2355,6 +2914,7 @@ __all__ = [
     "KAFKA_AVAILABLE",
     "KafkaEventBus",
     "KafkaEventBusConfig",
+    "KafkaEventBusMetrics",
     "KafkaEventBusStats",
     "KafkaNotAvailableError",
 ]
