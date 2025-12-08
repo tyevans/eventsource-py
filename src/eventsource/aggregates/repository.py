@@ -5,12 +5,19 @@ Repositories provide a clean interface for loading and saving aggregates,
 abstracting away the details of event store operations.
 """
 
-from typing import Any, Generic, TypeVar
+import asyncio
+import logging
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
 from uuid import UUID
 
 from eventsource.aggregates.base import AggregateRoot
 from eventsource.exceptions import AggregateNotFoundError
 from eventsource.stores.interface import EventPublisher, EventStore
+
+if TYPE_CHECKING:
+    from eventsource.snapshots import Snapshot, SnapshotStore
+
+logger = logging.getLogger(__name__)
 
 # Type variable for aggregate root
 # Using Any as the bound parameter to satisfy mypy while allowing any state type
@@ -30,9 +37,34 @@ class AggregateRepository(Generic[TAggregate]):
     - Save aggregates by persisting uncommitted events
     - Optional event publishing after successful save
     - Optimistic locking via event store
+    - **Optional snapshot support for fast aggregate loading**
 
     The repository uses a factory pattern to create aggregate instances,
     allowing for proper dependency injection and testing.
+
+    Snapshot Configuration:
+        To enable snapshotting, provide a snapshot_store and optionally
+        configure when snapshots are created:
+
+        >>> from eventsource.snapshots import InMemorySnapshotStore
+        >>>
+        >>> repo = AggregateRepository(
+        ...     event_store=event_store,
+        ...     aggregate_factory=OrderAggregate,
+        ...     aggregate_type="Order",
+        ...     # Snapshot configuration
+        ...     snapshot_store=InMemorySnapshotStore(),
+        ...     snapshot_threshold=100,  # Create snapshot every 100 events
+        ...     snapshot_mode="sync",    # "sync" | "background" | "manual"
+        ... )
+
+    Snapshot Modes:
+        - "sync": Create snapshot synchronously after save (default).
+                 Simplest and most predictable, but adds latency to saves.
+        - "background": Create snapshot asynchronously in background task.
+                       Best for high-throughput scenarios.
+        - "manual": Never create snapshots automatically.
+                   Use create_snapshot() method explicitly.
 
     Example:
         >>> from eventsource import AggregateRepository, InMemoryEventStore
@@ -58,6 +90,9 @@ class AggregateRepository(Generic[TAggregate]):
         _aggregate_factory: Factory (class) for creating aggregate instances
         _aggregate_type: String identifier for the aggregate type
         _event_publisher: Optional publisher for event distribution
+        _snapshot_store: Optional snapshot store for state caching
+        _snapshot_threshold: Events between automatic snapshots
+        _snapshot_mode: When to create snapshots ("sync", "background", "manual")
     """
 
     def __init__(
@@ -66,6 +101,10 @@ class AggregateRepository(Generic[TAggregate]):
         aggregate_factory: type[TAggregate],
         aggregate_type: str,
         event_publisher: EventPublisher | None = None,
+        # Snapshot configuration
+        snapshot_store: "SnapshotStore | None" = None,
+        snapshot_threshold: int | None = None,
+        snapshot_mode: Literal["sync", "background", "manual"] = "sync",
     ) -> None:
         """
         Initialize the repository.
@@ -75,19 +114,54 @@ class AggregateRepository(Generic[TAggregate]):
             aggregate_factory: Class to instantiate when loading aggregates
             aggregate_type: Type name of the aggregate (e.g., 'Order')
             event_publisher: Optional publisher for broadcasting events
+            snapshot_store: Optional snapshot store for state caching.
+                          When provided, enables snapshot-aware loading.
+            snapshot_threshold: Number of events between automatic snapshots.
+                              If None, snapshots are only created manually or
+                              when explicitly calling create_snapshot().
+                              Example: 100 means create snapshot every 100 events.
+            snapshot_mode: When to create snapshots:
+                          - "sync": Immediately after save (blocking)
+                          - "background": Asynchronously after save
+                          - "manual": Only via explicit create_snapshot() call
+                          Default is "sync" for simplicity.
 
         Example:
+            >>> # Basic repository (no snapshots)
             >>> repo = AggregateRepository(
             ...     event_store=PostgreSQLEventStore(session_factory),
             ...     aggregate_factory=OrderAggregate,
             ...     aggregate_type="Order",
-            ...     event_publisher=event_bus,
             ... )
+            >>>
+            >>> # With snapshot support
+            >>> repo = AggregateRepository(
+            ...     event_store=PostgreSQLEventStore(session_factory),
+            ...     aggregate_factory=OrderAggregate,
+            ...     aggregate_type="Order",
+            ...     snapshot_store=PostgreSQLSnapshotStore(session_factory),
+            ...     snapshot_threshold=100,
+            ...     snapshot_mode="background",
+            ... )
+
+        Note:
+            If snapshot_store is provided but snapshot_threshold is None,
+            snapshots must be created manually via create_snapshot().
+            This is useful when you want control over exactly when
+            snapshots are taken (e.g., after major state transitions).
         """
         self._event_store = event_store
         self._aggregate_factory = aggregate_factory
         self._aggregate_type = aggregate_type
         self._event_publisher = event_publisher
+
+        # Snapshot configuration
+        self._snapshot_store = snapshot_store
+        self._snapshot_threshold = snapshot_threshold
+        self._snapshot_mode = snapshot_mode
+
+        # Background task tracking (for background mode)
+        self._pending_snapshot_tasks: list[asyncio.Task[None]] = []
 
     @property
     def aggregate_type(self) -> str:
@@ -104,9 +178,34 @@ class AggregateRepository(Generic[TAggregate]):
         """Get the event publisher, if configured."""
         return self._event_publisher
 
+    @property
+    def snapshot_store(self) -> "SnapshotStore | None":
+        """Get the snapshot store, if configured."""
+        return self._snapshot_store
+
+    @property
+    def snapshot_threshold(self) -> int | None:
+        """Get the snapshot threshold (events between snapshots)."""
+        return self._snapshot_threshold
+
+    @property
+    def snapshot_mode(self) -> Literal["sync", "background", "manual"]:
+        """Get the snapshot creation mode."""
+        return self._snapshot_mode
+
+    @property
+    def has_snapshot_support(self) -> bool:
+        """Check if snapshot support is enabled."""
+        return self._snapshot_store is not None
+
     async def load(self, aggregate_id: UUID) -> TAggregate:
         """
         Load an aggregate from its event history.
+
+        If a snapshot store is configured and a valid snapshot exists,
+        the aggregate is restored from the snapshot and only events
+        since the snapshot are replayed. This significantly improves
+        load time for aggregates with many events.
 
         Retrieves all events for the aggregate from the event store
         and reconstitutes the aggregate state by replaying them.
@@ -120,24 +219,144 @@ class AggregateRepository(Generic[TAggregate]):
         Raises:
             AggregateNotFoundError: If no events exist for the aggregate
 
+        Loading Sequence:
+            1. Check for valid snapshot (if snapshot_store configured)
+            2. If snapshot valid: restore state, get events from snapshot.version
+            3. If no snapshot: get all events from version 0
+            4. Apply events to aggregate
+            5. Return hydrated aggregate
+
         Example:
             >>> order = await repo.load(order_id)
             >>> print(f"Order status: {order.state.status}")
         """
-        # Get events from event store
+        from_version = 0
+        snapshot = None
+
+        # Try to load from snapshot if configured
+        if self._snapshot_store is not None:
+            snapshot = await self._load_valid_snapshot(aggregate_id)
+            if snapshot is not None:
+                from_version = snapshot.version
+                logger.debug(
+                    "Using snapshot for %s/%s at version %d",
+                    self._aggregate_type,
+                    aggregate_id,
+                    from_version,
+                )
+
+        # Get events from event store (from snapshot version or 0)
         event_stream = await self._event_store.get_events(
             aggregate_id,
             aggregate_type=self._aggregate_type,
+            from_version=from_version,
         )
 
-        if not event_stream.events:
+        # Handle case: no snapshot and no events
+        if snapshot is None and not event_stream.events:
             raise AggregateNotFoundError(aggregate_id, self._aggregate_type)
 
-        # Create aggregate instance and load from history
+        # Create aggregate instance
         aggregate = self._aggregate_factory(aggregate_id)
-        aggregate.load_from_history(event_stream.events)
+
+        # Restore from snapshot if available
+        if snapshot is not None:
+            try:
+                aggregate._restore_from_snapshot(snapshot.state, snapshot.version)
+            except Exception as e:
+                # Deserialization failed - fall back to full replay
+                logger.warning(
+                    "Failed to restore from snapshot for %s/%s: %s. "
+                    "Falling back to full event replay.",
+                    self._aggregate_type,
+                    aggregate_id,
+                    e,
+                    exc_info=True,
+                )
+                # Re-fetch all events
+                event_stream = await self._event_store.get_events(
+                    aggregate_id,
+                    aggregate_type=self._aggregate_type,
+                    from_version=0,
+                )
+                if not event_stream.events:
+                    raise AggregateNotFoundError(aggregate_id, self._aggregate_type) from None
+                # Reset aggregate
+                aggregate = self._aggregate_factory(aggregate_id)
+
+        # Apply events since snapshot (or all events if no snapshot)
+        if event_stream.events:
+            aggregate.load_from_history(event_stream.events)
+
+        logger.debug(
+            "Loaded %s/%s at version %d (snapshot: %s, events replayed: %d)",
+            self._aggregate_type,
+            aggregate_id,
+            aggregate.version,
+            "yes" if snapshot else "no",
+            len(event_stream.events),
+        )
 
         return aggregate
+
+    async def _load_valid_snapshot(
+        self,
+        aggregate_id: UUID,
+    ) -> "Snapshot | None":
+        """
+        Load and validate a snapshot for an aggregate.
+
+        Checks:
+        1. Snapshot exists for aggregate_id
+        2. Schema version matches aggregate's schema_version
+
+        Args:
+            aggregate_id: ID of the aggregate
+
+        Returns:
+            Valid snapshot or None if no valid snapshot exists
+
+        Note:
+            Returns None (doesn't raise) for any validation failure.
+            This enables graceful fallback to full event replay.
+        """
+        if self._snapshot_store is None:
+            return None
+
+        try:
+            snapshot = await self._snapshot_store.get_snapshot(
+                aggregate_id,
+                self._aggregate_type,
+            )
+        except Exception as e:
+            # Snapshot store error - log and fall back
+            logger.warning(
+                "Error loading snapshot for %s/%s: %s. Falling back to event replay.",
+                self._aggregate_type,
+                aggregate_id,
+                e,
+            )
+            return None
+
+        if snapshot is None:
+            return None
+
+        # Validate schema version
+        aggregate_schema_version = getattr(self._aggregate_factory, "schema_version", 1)
+
+        if snapshot.schema_version != aggregate_schema_version:
+            logger.info(
+                "Snapshot schema version mismatch for %s/%s: "
+                "snapshot has v%d, aggregate expects v%d. "
+                "Falling back to full event replay.",
+                self._aggregate_type,
+                aggregate_id,
+                snapshot.schema_version,
+                aggregate_schema_version,
+            )
+            return None
+
+        return snapshot
 
     async def load_or_create(self, aggregate_id: UUID) -> TAggregate:
         """
@@ -172,6 +391,7 @@ class AggregateRepository(Generic[TAggregate]):
         After successful persistence:
         1. Marks events as committed on the aggregate
         2. Publishes events to event publisher (if configured)
+        3. Creates snapshot if threshold is met (if configured)
 
         Args:
             aggregate: The aggregate to save
@@ -180,7 +400,8 @@ class AggregateRepository(Generic[TAggregate]):
             OptimisticLockError: If there's a version conflict
 
         Note:
-            If there are no uncommitted events, this is a no-op.
+            - If there are no uncommitted events, this is a no-op.
+            - Snapshot creation failure does not fail the save operation.
 
         Example:
             >>> order.ship(tracking_number="TRACK123")
@@ -212,6 +433,263 @@ class AggregateRepository(Generic[TAggregate]):
             # Publish events if publisher is configured
             if self._event_publisher:
                 await self._event_publisher.publish(uncommitted_events)
+
+            # Create snapshot if conditions are met
+            if self._should_create_snapshot(aggregate):
+                if self._snapshot_mode == "sync":
+                    try:
+                        await self._create_snapshot(aggregate)
+                    except Exception as e:
+                        # Log but don't fail the save
+                        logger.warning(
+                            "Failed to create snapshot for %s/%s: %s",
+                            self._aggregate_type,
+                            aggregate.aggregate_id,
+                            e,
+                            exc_info=True,
+                        )
+                elif self._snapshot_mode == "background":
+                    # Create snapshot asynchronously
+                    task = asyncio.create_task(self._create_snapshot_background(aggregate))
+                    self._pending_snapshot_tasks.append(task)
+                    # Cleanup completed tasks
+                    self._cleanup_completed_tasks()
+
+    def _should_create_snapshot(self, aggregate: TAggregate) -> bool:
+        """
+        Determine if a snapshot should be created for the aggregate.
+
+        Snapshot creation conditions:
+        1. Snapshot store is configured
+        2. Snapshot mode is not "manual"
+        3. Snapshot threshold is configured
+        4. Aggregate version is at or past threshold boundary
+
+        The threshold check uses modulo: version % threshold == 0
+        This creates snapshots at versions 100, 200, 300, etc. for threshold=100.
+
+        Args:
+            aggregate: The aggregate to check
+
+        Returns:
+            True if snapshot should be created, False otherwise
+        """
+        # No snapshot store configured
+        if self._snapshot_store is None:
+            return False
+
+        # Manual mode - no automatic creation
+        if self._snapshot_mode == "manual":
+            return False
+
+        # No threshold configured
+        if self._snapshot_threshold is None:
+            return False
+
+        # Check if at threshold boundary
+        return aggregate.version > 0 and aggregate.version % self._snapshot_threshold == 0
+
+    async def _create_snapshot(self, aggregate: TAggregate) -> "Snapshot":
+        """
+        Create and save a snapshot for the aggregate.
+
+        Creates a snapshot of the current aggregate state and saves it
+        to the snapshot store. Uses upsert semantics - any existing
+        snapshot for this aggregate is replaced.
+
+        Args:
+            aggregate: The aggregate to snapshot
+
+        Returns:
+            The created Snapshot object
+
+        Raises:
+            RuntimeError: If snapshot store is not configured
+        """
+        from datetime import UTC, datetime
+
+        from eventsource.snapshots import Snapshot
+
+        if self._snapshot_store is None:
+            raise RuntimeError("Cannot create snapshot: snapshot_store not configured")
+
+        # Get schema version from aggregate class
+        schema_version = getattr(type(aggregate), "schema_version", 1)
+
+        # Serialize state
+        state_dict = aggregate._serialize_state()
+
+        # Create snapshot
+        snapshot = Snapshot(
+            aggregate_id=aggregate.aggregate_id,
+            aggregate_type=self._aggregate_type,
+            version=aggregate.version,
+            state=state_dict,
+            schema_version=schema_version,
+            created_at=datetime.now(UTC),
+        )
+
+        # Save to store
+        await self._snapshot_store.save_snapshot(snapshot)
+
+        logger.info(
+            "Created snapshot for %s/%s at version %d (schema_version=%d)",
+            self._aggregate_type,
+            aggregate.aggregate_id,
+            snapshot.version,
+            schema_version,
+        )
+
+        return snapshot
+
+    async def _create_snapshot_background(self, aggregate: TAggregate) -> None:
+        """
+        Create a snapshot in the background.
+
+        Wraps _create_snapshot with error handling suitable for
+        background execution. Errors are logged but not raised.
+
+        Args:
+            aggregate: The aggregate to snapshot
+        """
+        try:
+            await self._create_snapshot(aggregate)
+            logger.debug(
+                "Background snapshot created for %s/%s at version %d",
+                self._aggregate_type,
+                aggregate.aggregate_id,
+                aggregate.version,
+            )
+        except Exception as e:
+            logger.warning(
+                "Background snapshot creation failed for %s/%s: %s",
+                self._aggregate_type,
+                aggregate.aggregate_id,
+                e,
+                exc_info=True,
+            )
+
+    def _cleanup_completed_tasks(self) -> None:
+        """
+        Remove completed tasks from the pending list.
+
+        Called periodically to prevent memory leaks from accumulated
+        completed task references.
+        """
+        self._pending_snapshot_tasks = [
+            task for task in self._pending_snapshot_tasks if not task.done()
+        ]
+
+    async def create_snapshot(self, aggregate: TAggregate) -> "Snapshot":
+        """
+        Manually create a snapshot for the given aggregate.
+
+        Creates a snapshot of the aggregate's current state and saves it
+        to the snapshot store. This method can be called regardless of
+        the snapshot_mode or snapshot_threshold settings.
+
+        Use cases:
+        - Creating snapshots at specific business milestones
+        - Forcing snapshot creation before maintenance
+        - Pre-warming snapshots for frequently accessed aggregates
+        - Testing snapshot functionality
+
+        Args:
+            aggregate: The aggregate to create a snapshot for.
+                      The aggregate should have its current state loaded
+                      (via load() or after applying events).
+
+        Returns:
+            The created Snapshot object with all metadata.
+
+        Raises:
+            RuntimeError: If snapshot_store is not configured.
+
+        Example:
+            >>> # Create snapshot after a major state transition
+            >>> order = await repo.load(order_id)
+            >>> order.complete_fulfillment()
+            >>> await repo.save(order)
+            >>> snapshot = await repo.create_snapshot(order)
+            >>> print(f"Created snapshot at version {snapshot.version}")
+
+            >>> # Create snapshot for frequently accessed aggregate
+            >>> user = await repo.load(user_id)
+            >>> await repo.create_snapshot(user)
+
+        Note:
+            The snapshot is saved immediately (synchronously) regardless
+            of the configured snapshot_mode.
+
+            If a snapshot already exists for the aggregate, it will be
+            replaced (upsert semantics).
+        """
+        if self._snapshot_store is None:
+            raise RuntimeError(
+                "Cannot create snapshot: snapshot_store is not configured. "
+                "Provide a snapshot_store when creating the repository."
+            )
+
+        return await self._create_snapshot(aggregate)
+
+    async def await_pending_snapshots(self) -> int:
+        """
+        Wait for all pending background snapshot tasks to complete.
+
+        This method is primarily useful for testing to ensure all
+        background snapshots are complete before assertions.
+
+        Returns:
+            Number of tasks that were awaited.
+
+        Example:
+            >>> # In tests
+            >>> await repo.save(aggregate)  # Triggers background snapshot
+            >>> count = await repo.await_pending_snapshots()
+            >>> print(f"Waited for {count} background snapshots")
+            >>> # Now safe to check snapshot store
+
+        Note:
+            In production, you typically don't need to call this method.
+            Background snapshots complete independently.
+        """
+        if not self._pending_snapshot_tasks:
+            return 0
+
+        count = len(self._pending_snapshot_tasks)
+
+        # Wait for all tasks, capturing any exceptions
+        results = await asyncio.gather(
+            *self._pending_snapshot_tasks,
+            return_exceptions=True,
+        )
+
+        # Log any exceptions (shouldn't happen as _create_snapshot_background handles them)
+        for result in results:
+            if isinstance(result, Exception):
+                logger.error(
+                    "Unexpected error in background snapshot task: %s",
+                    result,
+                    exc_info=result,
+                )
+
+        # Clear the list
+        self._pending_snapshot_tasks.clear()
+
+        return count
+
+    @property
+    def pending_snapshot_count(self) -> int:
+        """
+        Get the number of pending background snapshot tasks.
+
+        Useful for monitoring and debugging.
+
+        Returns:
+            Number of background snapshot tasks not yet complete.
+        """
+        self._cleanup_completed_tasks()
+        return len(self._pending_snapshot_tasks)
 
     async def exists(self, aggregate_id: UUID) -> bool:
         """

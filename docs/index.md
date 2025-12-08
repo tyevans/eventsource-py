@@ -15,10 +15,16 @@ Welcome to the eventsource-py documentation. This library provides a production-
 - [Aggregates](api/aggregates.md) - AggregateRoot and Repository
 - [Projections](api/projections.md) - Projection system
 - [Event Bus](api/bus.md) - Event distribution
+- [Snapshots](api/snapshots.md) - Aggregate state caching for performance
 
 ## Development
 
 - [Testing Strategy](development/testing.md) - Testing patterns, fixtures, and best practices
+
+## Guides
+
+- [Snapshotting Guide](guides/snapshotting.md) - Enable aggregate state caching for performance
+- [Migration Guide](guides/snapshotting-migration.md) - Add snapshotting to existing projects
 
 ## Examples
 
@@ -27,6 +33,7 @@ The library includes working examples in the `examples/` directory:
 - **basic_usage.py** - Simple bank account example
 - **aggregate_example.py** - Shopping cart with declarative aggregates
 - **projection_example.py** - Building read models
+- [Snapshotting Example](examples/snapshotting.md) - Aggregate state caching
 
 Run examples with:
 ```bash
