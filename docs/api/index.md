@@ -41,6 +41,11 @@ This section provides comprehensive API documentation for the eventsource librar
 | | [`InMemorySnapshotStore`](snapshots.md#inmemorysnapshotstore) | In-memory store for testing |
 | | [`PostgreSQLSnapshotStore`](snapshots.md#postgresqlsnapshotstore) | Production PostgreSQL store |
 | | [`SQLiteSnapshotStore`](snapshots.md#sqlitesnapshotstore) | SQLite store for dev/embedded |
+| **Observability** | [`OTEL_AVAILABLE`](observability.md#otel_available) | OpenTelemetry availability constant |
+| | [`get_tracer`](observability.md#get_tracer) | Get OpenTelemetry tracer if available |
+| | [`should_trace`](observability.md#should_trace) | Check if tracing should be active |
+| | [`@traced`](observability.md#traced-decorator) | Decorator for method-level tracing |
+| | [`TracingMixin`](observability.md#tracingmixin-class) | Mixin class for tracing support |
 
 ---
 
@@ -357,6 +362,64 @@ order = await repo.load(order_id)
 ```
 
 [Read the full Snapshots API documentation](snapshots.md)
+
+---
+
+### Observability Module
+
+Reusable OpenTelemetry tracing utilities for consistent observability.
+
+```python
+from eventsource.observability import (
+    # Constants
+    OTEL_AVAILABLE,
+
+    # Helpers
+    get_tracer,
+    should_trace,
+
+    # Decorator
+    traced,
+
+    # Mixin
+    TracingMixin,
+)
+```
+
+**Key Components:**
+
+- **`OTEL_AVAILABLE`**: Boolean constant indicating OpenTelemetry availability (single source of truth).
+
+- **`get_tracer()`**: Safely obtain an OpenTelemetry tracer, returning None if unavailable.
+
+- **`@traced`**: Decorator for adding tracing to methods with minimal boilerplate.
+
+- **`TracingMixin`**: Mixin class providing `_init_tracing()` and `_create_span_context()` methods for standardized tracing support.
+
+**Example:**
+
+```python
+from eventsource.observability import traced, TracingMixin
+
+class MyStore(TracingMixin):
+    def __init__(self, enable_tracing: bool = True):
+        self._init_tracing(__name__, enable_tracing)
+
+    @traced("my_store.save")
+    async def save(self, item_id: str) -> None:
+        # Automatically traced
+        await self._do_save(item_id)
+
+    async def load(self, item_id: str) -> dict:
+        # Dynamic attributes
+        with self._create_span_context(
+            "my_store.load",
+            {"item.id": item_id},
+        ):
+            return await self._do_load(item_id)
+```
+
+[Read the full Observability API documentation](observability.md)
 
 ---
 
