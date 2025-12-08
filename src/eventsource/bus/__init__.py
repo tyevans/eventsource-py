@@ -6,6 +6,7 @@ subscribing to domain events.
 Available Implementations:
 - InMemoryEventBus: In-process event distribution (development/testing/single-instance)
 - RedisEventBus: Distributed event streaming via Redis Streams (production/multi-instance)
+- RabbitMQEventBus: Distributed event messaging via RabbitMQ (production/multi-instance)
 
 Example:
     >>> from eventsource.bus import InMemoryEventBus, EventSubscriber
@@ -38,6 +39,18 @@ For Redis-based distributed event bus:
     >>> bus = RedisEventBus(config=config)
     >>> await bus.connect()
     >>> await bus.publish([MyEvent(...)])
+
+For RabbitMQ-based distributed event bus:
+    >>> from eventsource.bus import RabbitMQEventBus, RabbitMQEventBusConfig
+    >>>
+    >>> config = RabbitMQEventBusConfig(
+    ...     rabbitmq_url="amqp://guest:guest@localhost:5672/",
+    ...     exchange_name="events",
+    ...     consumer_group="projections",
+    ... )
+    >>> bus = RabbitMQEventBus(config=config)
+    >>> await bus.connect()
+    >>> await bus.publish([MyEvent(...)])
 """
 
 from eventsource.bus.interface import (
@@ -48,6 +61,15 @@ from eventsource.bus.interface import (
     EventSubscriber,
 )
 from eventsource.bus.memory import InMemoryEventBus
+
+# RabbitMQ event bus - conditionally imported based on aio-pika availability
+from eventsource.bus.rabbitmq import (
+    RABBITMQ_AVAILABLE,
+    RabbitMQEventBus,
+    RabbitMQEventBusConfig,
+    RabbitMQEventBusStats,
+    RabbitMQNotAvailableError,
+)
 
 # Redis event bus - conditionally imported based on redis availability
 from eventsource.bus.redis import (
@@ -73,4 +95,10 @@ __all__ = [
     "RedisEventBusStats",
     "RedisNotAvailableError",
     "REDIS_AVAILABLE",
+    # RabbitMQ event bus
+    "RabbitMQEventBus",
+    "RabbitMQEventBusConfig",
+    "RabbitMQEventBusStats",
+    "RabbitMQNotAvailableError",
+    "RABBITMQ_AVAILABLE",
 ]

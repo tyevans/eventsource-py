@@ -38,8 +38,11 @@ telemetry = [
     "opentelemetry-api>=1.0,<2.0",
     "opentelemetry-sdk>=1.0,<2.0",
 ]
+rabbitmq = [
+    "aio-pika>=9.0.0",
+]
 all = [
-    "eventsource[postgresql,redis,telemetry]",
+    "eventsource[postgresql,redis,rabbitmq,telemetry]",
 ]
 dev = [
     "pytest>=8.0",
@@ -102,6 +105,14 @@ ignore_missing_imports = true
 module = "redis.*"
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = "aio_pika.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "aiormq.*"
+ignore_missing_imports = true
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
@@ -119,5 +130,6 @@ skips = ["B101"]  # Allow assert statements
 
 [dependency-groups]
 dev = [
+    "bandit>=1.9.2",
     "mypy>=1.19.0",
 ]
