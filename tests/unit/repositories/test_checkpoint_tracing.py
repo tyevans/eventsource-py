@@ -10,6 +10,7 @@ Tests for:
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock, Mock
 from uuid import uuid4
 
@@ -627,7 +628,7 @@ class TestCheckpointRepositoryStandardAttributes:
             ["grep", "-c", "ATTR_", "src/eventsource/repositories/checkpoint.py"],
             capture_output=True,
             text=True,
-            cwd="/home/ty/workspace/eventsource-py-wt-1",
+            cwd=Path(__file__).parents[3],
         )
         # Should find multiple ATTR_* usages
         count = int(result.stdout.strip())
@@ -641,7 +642,7 @@ class TestCheckpointRepositoryStandardAttributes:
             ["grep", "-c", "OTEL_AVAILABLE = ", "src/eventsource/repositories/checkpoint.py"],
             capture_output=True,
             text=True,
-            cwd="/home/ty/workspace/eventsource-py-wt-1",
+            cwd=Path(__file__).parents[3],
         )
         # Should be 0 - no local definition
         assert result.stdout.strip() == "0", (
@@ -661,7 +662,7 @@ class TestCheckpointRepositoryStandardAttributes:
             ],
             capture_output=True,
             text=True,
-            cwd="/home/ty/workspace/eventsource-py-wt-1",
+            cwd=Path(__file__).parents[3],
         )
         # Should be at least 1 - imports from observability
         count = int(result.stdout.strip())
