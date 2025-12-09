@@ -178,6 +178,5 @@ class KafkaEventBusStats:
 
 - [ADR-0001: Async-First Design](0001-async-first-design.md)
 - [ADR-0005: API Design Patterns](0005-api-design-patterns.md)
-- [FRD: Kafka Event Bus Integration](../futures/kafka-event-bus-integration.md)
 - [Kafka Event Bus Guide](../guides/kafka-event-bus.md)
 - [Event Bus API Reference](../api/bus.md#kafkaeventbus)
