@@ -33,6 +33,10 @@ from eventsource.observability import (
     TracingMixin,
 )
 from eventsource.stores._compat import normalize_timestamp
+from eventsource.stores._type_converter import (
+    DefaultTypeConverter,
+    TypeConverter,
+)
 from eventsource.stores.interface import (
     AppendResult,
     EventStore,
@@ -102,35 +106,6 @@ class PostgreSQLEventStore(TracingMixin, EventStore):
         ... )
     """
 
-    # Default UUID fields (always treated as UUID)
-    DEFAULT_UUID_FIELDS: frozenset[str] = frozenset(
-        {
-            "event_id",
-            "aggregate_id",
-            "tenant_id",
-            "correlation_id",
-            "causation_id",
-            "template_id",
-            "issuance_id",
-            "user_id",
-        }
-    )
-
-    # Default string ID fields (never treated as UUID even if ends with _id)
-    DEFAULT_STRING_ID_FIELDS: frozenset[str] = frozenset(
-        {
-            "actor_id",
-            "issuer_id",
-            "recipient_id",
-            "invited_by",
-            "assigned_by",
-            "revoked_by",
-            "deactivated_by",
-            "reactivated_by",
-            "removed_by",
-        }
-    )
-
     def __init__(
         self,
         session_factory: async_sessionmaker[AsyncSession],
@@ -138,10 +113,10 @@ class PostgreSQLEventStore(TracingMixin, EventStore):
         event_registry: EventRegistry | None = None,
         outbox_enabled: bool = False,
         enable_tracing: bool = True,
+        type_converter: TypeConverter | None = None,
         uuid_fields: set[str] | None = None,
         string_id_fields: set[str] | None = None,
         auto_detect_uuid: bool = True,
-        _use_defaults: bool = True,
     ) -> None:
         """
         Initialize the PostgreSQL event store.
@@ -151,13 +126,16 @@ class PostgreSQLEventStore(TracingMixin, EventStore):
             event_registry: Event registry for deserialization (defaults to module registry)
             outbox_enabled: If True, write events to outbox table on append
             enable_tracing: If True and OpenTelemetry is available, emit traces
+            type_converter: Custom TypeConverter for field type conversion.
+                If not provided, a DefaultTypeConverter is created using
+                the uuid_fields, string_id_fields, and auto_detect_uuid params.
             uuid_fields: Additional field names to treat as UUIDs.
-                        These are added to the default UUID fields.
+                These are added to the default UUID fields.
             string_id_fields: Field names that should NOT be treated as UUIDs,
-                             even if they match UUID patterns (e.g., end in '_id').
+                even if they match UUID patterns (e.g., end in '_id').
             auto_detect_uuid: If True (default), fields ending in '_id' are
-                             treated as UUIDs unless in string_id_fields.
-                             Set to False for explicit control only.
+                treated as UUIDs unless in string_id_fields.
+                Set to False for explicit control only.
 
         Example:
             >>> engine = create_async_engine("postgresql+asyncpg://localhost/mydb")
@@ -179,6 +157,11 @@ class PostgreSQLEventStore(TracingMixin, EventStore):
             ...     session_factory,
             ...     string_id_fields={"stripe_customer_id", "paypal_transaction_id"},
             ... )
+
+            # Custom type converter:
+            >>> from eventsource.stores import DefaultTypeConverter
+            >>> converter = DefaultTypeConverter.strict({"event_id", "aggregate_id"})
+            >>> store = PostgreSQLEventStore(session_factory, type_converter=converter)
         """
         self._session_factory = session_factory
         self._event_registry = event_registry or default_registry
@@ -187,31 +170,15 @@ class PostgreSQLEventStore(TracingMixin, EventStore):
         # Initialize tracing via TracingMixin
         self._init_tracing(__name__, enable_tracing)
 
-        # Build UUID field set
-        if _use_defaults:
-            self._uuid_fields: frozenset[str] = (
-                self.DEFAULT_UUID_FIELDS | frozenset(uuid_fields)
-                if uuid_fields
-                else self.DEFAULT_UUID_FIELDS
-            )
+        # Initialize type converter
+        if type_converter is not None:
+            self._type_converter = type_converter
         else:
-            # Strict mode: only use explicitly provided fields
-            self._uuid_fields = frozenset(uuid_fields) if uuid_fields else frozenset()
-
-        # Build string ID field set (exclusions)
-        if _use_defaults:
-            self._string_id_fields: frozenset[str] = (
-                self.DEFAULT_STRING_ID_FIELDS | frozenset(string_id_fields)
-                if string_id_fields
-                else self.DEFAULT_STRING_ID_FIELDS
+            self._type_converter = DefaultTypeConverter(
+                uuid_fields=uuid_fields,
+                string_id_fields=string_id_fields,
+                auto_detect_uuid=auto_detect_uuid,
             )
-        else:
-            # Strict mode: only use explicitly provided exclusions
-            self._string_id_fields = (
-                frozenset(string_id_fields) if string_id_fields else frozenset()
-            )
-
-        self._auto_detect_uuid = auto_detect_uuid
 
     @classmethod
     def with_strict_uuid_detection(
@@ -251,10 +218,7 @@ class PostgreSQLEventStore(TracingMixin, EventStore):
             event_registry=event_registry,
             outbox_enabled=outbox_enabled,
             enable_tracing=enable_tracing,
-            uuid_fields=uuid_fields,
-            string_id_fields=set(),  # Empty - not needed without auto-detect
-            auto_detect_uuid=False,
-            _use_defaults=False,  # Only use explicitly provided fields
+            type_converter=DefaultTypeConverter.strict(uuid_fields),
         )
 
     async def append_events(
@@ -965,71 +929,10 @@ class PostgreSQLEventStore(TracingMixin, EventStore):
         event_data = payload if isinstance(payload, dict) else json.loads(payload)
 
         # Convert string fields to proper types for Pydantic strict validation
-        event_data = self._convert_types(event_data)
+        event_data = self._type_converter.convert_types(event_data)
 
         # Create event instance
         return event_class.model_validate(event_data, strict=False)
-
-    def _convert_types(self, data: Any) -> Any:
-        """
-        Recursively convert UUID and datetime strings to proper types.
-
-        Pydantic strict mode requires exact types, so we need to convert
-        string representations back to UUID and datetime objects.
-        """
-        if isinstance(data, dict):
-            result: dict[str, Any] = {}
-            for key, value in data.items():
-                # Convert UUID string fields
-                if isinstance(value, str) and self._is_uuid_field(key):
-                    try:
-                        result[key] = UUID(value)
-                    except (ValueError, AttributeError):
-                        result[key] = value
-                # Convert datetime strings
-                elif isinstance(value, str) and (key == "occurred_at" or key.endswith("_at")):
-                    try:
-                        result[key] = datetime.fromisoformat(value.replace("Z", "+00:00"))
-                    except (ValueError, AttributeError):
-                        result[key] = value
-                # Recursively process nested structures
-                elif isinstance(value, dict):
-                    result[key] = self._convert_types(value)
-                elif isinstance(value, list):
-                    result[key] = [self._convert_types(item) for item in value]
-                else:
-                    result[key] = value
-            return result
-        elif isinstance(data, list):
-            return [self._convert_types(item) for item in data]
-        return data
-
-    def _is_uuid_field(self, key: str) -> bool:
-        """
-        Determine if a field should be treated as a UUID.
-
-        Args:
-            key: Field name to check
-
-        Returns:
-            True if field should be parsed/serialized as UUID
-
-        The detection logic:
-        1. If key is in explicit uuid_fields, return True
-        2. If key is in string_id_fields, return False (exclusion)
-        3. If auto_detect_uuid is True and key ends with '_id', return True
-        4. Otherwise return False
-        """
-        # Explicit UUID fields always match
-        if key in self._uuid_fields:
-            return True
-
-        # Excluded fields never match
-        if key in self._string_id_fields:
-            return False
-
-        # Auto-detection based on suffix
-        return self._auto_detect_uuid and key.endswith("_id")
 
     @property
     def session_factory(self) -> async_sessionmaker[AsyncSession]:

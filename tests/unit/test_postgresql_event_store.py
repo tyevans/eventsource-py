@@ -1172,13 +1172,13 @@ class TestTypeConversion:
     ) -> None:
         """Test that UUID fields are correctly identified."""
         # Should be UUID fields
-        assert store._is_uuid_field("event_id") is True
-        assert store._is_uuid_field("aggregate_id") is True
-        assert store._is_uuid_field("tenant_id") is True
-        assert store._is_uuid_field("correlation_id") is True
-        assert store._is_uuid_field("causation_id") is True
-        assert store._is_uuid_field("user_id") is True
-        assert store._is_uuid_field("order_id") is True
+        assert store._type_converter.is_uuid_field("event_id") is True
+        assert store._type_converter.is_uuid_field("aggregate_id") is True
+        assert store._type_converter.is_uuid_field("tenant_id") is True
+        assert store._type_converter.is_uuid_field("correlation_id") is True
+        assert store._type_converter.is_uuid_field("causation_id") is True
+        assert store._type_converter.is_uuid_field("user_id") is True
+        assert store._type_converter.is_uuid_field("order_id") is True
 
     def test_is_uuid_field_excludes_string_ids(
         self,
@@ -1186,10 +1186,10 @@ class TestTypeConversion:
     ) -> None:
         """Test that string ID fields are correctly excluded."""
         # Should NOT be UUID fields (these are strings)
-        assert store._is_uuid_field("actor_id") is False
-        assert store._is_uuid_field("issuer_id") is False
-        assert store._is_uuid_field("recipient_id") is False
-        assert store._is_uuid_field("invited_by") is False
+        assert store._type_converter.is_uuid_field("actor_id") is False
+        assert store._type_converter.is_uuid_field("issuer_id") is False
+        assert store._type_converter.is_uuid_field("recipient_id") is False
+        assert store._type_converter.is_uuid_field("invited_by") is False
 
     def test_convert_types_converts_uuids(
         self,
@@ -1199,7 +1199,7 @@ class TestTypeConversion:
         test_uuid = uuid4()
         data = {"event_id": str(test_uuid), "name": "test"}
 
-        result = store._convert_types(data)
+        result = store._type_converter.convert_types(data)
 
         assert isinstance(result["event_id"], UUID)
         assert result["event_id"] == test_uuid
@@ -1213,7 +1213,7 @@ class TestTypeConversion:
         now = datetime.now(UTC)
         data = {"occurred_at": now.isoformat(), "name": "test"}
 
-        result = store._convert_types(data)
+        result = store._type_converter.convert_types(data)
 
         assert isinstance(result["occurred_at"], datetime)
         assert result["name"] == "test"
@@ -1234,7 +1234,7 @@ class TestTypeConversion:
             ],
         }
 
-        result = store._convert_types(data)
+        result = store._type_converter.convert_types(data)
 
         assert isinstance(result["outer_id"], UUID)
         assert isinstance(result["nested"]["inner_id"], UUID)
@@ -1247,7 +1247,7 @@ class TestTypeConversion:
         """Test that Z timezone suffix is handled correctly."""
         data = {"occurred_at": "2024-01-01T12:00:00Z"}
 
-        result = store._convert_types(data)
+        result = store._type_converter.convert_types(data)
 
         assert isinstance(result["occurred_at"], datetime)
         assert result["occurred_at"].tzinfo is not None
@@ -1271,11 +1271,11 @@ class TestConfigurableUUIDDetection:
             enable_tracing=False,
         )
 
-        assert store._is_uuid_field("event_id") is True
-        assert store._is_uuid_field("aggregate_id") is True
-        assert store._is_uuid_field("tenant_id") is True
-        assert store._is_uuid_field("correlation_id") is True
-        assert store._is_uuid_field("causation_id") is True
+        assert store._type_converter.is_uuid_field("event_id") is True
+        assert store._type_converter.is_uuid_field("aggregate_id") is True
+        assert store._type_converter.is_uuid_field("tenant_id") is True
+        assert store._type_converter.is_uuid_field("correlation_id") is True
+        assert store._type_converter.is_uuid_field("causation_id") is True
 
     def test_default_string_fields_excluded(
         self,
@@ -1289,10 +1289,10 @@ class TestConfigurableUUIDDetection:
             enable_tracing=False,
         )
 
-        assert store._is_uuid_field("actor_id") is False
-        assert store._is_uuid_field("issuer_id") is False
-        assert store._is_uuid_field("recipient_id") is False
-        assert store._is_uuid_field("invited_by") is False
+        assert store._type_converter.is_uuid_field("actor_id") is False
+        assert store._type_converter.is_uuid_field("issuer_id") is False
+        assert store._type_converter.is_uuid_field("recipient_id") is False
+        assert store._type_converter.is_uuid_field("invited_by") is False
 
     def test_custom_uuid_field_added(
         self,
@@ -1308,10 +1308,10 @@ class TestConfigurableUUIDDetection:
         )
 
         # Custom fields should be detected
-        assert store._is_uuid_field("custom_reference_id") is True
-        assert store._is_uuid_field("special_field") is True
+        assert store._type_converter.is_uuid_field("custom_reference_id") is True
+        assert store._type_converter.is_uuid_field("special_field") is True
         # Default fields still work
-        assert store._is_uuid_field("event_id") is True
+        assert store._type_converter.is_uuid_field("event_id") is True
 
     def test_custom_string_field_excluded(
         self,
@@ -1328,10 +1328,10 @@ class TestConfigurableUUIDDetection:
 
         # Custom exclusions should work
         # (would normally match _id suffix, but excluded)
-        assert store._is_uuid_field("stripe_customer_id") is False
-        assert store._is_uuid_field("external_api_id") is False
+        assert store._type_converter.is_uuid_field("stripe_customer_id") is False
+        assert store._type_converter.is_uuid_field("external_api_id") is False
         # Default exclusions still work
-        assert store._is_uuid_field("actor_id") is False
+        assert store._type_converter.is_uuid_field("actor_id") is False
 
     def test_auto_detect_disabled(
         self,
@@ -1347,11 +1347,11 @@ class TestConfigurableUUIDDetection:
         )
 
         # Not in explicit list, suffix detection disabled
-        assert store._is_uuid_field("some_random_id") is False
-        assert store._is_uuid_field("custom_entity_id") is False
+        assert store._type_converter.is_uuid_field("some_random_id") is False
+        assert store._type_converter.is_uuid_field("custom_entity_id") is False
         # But explicit UUID fields still work
-        assert store._is_uuid_field("event_id") is True
-        assert store._is_uuid_field("aggregate_id") is True
+        assert store._type_converter.is_uuid_field("event_id") is True
+        assert store._type_converter.is_uuid_field("aggregate_id") is True
 
     def test_auto_detect_enabled_by_default(
         self,
@@ -1366,9 +1366,9 @@ class TestConfigurableUUIDDetection:
         )
 
         # Fields ending in _id should be detected
-        assert store._is_uuid_field("order_id") is True
-        assert store._is_uuid_field("customer_id") is True
-        assert store._is_uuid_field("product_id") is True
+        assert store._type_converter.is_uuid_field("order_id") is True
+        assert store._type_converter.is_uuid_field("customer_id") is True
+        assert store._type_converter.is_uuid_field("product_id") is True
 
     def test_strict_uuid_detection(
         self,
@@ -1384,14 +1384,14 @@ class TestConfigurableUUIDDetection:
         )
 
         # Only explicitly listed fields are UUIDs
-        assert store._is_uuid_field("event_id") is True
-        assert store._is_uuid_field("aggregate_id") is True
+        assert store._type_converter.is_uuid_field("event_id") is True
+        assert store._type_converter.is_uuid_field("aggregate_id") is True
         # Default UUID fields NOT in the explicit list
-        assert store._is_uuid_field("tenant_id") is False
-        assert store._is_uuid_field("correlation_id") is False
+        assert store._type_converter.is_uuid_field("tenant_id") is False
+        assert store._type_converter.is_uuid_field("correlation_id") is False
         # Auto-detection is disabled
-        assert store._is_uuid_field("any_other_id") is False
-        assert store._is_uuid_field("customer_id") is False
+        assert store._type_converter.is_uuid_field("any_other_id") is False
+        assert store._type_converter.is_uuid_field("customer_id") is False
 
     def test_strict_uuid_detection_with_outbox(
         self,
@@ -1408,7 +1408,7 @@ class TestConfigurableUUIDDetection:
         )
 
         assert store.outbox_enabled is True
-        assert store._is_uuid_field("event_id") is True
+        assert store._type_converter.is_uuid_field("event_id") is True
 
     def test_exclusion_takes_precedence_over_auto_detect(
         self,
@@ -1425,7 +1425,7 @@ class TestConfigurableUUIDDetection:
         )
 
         # Would match _id suffix, but explicitly excluded
-        assert store._is_uuid_field("external_order_id") is False
+        assert store._type_converter.is_uuid_field("external_order_id") is False
 
     def test_explicit_uuid_takes_precedence_over_exclusion(
         self,
@@ -1442,23 +1442,25 @@ class TestConfigurableUUIDDetection:
         )
 
         # Explicit UUID takes precedence
-        assert store._is_uuid_field("special_id") is True
+        assert store._type_converter.is_uuid_field("special_id") is True
 
-    def test_class_attributes_are_frozen(
+    def test_module_level_defaults_are_frozen(
         self,
         mock_session_factory: MagicMock,
         event_registry: EventRegistry,
     ) -> None:
-        """Class default sets are frozensets (immutable)."""
-        assert isinstance(PostgreSQLEventStore.DEFAULT_UUID_FIELDS, frozenset)
-        assert isinstance(PostgreSQLEventStore.DEFAULT_STRING_ID_FIELDS, frozenset)
+        """Module-level default sets are frozensets (immutable)."""
+        from eventsource.stores import DEFAULT_STRING_ID_FIELDS, DEFAULT_UUID_FIELDS
 
-    def test_instance_sets_are_frozen(
+        assert isinstance(DEFAULT_UUID_FIELDS, frozenset)
+        assert isinstance(DEFAULT_STRING_ID_FIELDS, frozenset)
+
+    def test_type_converter_sets_are_frozen(
         self,
         mock_session_factory: MagicMock,
         event_registry: EventRegistry,
     ) -> None:
-        """Instance UUID/string field sets are frozensets (immutable)."""
+        """TypeConverter internal field sets are frozensets (immutable)."""
         store = PostgreSQLEventStore(
             session_factory=mock_session_factory,
             event_registry=event_registry,
@@ -1467,5 +1469,5 @@ class TestConfigurableUUIDDetection:
             string_id_fields={"external_id"},
         )
 
-        assert isinstance(store._uuid_fields, frozenset)
-        assert isinstance(store._string_id_fields, frozenset)
+        assert isinstance(store._type_converter._uuid_fields, frozenset)
+        assert isinstance(store._type_converter._string_id_fields, frozenset)
