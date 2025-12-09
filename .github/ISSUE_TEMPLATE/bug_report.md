@@ -1,7 +1,9 @@
 ---
 name: Bug Report
-description: Report a bug or unexpected behavior
-labels: ["bug"]
+about: Report a bug or unexpected behavior
+title: ''
+labels: bug
+assignees: ''
 ---
 
 ## Description
