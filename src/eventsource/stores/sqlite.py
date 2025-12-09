@@ -40,6 +40,10 @@ from eventsource.observability import (
     TracingMixin,
 )
 from eventsource.stores._compat import normalize_timestamp
+from eventsource.stores._type_converter import (
+    DefaultTypeConverter,
+    TypeConverter,
+)
 from eventsource.stores.interface import (
     AppendResult,
     EventStore,
@@ -101,6 +105,10 @@ class SQLiteEventStore(TracingMixin, EventStore):
         wal_mode: bool = True,
         busy_timeout: int = 5000,
         enable_tracing: bool = True,
+        type_converter: TypeConverter | None = None,
+        uuid_fields: set[str] | None = None,
+        string_id_fields: set[str] | None = None,
+        auto_detect_uuid: bool = True,
     ) -> None:
         """
         Initialize the SQLite event store.
@@ -111,6 +119,16 @@ class SQLiteEventStore(TracingMixin, EventStore):
             wal_mode: If True, enable WAL mode for better concurrency (default: True)
             busy_timeout: Timeout in milliseconds when database is locked (default: 5000)
             enable_tracing: If True and OpenTelemetry is available, emit traces (default: True)
+            type_converter: Custom TypeConverter for field type conversion.
+                If not provided, a DefaultTypeConverter is created using
+                the uuid_fields, string_id_fields, and auto_detect_uuid params.
+            uuid_fields: Additional field names to treat as UUIDs.
+                These are added to the default UUID fields.
+            string_id_fields: Field names that should NOT be treated as UUIDs,
+                even if they match UUID patterns (e.g., end in '_id').
+            auto_detect_uuid: If True (default), fields ending in '_id' are
+                treated as UUIDs unless in string_id_fields.
+                Set to False for explicit control only.
 
         Example:
             >>> # In-memory database for testing
@@ -124,6 +142,14 @@ class SQLiteEventStore(TracingMixin, EventStore):
             >>>
             >>> # Without tracing
             >>> store = SQLiteEventStore("events.db", event_registry, enable_tracing=False)
+            >>>
+            >>> # Custom UUID fields
+            >>> store = SQLiteEventStore(":memory:", uuid_fields={"custom_reference_id"})
+            >>>
+            >>> # Custom type converter
+            >>> from eventsource.stores import DefaultTypeConverter
+            >>> converter = DefaultTypeConverter.strict({"event_id", "aggregate_id"})
+            >>> store = SQLiteEventStore(":memory:", type_converter=converter)
         """
         self._database = database
         self._event_registry = event_registry or default_registry
@@ -133,6 +159,60 @@ class SQLiteEventStore(TracingMixin, EventStore):
 
         # Initialize tracing via TracingMixin
         self._init_tracing(__name__, enable_tracing)
+
+        # Initialize type converter
+        if type_converter is not None:
+            self._type_converter = type_converter
+        else:
+            self._type_converter = DefaultTypeConverter(
+                uuid_fields=uuid_fields,
+                string_id_fields=string_id_fields,
+                auto_detect_uuid=auto_detect_uuid,
+            )
+
+    @classmethod
+    def with_strict_uuid_detection(
+        cls,
+        database: str,
+        uuid_fields: set[str],
+        *,
+        event_registry: EventRegistry | None = None,
+        wal_mode: bool = True,
+        busy_timeout: int = 5000,
+        enable_tracing: bool = True,
+    ) -> SQLiteEventStore:
+        """
+        Create store with explicit UUID field list only (no auto-detection).
+
+        Use this when you want full control over which fields are UUIDs.
+        Only the explicitly provided uuid_fields will be treated as UUIDs;
+        no auto-detection based on field name patterns will occur.
+
+        Args:
+            database: Path to SQLite database file or ':memory:' for in-memory
+            uuid_fields: Exact set of fields to treat as UUIDs
+            event_registry: Event registry for deserialization (defaults to module registry)
+            wal_mode: If True, enable WAL mode for better concurrency
+            busy_timeout: Timeout in milliseconds when database is locked
+            enable_tracing: If True and OpenTelemetry is available, emit traces
+
+        Returns:
+            SQLiteEventStore with strict UUID detection
+
+        Example:
+            >>> store = SQLiteEventStore.with_strict_uuid_detection(
+            ...     database=":memory:",
+            ...     uuid_fields={"event_id", "aggregate_id", "tenant_id"},
+            ... )
+        """
+        return cls(
+            database=database,
+            event_registry=event_registry,
+            wal_mode=wal_mode,
+            busy_timeout=busy_timeout,
+            enable_tracing=enable_tracing,
+            type_converter=DefaultTypeConverter.strict(uuid_fields),
+        )
 
     async def __aenter__(self) -> SQLiteEventStore:
         """
@@ -954,74 +1034,10 @@ class SQLiteEventStore(TracingMixin, EventStore):
         event_data = json.loads(payload)
 
         # Convert string fields to proper types for Pydantic strict validation
-        event_data = self._convert_types(event_data)
+        event_data = self._type_converter.convert_types(event_data)
 
         # Create event instance
         return event_class.model_validate(event_data, strict=False)
-
-    def _convert_types(self, data: Any) -> Any:
-        """
-        Recursively convert UUID and datetime strings to proper types.
-
-        Pydantic strict mode requires exact types, so we need to convert
-        string representations back to UUID and datetime objects.
-        """
-        if isinstance(data, dict):
-            result: dict[str, Any] = {}
-            for key, value in data.items():
-                # Convert UUID string fields
-                if isinstance(value, str) and self._is_uuid_field(key):
-                    try:
-                        result[key] = UUID(value)
-                    except (ValueError, AttributeError):
-                        result[key] = value
-                # Convert datetime strings
-                elif isinstance(value, str) and (key == "occurred_at" or key.endswith("_at")):
-                    try:
-                        result[key] = datetime.fromisoformat(value.replace("Z", "+00:00"))
-                    except (ValueError, AttributeError):
-                        result[key] = value
-                # Recursively process nested structures
-                elif isinstance(value, dict):
-                    result[key] = self._convert_types(value)
-                elif isinstance(value, list):
-                    result[key] = [self._convert_types(item) for item in value]
-                else:
-                    result[key] = value
-            return result
-        elif isinstance(data, list):
-            return [self._convert_types(item) for item in data]
-        return data
-
-    def _is_uuid_field(self, key: str) -> bool:
-        """Check if a field should be converted to UUID."""
-        # These fields are explicitly strings, not UUIDs
-        string_id_fields = {
-            "actor_id",
-            "issuer_id",
-            "recipient_id",
-            "invited_by",
-            "assigned_by",
-            "revoked_by",
-            "deactivated_by",
-            "reactivated_by",
-            "removed_by",
-        }
-        if key in string_id_fields:
-            return False
-
-        # These are UUID fields
-        uuid_field_names = {
-            "event_id",
-            "aggregate_id",
-            "tenant_id",
-            "correlation_id",
-            "causation_id",
-            "template_id",
-            "issuance_id",
-            "user_id",
-        }
-        return key.endswith("_id") or key in uuid_field_names
 
     @property
     def database(self) -> str:

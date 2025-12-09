@@ -24,6 +24,14 @@ from eventsource import (
     ReadDirection,
     ExpectedVersion,
 )
+
+# Type conversion utilities
+from eventsource.stores import (
+    TypeConverter,
+    DefaultTypeConverter,
+    DEFAULT_UUID_FIELDS,
+    DEFAULT_STRING_ID_FIELDS,
+)
 ```
 
 ---
@@ -222,6 +230,10 @@ store = PostgreSQLEventStore(
 | `event_registry` | `EventRegistry` | Default registry | Event type lookup |
 | `outbox_enabled` | `bool` | `False` | Write events to outbox table |
 | `enable_tracing` | `bool` | `True` | OpenTelemetry tracing |
+| `type_converter` | `TypeConverter` | `None` | Custom type converter (see [TypeConverter](#typeconverter)) |
+| `uuid_fields` | `set[str]` | `None` | Additional UUID field names |
+| `string_id_fields` | `set[str]` | `None` | Fields to exclude from UUID detection |
+| `auto_detect_uuid` | `bool` | `True` | Auto-detect UUIDs by `_id` suffix |
 
 ### Features
 
@@ -321,6 +333,27 @@ async with SQLiteEventStore("./events.db", enable_tracing=False) as store:
 | `wal_mode` | `bool` | `True` | Enable WAL journal mode |
 | `busy_timeout` | `int` | `5000` | Timeout in ms for locked database |
 | `enable_tracing` | `bool` | `True` | OpenTelemetry tracing |
+| `type_converter` | `TypeConverter` | `None` | Custom type converter (see [TypeConverter](#typeconverter)) |
+| `uuid_fields` | `set[str]` | `None` | Additional UUID field names |
+| `string_id_fields` | `set[str]` | `None` | Fields to exclude from UUID detection |
+| `auto_detect_uuid` | `bool` | `True` | Auto-detect UUIDs by `_id` suffix |
+
+### Factory Methods
+
+#### `with_strict_uuid_detection()`
+
+Create a store with explicit UUID field list only (no auto-detection):
+
+```python
+store = SQLiteEventStore.with_strict_uuid_detection(
+    database="./events.db",
+    uuid_fields={"event_id", "aggregate_id", "tenant_id"},
+    event_registry=registry,  # optional
+    wal_mode=True,            # optional
+    busy_timeout=5000,        # optional
+    enable_tracing=True,      # optional
+)
+```
 
 ### Features
 
@@ -461,6 +494,178 @@ asyncio.run(main())
 ```
 
 See [SQLite Backend Guide](../guides/sqlite-backend.md) for detailed usage patterns and best practices.
+
+---
+
+## TypeConverter
+
+The `TypeConverter` protocol and `DefaultTypeConverter` implementation handle type conversion during event deserialization, converting JSON-stored strings back to proper Python types (UUIDs, datetimes).
+
+### TypeConverter Protocol
+
+```python
+from typing import Any, Protocol, runtime_checkable
+
+@runtime_checkable
+class TypeConverter(Protocol):
+    """Protocol for type conversion during event deserialization."""
+
+    def convert_types(self, data: Any) -> Any:
+        """Recursively convert string types to proper Python types."""
+        ...
+
+    def is_uuid_field(self, key: str) -> bool:
+        """Determine if a field should be treated as UUID."""
+        ...
+
+    def is_datetime_field(self, key: str) -> bool:
+        """Determine if a field should be treated as datetime."""
+        ...
+```
+
+### DefaultTypeConverter
+
+The default implementation with configurable UUID detection.
+
+#### Constructor Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `uuid_fields` | `set[str]` | `None` | Additional field names to treat as UUIDs |
+| `string_id_fields` | `set[str]` | `None` | Field names that should NOT be treated as UUIDs |
+| `auto_detect_uuid` | `bool` | `True` | Whether `_id` suffix triggers UUID detection |
+| `use_defaults` | `bool` | `True` | Whether to merge with default field sets |
+
+#### Default Field Sets
+
+**DEFAULT_UUID_FIELDS** - Fields always converted to UUID:
+```python
+{"event_id", "aggregate_id", "tenant_id", "correlation_id",
+ "causation_id", "template_id", "issuance_id", "user_id"}
+```
+
+**DEFAULT_STRING_ID_FIELDS** - Fields never converted to UUID (exclusions):
+```python
+{"actor_id", "issuer_id", "recipient_id", "invited_by",
+ "assigned_by", "revoked_by", "deactivated_by", "reactivated_by", "removed_by"}
+```
+
+#### UUID Detection Logic
+
+1. If field name is in `uuid_fields`, return `True`
+2. If field name is in `string_id_fields`, return `False`
+3. If `auto_detect_uuid` is `True` and field name ends with `_id`, return `True`
+4. Otherwise, return `False`
+
+#### Datetime Detection Logic
+
+1. If field name is `"occurred_at"`, return `True`
+2. If field name ends with `"_at"`, return `True`
+3. Otherwise, return `False`
+
+### Usage Examples
+
+#### Default Configuration
+
+```python
+from eventsource.stores import DefaultTypeConverter
+
+converter = DefaultTypeConverter()
+data = {"event_id": "550e8400-e29b-41d4-a716-446655440000"}
+result = converter.convert_types(data)
+# result["event_id"] is now a UUID object
+```
+
+#### Custom UUID Fields
+
+```python
+converter = DefaultTypeConverter(
+    uuid_fields={"reference_id", "source_id"},
+)
+
+# reference_id and source_id will now be converted to UUID
+```
+
+#### Excluding String ID Fields
+
+```python
+converter = DefaultTypeConverter(
+    string_id_fields={"stripe_customer_id", "external_user_id"},
+)
+
+# These fields will remain as strings even though they end in _id
+```
+
+#### Strict Mode (No Auto-Detection)
+
+```python
+converter = DefaultTypeConverter.strict(
+    uuid_fields={"event_id", "aggregate_id", "tenant_id"},
+)
+
+# ONLY these three fields will be converted to UUID
+# No auto-detection based on _id suffix
+```
+
+### Using with Event Stores
+
+Both PostgreSQLEventStore and SQLiteEventStore support type converter configuration:
+
+```python
+# Direct converter injection
+converter = DefaultTypeConverter(uuid_fields={"custom_reference_id"})
+store = PostgreSQLEventStore(session_factory, type_converter=converter)
+
+# Or via constructor parameters (creates converter internally)
+store = PostgreSQLEventStore(
+    session_factory,
+    uuid_fields={"custom_reference_id"},
+    string_id_fields={"external_id"},
+    auto_detect_uuid=True,
+)
+
+# Strict mode via factory method
+store = SQLiteEventStore.with_strict_uuid_detection(
+    database="./events.db",
+    uuid_fields={"event_id", "aggregate_id", "tenant_id"},
+)
+```
+
+### Custom TypeConverter
+
+Implement the protocol for custom type conversion:
+
+```python
+class MyCustomConverter:
+    """Custom converter for company-specific field naming."""
+
+    def convert_types(self, data: Any) -> Any:
+        if isinstance(data, dict):
+            result = {}
+            for key, value in data.items():
+                if isinstance(value, str) and self.is_uuid_field(key):
+                    try:
+                        result[key] = UUID(value)
+                    except ValueError:
+                        result[key] = value
+                elif isinstance(value, dict):
+                    result[key] = self.convert_types(value)
+                else:
+                    result[key] = value
+            return result
+        return data
+
+    def is_uuid_field(self, key: str) -> bool:
+        # Company convention: UUIDs end with _uuid
+        return key.endswith("_uuid")
+
+    def is_datetime_field(self, key: str) -> bool:
+        # Company convention: timestamps end with _timestamp
+        return key.endswith("_timestamp")
+
+# Use with any event store
+store = PostgreSQLEventStore(session_factory, type_converter=MyCustomConverter())
+```
 
 ---
 
