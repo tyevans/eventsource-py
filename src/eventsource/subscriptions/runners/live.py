@@ -115,6 +115,9 @@ class LiveRunner(TracingMixin):
     _circuit_breaker: CircuitBreaker | None = field(default=None, init=False, repr=False)
     _retry: RetryableOperation | None = field(default=None, init=False, repr=False)
     _metrics: SubscriptionMetrics | None = field(default=None, init=False, repr=False)
+    _handlers: dict[type[DomainEvent], "_LiveEventHandler"] = field(
+        default_factory=dict, init=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         """Initialize config reference, flow controller, filter, retry mechanism, metrics and tracing."""
@@ -188,7 +191,9 @@ class LiveRunner(TracingMixin):
         event_types = self.subscription.subscriber.subscribed_to()
 
         for event_type in event_types:
-            self.event_bus.subscribe(event_type, self._create_event_handler())
+            handler = self._create_event_handler()
+            self._handlers[event_type] = handler
+            self.event_bus.subscribe(event_type, handler)
 
         self._subscribed = True
 
@@ -610,14 +615,11 @@ class LiveRunner(TracingMixin):
 
             self._running = False
 
-            # Unsubscribe from bus
+            # Unsubscribe from bus using stored handler references
             if self._subscribed:
-                event_types = self.subscription.subscriber.subscribed_to()
-                handler = self._create_event_handler()
-                for event_type in event_types:
-                    # Note: We unsubscribe using a new handler instance which won't match
-                    # the original. We need to track the original handler reference.
+                for event_type, handler in self._handlers.items():
                     self.event_bus.unsubscribe(event_type, handler)
+                self._handlers.clear()
                 self._subscribed = False
 
             logger.info(
