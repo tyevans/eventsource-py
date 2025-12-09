@@ -116,6 +116,40 @@ ATTR_MESSAGING_OPERATION = "messaging.operation"
 """Messaging operation type (e.g., 'publish', 'receive')."""
 
 # =============================================================================
+# Subscription Attributes
+# =============================================================================
+
+ATTR_SUBSCRIPTION_NAME = "eventsource.subscription.name"
+"""Name of the subscription being processed (string)."""
+
+ATTR_SUBSCRIPTION_STATE = "eventsource.subscription.state"
+"""Current state of the subscription (e.g., 'catching_up', 'live')."""
+
+ATTR_SUBSCRIPTION_PHASE = "eventsource.subscription.phase"
+"""Current phase of subscription transition (e.g., 'initial_catchup', 'live')."""
+
+ATTR_FROM_POSITION = "eventsource.from_position"
+"""Starting position for event reading (integer)."""
+
+ATTR_TO_POSITION = "eventsource.to_position"
+"""Target/ending position for event reading (integer)."""
+
+ATTR_BATCH_SIZE = "eventsource.batch.size"
+"""Number of events in a batch (integer)."""
+
+ATTR_BUFFER_SIZE = "eventsource.buffer.size"
+"""Current buffer size (integer)."""
+
+ATTR_EVENTS_PROCESSED = "eventsource.events.processed"
+"""Number of events processed (integer)."""
+
+ATTR_EVENTS_SKIPPED = "eventsource.events.skipped"
+"""Number of events skipped (integer)."""
+
+ATTR_WATERMARK = "eventsource.watermark"
+"""Watermark position for catch-up to live transition (integer)."""
+
+# =============================================================================
 # Error and Retry Attributes
 # =============================================================================
 
@@ -159,6 +193,17 @@ __all__ = [
     "ATTR_MESSAGING_SYSTEM",
     "ATTR_MESSAGING_DESTINATION",
     "ATTR_MESSAGING_OPERATION",
+    # Subscription
+    "ATTR_SUBSCRIPTION_NAME",
+    "ATTR_SUBSCRIPTION_STATE",
+    "ATTR_SUBSCRIPTION_PHASE",
+    "ATTR_FROM_POSITION",
+    "ATTR_TO_POSITION",
+    "ATTR_BATCH_SIZE",
+    "ATTR_BUFFER_SIZE",
+    "ATTR_EVENTS_PROCESSED",
+    "ATTR_EVENTS_SKIPPED",
+    "ATTR_WATERMARK",
     # Error/Retry
     "ATTR_RETRY_COUNT",
     "ATTR_ERROR_TYPE",

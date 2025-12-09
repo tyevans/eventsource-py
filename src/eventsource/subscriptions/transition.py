@@ -16,6 +16,16 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
+from eventsource.observability.attributes import (
+    ATTR_BUFFER_SIZE,
+    ATTR_EVENTS_PROCESSED,
+    ATTR_EVENTS_SKIPPED,
+    ATTR_POSITION,
+    ATTR_SUBSCRIPTION_NAME,
+    ATTR_SUBSCRIPTION_PHASE,
+    ATTR_WATERMARK,
+)
+from eventsource.observability.tracing import TracingMixin
 from eventsource.subscriptions.exceptions import TransitionError
 from eventsource.subscriptions.runners.catchup import CatchUpRunner
 from eventsource.subscriptions.runners.live import LiveRunner
@@ -79,7 +89,7 @@ class TransitionResult:
     error: Exception | None = None
 
 
-class TransitionCoordinator:
+class TransitionCoordinator(TracingMixin):
     """
     Coordinates the transition from catch-up to live event processing.
 
@@ -126,6 +136,7 @@ class TransitionCoordinator:
         event_bus: "EventBus",
         checkpoint_repo: "CheckpointRepository",
         subscription: Subscription,
+        enable_tracing: bool = True,
     ) -> None:
         """
         Initialize the transition coordinator.
@@ -135,7 +146,10 @@ class TransitionCoordinator:
             event_bus: Event bus for live subscription
             checkpoint_repo: Checkpoint repository for persistence
             subscription: The subscription being transitioned
+            enable_tracing: Whether to enable OpenTelemetry tracing (default True)
         """
+        self._init_tracing(__name__, enable_tracing)
+
         self.event_store = event_store
         self.event_bus = event_bus
         self.checkpoint_repo = checkpoint_repo
@@ -164,148 +178,183 @@ class TransitionCoordinator:
             After successful completion, access the live runner via
             the `live_runner` property for ongoing event processing.
         """
-        catchup_processed = 0
-        buffer_processed = 0
-        buffer_skipped = 0
+        with self._create_span_context(
+            "eventsource.transition_coordinator.execute",
+            {
+                ATTR_SUBSCRIPTION_NAME: self.subscription.name,
+                ATTR_POSITION: self.subscription.last_processed_position,
+            },
+        ) as span:
+            catchup_processed = 0
+            buffer_processed = 0
+            buffer_skipped = 0
 
-        try:
-            # Phase 1: Initial setup and watermark
-            self._phase = TransitionPhase.INITIAL_CATCHUP
-            self._watermark = await self.event_store.get_global_position()
+            try:
+                # Phase 1: Initial setup and watermark
+                self._phase = TransitionPhase.INITIAL_CATCHUP
+                self._watermark = await self.event_store.get_global_position()
 
-            logger.info(
-                "Transition starting",
-                extra={
-                    "subscription": self.subscription.name,
-                    "watermark": self._watermark,
-                    "current_position": self.subscription.last_processed_position,
-                },
-            )
+                if span:
+                    span.set_attribute(ATTR_WATERMARK, self._watermark)
+                    span.set_attribute(ATTR_SUBSCRIPTION_PHASE, self._phase.value)
 
-            # Check if already caught up (at or past watermark)
-            if self.subscription.last_processed_position >= self._watermark:
                 logger.info(
-                    "Already caught up, skipping to live",
+                    "Transition starting",
                     extra={
                         "subscription": self.subscription.name,
-                        "position": self.subscription.last_processed_position,
                         "watermark": self._watermark,
+                        "current_position": self.subscription.last_processed_position,
                     },
                 )
-                await self._start_live_directly()
+
+                # Check if already caught up (at or past watermark)
+                if self.subscription.last_processed_position >= self._watermark:
+                    logger.info(
+                        "Already caught up, skipping to live",
+                        extra={
+                            "subscription": self.subscription.name,
+                            "position": self.subscription.last_processed_position,
+                            "watermark": self._watermark,
+                        },
+                    )
+                    await self._start_live_directly()
+                    if span:
+                        span.set_attribute(ATTR_SUBSCRIPTION_PHASE, TransitionPhase.LIVE.value)
+                    return TransitionResult(
+                        success=True,
+                        catchup_events_processed=0,
+                        buffer_events_processed=0,
+                        buffer_events_skipped=0,
+                        final_position=self.subscription.last_processed_position,
+                        phase_reached=TransitionPhase.LIVE,
+                    )
+
+                # Phase 2: Subscribe to live events (buffering)
+                self._phase = TransitionPhase.LIVE_SUBSCRIBED
+                if span:
+                    span.set_attribute(ATTR_SUBSCRIPTION_PHASE, self._phase.value)
+
+                self._live_runner = LiveRunner(
+                    event_bus=self.event_bus,
+                    checkpoint_repo=self.checkpoint_repo,
+                    subscription=self.subscription,
+                )
+                await self._live_runner.start(buffer_events=True)
+
+                logger.debug(
+                    "Live subscription started (buffering)",
+                    extra={"subscription": self.subscription.name},
+                )
+
+                # Phase 3: Catch up to watermark
+                self._phase = TransitionPhase.FINAL_CATCHUP
+                if span:
+                    span.set_attribute(ATTR_SUBSCRIPTION_PHASE, self._phase.value)
+
+                self._catchup_runner = CatchUpRunner(
+                    event_store=self.event_store,
+                    checkpoint_repo=self.checkpoint_repo,
+                    subscription=self.subscription,
+                )
+
+                catchup_result = await self._catchup_runner.run_until_position(
+                    target_position=self._watermark
+                )
+                catchup_processed = catchup_result.events_processed
+
+                if catchup_result.error:
+                    raise TransitionError(
+                        f"Catch-up failed: {catchup_result.error}"
+                    ) from catchup_result.error
+
+                if span:
+                    span.set_attribute(ATTR_EVENTS_PROCESSED, catchup_processed)
+                    span.set_attribute(ATTR_BUFFER_SIZE, self._live_runner.buffer_size)
+
+                logger.info(
+                    "Catch-up to watermark complete",
+                    extra={
+                        "subscription": self.subscription.name,
+                        "events_processed": catchup_processed,
+                        "position": self.subscription.last_processed_position,
+                        "buffer_size": self._live_runner.buffer_size,
+                    },
+                )
+
+                # Phase 4: Process buffered events
+                self._phase = TransitionPhase.PROCESSING_BUFFER
+                if span:
+                    span.set_attribute(ATTR_SUBSCRIPTION_PHASE, self._phase.value)
+
+                buffer_processed = await self._live_runner.process_buffer()
+                buffer_skipped = self._live_runner.stats.events_skipped_duplicate
+
+                if span:
+                    span.set_attribute(ATTR_EVENTS_SKIPPED, buffer_skipped)
+
+                logger.info(
+                    "Buffer processed",
+                    extra={
+                        "subscription": self.subscription.name,
+                        "processed": buffer_processed,
+                        "skipped": buffer_skipped,
+                    },
+                )
+
+                # Phase 5: Switch to live mode
+                self._phase = TransitionPhase.LIVE
+                if span:
+                    span.set_attribute(ATTR_SUBSCRIPTION_PHASE, self._phase.value)
+
+                await self._live_runner.disable_buffer()
+
+                logger.info(
+                    "Transition complete, now live",
+                    extra={
+                        "subscription": self.subscription.name,
+                        "final_position": self.subscription.last_processed_position,
+                        "total_catchup": catchup_processed,
+                        "total_buffer": buffer_processed,
+                    },
+                )
+
                 return TransitionResult(
                     success=True,
-                    catchup_events_processed=0,
-                    buffer_events_processed=0,
-                    buffer_events_skipped=0,
+                    catchup_events_processed=catchup_processed,
+                    buffer_events_processed=buffer_processed,
+                    buffer_events_skipped=buffer_skipped,
                     final_position=self.subscription.last_processed_position,
                     phase_reached=TransitionPhase.LIVE,
                 )
 
-            # Phase 2: Subscribe to live events (buffering)
-            self._phase = TransitionPhase.LIVE_SUBSCRIBED
-            self._live_runner = LiveRunner(
-                event_bus=self.event_bus,
-                checkpoint_repo=self.checkpoint_repo,
-                subscription=self.subscription,
-            )
-            await self._live_runner.start(buffer_events=True)
+            except Exception as e:
+                self._phase = TransitionPhase.FAILED
 
-            logger.debug(
-                "Live subscription started (buffering)",
-                extra={"subscription": self.subscription.name},
-            )
+                if span:
+                    span.set_attribute(ATTR_SUBSCRIPTION_PHASE, self._phase.value)
 
-            # Phase 3: Catch up to watermark
-            self._phase = TransitionPhase.FINAL_CATCHUP
-            self._catchup_runner = CatchUpRunner(
-                event_store=self.event_store,
-                checkpoint_repo=self.checkpoint_repo,
-                subscription=self.subscription,
-            )
+                logger.error(
+                    "Transition failed",
+                    extra={
+                        "subscription": self.subscription.name,
+                        "phase": self._phase.value,
+                        "error": str(e),
+                    },
+                    exc_info=True,
+                )
 
-            catchup_result = await self._catchup_runner.run_until_position(
-                target_position=self._watermark
-            )
-            catchup_processed = catchup_result.events_processed
+                # Cleanup on failure
+                await self._cleanup()
 
-            if catchup_result.error:
-                raise TransitionError(
-                    f"Catch-up failed: {catchup_result.error}"
-                ) from catchup_result.error
-
-            logger.info(
-                "Catch-up to watermark complete",
-                extra={
-                    "subscription": self.subscription.name,
-                    "events_processed": catchup_processed,
-                    "position": self.subscription.last_processed_position,
-                    "buffer_size": self._live_runner.buffer_size,
-                },
-            )
-
-            # Phase 4: Process buffered events
-            self._phase = TransitionPhase.PROCESSING_BUFFER
-            buffer_processed = await self._live_runner.process_buffer()
-            buffer_skipped = self._live_runner.stats.events_skipped_duplicate
-
-            logger.info(
-                "Buffer processed",
-                extra={
-                    "subscription": self.subscription.name,
-                    "processed": buffer_processed,
-                    "skipped": buffer_skipped,
-                },
-            )
-
-            # Phase 5: Switch to live mode
-            self._phase = TransitionPhase.LIVE
-            await self._live_runner.disable_buffer()
-
-            logger.info(
-                "Transition complete, now live",
-                extra={
-                    "subscription": self.subscription.name,
-                    "final_position": self.subscription.last_processed_position,
-                    "total_catchup": catchup_processed,
-                    "total_buffer": buffer_processed,
-                },
-            )
-
-            return TransitionResult(
-                success=True,
-                catchup_events_processed=catchup_processed,
-                buffer_events_processed=buffer_processed,
-                buffer_events_skipped=buffer_skipped,
-                final_position=self.subscription.last_processed_position,
-                phase_reached=TransitionPhase.LIVE,
-            )
-
-        except Exception as e:
-            self._phase = TransitionPhase.FAILED
-
-            logger.error(
-                "Transition failed",
-                extra={
-                    "subscription": self.subscription.name,
-                    "phase": self._phase.value,
-                    "error": str(e),
-                },
-                exc_info=True,
-            )
-
-            # Cleanup on failure
-            await self._cleanup()
-
-            return TransitionResult(
-                success=False,
-                catchup_events_processed=catchup_processed,
-                buffer_events_processed=buffer_processed,
-                buffer_events_skipped=buffer_skipped,
-                final_position=self.subscription.last_processed_position,
-                phase_reached=self._phase,
-                error=e,
-            )
+                return TransitionResult(
+                    success=False,
+                    catchup_events_processed=catchup_processed,
+                    buffer_events_processed=buffer_processed,
+                    buffer_events_skipped=buffer_skipped,
+                    final_position=self.subscription.last_processed_position,
+                    phase_reached=self._phase,
+                    error=e,
+                )
 
     async def _start_live_directly(self) -> None:
         """
@@ -341,15 +390,22 @@ class TransitionCoordinator:
         Used for graceful shutdown during transition. Stops any
         active runners and releases resources.
         """
-        logger.info(
-            "Stopping transition",
-            extra={
-                "subscription": self.subscription.name,
-                "phase": self._phase.value,
+        with self._create_span_context(
+            "eventsource.transition_coordinator.stop",
+            {
+                ATTR_SUBSCRIPTION_NAME: self.subscription.name,
+                ATTR_SUBSCRIPTION_PHASE: self._phase.value,
             },
-        )
+        ):
+            logger.info(
+                "Stopping transition",
+                extra={
+                    "subscription": self.subscription.name,
+                    "phase": self._phase.value,
+                },
+            )
 
-        await self._cleanup()
+            await self._cleanup()
 
     @property
     def phase(self) -> TransitionPhase:

@@ -916,6 +916,63 @@ print(f"Failed: {snapshot.events_failed}")
 print(f"Lag: {snapshot.current_lag}")
 ```
 
+#### Tracing with OpenTelemetry
+
+All subscription components support OpenTelemetry tracing for distributed trace visibility:
+
+```python
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+
+# Configure tracing
+trace.set_tracer_provider(TracerProvider())
+trace.get_tracer_provider().add_span_processor(
+    BatchSpanProcessor(OTLPSpanExporter())
+)
+
+# Tracing is enabled by default
+manager = SubscriptionManager(
+    event_store=event_store,
+    event_bus=event_bus,
+    checkpoint_repo=checkpoint_repo,
+    enable_tracing=True,  # Default
+)
+```
+
+**Traced Operations:**
+
+| Component | Span Name | Description |
+|-----------|-----------|-------------|
+| SubscriptionManager | `eventsource.subscription_manager.subscribe` | Subscription registration |
+| SubscriptionManager | `eventsource.subscription_manager.start_subscription` | Subscription startup |
+| SubscriptionManager | `eventsource.subscription_manager.stop` | Manager shutdown |
+| TransitionCoordinator | `eventsource.transition_coordinator.execute` | Catch-up to live transition |
+| CatchUpRunner | `eventsource.catchup_runner.run_until_position` | Historical event processing |
+| CatchUpRunner | `eventsource.catchup_runner.deliver_event` | Individual event delivery |
+| LiveRunner | `eventsource.live_runner.start` | Live event subscription |
+| LiveRunner | `eventsource.live_runner.process_event` | Live event processing |
+
+**Span Attributes:**
+
+- `eventsource.subscription.name` - Subscription name
+- `eventsource.subscription.phase` - Transition phase (initial_catchup, live, etc.)
+- `eventsource.from_position` / `eventsource.to_position` - Position range
+- `eventsource.events.processed` - Events processed count
+- `eventsource.watermark` - Transition watermark
+
+To disable tracing:
+
+```python
+manager = SubscriptionManager(
+    event_store=event_store,
+    event_bus=event_bus,
+    checkpoint_repo=checkpoint_repo,
+    enable_tracing=False,
+)
+```
+
 ### Handling Long-Running Subscriptions
 
 #### Implement Idempotent Handlers

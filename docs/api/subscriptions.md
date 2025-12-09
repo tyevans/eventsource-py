@@ -118,6 +118,7 @@ SubscriptionManager(
     dlq_repo: DLQRepository | None = None,
     error_handling_config: ErrorHandlingConfig | None = None,
     health_check_config: HealthCheckConfig | None = None,
+    enable_tracing: bool = True,
 ) -> None
 ```
 
@@ -133,6 +134,7 @@ SubscriptionManager(
 | `dlq_repo` | `DLQRepository \| None` | `None` | Optional DLQ repository for dead letter handling |
 | `error_handling_config` | `ErrorHandlingConfig \| None` | `None` | Configuration for error handling behavior |
 | `health_check_config` | `HealthCheckConfig \| None` | `None` | Configuration for health check thresholds |
+| `enable_tracing` | `bool` | `True` | Enable OpenTelemetry tracing for subscription operations |
 
 #### Methods
 
@@ -747,6 +749,7 @@ CatchUpRunner(
     subscription: Subscription,
     event_filter: EventFilter | None = None,
     enable_metrics: bool = True,
+    enable_tracing: bool = True,
 ) -> None
 ```
 
@@ -759,6 +762,7 @@ CatchUpRunner(
 | `subscription` | `Subscription` | required | The subscription being processed |
 | `event_filter` | `EventFilter \| None` | `None` | Optional event filter |
 | `enable_metrics` | `bool` | `True` | Enable OpenTelemetry metrics |
+| `enable_tracing` | `bool` | `True` | Enable OpenTelemetry tracing |
 
 #### Methods
 
@@ -829,7 +833,18 @@ class LiveRunner:
     checkpoint_repo: CheckpointRepository
     subscription: Subscription
     enable_metrics: bool = True
+    enable_tracing: bool = True
 ```
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `event_bus` | `EventBus` | required | Event bus to subscribe to |
+| `checkpoint_repo` | `CheckpointRepository` | required | Checkpoint repository |
+| `subscription` | `Subscription` | required | The subscription being processed |
+| `enable_metrics` | `bool` | `True` | Enable OpenTelemetry metrics |
+| `enable_tracing` | `bool` | `True` | Enable OpenTelemetry tracing |
 
 #### Methods
 
@@ -932,8 +947,19 @@ TransitionCoordinator(
     event_bus: EventBus,
     checkpoint_repo: CheckpointRepository,
     subscription: Subscription,
+    enable_tracing: bool = True,
 ) -> None
 ```
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `event_store` | `EventStore` | required | Event store for catch-up and position lookup |
+| `event_bus` | `EventBus` | required | Event bus for live subscription |
+| `checkpoint_repo` | `CheckpointRepository` | required | Checkpoint repository |
+| `subscription` | `Subscription` | required | The subscription being transitioned |
+| `enable_tracing` | `bool` | `True` | Enable OpenTelemetry tracing |
 
 #### Methods
 
