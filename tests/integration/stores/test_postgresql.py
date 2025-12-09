@@ -893,3 +893,157 @@ class TestPostgreSQLEventStoreVersion:
             "TestItem",
         )
         assert version == 3
+
+
+class TestPostgreSQLEventStoreGlobalPosition:
+    """Tests for get_global_position() method."""
+
+    async def test_empty_store_returns_zero(
+        self,
+        postgres_event_store: PostgreSQLEventStore,
+    ) -> None:
+        """Test that an empty store returns position 0."""
+        position = await postgres_event_store.get_global_position()
+        assert position == 0
+
+    async def test_single_event_returns_correct_position(
+        self,
+        postgres_event_store: PostgreSQLEventStore,
+        sample_aggregate_id: uuid4,
+    ) -> None:
+        """Test that store returns correct position after one event."""
+        event = TestItemCreated(
+            aggregate_id=sample_aggregate_id,
+            aggregate_version=1,
+            name="Test Item",
+            quantity=10,
+        )
+
+        result = await postgres_event_store.append_events(
+            aggregate_id=sample_aggregate_id,
+            aggregate_type="TestItem",
+            events=[event],
+            expected_version=0,
+        )
+
+        position = await postgres_event_store.get_global_position()
+        assert position == result.global_position
+        assert position >= 1
+
+    async def test_multiple_events_returns_max_position(
+        self,
+        postgres_event_store: PostgreSQLEventStore,
+        sample_aggregate_id: uuid4,
+    ) -> None:
+        """Test that position reflects highest id after multiple events."""
+        events = [
+            TestItemCreated(
+                aggregate_id=sample_aggregate_id,
+                aggregate_version=i + 1,
+                name=f"Item {i}",
+                quantity=10,
+            )
+            for i in range(5)
+        ]
+
+        result = await postgres_event_store.append_events(
+            aggregate_id=sample_aggregate_id,
+            aggregate_type="TestItem",
+            events=events,
+            expected_version=0,
+        )
+
+        position = await postgres_event_store.get_global_position()
+        assert position == result.global_position
+
+    async def test_position_increases_after_append(
+        self,
+        postgres_event_store: PostgreSQLEventStore,
+        sample_aggregate_id: uuid4,
+    ) -> None:
+        """Test that position increases after appending more events."""
+        # Append first batch
+        events1 = [
+            TestItemCreated(
+                aggregate_id=sample_aggregate_id,
+                aggregate_version=i + 1,
+                name=f"Item {i}",
+                quantity=10,
+            )
+            for i in range(3)
+        ]
+        result1 = await postgres_event_store.append_events(
+            aggregate_id=sample_aggregate_id,
+            aggregate_type="TestItem",
+            events=events1,
+            expected_version=0,
+        )
+
+        position1 = await postgres_event_store.get_global_position()
+        assert position1 == result1.global_position
+
+        # Append second batch
+        events2 = [
+            TestItemUpdated(
+                aggregate_id=sample_aggregate_id,
+                aggregate_version=i + 4,
+                name=f"Updated Item {i}",
+            )
+            for i in range(2)
+        ]
+        result2 = await postgres_event_store.append_events(
+            aggregate_id=sample_aggregate_id,
+            aggregate_type="TestItem",
+            events=events2,
+            expected_version=3,
+        )
+
+        position2 = await postgres_event_store.get_global_position()
+        assert position2 == result2.global_position
+        assert position2 > position1
+
+    async def test_position_across_multiple_aggregates(
+        self,
+        postgres_event_store: PostgreSQLEventStore,
+    ) -> None:
+        """Test that position reflects events across all aggregates."""
+        agg1 = uuid4()
+        agg2 = uuid4()
+
+        # Append to first aggregate
+        await postgres_event_store.append_events(
+            aggregate_id=agg1,
+            aggregate_type="TestItem",
+            events=[
+                TestItemCreated(
+                    aggregate_id=agg1,
+                    aggregate_version=1,
+                    name="Item 1",
+                    quantity=10,
+                )
+            ],
+            expected_version=0,
+        )
+
+        # Append to second aggregate
+        result = await postgres_event_store.append_events(
+            aggregate_id=agg2,
+            aggregate_type="TestItem",
+            events=[
+                TestItemCreated(
+                    aggregate_id=agg2,
+                    aggregate_version=1,
+                    name="Item 2",
+                    quantity=20,
+                ),
+                TestItemUpdated(
+                    aggregate_id=agg2,
+                    aggregate_version=2,
+                    name="Updated Item 2",
+                ),
+            ],
+            expected_version=0,
+        )
+
+        position = await postgres_event_store.get_global_position()
+        assert position == result.global_position

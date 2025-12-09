@@ -339,6 +339,7 @@ class TestSQLiteCheckpointRepositoryTracingMixin:
                 last_event_type TEXT,
                 last_processed_at TEXT,
                 events_processed INTEGER NOT NULL DEFAULT 0,
+                global_position INTEGER,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
@@ -411,6 +412,7 @@ class TestSQLiteCheckpointRepositorySpanCreation:
                 last_event_type TEXT,
                 last_processed_at TEXT,
                 events_processed INTEGER NOT NULL DEFAULT 0,
+                global_position INTEGER,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
@@ -560,6 +562,7 @@ class TestSQLiteCheckpointRepositoryTracingDisabled:
                 last_event_type TEXT,
                 last_processed_at TEXT,
                 events_processed INTEGER NOT NULL DEFAULT 0,
+                global_position INTEGER,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             )

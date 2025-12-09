@@ -101,7 +101,9 @@ markers = [
     "postgres: marks tests that require PostgreSQL",
     "sqlite: marks tests that require SQLite",
     "redis: marks tests that require Redis",
-    "kafka: marks tests that require Kafka (deselect with '-m \"not kafka\"')",
+    "kafka: marks tests that require Kafka (excluded by default, run with '-m kafka')",
+    "rabbitmq: marks tests that require RabbitMQ (excluded by default, run with '-m rabbitmq')",
+    "slow: marks tests as slow-running",
     "e2e: marks tests as end-to-end integration tests",
     "benchmark: marks tests as performance benchmarks",
 ]

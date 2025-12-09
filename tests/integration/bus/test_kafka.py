@@ -673,6 +673,7 @@ class TestKafkaPublishConsumeRoundTrip:
 class TestKafkaEventBusConsumerGroups:
     """Tests for consumer group functionality."""
 
+    @pytest.mark.slow
     async def test_same_consumer_group_shares_messages(
         self,
         kafka_bootstrap_servers: str,
@@ -763,6 +764,7 @@ class TestKafkaEventBusConsumerGroups:
             await bus1.disconnect()
             await bus2.disconnect()
 
+    @pytest.mark.slow
     async def test_different_consumer_groups_receive_all_messages(
         self,
         kafka_bootstrap_servers: str,
@@ -855,6 +857,7 @@ class TestKafkaEventBusConsumerGroups:
 class TestKafkaEventBusDLQ:
     """Tests for dead letter queue functionality."""
 
+    @pytest.mark.slow
     async def test_handler_exception_triggers_retry(
         self,
         kafka_event_bus_factory: Any,
@@ -908,6 +911,7 @@ class TestKafkaEventBusDLQ:
         finally:
             await bus.disconnect()
 
+    @pytest.mark.slow
     async def test_max_retries_sends_to_dlq(
         self,
         kafka_event_bus_factory: Any,
@@ -997,6 +1001,7 @@ class TestKafkaEventBusDLQ:
         # Stats should show handler errors
         assert kafka_event_bus.stats.handler_errors >= 1
 
+    @pytest.mark.slow
     async def test_get_dlq_messages(
         self,
         kafka_event_bus_factory: Any,

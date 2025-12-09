@@ -915,6 +915,7 @@ class TestRabbitMQMultipleConsumerGroups:
             await bus1.disconnect()
             await bus2.disconnect()
 
+    @pytest.mark.slow
     async def test_consumer_group_load_balancing(
         self,
         rabbitmq_event_bus_factory: Any,
@@ -1374,6 +1375,7 @@ class TestRabbitMQEventBusPerformance:
 class TestRabbitMQReliabilityDLQ:
     """Tests for dead letter queue reliability features."""
 
+    @pytest.mark.slow
     async def test_message_sent_to_dlq_after_max_retries(
         self,
         rabbitmq_event_bus_factory: Any,
@@ -1567,6 +1569,7 @@ class TestRabbitMQReliabilityDLQ:
         finally:
             await bus.disconnect()
 
+    @pytest.mark.slow
     async def test_purge_dlq_removes_messages(
         self,
         rabbitmq_event_bus_factory: Any,
@@ -1636,6 +1639,7 @@ class TestRabbitMQReliabilityDLQ:
 class TestRabbitMQReliabilityRetry:
     """Tests for retry logic reliability features."""
 
+    @pytest.mark.slow
     async def test_message_retried_up_to_max_retries(
         self,
         rabbitmq_event_bus_factory: Any,
@@ -1695,6 +1699,7 @@ class TestRabbitMQReliabilityRetry:
         finally:
             await bus.disconnect()
 
+    @pytest.mark.slow
     async def test_retry_count_tracked_in_dlq_metadata(
         self,
         rabbitmq_event_bus_factory: Any,
@@ -1988,6 +1993,7 @@ class TestRabbitMQReliabilityStats:
         assert stats_dict["events_published"] >= 1
         assert stats_dict["is_connected"] is True
 
+    @pytest.mark.slow
     async def test_handler_errors_tracked_separately(
         self,
         rabbitmq_event_bus_factory: Any,
@@ -2098,6 +2104,7 @@ class TestRabbitMQReliabilityQueueInfo:
         assert result.error is not None
         assert "Not connected" in result.error
 
+    @pytest.mark.slow
     async def test_dlq_stats_tracking(
         self,
         rabbitmq_event_bus_factory: Any,
@@ -2419,6 +2426,7 @@ class TestAdvancedExchangeTypes:
         finally:
             await bus.disconnect()
 
+    @pytest.mark.slow
     async def test_topic_exchange_selective_pattern(
         self,
         rabbitmq_connection_url: str,
@@ -2510,6 +2518,7 @@ class TestAdvancedMultipleConsumers:
     multiple consumer groups receiving copies of the same events.
     """
 
+    @pytest.mark.slow
     async def test_competing_consumers_load_distribution(
         self,
         rabbitmq_connection_url: str,
@@ -2625,6 +2634,7 @@ class TestAdvancedMultipleConsumers:
             await bus1.disconnect()
             await bus2.disconnect()
 
+    @pytest.mark.slow
     async def test_multiple_consumer_groups_each_receive_all(
         self,
         rabbitmq_connection_url: str,

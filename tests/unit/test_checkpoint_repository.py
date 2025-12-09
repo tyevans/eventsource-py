@@ -372,6 +372,7 @@ class TestSQLiteCheckpointRepository:
                 last_event_id TEXT,
                 last_event_type TEXT,
                 last_processed_at TEXT,
+                global_position INTEGER,
                 events_processed INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -664,6 +665,7 @@ class TestSQLiteCheckpointRepositoryProtocol:
                 last_event_id TEXT,
                 last_event_type TEXT,
                 last_processed_at TEXT,
+                global_position INTEGER,
                 events_processed INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
