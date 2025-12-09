@@ -40,6 +40,7 @@ class CheckpointData:
         last_event_type: Type of the last processed event
         last_processed_at: When the last event was processed
         events_processed: Total count of events processed
+        global_position: Last processed global position in the event stream
     """
 
     projection_name: str
@@ -47,6 +48,7 @@ class CheckpointData:
     last_event_type: str | None = None
     last_processed_at: datetime | None = None
     events_processed: int = 0
+    global_position: int | None = None
 
 
 @dataclass(frozen=True)
@@ -139,6 +141,40 @@ class CheckpointRepository(Protocol):
 
         Args:
             projection_name: Name of the projection
+        """
+        ...
+
+    async def get_position(self, subscription_id: str) -> int | None:
+        """
+        Get last processed global position for a subscription.
+
+        Args:
+            subscription_id: Identifier for the subscription (typically projection name)
+
+        Returns:
+            Last processed global position, or None if no checkpoint exists
+            or if checkpoint doesn't have position data.
+        """
+        ...
+
+    async def save_position(
+        self,
+        subscription_id: str,
+        position: int,
+        event_id: UUID,
+        event_type: str,
+    ) -> None:
+        """
+        Save checkpoint with global position.
+
+        Updates the position, event_id, and event_type for the checkpoint.
+        Uses UPSERT pattern for idempotency.
+
+        Args:
+            subscription_id: Identifier for the subscription (typically projection name)
+            position: Global position of the event
+            event_id: Event ID that was processed
+            event_type: Type of event processed
         """
         ...
 
@@ -343,6 +379,88 @@ class PostgreSQLCheckpointRepository(TracingMixin):
             async with execute_with_connection(self.conn, transactional=True) as conn:
                 await conn.execute(query, params)
 
+    async def get_position(self, subscription_id: str) -> int | None:
+        """
+        Get last processed global position for a subscription.
+
+        Args:
+            subscription_id: Identifier for the subscription (typically projection name)
+
+        Returns:
+            Last processed global position, or None if no checkpoint exists
+            or if checkpoint doesn't have position data.
+        """
+        with self._create_span_context(
+            "eventsource.checkpoint.get_position",
+            {ATTR_PROJECTION_NAME: subscription_id},
+        ):
+            query = text("""
+                SELECT global_position
+                FROM projection_checkpoints
+                WHERE projection_name = :subscription_id
+            """)
+            params = {"subscription_id": subscription_id}
+
+            async with execute_with_connection(self.conn, transactional=False) as conn:
+                result = await conn.execute(query, params)
+                row = result.fetchone()
+                return row[0] if row and row[0] is not None else None
+
+    async def save_position(
+        self,
+        subscription_id: str,
+        position: int,
+        event_id: UUID,
+        event_type: str,
+    ) -> None:
+        """
+        Save checkpoint with global position.
+
+        Updates the position, event_id, and event_type for the checkpoint.
+        Uses UPSERT pattern for idempotency.
+
+        Args:
+            subscription_id: Identifier for the subscription (typically projection name)
+            position: Global position of the event
+            event_id: Event ID that was processed
+            event_type: Type of event processed
+        """
+        with self._create_span_context(
+            "eventsource.checkpoint.save_position",
+            {
+                ATTR_PROJECTION_NAME: subscription_id,
+                ATTR_EVENT_TYPE: event_type,
+                "global_position": position,
+            },
+        ):
+            now = datetime.now(UTC)
+            query = text("""
+                INSERT INTO projection_checkpoints
+                    (projection_name, last_event_id, last_event_type,
+                     last_processed_at, events_processed, global_position,
+                     created_at, updated_at)
+                VALUES
+                    (:subscription_id, :event_id, :event_type, :now,
+                     1, :position, :now, :now)
+                ON CONFLICT (projection_name) DO UPDATE
+                SET last_event_id = EXCLUDED.last_event_id,
+                    last_event_type = EXCLUDED.last_event_type,
+                    last_processed_at = EXCLUDED.last_processed_at,
+                    events_processed = projection_checkpoints.events_processed + 1,
+                    global_position = EXCLUDED.global_position,
+                    updated_at = EXCLUDED.updated_at
+            """)
+            params = {
+                "subscription_id": subscription_id,
+                "event_id": event_id,
+                "event_type": event_type,
+                "now": now,
+                "position": position,
+            }
+
+            async with execute_with_connection(self.conn, transactional=True) as conn:
+                await conn.execute(query, params)
+
     async def get_all_checkpoints(self) -> list[CheckpointData]:
         """
         Get all projection checkpoints.
@@ -356,7 +474,7 @@ class PostgreSQLCheckpointRepository(TracingMixin):
         ):
             query = text("""
                 SELECT projection_name, last_event_id, last_event_type,
-                       last_processed_at, events_processed
+                       last_processed_at, events_processed, global_position
                 FROM projection_checkpoints
                 ORDER BY projection_name
             """)
@@ -372,6 +490,7 @@ class PostgreSQLCheckpointRepository(TracingMixin):
                     last_event_type=row[2],
                     last_processed_at=row[3],
                     events_processed=row[4] or 0,
+                    global_position=row[5],
                 )
                 for row in rows
             ]
@@ -507,6 +626,66 @@ class InMemoryCheckpointRepository(TracingMixin):
         ):
             async with self._lock:
                 self._checkpoints.pop(projection_name, None)
+
+    async def get_position(self, subscription_id: str) -> int | None:
+        """
+        Get last processed global position for a subscription.
+
+        Args:
+            subscription_id: Identifier for the subscription (typically projection name)
+
+        Returns:
+            Last processed global position, or None if no checkpoint exists
+            or if checkpoint doesn't have position data.
+        """
+        with self._create_span_context(
+            "eventsource.checkpoint.get_position",
+            {ATTR_PROJECTION_NAME: subscription_id},
+        ):
+            async with self._lock:
+                checkpoint = self._checkpoints.get(subscription_id)
+                return checkpoint.global_position if checkpoint else None
+
+    async def save_position(
+        self,
+        subscription_id: str,
+        position: int,
+        event_id: UUID,
+        event_type: str,
+    ) -> None:
+        """
+        Save checkpoint with global position.
+
+        Updates the position, event_id, and event_type for the checkpoint.
+        Uses UPSERT pattern for idempotency.
+
+        Args:
+            subscription_id: Identifier for the subscription (typically projection name)
+            position: Global position of the event
+            event_id: Event ID that was processed
+            event_type: Type of event processed
+        """
+        with self._create_span_context(
+            "eventsource.checkpoint.save_position",
+            {
+                ATTR_PROJECTION_NAME: subscription_id,
+                ATTR_EVENT_TYPE: event_type,
+                "global_position": position,
+            },
+        ):
+            now = datetime.now(UTC)
+            async with self._lock:
+                existing = self._checkpoints.get(subscription_id)
+                events_processed = (existing.events_processed + 1) if existing else 1
+
+                self._checkpoints[subscription_id] = CheckpointData(
+                    projection_name=subscription_id,
+                    last_event_id=event_id,
+                    last_event_type=event_type,
+                    last_processed_at=now,
+                    events_processed=events_processed,
+                    global_position=position,
+                )
 
     async def get_all_checkpoints(self) -> list[CheckpointData]:
         """
@@ -771,6 +950,87 @@ class SQLiteCheckpointRepository(TracingMixin):
             )
             await self._connection.commit()
 
+    async def get_position(self, subscription_id: str) -> int | None:
+        """
+        Get last processed global position for a subscription.
+
+        Args:
+            subscription_id: Identifier for the subscription (typically projection name)
+
+        Returns:
+            Last processed global position, or None if no checkpoint exists
+            or if checkpoint doesn't have position data.
+        """
+        with self._create_span_context(
+            "eventsource.checkpoint.get_position",
+            {ATTR_PROJECTION_NAME: subscription_id},
+        ):
+            cursor = await self._connection.execute(
+                """
+                SELECT global_position
+                FROM projection_checkpoints
+                WHERE projection_name = ?
+                """,
+                (subscription_id,),
+            )
+            row = await cursor.fetchone()
+            return row[0] if row and row[0] is not None else None
+
+    async def save_position(
+        self,
+        subscription_id: str,
+        position: int,
+        event_id: UUID,
+        event_type: str,
+    ) -> None:
+        """
+        Save checkpoint with global position.
+
+        Updates the position, event_id, and event_type for the checkpoint.
+        Uses UPSERT pattern for idempotency.
+
+        Args:
+            subscription_id: Identifier for the subscription (typically projection name)
+            position: Global position of the event
+            event_id: Event ID that was processed
+            event_type: Type of event processed
+        """
+        with self._create_span_context(
+            "eventsource.checkpoint.save_position",
+            {
+                ATTR_PROJECTION_NAME: subscription_id,
+                ATTR_EVENT_TYPE: event_type,
+                "global_position": position,
+            },
+        ):
+            now = datetime.now(UTC).isoformat()
+            await self._connection.execute(
+                """
+                INSERT INTO projection_checkpoints
+                    (projection_name, last_event_id, last_event_type,
+                     last_processed_at, events_processed, global_position,
+                     created_at, updated_at)
+                VALUES (?, ?, ?, ?, 1, ?, ?, ?)
+                ON CONFLICT(projection_name) DO UPDATE SET
+                    last_event_id = excluded.last_event_id,
+                    last_event_type = excluded.last_event_type,
+                    last_processed_at = excluded.last_processed_at,
+                    events_processed = events_processed + 1,
+                    global_position = excluded.global_position,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    subscription_id,
+                    str(event_id),
+                    event_type,
+                    now,
+                    position,
+                    now,
+                    now,
+                ),
+            )
+            await self._connection.commit()
+
     async def get_all_checkpoints(self) -> list[CheckpointData]:
         """
         Get all projection checkpoints.
@@ -785,7 +1045,7 @@ class SQLiteCheckpointRepository(TracingMixin):
             cursor = await self._connection.execute(
                 """
                 SELECT projection_name, last_event_id, last_event_type,
-                       last_processed_at, events_processed
+                       last_processed_at, events_processed, global_position
                 FROM projection_checkpoints
                 ORDER BY projection_name
                 """
@@ -810,6 +1070,7 @@ class SQLiteCheckpointRepository(TracingMixin):
                         last_event_type=row[2],
                         last_processed_at=last_processed_at,
                         events_processed=row[4] or 0,
+                        global_position=row[5],
                     )
                 )
 

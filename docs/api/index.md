@@ -46,6 +46,16 @@ This section provides comprehensive API documentation for the eventsource librar
 | | [`should_trace`](observability.md#should_trace) | Check if tracing should be active |
 | | [`@traced`](observability.md#traced-decorator) | Decorator for method-level tracing |
 | | [`TracingMixin`](observability.md#tracingmixin-class) | Mixin class for tracing support |
+| **Subscriptions** | [`SubscriptionManager`](subscriptions.md#subscriptionmanager) | Main entry point for subscription management |
+| | [`Subscription`](subscriptions.md#subscription) | Individual subscription state machine |
+| | [`SubscriptionConfig`](subscriptions.md#subscriptionconfig) | Configuration for subscriptions |
+| | [`CatchUpRunner`](subscriptions.md#catchuprunner) | Historical event processing |
+| | [`LiveRunner`](subscriptions.md#liverunner) | Real-time event processing |
+| | [`TransitionCoordinator`](subscriptions.md#transitioncoordinator) | Catch-up to live transition |
+| | [`FlowController`](subscriptions.md#flowcontroller) | Backpressure management |
+| | [`ShutdownCoordinator`](subscriptions.md#shutdowncoordinator) | Graceful shutdown coordination |
+| | [`CircuitBreaker`](subscriptions.md#circuitbreaker) | Circuit breaker for resilience |
+| | [`EventFilter`](subscriptions.md#eventfilter) | Event filtering support |
 
 ---
 
@@ -423,6 +433,82 @@ class MyStore(TracingMixin):
 
 ---
 
+### Subscriptions Module
+
+Unified catch-up and live event subscription management with resilience features.
+
+```python
+from eventsource.subscriptions import (
+    # Core classes
+    SubscriptionManager,
+    SubscriptionConfig,
+    Subscription,
+    SubscriptionState,
+    SubscriptionStatus,
+
+    # Runners
+    CatchUpRunner,
+    LiveRunner,
+    TransitionCoordinator,
+
+    # Resilience
+    FlowController,
+    ShutdownCoordinator,
+    CircuitBreaker,
+    RetryConfig,
+
+    # Filtering
+    EventFilter,
+
+    # Error handling
+    SubscriptionErrorHandler,
+    ErrorHandlerRegistry,
+
+    # Health
+    ManagerHealth,
+    ReadinessStatus,
+    LivenessStatus,
+)
+```
+
+**Key Components:**
+
+- **`SubscriptionManager`**: Main entry point for managing catch-up and live event subscriptions. Handles subscription lifecycle, graceful shutdown, and health monitoring.
+
+- **`SubscriptionConfig`**: Configuration for subscriptions including start position, batch size, backpressure settings, checkpoint strategy, and retry/circuit breaker settings.
+
+- **`CatchUpRunner`**: Reads historical events from the event store in batches with checkpointing.
+
+- **`LiveRunner`**: Receives real-time events from the event bus with duplicate detection.
+
+- **`TransitionCoordinator`**: Coordinates the transition from catch-up to live using a watermark approach to ensure no events are lost.
+
+- **`FlowController`**: Backpressure management using semaphore-based flow control.
+
+- **`ShutdownCoordinator`**: Signal-aware graceful shutdown with phased draining.
+
+**Example:**
+
+```python
+from eventsource.subscriptions import SubscriptionManager, SubscriptionConfig
+
+# Create manager
+manager = SubscriptionManager(event_store, event_bus, checkpoint_repo)
+
+# Register subscribers
+await manager.subscribe(
+    my_projection,
+    SubscriptionConfig(start_from="beginning", batch_size=500)
+)
+
+# Run until shutdown signal (SIGTERM/SIGINT)
+result = await manager.run_until_shutdown()
+```
+
+[Read the full Subscriptions API documentation](subscriptions.md)
+
+---
+
 ## Common Import Patterns
 
 ### Minimal Import (Most Common Use Case)
@@ -526,6 +612,18 @@ from eventsource.repositories import (
     SQLiteDLQRepository,
     InMemoryCheckpointRepository,
     InMemoryDLQRepository,
+)
+
+from eventsource.subscriptions import (
+    SubscriptionManager,
+    SubscriptionConfig,
+    Subscription,
+    SubscriptionState,
+    FlowController,
+    ShutdownCoordinator,
+    CircuitBreaker,
+    RetryConfig,
+    EventFilter,
 )
 ```
 

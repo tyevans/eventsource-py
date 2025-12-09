@@ -96,6 +96,7 @@ CREATE TABLE IF NOT EXISTS projection_checkpoints (
     last_event_id UUID,
     last_event_type VARCHAR(255),
     last_processed_at TIMESTAMP WITH TIME ZONE,
+    global_position BIGINT,
     events_processed BIGINT NOT NULL DEFAULT 0,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
@@ -104,6 +105,7 @@ CREATE TABLE IF NOT EXISTS projection_checkpoints (
 -- Checkpoint indexes
 CREATE INDEX IF NOT EXISTS idx_checkpoints_last_processed ON projection_checkpoints (last_processed_at);
 CREATE INDEX IF NOT EXISTS idx_checkpoints_updated_at ON projection_checkpoints (updated_at);
+CREATE INDEX IF NOT EXISTS idx_checkpoints_global_position ON projection_checkpoints (global_position) WHERE global_position IS NOT NULL;
 
 -- Auto-update trigger for updated_at
 CREATE OR REPLACE FUNCTION update_checkpoint_timestamp()

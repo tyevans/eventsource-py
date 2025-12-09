@@ -948,3 +948,17 @@ class PostgreSQLEventStore(TracingMixin, EventStore):
     def outbox_enabled(self) -> bool:
         """Check if outbox pattern is enabled."""
         return self._outbox_enabled
+
+    async def get_global_position(self) -> int:
+        """
+        Get the current maximum global position in the event store.
+
+        Returns:
+            The maximum global position (id), or 0 if empty.
+        """
+        query = text("SELECT COALESCE(MAX(id), 0) FROM events")
+
+        async with self._session_factory() as session:
+            result = await session.execute(query)
+            position = result.scalar()
+            return position or 0

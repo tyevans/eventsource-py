@@ -409,6 +409,9 @@ class MockEventStore(EventStore):
     async def event_exists(self, event_id: UUID) -> bool:
         return event_id in self._event_ids
 
+    async def get_global_position(self) -> int:
+        return sum(len(e) for e in self._events.values())
+
 
 class TestEventStore:
     """Tests for EventStore abstract base class."""

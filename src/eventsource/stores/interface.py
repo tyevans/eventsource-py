@@ -588,6 +588,23 @@ class EventStore(ABC):
         if False:  # pragma: no cover
             yield
 
+    @abstractmethod
+    async def get_global_position(self) -> int:
+        """
+        Get the current maximum global position in the event store.
+
+        This is the position of the most recently stored event across all streams.
+        Used by SubscriptionManager to determine catch-up completion point.
+
+        Returns:
+            The maximum global position, or 0 if the store is empty.
+
+        Example:
+            >>> max_pos = await event_store.get_global_position()
+            >>> print(f"Event store has events up to position {max_pos}")
+        """
+        ...
+
 
 class EventPublisher(Protocol):
     """

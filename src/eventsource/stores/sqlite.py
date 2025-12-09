@@ -1063,3 +1063,19 @@ class SQLiteEventStore(TracingMixin, EventStore):
     def busy_timeout(self) -> int:
         """Get the busy timeout in milliseconds."""
         return self._busy_timeout
+
+    async def get_global_position(self) -> int:
+        """
+        Get the current maximum global position in the event store.
+
+        Returns:
+            The maximum global position (id), or 0 if empty.
+
+        Raises:
+            RuntimeError: If not connected to database
+        """
+        conn = self._ensure_connected()
+
+        cursor = await conn.execute("SELECT COALESCE(MAX(id), 0) FROM events")
+        row = await cursor.fetchone()
+        return row[0] if row else 0

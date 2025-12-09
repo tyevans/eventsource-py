@@ -24,6 +24,10 @@ CREATE TABLE IF NOT EXISTS projection_checkpoints (
     last_event_type VARCHAR(255),
     last_processed_at TIMESTAMP WITH TIME ZONE,
 
+    -- Global position in the event stream
+    -- Used for position-based checkpoint tracking
+    global_position BIGINT,
+
     -- Processing statistics
     events_processed BIGINT NOT NULL DEFAULT 0,
 
@@ -43,6 +47,11 @@ CREATE INDEX IF NOT EXISTS idx_checkpoints_last_processed
 -- Index for finding stale projections
 CREATE INDEX IF NOT EXISTS idx_checkpoints_updated_at
     ON projection_checkpoints (updated_at);
+
+-- Index for position-based queries (partial index for non-null values)
+CREATE INDEX IF NOT EXISTS idx_checkpoints_global_position
+    ON projection_checkpoints (global_position)
+    WHERE global_position IS NOT NULL;
 
 -- =============================================================================
 -- Trigger for automatic updated_at
@@ -142,6 +151,7 @@ SELECT
     last_event_id,
     last_event_type,
     last_processed_at,
+    global_position,
     events_processed,
     created_at,
     updated_at,
@@ -159,6 +169,7 @@ COMMENT ON COLUMN projection_checkpoints.projection_name IS 'Unique projection i
 COMMENT ON COLUMN projection_checkpoints.last_event_id IS 'Last successfully processed event ID';
 COMMENT ON COLUMN projection_checkpoints.last_event_type IS 'Type of the last processed event';
 COMMENT ON COLUMN projection_checkpoints.last_processed_at IS 'When the last event was processed';
+COMMENT ON COLUMN projection_checkpoints.global_position IS 'Global position in the event stream';
 COMMENT ON COLUMN projection_checkpoints.events_processed IS 'Total count of events processed';
 COMMENT ON FUNCTION update_projection_checkpoint IS 'Updates checkpoint using UPSERT pattern';
 COMMENT ON FUNCTION reset_projection_checkpoint IS 'Resets checkpoint for rebuilding projection';

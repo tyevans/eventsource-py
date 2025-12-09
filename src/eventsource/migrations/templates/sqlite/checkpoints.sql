@@ -30,6 +30,10 @@ CREATE TABLE IF NOT EXISTS projection_checkpoints (
     last_event_type TEXT,
     last_processed_at TEXT,
 
+    -- Global position in the event stream
+    -- Used for position-based checkpoint tracking
+    global_position INTEGER,
+
     -- Processing statistics
     events_processed INTEGER NOT NULL DEFAULT 0,
 
