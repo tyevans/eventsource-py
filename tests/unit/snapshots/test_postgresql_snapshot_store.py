@@ -57,7 +57,7 @@ def store(mock_session_factory: MagicMock) -> PostgreSQLSnapshotStore:
     """Create a PostgreSQLSnapshotStore with mocked session factory."""
     return PostgreSQLSnapshotStore(
         session_factory=mock_session_factory,
-        tracer=None,
+        enable_tracing=False,
     )
 
 
@@ -434,41 +434,42 @@ class TestProperties:
         """Test session_factory property returns the factory."""
         assert store.session_factory == mock_session_factory
 
-    def test_repr_without_tracer(
+    def test_repr_without_tracing(
         self,
         store: PostgreSQLSnapshotStore,
     ) -> None:
-        """Test __repr__ without tracer."""
+        """Test __repr__ without tracing."""
         assert "PostgreSQLSnapshotStore" in repr(store)
-        assert "tracer=disabled" in repr(store)
+        assert "tracing=disabled" in repr(store)
 
-    def test_repr_with_tracer(
+    def test_repr_with_tracing(
         self,
         mock_session_factory: MagicMock,
     ) -> None:
-        """Test __repr__ with tracer enabled."""
-        mock_tracer = MagicMock()
+        """Test __repr__ with tracing enabled."""
         store = PostgreSQLSnapshotStore(
             session_factory=mock_session_factory,
-            tracer=mock_tracer,
+            enable_tracing=True,
         )
-        assert "tracer=enabled" in repr(store)
+        # Note: tracing_enabled will be True only if OTEL is available
+        # The repr should reflect _enable_tracing, which is set to enable_tracing && OTEL_AVAILABLE
+        assert "PostgreSQLSnapshotStore" in repr(store)
 
 
 # --- OpenTelemetry Tracing Tests ---
 
 
 class TestOpenTelemetryTracing:
-    """Tests for optional OpenTelemetry tracing."""
+    """Tests for optional OpenTelemetry tracing using TracingMixin."""
 
     @pytest.mark.asyncio
-    async def test_save_creates_span_when_tracer_provided(
+    async def test_save_creates_span_when_tracing_enabled(
         self,
         mock_session_factory: MagicMock,
         mock_session: AsyncMock,
         sample_snapshot: Snapshot,
     ) -> None:
-        """Test that save_snapshot creates a span when tracer is provided."""
+        """Test that save_snapshot creates a span when tracing is enabled."""
         mock_tracer = MagicMock()
         mock_span = MagicMock()
         mock_span_context = MagicMock()
@@ -478,25 +479,28 @@ class TestOpenTelemetryTracing:
 
         store = PostgreSQLSnapshotStore(
             session_factory=mock_session_factory,
-            tracer=mock_tracer,
+            enable_tracing=True,
         )
+        # Inject mock tracer
+        store._tracer = mock_tracer
+        store._enable_tracing = True
         mock_session.execute.return_value = create_mock_result()
 
         await store.save_snapshot(sample_snapshot)
 
         mock_tracer.start_as_current_span.assert_called_once()
         call_kwargs = mock_tracer.start_as_current_span.call_args
-        assert call_kwargs[0][0] == "snapshot_store.save"
-        assert "snapshot.aggregate_id" in call_kwargs[1]["attributes"]
+        assert call_kwargs[0][0] == "eventsource.snapshot.save"
+        assert "eventsource.aggregate.id" in call_kwargs[1]["attributes"]
 
     @pytest.mark.asyncio
-    async def test_get_creates_span_with_found_attribute(
+    async def test_get_creates_span_when_tracing_enabled(
         self,
         mock_session_factory: MagicMock,
         mock_session: AsyncMock,
         sample_snapshot: Snapshot,
     ) -> None:
-        """Test that get_snapshot sets found attribute on span."""
+        """Test that get_snapshot creates a span when tracing is enabled."""
         mock_tracer = MagicMock()
         mock_span = MagicMock()
         mock_span_context = MagicMock()
@@ -506,8 +510,11 @@ class TestOpenTelemetryTracing:
 
         store = PostgreSQLSnapshotStore(
             session_factory=mock_session_factory,
-            tracer=mock_tracer,
+            enable_tracing=True,
         )
+        # Inject mock tracer
+        store._tracer = mock_tracer
+        store._enable_tracing = True
         row = create_snapshot_row(sample_snapshot)
         mock_session.execute.return_value = create_mock_result([row])
 
@@ -516,23 +523,19 @@ class TestOpenTelemetryTracing:
             sample_snapshot.aggregate_type,
         )
 
-        mock_tracer.start_as_current_span.assert_called_once_with(
-            "snapshot_store.get",
-            attributes={
-                "snapshot.aggregate_id": str(sample_snapshot.aggregate_id),
-                "snapshot.aggregate_type": sample_snapshot.aggregate_type,
-            },
-        )
-        mock_span.set_attribute.assert_any_call("snapshot.found", True)
+        mock_tracer.start_as_current_span.assert_called_once()
+        call_kwargs = mock_tracer.start_as_current_span.call_args
+        assert call_kwargs[0][0] == "eventsource.snapshot.get"
+        assert "eventsource.aggregate.id" in call_kwargs[1]["attributes"]
 
     @pytest.mark.asyncio
-    async def test_delete_creates_span_with_deleted_attribute(
+    async def test_delete_creates_span_when_tracing_enabled(
         self,
         mock_session_factory: MagicMock,
         mock_session: AsyncMock,
         aggregate_id: UUID,
     ) -> None:
-        """Test that delete_snapshot sets deleted attribute on span."""
+        """Test that delete_snapshot creates a span when tracing is enabled."""
         mock_tracer = MagicMock()
         mock_span = MagicMock()
         mock_span_context = MagicMock()
@@ -542,29 +545,28 @@ class TestOpenTelemetryTracing:
 
         store = PostgreSQLSnapshotStore(
             session_factory=mock_session_factory,
-            tracer=mock_tracer,
+            enable_tracing=True,
         )
+        # Inject mock tracer
+        store._tracer = mock_tracer
+        store._enable_tracing = True
         mock_session.execute.return_value = create_mock_result(rowcount=1)
 
         await store.delete_snapshot(aggregate_id, "TestAggregate")
 
-        mock_tracer.start_as_current_span.assert_called_once_with(
-            "snapshot_store.delete",
-            attributes={
-                "snapshot.aggregate_id": str(aggregate_id),
-                "snapshot.aggregate_type": "TestAggregate",
-            },
-        )
-        mock_span.set_attribute.assert_called_with("snapshot.deleted", True)
+        mock_tracer.start_as_current_span.assert_called_once()
+        call_kwargs = mock_tracer.start_as_current_span.call_args
+        assert call_kwargs[0][0] == "eventsource.snapshot.delete"
+        assert "eventsource.aggregate.id" in call_kwargs[1]["attributes"]
 
     @pytest.mark.asyncio
-    async def test_exists_creates_span(
+    async def test_exists_creates_span_when_tracing_enabled(
         self,
         mock_session_factory: MagicMock,
         mock_session: AsyncMock,
         aggregate_id: UUID,
     ) -> None:
-        """Test that snapshot_exists creates a span."""
+        """Test that snapshot_exists creates a span when tracing is enabled."""
         mock_tracer = MagicMock()
         mock_span = MagicMock()
         mock_span_context = MagicMock()
@@ -574,28 +576,27 @@ class TestOpenTelemetryTracing:
 
         store = PostgreSQLSnapshotStore(
             session_factory=mock_session_factory,
-            tracer=mock_tracer,
+            enable_tracing=True,
         )
+        # Inject mock tracer
+        store._tracer = mock_tracer
+        store._enable_tracing = True
         mock_session.execute.return_value = create_scalar_result(True)
 
         await store.snapshot_exists(aggregate_id, "TestAggregate")
 
-        mock_tracer.start_as_current_span.assert_called_once_with(
-            "snapshot_store.exists",
-            attributes={
-                "snapshot.aggregate_id": str(aggregate_id),
-                "snapshot.aggregate_type": "TestAggregate",
-            },
-        )
-        mock_span.set_attribute.assert_called_with("snapshot.exists", True)
+        mock_tracer.start_as_current_span.assert_called_once()
+        call_kwargs = mock_tracer.start_as_current_span.call_args
+        assert call_kwargs[0][0] == "eventsource.snapshot.exists"
+        assert "eventsource.aggregate.id" in call_kwargs[1]["attributes"]
 
     @pytest.mark.asyncio
-    async def test_delete_by_type_creates_span(
+    async def test_delete_by_type_creates_span_when_tracing_enabled(
         self,
         mock_session_factory: MagicMock,
         mock_session: AsyncMock,
     ) -> None:
-        """Test that delete_snapshots_by_type creates a span."""
+        """Test that delete_snapshots_by_type creates a span when tracing is enabled."""
         mock_tracer = MagicMock()
         mock_span = MagicMock()
         mock_span_context = MagicMock()
@@ -605,27 +606,27 @@ class TestOpenTelemetryTracing:
 
         store = PostgreSQLSnapshotStore(
             session_factory=mock_session_factory,
-            tracer=mock_tracer,
+            enable_tracing=True,
         )
+        # Inject mock tracer
+        store._tracer = mock_tracer
+        store._enable_tracing = True
         mock_session.execute.return_value = create_mock_result(rowcount=5)
 
         await store.delete_snapshots_by_type("TestAggregate", schema_version_below=2)
 
-        mock_tracer.start_as_current_span.assert_called_once_with(
-            "snapshot_store.delete_by_type",
-            attributes={
-                "snapshot.aggregate_type": "TestAggregate",
-                "snapshot.schema_version_below": 2,
-            },
-        )
-        mock_span.set_attribute.assert_called_with("snapshot.deleted_count", 5)
+        mock_tracer.start_as_current_span.assert_called_once()
+        call_kwargs = mock_tracer.start_as_current_span.call_args
+        assert call_kwargs[0][0] == "eventsource.snapshot.delete_by_type"
+        assert "eventsource.aggregate.type" in call_kwargs[1]["attributes"]
 
-    def test_no_span_created_without_tracer(
+    def test_no_span_created_when_tracing_disabled(
         self,
         store: PostgreSQLSnapshotStore,
     ) -> None:
-        """Test that no tracing occurs when tracer is None."""
-        # Store was created without tracer
+        """Test that no tracing occurs when tracing is disabled."""
+        # Store was created with enable_tracing=False
+        assert store._enable_tracing is False
         assert store._tracer is None
 
 

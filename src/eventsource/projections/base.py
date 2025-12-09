@@ -17,10 +17,21 @@ import inspect
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Coroutine
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from opentelemetry.trace import Span
 
 from eventsource.events.base import DomainEvent
 from eventsource.exceptions import UnhandledEventError
+from eventsource.observability import TracingMixin
+from eventsource.observability.attributes import (
+    ATTR_EVENT_ID,
+    ATTR_EVENT_TYPE,
+    ATTR_HANDLER_NAME,
+    ATTR_PROJECTION_NAME,
+    ATTR_RETRY_COUNT,
+)
 from eventsource.projections.decorators import get_handled_event_type
 from eventsource.protocols import EventSubscriber
 from eventsource.repositories.checkpoint import (
@@ -146,7 +157,7 @@ class EventHandlerBase(ABC):
         pass
 
 
-class CheckpointTrackingProjection(EventSubscriber, ABC):
+class CheckpointTrackingProjection(TracingMixin, EventSubscriber, ABC):
     """
     Base class for projections with automatic checkpoint tracking.
 
@@ -156,6 +167,7 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
     - Retry logic with exponential backoff
     - Dead letter queue for permanent failures
     - Lag monitoring support
+    - Optional OpenTelemetry tracing support (disabled by default)
 
     Subclasses must implement:
     - subscribed_to(): List of event types to handle
@@ -165,6 +177,11 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
     Configuration:
     - MAX_RETRIES: Number of retry attempts (default: 3)
     - RETRY_BACKOFF_BASE: Base for exponential backoff in seconds (default: 2)
+
+    Tracing:
+    - Tracing is disabled by default for projections (high-frequency processing)
+    - Enable with enable_tracing=True in constructor
+    - Emits spans: eventsource.projection.handle
 
     Example:
         >>> class OrderProjection(CheckpointTrackingProjection):
@@ -177,6 +194,9 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
         ...
         ...     async def _truncate_read_models(self, conn) -> None:
         ...         await conn.execute(text("TRUNCATE TABLE orders"))
+        >>>
+        >>> # With tracing enabled
+        >>> projection = OrderProjection(enable_tracing=True)
     """
 
     # Retry configuration
@@ -187,6 +207,7 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
         self,
         checkpoint_repo: CheckpointRepository | None = None,
         dlq_repo: DLQRepository | None = None,
+        enable_tracing: bool = False,
     ) -> None:
         """
         Initialize the checkpoint-tracking projection.
@@ -196,10 +217,14 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
                            If None, uses InMemoryCheckpointRepository.
             dlq_repo: Repository for dead letter queue.
                      If None, uses InMemoryDLQRepository.
+            enable_tracing: If True and OpenTelemetry is available, emit traces.
+                          Default is False (tracing off for high-frequency projections).
         """
         self._projection_name = self.__class__.__name__
         self._checkpoint_repo = checkpoint_repo or InMemoryCheckpointRepository()
         self._dlq_repo = dlq_repo or InMemoryDLQRepository()
+        # Initialize tracing via TracingMixin (default OFF for projections)
+        self._init_tracing(__name__, enable_tracing)
 
     async def handle(self, event: DomainEvent) -> None:
         """
@@ -209,10 +234,34 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
         1. Retry with exponential backoff for transient failures
         2. Dead letter queue for permanent failures
         3. Checkpoint tracking for successful processing
+        4. Optional tracing (when enable_tracing=True)
 
         Args:
             event: The domain event to process
         """
+        with self._create_span_context(
+            "eventsource.projection.handle",
+            {
+                ATTR_PROJECTION_NAME: self._projection_name,
+                ATTR_EVENT_TYPE: type(event).__name__,
+                ATTR_EVENT_ID: str(event.event_id),
+            },
+        ) as span:
+            await self._handle_with_retry(event, span)
+
+    async def _handle_with_retry(self, event: DomainEvent, span: "Span | None") -> None:
+        """
+        Internal method that implements retry logic for event handling.
+
+        Args:
+            event: The domain event to process
+            span: Optional OpenTelemetry span for adding attributes
+        """
+        from typing import TYPE_CHECKING
+
+        if TYPE_CHECKING:
+            pass
+
         for attempt in range(self.MAX_RETRIES):
             try:
                 # Process the event in projection-specific logic
@@ -224,6 +273,10 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
                     event_id=event.event_id,
                     event_type=event.event_type,
                 )
+
+                # Add success attribute to span if tracing enabled
+                if span is not None:
+                    span.set_attribute("checkpoint.updated", True)
 
                 # Success - log and return
                 logger.debug(
@@ -260,6 +313,10 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
 
                 # Last attempt failed - send to DLQ and re-raise
                 if attempt == self.MAX_RETRIES - 1:
+                    # Add retry count to span before final failure
+                    if span is not None:
+                        span.set_attribute(ATTR_RETRY_COUNT, attempt + 1)
+
                     await self._send_to_dlq(event, e, attempt + 1)
                     logger.critical(
                         "Event %s sent to DLQ after %d attempts",
@@ -456,6 +513,7 @@ class DeclarativeProjection(CheckpointTrackingProjection):
         self,
         checkpoint_repo: CheckpointRepository | None = None,
         dlq_repo: DLQRepository | None = None,
+        enable_tracing: bool = False,
     ) -> None:
         """
         Initialize the declarative projection.
@@ -465,12 +523,18 @@ class DeclarativeProjection(CheckpointTrackingProjection):
         Args:
             checkpoint_repo: Repository for checkpoint storage.
             dlq_repo: Repository for dead letter queue.
+            enable_tracing: If True and OpenTelemetry is available, emit traces.
+                          Default is False (tracing off for high-frequency projections).
         """
         # Initialize handlers dict before calling super().__init__()
         # in case subscribed_to() is called during parent initialization
         self._handlers: dict[type[DomainEvent], Callable[..., Coroutine[Any, Any, None]]] = {}
 
-        super().__init__(checkpoint_repo=checkpoint_repo, dlq_repo=dlq_repo)
+        super().__init__(
+            checkpoint_repo=checkpoint_repo,
+            dlq_repo=dlq_repo,
+            enable_tracing=enable_tracing,
+        )
 
         # Discover all handler methods
         for attr_name in dir(self):
@@ -608,19 +672,29 @@ class DeclarativeProjection(CheckpointTrackingProjection):
             return
 
         handler = self._handlers[event_type]
+        handler_name = handler.__name__
 
-        # Check handler signature to determine how to call it
-        sig = inspect.signature(handler)
-        params = list(sig.parameters.values())
+        # Dispatch to handler with optional tracing
+        with self._create_span_context(
+            "eventsource.projection.handler",
+            {
+                ATTR_PROJECTION_NAME: self._projection_name,
+                ATTR_EVENT_TYPE: type(event).__name__,
+                ATTR_HANDLER_NAME: handler_name,
+            },
+        ):
+            # Check handler signature to determine how to call it
+            sig = inspect.signature(handler)
+            params = list(sig.parameters.values())
 
-        if len(params) == 1:
-            # Single parameter handler: just event
-            await handler(event)
-        else:
-            # Two parameter handler: conn, event
-            # Pass None for conn since we don't have a database connection in base class
-            # Subclasses that need database access should override _process_event
-            await handler(None, event)
+            if len(params) == 1:
+                # Single parameter handler: just event
+                await handler(event)
+            else:
+                # Two parameter handler: conn, event
+                # Pass None for conn since we don't have a database connection in base class
+                # Subclasses that need database access should override _process_event
+                await handler(None, event)
 
     def _handle_unregistered_event(self, event: DomainEvent) -> None:
         """
@@ -712,6 +786,7 @@ class DatabaseProjection(DeclarativeProjection):
         session_factory: "async_sessionmaker[AsyncSession]",
         checkpoint_repo: CheckpointRepository | None = None,
         dlq_repo: DLQRepository | None = None,
+        enable_tracing: bool = False,
     ) -> None:
         """
         Initialize the database projection.
@@ -723,8 +798,14 @@ class DatabaseProjection(DeclarativeProjection):
                            If None, uses InMemoryCheckpointRepository.
             dlq_repo: Repository for dead letter queue.
                      If None, uses InMemoryDLQRepository.
+            enable_tracing: If True and OpenTelemetry is available, emit traces.
+                          Default is False (tracing off for high-frequency projections).
         """
-        super().__init__(checkpoint_repo=checkpoint_repo, dlq_repo=dlq_repo)
+        super().__init__(
+            checkpoint_repo=checkpoint_repo,
+            dlq_repo=dlq_repo,
+            enable_tracing=enable_tracing,
+        )
         self._session_factory = session_factory
         self._current_connection: AsyncConnection | None = None
 

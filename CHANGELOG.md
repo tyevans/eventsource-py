@@ -82,6 +82,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Added comprehensive observability guide (`docs/guides/observability.md`) with:
+  - Overview of OpenTelemetry tracing support
+  - Component-by-component span name reference
+  - Standard attributes reference (all ATTR_* constants)
+  - TracingMixin usage guide for custom components
+  - Distributed tracing with RabbitMQ and Kafka
+  - Example configurations for Jaeger, Zipkin, OTLP, and Grafana Tempo
+  - Best practices and troubleshooting guide
 - Added comprehensive installation guide (`docs/installation.md`) with detailed documentation of optional dependencies, troubleshooting, and version compatibility
 - Enhanced README installation section with extras table and links to installation guide
 - Updated getting-started guide to reference installation documentation

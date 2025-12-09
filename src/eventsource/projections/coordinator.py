@@ -10,6 +10,7 @@ The coordinator pattern enables:
 - Concurrent projection execution
 - Batched event processing
 - Rebuild and catch-up support
+- Optional OpenTelemetry tracing support
 """
 
 import asyncio
@@ -17,18 +18,25 @@ import logging
 from typing import Any
 
 from eventsource.events.base import DomainEvent
+from eventsource.observability import TracingMixin
+from eventsource.observability.attributes import (
+    ATTR_EVENT_COUNT,
+    ATTR_EVENT_ID,
+    ATTR_EVENT_TYPE,
+)
 from eventsource.projections.base import EventHandlerBase, Projection
 from eventsource.protocols import EventSubscriber
 
 logger = logging.getLogger(__name__)
 
 
-class ProjectionRegistry:
+class ProjectionRegistry(TracingMixin):
     """
     Registry for managing multiple projections.
 
     Allows routing events to appropriate projections and handlers.
     Supports concurrent execution for better throughput.
+    Optional OpenTelemetry tracing support (disabled by default).
 
     Example:
         >>> registry = ProjectionRegistry()
@@ -38,12 +46,23 @@ class ProjectionRegistry:
         >>>
         >>> # Dispatch events to all projections concurrently
         >>> await registry.dispatch(order_created_event)
+        >>>
+        >>> # With tracing enabled
+        >>> registry = ProjectionRegistry(enable_tracing=True)
     """
 
-    def __init__(self) -> None:
-        """Initialize the projection registry."""
+    def __init__(self, enable_tracing: bool = False) -> None:
+        """
+        Initialize the projection registry.
+
+        Args:
+            enable_tracing: If True and OpenTelemetry is available, emit traces.
+                          Default is False (tracing off for high-frequency operations).
+        """
         self._projections: list[Projection] = []
         self._handlers: list[EventHandlerBase] = []
+        # Initialize tracing via TracingMixin (default OFF for projections)
+        self._init_tracing(__name__, enable_tracing)
 
     def register_projection(self, projection: Projection) -> None:
         """
@@ -128,6 +147,19 @@ class ProjectionRegistry:
         Args:
             event: The event to dispatch
         """
+        with self._create_span_context(
+            "eventsource.projection.registry.dispatch",
+            {
+                ATTR_EVENT_TYPE: type(event).__name__,
+                ATTR_EVENT_ID: str(event.event_id),
+                "projection.count": len(self._projections),
+                "handler.count": len(self._handlers),
+            },
+        ):
+            await self._dispatch_internal(event)
+
+    async def _dispatch_internal(self, event: DomainEvent) -> None:
+        """Internal dispatch implementation without tracing context."""
         # Prepare projection tasks
         projection_tasks = []
         for projection in self._projections:
@@ -218,7 +250,7 @@ class ProjectionRegistry:
         return len(self._handlers)
 
 
-class ProjectionCoordinator:
+class ProjectionCoordinator(TracingMixin):
     """
     Coordinates event distribution from event store to projections.
 
@@ -228,6 +260,7 @@ class ProjectionCoordinator:
     3. Polls event store and dispatches to projections
     4. Supports rebuilding projections by replaying events
     5. Handles batching and resumption
+    6. Optional OpenTelemetry tracing support (disabled by default)
 
     This is a generic coordinator that doesn't depend on specific
     Honeybadger types. Application-specific coordinators should
@@ -240,6 +273,9 @@ class ProjectionCoordinator:
         ... )
         >>> await coordinator.start()  # Begin polling
         >>> await coordinator.rebuild_projection(order_projection)
+        >>>
+        >>> # With tracing enabled
+        >>> coordinator = ProjectionCoordinator(registry=registry, enable_tracing=True)
     """
 
     def __init__(
@@ -247,6 +283,7 @@ class ProjectionCoordinator:
         registry: ProjectionRegistry,
         batch_size: int = 100,
         poll_interval_seconds: float = 1.0,
+        enable_tracing: bool = False,
     ) -> None:
         """
         Initialize the coordinator.
@@ -255,12 +292,16 @@ class ProjectionCoordinator:
             registry: Registry containing projections
             batch_size: Number of events to process per batch
             poll_interval_seconds: How often to poll for new events
+            enable_tracing: If True and OpenTelemetry is available, emit traces.
+                          Default is False (tracing off for high-frequency operations).
         """
         self.registry = registry
         self.batch_size = batch_size
         self.poll_interval_seconds = poll_interval_seconds
         self._running = False
         self._task: asyncio.Task[None] | None = None
+        # Initialize tracing via TracingMixin (default OFF for projections)
+        self._init_tracing(__name__, enable_tracing)
 
     async def dispatch_events(self, events: list[DomainEvent]) -> int:
         """
@@ -272,8 +313,15 @@ class ProjectionCoordinator:
         Returns:
             Number of events dispatched
         """
-        await self.registry.dispatch_many(events)
-        return len(events)
+        with self._create_span_context(
+            "eventsource.projection.coordinate",
+            {
+                ATTR_EVENT_COUNT: len(events),
+                "projection.count": self.registry.get_projection_count(),
+            },
+        ):
+            await self.registry.dispatch_many(events)
+            return len(events)
 
     async def rebuild_all(self, events: list[DomainEvent]) -> int:
         """
