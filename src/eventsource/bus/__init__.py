@@ -7,6 +7,7 @@ Available Implementations:
 - InMemoryEventBus: In-process event distribution (development/testing/single-instance)
 - RedisEventBus: Distributed event streaming via Redis Streams (production/multi-instance)
 - RabbitMQEventBus: Distributed event messaging via RabbitMQ (production/multi-instance)
+- KafkaEventBus: Distributed event streaming via Apache Kafka (production/multi-instance)
 
 Example:
     >>> from eventsource.bus import InMemoryEventBus, EventSubscriber
@@ -51,12 +52,33 @@ For RabbitMQ-based distributed event bus:
     >>> bus = RabbitMQEventBus(config=config)
     >>> await bus.connect()
     >>> await bus.publish([MyEvent(...)])
+
+For Kafka-based distributed event bus:
+    >>> from eventsource.bus import KafkaEventBus, KafkaEventBusConfig
+    >>>
+    >>> config = KafkaEventBusConfig(
+    ...     bootstrap_servers="localhost:9092",
+    ...     topic_prefix="events",
+    ...     consumer_group="projections",
+    ... )
+    >>> bus = KafkaEventBus(config=config)
+    >>> await bus.connect()
+    >>> await bus.publish([MyEvent(...)])
 """
 
 from eventsource.bus.interface import (
     AsyncEventHandler,
     EventBus,
     EventHandlerFunc,
+)
+
+# Kafka event bus - conditionally imported based on aiokafka availability
+from eventsource.bus.kafka import (
+    KAFKA_AVAILABLE,
+    KafkaEventBus,
+    KafkaEventBusConfig,
+    KafkaEventBusStats,
+    KafkaNotAvailableError,
 )
 from eventsource.bus.memory import InMemoryEventBus
 
@@ -110,4 +132,10 @@ __all__ = [
     "RabbitMQEventBusStats",
     "RabbitMQNotAvailableError",
     "RABBITMQ_AVAILABLE",
+    # Kafka event bus
+    "KafkaEventBus",
+    "KafkaEventBusConfig",
+    "KafkaEventBusStats",
+    "KafkaNotAvailableError",
+    "KAFKA_AVAILABLE",
 ]

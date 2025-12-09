@@ -9,6 +9,7 @@ This module provides comprehensive test fixtures including:
 - Projection fixtures (test_projection)
 - Sample data fixtures (aggregate_id, tenant_id)
 - SQLite fixtures (sqlite_connection, sqlite_event_store, etc.)
+- OpenTelemetry metrics fixtures (metric_reader, reset_kafka_meter)
 
 All fixtures are properly scoped and documented for easy reuse.
 """
@@ -63,6 +64,23 @@ except ImportError:
 
 
 # ============================================================================
+# OpenTelemetry Metrics Availability Check
+# ============================================================================
+
+OTEL_METRICS_AVAILABLE = False
+try:
+    from opentelemetry import metrics as otel_metrics
+    from opentelemetry.sdk.metrics import MeterProvider
+    from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+
+    OTEL_METRICS_AVAILABLE = True
+except ImportError:
+    otel_metrics = None  # type: ignore[assignment]
+    MeterProvider = None  # type: ignore[assignment, misc]
+    InMemoryMetricReader = None  # type: ignore[assignment, misc]
+
+
+# ============================================================================
 # Pytest Configuration
 # ============================================================================
 
@@ -77,6 +95,10 @@ def pytest_configure(config: pytest.Config) -> None:
 # ============================================================================
 
 skip_if_no_aiosqlite = pytest.mark.skipif(not AIOSQLITE_AVAILABLE, reason="aiosqlite not installed")
+
+skip_if_no_otel_metrics = pytest.mark.skipif(
+    not OTEL_METRICS_AVAILABLE, reason="opentelemetry-sdk not installed"
+)
 
 
 # =============================================================================
@@ -477,6 +499,61 @@ class MockEventPublisher:
 
 
 # ============================================================================
+# OpenTelemetry Metrics Fixtures
+# ============================================================================
+
+
+@pytest.fixture
+def metric_reader() -> Any:
+    """
+    Provide an InMemoryMetricReader for testing metrics.
+
+    Creates a fresh metric reader and meter provider for each test.
+    The provider is set as the global meter provider for the test duration.
+
+    Yields:
+        InMemoryMetricReader: Reader for inspecting collected metrics.
+    """
+    if not OTEL_METRICS_AVAILABLE:
+        pytest.skip("opentelemetry-sdk not installed")
+
+    reader = InMemoryMetricReader()
+    provider = MeterProvider(metric_readers=[reader])
+
+    # Store old provider to restore later
+    old_provider = otel_metrics.get_meter_provider()
+    otel_metrics.set_meter_provider(provider)
+
+    yield reader
+
+    # Restore old provider
+    otel_metrics.set_meter_provider(old_provider)
+
+
+@pytest.fixture
+def reset_kafka_meter():
+    """
+    Reset the kafka module's cached meter between tests.
+
+    The kafka module caches the meter at module level, which can cause
+    issues between tests. This fixture resets it.
+    """
+    try:
+        import eventsource.bus.kafka as kafka_module
+    except ImportError:
+        pytest.skip("eventsource.bus.kafka not available")
+        return
+
+    # Reset cached meter
+    kafka_module._meter = None
+
+    yield
+
+    # Clean up after test
+    kafka_module._meter = None
+
+
+# ============================================================================
 # SQLite Fixtures
 # ============================================================================
 
@@ -712,4 +789,7 @@ __all__ = [
     # SQLite
     "AIOSQLITE_AVAILABLE",
     "skip_if_no_aiosqlite",
+    # OpenTelemetry Metrics
+    "OTEL_METRICS_AVAILABLE",
+    "skip_if_no_otel_metrics",
 ]

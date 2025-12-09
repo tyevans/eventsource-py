@@ -29,6 +29,15 @@ from eventsource.bus.interface import (
     EventBus,
     EventHandlerFunc,
 )
+
+# Kafka Event bus
+from eventsource.bus.kafka import (
+    KAFKA_AVAILABLE,
+    KafkaEventBus,
+    KafkaEventBusConfig,
+    KafkaEventBusStats,
+    KafkaNotAvailableError,
+)
 from eventsource.bus.memory import InMemoryEventBus
 
 # RabbitMQ Event bus
@@ -224,6 +233,12 @@ __all__ = [
     "RabbitMQEventBusStats",
     "RabbitMQNotAvailableError",
     "RABBITMQ_AVAILABLE",
+    # Kafka Event Bus
+    "KafkaEventBus",
+    "KafkaEventBusConfig",
+    "KafkaEventBusStats",
+    "KafkaNotAvailableError",
+    "KAFKA_AVAILABLE",
     # Exceptions
     "AggregateNotFoundError",
     "EventNotFoundError",

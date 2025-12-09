@@ -18,7 +18,7 @@ A production-ready event sourcing library for Python 3.11+.
 - **Repository Pattern** - Clean abstractions for loading and saving aggregates
 - **Aggregate Snapshotting** - Optimize load performance for long-lived aggregates
 - **Projection System** - Checkpoint tracking, retry logic, and dead letter queue support
-- **Event Bus** - In-Memory and Redis Streams backends for event distribution
+- **Event Bus** - In-Memory, Redis Streams, RabbitMQ, and Kafka backends for event distribution
 - **Transactional Outbox** - Reliable event publishing pattern
 - **Multi-tenancy** - Built-in tenant isolation support
 - **Observability** - Optional OpenTelemetry integration
@@ -45,6 +45,12 @@ pip install eventsource-py[sqlite]
 # Redis support - distributed event bus with Redis Streams
 pip install eventsource-py[redis]
 
+# RabbitMQ support - distributed event bus with RabbitMQ
+pip install eventsource-py[rabbitmq]
+
+# Kafka support - distributed event bus with Apache Kafka
+pip install eventsource-py[kafka]
+
 # Telemetry support - OpenTelemetry tracing integration
 pip install eventsource-py[telemetry]
 
@@ -58,7 +64,10 @@ pip install eventsource-py[postgresql,redis,telemetry]
 | Extra | Enables | Dependencies |
 |-------|---------|--------------|
 | `postgresql` | `PostgreSQLEventStore`, checkpoint/outbox/DLQ repositories | asyncpg |
+| `sqlite` | `SQLiteEventStore` for lightweight deployments | aiosqlite |
 | `redis` | `RedisEventBus` with consumer groups and DLQ | redis |
+| `rabbitmq` | `RabbitMQEventBus` with exchange routing and DLQ | aio-pika |
+| `kafka` | `KafkaEventBus` with consumer groups, DLQ, and tracing | aiokafka |
 | `telemetry` | Distributed tracing for event operations | opentelemetry-api, opentelemetry-sdk |
 | `all` | All of the above | All of the above |
 | `dev` | Development tools | pytest, mypy, ruff, pre-commit |
