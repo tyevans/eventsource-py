@@ -1,5 +1,11 @@
 """Event store implementations for the eventsource library."""
 
+from eventsource.stores._type_converter import (
+    DEFAULT_STRING_ID_FIELDS,
+    DEFAULT_UUID_FIELDS,
+    DefaultTypeConverter,
+    TypeConverter,
+)
 from eventsource.stores.in_memory import InMemoryEventStore
 from eventsource.stores.interface import (
     AppendResult,
@@ -36,6 +42,11 @@ __all__ = [
     "PostgreSQLEventStore",
     # Protocols
     "EventPublisher",
+    # Type conversion
+    "TypeConverter",
+    "DefaultTypeConverter",
+    "DEFAULT_UUID_FIELDS",
+    "DEFAULT_STRING_ID_FIELDS",
 ]
 
 # Add SQLiteEventStore to __all__ only if available
