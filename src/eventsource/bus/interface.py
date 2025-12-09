@@ -74,11 +74,74 @@ class EventBus(ABC):
     Implementations must be thread-safe and support both synchronous
     and asynchronous handlers.
 
+    Tracing Support:
+        Implementations SHOULD inherit from ``TracingMixin`` from
+        ``eventsource.observability`` to provide standardized OpenTelemetry
+        tracing. The standard tracing pattern includes:
+
+        1. **Inherit from TracingMixin:**
+           ``class MyEventBus(TracingMixin, EventBus): ...``
+
+        2. **Accept enable_tracing in constructor:**
+           ``def __init__(self, ..., enable_tracing: bool = True): ...``
+
+        3. **Initialize tracing in constructor:**
+           ``self._init_tracing(__name__, enable_tracing)``
+
+        4. **Use standard span naming convention:**
+           - ``eventsource.event_bus.publish`` - For publish operations
+           - ``eventsource.event_bus.dispatch`` - For dispatching to handlers
+           - ``eventsource.event_bus.handle`` - For individual handler invocations
+           - ``eventsource.event_bus.consume`` - For message consumption (distributed)
+           - ``eventsource.event_bus.process`` - For message processing (distributed)
+
+        5. **Use standard attribute constants from eventsource.observability.attributes:**
+           - ``ATTR_EVENT_TYPE`` - Event class name
+           - ``ATTR_EVENT_ID`` - Unique event identifier
+           - ``ATTR_AGGREGATE_ID`` - Aggregate identifier
+           - ``ATTR_HANDLER_NAME`` - Handler class/function name
+           - ``ATTR_HANDLER_COUNT`` - Number of handlers for event
+           - ``ATTR_HANDLER_SUCCESS`` - Whether handler succeeded
+           - ``ATTR_MESSAGING_SYSTEM`` - Backend system (e.g., 'redis', 'rabbitmq')
+           - ``ATTR_MESSAGING_DESTINATION`` - Queue/stream name
+
+        6. **Create spans with dynamic attributes:**
+           Use ``self._create_span_context()`` for operations with runtime attributes.
+
+        Distributed event buses (Redis, RabbitMQ, Kafka) should additionally:
+        - Inject trace context into message headers on publish
+        - Extract trace context from message headers on consume
+        - Use ``opentelemetry.propagate.inject/extract`` for context propagation
+
     Example:
         >>> event_bus = InMemoryEventBus()
         >>> event_bus.subscribe(OrderCreated, order_handler)
         >>> event_bus.subscribe_all(order_projection)
         >>> await event_bus.publish([OrderCreated(...)])
+
+    Example Traced Implementation:
+        >>> from eventsource.observability import TracingMixin
+        >>> from eventsource.observability.attributes import (
+        ...     ATTR_EVENT_TYPE, ATTR_EVENT_ID, ATTR_HANDLER_NAME
+        ... )
+        >>>
+        >>> class MyEventBus(TracingMixin, EventBus):
+        ...     def __init__(self, enable_tracing: bool = True):
+        ...         self._init_tracing(__name__, enable_tracing)
+        ...         self._subscribers = {}
+        ...
+        ...     async def publish(self, events, background=False):
+        ...         with self._create_span_context(
+        ...             "eventsource.event_bus.publish",
+        ...             {"eventsource.event.count": len(events)}
+        ...         ):
+        ...             # implementation
+        ...             pass
+
+    See Also:
+        - ``eventsource.observability.TracingMixin`` - Tracing mixin class
+        - ``eventsource.observability.attributes`` - Standard attribute constants
+        - ``InMemoryEventBus`` - Reference implementation with tracing
     """
 
     @abstractmethod

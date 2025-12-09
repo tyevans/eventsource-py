@@ -19,11 +19,8 @@ import json
 import logging
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import UUID
-
-if TYPE_CHECKING:
-    from opentelemetry.trace import Tracer
 
 import aiosqlite
 
@@ -31,6 +28,17 @@ from eventsource.events.base import DomainEvent
 from eventsource.events.registry import EventRegistry, default_registry
 from eventsource.exceptions import OptimisticLockError
 from eventsource.migrations import get_schema
+from eventsource.observability import (
+    ATTR_AGGREGATE_ID,
+    ATTR_AGGREGATE_TYPE,
+    ATTR_DB_NAME,
+    ATTR_DB_SYSTEM,
+    ATTR_EVENT_COUNT,
+    ATTR_EVENT_TYPE,
+    ATTR_EXPECTED_VERSION,
+    ATTR_FROM_VERSION,
+    TracingMixin,
+)
 from eventsource.stores._compat import normalize_timestamp
 from eventsource.stores.interface import (
     AppendResult,
@@ -42,19 +50,10 @@ from eventsource.stores.interface import (
     StoredEvent,
 )
 
-# Optional OpenTelemetry support
-try:
-    from opentelemetry import trace
-
-    OTEL_AVAILABLE = True
-except ImportError:
-    trace = None  # type: ignore[assignment]
-    OTEL_AVAILABLE = False
-
 logger = logging.getLogger(__name__)
 
 
-class SQLiteEventStore(EventStore):
+class SQLiteEventStore(TracingMixin, EventStore):
     """
     SQLite implementation of the event store.
 
@@ -67,6 +66,7 @@ class SQLiteEventStore(EventStore):
     - WAL mode for better concurrency (optional)
     - Multi-tenancy support
     - Full EventStore interface compliance
+    - OpenTelemetry tracing support via TracingMixin
 
     SQLite-specific adaptations:
     - UUIDs stored as TEXT (36 characters, hyphenated format)
@@ -131,11 +131,8 @@ class SQLiteEventStore(EventStore):
         self._busy_timeout = busy_timeout
         self._connection: aiosqlite.Connection | None = None
 
-        # Tracing initialization
-        self._enable_tracing = enable_tracing and OTEL_AVAILABLE
-        self._tracer: Tracer | None = None
-        if self._enable_tracing and trace is not None:
-            self._tracer = trace.get_tracer(__name__)
+        # Initialize tracing via TracingMixin
+        self._init_tracing(__name__, enable_tracing)
 
     async def __aenter__(self) -> SQLiteEventStore:
         """
@@ -300,24 +297,18 @@ class SQLiteEventStore(EventStore):
         if not events:
             return AppendResult.successful(expected_version)
 
-        # Start tracing span if enabled
-        if self._enable_tracing and self._tracer is not None:
-            with self._tracer.start_as_current_span(
-                "event_store.append_events",
-                attributes={
-                    "aggregate.id": str(aggregate_id),
-                    "aggregate.type": aggregate_type,
-                    "event.count": len(events),
-                    "expected_version": expected_version,
-                    "event.types": ",".join(type(e).__name__ for e in events),
-                    "db.system": "sqlite",
-                    "db.name": self._database,
-                },
-            ):
-                return await self._do_append_events(
-                    aggregate_id, aggregate_type, events, expected_version
-                )
-        else:
+        with self._create_span_context(
+            "sqlite_event_store.append_events",
+            {
+                ATTR_AGGREGATE_ID: str(aggregate_id),
+                ATTR_AGGREGATE_TYPE: aggregate_type,
+                ATTR_EVENT_COUNT: len(events),
+                ATTR_EXPECTED_VERSION: expected_version,
+                ATTR_EVENT_TYPE: ",".join(type(e).__name__ for e in events),
+                ATTR_DB_SYSTEM: "sqlite",
+                ATTR_DB_NAME: self._database,
+            },
+        ):
             return await self._do_append_events(
                 aggregate_id, aggregate_type, events, expected_version
             )
@@ -483,22 +474,16 @@ class SQLiteEventStore(EventStore):
             >>> for event in stream.events:
             ...     aggregate.apply(event)
         """
-        # Start tracing span if enabled
-        if self._enable_tracing and self._tracer is not None:
-            with self._tracer.start_as_current_span(
-                "event_store.get_events",
-                attributes={
-                    "aggregate.id": str(aggregate_id),
-                    "aggregate.type": aggregate_type or "any",
-                    "from_version": from_version,
-                    "db.system": "sqlite",
-                    "db.name": self._database,
-                },
-            ):
-                return await self._do_get_events(
-                    aggregate_id, aggregate_type, from_version, from_timestamp, to_timestamp
-                )
-        else:
+        with self._create_span_context(
+            "sqlite_event_store.get_events",
+            {
+                ATTR_AGGREGATE_ID: str(aggregate_id),
+                ATTR_AGGREGATE_TYPE: aggregate_type or "any",
+                ATTR_FROM_VERSION: from_version,
+                ATTR_DB_SYSTEM: "sqlite",
+                ATTR_DB_NAME: self._database,
+            },
+        ):
             return await self._do_get_events(
                 aggregate_id, aggregate_type, from_version, from_timestamp, to_timestamp
             )

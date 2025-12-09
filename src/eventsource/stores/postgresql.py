@@ -21,6 +21,17 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from eventsource.events.base import DomainEvent
 from eventsource.events.registry import EventRegistry, default_registry
 from eventsource.exceptions import OptimisticLockError
+from eventsource.observability import (
+    ATTR_AGGREGATE_ID,
+    ATTR_AGGREGATE_TYPE,
+    ATTR_DB_NAME,
+    ATTR_DB_SYSTEM,
+    ATTR_EVENT_COUNT,
+    ATTR_EVENT_TYPE,
+    ATTR_EXPECTED_VERSION,
+    ATTR_FROM_VERSION,
+    TracingMixin,
+)
 from eventsource.stores._compat import normalize_timestamp
 from eventsource.stores.interface import (
     AppendResult,
@@ -35,19 +46,10 @@ from eventsource.stores.interface import (
 if TYPE_CHECKING:
     pass
 
-# Optional OpenTelemetry support
-try:
-    from opentelemetry import trace
-
-    OTEL_AVAILABLE = True
-except ImportError:
-    trace = None  # type: ignore[assignment]
-    OTEL_AVAILABLE = False
-
 logger = logging.getLogger(__name__)
 
 
-class PostgreSQLEventStore(EventStore):
+class PostgreSQLEventStore(TracingMixin, EventStore):
     """
     PostgreSQL implementation of the event store.
 
@@ -181,7 +183,9 @@ class PostgreSQLEventStore(EventStore):
         self._session_factory = session_factory
         self._event_registry = event_registry or default_registry
         self._outbox_enabled = outbox_enabled
-        self._enable_tracing = enable_tracing and OTEL_AVAILABLE
+
+        # Initialize tracing via TracingMixin
+        self._init_tracing(__name__, enable_tracing)
 
         # Build UUID field set
         if _use_defaults:
@@ -208,11 +212,6 @@ class PostgreSQLEventStore(EventStore):
             )
 
         self._auto_detect_uuid = auto_detect_uuid
-
-        if self._enable_tracing and trace is not None:
-            self._tracer = trace.get_tracer(__name__)
-        else:
-            self._tracer = None  # type: ignore[assignment]
 
     @classmethod
     def with_strict_uuid_detection(
@@ -294,22 +293,18 @@ class PostgreSQLEventStore(EventStore):
         if not events:
             return AppendResult.successful(expected_version)
 
-        # Start tracing span if enabled
-        if self._enable_tracing and self._tracer is not None:
-            with self._tracer.start_as_current_span(
-                "event_store.append_events",
-                attributes={
-                    "aggregate.id": str(aggregate_id),
-                    "aggregate.type": aggregate_type,
-                    "event.count": len(events),
-                    "expected_version": expected_version,
-                    "event.types": ",".join(type(e).__name__ for e in events),
-                },
-            ):
-                return await self._do_append_events(
-                    aggregate_id, aggregate_type, events, expected_version
-                )
-        else:
+        with self._create_span_context(
+            "postgresql_event_store.append_events",
+            {
+                ATTR_AGGREGATE_ID: str(aggregate_id),
+                ATTR_AGGREGATE_TYPE: aggregate_type,
+                ATTR_EVENT_COUNT: len(events),
+                ATTR_EXPECTED_VERSION: expected_version,
+                ATTR_EVENT_TYPE: ",".join(type(e).__name__ for e in events),
+                ATTR_DB_SYSTEM: "postgresql",
+                ATTR_DB_NAME: "postgresql",
+            },
+        ):
             return await self._do_append_events(
                 aggregate_id, aggregate_type, events, expected_version
             )
@@ -518,20 +513,16 @@ class PostgreSQLEventStore(EventStore):
             For partitioned tables, providing timestamp filters significantly
             improves query performance by enabling partition pruning.
         """
-        # Start tracing span if enabled
-        if self._enable_tracing and self._tracer is not None:
-            with self._tracer.start_as_current_span(
-                "event_store.get_events",
-                attributes={
-                    "aggregate.id": str(aggregate_id),
-                    "aggregate.type": aggregate_type or "any",
-                    "from_version": from_version,
-                },
-            ):
-                return await self._do_get_events(
-                    aggregate_id, aggregate_type, from_version, from_timestamp, to_timestamp
-                )
-        else:
+        with self._create_span_context(
+            "postgresql_event_store.get_events",
+            {
+                ATTR_AGGREGATE_ID: str(aggregate_id),
+                ATTR_AGGREGATE_TYPE: aggregate_type or "any",
+                ATTR_FROM_VERSION: from_version,
+                ATTR_DB_SYSTEM: "postgresql",
+                ATTR_DB_NAME: "postgresql",
+            },
+        ):
             return await self._do_get_events(
                 aggregate_id, aggregate_type, from_version, from_timestamp, to_timestamp
             )

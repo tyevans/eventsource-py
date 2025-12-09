@@ -1117,9 +1117,9 @@ class TestOpenTelemetryTracing:
         event_registry: EventRegistry,
     ) -> None:
         """Test that tracing is disabled when OTEL is not available."""
-        import eventsource.stores.postgresql as pg_module
+        import eventsource.observability.tracing as tracing_module
 
-        with patch.object(pg_module, "OTEL_AVAILABLE", False):
+        with patch.object(tracing_module, "OTEL_AVAILABLE", False):
             store = PostgreSQLEventStore(
                 session_factory=mock_session_factory,
                 event_registry=event_registry,

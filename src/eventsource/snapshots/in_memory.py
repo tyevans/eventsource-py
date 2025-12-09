@@ -11,12 +11,18 @@ import asyncio
 import logging
 from uuid import UUID
 
+from eventsource.observability import TracingMixin
+from eventsource.observability.attributes import (
+    ATTR_AGGREGATE_ID,
+    ATTR_AGGREGATE_TYPE,
+    ATTR_VERSION,
+)
 from eventsource.snapshots.interface import Snapshot, SnapshotStore
 
 logger = logging.getLogger(__name__)
 
 
-class InMemorySnapshotStore(SnapshotStore):
+class InMemorySnapshotStore(SnapshotStore, TracingMixin):
     """
     In-memory implementation of SnapshotStore for testing and development.
 
@@ -28,6 +34,7 @@ class InMemorySnapshotStore(SnapshotStore):
     - Thread-safe with asyncio.Lock
     - clear() method for test cleanup
     - Full implementation of delete_snapshots_by_type
+    - Optional OpenTelemetry tracing
 
     Limitations:
     - Data is not persisted (lost on process restart)
@@ -63,8 +70,14 @@ class InMemorySnapshotStore(SnapshotStore):
         SQLiteSnapshotStore: For embedded/lightweight deployments
     """
 
-    def __init__(self) -> None:
-        """Initialize the in-memory snapshot store."""
+    def __init__(self, enable_tracing: bool = True) -> None:
+        """
+        Initialize the in-memory snapshot store.
+
+        Args:
+            enable_tracing: Whether to enable OpenTelemetry tracing (default True)
+        """
+        self._init_tracing(__name__, enable_tracing)
         self._snapshots: dict[tuple[UUID, str], Snapshot] = {}
         self._lock = asyncio.Lock()
         logger.debug("InMemorySnapshotStore initialized")
@@ -79,26 +92,34 @@ class InMemorySnapshotStore(SnapshotStore):
         Args:
             snapshot: The snapshot to save
         """
-        async with self._lock:
-            key = (snapshot.aggregate_id, snapshot.aggregate_type)
-            old_snapshot = self._snapshots.get(key)
-            self._snapshots[key] = snapshot
+        with self._create_span_context(
+            "eventsource.snapshot.save",
+            {
+                ATTR_AGGREGATE_ID: str(snapshot.aggregate_id),
+                ATTR_AGGREGATE_TYPE: snapshot.aggregate_type,
+                ATTR_VERSION: snapshot.version,
+            },
+        ):
+            async with self._lock:
+                key = (snapshot.aggregate_id, snapshot.aggregate_type)
+                old_snapshot = self._snapshots.get(key)
+                self._snapshots[key] = snapshot
 
-            if old_snapshot:
-                logger.debug(
-                    "Updated snapshot for %s/%s: v%d -> v%d",
-                    snapshot.aggregate_type,
-                    snapshot.aggregate_id,
-                    old_snapshot.version,
-                    snapshot.version,
-                )
-            else:
-                logger.debug(
-                    "Created snapshot for %s/%s at v%d",
-                    snapshot.aggregate_type,
-                    snapshot.aggregate_id,
-                    snapshot.version,
-                )
+                if old_snapshot:
+                    logger.debug(
+                        "Updated snapshot for %s/%s: v%d -> v%d",
+                        snapshot.aggregate_type,
+                        snapshot.aggregate_id,
+                        old_snapshot.version,
+                        snapshot.version,
+                    )
+                else:
+                    logger.debug(
+                        "Created snapshot for %s/%s at v%d",
+                        snapshot.aggregate_type,
+                        snapshot.aggregate_id,
+                        snapshot.version,
+                    )
 
     async def get_snapshot(
         self,
@@ -115,25 +136,32 @@ class InMemorySnapshotStore(SnapshotStore):
         Returns:
             The snapshot if found, None otherwise
         """
-        async with self._lock:
-            key = (aggregate_id, aggregate_type)
-            snapshot = self._snapshots.get(key)
+        with self._create_span_context(
+            "eventsource.snapshot.get",
+            {
+                ATTR_AGGREGATE_ID: str(aggregate_id),
+                ATTR_AGGREGATE_TYPE: aggregate_type,
+            },
+        ):
+            async with self._lock:
+                key = (aggregate_id, aggregate_type)
+                snapshot = self._snapshots.get(key)
 
-            if snapshot:
-                logger.debug(
-                    "Retrieved snapshot for %s/%s at v%d",
-                    aggregate_type,
-                    aggregate_id,
-                    snapshot.version,
-                )
-            else:
-                logger.debug(
-                    "No snapshot found for %s/%s",
-                    aggregate_type,
-                    aggregate_id,
-                )
+                if snapshot:
+                    logger.debug(
+                        "Retrieved snapshot for %s/%s at v%d",
+                        aggregate_type,
+                        aggregate_id,
+                        snapshot.version,
+                    )
+                else:
+                    logger.debug(
+                        "No snapshot found for %s/%s",
+                        aggregate_type,
+                        aggregate_id,
+                    )
 
-            return snapshot
+                return snapshot
 
     async def delete_snapshot(
         self,
@@ -150,23 +178,30 @@ class InMemorySnapshotStore(SnapshotStore):
         Returns:
             True if a snapshot was deleted, False if none existed
         """
-        async with self._lock:
-            key = (aggregate_id, aggregate_type)
-            if key in self._snapshots:
-                del self._snapshots[key]
+        with self._create_span_context(
+            "eventsource.snapshot.delete",
+            {
+                ATTR_AGGREGATE_ID: str(aggregate_id),
+                ATTR_AGGREGATE_TYPE: aggregate_type,
+            },
+        ):
+            async with self._lock:
+                key = (aggregate_id, aggregate_type)
+                if key in self._snapshots:
+                    del self._snapshots[key]
+                    logger.debug(
+                        "Deleted snapshot for %s/%s",
+                        aggregate_type,
+                        aggregate_id,
+                    )
+                    return True
+
                 logger.debug(
-                    "Deleted snapshot for %s/%s",
+                    "No snapshot to delete for %s/%s",
                     aggregate_type,
                     aggregate_id,
                 )
-                return True
-
-            logger.debug(
-                "No snapshot to delete for %s/%s",
-                aggregate_type,
-                aggregate_id,
-            )
-            return False
+                return False
 
     async def snapshot_exists(
         self,
@@ -186,9 +221,16 @@ class InMemorySnapshotStore(SnapshotStore):
         Returns:
             True if snapshot exists, False otherwise
         """
-        async with self._lock:
-            key = (aggregate_id, aggregate_type)
-            return key in self._snapshots
+        with self._create_span_context(
+            "eventsource.snapshot.exists",
+            {
+                ATTR_AGGREGATE_ID: str(aggregate_id),
+                ATTR_AGGREGATE_TYPE: aggregate_type,
+            },
+        ):
+            async with self._lock:
+                key = (aggregate_id, aggregate_type)
+                return key in self._snapshots
 
     async def delete_snapshots_by_type(
         self,
@@ -206,34 +248,42 @@ class InMemorySnapshotStore(SnapshotStore):
         Returns:
             Number of snapshots deleted
         """
-        async with self._lock:
-            keys_to_delete = []
+        with self._create_span_context(
+            "eventsource.snapshot.delete_by_type",
+            {
+                ATTR_AGGREGATE_TYPE: aggregate_type,
+            },
+        ):
+            async with self._lock:
+                keys_to_delete = []
 
-            for key, snapshot in self._snapshots.items():
-                agg_id, agg_type = key
-                if agg_type != aggregate_type:
-                    continue
+                for key, snapshot in self._snapshots.items():
+                    agg_id, agg_type = key
+                    if agg_type != aggregate_type:
+                        continue
 
-                if (
-                    schema_version_below is not None
-                    and snapshot.schema_version >= schema_version_below
-                ):
-                    continue
+                    if (
+                        schema_version_below is not None
+                        and snapshot.schema_version >= schema_version_below
+                    ):
+                        continue
 
-                keys_to_delete.append(key)
+                    keys_to_delete.append(key)
 
-            for key in keys_to_delete:
-                del self._snapshots[key]
+                for key in keys_to_delete:
+                    del self._snapshots[key]
 
-            if keys_to_delete:
-                logger.info(
-                    "Deleted %d snapshots for aggregate type %s%s",
-                    len(keys_to_delete),
-                    aggregate_type,
-                    f" (schema_version < {schema_version_below})" if schema_version_below else "",
-                )
+                if keys_to_delete:
+                    logger.info(
+                        "Deleted %d snapshots for aggregate type %s%s",
+                        len(keys_to_delete),
+                        aggregate_type,
+                        f" (schema_version < {schema_version_below})"
+                        if schema_version_below
+                        else "",
+                    )
 
-            return len(keys_to_delete)
+                return len(keys_to_delete)
 
     async def clear(self) -> None:
         """
@@ -248,10 +298,14 @@ class InMemorySnapshotStore(SnapshotStore):
             ...     yield store
             ...     await store.clear()  # Cleanup after test
         """
-        async with self._lock:
-            count = len(self._snapshots)
-            self._snapshots.clear()
-            logger.debug("Cleared %d snapshots from InMemorySnapshotStore", count)
+        with self._create_span_context(
+            "eventsource.snapshot.clear",
+            {},
+        ):
+            async with self._lock:
+                count = len(self._snapshots)
+                self._snapshots.clear()
+                logger.debug("Cleared %d snapshots from InMemorySnapshotStore", count)
 
     @property
     def snapshot_count(self) -> int:
