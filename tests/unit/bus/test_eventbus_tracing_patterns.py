@@ -308,13 +308,13 @@ class TestKafkaEventBusTracingCompliance:
         assert hasattr(config, "enable_tracing")
         assert config.enable_tracing is True
 
-    def test_has_tracer_function(self, check_kafka_available: None) -> None:
-        """KafkaEventBus should have a tracer getter function."""
-        from eventsource.bus import kafka as kafka_module
+    def test_inherits_from_tracing_mixin(self, check_kafka_available: None) -> None:
+        """KafkaEventBus should inherit from TracingMixin."""
+        from eventsource.bus.kafka import KafkaEventBus
+        from eventsource.observability import TracingMixin
 
-        # Kafka uses module-level _get_tracer() function
-        assert hasattr(kafka_module, "_get_tracer")
-        assert callable(kafka_module._get_tracer)
+        # Kafka now uses TracingMixin like other buses
+        assert issubclass(KafkaEventBus, TracingMixin)
 
     def test_has_context_propagation(self, check_kafka_available: None) -> None:
         """KafkaEventBus should have context propagation support."""
