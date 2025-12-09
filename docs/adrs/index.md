@@ -25,6 +25,7 @@ ADRs help teams:
 | [ADR-0005](0005-api-design-patterns.md) | API Design Patterns | Accepted | 2025-12-06 |
 | [ADR-0006](0006-event-registry-serialization.md) | Event Registry and Serialization | Accepted | 2025-12-06 |
 | [ADR-0007](0007-remove-sync-event-store.md) | Remove SyncEventStore Interface | Accepted | 2025-12-07 |
+| [ADR-0008](0008-kafka-event-bus-integration.md) | Kafka Event Bus Integration | Accepted | 2025-12-08 |
 
 ## Status Definitions
 

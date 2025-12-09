@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Kafka Event Bus OpenTelemetry Metrics** - Comprehensive metrics support for the Kafka Event Bus
+  - Counter metrics: `messages.published`, `messages.consumed`, `handler.invocations`, `handler.errors`, `messages.dlq`, `connection.errors`, `reconnections`, `rebalances`, `publish.errors`
+  - Histogram metrics: `publish.duration`, `consume.duration`, `handler.duration`, `batch.size`
+  - Observable gauge metrics: `connections.active` (connection status), `consumer.lag` (per partition)
+  - New `KafkaEventBusMetrics` class for metric instrument management
+  - `enable_metrics` configuration option (default: True)
+  - Full documentation with PromQL queries, alerting recommendations, and Grafana dashboard examples
+  - Less than 5% performance overhead when enabled
 - **Observability Module** - New `eventsource.observability` module providing reusable OpenTelemetry tracing utilities
   - `OTEL_AVAILABLE` constant as single source of truth for OpenTelemetry availability
   - `get_tracer()` helper function for safely obtaining tracers

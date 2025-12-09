@@ -44,8 +44,15 @@ telemetry = [
 rabbitmq = [
     "aio-pika>=9.0.0",
 ]
+kafka = [
+    "aiokafka>=0.9.0,<1.0.0",
+]
+kafka-schema-registry = [
+    "aiokafka>=0.9.0,<1.0.0",
+    "confluent-kafka>=2.0.0,<3.0.0",
+]
 all = [
-    "eventsource-py[postgresql,sqlite,redis,rabbitmq,telemetry]",
+    "eventsource-py[postgresql,sqlite,redis,rabbitmq,kafka,telemetry]",
 ]
 all-backends = [
     "eventsource-py[postgresql,sqlite]",
@@ -94,6 +101,7 @@ markers = [
     "postgres: marks tests that require PostgreSQL",
     "sqlite: marks tests that require SQLite",
     "redis: marks tests that require Redis",
+    "kafka: marks tests that require Kafka (deselect with '-m \"not kafka\"')",
     "e2e: marks tests as end-to-end integration tests",
     "benchmark: marks tests as performance benchmarks",
 ]
@@ -128,6 +136,10 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "aiosqlite.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "aiokafka.*"
 ignore_missing_imports = true
 
 [tool.ruff]
