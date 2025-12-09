@@ -7,102 +7,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2025-12-08
+
 ### Added
 
-- **Kafka Event Bus OpenTelemetry Metrics** - Comprehensive metrics support for the Kafka Event Bus
-  - Counter metrics: `messages.published`, `messages.consumed`, `handler.invocations`, `handler.errors`, `messages.dlq`, `connection.errors`, `reconnections`, `rebalances`, `publish.errors`
-  - Histogram metrics: `publish.duration`, `consume.duration`, `handler.duration`, `batch.size`
-  - Observable gauge metrics: `connections.active` (connection status), `consumer.lag` (per partition)
-  - New `KafkaEventBusMetrics` class for metric instrument management
-  - `enable_metrics` configuration option (default: True)
-  - Full documentation with PromQL queries, alerting recommendations, and Grafana dashboard examples
-  - Less than 5% performance overhead when enabled
-- **Observability Module** - New `eventsource.observability` module providing reusable OpenTelemetry tracing utilities
-  - `OTEL_AVAILABLE` constant as single source of truth for OpenTelemetry availability
-  - `get_tracer()` helper function for safely obtaining tracers
-  - `should_trace()` helper for combining component and global tracing settings
-  - `@traced` decorator for method-level tracing with minimal boilerplate
-  - `TracingMixin` class providing `_init_tracing()` and `_create_span_context()` methods
-- **SQLiteEventStore OpenTelemetry Tracing** - Added `enable_tracing` parameter (default: True)
-  - Traces `append_events` and `get_events` operations with span attributes
-  - Consistent with PostgreSQLEventStore tracing behavior
-- **InMemoryEventBus OpenTelemetry Tracing** - Added `enable_tracing` parameter (default: True)
-  - Traces event dispatch and handler execution
-  - Refactored to use `TracingMixin` for reduced code duplication
-- **Aggregate Snapshotting** - Performance optimization for long-lived aggregates with many events
-  - `Snapshot` dataclass for capturing point-in-time aggregate state
-  - `SnapshotStore` abstract interface with three implementations:
-    - `InMemorySnapshotStore` for testing and development
-    - `PostgreSQLSnapshotStore` for production with PostgreSQL (includes OpenTelemetry tracing)
-    - `SQLiteSnapshotStore` for embedded/lightweight deployments
-  - `AggregateRepository` enhanced with snapshot support via new parameters:
-    - `snapshot_store`: Optional snapshot store for state caching
-    - `snapshot_threshold`: Number of events between automatic snapshots
-    - `snapshot_mode`: "sync", "background", or "manual" snapshot creation
-  - `AggregateRoot.schema_version` class attribute for snapshot schema evolution
-  - Automatic snapshot invalidation when schema version changes
-  - `create_snapshot()` method for manual snapshot creation
-  - `await_pending_snapshots()` for testing background snapshot operations
-  - Snapshot-specific exceptions: `SnapshotError`, `SnapshotDeserializationError`, `SnapshotSchemaVersionError`, `SnapshotNotFoundError`
-  - Database schema migrations for `snapshots` table (PostgreSQL and SQLite)
-  - Comprehensive documentation: API reference, user guide, migration guide, and examples
-- Pre-commit hooks configuration with ruff, mypy, and bandit for automated code quality checks
-- GitHub Actions workflow for performance benchmarks with automatic baseline tracking and PR comparison
+#### Observability & Telemetry
+
+- **Observability Module** (`eventsource.observability`) - Reusable OpenTelemetry utilities
+  - `OTEL_AVAILABLE` constant for checking OpenTelemetry availability
+  - `get_tracer()` and `should_trace()` helper functions
+  - `@traced` decorator for method-level tracing
+  - `TracingMixin` class for consistent tracing across components
+- **Kafka Event Bus Metrics** - Comprehensive OpenTelemetry metrics
+  - Counters: `messages.published`, `messages.consumed`, `handler.invocations`, `handler.errors`, `messages.dlq`, `connection.errors`, `reconnections`, `rebalances`, `publish.errors`
+  - Histograms: `publish.duration`, `consume.duration`, `handler.duration`, `batch.size`
+  - Gauges: `connections.active`, `consumer.lag` (per partition)
+  - New `KafkaEventBusMetrics` class with `enable_metrics` config option
+  - Less than 5% performance overhead
+- **SQLiteEventStore Tracing** - `enable_tracing` parameter for `append_events` and `get_events` operations
+- **InMemoryEventBus Tracing** - `enable_tracing` parameter for event dispatch and handler execution
+
+#### Aggregate Snapshotting
+
+- `Snapshot` dataclass for point-in-time aggregate state capture
+- `SnapshotStore` interface with `InMemorySnapshotStore`, `PostgreSQLSnapshotStore`, and `SQLiteSnapshotStore` implementations
+- `AggregateRepository` snapshot support: `snapshot_store`, `snapshot_threshold`, and `snapshot_mode` parameters
+- `AggregateRoot.schema_version` for snapshot schema evolution with automatic invalidation
+- `create_snapshot()` and `await_pending_snapshots()` methods
+- Snapshot exceptions: `SnapshotError`, `SnapshotDeserializationError`, `SnapshotSchemaVersionError`, `SnapshotNotFoundError`
+- Database migrations for `snapshots` table (PostgreSQL and SQLite)
+
+#### Event Handling & Validation
+
+- `EventVersionError` exception and configurable version validation via `AggregateRoot.validate_versions`
+- `UnhandledEventError` exception with configurable handling via `unregistered_event_handling` attribute ("ignore", "warn", "error")
+- `FlexibleEventHandler` and `FlexibleEventSubscriber` protocols for sync/async handler signatures
+- Consolidated `eventsource.protocols` module as canonical location for protocol definitions
+
+#### Database & Repository
+
 - `DatabaseProjection` class for projections requiring raw database connection access
-- `execute_with_connection` helper for consistent connection handling across repositories
-- `EventVersionError` exception for event version validation failures
-- Configurable event version validation in `AggregateRoot` via `validate_versions` class attribute
-- `UnhandledEventError` exception for unregistered event handling
-- Configurable unregistered event handling in `DeclarativeAggregate` and `DeclarativeProjection` via `unregistered_event_handling` class attribute (options: "ignore", "warn", "error")
-- New `eventsource.protocols` module as the canonical location for protocol definitions
-- `FlexibleEventHandler` and `FlexibleEventSubscriber` protocols for handlers supporting both sync and async signatures
+- `execute_with_connection` helper for consistent connection handling
 - Configurable UUID field detection in `PostgreSQLEventStore` via `uuid_fields`, `string_id_fields`, and `auto_detect_uuid` parameters
-- `PostgreSQLEventStore.with_strict_uuid_detection()` class method for explicit-only UUID field configuration
+- `PostgreSQLEventStore.with_strict_uuid_detection()` class method
 
-### Removed
+#### Developer Experience
 
-- Removed unused `SyncEventStore` abstract class from the public API. Users needing synchronous access can wrap async calls with `asyncio.run()`. See ADR-0007 for details.
+- Pre-commit hooks with ruff, mypy, and bandit
+- GitHub Actions workflow for performance benchmarks with baseline tracking and PR comparison
+- Shared test fixtures module (`tests/fixtures/`) with reusable components
 
 ### Changed
 
-- Improved type annotations for better mypy compatibility across all modules
-- Applied consistent code formatting with ruff
-- Refactored DLQ, outbox, and checkpoint repositories to use `execute_with_connection` helper
-- In-memory repositories now use `asyncio.Lock` for proper async concurrency safety
-- Consolidated `@handles` decorator to a single canonical location (`eventsource.projections.decorators`), with deprecation warning for the old location in `eventsource.aggregates.base`
-- Consolidated protocol definitions (`EventHandler`, `SyncEventHandler`, `EventSubscriber`) to a single canonical location (`eventsource.protocols`), with deprecation warnings for imports from old locations (`eventsource.bus.interface` and `eventsource.projections.protocols`)
-- Repository methods `get_pending_events`, `get_failed_events`, and `get_failed_event_by_id` now return typed dataclasses (`OutboxEntry`, `DLQEntry`) instead of raw dictionaries. Dict-style access is supported with deprecation warnings for backward compatibility.
-- Unified timestamp parameter types across `get_events_by_type()` methods to use `datetime` instead of `float` (Unix timestamp). Float values are still accepted for backward compatibility but emit a deprecation warning.
+- Improved type annotations for better mypy compatibility
+- Consolidated `@handles` decorator to `eventsource.projections.decorators` (old location deprecated)
+- Consolidated protocol definitions to `eventsource.protocols` (old locations deprecated)
+- Repository methods `get_pending_events`, `get_failed_events`, `get_failed_event_by_id` now return typed dataclasses (`OutboxEntry`, `DLQEntry`) instead of dicts
+- Unified `get_events_by_type()` timestamp parameters to use `datetime` instead of `float`
+- Refactored repositories to use `execute_with_connection` helper
+- In-memory repositories now use `asyncio.Lock` for proper async concurrency
+
+### Removed
+
+- `SyncEventStore` abstract class (use `asyncio.run()` for sync access; see ADR-0007)
 
 ### Fixed
 
-- Fixed broken documentation links in ADRs and guides
-- Resolved mypy type errors in projections, repositories, and event bus modules
-- Fixed `DeclarativeProjection` connection handling to properly share transactions with checkpoint updates
-
-### Documentation
-
-- Added comprehensive observability guide (`docs/guides/observability.md`) with:
-  - Overview of OpenTelemetry tracing support
-  - Component-by-component span name reference
-  - Standard attributes reference (all ATTR_* constants)
-  - TracingMixin usage guide for custom components
-  - Distributed tracing with RabbitMQ and Kafka
-  - Example configurations for Jaeger, Zipkin, OTLP, and Grafana Tempo
-  - Best practices and troubleshooting guide
-- Added comprehensive installation guide (`docs/installation.md`) with detailed documentation of optional dependencies, troubleshooting, and version compatibility
-- Enhanced README installation section with extras table and links to installation guide
-- Updated getting-started guide to reference installation documentation
-- Updated MkDocs configuration
-- Fixed links in getting-started guide and ADR documents
-
-### Tests
-
-- Improved test fixtures and integration test configuration
-- Enhanced unit test coverage and organization
-- Added concurrency tests for `InMemoryCheckpointRepository`, `InMemoryOutboxRepository`, and `InMemoryDLQRepository`
-- Created shared test fixtures module (`tests/fixtures/`) with reusable event types, aggregate implementations, and pytest fixtures to reduce duplication across test files
-- Added comprehensive performance benchmark suite with pytest-benchmark covering event store operations, projections, repositories, and serialization
+- Broken documentation links in ADRs and guides
+- Mypy type errors in projections, repositories, and event bus modules
+- `DeclarativeProjection` connection handling for proper transaction sharing
 
 ## [0.1.3] - 2025-12-07
 
@@ -154,7 +127,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Automatic schema creation and migrations
 - GitHub Actions CI/CD pipeline
 
-[Unreleased]: https://github.com/tyevans/eventsource-py/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/tyevans/eventsource-py/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/tyevans/eventsource-py/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/tyevans/eventsource-py/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/tyevans/eventsource-py/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/tyevans/eventsource-py/compare/v0.1.0...v0.1.1
