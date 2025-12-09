@@ -9,6 +9,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Subscription Manager** - New `eventsource.subscriptions` module for building event-driven projections with catch-up subscriptions and live event streaming
+  - `SubscriptionManager` class for coordinating subscriptions with unified lifecycle management
+    - Automatic catch-up from event store historical data
+    - Seamless transition to live event streaming via event bus
+    - Multiple subscriber support with concurrent processing
+    - Graceful shutdown with SIGTERM/SIGINT signal handling (`run_until_shutdown()`)
+    - Pause/resume functionality for individual subscriptions
+  - `Subscription` class with state machine for subscription lifecycle (idle → starting → catching_up → live → pausing → paused → resuming → stopping → stopped → failed)
+  - `SubscriptionConfig` for configurable subscription behavior:
+    - `batch_size`: Events per batch during catch-up (default: 100)
+    - `checkpoint_interval`: Events between checkpoints (default: 100)
+    - `checkpoint_strategy`: "batch" or "interval" checkpointing
+    - `start_from`: Start position ("beginning", "end", or specific position)
+    - `filter_event_types`: Optional event type filtering
+  - Subscriber protocols and base classes:
+    - `Subscriber` and `SyncSubscriber` protocols for event handlers
+    - `BatchSubscriber` protocol for batch event processing
+    - `BaseSubscriber`, `BatchAwareSubscriber`, and `FilteringSubscriber` base classes
+  - Catch-up and live runner implementations:
+    - `CatchupRunner` for reading historical events from event store with batching
+    - `LiveRunner` for streaming real-time events from event bus
+    - `TransitionCoordinator` for seamless handoff between modes
+  - Comprehensive error handling (`eventsource.subscriptions.error_handling`):
+    - `SubscriptionErrorHandler` with configurable retry policies
+    - `ErrorSeverity` levels: low, medium, high, critical
+    - `ErrorCategory` classification: event_processing, checkpoint, transition, infrastructure
+    - Error callbacks: `on_error()` and `on_critical_error()` hooks
+    - Circuit breaker pattern for failing subscriptions
+  - Retry system (`eventsource.subscriptions.retry`):
+    - Configurable retry with exponential backoff
+    - Jitter support for distributed systems
+    - Max retries and timeout limits
+  - Health monitoring (`eventsource.subscriptions.health`):
+    - `ManagerHealthChecker` for overall system health
+    - `SubscriptionHealthChecker` for per-subscription health
+    - Kubernetes-compatible liveness/readiness probes
+    - `HealthStatus`, `LivenessStatus`, `ReadinessStatus` enums
+    - Configurable health check thresholds
+  - Metrics collection (`eventsource.subscriptions.metrics`):
+    - Events processed, errors, lag, and processing duration metrics
+    - Per-subscription and aggregate statistics
+  - Flow control (`eventsource.subscriptions.flow_control`):
+    - Backpressure handling for slow consumers
+    - Rate limiting support
+  - Graceful shutdown (`eventsource.subscriptions.shutdown`):
+    - `ShutdownCoordinator` with phased shutdown sequence
+    - Configurable shutdown timeout
+    - In-flight event completion before shutdown
+  - Event filtering (`eventsource.subscriptions.filtering`):
+    - Filter events by type, aggregate, or custom predicates
+  - Global position support in event stores:
+    - `PostgreSQLEventStore.subscribe_all_from_position()` for ordered event streaming
+    - `SQLiteEventStore.subscribe_all_from_position()` for ordered event streaming
+    - `global_position` field in stored events for total ordering
+  - Database migrations for `checkpoints` table with position tracking
+  - Comprehensive documentation: API reference, user guide, migration guide, and examples
+  - Exception hierarchy: `SubscriptionError`, `SubscriptionConfigError`, `SubscriptionStateError`, `SubscriptionAlreadyExistsError`, `CheckpointNotFoundError`
 - **Kafka Event Bus OpenTelemetry Metrics** - Comprehensive metrics support for the Kafka Event Bus
   - Counter metrics: `messages.published`, `messages.consumed`, `handler.invocations`, `handler.errors`, `messages.dlq`, `connection.errors`, `reconnections`, `rebalances`, `publish.errors`
   - Histogram metrics: `publish.duration`, `consume.duration`, `handler.duration`, `batch.size`
@@ -82,6 +139,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Added subscription manager user guide (`docs/guides/subscriptions.md`) covering:
+  - Getting started with catch-up and live subscriptions
+  - Basic usage patterns and configuration
+  - Resilience patterns and error handling
+  - Advanced patterns for production deployments
+  - Troubleshooting guide
+- Added subscription API reference (`docs/api/subscriptions.md`) with complete class and method documentation
+- Added subscription migration guide (`docs/guides/subscription-migration.md`) for migrating from manual projection processing
+- Added subscription examples (`examples/subscriptions/`) with:
+  - Basic projection example
+  - Multi-subscriber example
+  - Resilient projection with error handling
 - Added comprehensive observability guide (`docs/guides/observability.md`) with:
   - Overview of OpenTelemetry tracing support
   - Component-by-component span name reference
@@ -98,6 +167,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
+- Added comprehensive subscription manager test suite:
+  - Unit tests for all subscription components (`tests/unit/subscriptions/`)
+  - Integration tests for catch-up, live, and transition flows (`tests/integration/subscriptions/`)
+  - Resilience tests for error handling, retries, and recovery
+  - Health check and metrics tests
+  - Pause/resume functionality tests
+  - Backpressure and flow control tests
 - Improved test fixtures and integration test configuration
 - Enhanced unit test coverage and organization
 - Added concurrency tests for `InMemoryCheckpointRepository`, `InMemoryOutboxRepository`, and `InMemoryDLQRepository`
