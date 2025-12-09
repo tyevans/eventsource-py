@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Subscription Tracing** - OpenTelemetry tracing for all subscription components
+  - `SubscriptionManager` tracing for subscription lifecycle operations:
+    - `subscribe`, `unsubscribe`, `start_subscription`, `stop`, `stop_subscription`
+    - `pause_subscription`, `resume_subscription`
+  - `TransitionCoordinator` tracing for catch-up to live transitions:
+    - `execute` span with phase tracking (initial_catchup → live_subscribed → final_catchup → processing_buffer → live)
+    - Watermark and buffer size attributes
+  - `CatchUpRunner` tracing for historical event processing:
+    - `run_until_position` span with batch progress
+    - `deliver_event` span for individual event delivery
+  - `LiveRunner` tracing for real-time event processing:
+    - `start`, `stop`, `process_event` spans
+    - `process_buffer`, `process_pause_buffer` for transition buffers
+  - New subscription trace attributes in `eventsource.observability.attributes`:
+    - `ATTR_SUBSCRIPTION_NAME`, `ATTR_SUBSCRIPTION_STATE`, `ATTR_SUBSCRIPTION_PHASE`
+    - `ATTR_FROM_POSITION`, `ATTR_TO_POSITION`, `ATTR_BATCH_SIZE`
+    - `ATTR_BUFFER_SIZE`, `ATTR_EVENTS_PROCESSED`, `ATTR_EVENTS_SKIPPED`, `ATTR_WATERMARK`
+  - All components support `enable_tracing` parameter (default: `True`)
+  - Graceful degradation when OpenTelemetry is not installed
+
 - **Subscription Manager** - New `eventsource.subscriptions` module for building event-driven projections with catch-up subscriptions and live event streaming
   - `SubscriptionManager` class for coordinating subscriptions with unified lifecycle management
     - Automatic catch-up from event store historical data

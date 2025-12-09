@@ -15,6 +15,17 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from eventsource.observability.attributes import (
+    ATTR_BATCH_SIZE,
+    ATTR_EVENT_ID,
+    ATTR_EVENT_TYPE,
+    ATTR_EVENTS_PROCESSED,
+    ATTR_FROM_POSITION,
+    ATTR_POSITION,
+    ATTR_SUBSCRIPTION_NAME,
+    ATTR_TO_POSITION,
+)
+from eventsource.observability.tracing import TracingMixin
 from eventsource.stores.interface import ReadDirection, ReadOptions, StoredEvent
 from eventsource.subscriptions.config import CheckpointStrategy
 from eventsource.subscriptions.filtering import EventFilter, FilterStats
@@ -59,7 +70,7 @@ class CatchUpResult:
         return self.completed and self.error is None
 
 
-class CatchUpRunner:
+class CatchUpRunner(TracingMixin):
     """
     Reads historical events from the event store and delivers to subscriber.
 
@@ -86,6 +97,7 @@ class CatchUpRunner:
         subscription: Subscription,
         event_filter: EventFilter | None = None,
         enable_metrics: bool = True,
+        enable_tracing: bool = True,
     ) -> None:
         """
         Initialize the catch-up runner.
@@ -97,7 +109,10 @@ class CatchUpRunner:
             event_filter: Optional event filter. If not provided, creates one
                          from config and subscriber.
             enable_metrics: Whether to enable OpenTelemetry metrics (default True)
+            enable_tracing: Whether to enable OpenTelemetry tracing (default True)
         """
+        self._init_tracing(__name__, enable_tracing)
+
         self.event_store = event_store
         self.checkpoint_repo = checkpoint_repo
         self.subscription = subscription
@@ -154,94 +169,108 @@ class CatchUpRunner:
         Returns:
             CatchUpResult with processing statistics
         """
-        self._running = True
-        self._stop_requested = False
-        self._last_checkpoint_time = time.monotonic()
-        total_processed = 0
         start_position = self.subscription.last_processed_position
 
-        logger.info(
-            "Starting catch-up",
-            extra={
-                "subscription": self.subscription.name,
-                "from_position": start_position,
-                "to_position": target_position,
-                "batch_size": self.config.batch_size,
-                "checkpoint_strategy": self.config.checkpoint_strategy.value,
+        with self._create_span_context(
+            "eventsource.catchup_runner.run_until_position",
+            {
+                ATTR_SUBSCRIPTION_NAME: self.subscription.name,
+                ATTR_FROM_POSITION: start_position,
+                ATTR_TO_POSITION: target_position,
+                ATTR_BATCH_SIZE: self.config.batch_size,
             },
-        )
-
-        try:
-            # Transition to CATCHING_UP state
-            await self.subscription.transition_to(SubscriptionState.CATCHING_UP)
-            self._metrics.record_state("catching_up")
-
-            # Update max position for lag calculation
-            await self.subscription.update_max_position(target_position)
-            self._metrics.record_lag(self.subscription.lag)
-
-            # Process batches until we reach the target or are stopped
-            while (
-                self._running
-                and not self._stop_requested
-                and self.subscription.last_processed_position < target_position
-            ):
-                # Check for pause and wait if paused
-                was_paused = await self.subscription.wait_if_paused()
-                if was_paused:
-                    # After resume, check if we should stop
-                    if self._stop_requested or not self._running:
-                        break
-                    logger.debug(
-                        "Catch-up resumed after pause",
-                        extra={"subscription": self.subscription.name},
-                    )
-
-                batch_result = await self._process_batch(target_position)
-                total_processed += batch_result
-
-                if batch_result == 0:
-                    # No more events to process
-                    break
-
-            completed = self.subscription.last_processed_position >= target_position
-            final_position = self.subscription.last_processed_position
+        ) as span:
+            self._running = True
+            self._stop_requested = False
+            self._last_checkpoint_time = time.monotonic()
+            total_processed = 0
 
             logger.info(
-                "Catch-up completed",
+                "Starting catch-up",
                 extra={
                     "subscription": self.subscription.name,
-                    "events_processed": total_processed,
-                    "final_position": final_position,
-                    "completed": completed,
+                    "from_position": start_position,
+                    "to_position": target_position,
+                    "batch_size": self.config.batch_size,
+                    "checkpoint_strategy": self.config.checkpoint_strategy.value,
                 },
             )
 
-            return CatchUpResult(
-                events_processed=total_processed,
-                final_position=final_position,
-                completed=completed,
-            )
+            try:
+                # Transition to CATCHING_UP state
+                await self.subscription.transition_to(SubscriptionState.CATCHING_UP)
+                self._metrics.record_state("catching_up")
 
-        except Exception as e:
-            logger.error(
-                "Catch-up failed",
-                extra={
-                    "subscription": self.subscription.name,
-                    "error": str(e),
-                    "position": self.subscription.last_processed_position,
-                    "events_processed": total_processed,
-                },
-                exc_info=True,
-            )
-            return CatchUpResult(
-                events_processed=total_processed,
-                final_position=self.subscription.last_processed_position,
-                completed=False,
-                error=e,
-            )
-        finally:
-            self._running = False
+                # Update max position for lag calculation
+                await self.subscription.update_max_position(target_position)
+                self._metrics.record_lag(self.subscription.lag)
+
+                # Process batches until we reach the target or are stopped
+                while (
+                    self._running
+                    and not self._stop_requested
+                    and self.subscription.last_processed_position < target_position
+                ):
+                    # Check for pause and wait if paused
+                    was_paused = await self.subscription.wait_if_paused()
+                    if was_paused:
+                        # After resume, check if we should stop
+                        if self._stop_requested or not self._running:
+                            break
+                        logger.debug(
+                            "Catch-up resumed after pause",
+                            extra={"subscription": self.subscription.name},
+                        )
+
+                    batch_result = await self._process_batch(target_position)
+                    total_processed += batch_result
+
+                    if batch_result == 0:
+                        # No more events to process
+                        break
+
+                completed = self.subscription.last_processed_position >= target_position
+                final_position = self.subscription.last_processed_position
+
+                if span:
+                    span.set_attribute(ATTR_EVENTS_PROCESSED, total_processed)
+                    span.set_attribute(ATTR_POSITION, final_position)
+
+                logger.info(
+                    "Catch-up completed",
+                    extra={
+                        "subscription": self.subscription.name,
+                        "events_processed": total_processed,
+                        "final_position": final_position,
+                        "completed": completed,
+                    },
+                )
+
+                return CatchUpResult(
+                    events_processed=total_processed,
+                    final_position=final_position,
+                    completed=completed,
+                )
+
+            except Exception as e:
+                logger.error(
+                    "Catch-up failed",
+                    extra={
+                        "subscription": self.subscription.name,
+                        "error": str(e),
+                        "position": self.subscription.last_processed_position,
+                        "events_processed": total_processed,
+                    },
+                    exc_info=True,
+                )
+                return CatchUpResult(
+                    events_processed=total_processed,
+                    final_position=self.subscription.last_processed_position,
+                    completed=False,
+                    error=e,
+                )
+            finally:
+                self._running = False
 
     async def _process_batch(self, target_position: int) -> int:
         """
@@ -380,40 +409,49 @@ class CatchUpRunner:
         Raises:
             Exception: If continue_on_error is False and handler fails
         """
-        start_time = time.perf_counter()
-        try:
-            await self.subscription.subscriber.handle(stored_event.event)
-            # Record success metrics
-            duration_ms = (time.perf_counter() - start_time) * 1000
-            self._metrics.record_event_processed(
-                event_type=stored_event.event_type,
-                duration_ms=duration_ms,
-            )
-            # Update lag after each event
-            self._metrics.record_lag(self.subscription.lag)
-        except Exception as e:
-            # Record failure metrics
-            duration_ms = (time.perf_counter() - start_time) * 1000
-            self._metrics.record_event_failed(
-                event_type=stored_event.event_type,
-                error_type=type(e).__name__,
-                duration_ms=duration_ms,
-            )
-            await self.subscription.record_event_failed(e)
+        with self._create_span_context(
+            "eventsource.catchup_runner.deliver_event",
+            {
+                ATTR_SUBSCRIPTION_NAME: self.subscription.name,
+                ATTR_EVENT_ID: str(stored_event.event_id),
+                ATTR_EVENT_TYPE: stored_event.event_type,
+                ATTR_POSITION: stored_event.global_position,
+            },
+        ):
+            start_time = time.perf_counter()
+            try:
+                await self.subscription.subscriber.handle(stored_event.event)
+                # Record success metrics
+                duration_ms = (time.perf_counter() - start_time) * 1000
+                self._metrics.record_event_processed(
+                    event_type=stored_event.event_type,
+                    duration_ms=duration_ms,
+                )
+                # Update lag after each event
+                self._metrics.record_lag(self.subscription.lag)
+            except Exception as e:
+                # Record failure metrics
+                duration_ms = (time.perf_counter() - start_time) * 1000
+                self._metrics.record_event_failed(
+                    event_type=stored_event.event_type,
+                    error_type=type(e).__name__,
+                    duration_ms=duration_ms,
+                )
+                await self.subscription.record_event_failed(e)
 
-            if not self.config.continue_on_error:
-                raise
+                if not self.config.continue_on_error:
+                    raise
 
-            logger.warning(
-                "Event processing failed, continuing",
-                extra={
-                    "subscription": self.subscription.name,
-                    "event_id": str(stored_event.event_id),
-                    "event_type": stored_event.event_type,
-                    "global_position": stored_event.global_position,
-                    "error": str(e),
-                },
-            )
+                logger.warning(
+                    "Event processing failed, continuing",
+                    extra={
+                        "subscription": self.subscription.name,
+                        "event_id": str(stored_event.event_id),
+                        "event_type": stored_event.event_type,
+                        "global_position": stored_event.global_position,
+                        "error": str(e),
+                    },
+                )
 
     async def _save_checkpoint(self, stored_event: StoredEvent) -> None:
         """

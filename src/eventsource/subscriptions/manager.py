@@ -37,6 +37,12 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from eventsource.observability.attributes import (
+    ATTR_EVENTS_PROCESSED,
+    ATTR_POSITION,
+    ATTR_SUBSCRIPTION_NAME,
+)
+from eventsource.observability.tracing import TracingMixin
 from eventsource.subscriptions.config import SubscriptionConfig
 from eventsource.subscriptions.error_handling import (
     ErrorCallback,
@@ -86,7 +92,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class SubscriptionManager:
+class SubscriptionManager(TracingMixin):
     """
     Manages catch-up and live event subscriptions.
 
@@ -119,6 +125,7 @@ class SubscriptionManager:
         dlq_repo: "DLQRepository | None" = None,
         error_handling_config: ErrorHandlingConfig | None = None,
         health_check_config: HealthCheckConfig | None = None,
+        enable_tracing: bool = True,
     ) -> None:
         """
         Initialize the subscription manager.
@@ -132,7 +139,10 @@ class SubscriptionManager:
             dlq_repo: Optional DLQ repository for dead letter handling
             error_handling_config: Configuration for error handling behavior
             health_check_config: Configuration for health check thresholds
+            enable_tracing: Whether to enable OpenTelemetry tracing (default True)
         """
+        self._init_tracing(__name__, enable_tracing)
+
         self.event_store = event_store
         self.event_bus = event_bus
         self.checkpoint_repo = checkpoint_repo
@@ -196,49 +206,53 @@ class SubscriptionManager:
         subscription_name = name or subscriber.__class__.__name__
         config = config or SubscriptionConfig()
 
-        async with self._lock:
-            if subscription_name in self._subscriptions:
-                raise SubscriptionAlreadyExistsError(subscription_name)
+        with self._create_span_context(
+            "eventsource.subscription_manager.subscribe",
+            {ATTR_SUBSCRIPTION_NAME: subscription_name},
+        ):
+            async with self._lock:
+                if subscription_name in self._subscriptions:
+                    raise SubscriptionAlreadyExistsError(subscription_name)
 
-            subscription = Subscription(
-                name=subscription_name,
-                config=config,
-                subscriber=subscriber,
-            )
+                subscription = Subscription(
+                    name=subscription_name,
+                    config=config,
+                    subscriber=subscriber,
+                )
 
-            self._subscriptions[subscription_name] = subscription
+                self._subscriptions[subscription_name] = subscription
 
-            # Create error handler for this subscription
-            error_handler = SubscriptionErrorHandler(
-                subscription_name=subscription_name,
-                config=self._error_handling_config,
-                dlq_repo=self._dlq_repo,
-            )
+                # Create error handler for this subscription
+                error_handler = SubscriptionErrorHandler(
+                    subscription_name=subscription_name,
+                    config=self._error_handling_config,
+                    dlq_repo=self._dlq_repo,
+                )
 
-            # Register global callbacks on the subscription handler
-            for callback in self._global_error_callbacks:
-                error_handler.on_error(callback)
+                # Register global callbacks on the subscription handler
+                for callback in self._global_error_callbacks:
+                    error_handler.on_error(callback)
 
-            self._error_handlers[subscription_name] = error_handler
+                self._error_handlers[subscription_name] = error_handler
 
-            # Create health checker for this subscription
-            health_checker = SubscriptionHealthChecker(
-                subscription=subscription,
-                config=self._health_check_config,
-                error_handler=error_handler,
-            )
-            self._health_checkers[subscription_name] = health_checker
+                # Create health checker for this subscription
+                health_checker = SubscriptionHealthChecker(
+                    subscription=subscription,
+                    config=self._health_check_config,
+                    error_handler=error_handler,
+                )
+                self._health_checkers[subscription_name] = health_checker
 
-            logger.info(
-                "Subscription registered",
-                extra={
-                    "subscription": subscription_name,
-                    "start_from": str(config.start_from),
-                    "batch_size": config.batch_size,
-                },
-            )
+                logger.info(
+                    "Subscription registered",
+                    extra={
+                        "subscription": subscription_name,
+                        "start_from": str(config.start_from),
+                        "batch_size": config.batch_size,
+                    },
+                )
 
-            return subscription
+                return subscription
 
     async def unsubscribe(self, name: str) -> bool:
         """
@@ -252,34 +266,38 @@ class SubscriptionManager:
         Returns:
             True if the subscription was found and removed, False otherwise
         """
-        async with self._lock:
-            if name not in self._subscriptions:
-                return False
+        with self._create_span_context(
+            "eventsource.subscription_manager.unsubscribe",
+            {ATTR_SUBSCRIPTION_NAME: name},
+        ):
+            async with self._lock:
+                if name not in self._subscriptions:
+                    return False
 
-            # Stop coordinator if running
-            if name in self._coordinators:
-                coordinator = self._coordinators[name]
-                await coordinator.stop()
-                del self._coordinators[name]
+                # Stop coordinator if running
+                if name in self._coordinators:
+                    coordinator = self._coordinators[name]
+                    await coordinator.stop()
+                    del self._coordinators[name]
 
-            subscription = self._subscriptions[name]
-            if not subscription.is_terminal:
-                await subscription.transition_to(SubscriptionState.STOPPED)
+                subscription = self._subscriptions[name]
+                if not subscription.is_terminal:
+                    await subscription.transition_to(SubscriptionState.STOPPED)
 
-            del self._subscriptions[name]
+                del self._subscriptions[name]
 
-            # Clean up error handler and health checker
-            if name in self._error_handlers:
-                del self._error_handlers[name]
-            if name in self._health_checkers:
-                del self._health_checkers[name]
+                # Clean up error handler and health checker
+                if name in self._error_handlers:
+                    del self._error_handlers[name]
+                if name in self._health_checkers:
+                    del self._health_checkers[name]
 
-            logger.info(
-                "Subscription unregistered",
-                extra={"subscription": name},
-            )
+                logger.info(
+                    "Subscription unregistered",
+                    extra={"subscription": name},
+                )
 
-            return True
+                return True
 
     async def start(
         self,
@@ -421,56 +439,70 @@ class SubscriptionManager:
         """
         name = subscription.name
 
-        try:
-            # Resolve starting position
-            start_position = await self._start_resolver.resolve(subscription)
-            subscription.last_processed_position = start_position
+        with self._create_span_context(
+            "eventsource.subscription_manager.start_subscription",
+            {ATTR_SUBSCRIPTION_NAME: name},
+        ) as span:
+            try:
+                # Resolve starting position
+                start_position = await self._start_resolver.resolve(subscription)
+                subscription.last_processed_position = start_position
 
-            logger.info(
-                "Starting subscription",
-                extra={
-                    "subscription": name,
-                    "start_position": start_position,
-                },
-            )
+                if span:
+                    span.set_attribute(ATTR_POSITION, start_position)
 
-            # Create and execute transition coordinator
-            coordinator = TransitionCoordinator(
-                event_store=self.event_store,
-                event_bus=self.event_bus,
-                checkpoint_repo=self.checkpoint_repo,
-                subscription=subscription,
-            )
-            self._coordinators[name] = coordinator
+                logger.info(
+                    "Starting subscription",
+                    extra={
+                        "subscription": name,
+                        "start_position": start_position,
+                    },
+                )
 
-            # Execute transition (catch-up to live)
-            result = await coordinator.execute()
+                # Create and execute transition coordinator
+                coordinator = TransitionCoordinator(
+                    event_store=self.event_store,
+                    event_bus=self.event_bus,
+                    checkpoint_repo=self.checkpoint_repo,
+                    subscription=subscription,
+                )
+                self._coordinators[name] = coordinator
 
-            if not result.success:
-                await subscription.set_error(result.error or SubscriptionError("Transition failed"))
-                raise SubscriptionError(f"Subscription {name} failed to transition: {result.error}")
+                # Execute transition (catch-up to live)
+                result = await coordinator.execute()
 
-            logger.info(
-                "Subscription started successfully",
-                extra={
-                    "subscription": name,
-                    "catchup_events": result.catchup_events_processed,
-                    "buffer_events": result.buffer_events_processed,
-                    "final_position": result.final_position,
-                },
-            )
+                if not result.success:
+                    await subscription.set_error(
+                        result.error or SubscriptionError("Transition failed")
+                    )
+                    raise SubscriptionError(
+                        f"Subscription {name} failed to transition: {result.error}"
+                    )
 
-        except Exception as e:
-            logger.error(
-                "Failed to start subscription",
-                extra={
-                    "subscription": name,
-                    "error": str(e),
-                },
-                exc_info=True,
-            )
-            await subscription.set_error(e)
-            raise
+                if span:
+                    span.set_attribute(ATTR_EVENTS_PROCESSED, result.catchup_events_processed)
+
+                logger.info(
+                    "Subscription started successfully",
+                    extra={
+                        "subscription": name,
+                        "catchup_events": result.catchup_events_processed,
+                        "buffer_events": result.buffer_events_processed,
+                        "final_position": result.final_position,
+                    },
+                )
+
+            except Exception as e:
+                logger.error(
+                    "Failed to start subscription",
+                    extra={
+                        "subscription": name,
+                        "error": str(e),
+                    },
+                    exc_info=True,
+                )
+                await subscription.set_error(e)
+                raise
 
     async def stop(
         self,
@@ -487,44 +519,47 @@ class SubscriptionManager:
             subscription_names: Optional list of subscription names to stop.
                               If None, stops all subscriptions.
         """
-        if not self._running and subscription_names is None:
-            return
+        with self._create_span_context(
+            "eventsource.subscription_manager.stop",
+        ):
+            if not self._running and subscription_names is None:
+                return
 
-        # Determine which subscriptions to stop
-        if subscription_names is None:
-            names_to_stop = list(self._coordinators.keys())
-            subscriptions_to_stop = list(self._subscriptions.values())
-            self._running = False
-        else:
-            names_to_stop = [name for name in subscription_names if name in self._coordinators]
-            subscriptions_to_stop = [
-                sub for name, sub in self._subscriptions.items() if name in subscription_names
-            ]
+            # Determine which subscriptions to stop
+            if subscription_names is None:
+                names_to_stop = list(self._coordinators.keys())
+                subscriptions_to_stop = list(self._subscriptions.values())
+                self._running = False
+            else:
+                names_to_stop = [name for name in subscription_names if name in self._coordinators]
+                subscriptions_to_stop = [
+                    sub for name, sub in self._subscriptions.items() if name in subscription_names
+                ]
 
-        logger.info(
-            "Stopping subscription manager",
-            extra={
-                "subscription_count": len(names_to_stop),
-                "timeout": timeout,
-            },
-        )
+            logger.info(
+                "Stopping subscription manager",
+                extra={
+                    "subscription_count": len(names_to_stop),
+                    "timeout": timeout,
+                },
+            )
 
-        # Stop all coordinators
-        stop_tasks = []
-        for name in names_to_stop:
-            if name in self._coordinators:
-                coordinator = self._coordinators[name]
-                stop_tasks.append(self._stop_subscription(name, coordinator, timeout))
+            # Stop all coordinators
+            stop_tasks = []
+            for name in names_to_stop:
+                if name in self._coordinators:
+                    coordinator = self._coordinators[name]
+                    stop_tasks.append(self._stop_subscription(name, coordinator, timeout))
 
-        if stop_tasks:
-            await asyncio.gather(*stop_tasks, return_exceptions=True)
+            if stop_tasks:
+                await asyncio.gather(*stop_tasks, return_exceptions=True)
 
-        # Update subscription states
-        for subscription in subscriptions_to_stop:
-            if not subscription.is_terminal:
-                await subscription.transition_to(SubscriptionState.STOPPED)
+            # Update subscription states
+            for subscription in subscriptions_to_stop:
+                if not subscription.is_terminal:
+                    await subscription.transition_to(SubscriptionState.STOPPED)
 
-        logger.info("Subscription manager stopped")
+            logger.info("Subscription manager stopped")
 
     async def _stop_subscription(
         self,
@@ -540,20 +575,24 @@ class SubscriptionManager:
             coordinator: The subscription's coordinator
             timeout: Shutdown timeout
         """
-        try:
-            await asyncio.wait_for(coordinator.stop(), timeout=timeout)
-            logger.info(
-                "Subscription stopped",
-                extra={"subscription": name},
-            )
-        except TimeoutError:
-            logger.warning(
-                "Subscription stop timed out",
-                extra={
-                    "subscription": name,
-                    "timeout": timeout,
-                },
-            )
+        with self._create_span_context(
+            "eventsource.subscription_manager.stop_subscription",
+            {ATTR_SUBSCRIPTION_NAME: name},
+        ):
+            try:
+                await asyncio.wait_for(coordinator.stop(), timeout=timeout)
+                logger.info(
+                    "Subscription stopped",
+                    extra={"subscription": name},
+                )
+            except TimeoutError:
+                logger.warning(
+                    "Subscription stop timed out",
+                    extra={
+                        "subscription": name,
+                        "timeout": timeout,
+                    },
+                )
 
     @property
     def subscriptions(self) -> list[Subscription]:
@@ -1501,40 +1540,44 @@ class SubscriptionManager:
         """
         from eventsource.subscriptions.subscription import PauseReason
 
-        subscription = self._subscriptions.get(name)
-        if subscription is None:
-            logger.warning(
-                "Cannot pause subscription: not found",
-                extra={"subscription": name},
-            )
-            return False
+        with self._create_span_context(
+            "eventsource.subscription_manager.pause_subscription",
+            {ATTR_SUBSCRIPTION_NAME: name},
+        ):
+            subscription = self._subscriptions.get(name)
+            if subscription is None:
+                logger.warning(
+                    "Cannot pause subscription: not found",
+                    extra={"subscription": name},
+                )
+                return False
 
-        if not subscription.is_running:
-            logger.warning(
-                "Cannot pause subscription: not running",
-                extra={"subscription": name, "state": subscription.state.value},
-            )
-            return False
+            if not subscription.is_running:
+                logger.warning(
+                    "Cannot pause subscription: not running",
+                    extra={"subscription": name, "state": subscription.state.value},
+                )
+                return False
 
-        try:
-            pause_reason = reason or PauseReason.MANUAL
-            await subscription.pause(reason=pause_reason)
-            logger.info(
-                "Subscription paused via manager",
-                extra={
-                    "subscription": name,
-                    "reason": pause_reason.value,
-                    "position": subscription.last_processed_position,
-                },
-            )
-            return True
-        except Exception as e:
-            logger.error(
-                "Failed to pause subscription",
-                extra={"subscription": name, "error": str(e)},
-                exc_info=True,
-            )
-            return False
+            try:
+                pause_reason = reason or PauseReason.MANUAL
+                await subscription.pause(reason=pause_reason)
+                logger.info(
+                    "Subscription paused via manager",
+                    extra={
+                        "subscription": name,
+                        "reason": pause_reason.value,
+                        "position": subscription.last_processed_position,
+                    },
+                )
+                return True
+            except Exception as e:
+                logger.error(
+                    "Failed to pause subscription",
+                    extra={"subscription": name, "error": str(e)},
+                    exc_info=True,
+                )
+                return False
 
     async def resume_subscription(self, name: str) -> bool:
         """
@@ -1554,54 +1597,58 @@ class SubscriptionManager:
             >>> # ... do maintenance ...
             >>> await manager.resume_subscription("OrderProjection")
         """
-        subscription = self._subscriptions.get(name)
-        if subscription is None:
-            logger.warning(
-                "Cannot resume subscription: not found",
-                extra={"subscription": name},
-            )
-            return False
+        with self._create_span_context(
+            "eventsource.subscription_manager.resume_subscription",
+            {ATTR_SUBSCRIPTION_NAME: name},
+        ):
+            subscription = self._subscriptions.get(name)
+            if subscription is None:
+                logger.warning(
+                    "Cannot resume subscription: not found",
+                    extra={"subscription": name},
+                )
+                return False
 
-        if not subscription.is_paused:
-            logger.warning(
-                "Cannot resume subscription: not paused",
-                extra={"subscription": name, "state": subscription.state.value},
-            )
-            return False
+            if not subscription.is_paused:
+                logger.warning(
+                    "Cannot resume subscription: not paused",
+                    extra={"subscription": name, "state": subscription.state.value},
+                )
+                return False
 
-        try:
-            await subscription.resume()
+            try:
+                await subscription.resume()
 
-            # Process any buffered events from the live runner
-            coordinator = self._coordinators.get(name)
-            if coordinator and coordinator.live_runner:
-                pause_buffer_size = coordinator.live_runner.pause_buffer_size
-                if pause_buffer_size > 0:
-                    processed = await coordinator.live_runner.process_pause_buffer()
-                    logger.info(
-                        "Processed pause buffer after resume",
-                        extra={
-                            "subscription": name,
-                            "events_processed": processed,
-                        },
-                    )
+                # Process any buffered events from the live runner
+                coordinator = self._coordinators.get(name)
+                if coordinator and coordinator.live_runner:
+                    pause_buffer_size = coordinator.live_runner.pause_buffer_size
+                    if pause_buffer_size > 0:
+                        processed = await coordinator.live_runner.process_pause_buffer()
+                        logger.info(
+                            "Processed pause buffer after resume",
+                            extra={
+                                "subscription": name,
+                                "events_processed": processed,
+                            },
+                        )
 
-            logger.info(
-                "Subscription resumed via manager",
-                extra={
-                    "subscription": name,
-                    "position": subscription.last_processed_position,
-                    "state": subscription.state.value,
-                },
-            )
-            return True
-        except Exception as e:
-            logger.error(
-                "Failed to resume subscription",
-                extra={"subscription": name, "error": str(e)},
-                exc_info=True,
-            )
-            return False
+                logger.info(
+                    "Subscription resumed via manager",
+                    extra={
+                        "subscription": name,
+                        "position": subscription.last_processed_position,
+                        "state": subscription.state.value,
+                    },
+                )
+                return True
+            except Exception as e:
+                logger.error(
+                    "Failed to resume subscription",
+                    extra={"subscription": name, "error": str(e)},
+                    exc_info=True,
+                )
+                return False
 
     async def pause_all(
         self,

@@ -17,6 +17,16 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from eventsource.events.base import DomainEvent
+from eventsource.observability.attributes import (
+    ATTR_BUFFER_SIZE,
+    ATTR_EVENT_ID,
+    ATTR_EVENT_TYPE,
+    ATTR_EVENTS_PROCESSED,
+    ATTR_EVENTS_SKIPPED,
+    ATTR_POSITION,
+    ATTR_SUBSCRIPTION_NAME,
+)
+from eventsource.observability.tracing import TracingMixin
 from eventsource.subscriptions.config import CheckpointStrategy
 from eventsource.subscriptions.filtering import EventFilter, FilterStats
 from eventsource.subscriptions.flow_control import FlowController, FlowControlStats
@@ -56,7 +66,7 @@ class LiveRunnerStats:
 
 
 @dataclass
-class LiveRunner:
+class LiveRunner(TracingMixin):
     """
     Receives real-time events from the event bus and delivers to subscriber.
 
@@ -85,6 +95,7 @@ class LiveRunner:
     checkpoint_repo: "CheckpointRepository"
     subscription: Subscription
     enable_metrics: bool = True
+    enable_tracing: bool = True
 
     # Internal state - not part of init
     _running: bool = field(default=False, init=False, repr=False)
@@ -106,7 +117,9 @@ class LiveRunner:
     _metrics: SubscriptionMetrics | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        """Initialize config reference, flow controller, filter, retry mechanism, and metrics."""
+        """Initialize config reference, flow controller, filter, retry mechanism, metrics and tracing."""
+        self._init_tracing(__name__, self.enable_tracing)
+
         self.config = self.subscription.config
         self._flow_controller = FlowController(
             max_in_flight=self.config.max_in_flight,
@@ -142,28 +155,32 @@ class LiveRunner:
             buffer_events: If True, buffer events instead of processing immediately.
                           Used during catch-up to live transition.
         """
-        if self._running:
-            return
+        with self._create_span_context(
+            "eventsource.live_runner.start",
+            {ATTR_SUBSCRIPTION_NAME: self.subscription.name},
+        ):
+            if self._running:
+                return
 
-        self._running = True
-        self._buffer_enabled = buffer_events
-        self._last_checkpoint_time = time.monotonic()
+            self._running = True
+            self._buffer_enabled = buffer_events
+            self._last_checkpoint_time = time.monotonic()
 
-        # Subscribe to event bus for all event types the subscriber handles
-        self._subscribe_to_bus()
+            # Subscribe to event bus for all event types the subscriber handles
+            self._subscribe_to_bus()
 
-        if not buffer_events:
-            await self.subscription.transition_to(SubscriptionState.LIVE)
-            if self._metrics:
-                self._metrics.record_state("live")
+            if not buffer_events:
+                await self.subscription.transition_to(SubscriptionState.LIVE)
+                if self._metrics:
+                    self._metrics.record_state("live")
 
-        logger.info(
-            "Live runner started",
-            extra={
-                "subscription": self.subscription.name,
-                "buffer_enabled": buffer_events,
-            },
-        )
+            logger.info(
+                "Live runner started",
+                extra={
+                    "subscription": self.subscription.name,
+                    "buffer_enabled": buffer_events,
+                },
+            )
 
     def _subscribe_to_bus(self) -> None:
         """Subscribe to the event bus with our internal handler."""
@@ -239,102 +256,111 @@ class LiveRunner:
         if position is None:
             position = self._get_event_position(event)
 
-        # Check for duplicate (already processed during catch-up)
-        if position is not None and position <= self.subscription.last_processed_position:
-            self._stats.events_skipped_duplicate += 1
-            logger.debug(
-                "Skipping duplicate event",
-                extra={
-                    "subscription": self.subscription.name,
-                    "event_id": str(event.event_id),
-                    "position": position,
-                    "last_processed": self.subscription.last_processed_position,
-                },
-            )
-            return
-
-        # Apply event type filtering
-        if self._filter and not self._filter.matches(event):
-            self._stats.events_skipped_filtered += 1
-            logger.debug(
-                "Event filtered out",
-                extra={
-                    "subscription": self.subscription.name,
-                    "event_id": str(event.event_id),
-                    "event_type": event.event_type,
-                },
-            )
-            # Still update position to track progress
-            if position is not None:
-                await self.subscription.record_event_processed(
-                    position=position,
-                    event_id=event.event_id,
-                    event_type=event.event_type,
+        with self._create_span_context(
+            "eventsource.live_runner.process_event",
+            {
+                ATTR_SUBSCRIPTION_NAME: self.subscription.name,
+                ATTR_EVENT_ID: str(event.event_id),
+                ATTR_EVENT_TYPE: event.event_type,
+                ATTR_POSITION: position if position is not None else -1,
+            },
+        ):
+            # Check for duplicate (already processed during catch-up)
+            if position is not None and position <= self.subscription.last_processed_position:
+                self._stats.events_skipped_duplicate += 1
+                logger.debug(
+                    "Skipping duplicate event",
+                    extra={
+                        "subscription": self.subscription.name,
+                        "event_id": str(event.event_id),
+                        "position": position,
+                        "last_processed": self.subscription.last_processed_position,
+                    },
                 )
-            return
+                return
 
-        # Acquire flow control slot (may block if at capacity)
-        assert self._flow_controller is not None
-        async with await self._flow_controller.acquire():
-            # Deliver to subscriber
-            start_time = time.perf_counter()
-            try:
-                await self.subscription.subscriber.handle(event)
-                self._stats.events_processed += 1
-
-                # Record success metrics
-                duration_ms = (time.perf_counter() - start_time) * 1000
-                if self._metrics:
-                    self._metrics.record_event_processed(
-                        event_type=event.event_type,
-                        duration_ms=duration_ms,
-                    )
-                    # Update lag metric
-                    self._metrics.record_lag(self.subscription.lag)
-
-                # Update subscription position if we have it
+            # Apply event type filtering
+            if self._filter and not self._filter.matches(event):
+                self._stats.events_skipped_filtered += 1
+                logger.debug(
+                    "Event filtered out",
+                    extra={
+                        "subscription": self.subscription.name,
+                        "event_id": str(event.event_id),
+                        "event_type": event.event_type,
+                    },
+                )
+                # Still update position to track progress
                 if position is not None:
                     await self.subscription.record_event_processed(
                         position=position,
                         event_id=event.event_id,
                         event_type=event.event_type,
                     )
+                return
 
-                    # Checkpoint based on strategy
-                    await self._maybe_checkpoint(position, event)
-                else:
-                    # Update processed count without position
-                    await self.subscription.record_event_processed(
-                        position=self.subscription.last_processed_position,
-                        event_id=event.event_id,
-                        event_type=event.event_type,
+            # Acquire flow control slot (may block if at capacity)
+            assert self._flow_controller is not None
+            async with await self._flow_controller.acquire():
+                # Deliver to subscriber
+                start_time = time.perf_counter()
+                try:
+                    await self.subscription.subscriber.handle(event)
+                    self._stats.events_processed += 1
+
+                    # Record success metrics
+                    duration_ms = (time.perf_counter() - start_time) * 1000
+                    if self._metrics:
+                        self._metrics.record_event_processed(
+                            event_type=event.event_type,
+                            duration_ms=duration_ms,
+                        )
+                        # Update lag metric
+                        self._metrics.record_lag(self.subscription.lag)
+
+                    # Update subscription position if we have it
+                    if position is not None:
+                        await self.subscription.record_event_processed(
+                            position=position,
+                            event_id=event.event_id,
+                            event_type=event.event_type,
+                        )
+
+                        # Checkpoint based on strategy
+                        await self._maybe_checkpoint(position, event)
+                    else:
+                        # Update processed count without position
+                        await self.subscription.record_event_processed(
+                            position=self.subscription.last_processed_position,
+                            event_id=event.event_id,
+                            event_type=event.event_type,
+                        )
+
+                except Exception as e:
+                    self._stats.events_failed += 1
+
+                    # Record failure metrics
+                    duration_ms = (time.perf_counter() - start_time) * 1000
+                    if self._metrics:
+                        self._metrics.record_event_failed(
+                            event_type=event.event_type,
+                            error_type=type(e).__name__,
+                            duration_ms=duration_ms,
+                        )
+
+                    await self.subscription.record_event_failed(e)
+
+                    if not self.config.continue_on_error:
+                        raise
+
+                    logger.warning(
+                        "Live event processing failed, continuing",
+                        extra={
+                            "subscription": self.subscription.name,
+                            "event_id": str(event.event_id),
+                            "error": str(e),
+                        },
                     )
-
-            except Exception as e:
-                self._stats.events_failed += 1
-
-                # Record failure metrics
-                duration_ms = (time.perf_counter() - start_time) * 1000
-                if self._metrics:
-                    self._metrics.record_event_failed(
-                        event_type=event.event_type,
-                        error_type=type(e).__name__,
-                        duration_ms=duration_ms,
-                    )
-
-                await self.subscription.record_event_failed(e)
-
-                if not self.config.continue_on_error:
-                    raise
-
-                logger.warning(
-                    "Live event processing failed, continuing",
-                    extra={
-                        "subscription": self.subscription.name,
-                        "event_id": str(event.event_id),
-                        "error": str(e),
-                    },
-                )
 
     def _get_event_position(self, event: DomainEvent) -> int | None:
         """
@@ -469,26 +495,37 @@ class LiveRunner:
         Returns:
             Number of events processed from buffer
         """
-        processed = 0
-
-        while not self._buffer.empty():
-            try:
-                event = self._buffer.get_nowait()
-                await self._process_live_event(event)
-                processed += 1
-            except asyncio.QueueEmpty:
-                break
-
-        logger.info(
-            "Buffer processed",
-            extra={
-                "subscription": self.subscription.name,
-                "events_processed": processed,
-                "events_skipped": self._stats.events_skipped_duplicate,
+        with self._create_span_context(
+            "eventsource.live_runner.process_buffer",
+            {
+                ATTR_SUBSCRIPTION_NAME: self.subscription.name,
+                ATTR_BUFFER_SIZE: self._buffer.qsize(),
             },
-        )
+        ) as span:
+            processed = 0
 
-        return processed
+            while not self._buffer.empty():
+                try:
+                    event = self._buffer.get_nowait()
+                    await self._process_live_event(event)
+                    processed += 1
+                except asyncio.QueueEmpty:
+                    break
+
+            if span:
+                span.set_attribute(ATTR_EVENTS_PROCESSED, processed)
+                span.set_attribute(ATTR_EVENTS_SKIPPED, self._stats.events_skipped_duplicate)
+
+            logger.info(
+                "Buffer processed",
+                extra={
+                    "subscription": self.subscription.name,
+                    "events_processed": processed,
+                    "events_skipped": self._stats.events_skipped_duplicate,
+                },
+            )
+
+            return processed
 
     async def disable_buffer(self) -> None:
         """
@@ -516,37 +553,47 @@ class LiveRunner:
         Returns:
             Number of events processed from pause buffer
         """
-        processed = 0
-
-        logger.info(
-            "Processing pause buffer",
-            extra={
-                "subscription": self.subscription.name,
-                "pause_buffer_size": self._pause_buffer.qsize(),
+        with self._create_span_context(
+            "eventsource.live_runner.process_pause_buffer",
+            {
+                ATTR_SUBSCRIPTION_NAME: self.subscription.name,
+                ATTR_BUFFER_SIZE: self._pause_buffer.qsize(),
             },
-        )
+        ) as span:
+            processed = 0
 
-        while not self._pause_buffer.empty():
-            try:
-                event = self._pause_buffer.get_nowait()
-                await self._process_live_event(event)
-                processed += 1
-            except asyncio.QueueEmpty:
-                break
+            logger.info(
+                "Processing pause buffer",
+                extra={
+                    "subscription": self.subscription.name,
+                    "pause_buffer_size": self._pause_buffer.qsize(),
+                },
+            )
 
-        logger.info(
-            "Pause buffer processed",
-            extra={
-                "subscription": self.subscription.name,
-                "events_processed": processed,
-                "events_skipped": self._stats.events_skipped_duplicate,
-            },
-        )
+            while not self._pause_buffer.empty():
+                try:
+                    event = self._pause_buffer.get_nowait()
+                    await self._process_live_event(event)
+                    processed += 1
+                except asyncio.QueueEmpty:
+                    break
 
-        # Reset pause buffer tracking
-        self._events_buffered_during_pause = 0
+            if span:
+                span.set_attribute(ATTR_EVENTS_PROCESSED, processed)
 
-        return processed
+            logger.info(
+                "Pause buffer processed",
+                extra={
+                    "subscription": self.subscription.name,
+                    "events_processed": processed,
+                    "events_skipped": self._stats.events_skipped_duplicate,
+                },
+            )
+
+            # Reset pause buffer tracking
+            self._events_buffered_during_pause = 0
+
+            return processed
 
     async def stop(self) -> None:
         """
@@ -554,34 +601,38 @@ class LiveRunner:
 
         Unsubscribes from the event bus and stops processing.
         """
-        if not self._running:
-            return
+        with self._create_span_context(
+            "eventsource.live_runner.stop",
+            {ATTR_SUBSCRIPTION_NAME: self.subscription.name},
+        ):
+            if not self._running:
+                return
 
-        self._running = False
+            self._running = False
 
-        # Unsubscribe from bus
-        if self._subscribed:
-            event_types = self.subscription.subscriber.subscribed_to()
-            handler = self._create_event_handler()
-            for event_type in event_types:
-                # Note: We unsubscribe using a new handler instance which won't match
-                # the original. We need to track the original handler reference.
-                self.event_bus.unsubscribe(event_type, handler)
-            self._subscribed = False
+            # Unsubscribe from bus
+            if self._subscribed:
+                event_types = self.subscription.subscriber.subscribed_to()
+                handler = self._create_event_handler()
+                for event_type in event_types:
+                    # Note: We unsubscribe using a new handler instance which won't match
+                    # the original. We need to track the original handler reference.
+                    self.event_bus.unsubscribe(event_type, handler)
+                self._subscribed = False
 
-        logger.info(
-            "Live runner stopped",
-            extra={
-                "subscription": self.subscription.name,
-                "stats": {
-                    "received": self._stats.events_received,
-                    "processed": self._stats.events_processed,
-                    "skipped_duplicate": self._stats.events_skipped_duplicate,
-                    "skipped_filtered": self._stats.events_skipped_filtered,
-                    "failed": self._stats.events_failed,
+            logger.info(
+                "Live runner stopped",
+                extra={
+                    "subscription": self.subscription.name,
+                    "stats": {
+                        "received": self._stats.events_received,
+                        "processed": self._stats.events_processed,
+                        "skipped_duplicate": self._stats.events_skipped_duplicate,
+                        "skipped_filtered": self._stats.events_skipped_filtered,
+                        "failed": self._stats.events_failed,
+                    },
                 },
-            },
-        )
+            )
 
     @property
     def is_running(self) -> bool:

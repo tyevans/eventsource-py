@@ -348,6 +348,16 @@ Follow these conventions for consistent span names across the codebase:
 | Event Bus | Handler execution | `event_handler.{HandlerName}` |
 | Snapshot Store | Save snapshot | `snapshot_store.save` |
 | Snapshot Store | Get snapshot | `snapshot_store.get` |
+| Subscription Manager | Subscribe | `eventsource.subscription_manager.subscribe` |
+| Subscription Manager | Start subscription | `eventsource.subscription_manager.start_subscription` |
+| Subscription Manager | Stop | `eventsource.subscription_manager.stop` |
+| Subscription Manager | Pause/Resume | `eventsource.subscription_manager.pause_subscription` |
+| Transition Coordinator | Execute transition | `eventsource.transition_coordinator.execute` |
+| Catch-up Runner | Run until position | `eventsource.catchup_runner.run_until_position` |
+| Catch-up Runner | Deliver event | `eventsource.catchup_runner.deliver_event` |
+| Live Runner | Start | `eventsource.live_runner.start` |
+| Live Runner | Process event | `eventsource.live_runner.process_event` |
+| Live Runner | Process buffer | `eventsource.live_runner.process_buffer` |
 
 **Attribute Guidelines:**
 
@@ -363,6 +373,20 @@ Follow these conventions for consistent span names across the codebase:
 | `db.system` | Database operations | `"postgresql"` or `"sqlite"` |
 | `db.name` | Database operations | `"/path/to/events.db"` |
 
+**Subscription Attributes:**
+
+| Attribute | When to Use | Example Value |
+|-----------|-------------|---------------|
+| `eventsource.subscription.name` | Subscription operations | `"OrderProjection"` |
+| `eventsource.subscription.phase` | Transition phase tracking | `"live"`, `"catching_up"` |
+| `eventsource.from_position` | Catch-up start | `0` |
+| `eventsource.to_position` | Catch-up target | `10000` |
+| `eventsource.batch.size` | Batch processing | `100` |
+| `eventsource.buffer.size` | Buffer processing | `50` |
+| `eventsource.events.processed` | After processing | `1000` |
+| `eventsource.events.skipped` | Duplicate/filtered events | `5` |
+| `eventsource.watermark` | Transition watermark | `9500` |
+
 ---
 
 ## Components Using Observability
@@ -377,6 +401,12 @@ The following components use the observability module:
 | `PostgreSQLSnapshotStore` | Direct tracing | `enable_tracing` parameter |
 | `RedisEventBus` | Config-based | `RedisEventBusConfig.enable_tracing` |
 | `RabbitMQEventBus` | Config-based | `RabbitMQEventBusConfig.enable_tracing` |
+| `SubscriptionManager` | `TracingMixin` | `enable_tracing` parameter |
+| `TransitionCoordinator` | `TracingMixin` | `enable_tracing` parameter |
+| `CatchUpRunner` | `TracingMixin` | `enable_tracing` parameter |
+| `LiveRunner` | `TracingMixin` | `enable_tracing` parameter |
+| `PostgreSQLCheckpointRepository` | `TracingMixin` | `enable_tracing` parameter |
+| `PostgreSQLDLQRepository` | `TracingMixin` | `enable_tracing` parameter |
 
 ---
 
