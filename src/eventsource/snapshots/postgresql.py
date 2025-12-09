@@ -7,24 +7,26 @@ async SQLAlchemy sessions and optional OpenTelemetry tracing.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
-from typing import TYPE_CHECKING, cast
+from typing import cast
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from eventsource.observability import TracingMixin
+from eventsource.observability.attributes import (
+    ATTR_AGGREGATE_ID,
+    ATTR_AGGREGATE_TYPE,
+    ATTR_VERSION,
+)
 from eventsource.snapshots.interface import Snapshot, SnapshotStore
-
-if TYPE_CHECKING:
-    from opentelemetry.trace import Tracer
 
 logger = logging.getLogger(__name__)
 
 
-class PostgreSQLSnapshotStore(SnapshotStore):
+class PostgreSQLSnapshotStore(SnapshotStore, TracingMixin):
     """
     PostgreSQL implementation of SnapshotStore.
 
@@ -35,7 +37,7 @@ class PostgreSQLSnapshotStore(SnapshotStore):
     - Upsert semantics for save (INSERT ON CONFLICT UPDATE)
     - Efficient single-row lookups
     - Bulk delete by aggregate type
-    - Optional OpenTelemetry tracing
+    - Optional OpenTelemetry tracing via TracingMixin
 
     Example:
         >>> from sqlalchemy.ext.asyncio import (
@@ -56,10 +58,8 @@ class PostgreSQLSnapshotStore(SnapshotStore):
         ...     snapshot_store=store,
         ... )
 
-        >>> # With OpenTelemetry tracing
-        >>> from opentelemetry import trace
-        >>> tracer = trace.get_tracer(__name__)
-        >>> store = PostgreSQLSnapshotStore(session_factory, tracer=tracer)
+        >>> # Disable tracing
+        >>> store = PostgreSQLSnapshotStore(session_factory, enable_tracing=False)
 
     Note:
         Ensure the snapshots table exists before using this store.
@@ -69,7 +69,7 @@ class PostgreSQLSnapshotStore(SnapshotStore):
     def __init__(
         self,
         session_factory: async_sessionmaker[AsyncSession],
-        tracer: Tracer | None = None,
+        enable_tracing: bool = True,
     ) -> None:
         """
         Initialize the PostgreSQL snapshot store.
@@ -78,11 +78,10 @@ class PostgreSQLSnapshotStore(SnapshotStore):
             session_factory: SQLAlchemy async session factory.
                            Should be configured with expire_on_commit=False
                            for best performance.
-            tracer: Optional OpenTelemetry tracer for distributed tracing.
-                   If provided, spans are created for each operation.
+            enable_tracing: Whether to enable OpenTelemetry tracing (default True)
         """
+        self._init_tracing(__name__, enable_tracing)
         self._session_factory = session_factory
-        self._tracer = tracer
         logger.debug("PostgreSQLSnapshotStore initialized")
 
     async def save_snapshot(self, snapshot: Snapshot) -> None:
@@ -95,25 +94,17 @@ class PostgreSQLSnapshotStore(SnapshotStore):
         Args:
             snapshot: The snapshot to save
         """
-        span_context = (
-            self._tracer.start_as_current_span(
-                "snapshot_store.save",
-                attributes={
-                    "snapshot.aggregate_id": str(snapshot.aggregate_id),
-                    "snapshot.aggregate_type": snapshot.aggregate_type,
-                    "snapshot.version": snapshot.version,
-                    "snapshot.schema_version": snapshot.schema_version,
-                },
-            )
-            if self._tracer
-            else contextlib.nullcontext()
-        )
-
-        with span_context:
-            async with self._session_factory() as session:
-                async with session.begin():
-                    await session.execute(
-                        text("""
+        with self._create_span_context(
+            "eventsource.snapshot.save",
+            {
+                ATTR_AGGREGATE_ID: str(snapshot.aggregate_id),
+                ATTR_AGGREGATE_TYPE: snapshot.aggregate_type,
+                ATTR_VERSION: snapshot.version,
+            },
+        ):
+            async with self._session_factory() as session, session.begin():
+                await session.execute(
+                    text("""
                             INSERT INTO snapshots (
                                 aggregate_id,
                                 aggregate_type,
@@ -136,22 +127,22 @@ class PostgreSQLSnapshotStore(SnapshotStore):
                                 state = EXCLUDED.state,
                                 created_at = EXCLUDED.created_at
                         """),
-                        {
-                            "aggregate_id": snapshot.aggregate_id,
-                            "aggregate_type": snapshot.aggregate_type,
-                            "version": snapshot.version,
-                            "schema_version": snapshot.schema_version,
-                            "state": json.dumps(snapshot.state),
-                            "created_at": snapshot.created_at,
-                        },
-                    )
+                    {
+                        "aggregate_id": snapshot.aggregate_id,
+                        "aggregate_type": snapshot.aggregate_type,
+                        "version": snapshot.version,
+                        "schema_version": snapshot.schema_version,
+                        "state": json.dumps(snapshot.state),
+                        "created_at": snapshot.created_at,
+                    },
+                )
 
-        logger.debug(
-            "Saved snapshot for %s/%s at version %d",
-            snapshot.aggregate_type,
-            snapshot.aggregate_id,
-            snapshot.version,
-        )
+            logger.debug(
+                "Saved snapshot for %s/%s at version %d",
+                snapshot.aggregate_type,
+                snapshot.aggregate_id,
+                snapshot.version,
+            )
 
     async def get_snapshot(
         self,
@@ -168,19 +159,13 @@ class PostgreSQLSnapshotStore(SnapshotStore):
         Returns:
             The snapshot if found, None otherwise
         """
-        span_context = (
-            self._tracer.start_as_current_span(
-                "snapshot_store.get",
-                attributes={
-                    "snapshot.aggregate_id": str(aggregate_id),
-                    "snapshot.aggregate_type": aggregate_type,
-                },
-            )
-            if self._tracer
-            else contextlib.nullcontext()
-        )
-
-        with span_context as span:
+        with self._create_span_context(
+            "eventsource.snapshot.get",
+            {
+                ATTR_AGGREGATE_ID: str(aggregate_id),
+                ATTR_AGGREGATE_TYPE: aggregate_type,
+            },
+        ):
             async with self._session_factory() as session:
                 result = await session.execute(
                     text("""
@@ -203,8 +188,6 @@ class PostgreSQLSnapshotStore(SnapshotStore):
                 row = result.fetchone()
 
             if row is None:
-                if span:
-                    span.set_attribute("snapshot.found", False)
                 logger.debug(
                     "No snapshot found for %s/%s",
                     aggregate_type,
@@ -225,10 +208,6 @@ class PostgreSQLSnapshotStore(SnapshotStore):
                 state=state,
                 created_at=row.created_at,
             )
-
-            if span:
-                span.set_attribute("snapshot.found", True)
-                span.set_attribute("snapshot.version", snapshot.version)
 
             logger.debug(
                 "Retrieved snapshot for %s/%s at version %d",
@@ -254,19 +233,13 @@ class PostgreSQLSnapshotStore(SnapshotStore):
         Returns:
             True if a snapshot was deleted, False otherwise
         """
-        span_context = (
-            self._tracer.start_as_current_span(
-                "snapshot_store.delete",
-                attributes={
-                    "snapshot.aggregate_id": str(aggregate_id),
-                    "snapshot.aggregate_type": aggregate_type,
-                },
-            )
-            if self._tracer
-            else contextlib.nullcontext()
-        )
-
-        with span_context as span:
+        with self._create_span_context(
+            "eventsource.snapshot.delete",
+            {
+                ATTR_AGGREGATE_ID: str(aggregate_id),
+                ATTR_AGGREGATE_TYPE: aggregate_type,
+            },
+        ):
             async with self._session_factory() as session, session.begin():
                 result = await session.execute(
                     text("""
@@ -281,23 +254,20 @@ class PostgreSQLSnapshotStore(SnapshotStore):
                 )
                 deleted = cast(int, result.rowcount) > 0  # type: ignore[attr-defined]
 
-            if span:
-                span.set_attribute("snapshot.deleted", deleted)
+            if deleted:
+                logger.debug(
+                    "Deleted snapshot for %s/%s",
+                    aggregate_type,
+                    aggregate_id,
+                )
+            else:
+                logger.debug(
+                    "No snapshot to delete for %s/%s",
+                    aggregate_type,
+                    aggregate_id,
+                )
 
-        if deleted:
-            logger.debug(
-                "Deleted snapshot for %s/%s",
-                aggregate_type,
-                aggregate_id,
-            )
-        else:
-            logger.debug(
-                "No snapshot to delete for %s/%s",
-                aggregate_type,
-                aggregate_id,
-            )
-
-        return deleted
+            return deleted
 
     async def snapshot_exists(
         self,
@@ -316,19 +286,13 @@ class PostgreSQLSnapshotStore(SnapshotStore):
         Returns:
             True if snapshot exists, False otherwise
         """
-        span_context = (
-            self._tracer.start_as_current_span(
-                "snapshot_store.exists",
-                attributes={
-                    "snapshot.aggregate_id": str(aggregate_id),
-                    "snapshot.aggregate_type": aggregate_type,
-                },
-            )
-            if self._tracer
-            else contextlib.nullcontext()
-        )
-
-        with span_context as span:
+        with self._create_span_context(
+            "eventsource.snapshot.exists",
+            {
+                ATTR_AGGREGATE_ID: str(aggregate_id),
+                ATTR_AGGREGATE_TYPE: aggregate_type,
+            },
+        ):
             async with self._session_factory() as session:
                 result = await session.execute(
                     text("""
@@ -344,9 +308,6 @@ class PostgreSQLSnapshotStore(SnapshotStore):
                     },
                 )
                 exists = result.scalar() or False
-
-            if span:
-                span.set_attribute("snapshot.exists", exists)
 
             return exists
 
@@ -368,19 +329,12 @@ class PostgreSQLSnapshotStore(SnapshotStore):
         Returns:
             Number of snapshots deleted
         """
-        span_context = (
-            self._tracer.start_as_current_span(
-                "snapshot_store.delete_by_type",
-                attributes={
-                    "snapshot.aggregate_type": aggregate_type,
-                    "snapshot.schema_version_below": schema_version_below or -1,
-                },
-            )
-            if self._tracer
-            else contextlib.nullcontext()
-        )
-
-        with span_context as span:
+        with self._create_span_context(
+            "eventsource.snapshot.delete_by_type",
+            {
+                ATTR_AGGREGATE_TYPE: aggregate_type,
+            },
+        ):
             async with self._session_factory() as session, session.begin():
                 if schema_version_below is not None:
                     result = await session.execute(
@@ -406,18 +360,15 @@ class PostgreSQLSnapshotStore(SnapshotStore):
                     )
                 count = cast(int, result.rowcount)  # type: ignore[attr-defined]
 
-            if span:
-                span.set_attribute("snapshot.deleted_count", count)
+            if count > 0:
+                logger.info(
+                    "Deleted %d snapshots for aggregate type %s%s",
+                    count,
+                    aggregate_type,
+                    f" (schema_version < {schema_version_below})" if schema_version_below else "",
+                )
 
-        if count > 0:
-            logger.info(
-                "Deleted %d snapshots for aggregate type %s%s",
-                count,
-                aggregate_type,
-                f" (schema_version < {schema_version_below})" if schema_version_below else "",
-            )
-
-        return count
+            return count
 
     @property
     def session_factory(self) -> async_sessionmaker[AsyncSession]:
@@ -426,4 +377,6 @@ class PostgreSQLSnapshotStore(SnapshotStore):
 
     def __repr__(self) -> str:
         """String representation for debugging."""
-        return f"PostgreSQLSnapshotStore(tracer={'enabled' if self._tracer else 'disabled'})"
+        return (
+            f"PostgreSQLSnapshotStore(tracing={'enabled' if self._enable_tracing else 'disabled'})"
+        )

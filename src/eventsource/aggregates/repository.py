@@ -12,6 +12,13 @@ from uuid import UUID
 
 from eventsource.aggregates.base import AggregateRoot
 from eventsource.exceptions import AggregateNotFoundError
+from eventsource.observability import TracingMixin
+from eventsource.observability.attributes import (
+    ATTR_AGGREGATE_ID,
+    ATTR_AGGREGATE_TYPE,
+    ATTR_EVENT_COUNT,
+    ATTR_VERSION,
+)
 from eventsource.stores.interface import EventPublisher, EventStore
 
 if TYPE_CHECKING:
@@ -24,7 +31,7 @@ logger = logging.getLogger(__name__)
 TAggregate = TypeVar("TAggregate", bound="AggregateRoot[Any]")
 
 
-class AggregateRepository(Generic[TAggregate]):
+class AggregateRepository(TracingMixin, Generic[TAggregate]):
     """
     Repository for event-sourced aggregates.
 
@@ -105,6 +112,8 @@ class AggregateRepository(Generic[TAggregate]):
         snapshot_store: "SnapshotStore | None" = None,
         snapshot_threshold: int | None = None,
         snapshot_mode: Literal["sync", "background", "manual"] = "sync",
+        # Tracing configuration
+        enable_tracing: bool = True,
     ) -> None:
         """
         Initialize the repository.
@@ -125,6 +134,8 @@ class AggregateRepository(Generic[TAggregate]):
                           - "background": Asynchronously after save
                           - "manual": Only via explicit create_snapshot() call
                           Default is "sync" for simplicity.
+            enable_tracing: If True and OpenTelemetry is available, emit traces.
+                          Defaults to True for consistency with other components.
 
         Example:
             >>> # Basic repository (no snapshots)
@@ -150,6 +161,9 @@ class AggregateRepository(Generic[TAggregate]):
             This is useful when you want control over exactly when
             snapshots are taken (e.g., after major state transitions).
         """
+        # Initialize tracing via mixin
+        self._init_tracing(__name__, enable_tracing)
+
         self._event_store = event_store
         self._aggregate_factory = aggregate_factory
         self._aggregate_type = aggregate_type
@@ -230,74 +244,88 @@ class AggregateRepository(Generic[TAggregate]):
             >>> order = await repo.load(order_id)
             >>> print(f"Order status: {order.state.status}")
         """
-        from_version = 0
-        snapshot = None
+        with self._create_span_context(
+            "eventsource.repository.load",
+            {
+                ATTR_AGGREGATE_ID: str(aggregate_id),
+                ATTR_AGGREGATE_TYPE: self._aggregate_type,
+            },
+        ) as span:
+            from_version = 0
+            snapshot = None
 
-        # Try to load from snapshot if configured
-        if self._snapshot_store is not None:
-            snapshot = await self._load_valid_snapshot(aggregate_id)
+            # Try to load from snapshot if configured
+            if self._snapshot_store is not None:
+                snapshot = await self._load_valid_snapshot(aggregate_id)
+                if snapshot is not None:
+                    from_version = snapshot.version
+                    if span:
+                        span.set_attribute("snapshot.used", True)
+                        span.set_attribute("snapshot.version", from_version)
+                    logger.debug(
+                        "Using snapshot for %s/%s at version %d",
+                        self._aggregate_type,
+                        aggregate_id,
+                        from_version,
+                    )
+
+            # Get events from event store (from snapshot version or 0)
+            event_stream = await self._event_store.get_events(
+                aggregate_id,
+                aggregate_type=self._aggregate_type,
+                from_version=from_version,
+            )
+
+            # Handle case: no snapshot and no events
+            if snapshot is None and not event_stream.events:
+                raise AggregateNotFoundError(aggregate_id, self._aggregate_type)
+
+            # Create aggregate instance
+            aggregate = self._aggregate_factory(aggregate_id)
+
+            # Restore from snapshot if available
             if snapshot is not None:
-                from_version = snapshot.version
-                logger.debug(
-                    "Using snapshot for %s/%s at version %d",
-                    self._aggregate_type,
-                    aggregate_id,
-                    from_version,
-                )
+                try:
+                    aggregate._restore_from_snapshot(snapshot.state, snapshot.version)
+                except Exception as e:
+                    # Deserialization failed - fall back to full replay
+                    logger.warning(
+                        "Failed to restore from snapshot for %s/%s: %s. "
+                        "Falling back to full event replay.",
+                        self._aggregate_type,
+                        aggregate_id,
+                        e,
+                        exc_info=True,
+                    )
+                    # Re-fetch all events
+                    event_stream = await self._event_store.get_events(
+                        aggregate_id,
+                        aggregate_type=self._aggregate_type,
+                        from_version=0,
+                    )
+                    if not event_stream.events:
+                        raise AggregateNotFoundError(aggregate_id, self._aggregate_type) from None
+                    # Reset aggregate
+                    aggregate = self._aggregate_factory(aggregate_id)
 
-        # Get events from event store (from snapshot version or 0)
-        event_stream = await self._event_store.get_events(
-            aggregate_id,
-            aggregate_type=self._aggregate_type,
-            from_version=from_version,
-        )
+            # Apply events since snapshot (or all events if no snapshot)
+            if event_stream.events:
+                aggregate.load_from_history(event_stream.events)
 
-        # Handle case: no snapshot and no events
-        if snapshot is None and not event_stream.events:
-            raise AggregateNotFoundError(aggregate_id, self._aggregate_type)
+            if span:
+                span.set_attribute("events.replayed", len(event_stream.events))
+                span.set_attribute(ATTR_VERSION, aggregate.version)
 
-        # Create aggregate instance
-        aggregate = self._aggregate_factory(aggregate_id)
+            logger.debug(
+                "Loaded %s/%s at version %d (snapshot: %s, events replayed: %d)",
+                self._aggregate_type,
+                aggregate_id,
+                aggregate.version,
+                "yes" if snapshot else "no",
+                len(event_stream.events),
+            )
 
-        # Restore from snapshot if available
-        if snapshot is not None:
-            try:
-                aggregate._restore_from_snapshot(snapshot.state, snapshot.version)
-            except Exception as e:
-                # Deserialization failed - fall back to full replay
-                logger.warning(
-                    "Failed to restore from snapshot for %s/%s: %s. "
-                    "Falling back to full event replay.",
-                    self._aggregate_type,
-                    aggregate_id,
-                    e,
-                    exc_info=True,
-                )
-                # Re-fetch all events
-                event_stream = await self._event_store.get_events(
-                    aggregate_id,
-                    aggregate_type=self._aggregate_type,
-                    from_version=0,
-                )
-                if not event_stream.events:
-                    raise AggregateNotFoundError(aggregate_id, self._aggregate_type) from None
-                # Reset aggregate
-                aggregate = self._aggregate_factory(aggregate_id)
-
-        # Apply events since snapshot (or all events if no snapshot)
-        if event_stream.events:
-            aggregate.load_from_history(event_stream.events)
-
-        logger.debug(
-            "Loaded %s/%s at version %d (snapshot: %s, events replayed: %d)",
-            self._aggregate_type,
-            aggregate_id,
-            aggregate.version,
-            "yes" if snapshot else "no",
-            len(event_stream.events),
-        )
-
-        return aggregate
+            return aggregate
 
     async def _load_valid_snapshot(
         self,
@@ -414,46 +442,59 @@ class AggregateRepository(Generic[TAggregate]):
             # No changes to persist
             return
 
-        # Calculate expected version
-        # Current version minus number of new events = version before changes
-        expected_version = aggregate.version - len(uncommitted_events)
+        with self._create_span_context(
+            "eventsource.repository.save",
+            {
+                ATTR_AGGREGATE_ID: str(aggregate.aggregate_id),
+                ATTR_AGGREGATE_TYPE: self._aggregate_type,
+                ATTR_EVENT_COUNT: len(uncommitted_events),
+                ATTR_VERSION: aggregate.version,
+            },
+        ) as span:
+            # Calculate expected version
+            # Current version minus number of new events = version before changes
+            expected_version = aggregate.version - len(uncommitted_events)
 
-        # Append events to event store
-        result = await self._event_store.append_events(
-            aggregate_id=aggregate.aggregate_id,
-            aggregate_type=self._aggregate_type,
-            events=uncommitted_events,
-            expected_version=expected_version,
-        )
+            # Append events to event store
+            result = await self._event_store.append_events(
+                aggregate_id=aggregate.aggregate_id,
+                aggregate_type=self._aggregate_type,
+                events=uncommitted_events,
+                expected_version=expected_version,
+            )
 
-        if result.success:
-            # Mark events as committed on the aggregate
-            aggregate.mark_events_as_committed()
+            if result.success:
+                # Mark events as committed on the aggregate
+                aggregate.mark_events_as_committed()
 
-            # Publish events if publisher is configured
-            if self._event_publisher:
-                await self._event_publisher.publish(uncommitted_events)
+                if span:
+                    span.set_attribute("save.success", True)
+                    span.set_attribute("new_version", aggregate.version)
 
-            # Create snapshot if conditions are met
-            if self._should_create_snapshot(aggregate):
-                if self._snapshot_mode == "sync":
-                    try:
-                        await self._create_snapshot(aggregate)
-                    except Exception as e:
-                        # Log but don't fail the save
-                        logger.warning(
-                            "Failed to create snapshot for %s/%s: %s",
-                            self._aggregate_type,
-                            aggregate.aggregate_id,
-                            e,
-                            exc_info=True,
-                        )
-                elif self._snapshot_mode == "background":
-                    # Create snapshot asynchronously
-                    task = asyncio.create_task(self._create_snapshot_background(aggregate))
-                    self._pending_snapshot_tasks.append(task)
-                    # Cleanup completed tasks
-                    self._cleanup_completed_tasks()
+                # Publish events if publisher is configured
+                if self._event_publisher:
+                    await self._event_publisher.publish(uncommitted_events)
+
+                # Create snapshot if conditions are met
+                if self._should_create_snapshot(aggregate):
+                    if self._snapshot_mode == "sync":
+                        try:
+                            await self._create_snapshot(aggregate)
+                        except Exception as e:
+                            # Log but don't fail the save
+                            logger.warning(
+                                "Failed to create snapshot for %s/%s: %s",
+                                self._aggregate_type,
+                                aggregate.aggregate_id,
+                                e,
+                                exc_info=True,
+                            )
+                    elif self._snapshot_mode == "background":
+                        # Create snapshot asynchronously
+                        task = asyncio.create_task(self._create_snapshot_background(aggregate))
+                        self._pending_snapshot_tasks.append(task)
+                        # Cleanup completed tasks
+                        self._cleanup_completed_tasks()
 
     def _should_create_snapshot(self, aggregate: TAggregate) -> bool:
         """
@@ -630,7 +671,15 @@ class AggregateRepository(Generic[TAggregate]):
                 "Provide a snapshot_store when creating the repository."
             )
 
-        return await self._create_snapshot(aggregate)
+        with self._create_span_context(
+            "eventsource.repository.create_snapshot",
+            {
+                ATTR_AGGREGATE_ID: str(aggregate.aggregate_id),
+                ATTR_AGGREGATE_TYPE: self._aggregate_type,
+                ATTR_VERSION: aggregate.version,
+            },
+        ):
+            return await self._create_snapshot(aggregate)
 
     async def await_pending_snapshots(self) -> int:
         """
@@ -705,11 +754,23 @@ class AggregateRepository(Generic[TAggregate]):
             >>> if await repo.exists(order_id):
             ...     order = await repo.load(order_id)
         """
-        event_stream = await self._event_store.get_events(
-            aggregate_id,
-            aggregate_type=self._aggregate_type,
-        )
-        return len(event_stream.events) > 0
+        with self._create_span_context(
+            "eventsource.repository.exists",
+            {
+                ATTR_AGGREGATE_ID: str(aggregate_id),
+                ATTR_AGGREGATE_TYPE: self._aggregate_type,
+            },
+        ) as span:
+            event_stream = await self._event_store.get_events(
+                aggregate_id,
+                aggregate_type=self._aggregate_type,
+            )
+            exists = len(event_stream.events) > 0
+
+            if span:
+                span.set_attribute("exists", exists)
+
+            return exists
 
     async def get_version(self, aggregate_id: UUID) -> int:
         """

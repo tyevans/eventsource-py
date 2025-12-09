@@ -46,6 +46,18 @@ from eventsource.bus.interface import (
     EventHandlerFunc,
 )
 from eventsource.events.base import DomainEvent
+from eventsource.observability import TracingMixin
+from eventsource.observability.attributes import (
+    ATTR_AGGREGATE_ID,
+    ATTR_EVENT_COUNT,
+    ATTR_EVENT_ID,
+    ATTR_EVENT_TYPE,
+    ATTR_HANDLER_COUNT,
+    ATTR_HANDLER_NAME,
+    ATTR_HANDLER_SUCCESS,
+    ATTR_MESSAGING_DESTINATION,
+    ATTR_MESSAGING_SYSTEM,
+)
 from eventsource.protocols import (
     FlexibleEventHandler,
     FlexibleEventSubscriber,
@@ -68,15 +80,6 @@ except ImportError:
     Redis = None  # type: ignore[assignment, misc]
     RedisConnectionError = Exception  # type: ignore[assignment, misc]
     ResponseError = Exception  # type: ignore[assignment, misc]
-
-# Optional OpenTelemetry integration
-try:
-    from opentelemetry import trace
-
-    OTEL_AVAILABLE = True
-except ImportError:
-    OTEL_AVAILABLE = False
-    trace = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -182,7 +185,7 @@ class RedisEventBusStats:
 HandlerWrapper = tuple[Any, Callable[[DomainEvent], Any]]
 
 
-class RedisEventBus(EventBus):
+class RedisEventBus(TracingMixin, EventBus):
     """
     Event bus using Redis Streams for durable event distribution.
 
@@ -247,6 +250,9 @@ class RedisEventBus(EventBus):
 
         # Background tasks
         self._consumer_task: asyncio.Task[None] | None = None
+
+        # Initialize tracing via mixin
+        self._init_tracing(__name__, self._config.enable_tracing)
 
     @property
     def config(self) -> RedisEventBusConfig:
@@ -439,37 +445,30 @@ class RedisEventBus(EventBus):
         if not self._redis:
             raise RuntimeError("Redis client not initialized")
 
-        # Create span for publishing if tracing is enabled
-        span_context = None
-        if self._config.enable_tracing and OTEL_AVAILABLE and trace is not None:
-            tracer = trace.get_tracer(__name__)
-            span_context = tracer.start_span(
-                "redis.event_bus.publish",
-                attributes={
-                    "event.count": len(events),
-                    "redis.stream": self._config.stream_name,
-                },
-            )
+        with self._create_span_context(
+            "eventsource.event_bus.publish",
+            {
+                ATTR_EVENT_COUNT: len(events),
+                ATTR_MESSAGING_SYSTEM: "redis",
+                ATTR_MESSAGING_DESTINATION: self._config.stream_name,
+            },
+        ) as span:
+            try:
+                if len(events) > 1:
+                    # Use pipeline for batch operations
+                    await self._publish_batch(events)
+                else:
+                    # Single event - no need for pipeline overhead
+                    await self._publish_single(events[0])
 
-        try:
-            if len(events) > 1:
-                # Use pipeline for batch operations
-                await self._publish_batch(events)
-            else:
-                # Single event - no need for pipeline overhead
-                await self._publish_single(events[0])
+                if span:
+                    span.set_attribute("publish.success", True)
 
-            if span_context:
-                span_context.set_attribute("publish.success", True)
-
-        except Exception as e:
-            if span_context:
-                span_context.set_attribute("publish.success", False)
-                span_context.record_exception(e)
-            raise
-        finally:
-            if span_context:
-                span_context.end()
+            except Exception as e:
+                if span:
+                    span.set_attribute("publish.success", False)
+                    span.record_exception(e)
+                raise
 
     async def _publish_single(self, event: DomainEvent) -> str:
         """Publish a single event to the stream."""
@@ -781,117 +780,109 @@ class RedisEventBus(EventBus):
         event_type_name = message_data.get("event_type", "unknown")
         event_id = message_data.get("event_id", "unknown")
 
-        # Create span for processing if tracing is enabled
-        span_context = None
-        if self._config.enable_tracing and OTEL_AVAILABLE and trace is not None:
-            tracer = trace.get_tracer(__name__)
-            span_context = tracer.start_span(
-                f"redis.event_bus.process.{event_type_name}",
-                attributes={
-                    "event.type": event_type_name,
-                    "event.id": event_id,
-                    "message.id": message_id,
-                    "consumer.name": consumer_name,
-                },
-            )
-
         processing_start = datetime.now(UTC)
 
-        try:
-            logger.debug(
-                f"Processing message {message_id}: {event_type_name}",
-                extra={
-                    "message_id": message_id,
-                    "event_type": event_type_name,
-                    "event_id": event_id,
-                },
-            )
-
-            # Calculate processing lag
-            occurred_at_str = message_data.get("occurred_at")
-            if occurred_at_str:
-                try:
-                    occurred_at = datetime.fromisoformat(occurred_at_str)
-                    now = datetime.now(UTC)
-                    if occurred_at.tzinfo is None:
-                        occurred_at = occurred_at.replace(tzinfo=UTC)
-                    lag_seconds = (now - occurred_at).total_seconds()
-                    logger.debug(
-                        f"Processing lag: {lag_seconds:.3f}s",
-                        extra={"lag_seconds": lag_seconds},
-                    )
-                except (ValueError, TypeError) as e:
-                    logger.warning(f"Failed to calculate processing lag: {e}")
-
-            # Deserialize event
-            event = self._deserialize_event(event_type_name, message_data)
-            if event is None:
-                logger.warning(
-                    f"Unknown event type: {event_type_name}, skipping",
-                    extra={"event_type": event_type_name, "message_id": message_id},
+        with self._create_span_context(
+            "eventsource.event_bus.process",
+            {
+                ATTR_EVENT_TYPE: event_type_name,
+                ATTR_EVENT_ID: event_id,
+                ATTR_MESSAGING_SYSTEM: "redis",
+                "message.id": message_id,
+                "consumer.name": consumer_name,
+            },
+        ) as span:
+            try:
+                logger.debug(
+                    f"Processing message {message_id}: {event_type_name}",
+                    extra={
+                        "message_id": message_id,
+                        "event_type": event_type_name,
+                        "event_id": event_id,
+                    },
                 )
-                # Acknowledge to prevent blocking
+
+                # Calculate processing lag
+                occurred_at_str = message_data.get("occurred_at")
+                if occurred_at_str:
+                    try:
+                        occurred_at = datetime.fromisoformat(occurred_at_str)
+                        now = datetime.now(UTC)
+                        if occurred_at.tzinfo is None:
+                            occurred_at = occurred_at.replace(tzinfo=UTC)
+                        lag_seconds = (now - occurred_at).total_seconds()
+                        logger.debug(
+                            f"Processing lag: {lag_seconds:.3f}s",
+                            extra={"lag_seconds": lag_seconds},
+                        )
+                    except (ValueError, TypeError) as e:
+                        logger.warning(f"Failed to calculate processing lag: {e}")
+
+                # Deserialize event
+                event = self._deserialize_event(event_type_name, message_data)
+                if event is None:
+                    logger.warning(
+                        f"Unknown event type: {event_type_name}, skipping",
+                        extra={"event_type": event_type_name, "message_id": message_id},
+                    )
+                    # Acknowledge to prevent blocking
+                    await self._redis.xack(
+                        self._config.stream_name,
+                        self._config.consumer_group,
+                        message_id,
+                    )
+                    return
+
+                # Dispatch to registered handlers
+                await self._dispatch_event(event, message_id)
+
+                # Acknowledge message after successful processing
                 await self._redis.xack(
                     self._config.stream_name,
                     self._config.consumer_group,
                     message_id,
                 )
-                return
 
-            # Dispatch to registered handlers
-            await self._dispatch_event(event, message_id)
+                self._stats.events_consumed += 1
+                self._stats.events_processed_success += 1
 
-            # Acknowledge message after successful processing
-            await self._redis.xack(
-                self._config.stream_name,
-                self._config.consumer_group,
-                message_id,
-            )
+                processing_duration = (datetime.now(UTC) - processing_start).total_seconds()
 
-            self._stats.events_consumed += 1
-            self._stats.events_processed_success += 1
+                if span:
+                    span.set_attribute("processing.success", True)
+                    span.set_attribute("processing.duration_ms", processing_duration * 1000)
 
-            processing_duration = (datetime.now(UTC) - processing_start).total_seconds()
+                logger.debug(
+                    f"Successfully processed {event_type_name}",
+                    extra={
+                        "message_id": message_id,
+                        "event_type": event_type_name,
+                        "event_id": event_id,
+                        "duration_ms": processing_duration * 1000,
+                    },
+                )
 
-            if span_context:
-                span_context.set_attribute("processing.success", True)
-                span_context.set_attribute("processing.duration_ms", processing_duration * 1000)
+            except Exception as e:
+                self._stats.events_processed_failed += 1
 
-            logger.debug(
-                f"Successfully processed {event_type_name}",
-                extra={
-                    "message_id": message_id,
-                    "event_type": event_type_name,
-                    "event_id": event_id,
-                    "duration_ms": processing_duration * 1000,
-                },
-            )
+                processing_duration = (datetime.now(UTC) - processing_start).total_seconds()
 
-        except Exception as e:
-            self._stats.events_processed_failed += 1
+                if span:
+                    span.set_attribute("processing.success", False)
+                    span.record_exception(e)
 
-            processing_duration = (datetime.now(UTC) - processing_start).total_seconds()
-
-            if span_context:
-                span_context.set_attribute("processing.success", False)
-                span_context.record_exception(e)
-
-            logger.error(
-                f"Failed to process message {message_id}: {e}",
-                exc_info=True,
-                extra={
-                    "message_id": message_id,
-                    "event_type": event_type_name,
-                    "event_id": event_id,
-                    "error": str(e),
-                    "duration_ms": processing_duration * 1000,
-                },
-            )
-            # Don't ack - message will be redelivered or recovered later
-
-        finally:
-            if span_context:
-                span_context.end()
+                logger.error(
+                    f"Failed to process message {message_id}: {e}",
+                    exc_info=True,
+                    extra={
+                        "message_id": message_id,
+                        "event_type": event_type_name,
+                        "event_id": event_id,
+                        "error": str(e),
+                        "duration_ms": processing_duration * 1000,
+                    },
+                )
+                # Don't ack - message will be redelivered or recovered later
 
     def _deserialize_event(
         self,
@@ -966,12 +957,54 @@ class RedisEventBus(EventBus):
             },
         )
 
-        # Process handlers sequentially for ordering guarantees
-        for original_handler, async_handler in handlers:
-            handler_name = self._get_handler_name(original_handler)
+        # Trace event dispatch with dynamic attributes
+        with self._create_span_context(
+            "eventsource.event_bus.dispatch",
+            {
+                ATTR_EVENT_TYPE: event_type.__name__,
+                ATTR_EVENT_ID: str(event.event_id),
+                ATTR_AGGREGATE_ID: str(event.aggregate_id),
+                ATTR_HANDLER_COUNT: len(handlers),
+                ATTR_MESSAGING_SYSTEM: "redis",
+            },
+        ):
+            # Process handlers sequentially for ordering guarantees
+            for original_handler, async_handler in handlers:
+                await self._invoke_handler(original_handler, async_handler, event, message_id)
 
+    async def _invoke_handler(
+        self,
+        original_handler: Any,
+        async_handler: Callable[[DomainEvent], Any],
+        event: DomainEvent,
+        message_id: str,
+    ) -> None:
+        """
+        Invoke a single handler with tracing support.
+
+        Args:
+            original_handler: The original handler object
+            async_handler: The normalized async handler function
+            event: The event to handle
+            message_id: Redis message ID for logging
+        """
+        handler_name = self._get_handler_name(original_handler)
+
+        # Trace handler execution with dynamic attributes and error recording
+        with self._create_span_context(
+            "eventsource.event_bus.handle",
+            {
+                ATTR_EVENT_TYPE: type(event).__name__,
+                ATTR_EVENT_ID: str(event.event_id),
+                ATTR_AGGREGATE_ID: str(event.aggregate_id),
+                ATTR_HANDLER_NAME: handler_name,
+                ATTR_MESSAGING_SYSTEM: "redis",
+            },
+        ) as span:
             try:
                 await async_handler(event)
+                if span:
+                    span.set_attribute(ATTR_HANDLER_SUCCESS, True)
                 logger.debug(
                     f"Handler {handler_name} processed {event.event_type}",
                     extra={
@@ -981,6 +1014,9 @@ class RedisEventBus(EventBus):
                     },
                 )
             except Exception as e:
+                if span:
+                    span.set_attribute(ATTR_HANDLER_SUCCESS, False)
+                    span.record_exception(e)
                 self._stats.handler_errors += 1
                 logger.error(
                     f"Handler {handler_name} failed: {e}",
