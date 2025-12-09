@@ -23,6 +23,7 @@ Welcome to the eventsource-py documentation. This library provides a production-
 
 ## Guides
 
+- [Observability Guide](guides/observability.md) - OpenTelemetry tracing and distributed tracing
 - [Snapshotting Guide](guides/snapshotting.md) - Enable aggregate state caching for performance
 - [Migration Guide](guides/snapshotting-migration.md) - Add snapshotting to existing projects
 

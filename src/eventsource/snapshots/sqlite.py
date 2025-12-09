@@ -20,6 +20,12 @@ import logging
 from datetime import datetime
 from uuid import UUID
 
+from eventsource.observability import TracingMixin
+from eventsource.observability.attributes import (
+    ATTR_AGGREGATE_ID,
+    ATTR_AGGREGATE_TYPE,
+    ATTR_VERSION,
+)
 from eventsource.snapshots.interface import Snapshot, SnapshotStore
 
 # Optional dependency handling
@@ -44,7 +50,7 @@ class SQLiteNotAvailableError(ImportError):
         )
 
 
-class SQLiteSnapshotStore(SnapshotStore):
+class SQLiteSnapshotStore(SnapshotStore, TracingMixin):
     """
     SQLite implementation of SnapshotStore.
 
@@ -59,6 +65,7 @@ class SQLiteSnapshotStore(SnapshotStore):
     - No external database server required
     - Async operations via aiosqlite
     - Upsert using INSERT OR REPLACE
+    - Optional OpenTelemetry tracing
 
     Example:
         >>> from eventsource.snapshots import SQLiteSnapshotStore
@@ -79,13 +86,18 @@ class SQLiteSnapshotStore(SnapshotStore):
         - For production workloads, consider PostgreSQLSnapshotStore
     """
 
-    def __init__(self, database_path: str) -> None:
+    def __init__(
+        self,
+        database_path: str,
+        enable_tracing: bool = True,
+    ) -> None:
         """
         Initialize the SQLite snapshot store.
 
         Args:
             database_path: Path to the SQLite database file.
                           Use ":memory:" for in-memory database.
+            enable_tracing: Whether to enable OpenTelemetry tracing (default True)
 
         Raises:
             SQLiteNotAvailableError: If aiosqlite is not installed.
@@ -93,6 +105,7 @@ class SQLiteSnapshotStore(SnapshotStore):
         if not SQLITE_AVAILABLE:
             raise SQLiteNotAvailableError()
 
+        self._init_tracing(__name__, enable_tracing)
         self._database_path = database_path
         logger.debug("SQLiteSnapshotStore initialized with %s", database_path)
 
@@ -103,35 +116,43 @@ class SQLiteSnapshotStore(SnapshotStore):
         Args:
             snapshot: The snapshot to save
         """
-        async with aiosqlite.connect(self._database_path) as conn:
-            await conn.execute(
-                """
-                INSERT OR REPLACE INTO snapshots (
-                    aggregate_id,
-                    aggregate_type,
-                    version,
-                    schema_version,
-                    state,
-                    created_at
-                ) VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    str(snapshot.aggregate_id),
-                    snapshot.aggregate_type,
-                    snapshot.version,
-                    snapshot.schema_version,
-                    json.dumps(snapshot.state),
-                    snapshot.created_at.isoformat(),
-                ),
-            )
-            await conn.commit()
+        with self._create_span_context(
+            "eventsource.snapshot.save",
+            {
+                ATTR_AGGREGATE_ID: str(snapshot.aggregate_id),
+                ATTR_AGGREGATE_TYPE: snapshot.aggregate_type,
+                ATTR_VERSION: snapshot.version,
+            },
+        ):
+            async with aiosqlite.connect(self._database_path) as conn:
+                await conn.execute(
+                    """
+                    INSERT OR REPLACE INTO snapshots (
+                        aggregate_id,
+                        aggregate_type,
+                        version,
+                        schema_version,
+                        state,
+                        created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(snapshot.aggregate_id),
+                        snapshot.aggregate_type,
+                        snapshot.version,
+                        snapshot.schema_version,
+                        json.dumps(snapshot.state),
+                        snapshot.created_at.isoformat(),
+                    ),
+                )
+                await conn.commit()
 
-        logger.debug(
-            "Saved snapshot for %s/%s at version %d",
-            snapshot.aggregate_type,
-            snapshot.aggregate_id,
-            snapshot.version,
-        )
+            logger.debug(
+                "Saved snapshot for %s/%s at version %d",
+                snapshot.aggregate_type,
+                snapshot.aggregate_id,
+                snapshot.version,
+            )
 
     async def get_snapshot(
         self,
@@ -148,50 +169,57 @@ class SQLiteSnapshotStore(SnapshotStore):
         Returns:
             The snapshot if found, None otherwise
         """
-        async with aiosqlite.connect(self._database_path) as conn:
-            conn.row_factory = aiosqlite.Row
-            cursor = await conn.execute(
-                """
-                SELECT
-                    aggregate_id,
-                    aggregate_type,
-                    version,
-                    schema_version,
-                    state,
-                    created_at
-                FROM snapshots
-                WHERE aggregate_id = ?
-                  AND aggregate_type = ?
-                """,
-                (str(aggregate_id), aggregate_type),
-            )
-            row = await cursor.fetchone()
+        with self._create_span_context(
+            "eventsource.snapshot.get",
+            {
+                ATTR_AGGREGATE_ID: str(aggregate_id),
+                ATTR_AGGREGATE_TYPE: aggregate_type,
+            },
+        ):
+            async with aiosqlite.connect(self._database_path) as conn:
+                conn.row_factory = aiosqlite.Row
+                cursor = await conn.execute(
+                    """
+                    SELECT
+                        aggregate_id,
+                        aggregate_type,
+                        version,
+                        schema_version,
+                        state,
+                        created_at
+                    FROM snapshots
+                    WHERE aggregate_id = ?
+                      AND aggregate_type = ?
+                    """,
+                    (str(aggregate_id), aggregate_type),
+                )
+                row = await cursor.fetchone()
 
-        if row is None:
+            if row is None:
+                logger.debug(
+                    "No snapshot found for %s/%s",
+                    aggregate_type,
+                    aggregate_id,
+                )
+                return None
+
+            snapshot = Snapshot(
+                aggregate_id=UUID(row["aggregate_id"]),
+                aggregate_type=row["aggregate_type"],
+                version=row["version"],
+                schema_version=row["schema_version"],
+                state=json.loads(row["state"]),
+                created_at=datetime.fromisoformat(row["created_at"]),
+            )
+
             logger.debug(
-                "No snapshot found for %s/%s",
+                "Retrieved snapshot for %s/%s at version %d",
                 aggregate_type,
                 aggregate_id,
+                snapshot.version,
             )
-            return None
 
-        snapshot = Snapshot(
-            aggregate_id=UUID(row["aggregate_id"]),
-            aggregate_type=row["aggregate_type"],
-            version=row["version"],
-            schema_version=row["schema_version"],
-            state=json.loads(row["state"]),
-            created_at=datetime.fromisoformat(row["created_at"]),
-        )
-
-        logger.debug(
-            "Retrieved snapshot for %s/%s at version %d",
-            aggregate_type,
-            aggregate_id,
-            snapshot.version,
-        )
-
-        return snapshot
+            return snapshot
 
     async def delete_snapshot(
         self,
@@ -208,32 +236,39 @@ class SQLiteSnapshotStore(SnapshotStore):
         Returns:
             True if a snapshot was deleted, False otherwise
         """
-        async with aiosqlite.connect(self._database_path) as conn:
-            cursor = await conn.execute(
-                """
-                DELETE FROM snapshots
-                WHERE aggregate_id = ?
-                  AND aggregate_type = ?
-                """,
-                (str(aggregate_id), aggregate_type),
-            )
-            await conn.commit()
-            deleted: bool = cursor.rowcount > 0
+        with self._create_span_context(
+            "eventsource.snapshot.delete",
+            {
+                ATTR_AGGREGATE_ID: str(aggregate_id),
+                ATTR_AGGREGATE_TYPE: aggregate_type,
+            },
+        ):
+            async with aiosqlite.connect(self._database_path) as conn:
+                cursor = await conn.execute(
+                    """
+                    DELETE FROM snapshots
+                    WHERE aggregate_id = ?
+                      AND aggregate_type = ?
+                    """,
+                    (str(aggregate_id), aggregate_type),
+                )
+                await conn.commit()
+                deleted: bool = cursor.rowcount > 0
 
-        if deleted:
-            logger.debug(
-                "Deleted snapshot for %s/%s",
-                aggregate_type,
-                aggregate_id,
-            )
-        else:
-            logger.debug(
-                "No snapshot to delete for %s/%s",
-                aggregate_type,
-                aggregate_id,
-            )
+            if deleted:
+                logger.debug(
+                    "Deleted snapshot for %s/%s",
+                    aggregate_type,
+                    aggregate_id,
+                )
+            else:
+                logger.debug(
+                    "No snapshot to delete for %s/%s",
+                    aggregate_type,
+                    aggregate_id,
+                )
 
-        return deleted
+            return deleted
 
     async def snapshot_exists(
         self,
@@ -250,19 +285,26 @@ class SQLiteSnapshotStore(SnapshotStore):
         Returns:
             True if snapshot exists, False otherwise
         """
-        async with aiosqlite.connect(self._database_path) as conn:
-            cursor = await conn.execute(
-                """
-                SELECT EXISTS (
-                    SELECT 1 FROM snapshots
-                    WHERE aggregate_id = ?
-                      AND aggregate_type = ?
+        with self._create_span_context(
+            "eventsource.snapshot.exists",
+            {
+                ATTR_AGGREGATE_ID: str(aggregate_id),
+                ATTR_AGGREGATE_TYPE: aggregate_type,
+            },
+        ):
+            async with aiosqlite.connect(self._database_path) as conn:
+                cursor = await conn.execute(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1 FROM snapshots
+                        WHERE aggregate_id = ?
+                          AND aggregate_type = ?
+                    )
+                    """,
+                    (str(aggregate_id), aggregate_type),
                 )
-                """,
-                (str(aggregate_id), aggregate_type),
-            )
-            row = await cursor.fetchone()
-            return bool(row[0]) if row else False
+                row = await cursor.fetchone()
+                return bool(row[0]) if row else False
 
     async def delete_snapshots_by_type(
         self,
@@ -280,36 +322,42 @@ class SQLiteSnapshotStore(SnapshotStore):
         Returns:
             Number of snapshots deleted
         """
-        async with aiosqlite.connect(self._database_path) as conn:
-            if schema_version_below is not None:
-                cursor = await conn.execute(
-                    """
-                    DELETE FROM snapshots
-                    WHERE aggregate_type = ?
-                      AND schema_version < ?
-                    """,
-                    (aggregate_type, schema_version_below),
-                )
-            else:
-                cursor = await conn.execute(
-                    """
-                    DELETE FROM snapshots
-                    WHERE aggregate_type = ?
-                    """,
-                    (aggregate_type,),
-                )
-            await conn.commit()
-            count: int = cursor.rowcount
+        with self._create_span_context(
+            "eventsource.snapshot.delete_by_type",
+            {
+                ATTR_AGGREGATE_TYPE: aggregate_type,
+            },
+        ):
+            async with aiosqlite.connect(self._database_path) as conn:
+                if schema_version_below is not None:
+                    cursor = await conn.execute(
+                        """
+                        DELETE FROM snapshots
+                        WHERE aggregate_type = ?
+                          AND schema_version < ?
+                        """,
+                        (aggregate_type, schema_version_below),
+                    )
+                else:
+                    cursor = await conn.execute(
+                        """
+                        DELETE FROM snapshots
+                        WHERE aggregate_type = ?
+                        """,
+                        (aggregate_type,),
+                    )
+                await conn.commit()
+                count: int = cursor.rowcount
 
-        if count > 0:
-            logger.info(
-                "Deleted %d snapshots for aggregate type %s%s",
-                count,
-                aggregate_type,
-                f" (schema_version < {schema_version_below})" if schema_version_below else "",
-            )
+            if count > 0:
+                logger.info(
+                    "Deleted %d snapshots for aggregate type %s%s",
+                    count,
+                    aggregate_type,
+                    f" (schema_version < {schema_version_below})" if schema_version_below else "",
+                )
 
-        return count
+            return count
 
     @property
     def database_path(self) -> str:

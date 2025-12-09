@@ -19,6 +19,14 @@ from eventsource.bus.interface import (
 )
 from eventsource.events.base import DomainEvent
 from eventsource.observability import TracingMixin
+from eventsource.observability.attributes import (
+    ATTR_AGGREGATE_ID,
+    ATTR_EVENT_ID,
+    ATTR_EVENT_TYPE,
+    ATTR_HANDLER_COUNT,
+    ATTR_HANDLER_NAME,
+    ATTR_HANDLER_SUCCESS,
+)
 from eventsource.protocols import (
     FlexibleEventHandler,
     FlexibleEventSubscriber,
@@ -235,12 +243,12 @@ class InMemoryEventBus(EventBus, TracingMixin):
 
         # Trace event dispatch with dynamic attributes
         with self._create_span_context(
-            f"event.dispatch.{event_type.__name__}",
+            "eventsource.event_bus.dispatch",
             {
-                "event.type": event_type.__name__,
-                "event.id": str(event.event_id),
-                "event.aggregate_id": str(event.aggregate_id),
-                "event.handler_count": len(handlers),
+                ATTR_EVENT_TYPE: event_type.__name__,
+                ATTR_EVENT_ID: str(event.event_id),
+                ATTR_AGGREGATE_ID: str(event.aggregate_id),
+                ATTR_HANDLER_COUNT: len(handlers),
             },
         ):
             await self._invoke_handlers(handlers, event)
@@ -270,18 +278,18 @@ class InMemoryEventBus(EventBus, TracingMixin):
 
         # Trace handler execution with dynamic attributes and error recording
         with self._create_span_context(
-            f"event_handler.{handler_name}",
+            "eventsource.event_bus.handle",
             {
-                "event.type": type(event).__name__,
-                "event.id": str(event.event_id),
-                "event.aggregate_id": str(event.aggregate_id),
-                "handler.name": handler_name,
+                ATTR_EVENT_TYPE: type(event).__name__,
+                ATTR_EVENT_ID: str(event.event_id),
+                ATTR_AGGREGATE_ID: str(event.aggregate_id),
+                ATTR_HANDLER_NAME: handler_name,
             },
         ) as span:
             try:
                 await async_handler(event)
                 if span:
-                    span.set_attribute("handler.success", True)
+                    span.set_attribute(ATTR_HANDLER_SUCCESS, True)
                 self._stats["handlers_invoked"] += 1
                 logger.debug(
                     f"Handler {handler_name} processed {type(event).__name__}",
@@ -293,7 +301,7 @@ class InMemoryEventBus(EventBus, TracingMixin):
                 )
             except Exception as e:
                 if span:
-                    span.set_attribute("handler.success", False)
+                    span.set_attribute(ATTR_HANDLER_SUCCESS, False)
                     span.record_exception(e)
                 self._stats["handler_errors"] += 1
                 logger.error(

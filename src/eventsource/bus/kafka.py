@@ -79,6 +79,17 @@ from eventsource.bus.interface import (
     EventHandlerFunc,
 )
 from eventsource.events.base import DomainEvent
+from eventsource.observability import OTEL_AVAILABLE, TracingMixin
+from eventsource.observability.attributes import (
+    ATTR_AGGREGATE_ID,
+    ATTR_AGGREGATE_TYPE,
+    ATTR_EVENT_ID,
+    ATTR_EVENT_TYPE,
+    ATTR_HANDLER_NAME,
+    ATTR_MESSAGING_DESTINATION,
+    ATTR_MESSAGING_OPERATION,
+    ATTR_MESSAGING_SYSTEM,
+)
 from eventsource.protocols import (
     FlexibleEventHandler,
     FlexibleEventSubscriber,
@@ -99,18 +110,16 @@ except ImportError:
     AIOKafkaConsumer = None
     KafkaError = Exception
 
-# Optional OpenTelemetry integration
+# OpenTelemetry metrics and propagation imports - kept separate from TracingMixin
+# These are NOT in TracingMixin and must be imported directly for metrics and inject/extract
 try:
     from opentelemetry import metrics as otel_metrics
-    from opentelemetry import trace
     from opentelemetry.metrics import CallbackOptions, Observation
     from opentelemetry.propagate import extract, inject
     from opentelemetry.trace import SpanKind, Status, StatusCode
 
-    OTEL_AVAILABLE = True
+    PROPAGATION_AVAILABLE = OTEL_AVAILABLE
 except ImportError:
-    OTEL_AVAILABLE = False
-    trace = None  # type: ignore[assignment]
     otel_metrics = None  # type: ignore[assignment]
     CallbackOptions = None  # type: ignore[assignment, misc]
     Observation = None  # type: ignore[assignment, misc]
@@ -119,29 +128,9 @@ except ImportError:
     SpanKind = None  # type: ignore[assignment, misc]
     Status = None  # type: ignore[assignment, misc]
     StatusCode = None  # type: ignore[assignment, misc]
+    PROPAGATION_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
-
-# Module-level tracer cache for lazy initialization
-_tracer: Any = None
-
-
-def _get_tracer() -> Any:
-    """Get or create the OpenTelemetry tracer.
-
-    Returns a tracer instance for creating spans. The tracer is lazily
-    initialized on first use and cached for subsequent calls.
-
-    Returns:
-        The tracer instance, or None if OpenTelemetry is not available.
-    """
-    global _tracer
-    if not OTEL_AVAILABLE:
-        return None
-    if _tracer is None:
-        _tracer = trace.get_tracer("eventsource.bus.kafka")
-    return _tracer
-
 
 # Module-level meter cache for lazy initialization
 _meter: Any = None
@@ -753,7 +742,7 @@ class KafkaEventBusStats:
 HandlerWrapper = tuple[Any, Callable[[DomainEvent], Any]]
 
 
-class KafkaEventBus(EventBus):
+class KafkaEventBus(TracingMixin, EventBus):
     """Kafka implementation of the EventBus interface.
 
     Provides a distributed event bus using Apache Kafka for high-throughput
@@ -799,6 +788,9 @@ class KafkaEventBus(EventBus):
 
         self._config = config or KafkaEventBusConfig()
         self._event_registry = event_registry
+
+        # Initialize tracing via mixin
+        self._init_tracing(__name__, self._config.enable_tracing)
 
         # Connection state
         self._producer: AIOKafkaProducer | None = None
@@ -1301,11 +1293,8 @@ class KafkaEventBus(EventBus):
             },
         )
 
-        # Get tracer if tracing is enabled
-        tracer = _get_tracer() if self._config.enable_tracing else None
-
         for event in events:
-            await self._publish_single_event(event, background, tracer)
+            await self._publish_single_event(event, background)
 
         # Update statistics
         self._stats.events_published += len(events)
@@ -1331,7 +1320,6 @@ class KafkaEventBus(EventBus):
         self,
         event: DomainEvent,
         background: bool,
-        tracer: Any,
     ) -> None:
         """Publish a single event with optional tracing span.
 
@@ -1342,7 +1330,6 @@ class KafkaEventBus(EventBus):
         Args:
             event: The event to publish.
             background: Whether to wait for acknowledgment.
-            tracer: The OpenTelemetry tracer, or None if disabled.
         """
         if not self._producer:
             raise RuntimeError("Producer not connected")
@@ -1352,27 +1339,28 @@ class KafkaEventBus(EventBus):
         value = self._serialize_event(event)
         headers = self._create_headers(event)
 
-        if tracer:
-            # Create span for publish
-            with tracer.start_as_current_span(
-                name=f"kafka.publish {event.event_type}",
+        # Create span for publish using TracingMixin
+        if self._enable_tracing and self._tracer:
+            with self._tracer.start_as_current_span(
+                name=f"eventsource.event_bus.publish {event.event_type}",
                 kind=SpanKind.PRODUCER,
                 attributes={
-                    "messaging.system": "kafka",
-                    "messaging.destination": self._config.topic_name,
+                    ATTR_MESSAGING_SYSTEM: "kafka",
+                    ATTR_MESSAGING_DESTINATION: self._config.topic_name,
                     "messaging.destination_kind": "topic",
-                    "messaging.operation": "publish",
-                    "event.type": event.event_type,
-                    "event.id": str(event.event_id),
-                    "aggregate.id": str(event.aggregate_id),
-                    "aggregate.type": event.aggregate_type,
+                    ATTR_MESSAGING_OPERATION: "publish",
+                    ATTR_EVENT_TYPE: event.event_type,
+                    ATTR_EVENT_ID: str(event.event_id),
+                    ATTR_AGGREGATE_ID: str(event.aggregate_id),
+                    ATTR_AGGREGATE_TYPE: event.aggregate_type,
                 },
             ) as span:
-                # Inject trace context into headers
-                carrier: dict[str, str] = {}
-                inject(carrier)
-                for trace_key, trace_value in carrier.items():
-                    headers.append((trace_key, trace_value.encode("utf-8")))
+                # Inject trace context into headers for distributed tracing
+                if PROPAGATION_AVAILABLE and inject is not None:
+                    carrier: dict[str, str] = {}
+                    inject(carrier)
+                    for trace_key, trace_value in carrier.items():
+                        headers.append((trace_key, trace_value.encode("utf-8")))
 
                 await self._send_to_kafka(key, value, headers, background, span, event)
         else:
@@ -2029,28 +2017,26 @@ class KafkaEventBus(EventBus):
             },
         )
 
-        # Get tracer if tracing is enabled
-        tracer = _get_tracer() if self._config.enable_tracing else None
-
-        if tracer:
-            # Extract trace context from headers
+        # Use TracingMixin pattern for tracing
+        if self._enable_tracing and self._tracer and PROPAGATION_AVAILABLE and extract is not None:
+            # Extract trace context from headers for distributed tracing
             carrier = self._extract_trace_context(message.headers)
             context = extract(carrier)
 
             # Create span for consume
-            with tracer.start_as_current_span(
-                name=f"kafka.consume {event_type_name}",
+            with self._tracer.start_as_current_span(
+                name=f"eventsource.event_bus.consume {event_type_name}",
                 context=context,
                 kind=SpanKind.CONSUMER,
                 attributes={
-                    "messaging.system": "kafka",
+                    ATTR_MESSAGING_SYSTEM: "kafka",
                     "messaging.source": message.topic,
                     "messaging.source_kind": "topic",
-                    "messaging.operation": "receive",
+                    ATTR_MESSAGING_OPERATION: "receive",
                     "messaging.kafka.partition": message.partition,
                     "messaging.kafka.offset": message.offset,
                     "messaging.kafka.consumer_group": self._config.consumer_group,
-                    "event.type": event_type_name,
+                    ATTR_EVENT_TYPE: event_type_name,
                 },
             ) as span:
                 await self._process_message_with_span(message, event_type_name, span)
@@ -2108,9 +2094,9 @@ class KafkaEventBus(EventBus):
             event = self._deserialize_message(message)
 
             if span:
-                span.set_attribute("event.id", str(event.event_id))
-                span.set_attribute("aggregate.id", str(event.aggregate_id))
-                span.set_attribute("aggregate.type", event.aggregate_type)
+                span.set_attribute(ATTR_EVENT_ID, str(event.event_id))
+                span.set_attribute(ATTR_AGGREGATE_ID, str(event.aggregate_id))
+                span.set_attribute(ATTR_AGGREGATE_TYPE, event.aggregate_type)
 
             # Get handlers for this event type
             handlers = self.get_handlers_for_event(event_type_name)
@@ -2258,23 +2244,21 @@ class KafkaEventBus(EventBus):
         Raises:
             Exception: Re-raises any handler exception.
         """
-        # Get tracer if tracing is enabled
-        tracer = _get_tracer() if self._config.enable_tracing else None
-
         for original, handler_func in handlers:
             handler_name = self._get_handler_name(original)
 
             # Start timing for handler duration histogram
             handler_start_time = time.perf_counter()
 
-            if tracer:
-                with tracer.start_as_current_span(
-                    name=f"handle {handler_name}",
+            # Use TracingMixin pattern for tracing
+            if self._enable_tracing and self._tracer:
+                with self._tracer.start_as_current_span(
+                    name=f"eventsource.event_bus.dispatch {handler_name}",
                     kind=SpanKind.INTERNAL,
                     attributes={
-                        "handler.name": handler_name,
-                        "event.type": event.event_type,
-                        "event.id": str(event.event_id),
+                        ATTR_HANDLER_NAME: handler_name,
+                        ATTR_EVENT_TYPE: event.event_type,
+                        ATTR_EVENT_ID: str(event.event_id),
                     },
                 ) as span:
                     try:

@@ -13,6 +13,16 @@ from uuid import UUID
 
 from eventsource.events.base import DomainEvent
 from eventsource.exceptions import OptimisticLockError
+from eventsource.observability import (
+    ATTR_AGGREGATE_ID,
+    ATTR_AGGREGATE_TYPE,
+    ATTR_EVENT_COUNT,
+    ATTR_EXPECTED_VERSION,
+    ATTR_FROM_VERSION,
+    ATTR_POSITION,
+    ATTR_STREAM_ID,
+    TracingMixin,
+)
 from eventsource.stores._compat import normalize_timestamp
 from eventsource.stores.interface import (
     AppendResult,
@@ -25,7 +35,7 @@ from eventsource.stores.interface import (
 )
 
 
-class InMemoryEventStore(EventStore):
+class InMemoryEventStore(TracingMixin, EventStore):
     """
     In-memory implementation of the event store.
 
@@ -47,6 +57,9 @@ class InMemoryEventStore(EventStore):
         async operations within a single process. For high-concurrency
         production use, prefer PostgreSQLEventStore.
 
+    Features:
+        - OpenTelemetry tracing support via TracingMixin
+
     Example:
         >>> store = InMemoryEventStore()
         >>> result = await store.append_events(
@@ -65,8 +78,16 @@ class InMemoryEventStore(EventStore):
         _global_position: Counter for global position
     """
 
-    def __init__(self) -> None:
-        """Initialize an empty in-memory event store."""
+    def __init__(self, enable_tracing: bool = True) -> None:
+        """
+        Initialize an empty in-memory event store.
+
+        Args:
+            enable_tracing: If True and OpenTelemetry is available, emit traces (default: True)
+        """
+        # Initialize tracing via TracingMixin
+        self._init_tracing(__name__, enable_tracing)
+
         # Store events by aggregate_id
         self._events: dict[UUID, list[DomainEvent]] = defaultdict(list)
         # Store aggregate types by aggregate_id
@@ -123,6 +144,27 @@ class InMemoryEventStore(EventStore):
         if not events:
             return AppendResult.successful(expected_version)
 
+        with self._create_span_context(
+            "inmemory_event_store.append_events",
+            {
+                ATTR_AGGREGATE_ID: str(aggregate_id),
+                ATTR_AGGREGATE_TYPE: aggregate_type,
+                ATTR_EVENT_COUNT: len(events),
+                ATTR_EXPECTED_VERSION: expected_version,
+            },
+        ):
+            return await self._do_append_events(
+                aggregate_id, aggregate_type, events, expected_version
+            )
+
+    async def _do_append_events(
+        self,
+        aggregate_id: UUID,
+        aggregate_type: str,
+        events: list[DomainEvent],
+        expected_version: int,
+    ) -> AppendResult:
+        """Internal implementation of append_events."""
         async with self._lock:
             # Get current version for this aggregate type
             all_events = self._events[aggregate_id]
@@ -208,6 +250,27 @@ class InMemoryEventStore(EventStore):
             >>> for event in stream.events:
             ...     aggregate.apply_event(event, is_new=False)
         """
+        with self._create_span_context(
+            "inmemory_event_store.get_events",
+            {
+                ATTR_AGGREGATE_ID: str(aggregate_id),
+                ATTR_AGGREGATE_TYPE: aggregate_type or "any",
+                ATTR_FROM_VERSION: from_version,
+            },
+        ):
+            return await self._do_get_events(
+                aggregate_id, aggregate_type, from_version, from_timestamp, to_timestamp
+            )
+
+    async def _do_get_events(
+        self,
+        aggregate_id: UUID,
+        aggregate_type: str | None = None,
+        from_version: int = 0,
+        from_timestamp: datetime | None = None,
+        to_timestamp: datetime | None = None,
+    ) -> EventStream:
+        """Internal implementation of get_events."""
         async with self._lock:
             all_events = list(self._events[aggregate_id])
             stored_aggregate_type = self._aggregate_types.get(aggregate_id, "Unknown")
@@ -354,6 +417,22 @@ class InMemoryEventStore(EventStore):
         if options is None:
             options = ReadOptions()
 
+        with self._create_span_context(
+            "inmemory_event_store.read_stream",
+            {
+                ATTR_STREAM_ID: stream_id,
+                ATTR_POSITION: options.from_position,
+            },
+        ):
+            async for stored_event in self._do_read_stream(stream_id, options):
+                yield stored_event
+
+    async def _do_read_stream(
+        self,
+        stream_id: str,
+        options: ReadOptions,
+    ) -> AsyncIterator[StoredEvent]:
+        """Internal implementation of read_stream."""
         # Parse stream_id (format: "aggregate_id:aggregate_type")
         parts = stream_id.rsplit(":", 1)
         if len(parts) != 2:
@@ -445,6 +524,20 @@ class InMemoryEventStore(EventStore):
         if options is None:
             options = ReadOptions()
 
+        with self._create_span_context(
+            "inmemory_event_store.read_all",
+            {
+                ATTR_POSITION: options.from_position,
+            },
+        ):
+            async for stored_event in self._do_read_all(options):
+                yield stored_event
+
+    async def _do_read_all(
+        self,
+        options: ReadOptions,
+    ) -> AsyncIterator[StoredEvent]:
+        """Internal implementation of read_all."""
         async with self._lock:
             # Get all global events
             all_global = list(self._global_events)
