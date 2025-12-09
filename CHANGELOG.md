@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **TypeConverter Extraction** - Refactored serialization logic from event stores into a dedicated component
+  - New `TypeConverter` protocol defining the contract for type conversion during event deserialization
+  - `DefaultTypeConverter` implementation with configurable UUID and datetime field detection
+  - `DEFAULT_UUID_FIELDS` and `DEFAULT_STRING_ID_FIELDS` constants for common field patterns
+  - `DefaultTypeConverter.strict()` factory method for explicit-only UUID field configuration
+  - SQLiteEventStore now has full configuration parity with PostgreSQLEventStore:
+    - Added `uuid_fields`, `string_id_fields`, and `auto_detect_uuid` constructor parameters
+    - Added `with_strict_uuid_detection()` factory method
+  - Public exports from `eventsource.stores`: `TypeConverter`, `DefaultTypeConverter`, `DEFAULT_UUID_FIELDS`, `DEFAULT_STRING_ID_FIELDS`
+  - 37 unit tests for comprehensive TypeConverter coverage
+
+### Changed
+
+- Removed ~120 lines of duplicate serialization code from PostgreSQL and SQLite event stores by extracting to shared `TypeConverter`
+
+### Breaking Changes (Internal)
+
+- Internal methods `_is_uuid_field()` and `_convert_types()` on event stores have been removed
+  - Users who were calling these internal methods directly should migrate to `store._type_converter.is_uuid_field()` and `store._type_converter.convert_types()`
+
 ## [0.2.0] - 2025-12-08
 
 ### Added
