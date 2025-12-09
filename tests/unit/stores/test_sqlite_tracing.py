@@ -44,11 +44,11 @@ if AIOSQLITE_AVAILABLE:
     from eventsource.stores.sqlite import SQLiteEventStore
 
     @register_event
-    class TracingTestEvent(DomainEvent):
-        """Test event for tracing tests."""
+    class SQLiteTracingTestEvent(DomainEvent):
+        """Test event for SQLite tracing tests."""
 
-        event_type: str = "TracingTestEvent"
-        aggregate_type: str = "TracingTestAggregate"
+        event_type: str = "SQLiteTracingTestEvent"
+        aggregate_type: str = "SQLiteTracingTestAggregate"
         name: str
 
 
@@ -113,7 +113,7 @@ class TestSQLiteEventStoreSpanCreation:
     def traced_store(self, mock_tracer):
         """Create a store with injected mock tracer."""
         registry = EventRegistry()
-        registry.register(TracingTestEvent)
+        registry.register(SQLiteTracingTestEvent)
 
         store = SQLiteEventStore(":memory:", registry, enable_tracing=True)
         # Inject mock tracer
@@ -128,7 +128,7 @@ class TestSQLiteEventStoreSpanCreation:
             await traced_store.initialize()
 
             aggregate_id = uuid4()
-            event = TracingTestEvent(
+            event = SQLiteTracingTestEvent(
                 aggregate_id=aggregate_id,
                 aggregate_version=1,
                 name="Test",
@@ -136,7 +136,7 @@ class TestSQLiteEventStoreSpanCreation:
 
             await traced_store.append_events(
                 aggregate_id=aggregate_id,
-                aggregate_type="TracingTestAggregate",
+                aggregate_type="SQLiteTracingTestAggregate",
                 events=[event],
                 expected_version=0,
             )
@@ -153,7 +153,7 @@ class TestSQLiteEventStoreSpanCreation:
             await traced_store.initialize()
 
             aggregate_id = uuid4()
-            event = TracingTestEvent(
+            event = SQLiteTracingTestEvent(
                 aggregate_id=aggregate_id,
                 aggregate_version=1,
                 name="Test",
@@ -161,7 +161,7 @@ class TestSQLiteEventStoreSpanCreation:
 
             await traced_store.append_events(
                 aggregate_id=aggregate_id,
-                aggregate_type="TracingTestAggregate",
+                aggregate_type="SQLiteTracingTestAggregate",
                 events=[event],
                 expected_version=0,
             )
@@ -173,13 +173,13 @@ class TestSQLiteEventStoreSpanCreation:
         assert ATTR_AGGREGATE_ID in attributes
         assert attributes[ATTR_AGGREGATE_ID] == str(aggregate_id)
         assert ATTR_AGGREGATE_TYPE in attributes
-        assert attributes[ATTR_AGGREGATE_TYPE] == "TracingTestAggregate"
+        assert attributes[ATTR_AGGREGATE_TYPE] == "SQLiteTracingTestAggregate"
         assert ATTR_EVENT_COUNT in attributes
         assert attributes[ATTR_EVENT_COUNT] == 1
         assert ATTR_EXPECTED_VERSION in attributes
         assert attributes[ATTR_EXPECTED_VERSION] == 0
         assert ATTR_EVENT_TYPE in attributes
-        assert attributes[ATTR_EVENT_TYPE] == "TracingTestEvent"
+        assert attributes[ATTR_EVENT_TYPE] == "SQLiteTracingTestEvent"
         assert ATTR_DB_SYSTEM in attributes
         assert attributes[ATTR_DB_SYSTEM] == "sqlite"
         assert ATTR_DB_NAME in attributes
@@ -194,7 +194,7 @@ class TestSQLiteEventStoreSpanCreation:
             aggregate_id = uuid4()
             await traced_store.get_events(
                 aggregate_id,
-                aggregate_type="TracingTestAggregate",
+                aggregate_type="SQLiteTracingTestAggregate",
             )
 
         # Verify span was created with correct name
@@ -211,7 +211,7 @@ class TestSQLiteEventStoreSpanCreation:
             aggregate_id = uuid4()
             await traced_store.get_events(
                 aggregate_id,
-                aggregate_type="TracingTestAggregate",
+                aggregate_type="SQLiteTracingTestAggregate",
                 from_version=5,
             )
 
@@ -222,7 +222,7 @@ class TestSQLiteEventStoreSpanCreation:
         assert ATTR_AGGREGATE_ID in attributes
         assert attributes[ATTR_AGGREGATE_ID] == str(aggregate_id)
         assert ATTR_AGGREGATE_TYPE in attributes
-        assert attributes[ATTR_AGGREGATE_TYPE] == "TracingTestAggregate"
+        assert attributes[ATTR_AGGREGATE_TYPE] == "SQLiteTracingTestAggregate"
         assert ATTR_FROM_VERSION in attributes
         assert attributes[ATTR_FROM_VERSION] == 5
         assert ATTR_DB_SYSTEM in attributes
@@ -243,7 +243,7 @@ class TestSQLiteEventStoreTracingDisabled:
     async def test_append_events_works_without_tracing(self):
         """append_events works correctly when tracing is disabled."""
         registry = EventRegistry()
-        registry.register(TracingTestEvent)
+        registry.register(SQLiteTracingTestEvent)
 
         store = SQLiteEventStore(":memory:", registry, enable_tracing=False)
 
@@ -251,7 +251,7 @@ class TestSQLiteEventStoreTracingDisabled:
             await store.initialize()
 
             aggregate_id = uuid4()
-            event = TracingTestEvent(
+            event = SQLiteTracingTestEvent(
                 aggregate_id=aggregate_id,
                 aggregate_version=1,
                 name="Test",
@@ -259,7 +259,7 @@ class TestSQLiteEventStoreTracingDisabled:
 
             result = await store.append_events(
                 aggregate_id=aggregate_id,
-                aggregate_type="TracingTestAggregate",
+                aggregate_type="SQLiteTracingTestAggregate",
                 events=[event],
                 expected_version=0,
             )
@@ -271,7 +271,7 @@ class TestSQLiteEventStoreTracingDisabled:
     async def test_get_events_works_without_tracing(self):
         """get_events works correctly when tracing is disabled."""
         registry = EventRegistry()
-        registry.register(TracingTestEvent)
+        registry.register(SQLiteTracingTestEvent)
 
         store = SQLiteEventStore(":memory:", registry, enable_tracing=False)
 
@@ -279,7 +279,7 @@ class TestSQLiteEventStoreTracingDisabled:
             await store.initialize()
 
             aggregate_id = uuid4()
-            event = TracingTestEvent(
+            event = SQLiteTracingTestEvent(
                 aggregate_id=aggregate_id,
                 aggregate_version=1,
                 name="Test",
@@ -287,14 +287,14 @@ class TestSQLiteEventStoreTracingDisabled:
 
             await store.append_events(
                 aggregate_id=aggregate_id,
-                aggregate_type="TracingTestAggregate",
+                aggregate_type="SQLiteTracingTestAggregate",
                 events=[event],
                 expected_version=0,
             )
 
             stream = await store.get_events(
                 aggregate_id,
-                aggregate_type="TracingTestAggregate",
+                aggregate_type="SQLiteTracingTestAggregate",
             )
 
             assert len(stream.events) == 1
@@ -377,7 +377,7 @@ class TestSQLiteEventStoreTracingMultipleEvents:
     async def test_multiple_events_count_attribute(self, mock_tracer):
         """Event count attribute reflects actual number of events."""
         registry = EventRegistry()
-        registry.register(TracingTestEvent)
+        registry.register(SQLiteTracingTestEvent)
 
         store = SQLiteEventStore(":memory:", registry, enable_tracing=True)
         store._tracer = mock_tracer
@@ -388,7 +388,7 @@ class TestSQLiteEventStoreTracingMultipleEvents:
 
             aggregate_id = uuid4()
             events = [
-                TracingTestEvent(
+                SQLiteTracingTestEvent(
                     aggregate_id=aggregate_id,
                     aggregate_version=i + 1,
                     name=f"Event {i}",
@@ -398,7 +398,7 @@ class TestSQLiteEventStoreTracingMultipleEvents:
 
             await store.append_events(
                 aggregate_id=aggregate_id,
-                aggregate_type="TracingTestAggregate",
+                aggregate_type="SQLiteTracingTestAggregate",
                 events=events,
                 expected_version=0,
             )
@@ -407,7 +407,7 @@ class TestSQLiteEventStoreTracingMultipleEvents:
         attributes = call_args[1]["attributes"]
 
         assert attributes[ATTR_EVENT_COUNT] == 3
-        assert "TracingTestEvent" in attributes[ATTR_EVENT_TYPE]
+        assert "SQLiteTracingTestEvent" in attributes[ATTR_EVENT_TYPE]
 
     @pytest.mark.asyncio
     async def test_empty_events_no_span(self, mock_tracer):
@@ -424,7 +424,7 @@ class TestSQLiteEventStoreTracingMultipleEvents:
             aggregate_id = uuid4()
             result = await store.append_events(
                 aggregate_id=aggregate_id,
-                aggregate_type="TracingTestAggregate",
+                aggregate_type="SQLiteTracingTestAggregate",
                 events=[],  # Empty list
                 expected_version=0,
             )
