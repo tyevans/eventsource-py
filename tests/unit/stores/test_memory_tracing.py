@@ -10,6 +10,7 @@ Tests for:
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock, Mock
 from uuid import uuid4
 
@@ -384,7 +385,7 @@ class TestInMemoryEventStoreStandardAttributes:
             ["grep", "-c", "OTEL_AVAILABLE = ", "src/eventsource/stores/in_memory.py"],
             capture_output=True,
             text=True,
-            cwd="/home/ty/workspace/eventsource-py-wt-1",
+            cwd=Path(__file__).parents[3],
         )
         # Should be 0 - no local definition
         assert result.stdout.strip() == "0", (
@@ -404,7 +405,7 @@ class TestInMemoryEventStoreStandardAttributes:
             ],
             capture_output=True,
             text=True,
-            cwd="/home/ty/workspace/eventsource-py-wt-1",
+            cwd=Path(__file__).parents[3],
         )
         # Should be at least 1 - imports from observability
         count = int(result.stdout.strip())
@@ -418,7 +419,7 @@ class TestInMemoryEventStoreStandardAttributes:
             ["grep", "-c", "ATTR_", "src/eventsource/stores/in_memory.py"],
             capture_output=True,
             text=True,
-            cwd="/home/ty/workspace/eventsource-py-wt-1",
+            cwd=Path(__file__).parents[3],
         )
         # Should find multiple ATTR_* usages
         count = int(result.stdout.strip())
