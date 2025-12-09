@@ -11,6 +11,7 @@ Tests for:
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 from uuid import uuid4
 
@@ -613,7 +614,7 @@ class TestRedisEventBusStandardAttributes:
             ["grep", "-c", "OTEL_AVAILABLE = ", "src/eventsource/bus/redis.py"],
             capture_output=True,
             text=True,
-            cwd="/home/ty/workspace/eventsource-py-wt-1",
+            cwd=Path(__file__).parents[2],
         )
         # Should be 0 - no local definition
         assert result.stdout.strip() == "0", (
@@ -628,7 +629,7 @@ class TestRedisEventBusStandardAttributes:
             ["grep", "-c", "from eventsource.observability import", "src/eventsource/bus/redis.py"],
             capture_output=True,
             text=True,
-            cwd="/home/ty/workspace/eventsource-py-wt-1",
+            cwd=Path(__file__).parents[2],
         )
         # Should be at least 1 - imports from observability
         count = int(result.stdout.strip())
@@ -642,7 +643,7 @@ class TestRedisEventBusStandardAttributes:
             ["grep", "-c", "ATTR_", "src/eventsource/bus/redis.py"],
             capture_output=True,
             text=True,
-            cwd="/home/ty/workspace/eventsource-py-wt-1",
+            cwd=Path(__file__).parents[2],
         )
         # Should find multiple ATTR_* usages
         count = int(result.stdout.strip())
@@ -656,7 +657,7 @@ class TestRedisEventBusStandardAttributes:
             ["grep", "-c", "_create_span_context", "src/eventsource/bus/redis.py"],
             capture_output=True,
             text=True,
-            cwd="/home/ty/workspace/eventsource-py-wt-1",
+            cwd=Path(__file__).parents[2],
         )
         # Should find multiple _create_span_context usages
         count = int(result.stdout.strip())
