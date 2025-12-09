@@ -15,6 +15,7 @@ Tests cover:
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import MagicMock, Mock
 from uuid import uuid4
 
@@ -399,7 +400,7 @@ class TestSnapshotStoreStandardAttributes:
             ],
             capture_output=True,
             text=True,
-            cwd="/home/ty/workspace/eventsource-py-wt-1",
+            cwd=Path(__file__).parents[3],
         )
         # Should be at least 1 - imports from observability
         count = int(result.stdout.strip())
@@ -413,7 +414,7 @@ class TestSnapshotStoreStandardAttributes:
             ["grep", "-c", "ATTR_", "src/eventsource/snapshots/in_memory.py"],
             capture_output=True,
             text=True,
-            cwd="/home/ty/workspace/eventsource-py-wt-1",
+            cwd=Path(__file__).parents[3],
         )
         # Should find multiple ATTR_* usages
         count = int(result.stdout.strip())
@@ -432,7 +433,7 @@ class TestSnapshotStoreStandardAttributes:
             ],
             capture_output=True,
             text=True,
-            cwd="/home/ty/workspace/eventsource-py-wt-1",
+            cwd=Path(__file__).parents[3],
         )
         # Should be at least 1 - imports from observability
         count = int(result.stdout.strip())
@@ -446,7 +447,7 @@ class TestSnapshotStoreStandardAttributes:
             ["grep", "-c", "ATTR_", "src/eventsource/snapshots/postgresql.py"],
             capture_output=True,
             text=True,
-            cwd="/home/ty/workspace/eventsource-py-wt-1",
+            cwd=Path(__file__).parents[3],
         )
         # Should find multiple ATTR_* usages
         count = int(result.stdout.strip())
@@ -465,7 +466,7 @@ class TestSnapshotStoreStandardAttributes:
             ],
             capture_output=True,
             text=True,
-            cwd="/home/ty/workspace/eventsource-py-wt-1",
+            cwd=Path(__file__).parents[3],
         )
         # Should be at least 1 - imports from observability
         count = int(result.stdout.strip())
@@ -479,7 +480,7 @@ class TestSnapshotStoreStandardAttributes:
             ["grep", "-c", "ATTR_", "src/eventsource/snapshots/sqlite.py"],
             capture_output=True,
             text=True,
-            cwd="/home/ty/workspace/eventsource-py-wt-1",
+            cwd=Path(__file__).parents[3],
         )
         # Should find multiple ATTR_* usages
         count = int(result.stdout.strip())
