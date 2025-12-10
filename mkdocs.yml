@@ -63,6 +63,29 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Getting Started: getting-started.md
+  - Tutorials:
+      - tutorials/index.md
+      - "1. Introduction": tutorials/01-introduction.md
+      - "2. First Event": tutorials/02-first-event.md
+      - "3. First Aggregate": tutorials/03-first-aggregate.md
+      - "4. Event Stores": tutorials/04-event-stores.md
+      - "5. Repositories": tutorials/05-repositories.md
+      - "6. Projections": tutorials/06-projections.md
+      - "7. Event Bus": tutorials/07-event-bus.md
+      - "8. Testing": tutorials/08-testing.md
+      - "9. Error Handling": tutorials/09-error-handling.md
+      - "10. Checkpoints": tutorials/10-checkpoints.md
+      - "11. PostgreSQL": tutorials/11-postgresql.md
+      - "12. SQLite": tutorials/12-sqlite.md
+      - "13. Subscriptions": tutorials/13-subscriptions.md
+      - "14. Snapshotting": tutorials/14-snapshotting.md
+      - "15. Production": tutorials/15-production.md
+      - "16. Multi-Tenancy": tutorials/16-multi-tenancy.md
+      - "17. Redis": tutorials/17-redis.md
+      - "18. Kafka": tutorials/18-kafka.md
+      - "19. RabbitMQ": tutorials/19-rabbitmq.md
+      - "20. Observability": tutorials/20-observability.md
+      - "21. Advanced Aggregates": tutorials/21-advanced-aggregates.md
   - Architecture: architecture.md
   - FAQ: faq.md
   - API Reference:
