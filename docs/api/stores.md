@@ -87,6 +87,26 @@ Stream "Order-123":        Global Event Log:
 - **Stream Position**: Order within a single aggregate's events (used for aggregate reconstruction)
 - **Global Position**: Order across ALL events in the store (used for projections and subscriptions)
 
+### Why Integer Positions Instead of UUIDs?
+
+Events have both an `event_id` (UUID) and a `global_position` (integer) because they serve different purposes:
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `event_id` | UUID | **Identity** — Unique identifier for deduplication and idempotency checks |
+| `global_position` | Integer | **Ordering** — Strict sequential ordering for subscriptions and catch-up |
+
+**Why not use UUIDs for ordering?** Standard UUIDs (v1-v4) have no natural sort order. Even UUID v7 (timestamp-based) can have ordering issues with clock skew across distributed writers. Database-assigned auto-increment integers provide:
+
+1. **Guaranteed sequential ordering** — No gaps, no out-of-order events
+2. **Atomic assignment** — The database ensures each position is unique
+3. **Clock-independent** — Works correctly with multiple writers across machines
+4. **Watermark compatibility** — Subscriptions can reliably track "catch up to position X"
+
+This is the standard pattern used by EventStoreDB, Marten, Axon, and other production event stores.
+
+See the [FAQ: Why integers instead of UUIDs?](../faq.md#why-does-eventsource-use-integers-for-global-ordering-instead-of-uuids) for more details.
+
 ### Optimistic Concurrency Control
 
 When saving events, you specify the expected version. If another process saved events first, you get a conflict:
