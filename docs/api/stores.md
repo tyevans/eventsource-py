@@ -1,10 +1,32 @@
 # Event Stores API Reference
 
-This document covers the event store interface and implementations for persisting and retrieving domain events.
+The event store is the heart of event sourcing. It is an append-only database that stores all domain events as the single source of truth.
 
-## Overview
+## What is an Event Store?
 
-Event stores are the source of truth in event sourcing architecture. They persist and retrieve domain events for aggregate reconstruction.
+In traditional systems, you store the current state and lose the history. Event sourcing flips this: you store the sequence of events that led to the current state, then derive the state by replaying those events.
+
+```
+Traditional Database:           Event Store:
++------------------+            +----------------------------------+
+| orders           |            | events                           |
+|------------------|            |----------------------------------|
+| id: 123          |            | OrderCreated { id: 123 }         |
+| status: shipped  |            | ItemAdded { sku: "ABC" }         |
+| items: [...]     |            | ItemAdded { sku: "XYZ" }         |
++------------------+            | OrderShipped { tracking: "..." } |
+                                +----------------------------------+
+     (State only)                   (Complete history)
+```
+
+The event store provides:
+
+- **Durability**: Events are persisted and never lost
+- **Ordering**: Events are stored in strict order (both per-stream and global)
+- **Optimistic concurrency**: Prevents concurrent modifications to the same aggregate
+- **Replay capability**: Rebuild any aggregate or projection from events
+
+## Quick Start
 
 ```python
 from eventsource import (
@@ -12,9 +34,9 @@ from eventsource import (
     EventStore,
 
     # Implementations
-    InMemoryEventStore,
-    PostgreSQLEventStore,
-    SQLiteEventStore,
+    InMemoryEventStore,      # Testing and development
+    PostgreSQLEventStore,    # Production
+    SQLiteEventStore,        # Lightweight/embedded
 
     # Data structures
     EventStream,
@@ -24,27 +46,72 @@ from eventsource import (
     ReadDirection,
     ExpectedVersion,
 )
-
-# Type conversion utilities
-from eventsource.stores import (
-    TypeConverter,
-    DefaultTypeConverter,
-    DEFAULT_UUID_FIELDS,
-    DEFAULT_STRING_ID_FIELDS,
-)
 ```
+
+**Choose your store:**
+
+```python
+# Development/Testing: In-memory (no persistence)
+store = InMemoryEventStore()
+
+# Development/Testing: SQLite (file or memory)
+async with SQLiteEventStore("./events.db") as store:
+    await store.initialize()
+
+# Production: PostgreSQL
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+engine = create_async_engine("postgresql+asyncpg://localhost/mydb")
+session_factory = async_sessionmaker(engine, expire_on_commit=False)
+store = PostgreSQLEventStore(session_factory)
+```
+
+---
+
+## Key Concepts
+
+### Stream Position vs Global Position
+
+Every event has two positions:
+
+```
+Stream "Order-123":        Global Event Log:
++-------------------+      +--------------------------------+
+| Position 1: Created |      | Position 1: User-456 Created   |
+| Position 2: ItemAdd |  --> | Position 2: Order-123 Created  |  <-- stream_position=1
+| Position 3: Shipped |      | Position 3: Order-123 ItemAdd  |  <-- stream_position=2
++-------------------+      | Position 4: User-789 Updated   |
+                           | Position 5: Order-123 Shipped  |  <-- stream_position=3
+                           +--------------------------------+
+```
+
+- **Stream Position**: Order within a single aggregate's events (used for aggregate reconstruction)
+- **Global Position**: Order across ALL events in the store (used for projections and subscriptions)
+
+### Optimistic Concurrency Control
+
+When saving events, you specify the expected version. If another process saved events first, you get a conflict:
+
+```python
+# Load aggregate at version 3
+order = await repo.load(order_id)  # version = 3
+
+# Meanwhile, another process saves to version 4...
+
+# Your save fails with OptimisticLockError
+await repo.save(order)  # expected_version=3, but current is 4!
+```
+
+This prevents lost updates in concurrent systems. See [ADR-0003: Optimistic Locking](../adrs/0003-optimistic-locking.md) for details.
 
 ---
 
 ## EventStore Interface
 
-The abstract `EventStore` class defines the contract for all event store implementations.
+The abstract `EventStore` class defines the contract for all implementations.
 
-### Core Methods
+### `append_events()`
 
-#### `append_events()`
-
-Append events to an aggregate's event stream with optimistic locking.
+Append events to an aggregate's stream with optimistic locking.
 
 ```python
 async def append_events(
@@ -57,29 +124,49 @@ async def append_events(
 ```
 
 **Parameters:**
-- `aggregate_id`: ID of the aggregate
-- `aggregate_type`: Type name (e.g., "Order")
-- `events`: Events to append
-- `expected_version`: Expected current version for optimistic locking
+
+| Parameter | Description |
+|-----------|-------------|
+| `aggregate_id` | UUID of the aggregate |
+| `aggregate_type` | Type name (e.g., "Order", "User") |
+| `events` | List of events to append (in order) |
+| `expected_version` | Current version for optimistic locking (0 for new aggregates) |
 
 **Example:**
+
 ```python
+from uuid import uuid4
+from eventsource import ExpectedVersion, OptimisticLockError
+
+# Create a new aggregate (version 0 -> 1)
+result = await store.append_events(
+    aggregate_id=uuid4(),
+    aggregate_type="Order",
+    events=[OrderCreated(...)],
+    expected_version=0,
+)
+assert result.success
+assert result.new_version == 1
+
+# Update existing aggregate (version 1 -> 2)
 result = await store.append_events(
     aggregate_id=order_id,
     aggregate_type="Order",
-    events=[order_created_event],
-    expected_version=0,  # New aggregate
+    events=[OrderShipped(...)],
+    expected_version=1,
 )
 
-if result.success:
-    print(f"New version: {result.new_version}")
-elif result.conflict:
-    print("Concurrent modification detected")
+# Handle concurrent modification
+try:
+    await store.append_events(...)
+except OptimisticLockError as e:
+    print(f"Expected version {e.expected_version}, but was {e.actual_version}")
+    # Reload and retry
 ```
 
-#### `get_events()`
+### `get_events()`
 
-Get all events for an aggregate.
+Retrieve events for an aggregate to reconstruct its state.
 
 ```python
 async def get_events(
@@ -93,46 +180,82 @@ async def get_events(
 ```
 
 **Example:**
+
 ```python
+# Get all events for an aggregate
 stream = await store.get_events(order_id, "Order")
+print(f"Order has {stream.version} events")
+
 for event in stream.events:
-    aggregate.apply_event(event, is_new=False)
+    aggregate._apply(event)
+
+# Get events after version 5 (for partial replay)
+stream = await store.get_events(order_id, "Order", from_version=5)
+
+# Get events within a time range (useful for partitioned tables)
+from datetime import datetime, timedelta, UTC
+one_week_ago = datetime.now(UTC) - timedelta(days=7)
+stream = await store.get_events(
+    order_id, "Order",
+    from_timestamp=one_week_ago,
+)
 ```
 
-#### `get_events_by_type()`
+### `get_events_by_type()`
 
-Get all events for a specific aggregate type.
+Get all events for a specific aggregate type (useful for building projections).
 
 ```python
 async def get_events_by_type(
     self,
     aggregate_type: str,
     tenant_id: UUID | None = None,
-    from_timestamp: float | None = None,
+    from_timestamp: datetime | None = None,
 ) -> list[DomainEvent]
 ```
 
 **Example:**
+
 ```python
-# Get all Order events for a tenant
+from datetime import datetime, UTC, timedelta
+
+# Get all Order events
+order_events = await store.get_events_by_type("Order")
+
+# Get Order events for a specific tenant
 order_events = await store.get_events_by_type(
     "Order",
     tenant_id=tenant_uuid,
-    from_timestamp=last_processed_time,
+)
+
+# Get recent events only
+one_hour_ago = datetime.now(UTC) - timedelta(hours=1)
+recent_events = await store.get_events_by_type(
+    "Order",
+    from_timestamp=one_hour_ago,
 )
 ```
 
-#### `event_exists()`
+### `event_exists()`
 
-Check if an event exists (for idempotency).
+Check if an event exists (for idempotency checks).
 
 ```python
 async def event_exists(self, event_id: UUID) -> bool
 ```
 
-#### `get_stream_version()`
+**Example:**
 
-Get the current version of an aggregate.
+```python
+# Prevent duplicate processing
+if await store.event_exists(event.event_id):
+    print("Already processed, skipping")
+    return
+```
+
+### `get_stream_version()`
+
+Get the current version of an aggregate without fetching all events.
 
 ```python
 async def get_stream_version(
@@ -142,65 +265,129 @@ async def get_stream_version(
 ) -> int
 ```
 
-#### `read_stream()` / `read_all()`
+### `get_global_position()`
 
-Streaming methods for efficient event processing:
+Get the maximum global position in the event store. Used by subscriptions to determine catch-up completion.
 
 ```python
+async def get_global_position(self) -> int
+```
+
+**Example:**
+
+```python
+# Check how far behind a projection is
+current_position = await store.get_global_position()
+projection_position = await checkpoint_repo.get_position("MyProjection")
+lag = current_position - projection_position
+print(f"Projection is {lag} events behind")
+```
+
+### `read_stream()` / `read_all()`
+
+Streaming methods for efficient event processing (memory-efficient for large datasets):
+
+```python
+# Read a specific aggregate's stream
 async for stored_event in store.read_stream("order-123:Order"):
     print(f"Event at position {stored_event.stream_position}")
 
+# Read ALL events (for projections)
 async for stored_event in store.read_all():
-    projection.handle(stored_event.event)
+    await projection.handle(stored_event.event)
+
+# Read with options
+from eventsource.stores import ReadOptions, ReadDirection
+
+options = ReadOptions(
+    from_position=1000,        # Start after position 1000
+    limit=100,                 # Process in batches
+    direction=ReadDirection.FORWARD,
+)
+async for stored_event in store.read_all(options):
+    print(f"Global position: {stored_event.global_position}")
 ```
 
 ---
 
 ## InMemoryEventStore
 
-In-memory implementation for testing and development.
-
-### Usage
+Fast, thread-safe in-memory implementation for testing and development.
 
 ```python
 from eventsource import InMemoryEventStore
 
 store = InMemoryEventStore()
 
-# Basic operations
-result = await store.append_events(...)
-stream = await store.get_events(aggregate_id, "Order")
+# All EventStore operations work
+result = await store.append_events(
+    aggregate_id=order_id,
+    aggregate_type="Order",
+    events=[order_created],
+    expected_version=0,
+)
+stream = await store.get_events(order_id, "Order")
+```
 
-# Testing utilities
-store.clear()  # Reset state between tests
-all_events = store.get_all_events()
-count = store.get_event_count()
+### Constructor
+
+```python
+InMemoryEventStore(enable_tracing: bool = True)
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enable_tracing` | `bool` | `True` | Enable OpenTelemetry tracing |
+
+### Testing Utilities
+
+The in-memory store provides extra methods useful for testing:
+
+```python
+# Reset state between tests
+await store.clear()
+
+# Get all events (useful for assertions)
+all_events = await store.get_all_events()
+
+# Count total events
+count = await store.get_event_count()
+
+# List all aggregate IDs
+aggregate_ids = await store.get_aggregate_ids()
+
+# Get current global position
+position = await store.get_global_position()
 ```
 
 ### Characteristics
 
-- **Thread-safe**: Uses internal locking
-- **Non-persistent**: Events lost when process terminates
-- **Fast**: All operations in memory
+| Feature | Value |
+|---------|-------|
+| Persistence | None (data lost on process exit) |
+| Concurrency | Thread-safe via asyncio.Lock |
+| Performance | Very fast (all in-memory) |
+| Global ordering | Fully supported |
+| Tracing | OpenTelemetry (optional) |
 
 ### When to Use
 
-- Unit testing
-- Development environments
-- Prototyping
-- Single-process applications with ephemeral state
+- Unit tests (fast, isolated, deterministic)
+- Integration tests (full event store API)
+- Development/prototyping (quick iteration)
+- Single-process apps with ephemeral state
 
 ### When NOT to Use
 
-- Production deployments requiring persistence
-- Distributed systems
-- High-volume event storage
+- Production (no persistence)
+- Distributed systems (no shared state)
+- Large event volumes (memory-bound)
 
 ---
 
 ## PostgreSQLEventStore
 
-Production-ready PostgreSQL implementation.
+Production-ready PostgreSQL implementation with ACID guarantees, optimistic locking, and optional transactional outbox.
 
 ### Setup
 
@@ -208,6 +395,7 @@ Production-ready PostgreSQL implementation.
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from eventsource import PostgreSQLEventStore
 
+# Create SQLAlchemy async engine
 engine = create_async_engine(
     "postgresql+asyncpg://user:pass@localhost/mydb",
     pool_size=10,
@@ -215,10 +403,14 @@ engine = create_async_engine(
 )
 session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
+# Basic setup
+store = PostgreSQLEventStore(session_factory)
+
+# Production setup with all features
 store = PostgreSQLEventStore(
     session_factory,
-    outbox_enabled=True,      # Enable transactional outbox
-    enable_tracing=True,      # Enable OpenTelemetry tracing
+    outbox_enabled=True,      # Transactional outbox pattern
+    enable_tracing=True,      # OpenTelemetry tracing
 )
 ```
 
@@ -226,53 +418,77 @@ store = PostgreSQLEventStore(
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `session_factory` | `async_sessionmaker` | Required | SQLAlchemy session factory |
-| `event_registry` | `EventRegistry` | Default registry | Event type lookup |
-| `outbox_enabled` | `bool` | `False` | Write events to outbox table |
+| `session_factory` | `async_sessionmaker` | Required | SQLAlchemy async session factory |
+| `event_registry` | `EventRegistry` | Default | Registry for event deserialization |
+| `outbox_enabled` | `bool` | `False` | Write to outbox table atomically |
 | `enable_tracing` | `bool` | `True` | OpenTelemetry tracing |
-| `type_converter` | `TypeConverter` | `None` | Custom type converter (see [TypeConverter](#typeconverter)) |
+| `type_converter` | `TypeConverter` | `None` | Custom type converter |
 | `uuid_fields` | `set[str]` | `None` | Additional UUID field names |
 | `string_id_fields` | `set[str]` | `None` | Fields to exclude from UUID detection |
 | `auto_detect_uuid` | `bool` | `True` | Auto-detect UUIDs by `_id` suffix |
 
+### Factory Methods
+
+```python
+# Strict UUID detection (no auto-detection, explicit fields only)
+store = PostgreSQLEventStore.with_strict_uuid_detection(
+    session_factory,
+    uuid_fields={"event_id", "aggregate_id", "tenant_id"},
+)
+```
+
 ### Features
 
-- **Optimistic locking**: Concurrent modification detection
-- **Idempotent writes**: Duplicate events are skipped
-- **Transactional outbox**: Atomic event + outbox writes
-- **OpenTelemetry tracing**: Optional performance monitoring
-- **Partition-aware**: Timestamp filters enable partition pruning
-- **Multi-tenancy**: Built-in tenant isolation
+| Feature | Description |
+|---------|-------------|
+| **Optimistic locking** | Version-based conflict detection with unique constraint backup |
+| **Idempotent writes** | Duplicate events (same event_id) are silently skipped |
+| **Transactional outbox** | Events + outbox written atomically (reliable publishing) |
+| **OpenTelemetry tracing** | Spans for all operations with semantic attributes |
+| **Partition-aware** | Timestamp filters enable partition pruning |
+| **Multi-tenancy** | `tenant_id` field for data isolation |
+| **Global ordering** | Auto-increment `id` provides total ordering |
+
+### Properties
+
+```python
+store.session_factory    # Get the SQLAlchemy session factory
+store.event_registry     # Get the event registry
+store.outbox_enabled     # Check if outbox is enabled
+```
 
 ### Database Schema
 
-The store expects an `events` table:
+The store requires an `events` table. Create it with this schema:
 
 ```sql
+-- Main events table
 CREATE TABLE events (
-    id BIGSERIAL PRIMARY KEY,
-    event_id UUID NOT NULL UNIQUE,
-    event_type VARCHAR(255) NOT NULL,
-    aggregate_type VARCHAR(255) NOT NULL,
-    aggregate_id UUID NOT NULL,
-    tenant_id VARCHAR(36),
-    actor_id VARCHAR(255),
-    version INTEGER NOT NULL,
-    timestamp TIMESTAMPTZ NOT NULL,
-    payload JSONB NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
+    id BIGSERIAL PRIMARY KEY,           -- Global position (auto-increment)
+    event_id UUID NOT NULL UNIQUE,      -- Unique event identifier
+    event_type VARCHAR(255) NOT NULL,   -- e.g., "OrderCreated"
+    aggregate_type VARCHAR(255) NOT NULL, -- e.g., "Order"
+    aggregate_id UUID NOT NULL,         -- Aggregate identifier
+    tenant_id VARCHAR(36),              -- Multi-tenancy support
+    actor_id VARCHAR(255),              -- Who triggered the event
+    version INTEGER NOT NULL,           -- Stream position (1-based)
+    timestamp TIMESTAMPTZ NOT NULL,     -- When event occurred
+    payload JSONB NOT NULL,             -- Event data
+    created_at TIMESTAMPTZ DEFAULT NOW(), -- When stored
 
+    -- Optimistic locking constraint
     CONSTRAINT uq_events_aggregate_version
         UNIQUE (aggregate_id, aggregate_type, version)
 );
 
+-- Performance indexes
 CREATE INDEX idx_events_aggregate ON events(aggregate_id, aggregate_type);
 CREATE INDEX idx_events_type ON events(aggregate_type);
 CREATE INDEX idx_events_tenant ON events(tenant_id);
 CREATE INDEX idx_events_timestamp ON events(timestamp);
 ```
 
-For outbox pattern:
+**For the transactional outbox pattern** (when `outbox_enabled=True`):
 
 ```sql
 CREATE TABLE event_outbox (
@@ -291,11 +507,45 @@ CREATE TABLE event_outbox (
 CREATE INDEX idx_outbox_status ON event_outbox(status, created_at);
 ```
 
+### Performance Considerations
+
+**Connection Pooling:**
+```python
+engine = create_async_engine(
+    "postgresql+asyncpg://...",
+    pool_size=10,          # Base pool size
+    max_overflow=20,       # Additional connections under load
+    pool_recycle=3600,     # Recycle connections hourly
+)
+```
+
+**Partition Pruning:**
+```python
+# For time-partitioned tables, always include timestamp filters
+from datetime import datetime, timedelta, UTC
+
+# This enables PostgreSQL to skip irrelevant partitions
+stream = await store.get_events(
+    aggregate_id=order_id,
+    aggregate_type="Order",
+    from_timestamp=datetime.now(UTC) - timedelta(days=30),
+)
+```
+
+**Batch Processing:**
+```python
+# Use read_all with limits for large datasets
+options = ReadOptions(from_position=last_position, limit=1000)
+async for event in store.read_all(options):
+    await process(event)
+    last_position = event.global_position
+```
+
 ---
 
 ## SQLiteEventStore
 
-Lightweight SQLite implementation for development, testing, and embedded applications.
+Lightweight SQLite implementation for development, testing, and embedded applications. Zero configuration required.
 
 ### Installation
 
@@ -308,18 +558,13 @@ pip install eventsource[sqlite]
 ```python
 from eventsource import SQLiteEventStore
 
-# File-based database
+# File-based database (persistent)
 async with SQLiteEventStore("./events.db") as store:
     await store.initialize()
     # ... use store
 
-# In-memory database for testing
+# In-memory database (perfect for tests)
 async with SQLiteEventStore(":memory:") as store:
-    await store.initialize()
-    # ... use store
-
-# With tracing disabled (useful for testing without OpenTelemetry overhead)
-async with SQLiteEventStore("./events.db", enable_tracing=False) as store:
     await store.initialize()
     # ... use store
 ```
@@ -329,66 +574,42 @@ async with SQLiteEventStore("./events.db", enable_tracing=False) as store:
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `database` | `str` | Required | Path to SQLite file or `:memory:` |
-| `event_registry` | `EventRegistry` | Default registry | Event type lookup |
-| `wal_mode` | `bool` | `True` | Enable WAL journal mode |
-| `busy_timeout` | `int` | `5000` | Timeout in ms for locked database |
+| `event_registry` | `EventRegistry` | Default | Registry for event deserialization |
+| `wal_mode` | `bool` | `True` | WAL mode for concurrent read performance |
+| `busy_timeout` | `int` | `5000` | Milliseconds to wait when database is locked |
 | `enable_tracing` | `bool` | `True` | OpenTelemetry tracing |
-| `type_converter` | `TypeConverter` | `None` | Custom type converter (see [TypeConverter](#typeconverter)) |
+| `type_converter` | `TypeConverter` | `None` | Custom type converter |
 | `uuid_fields` | `set[str]` | `None` | Additional UUID field names |
 | `string_id_fields` | `set[str]` | `None` | Fields to exclude from UUID detection |
 | `auto_detect_uuid` | `bool` | `True` | Auto-detect UUIDs by `_id` suffix |
 
 ### Factory Methods
 
-#### `with_strict_uuid_detection()`
-
-Create a store with explicit UUID field list only (no auto-detection):
-
 ```python
+# Strict UUID detection (no auto-detection)
 store = SQLiteEventStore.with_strict_uuid_detection(
     database="./events.db",
     uuid_fields={"event_id", "aggregate_id", "tenant_id"},
-    event_registry=registry,  # optional
-    wal_mode=True,            # optional
-    busy_timeout=5000,        # optional
-    enable_tracing=True,      # optional
 )
 ```
 
-### Features
+### Context Manager Usage
 
-- **Optimistic locking**: Version-based conflict detection
-- **Idempotent writes**: Duplicate events are skipped
-- **WAL mode**: Better concurrent read performance (optional)
-- **Multi-tenancy**: Built-in tenant isolation
-- **OpenTelemetry tracing**: Optional performance monitoring (consistent with PostgreSQLEventStore)
-- **Full EventStore interface**: Drop-in replacement for other stores
-
-### SQLite-Specific Adaptations
-
-The SQLite implementation handles type differences transparently:
-
-- **UUIDs**: Stored as TEXT (36-character hyphenated format)
-- **Timestamps**: Stored as TEXT (ISO 8601 format)
-- **JSON**: Stored as TEXT (SQLite lacks native JSONB)
-- **Auto-increment**: Uses INTEGER PRIMARY KEY AUTOINCREMENT
-
-### Context Manager
-
-Always use the async context manager for proper resource cleanup:
+Always use the async context manager:
 
 ```python
-# Recommended approach
+# Recommended: automatic cleanup
 async with SQLiteEventStore("./events.db") as store:
     await store.initialize()
-    result = await store.append_events(...)
+    # ... use store
+# Connection automatically closed
 
-# Manual approach (requires explicit cleanup)
+# Manual (if needed)
 store = SQLiteEventStore("./events.db")
 await store._connect()
 await store.initialize()
 try:
-    result = await store.append_events(...)
+    # ... use store
 finally:
     await store.close()
 ```
@@ -396,110 +617,180 @@ finally:
 ### Properties
 
 ```python
-store = SQLiteEventStore("./events.db", wal_mode=True, busy_timeout=10000)
-
-# Read-only properties
 store.database        # "./events.db"
 store.event_registry  # EventRegistry instance
 store.is_connected    # True if connection is open
-store.wal_mode        # True
-store.busy_timeout    # 10000
+store.wal_mode        # True/False
+store.busy_timeout    # Timeout in ms
 ```
+
+### Features
+
+| Feature | Description |
+|---------|-------------|
+| **Optimistic locking** | Version-based conflict detection |
+| **Idempotent writes** | Duplicate events silently skipped |
+| **WAL mode** | Better concurrent read performance |
+| **Multi-tenancy** | `tenant_id` field for isolation |
+| **OpenTelemetry tracing** | Optional performance monitoring |
+| **Auto schema creation** | `initialize()` creates tables |
+
+### SQLite Type Adaptations
+
+SQLite stores all data as TEXT, but the store handles conversion transparently:
+
+| Python Type | SQLite Storage | Notes |
+|-------------|----------------|-------|
+| `UUID` | TEXT | 36-char hyphenated format |
+| `datetime` | TEXT | ISO 8601 format |
+| `dict` (payload) | TEXT | JSON serialized |
+| `int` (id) | INTEGER | Auto-increment |
 
 ### Database Schema
 
-The store uses the following schema (created by `initialize()`):
+Created automatically by `initialize()`:
 
 ```sql
-CREATE TABLE IF NOT EXISTS events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+CREATE TABLE events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,  -- Global position
     event_id TEXT NOT NULL UNIQUE,
     event_type TEXT NOT NULL,
     aggregate_type TEXT NOT NULL,
     aggregate_id TEXT NOT NULL,
     tenant_id TEXT,
     actor_id TEXT,
-    version INTEGER NOT NULL,
+    version INTEGER NOT NULL,              -- Stream position
     timestamp TEXT NOT NULL,
     payload TEXT NOT NULL,
     created_at TEXT NOT NULL,
     UNIQUE(aggregate_id, aggregate_type, version)
 );
 
-CREATE INDEX IF NOT EXISTS idx_events_aggregate
-    ON events(aggregate_id, aggregate_type);
-CREATE INDEX IF NOT EXISTS idx_events_type
-    ON events(aggregate_type);
-CREATE INDEX IF NOT EXISTS idx_events_tenant
-    ON events(tenant_id);
-CREATE INDEX IF NOT EXISTS idx_events_timestamp
-    ON events(timestamp);
+CREATE INDEX idx_events_aggregate ON events(aggregate_id, aggregate_type);
+CREATE INDEX idx_events_type ON events(aggregate_type);
+CREATE INDEX idx_events_tenant ON events(tenant_id);
+CREATE INDEX idx_events_timestamp ON events(timestamp);
 ```
 
 ### Limitations
 
-- **Single writer**: Only one write operation at a time
-- **No network access**: Cannot share database across machines
-- **Busy timeout**: Concurrent writers may fail after timeout
+| Limitation | Impact | Mitigation |
+|------------|--------|------------|
+| Single writer | Only one concurrent write | Use PostgreSQL for high write loads |
+| No network sharing | Cannot access from multiple machines | Use PostgreSQL for distributed systems |
+| Busy timeout | Writes may fail under contention | Increase `busy_timeout` or retry |
 
 ### When to Use
 
-- Local development without database setup
-- Unit and integration testing
+- Local development (no database setup)
+- Unit and integration tests (fast, isolated)
 - CI/CD pipelines
 - Single-instance deployments
-- Embedded applications
-- Edge computing scenarios
+- Embedded/edge applications
+- Desktop applications
 
 ### When NOT to Use
 
-- High-throughput production workloads
+- High-throughput production
 - Multi-instance deployments
-- Heavy concurrent write loads
+- Heavy concurrent writes
+- Distributed systems
 
-### Example: Complete Usage
+### Example
 
 ```python
 import asyncio
 from uuid import uuid4
-from eventsource import SQLiteEventStore, AggregateRepository
+from eventsource import SQLiteEventStore
 
 async def main():
-    async with SQLiteEventStore("./app.db", wal_mode=True) as store:
+    async with SQLiteEventStore("./app.db") as store:
         await store.initialize()
 
-        # Direct event operations
         order_id = uuid4()
+
+        # Append events
         result = await store.append_events(
             aggregate_id=order_id,
             aggregate_type="Order",
-            events=[order_created_event],
+            events=[OrderCreated(aggregate_id=order_id, ...)],
             expected_version=0,
         )
-        print(f"Appended: version={result.new_version}")
+        print(f"Version: {result.new_version}, Position: {result.global_position}")
 
-        # Get events
+        # Read events
         stream = await store.get_events(order_id, "Order")
-        print(f"Stream has {len(stream.events)} events")
-
-        # Check existence
-        exists = await store.event_exists(order_created_event.event_id)
-        print(f"Event exists: {exists}")
+        print(f"Order has {stream.version} events")
 
         # Stream all events
-        async for stored_event in store.read_all():
-            print(f"Position {stored_event.global_position}: {stored_event.event_type}")
+        async for stored in store.read_all():
+            print(f"[{stored.global_position}] {stored.event_type}")
 
 asyncio.run(main())
 ```
 
-See [SQLite Backend Guide](../guides/sqlite-backend.md) for detailed usage patterns and best practices.
+See [SQLite Backend Guide](../guides/sqlite-backend.md) for comprehensive usage patterns.
+
+---
+
+## Choosing an Event Store
+
+Use this comparison to select the right store for your use case:
+
+| Feature | InMemoryEventStore | SQLiteEventStore | PostgreSQLEventStore |
+|---------|-------------------|------------------|---------------------|
+| **Persistence** | None | File or memory | Full ACID |
+| **Setup complexity** | None | None | Database required |
+| **Concurrency** | Single process | Single writer | Full multi-writer |
+| **Performance** | Fastest | Fast | Production-grade |
+| **Scalability** | None | Limited | Horizontal |
+| **Distributed** | No | No | Yes |
+| **Multi-tenancy** | Yes | Yes | Yes |
+| **Tracing** | Optional | Optional | Optional |
+| **Best for** | Tests | Dev/Embedded | Production |
+
+### Decision Guide
+
+```
+Need persistence?
+├── No  → InMemoryEventStore
+└── Yes → Need concurrent writes from multiple instances?
+          ├── No  → SQLiteEventStore
+          └── Yes → PostgreSQLEventStore
+```
+
+### Migration Path
+
+All stores implement the same `EventStore` interface, making migration easy:
+
+```python
+# Development
+store = InMemoryEventStore()
+
+# Testing with persistence
+store = SQLiteEventStore(":memory:")
+
+# Production
+store = PostgreSQLEventStore(session_factory)
+
+# Your code doesn't change!
+repo = AggregateRepository(event_store=store, ...)
+```
 
 ---
 
 ## TypeConverter
 
-The `TypeConverter` protocol and `DefaultTypeConverter` implementation handle type conversion during event deserialization, converting JSON-stored strings back to proper Python types (UUIDs, datetimes).
+When events are stored, UUIDs and datetimes become JSON strings. The `TypeConverter` handles converting them back to proper Python types during deserialization.
+
+```python
+from eventsource.stores import (
+    TypeConverter,           # Protocol
+    DefaultTypeConverter,    # Default implementation
+    DEFAULT_UUID_FIELDS,     # Default UUID field names
+    DEFAULT_STRING_ID_FIELDS, # Default exclusions
+)
+```
 
 ### TypeConverter Protocol
 
@@ -816,56 +1107,126 @@ except OptimisticLockError as e:
 
 ## Best Practices
 
-### Optimistic Locking
+### Use Repository Pattern
 
-Always use proper expected versions:
+Prefer the repository over direct store access. The repository handles optimistic locking automatically:
 
 ```python
-# Load aggregate to get current version
-stream = await store.get_events(order_id, "Order")
-current_version = stream.version
+# Recommended: Repository pattern
+repo = AggregateRepository(event_store=store, ...)
+order = await repo.load(order_id)
+order.ship(tracking_number)
+await repo.save(order)  # Handles versioning internally
 
-# Modify and save
-result = await store.append_events(
-    aggregate_id=order_id,
-    aggregate_type="Order",
-    events=new_events,
-    expected_version=current_version,
-)
+# Direct store access (lower-level, manual versioning)
+stream = await store.get_events(order_id, "Order")
+# ... create events manually ...
+await store.append_events(..., expected_version=stream.version)
+```
+
+### Handle Concurrency Conflicts
+
+Always handle `OptimisticLockError` with retry logic:
+
+```python
+from eventsource import OptimisticLockError
+
+MAX_RETRIES = 3
+
+for attempt in range(MAX_RETRIES):
+    try:
+        order = await repo.load(order_id)
+        order.ship(tracking_number)
+        await repo.save(order)
+        break
+    except OptimisticLockError:
+        if attempt == MAX_RETRIES - 1:
+            raise  # Give up after max retries
+        # Reload and retry
+        continue
 ```
 
 ### Idempotency
 
-Use `event_exists()` for deduplication:
+Use unique event IDs to prevent duplicate processing:
 
 ```python
+# Each event has a unique event_id
 if await store.event_exists(event.event_id):
-    print("Event already processed")
-    return
+    return  # Already processed, skip
+
+# Or use deterministic event IDs for idempotent commands
+event_id = uuid5(NAMESPACE, f"{command_id}:{command_type}")
 ```
 
-### Batch Processing
+### Batch Processing for Projections
 
-Use streaming methods for large datasets:
+Use streaming methods for memory efficiency:
 
 ```python
-options = ReadOptions(limit=100)
+# Process in batches
+last_position = await checkpoint_repo.get_position("MyProjection")
+
+options = ReadOptions(from_position=last_position, limit=1000)
 async for stored_event in store.read_all(options):
-    await process_event(stored_event.event)
+    await projection.handle(stored_event.event)
+    last_position = stored_event.global_position
+
+await checkpoint_repo.save_position("MyProjection", last_position)
 ```
 
-### Timestamp Filtering
+### Timestamp Filtering for Partitioned Tables
 
-Enable partition pruning in PostgreSQL:
+Include timestamp bounds to enable partition pruning in PostgreSQL:
 
 ```python
-# Only query recent events
 from datetime import datetime, timedelta, UTC
 
-recent = datetime.now(UTC) - timedelta(days=7)
+# Instead of scanning all partitions
+stream = await store.get_events(order_id, "Order")
+
+# Scan only relevant partitions
+recent = datetime.now(UTC) - timedelta(days=30)
 stream = await store.get_events(
-    aggregate_id=order_id,
-    aggregate_type="Order",
+    order_id, "Order",
     from_timestamp=recent,
 )
 ```
+
+### Testing Best Practices
+
+```python
+import pytest
+from eventsource import InMemoryEventStore, SQLiteEventStore
+
+# Fast unit tests: InMemoryEventStore
+@pytest.fixture
+def store():
+    return InMemoryEventStore()
+
+# Integration tests with persistence: SQLiteEventStore in-memory
+@pytest.fixture
+async def store():
+    async with SQLiteEventStore(":memory:") as store:
+        await store.initialize()
+        yield store
+
+# Reset between tests
+@pytest.fixture(autouse=True)
+async def reset_store(store):
+    yield
+    if hasattr(store, 'clear'):
+        await store.clear()
+```
+
+---
+
+## See Also
+
+- [Architecture Overview](../architecture.md) - How event stores fit in the system
+- [ADR-0003: Optimistic Locking](../adrs/0003-optimistic-locking.md) - Design rationale
+- [ADR-0007: Remove Sync Event Store](../adrs/0007-remove-sync-event-store.md) - Async-only design
+- [SQLite Backend Guide](../guides/sqlite-backend.md) - SQLite patterns and configuration
+- [Repository Pattern Guide](../guides/repository-pattern.md) - Higher-level aggregate access
+- [Subscriptions Guide](../guides/subscriptions.md) - Processing events from the store
+- [SQLite Usage Examples](../examples/sqlite-usage.md) - Practical code examples

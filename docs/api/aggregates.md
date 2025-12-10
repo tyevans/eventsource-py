@@ -1,17 +1,13 @@
 # Aggregates API Reference
 
-This document covers the aggregate pattern implementation, including `AggregateRoot`, `DeclarativeAggregate`, and `AggregateRepository`.
-
-## Overview
-
-Aggregates are consistency boundaries in event sourcing. They maintain their state by applying events and emit new events when commands are executed.
+Aggregates are consistency boundaries in event sourcing. They encapsulate domain logic, maintain state by applying events, and enforce business invariants.
 
 ```python
 from eventsource import (
     AggregateRoot,
     DeclarativeAggregate,
     AggregateRepository,
-    handles,
+    handles,  # The @handles decorator for declarative event handling
 )
 ```
 
@@ -21,59 +17,50 @@ from eventsource import (
 
 The base class for event-sourced aggregates.
 
-### Class Definition
+### Class Attributes
 
-```python
-class AggregateRoot(Generic[TState], ABC):
-    """Base class for event-sourced aggregate roots."""
+| Attribute | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `aggregate_type` | `str` | `"Unknown"` | Type identifier for this aggregate (override in subclasses) |
+| `schema_version` | `int` | `1` | Increment when state structure changes (invalidates old snapshots) |
+| `validate_versions` | `bool` | `True` | When `True`, raises `EventVersionError` on version mismatch |
 
-    aggregate_type: str = "Unknown"  # Override in subclasses
-    schema_version: int = 1  # Increment when state structure changes (for snapshotting)
+### Instance Properties
 
-    def __init__(self, aggregate_id: UUID) -> None: ...
+| Property | Type | Description |
+|----------|------|-------------|
+| `aggregate_id` | `UUID` | Unique identifier for this aggregate instance |
+| `version` | `int` | Current version (number of events applied) |
+| `state` | `TState \| None` | Current state (`None` for new aggregates) |
+| `uncommitted_events` | `list[DomainEvent]` | Events waiting to be persisted |
+| `has_uncommitted_events` | `bool` | Whether there are events to save |
 
-    @property
-    def aggregate_id(self) -> UUID: ...
+### Key Methods
 
-    @property
-    def version(self) -> int: ...
-
-    @property
-    def state(self) -> TState | None: ...
-
-    @property
-    def uncommitted_events(self) -> list[DomainEvent]: ...
-
-    @property
-    def has_uncommitted_events(self) -> bool: ...
-
-    def apply_event(self, event: DomainEvent, is_new: bool = True) -> None: ...
-
-    @abstractmethod
-    def _apply(self, event: DomainEvent) -> None: ...
-
-    @abstractmethod
-    def _get_initial_state(self) -> TState: ...
-
-    def mark_events_as_committed(self) -> None: ...
-
-    def load_from_history(self, events: list[DomainEvent]) -> None: ...
-
-    def get_next_version(self) -> int: ...
-
-    def clear_uncommitted_events(self) -> list[DomainEvent]: ...
-```
+| Method | Description |
+|--------|-------------|
+| `apply_event(event, is_new=True)` | Apply event to aggregate; tracks for persistence if `is_new=True` |
+| `_apply(event)` | **Abstract.** Update state based on event (implement in subclass) |
+| `_get_initial_state()` | **Abstract.** Return initial state for new aggregates |
+| `_raise_event(event)` | Convenience alias for `apply_event(event, is_new=True)` |
+| `load_from_history(events)` | Reconstitute state by replaying historical events |
+| `get_next_version()` | Get version number for the next event (`version + 1`) |
+| `mark_events_as_committed()` | Clear uncommitted events after successful save |
+| `clear_uncommitted_events()` | Clear and return uncommitted events |
 
 ### Creating an Aggregate
 
-#### 1. Define State Model
+Building an aggregate requires three components: state model, events, and the aggregate class itself.
+
+#### Step 1: Define the State Model
+
+Use Pydantic for validation and serialization:
 
 ```python
 from pydantic import BaseModel
 from uuid import UUID
 
 class OrderState(BaseModel):
-    """State of an Order aggregate."""
     order_id: UUID
     customer_id: UUID | None = None
     status: str = "draft"
@@ -81,7 +68,9 @@ class OrderState(BaseModel):
     total: float = 0.0
 ```
 
-#### 2. Define Events
+#### Step 2: Define Domain Events
+
+Events capture what happened. Register them for serialization:
 
 ```python
 from eventsource import DomainEvent, register_event
@@ -106,22 +95,19 @@ class OrderSubmitted(DomainEvent):
     aggregate_type: str = "Order"
 ```
 
-#### 3. Implement Aggregate
+#### Step 3: Implement the Aggregate
 
 ```python
 from eventsource import AggregateRoot
 
 class OrderAggregate(AggregateRoot[OrderState]):
-    """Event-sourced Order aggregate."""
-
     aggregate_type = "Order"
 
     def _get_initial_state(self) -> OrderState:
-        """Return initial state for new aggregates."""
         return OrderState(order_id=self.aggregate_id)
 
     def _apply(self, event: DomainEvent) -> None:
-        """Apply event to update state."""
+        """Route events to state changes."""
         if isinstance(event, OrderCreated):
             self._state = OrderState(
                 order_id=self.aggregate_id,
@@ -130,119 +116,68 @@ class OrderAggregate(AggregateRoot[OrderState]):
             )
         elif isinstance(event, ItemAdded):
             if self._state:
-                new_items = [*self._state.items, {
-                    "product_id": str(event.product_id),
-                    "quantity": event.quantity,
-                    "price": event.price,
-                }]
-                new_total = self._state.total + (event.quantity * event.price)
                 self._state = self._state.model_copy(update={
-                    "items": new_items,
-                    "total": new_total,
+                    "items": [*self._state.items, {
+                        "product_id": str(event.product_id),
+                        "quantity": event.quantity,
+                        "price": event.price,
+                    }],
+                    "total": self._state.total + (event.quantity * event.price),
                 })
         elif isinstance(event, OrderSubmitted):
             if self._state:
-                self._state = self._state.model_copy(update={
-                    "status": "submitted",
-                })
+                self._state = self._state.model_copy(update={"status": "submitted"})
 
-    # Command methods
+    # Commands validate business rules then emit events
     def create(self, customer_id: UUID) -> None:
-        """Command: Create the order."""
         if self.version > 0:
             raise ValueError("Order already created")
-
-        event = OrderCreated(
+        self._raise_event(OrderCreated(
             aggregate_id=self.aggregate_id,
             customer_id=customer_id,
             aggregate_version=self.get_next_version(),
-        )
-        self.apply_event(event)
+        ))
 
     def add_item(self, product_id: UUID, quantity: int, price: float) -> None:
-        """Command: Add item to order."""
         if not self.state or self.state.status != "created":
             raise ValueError("Order must be created before adding items")
-
-        event = ItemAdded(
+        self._raise_event(ItemAdded(
             aggregate_id=self.aggregate_id,
             product_id=product_id,
             quantity=quantity,
             price=price,
             aggregate_version=self.get_next_version(),
-        )
-        self.apply_event(event)
+        ))
 
     def submit(self) -> None:
-        """Command: Submit the order."""
         if not self.state or self.state.status != "created":
             raise ValueError("Order must be created before submitting")
         if not self.state.items:
             raise ValueError("Cannot submit empty order")
-
-        event = OrderSubmitted(
+        self._raise_event(OrderSubmitted(
             aggregate_id=self.aggregate_id,
             aggregate_version=self.get_next_version(),
-        )
-        self.apply_event(event)
+        ))
 ```
 
-### Key Methods
+### Version Validation
 
-#### `apply_event(event, is_new=True)`
-
-Apply an event to the aggregate:
-
-- `is_new=True`: New event - will be tracked for persistence
-- `is_new=False`: Historical event - only updates state
+By default, aggregates validate that events arrive in sequence. Disable for special cases:
 
 ```python
-# New event (generated by command)
-aggregate.apply_event(order_created, is_new=True)
-
-# Historical event (loaded from store)
-aggregate.apply_event(stored_event, is_new=False)
+class LenientAggregate(AggregateRoot[MyState]):
+    validate_versions = False  # Log warnings instead of raising errors
 ```
 
-#### `load_from_history(events)`
-
-Reconstitute aggregate from event history:
-
-```python
-aggregate = OrderAggregate(order_id)
-aggregate.load_from_history(stream.events)
-print(f"Loaded with version {aggregate.version}")
-```
-
-#### `get_next_version()`
-
-Get version number for new events:
-
-```python
-event = OrderCreated(
-    aggregate_id=self.aggregate_id,
-    aggregate_version=self.get_next_version(),
-    ...
-)
-```
-
-#### `mark_events_as_committed()`
-
-Clear uncommitted events after save:
-
-```python
-# Called by repository after successful save
-aggregate.mark_events_as_committed()
-assert not aggregate.has_uncommitted_events
-```
+When `validate_versions=True` (default) and a version mismatch occurs, `EventVersionError` is raised.
 
 ---
 
 ## DeclarativeAggregate
 
-Alternative to `AggregateRoot` using decorators for event handlers.
+Use `@handles` decorators instead of `if/elif` chains. Cleaner and more maintainable for aggregates with many event types.
 
-### Usage
+### Basic Usage
 
 ```python
 from eventsource import DeclarativeAggregate, handles
@@ -264,59 +199,98 @@ class OrderAggregate(DeclarativeAggregate[OrderState]):
     @handles(ItemAdded)
     def _on_item_added(self, event: ItemAdded) -> None:
         if self._state:
-            # Update state...
-            pass
+            self._state = self._state.model_copy(update={
+                "items": [*self._state.items, {"product_id": str(event.product_id)}],
+            })
 
     @handles(OrderSubmitted)
     def _on_order_submitted(self, event: OrderSubmitted) -> None:
         if self._state:
             self._state = self._state.model_copy(update={"status": "submitted"})
 
-    # Command methods remain the same
+    # Commands remain the same as AggregateRoot
     def create(self, customer_id: UUID) -> None:
         ...
 ```
 
+### Unregistered Event Handling
+
+Control behavior when an event has no `@handles` decorator:
+
+| Mode | Behavior |
+|------|----------|
+| `"ignore"` | Silently skip (default, forward-compatible) |
+| `"warn"` | Log a warning |
+| `"error"` | Raise `UnhandledEventError` |
+
+```python
+class StrictOrderAggregate(DeclarativeAggregate[OrderState]):
+    unregistered_event_handling = "error"  # Fail fast on missing handlers
+
+    @handles(OrderCreated)
+    def _on_created(self, event: OrderCreated) -> None:
+        ...
+    # If OrderShipped arrives without a handler, raises UnhandledEventError
+```
+
 ### Benefits
 
-- No large `if/elif` chains in `_apply()`
-- Handler methods are self-documenting
-- Easy to add new event handlers
-- Forward compatible (unknown events are ignored)
+- No `if/elif` chains in `_apply()`
+- Self-documenting handler methods
+- Easy to add new event types
+- Forward-compatible by default (ignores unknown events)
 
 ---
 
 ## AggregateRepository
 
-Repository pattern for loading and saving aggregates.
+Abstracts aggregate persistence: loading from event history and saving new events.
 
-### Setup
+> **For comprehensive usage patterns, see the [Repository Pattern Guide](../guides/repository-pattern.md).**
+
+### Constructor
 
 ```python
 from eventsource import AggregateRepository, InMemoryEventStore
 
-event_store = InMemoryEventStore()
 repo = AggregateRepository(
-    event_store=event_store,
+    event_store=InMemoryEventStore(),
     aggregate_factory=OrderAggregate,
     aggregate_type="Order",
-    event_publisher=event_bus,  # Optional
+    event_publisher=event_bus,       # Optional: broadcast events after save
+    snapshot_store=snapshot_store,   # Optional: enable snapshotting
+    snapshot_threshold=100,          # Optional: auto-snapshot every N events
+    snapshot_mode="sync",            # "sync" | "background" | "manual"
+    enable_tracing=True,             # Optional: OpenTelemetry support
 )
 ```
 
-### Constructor Parameters
+### Core Methods
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `event_store` | `EventStore` | Required | Event store for persistence |
-| `aggregate_factory` | `type[TAggregate]` | Required | Class to instantiate |
-| `aggregate_type` | `str` | Required | Type name for events |
-| `event_publisher` | `EventPublisher \| None` | `None` | Optional event broadcaster |
-| `snapshot_store` | `SnapshotStore \| None` | `None` | Optional snapshot store for state caching |
-| `snapshot_threshold` | `int \| None` | `None` | Events between automatic snapshots |
-| `snapshot_mode` | `"sync" \| "background" \| "manual"` | `"sync"` | When to create snapshots |
+```python
+# Load existing aggregate (raises AggregateNotFoundError if missing)
+order = await repo.load(order_id)
 
-### Snapshot-Enabled Repository
+# Load or create new if not found
+order = await repo.load_or_create(order_id)
+
+# Create new (in-memory only, not persisted)
+order = repo.create_new(uuid4())
+
+# Save uncommitted events (uses optimistic locking)
+await repo.save(order)
+
+# Check existence without loading
+if await repo.exists(order_id):
+    ...
+
+# Get current version
+version = await repo.get_version(order_id)
+```
+
+### Snapshot Configuration
+
+Snapshots speed up loading for aggregates with many events:
 
 ```python
 from eventsource import AggregateRepository, PostgreSQLEventStore
@@ -327,104 +301,37 @@ repo = AggregateRepository(
     aggregate_factory=OrderAggregate,
     aggregate_type="Order",
     snapshot_store=PostgreSQLSnapshotStore(session_factory),
-    snapshot_threshold=100,  # Snapshot every 100 events
-    snapshot_mode="background",  # Non-blocking snapshot creation
+    snapshot_threshold=100,      # Auto-snapshot every 100 events
+    snapshot_mode="background",  # Non-blocking
 )
 ```
 
-### Methods
-
-#### `load(aggregate_id)`
-
-Load aggregate from history:
-
-```python
-order = await repo.load(order_id)
-print(f"Order status: {order.state.status}")
-```
-
-Raises `AggregateNotFoundError` if no events exist.
-
-#### `load_or_create(aggregate_id)`
-
-Load existing or create new:
+| Mode | Behavior |
+|------|----------|
+| `"sync"` | Create snapshot immediately after save (blocking) |
+| `"background"` | Create snapshot asynchronously |
+| `"manual"` | Only via explicit `create_snapshot()` call |
 
 ```python
-order = await repo.load_or_create(order_id)
-if order.version == 0:
-    order.create(customer_id=customer_id)
-```
-
-#### `save(aggregate)`
-
-Save uncommitted events:
-
-```python
-order.add_item(product_id, quantity=2, price=19.99)
-await repo.save(order)
-
-# Events are now committed
-assert not order.has_uncommitted_events
-```
-
-#### `exists(aggregate_id)`
-
-Check if aggregate exists:
-
-```python
-if await repo.exists(order_id):
-    order = await repo.load(order_id)
-```
-
-#### `get_version(aggregate_id)`
-
-Get current version:
-
-```python
-version = await repo.get_version(order_id)
-```
-
-#### `create_new(aggregate_id)`
-
-Create new aggregate instance (in memory only):
-
-```python
-order = repo.create_new(uuid4())
-order.create(customer_id=customer_id)
-await repo.save(order)
-```
-
-#### `create_snapshot(aggregate)`
-
-Manually create a snapshot:
-
-```python
-order = await repo.load(order_id)
+# Manual snapshot creation
 snapshot = await repo.create_snapshot(order)
-print(f"Created snapshot at version {snapshot.version}")
-```
 
-**Note:** Requires `snapshot_store` to be configured.
-
-#### `await_pending_snapshots()`
-
-Wait for background snapshot tasks (useful for testing):
-
-```python
-await repo.save(aggregate)  # Triggers background snapshot
+# Wait for background snapshots (useful in tests)
 count = await repo.await_pending_snapshots()
-print(f"Waited for {count} background snapshots")
 ```
 
-### Snapshot Properties
+### Properties
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `snapshot_store` | `SnapshotStore \| None` | The configured snapshot store |
-| `snapshot_threshold` | `int \| None` | Events between snapshots |
-| `snapshot_mode` | `str` | Current snapshot mode |
-| `has_snapshot_support` | `bool` | Whether snapshotting is enabled |
-| `pending_snapshot_count` | `int` | Background tasks not yet complete |
+| `aggregate_type` | `str` | The aggregate type this repository manages |
+| `event_store` | `EventStore` | The configured event store |
+| `event_publisher` | `EventPublisher \| None` | The event bus, if configured |
+| `snapshot_store` | `SnapshotStore \| None` | The snapshot store, if configured |
+| `snapshot_threshold` | `int \| None` | Events between auto-snapshots |
+| `snapshot_mode` | `Literal["sync", "background", "manual"]` | When snapshots are created |
+| `has_snapshot_support` | `bool` | `True` if snapshot_store is configured |
+| `pending_snapshot_count` | `int` | Number of pending background snapshots |
 
 ### Complete Example
 
@@ -434,32 +341,22 @@ from uuid import uuid4
 from eventsource import AggregateRepository, InMemoryEventStore
 
 async def main():
-    # Setup
-    store = InMemoryEventStore()
     repo = AggregateRepository(
-        event_store=store,
+        event_store=InMemoryEventStore(),
         aggregate_factory=OrderAggregate,
         aggregate_type="Order",
     )
 
-    # Create order
-    order_id = uuid4()
-    customer_id = uuid4()
-
-    order = repo.create_new(order_id)
-    order.create(customer_id=customer_id)
+    # Create and persist
+    order = repo.create_new(uuid4())
+    order.create(customer_id=uuid4())
     order.add_item(uuid4(), quantity=2, price=29.99)
-    order.add_item(uuid4(), quantity=1, price=49.99)
     order.submit()
-
     await repo.save(order)
 
-    # Reload and verify
-    loaded = await repo.load(order_id)
-    print(f"Status: {loaded.state.status}")
-    print(f"Items: {len(loaded.state.items)}")
-    print(f"Total: ${loaded.state.total:.2f}")
-    print(f"Version: {loaded.version}")
+    # Reload from event store
+    loaded = await repo.load(order.aggregate_id)
+    print(f"Status: {loaded.state.status}, Version: {loaded.version}")
 
 asyncio.run(main())
 ```
@@ -470,24 +367,25 @@ asyncio.run(main())
 
 ### AggregateNotFoundError
 
+Raised when loading an aggregate with no events:
+
 ```python
 from eventsource import AggregateNotFoundError
 
 try:
     order = await repo.load(order_id)
 except AggregateNotFoundError as e:
-    print(f"Not found: {e.aggregate_id}")
-    print(f"Type: {e.aggregate_type}")
+    print(f"Aggregate {e.aggregate_id} of type {e.aggregate_type} not found")
 ```
 
 ### OptimisticLockError
 
-Concurrent modification detected during save:
+Raised on concurrent modification. Handle with retry:
 
 ```python
 from eventsource import OptimisticLockError
 
-async def update_order(order_id: UUID, max_retries: int = 3):
+async def update_with_retry(order_id: UUID, max_retries: int = 3):
     for attempt in range(max_retries):
         try:
             order = await repo.load(order_id)
@@ -497,80 +395,154 @@ async def update_order(order_id: UUID, max_retries: int = 3):
         except OptimisticLockError:
             if attempt == max_retries - 1:
                 raise
-            # Retry with fresh state
+            # Reload fresh state and retry
+```
 
-raise RuntimeError("Max retries exceeded")
+### EventVersionError
+
+Raised when event versions are out of sequence (if `validate_versions=True`):
+
+```python
+from eventsource import EventVersionError
+
+try:
+    aggregate.apply_event(event)
+except EventVersionError as e:
+    print(f"Expected v{e.expected_version}, got v{e.actual_version}")
+```
+
+### UnhandledEventError
+
+Raised by `DeclarativeAggregate` when `unregistered_event_handling="error"` and no handler exists:
+
+```python
+from eventsource.exceptions import UnhandledEventError
+
+try:
+    aggregate.apply_event(unknown_event)
+except UnhandledEventError as e:
+    print(f"No handler for {e.event_type} in {e.handler_class}")
+```
+
+---
+
+## Aggregate Lifecycle
+
+```
+                    +------------------+
+                    |   Create New     |
+                    |  repo.create_new |
+                    +--------+---------+
+                             |
+                             v
++------------------+    +----+----+
+|  Load from Store |    | version |
+| repo.load(id)    |--->|   = 0   |
++------------------+    +----+----+
+                             |
+                    Execute Commands
+                   (emit & apply events)
+                             |
+                             v
+                    +--------+--------+
+                    | uncommitted     |
+                    | events > 0      |
+                    +--------+--------+
+                             |
+                        repo.save()
+                             |
+                             v
+                    +--------+--------+
+                    | Events persisted|
+                    | version updated |
+                    +--------+--------+
+                             |
+                   (Reload to continue)
 ```
 
 ---
 
 ## Best Practices
 
-### Command Validation
+### Validate Before Emitting
 
-Validate commands before emitting events:
+Commands should validate business rules before raising events:
 
 ```python
 def submit(self) -> None:
-    # Validate state
     if not self.state:
         raise ValueError("Order not created")
     if self.state.status != "created":
-        raise ValueError(f"Cannot submit order in {self.state.status} status")
+        raise ValueError(f"Cannot submit {self.state.status} order")
     if not self.state.items:
         raise ValueError("Cannot submit empty order")
 
-    # Emit event
-    event = OrderSubmitted(...)
-    self.apply_event(event)
+    self._raise_event(OrderSubmitted(...))
 ```
 
-### Immutable State
+### Immutable State Updates
 
-Use Pydantic's `model_copy()` for state updates:
+Use `model_copy()` to create new state objects:
 
 ```python
 def _apply(self, event: DomainEvent) -> None:
     if isinstance(event, ItemAdded) and self._state:
-        # Create new state object
         self._state = self._state.model_copy(update={
             "items": [*self._state.items, new_item],
             "total": self._state.total + item_total,
         })
 ```
 
-### Separate Commands from Queries
+### Aggregates Are for Writes
 
-Aggregates should only be used for writes:
+Use aggregates only for commands. For queries, use projections:
 
 ```python
-# Good: Load aggregate, execute command, save
+# Correct: Load, command, save
 order = await repo.load(order_id)
 order.submit()
 await repo.save(order)
 
-# Bad: Using aggregate for queries
+# Wrong: Using aggregates for reads
 # Use projections/read models instead
 ```
 
 ### Keep Aggregates Small
 
-Break large aggregates into smaller ones:
+Large aggregates are slow to load and prone to conflicts. Split by consistency boundary:
+
+```
+Instead of one giant OrderAggregate:
+  - OrderAggregate (lifecycle)
+  - InventoryAggregate (stock levels)
+  - ShippingAggregate (delivery)
+```
+
+---
+
+## Schema Versioning
+
+When your state model changes, increment `schema_version` to invalidate old snapshots:
 
 ```python
-# Instead of one huge OrderAggregate with all details,
-# consider separate aggregates:
-# - OrderAggregate (order lifecycle)
-# - OrderLineItemAggregate (individual items)
-# - ShippingAggregate (shipping details)
+class OrderAggregate(AggregateRoot[OrderStateV2]):
+    aggregate_type = "Order"
+    schema_version = 2  # Was 1, incremented after OrderState changed
+
+    def _get_initial_state(self) -> OrderStateV2:
+        return OrderStateV2(order_id=self.aggregate_id)
 ```
+
+Mismatched versions trigger full event replay instead of using stale snapshots.
 
 ---
 
 ## See Also
 
-- [Snapshots API Reference](./snapshots.md) - Complete snapshot store documentation
-- [Snapshotting Guide](../guides/snapshotting.md) - How to enable and configure snapshotting
-- [Snapshotting Migration Guide](../guides/snapshotting-migration.md) - Adding snapshotting to existing projects
-- [Snapshotting Example](../examples/snapshotting.md) - Working code examples
-- [Event Stores API](./stores.md) - Event store implementations
+- [Repository Pattern Guide](../guides/repository-pattern.md) - Comprehensive repository usage guide
+- [Snapshots API Reference](./snapshots.md) - Snapshot store documentation
+- [Snapshotting Guide](../guides/snapshotting.md) - Enable and configure snapshots
+- [Events API Reference](./events.md) - Domain event documentation
+- [Event Stores API Reference](./stores.md) - Event store implementations
+- [ADR-0003: Optimistic Locking](../adrs/0003-optimistic-locking.md) - Concurrency control design
+- [Basic Order Example](../examples/basic-order.md) - Complete working example

@@ -1,73 +1,74 @@
 # Observability Guide
 
-This guide covers the observability features in eventsource-py, including OpenTelemetry tracing integration, span naming conventions, standard attributes, and configuration options.
+This guide covers observability features in eventsource-py: tracing, metrics, and logging.
+
+**Contents:**
+- [Overview](#overview)
+- [Quick Start](#quick-start)
+- [Traced Components](#traced-components) - All traceable components and span names
+- [Standard Attributes](#standard-attributes) - Attribute constants for spans
+- [TracingMixin Usage](#tracingmixin-usage-guide) - Add tracing to custom components
+- [Distributed Tracing](#distributed-tracing) - Cross-service trace propagation
+- [Metrics](#metrics) - Kafka and subscription metrics
+- [Logging](#logging) - Structured logging configuration
+- [Troubleshooting](#troubleshooting)
+
+---
 
 ## Overview
 
-eventsource-py provides built-in support for OpenTelemetry tracing across all components. Tracing is designed to:
+eventsource-py provides three observability pillars:
 
-- Provide visibility into event sourcing operations
-- Enable distributed tracing across services (e.g., RabbitMQ, Kafka)
-- Support debugging and performance analysis
-- Integrate with popular observability backends (Jaeger, Zipkin, Grafana Tempo, etc.)
+| Pillar | Technology | Purpose |
+|--------|------------|---------|
+| **Tracing** | OpenTelemetry | Distributed request tracking, latency analysis |
+| **Metrics** | OpenTelemetry | Throughput, error rates, lag monitoring |
+| **Logging** | Python `logging` | Structured operational logs |
 
-All tracing is optional and degrades gracefully when OpenTelemetry is not installed.
+All observability features are optional and degrade gracefully when dependencies are not installed.
 
 ## Quick Start
 
-### Install OpenTelemetry
+### Installation
 
 ```bash
-# Install eventsource with telemetry support
+# Install with telemetry support
 pip install eventsource-py[telemetry]
 
-# Or install OpenTelemetry packages directly
-pip install opentelemetry-api opentelemetry-sdk
+# Includes: opentelemetry-api, opentelemetry-sdk
 ```
 
-### Enable Tracing on Components
-
-All eventsource components support tracing via the `enable_tracing` parameter:
-
-```python
-from eventsource.stores import SQLiteEventStore, InMemoryEventStore
-from eventsource.bus import InMemoryEventBus
-from eventsource.aggregates import AggregateRepository
-from eventsource.snapshots import InMemorySnapshotStore
-
-# Enable tracing on event store (enabled by default)
-store = SQLiteEventStore(":memory:", enable_tracing=True)
-
-# Enable tracing on event bus
-bus = InMemoryEventBus(enable_tracing=True)
-
-# Enable tracing on repository
-repo = AggregateRepository(
-    event_store=store,
-    aggregate_factory=OrderAggregate,
-    aggregate_type="Order",
-    enable_tracing=True,
-)
-
-# Enable tracing on snapshot store
-snapshot_store = InMemorySnapshotStore(enable_tracing=True)
-```
-
-### Configure an Exporter
-
-Configure where traces are sent:
+### Minimal Setup
 
 ```python
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
 
-# Configure provider
-provider = TracerProvider()
-processor = BatchSpanProcessor(OTLPSpanExporter(endpoint="http://localhost:4317"))
-provider.add_span_processor(processor)
-trace.set_tracer_provider(provider)
+# Configure tracing (do this once at startup)
+trace.set_tracer_provider(TracerProvider())
+trace.get_tracer_provider().add_span_processor(
+    BatchSpanProcessor(ConsoleSpanExporter())  # Replace with your exporter
+)
+
+# All eventsource components have tracing enabled by default
+from eventsource.stores import SQLiteEventStore
+from eventsource.aggregates import AggregateRepository
+
+store = SQLiteEventStore(":memory:")  # Tracing ON by default
+repo = AggregateRepository(
+    event_store=store,
+    aggregate_factory=OrderAggregate,
+    aggregate_type="Order",
+)
+```
+
+### Disable Tracing Per-Component
+
+```python
+# Disable for high-frequency operations
+store = SQLiteEventStore(":memory:", enable_tracing=False)
+projection = MyProjection(connection, enable_tracing=False)
 ```
 
 ## Traced Components
@@ -117,6 +118,17 @@ All event store implementations support tracing:
 | ProjectionCoordinator | `eventsource.projection.coordinate`, `eventsource.projection.registry.dispatch` |
 
 **Note:** Projection tracing is OFF by default. Enable with `enable_tracing=True`.
+
+### Subscription Manager
+
+| Component | Span Names |
+|-----------|------------|
+| SubscriptionManager | `eventsource.subscription_manager.subscribe`, `eventsource.subscription_manager.start_subscription`, `eventsource.subscription_manager.stop` |
+| TransitionCoordinator | `eventsource.transition_coordinator.execute` |
+| CatchUpRunner | `eventsource.catchup_runner.run_until_position`, `eventsource.catchup_runner.deliver_event` |
+| LiveRunner | `eventsource.live_runner.start`, `eventsource.live_runner.process_event` |
+| PauseResumeController | `eventsource.pause_resume.pause`, `eventsource.pause_resume.resume` |
+| SubscriptionLifecycleManager | `eventsource.lifecycle.start`, `eventsource.lifecycle.stop` |
 
 ## Standard Attributes
 
@@ -179,12 +191,24 @@ All spans include standardized attributes from `eventsource.observability.attrib
 | `ATTR_MESSAGING_DESTINATION` | `messaging.destination` | Destination queue or topic name | `"events"` |
 | `ATTR_MESSAGING_OPERATION` | `messaging.operation` | Messaging operation type | `"publish"`, `"receive"` |
 
+### Subscription Attributes
+
+| Constant | Attribute Name | Description | Example Value |
+|----------|----------------|-------------|---------------|
+| `ATTR_SUBSCRIPTION_NAME` | `eventsource.subscription.name` | Subscription name | `"OrderProjection"` |
+| `ATTR_SUBSCRIPTION_STATE` | `eventsource.subscription.state` | Current state | `"live"`, `"catching_up"` |
+| `ATTR_SUBSCRIPTION_PHASE` | `eventsource.subscription.phase` | Transition phase | `"initial_catchup"` |
+| `ATTR_FROM_POSITION` | `eventsource.from_position` | Starting position | `0` |
+| `ATTR_TO_POSITION` | `eventsource.to_position` | Target position | `1000` |
+| `ATTR_BATCH_SIZE` | `eventsource.batch.size` | Events per batch | `100` |
+| `ATTR_EVENTS_PROCESSED` | `eventsource.events.processed` | Events processed count | `5000` |
+
 ### Error and Retry Attributes
 
 | Constant | Attribute Name | Description | Example Value |
 |----------|----------------|-------------|---------------|
-| `ATTR_RETRY_COUNT` | `eventsource.retry.count` | Number of retry attempts for an operation | `3` |
-| `ATTR_ERROR_TYPE` | `eventsource.error.type` | Type of error encountered (exception class name) | `"OptimisticLockError"` |
+| `ATTR_RETRY_COUNT` | `eventsource.retry.count` | Retry attempts | `3` |
+| `ATTR_ERROR_TYPE` | `eventsource.error.type` | Exception class name | `"OptimisticLockError"` |
 
 ## TracingMixin Usage Guide
 
@@ -573,11 +597,206 @@ provider.add_span_processor(SimpleSpanProcessor(exporter))
 
 3. **Verify both services are configured with the same trace provider backend**
 
+---
+
+## Metrics
+
+eventsource-py emits OpenTelemetry metrics for monitoring throughput, latency, and system health.
+
+### Kafka Event Bus Metrics
+
+The Kafka event bus provides comprehensive metrics. See [Kafka Metrics Guide](kafka-metrics.md) for details.
+
+```python
+from eventsource.bus.kafka import KafkaEventBus, KafkaEventBusConfig
+
+config = KafkaEventBusConfig(
+    bootstrap_servers="localhost:9092",
+    enable_metrics=True,   # Enabled by default
+    enable_tracing=True,   # Enabled by default
+)
+bus = KafkaEventBus(config=config)
+```
+
+**Key Kafka Metrics:**
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `kafka.eventbus.messages.published` | Counter | Messages published |
+| `kafka.eventbus.messages.consumed` | Counter | Messages consumed |
+| `kafka.eventbus.handler.duration` | Histogram | Handler execution time (ms) |
+| `kafka.eventbus.consumer.lag` | Gauge | Consumer lag per partition |
+
+### Subscription Manager Metrics
+
+The subscription manager emits metrics for event processing:
+
+```python
+from eventsource.subscriptions import SubscriptionManager, get_metrics
+
+# Metrics are emitted automatically
+manager = SubscriptionManager(
+    event_store=store,
+    event_bus=bus,
+    checkpoint_repo=checkpoint_repo,
+)
+
+# Access metrics programmatically
+metrics = get_metrics("OrderProjection")
+snapshot = metrics.get_snapshot()
+print(f"Processed: {snapshot.events_processed}")
+print(f"Lag: {snapshot.current_lag}")
+```
+
+**Subscription Metrics:**
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `subscription.events.processed` | Counter | Events processed successfully |
+| `subscription.events.failed` | Counter | Events that failed processing |
+| `subscription.processing.duration` | Histogram | Processing time (ms) |
+| `subscription.lag` | Gauge | Current event lag |
+| `subscription.state` | Gauge | Current state (numeric) |
+
+**State Values:**
+
+| Value | State | Description |
+|-------|-------|-------------|
+| 1 | `starting` | Subscription initializing |
+| 2 | `catching_up` | Processing historical events |
+| 3 | `live` | Processing real-time events |
+| 4 | `paused` | Temporarily paused |
+| 5 | `stopped` | Stopped |
+| 6 | `error` | Error state |
+
+### Configure Metrics Export
+
+```python
+from opentelemetry import metrics
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+
+# OTLP export to collector
+reader = PeriodicExportingMetricReader(
+    OTLPMetricExporter(endpoint="http://otel-collector:4317"),
+    export_interval_millis=60000,
+)
+metrics.set_meter_provider(MeterProvider(metric_readers=[reader]))
+```
+
+```python
+# Prometheus export
+from opentelemetry.exporter.prometheus import PrometheusMetricReader
+from prometheus_client import start_http_server
+
+start_http_server(port=8000)
+reader = PrometheusMetricReader()
+metrics.set_meter_provider(MeterProvider(metric_readers=[reader]))
+```
+
+---
+
+## Logging
+
+eventsource-py uses Python's standard `logging` module. All components log to named loggers under the `eventsource` namespace.
+
+### Configure Logging
+
+```python
+import logging
+
+# Basic configuration
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+
+# Adjust eventsource log level
+logging.getLogger("eventsource").setLevel(logging.DEBUG)
+
+# Fine-tune specific components
+logging.getLogger("eventsource.stores.sqlite").setLevel(logging.WARNING)
+logging.getLogger("eventsource.bus.kafka").setLevel(logging.DEBUG)
+```
+
+### Logger Hierarchy
+
+| Logger Name | Component |
+|-------------|-----------|
+| `eventsource.stores.sqlite` | SQLite event store |
+| `eventsource.stores.postgresql` | PostgreSQL event store |
+| `eventsource.bus.kafka` | Kafka event bus |
+| `eventsource.bus.rabbitmq` | RabbitMQ event bus |
+| `eventsource.bus.redis` | Redis event bus |
+| `eventsource.aggregates.repository` | Aggregate repository |
+| `eventsource.subscriptions.manager` | Subscription manager |
+| `eventsource.projections` | Projection system |
+
+### Structured Logging with JSON
+
+For production environments, use structured JSON logging:
+
+```python
+import logging
+import json
+from datetime import datetime, UTC
+
+class JSONFormatter(logging.Formatter):
+    def format(self, record):
+        log_obj = {
+            "timestamp": datetime.now(UTC).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        if record.exc_info:
+            log_obj["exception"] = self.formatException(record.exc_info)
+        return json.dumps(log_obj)
+
+handler = logging.StreamHandler()
+handler.setFormatter(JSONFormatter())
+logging.getLogger("eventsource").addHandler(handler)
+```
+
+### Correlating Logs with Traces
+
+Inject trace context into log records:
+
+```python
+from opentelemetry import trace
+
+class TraceContextFilter(logging.Filter):
+    def filter(self, record):
+        span = trace.get_current_span()
+        ctx = span.get_span_context()
+        record.trace_id = format(ctx.trace_id, "032x") if ctx.is_valid else ""
+        record.span_id = format(ctx.span_id, "016x") if ctx.is_valid else ""
+        return True
+
+handler = logging.StreamHandler()
+handler.addFilter(TraceContextFilter())
+handler.setFormatter(logging.Formatter(
+    "%(asctime)s [%(levelname)s] trace_id=%(trace_id)s span_id=%(span_id)s - %(message)s"
+))
+logging.getLogger("eventsource").addHandler(handler)
+```
+
+---
+
 ## Related Resources
 
-- [OpenTelemetry Python Documentation](https://opentelemetry.io/docs/instrumentation/python/)
-- [OpenTelemetry Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/)
-- [Kafka Metrics Guide](kafka-metrics.md) - Metrics support for Kafka Event Bus
-- [Jaeger Documentation](https://www.jaegertracing.io/docs/)
-- [Zipkin Documentation](https://zipkin.io/)
-- [Grafana Tempo Documentation](https://grafana.com/docs/tempo/latest/)
+**eventsource-py guides:**
+- [Kafka Metrics Guide](kafka-metrics.md) - Detailed Kafka metrics, PromQL queries, alerting
+- [Subscriptions Guide](subscriptions.md) - Subscription manager with metrics section
+- [Production Guide](production.md) - Production deployment recommendations
+
+**OpenTelemetry:**
+- [OpenTelemetry Python](https://opentelemetry.io/docs/instrumentation/python/)
+- [Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/)
+
+**Observability backends:**
+- [Jaeger](https://www.jaegertracing.io/docs/)
+- [Zipkin](https://zipkin.io/)
+- [Grafana Tempo](https://grafana.com/docs/tempo/latest/)
+- [Honeycomb](https://docs.honeycomb.io/)

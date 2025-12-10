@@ -146,23 +146,37 @@ Aggregates are consistency boundaries that encapsulate business logic.
 
 ### 4. Repository
 
-Repositories abstract the event store interaction.
+Repositories abstract the event store interaction, providing a clean interface for loading and saving aggregates.
 
 ```python
+from eventsource import AggregateRepository, InMemoryEventStore
+
+repo = AggregateRepository(
+    event_store=InMemoryEventStore(),
+    aggregate_factory=OrderAggregate,
+    aggregate_type="Order",
+    event_publisher=event_bus,      # Optional: publish after save
+    snapshot_store=snapshot_store,  # Optional: enable snapshots
+)
+
 # Load aggregate (reconstruct from events)
 order = await repo.load(order_id)
 
 # Execute command
 order.ship(tracking_number="TRACK-123")
 
-# Save (persist new events)
+# Save (persist new events with optimistic locking)
 await repo.save(order)
 ```
 
-**Features:**
-- Clean API for aggregates
-- Automatic version tracking
-- Optional event publishing
+**Key Features:**
+- **Clean abstraction**: Simple load/save API hides event store complexity
+- **Optimistic locking**: Detects concurrent modifications via version checking
+- **Snapshot integration**: Load from snapshot + recent events for performance
+- **Event publishing**: Automatically publish events to bus after save
+- **OpenTelemetry tracing**: Built-in observability support
+
+See the [Repository Pattern Guide](guides/repository-pattern.md) for comprehensive documentation.
 
 ### 5. Projections
 
@@ -193,7 +207,7 @@ Projections build read models from event streams.
 
 ### 6. Event Bus
 
-The event bus distributes events to subscribers.
+The event bus distributes events to subscribers, decoupling producers from consumers.
 
 ```
                      Event Bus
@@ -208,10 +222,15 @@ The event bus distributes events to subscribers.
 ```
 
 **Implementations:**
-- `InMemoryEventBus`: Single-process, development/testing
-- `RedisEventBus`: Distributed systems with Redis Streams
-- `RabbitMQEventBus`: Distributed systems with AMQP messaging
-- `KafkaEventBus`: High-throughput distributed streaming
+
+| Implementation | Use Case | Scaling Model |
+|----------------|----------|---------------|
+| `InMemoryEventBus` | Development, testing, single-process | None |
+| `RedisEventBus` | Real-time distributed systems | Consumer groups |
+| `RabbitMQEventBus` | Enterprise messaging with routing | Queue bindings |
+| `KafkaEventBus` | High-throughput event streaming | Partitions |
+
+See the [Event Bus Guide](guides/event-bus.md) for detailed usage.
 
 ## Data Flow
 

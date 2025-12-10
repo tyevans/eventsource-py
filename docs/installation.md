@@ -455,4 +455,5 @@ config = KafkaEventBusConfig(
 
 - [Getting Started Guide](getting-started.md) - Build your first event-sourced application
 - [Architecture Overview](architecture.md) - Understand the system design
+- [Event Bus Guide](guides/event-bus.md) - Event distribution with Redis, RabbitMQ, and Kafka
 - [Production Deployment](guides/production.md) - Production readiness checklist

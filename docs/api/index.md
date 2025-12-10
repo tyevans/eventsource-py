@@ -176,7 +176,9 @@ from eventsource import (
 
 - **`DeclarativeAggregate`**: Alternative to AggregateRoot using `@handles` decorators for cleaner event application.
 
-- **`AggregateRepository`**: Repository pattern for loading aggregates from event streams and saving new events.
+- **`AggregateRepository`**: Repository pattern for loading aggregates from event streams and saving new events. Supports event publishing, snapshot integration, and optimistic locking.
+
+> **See the [Repository Pattern Guide](../guides/repository-pattern.md) for comprehensive usage patterns.**
 
 **Example:**
 
@@ -783,6 +785,7 @@ class MyHandler(EventHandler):
 
 - [Getting Started Guide](../getting-started.md) - Step-by-step tutorial for new users
 - [Architecture Overview](../architecture.md) - System design and data flow
+- [Repository Pattern Guide](../guides/repository-pattern.md) - Comprehensive repository usage
 - [Snapshotting Guide](../guides/snapshotting.md) - Optimize aggregate load performance
 - [Snapshotting Migration Guide](../guides/snapshotting-migration.md) - Add snapshotting to existing projects
 - [Multi-Tenant Guide](../guides/multi-tenant.md) - Multi-tenancy support

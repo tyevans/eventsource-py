@@ -38,6 +38,8 @@ from eventsource.observability.attributes import (
     # Aggregate
     ATTR_AGGREGATE_ID,
     ATTR_AGGREGATE_TYPE,
+    ATTR_BATCH_SIZE,
+    ATTR_BUFFER_SIZE,
     ATTR_DB_NAME,
     ATTR_DB_OPERATION,
     # Database (OTEL semantic)
@@ -47,10 +49,14 @@ from eventsource.observability.attributes import (
     # Event
     ATTR_EVENT_ID,
     ATTR_EVENT_TYPE,
+    ATTR_EVENTS_PROCESSED,
+    ATTR_EVENTS_SKIPPED,
     ATTR_EXPECTED_VERSION,
+    ATTR_FROM_POSITION,
     ATTR_FROM_VERSION,
     ATTR_HANDLER_COUNT,
     ATTR_HANDLER_NAME,
+    ATTR_HANDLER_SUCCESS,
     ATTR_MESSAGING_DESTINATION,
     ATTR_MESSAGING_OPERATION,
     # Messaging (OTEL semantic)
@@ -61,10 +67,16 @@ from eventsource.observability.attributes import (
     # Error/Retry
     ATTR_RETRY_COUNT,
     ATTR_STREAM_ID,
+    # Subscription
+    ATTR_SUBSCRIPTION_NAME,
+    ATTR_SUBSCRIPTION_PHASE,
+    ATTR_SUBSCRIPTION_STATE,
     # Tenant/Actor
     ATTR_TENANT_ID,
+    ATTR_TO_POSITION,
     # Version
     ATTR_VERSION,
+    ATTR_WATERMARK,
 )
 from eventsource.observability.tracing import (
     OTEL_AVAILABLE,
@@ -99,6 +111,7 @@ __all__ = [
     "ATTR_PROJECTION_NAME",
     "ATTR_HANDLER_NAME",
     "ATTR_HANDLER_COUNT",
+    "ATTR_HANDLER_SUCCESS",
     "ATTR_STREAM_ID",
     "ATTR_POSITION",
     # Attributes - Database
@@ -109,6 +122,17 @@ __all__ = [
     "ATTR_MESSAGING_SYSTEM",
     "ATTR_MESSAGING_DESTINATION",
     "ATTR_MESSAGING_OPERATION",
+    # Attributes - Subscription
+    "ATTR_SUBSCRIPTION_NAME",
+    "ATTR_SUBSCRIPTION_STATE",
+    "ATTR_SUBSCRIPTION_PHASE",
+    "ATTR_FROM_POSITION",
+    "ATTR_TO_POSITION",
+    "ATTR_BATCH_SIZE",
+    "ATTR_BUFFER_SIZE",
+    "ATTR_EVENTS_PROCESSED",
+    "ATTR_EVENTS_SKIPPED",
+    "ATTR_WATERMARK",
     # Attributes - Error/Retry
     "ATTR_RETRY_COUNT",
     "ATTR_ERROR_TYPE",
