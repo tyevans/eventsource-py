@@ -45,20 +45,24 @@ from typing import TYPE_CHECKING, Any
 
 from eventsource.bus.interface import (
     EventBus,
-    EventHandler,
     EventHandlerFunc,
-    EventSubscriber,
 )
 from eventsource.events.base import DomainEvent
 from eventsource.observability import OTEL_AVAILABLE, TracingMixin
 from eventsource.observability.attributes import (
     ATTR_AGGREGATE_ID,
+    ATTR_EVENT_COUNT,
     ATTR_EVENT_ID,
     ATTR_EVENT_TYPE,
+    ATTR_HANDLER_COUNT,
     ATTR_HANDLER_NAME,
     ATTR_HANDLER_SUCCESS,
     ATTR_MESSAGING_DESTINATION,
     ATTR_MESSAGING_SYSTEM,
+)
+from eventsource.protocols import (
+    FlexibleEventHandler,
+    FlexibleEventSubscriber,
 )
 
 if TYPE_CHECKING:
@@ -2280,7 +2284,7 @@ class RabbitMQEventBus(TracingMixin, EventBus):
 
     def _normalize_handler(
         self,
-        handler: EventHandler | EventHandlerFunc,
+        handler: FlexibleEventHandler | EventHandlerFunc,
     ) -> HandlerWrapper:
         """Normalize a handler to an async callable.
 
@@ -2347,7 +2351,7 @@ class RabbitMQEventBus(TracingMixin, EventBus):
     def subscribe(
         self,
         event_type: type[DomainEvent],
-        handler: EventHandler | EventHandlerFunc,
+        handler: FlexibleEventHandler | EventHandlerFunc,
     ) -> None:
         """Subscribe a handler to a specific event type.
 
@@ -2378,7 +2382,7 @@ class RabbitMQEventBus(TracingMixin, EventBus):
     def unsubscribe(
         self,
         event_type: type[DomainEvent],
-        handler: EventHandler | EventHandlerFunc,
+        handler: FlexibleEventHandler | EventHandlerFunc,
     ) -> bool:
         """Unsubscribe a handler from a specific event type.
 
@@ -2413,7 +2417,7 @@ class RabbitMQEventBus(TracingMixin, EventBus):
         )
         return False
 
-    def subscribe_all(self, subscriber: EventSubscriber) -> None:
+    def subscribe_all(self, subscriber: FlexibleEventSubscriber) -> None:
         """Subscribe an EventSubscriber to all its declared event types.
 
         Convenience method that calls subscribe() for each event type
@@ -2428,7 +2432,7 @@ class RabbitMQEventBus(TracingMixin, EventBus):
 
     def subscribe_to_all_events(
         self,
-        handler: EventHandler | EventHandlerFunc,
+        handler: FlexibleEventHandler | EventHandlerFunc,
     ) -> None:
         """Subscribe a handler to all event types (wildcard subscription).
 
@@ -2451,7 +2455,7 @@ class RabbitMQEventBus(TracingMixin, EventBus):
 
     def unsubscribe_from_all_events(
         self,
-        handler: EventHandler | EventHandlerFunc,
+        handler: FlexibleEventHandler | EventHandlerFunc,
     ) -> bool:
         """Unsubscribe a handler from the wildcard subscription.
 
@@ -2753,6 +2757,9 @@ class RabbitMQEventBus(TracingMixin, EventBus):
         Uses asyncio.gather for concurrent publishing with chunking
         to prevent overwhelming the broker.
 
+        Creates a parent span for the batch operation when tracing is enabled,
+        providing observability into batch publish performance.
+
         Args:
             events: Events to publish
             wait_for_confirm: Whether to wait for confirms
@@ -2777,45 +2784,84 @@ class RabbitMQEventBus(TracingMixin, EventBus):
             },
         )
 
-        # Track batch stats
-        self._stats.batch_publishes += 1
-        published_count = 0
-        errors: list[Exception] = []
-
-        # Process in chunks to prevent overwhelming the broker
-        for chunk_start in range(0, total_events, chunk_size):
-            chunk_end = min(chunk_start + chunk_size, total_events)
-            chunk = events[chunk_start:chunk_end]
-
-            # Within each chunk, limit concurrency
-            chunk_published = await self._publish_chunk_concurrent(chunk, max_concurrent, errors)
-            published_count += chunk_published
-
-        # Update statistics
-        self._stats.events_published += published_count
-        self._stats.batch_events_published += published_count
-        self._stats.last_publish_at = datetime.now(UTC)
-
-        if wait_for_confirm:
-            self._stats.publish_confirms += published_count
-
-        if errors:
-            self._stats.batch_partial_failures += 1
-            self._logger.error(
-                f"Batch publish had {len(errors)} failures out of {total_events} events",
-                extra={
-                    "failures": len(errors),
-                    "published": published_count,
-                    "total": total_events,
+        # Create parent span for batch operation if tracing is enabled
+        span = None
+        if self._enable_tracing and self._tracer is not None and PROPAGATION_AVAILABLE:
+            span = self._tracer.start_span(
+                "eventsource.event_bus.publish_batch",
+                kind=SpanKind.PRODUCER,
+                attributes={
+                    ATTR_MESSAGING_SYSTEM: "rabbitmq",
+                    ATTR_MESSAGING_DESTINATION: self._config.exchange_name,
+                    ATTR_EVENT_COUNT: total_events,
+                    "messaging.destination_kind": "exchange",
+                    "messaging.batch.size": total_events,
+                    "messaging.batch.chunk_size": chunk_size,
+                    "messaging.batch.max_concurrent": max_concurrent,
                 },
             )
-            # Raise the first error to indicate batch failure
-            raise errors[0]
 
-        self._logger.debug(
-            f"Successfully published batch of {total_events} events",
-            extra={"batch_size": total_events, "published": published_count},
-        )
+        try:
+            # Track batch stats
+            self._stats.batch_publishes += 1
+            published_count = 0
+            errors: list[Exception] = []
+
+            # Process in chunks to prevent overwhelming the broker
+            for chunk_start in range(0, total_events, chunk_size):
+                chunk_end = min(chunk_start + chunk_size, total_events)
+                chunk = events[chunk_start:chunk_end]
+
+                # Within each chunk, limit concurrency
+                chunk_published = await self._publish_chunk_concurrent(
+                    chunk, max_concurrent, errors
+                )
+                published_count += chunk_published
+
+            # Update statistics
+            self._stats.events_published += published_count
+            self._stats.batch_events_published += published_count
+            self._stats.last_publish_at = datetime.now(UTC)
+
+            if wait_for_confirm:
+                self._stats.publish_confirms += published_count
+
+            if errors:
+                self._stats.batch_partial_failures += 1
+                self._logger.error(
+                    f"Batch publish had {len(errors)} failures out of {total_events} events",
+                    extra={
+                        "failures": len(errors),
+                        "published": published_count,
+                        "total": total_events,
+                    },
+                )
+                if span:
+                    span.set_attribute("messaging.batch.published", published_count)
+                    span.set_attribute("messaging.batch.failed", len(errors))
+                    span.set_status(Status(StatusCode.ERROR, f"{len(errors)} events failed"))
+                # Raise the first error to indicate batch failure
+                raise errors[0]
+
+            self._logger.debug(
+                f"Successfully published batch of {total_events} events",
+                extra={"batch_size": total_events, "published": published_count},
+            )
+
+            if span:
+                span.set_attribute("messaging.batch.published", published_count)
+                span.set_status(Status(StatusCode.OK))
+
+        except Exception as e:
+            if span:
+                span.record_exception(e)
+                if not errors:  # Only set error status if not already set above
+                    span.set_status(Status(StatusCode.ERROR, str(e)))
+            raise
+
+        finally:
+            if span:
+                span.end()
 
     async def _publish_chunk_concurrent(
         self,
@@ -3360,6 +3406,10 @@ class RabbitMQEventBus(TracingMixin, EventBus):
                 extra={"event_type": event.event_type},
             )
             return
+
+        # Add handler count to parent span for observability
+        if parent_span is not None:
+            parent_span.set_attribute(ATTR_HANDLER_COUNT, len(handlers))
 
         self._logger.debug(
             f"Dispatching {event.event_type} to {len(handlers)} handler(s)",
