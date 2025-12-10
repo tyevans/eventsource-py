@@ -384,11 +384,11 @@ class TestPostgreSQLOutboxRepositoryStatistics:
         """Test getting stats when outbox is empty."""
         stats = await postgres_outbox_repo.get_stats()
 
-        assert stats["pending_count"] == 0
-        assert stats["published_count"] == 0
-        assert stats["failed_count"] == 0
-        assert stats["oldest_pending"] is None
-        assert stats["avg_retries"] == 0.0
+        assert stats.pending_count == 0
+        assert stats.published_count == 0
+        assert stats.failed_count == 0
+        assert stats.oldest_pending is None
+        assert stats.avg_retries == 0.0
 
     async def test_get_stats_with_entries(
         self,
@@ -431,12 +431,12 @@ class TestPostgreSQLOutboxRepositoryStatistics:
 
         stats = await postgres_outbox_repo.get_stats()
 
-        assert stats["pending_count"] == 3
-        assert stats["published_count"] == 1
-        assert stats["failed_count"] == 1
-        assert stats["oldest_pending"] is not None
+        assert stats.pending_count == 3
+        assert stats.published_count == 1
+        assert stats.failed_count == 1
+        assert stats.oldest_pending is not None
         # avg_retries should reflect the 2 retries on one of 3 pending events
-        assert stats["avg_retries"] > 0
+        assert stats.avg_retries > 0
 
 
 class TestPostgreSQLOutboxRepositoryMultipleEventTypes:

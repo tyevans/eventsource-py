@@ -178,6 +178,15 @@ class CheckpointRepository(Protocol):
         """
         ...
 
+    async def get_all_checkpoints(self) -> list[CheckpointData]:
+        """
+        Get all projection checkpoints.
+
+        Returns:
+            List of CheckpointData for all projections
+        """
+        ...
+
 
 class PostgreSQLCheckpointRepository(TracingMixin):
     """

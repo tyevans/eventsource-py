@@ -383,7 +383,7 @@ class TestSQLiteOutboxRepositoryMarkPublished:
         assert len(pending) == 0
 
         stats = await sqlite_outbox_repo.get_stats()
-        assert stats["published_count"] == 1
+        assert stats.published_count == 1
 
 
 class TestSQLiteOutboxRepositoryMarkFailed:
@@ -403,7 +403,7 @@ class TestSQLiteOutboxRepositoryMarkFailed:
         assert len(pending) == 0
 
         stats = await sqlite_outbox_repo.get_stats()
-        assert stats["failed_count"] == 1
+        assert stats.failed_count == 1
 
 
 class TestSQLiteOutboxRepositoryIncrementRetry:
@@ -473,11 +473,11 @@ class TestSQLiteOutboxRepositoryGetStats:
     async def test_get_stats_empty(self, sqlite_outbox_repo: SQLiteOutboxRepository) -> None:
         """Test stats when outbox is empty."""
         stats = await sqlite_outbox_repo.get_stats()
-        assert stats["pending_count"] == 0
-        assert stats["published_count"] == 0
-        assert stats["failed_count"] == 0
-        assert stats["avg_retries"] == 0.0
-        assert stats["oldest_pending"] is None
+        assert stats.pending_count == 0
+        assert stats.published_count == 0
+        assert stats.failed_count == 0
+        assert stats.avg_retries == 0.0
+        assert stats.oldest_pending is None
 
     async def test_get_stats_with_data(self, sqlite_outbox_repo: SQLiteOutboxRepository) -> None:
         """Test stats with various event states."""
@@ -495,10 +495,10 @@ class TestSQLiteOutboxRepositoryGetStats:
         await sqlite_outbox_repo.mark_failed(outbox_ids[4], "Error")
 
         stats = await sqlite_outbox_repo.get_stats()
-        assert stats["pending_count"] == 2
-        assert stats["published_count"] == 2
-        assert stats["failed_count"] == 1
-        assert stats["oldest_pending"] is not None
+        assert stats.pending_count == 2
+        assert stats.published_count == 2
+        assert stats.failed_count == 1
+        assert stats.oldest_pending is not None
 
 
 class TestSQLiteOutboxRepositoryMultipleEvents:
@@ -785,10 +785,10 @@ class TestSQLiteDLQRepositoryGetFailureStats:
     async def test_get_failure_stats_empty(self, sqlite_dlq_repo: SQLiteDLQRepository) -> None:
         """Test failure stats with no failures."""
         stats = await sqlite_dlq_repo.get_failure_stats()
-        assert stats["total_failed"] == 0
-        assert stats["total_retrying"] == 0
-        assert stats["affected_projections"] == 0
-        assert stats["oldest_failure"] is None
+        assert stats.total_failed == 0
+        assert stats.total_retrying == 0
+        assert stats.affected_projections == 0
+        assert stats.oldest_failure is None
 
     async def test_get_failure_stats_with_data(self, sqlite_dlq_repo: SQLiteDLQRepository) -> None:
         """Test failure stats with failures."""
@@ -802,9 +802,9 @@ class TestSQLiteDLQRepositoryGetFailureStats:
             )
 
         stats = await sqlite_dlq_repo.get_failure_stats()
-        assert stats["total_failed"] == 3
-        assert stats["affected_projections"] == 2
-        assert stats["oldest_failure"] is not None
+        assert stats.total_failed == 3
+        assert stats.affected_projections == 2
+        assert stats.oldest_failure is not None
 
     async def test_get_failure_stats_with_retrying(
         self, sqlite_dlq_repo: SQLiteDLQRepository
@@ -823,8 +823,8 @@ class TestSQLiteDLQRepositoryGetFailureStats:
         await sqlite_dlq_repo.mark_retrying(events[0].id)
 
         stats = await sqlite_dlq_repo.get_failure_stats()
-        assert stats["total_failed"] == 1
-        assert stats["total_retrying"] == 1
+        assert stats.total_failed == 1
+        assert stats.total_retrying == 1
 
 
 class TestSQLiteDLQRepositoryGetProjectionFailureCounts:
@@ -848,10 +848,10 @@ class TestSQLiteDLQRepositoryGetProjectionFailureCounts:
         assert len(counts) == 2
 
         # Should be ordered by count descending
-        assert counts[0]["projection_name"] == "HighFailure"
-        assert counts[0]["failure_count"] == 3
-        assert counts[1]["projection_name"] == "LowFailure"
-        assert counts[1]["failure_count"] == 2
+        assert counts[0].projection_name == "HighFailure"
+        assert counts[0].failure_count == 3
+        assert counts[1].projection_name == "LowFailure"
+        assert counts[1].failure_count == 2
 
 
 class TestSQLiteDLQRepositoryDeleteResolvedEvents:

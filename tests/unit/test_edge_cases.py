@@ -415,8 +415,8 @@ class TestDLQRepositoryEdgeCases:
         await repo.mark_resolved(1, "admin")
 
         stats = await repo.get_failure_stats()
-        assert stats["total_failed"] == 0
-        assert stats["total_retrying"] == 0
+        assert stats.total_failed == 0
+        assert stats.total_retrying == 0
 
 
 # --- InMemoryOutboxRepository Edge Cases ---
@@ -484,7 +484,7 @@ class TestConcurrentAccess:
         await asyncio.gather(*[add_and_mark() for _ in range(10)])
 
         stats = await repo.get_failure_stats()
-        assert stats["total_failed"] == 10
+        assert stats.total_failed == 10
 
     @pytest.mark.asyncio
     async def test_concurrent_event_bus_operations(self):
@@ -522,7 +522,7 @@ class TestConcurrentAccess:
 
         # Verify all events were added
         stats = await repo.get_stats()
-        assert stats["pending_count"] == 20
+        assert stats.pending_count == 20
 
     @pytest.mark.asyncio
     async def test_concurrent_outbox_mark_published(self):
@@ -541,8 +541,8 @@ class TestConcurrentAccess:
 
         # All should be published
         stats = await repo.get_stats()
-        assert stats["pending_count"] == 0
-        assert stats["published_count"] == 10
+        assert stats.pending_count == 0
+        assert stats.published_count == 10
 
     @pytest.mark.asyncio
     async def test_concurrent_event_store_reads_writes(self):

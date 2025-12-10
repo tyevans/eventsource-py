@@ -313,10 +313,10 @@ class TestPostgreSQLDLQRepositoryStatistics:
         """Test getting failure stats when DLQ is empty."""
         stats = await postgres_dlq_repo.get_failure_stats()
 
-        assert stats["total_failed"] == 0
-        assert stats["total_retrying"] == 0
-        assert stats["affected_projections"] == 0
-        assert stats["oldest_failure"] is None
+        assert stats.total_failed == 0
+        assert stats.total_retrying == 0
+        assert stats.affected_projections == 0
+        assert stats.oldest_failure is None
 
     async def test_get_failure_stats_with_entries(
         self,
@@ -339,10 +339,10 @@ class TestPostgreSQLDLQRepositoryStatistics:
 
         stats = await postgres_dlq_repo.get_failure_stats()
 
-        assert stats["total_failed"] == 2  # One was marked retrying
-        assert stats["total_retrying"] == 1
-        assert stats["affected_projections"] == 2
-        assert stats["oldest_failure"] is not None
+        assert stats.total_failed == 2  # One was marked retrying
+        assert stats.total_retrying == 1
+        assert stats.affected_projections == 2
+        assert stats.oldest_failure is not None
 
     async def test_get_projection_failure_counts(
         self,

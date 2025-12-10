@@ -124,8 +124,8 @@ class TestInMemoryOutboxRepository:
 
         # Check stats
         stats = await repo.get_stats()
-        assert stats["pending_count"] == 0
-        assert stats["published_count"] == 1
+        assert stats.pending_count == 0
+        assert stats.published_count == 1
 
     @pytest.mark.asyncio
     async def test_mark_failed(self, repo: InMemoryOutboxRepository, sample_event: SampleEvent):
@@ -140,8 +140,8 @@ class TestInMemoryOutboxRepository:
 
         # Check stats
         stats = await repo.get_stats()
-        assert stats["pending_count"] == 0
-        assert stats["failed_count"] == 1
+        assert stats.pending_count == 0
+        assert stats.failed_count == 1
 
     @pytest.mark.asyncio
     async def test_increment_retry(self, repo: InMemoryOutboxRepository, sample_event: SampleEvent):
@@ -187,21 +187,21 @@ class TestInMemoryOutboxRepository:
                 await repo.mark_failed(outbox_id, "Error")
 
         stats = await repo.get_stats()
-        assert stats["pending_count"] == 2
-        assert stats["published_count"] == 2
-        assert stats["failed_count"] == 1
-        assert stats["oldest_pending"] is not None
-        assert stats["avg_retries"] == 0.0
+        assert stats.pending_count == 2
+        assert stats.published_count == 2
+        assert stats.failed_count == 1
+        assert stats.oldest_pending is not None
+        assert stats.avg_retries == 0.0
 
     @pytest.mark.asyncio
     async def test_get_stats_empty(self, repo: InMemoryOutboxRepository):
         """Test getting stats when outbox is empty."""
         stats = await repo.get_stats()
-        assert stats["pending_count"] == 0
-        assert stats["published_count"] == 0
-        assert stats["failed_count"] == 0
-        assert stats["oldest_pending"] is None
-        assert stats["avg_retries"] == 0.0
+        assert stats.pending_count == 0
+        assert stats.published_count == 0
+        assert stats.failed_count == 0
+        assert stats.oldest_pending is None
+        assert stats.avg_retries == 0.0
 
     @pytest.mark.asyncio
     async def test_get_stats_avg_retries(self, repo: InMemoryOutboxRepository):
@@ -217,7 +217,7 @@ class TestInMemoryOutboxRepository:
 
         stats = await repo.get_stats()
         # Average of 0, 2, 4 = 2.0
-        assert stats["avg_retries"] == 2.0
+        assert stats.avg_retries == 2.0
 
     @pytest.mark.asyncio
     async def test_clear(self, repo: InMemoryOutboxRepository):
@@ -232,7 +232,7 @@ class TestInMemoryOutboxRepository:
         assert len(pending) == 0
 
         stats = await repo.get_stats()
-        assert stats["pending_count"] == 0
+        assert stats.pending_count == 0
 
     @pytest.mark.asyncio
     async def test_event_with_tenant_id(self, repo: InMemoryOutboxRepository):
@@ -390,8 +390,8 @@ class TestInMemoryOutboxRepositoryConcurrency:
 
         # Verify stats
         stats = await repo.get_stats()
-        assert stats["published_count"] == num_events
-        assert stats["pending_count"] == 0
+        assert stats.published_count == num_events
+        assert stats.pending_count == 0
 
     @pytest.mark.asyncio
     async def test_concurrent_retry_increment(self, repo: InMemoryOutboxRepository):
@@ -448,7 +448,7 @@ class TestInMemoryOutboxRepositoryConcurrency:
         # All stats calls completed without error
         assert len(stats_results) == 10
         for stats in stats_results:
-            assert "pending_count" in stats
+            assert hasattr(stats, "pending_count")
 
 
 # ============================================================================
@@ -758,8 +758,8 @@ class TestSQLiteOutboxRepository:
 
         # Check stats
         stats = await repo.get_stats()
-        assert stats["pending_count"] == 0
-        assert stats["published_count"] == 1
+        assert stats.pending_count == 0
+        assert stats.published_count == 1
 
     @pytest.mark.asyncio
     async def test_mark_failed(self, repo: SQLiteOutboxRepository, sample_event: SampleEvent):
@@ -778,8 +778,8 @@ class TestSQLiteOutboxRepository:
 
         # Check stats
         stats = await repo.get_stats()
-        assert stats["pending_count"] == 0
-        assert stats["failed_count"] == 1
+        assert stats.pending_count == 0
+        assert stats.failed_count == 1
 
     @pytest.mark.asyncio
     async def test_increment_retry(self, repo: SQLiteOutboxRepository, sample_event: SampleEvent):
@@ -859,21 +859,21 @@ class TestSQLiteOutboxRepository:
         await repo.mark_failed(outbox_ids[4], "Error")
 
         stats = await repo.get_stats()
-        assert stats["pending_count"] == 2
-        assert stats["published_count"] == 2
-        assert stats["failed_count"] == 1
-        assert stats["oldest_pending"] is not None
-        assert stats["avg_retries"] == 0.0
+        assert stats.pending_count == 2
+        assert stats.published_count == 2
+        assert stats.failed_count == 1
+        assert stats.oldest_pending is not None
+        assert stats.avg_retries == 0.0
 
     @pytest.mark.asyncio
     async def test_get_stats_empty(self, repo: SQLiteOutboxRepository):
         """Test getting stats when outbox is empty."""
         stats = await repo.get_stats()
-        assert stats["pending_count"] == 0
-        assert stats["published_count"] == 0
-        assert stats["failed_count"] == 0
-        assert stats["oldest_pending"] is None
-        assert stats["avg_retries"] == 0.0
+        assert stats.pending_count == 0
+        assert stats.published_count == 0
+        assert stats.failed_count == 0
+        assert stats.oldest_pending is None
+        assert stats.avg_retries == 0.0
 
     @pytest.mark.asyncio
     async def test_get_stats_avg_retries(self, repo: SQLiteOutboxRepository):
@@ -894,7 +894,7 @@ class TestSQLiteOutboxRepository:
 
         stats = await repo.get_stats()
         # Average of 0, 2, 4 = 2.0
-        assert stats["avg_retries"] == 2.0
+        assert stats.avg_retries == 2.0
 
     @pytest.mark.asyncio
     async def test_event_with_tenant_id(self, repo: SQLiteOutboxRepository):

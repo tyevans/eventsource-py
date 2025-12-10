@@ -250,12 +250,35 @@ class DLQRepository(Protocol):
         """
         ...
 
-    async def get_failure_stats(self) -> dict[str, Any]:
+    async def get_failure_stats(self) -> DLQStats:
         """
         Get aggregate statistics about DLQ health.
 
         Returns:
-            Dictionary with failure statistics
+            DLQStats with failure statistics
+        """
+        ...
+
+    async def get_projection_failure_counts(self) -> list[ProjectionFailureCount]:
+        """
+        Get failure counts grouped by projection.
+
+        Returns:
+            List of ProjectionFailureCount for each affected projection
+        """
+        ...
+
+    async def delete_resolved_events(self, older_than_days: int = 30) -> int:
+        """
+        Delete resolved events older than specified days.
+
+        Useful for periodic cleanup to prevent DLQ table growth.
+
+        Args:
+            older_than_days: Delete resolved events older than this many days
+
+        Returns:
+            Number of events deleted
         """
         ...
 
@@ -527,12 +550,12 @@ class PostgreSQLDLQRepository(TracingMixin):
             async with execute_with_connection(self.conn, transactional=True) as conn:
                 await conn.execute(query, {"dlq_id": dlq_id})
 
-    async def get_failure_stats(self) -> dict[str, Any]:
+    async def get_failure_stats(self) -> DLQStats:
         """
         Get aggregate statistics about DLQ health.
 
         Returns:
-            Dictionary with failure statistics
+            DLQStats with failure statistics
         """
         with self._create_span_context(
             "eventsource.dlq.get_stats",
@@ -552,19 +575,19 @@ class PostgreSQLDLQRepository(TracingMixin):
                 result = await conn.execute(query)
                 row = result.fetchone()
 
-            return {
-                "total_failed": row[0] if row else 0,
-                "total_retrying": row[1] if row else 0,
-                "affected_projections": row[2] if row else 0,
-                "oldest_failure": row[3].isoformat() if (row and row[3]) else None,
-            }
+            return DLQStats(
+                total_failed=row[0] if row else 0,
+                total_retrying=row[1] if row else 0,
+                affected_projections=row[2] if row else 0,
+                oldest_failure=row[3].isoformat() if (row and row[3]) else None,
+            )
 
-    async def get_projection_failure_counts(self) -> list[dict[str, Any]]:
+    async def get_projection_failure_counts(self) -> list[ProjectionFailureCount]:
         """
         Get failure counts grouped by projection.
 
         Returns:
-            List of projection failure statistics
+            List of ProjectionFailureCount for each affected projection
         """
         with self._create_span_context(
             "eventsource.dlq.get_projection_counts",
@@ -587,12 +610,12 @@ class PostgreSQLDLQRepository(TracingMixin):
                 rows = result.fetchall()
 
             return [
-                {
-                    "projection_name": row[0],
-                    "failure_count": row[1],
-                    "oldest_failure": row[2].isoformat() if row[2] else None,
-                    "most_recent_failure": row[3].isoformat() if row[3] else None,
-                }
+                ProjectionFailureCount(
+                    projection_name=row[0],
+                    failure_count=row[1],
+                    oldest_failure=row[2].isoformat() if row[2] else None,
+                    most_recent_failure=row[3].isoformat() if row[3] else None,
+                )
                 for row in rows
             ]
 
@@ -830,12 +853,12 @@ class InMemoryDLQRepository(TracingMixin):
                         entry.status = "retrying"
                         break
 
-    async def get_failure_stats(self) -> dict[str, Any]:
+    async def get_failure_stats(self) -> DLQStats:
         """
         Get aggregate statistics about DLQ health.
 
         Returns:
-            Dictionary with failure statistics
+            DLQStats with failure statistics
         """
         with self._create_span_context(
             "eventsource.dlq.get_stats",
@@ -858,19 +881,19 @@ class InMemoryDLQRepository(TracingMixin):
                     if failures_with_dates:
                         oldest_failure = min(failures_with_dates).isoformat()
 
-                return {
-                    "total_failed": total_failed,
-                    "total_retrying": total_retrying,
-                    "affected_projections": affected_projections,
-                    "oldest_failure": oldest_failure,
-                }
+                return DLQStats(
+                    total_failed=total_failed,
+                    total_retrying=total_retrying,
+                    affected_projections=affected_projections,
+                    oldest_failure=oldest_failure,
+                )
 
-    async def get_projection_failure_counts(self) -> list[dict[str, Any]]:
+    async def get_projection_failure_counts(self) -> list[ProjectionFailureCount]:
         """
         Get failure counts grouped by projection.
 
         Returns:
-            List of projection failure statistics
+            List of ProjectionFailureCount for each affected projection
         """
         with self._create_span_context(
             "eventsource.dlq.get_projection_counts",
@@ -894,27 +917,22 @@ class InMemoryDLQRepository(TracingMixin):
                     failures_with_last = [e.last_failed_at for e in entries if e.last_failed_at]
 
                     result.append(
-                        {
-                            "projection_name": projection_name,
-                            "failure_count": len(entries),
-                            "oldest_failure": (
+                        ProjectionFailureCount(
+                            projection_name=projection_name,
+                            failure_count=len(entries),
+                            oldest_failure=(
                                 min(failures_with_first).isoformat()
                                 if failures_with_first
                                 else None
                             ),
-                            "most_recent_failure": (
+                            most_recent_failure=(
                                 max(failures_with_last).isoformat() if failures_with_last else None
                             ),
-                        }
+                        )
                     )
 
                 # Sort by failure count descending
-                # Cast needed because dict values are typed as Any
-                def get_failure_count(x: dict[str, Any]) -> int:
-                    count = x["failure_count"]
-                    return count if isinstance(count, int) else 0
-
-                result.sort(key=get_failure_count, reverse=True)
+                result.sort(key=lambda x: x.failure_count, reverse=True)
                 return result
 
     async def delete_resolved_events(self, older_than_days: int = 30) -> int:
@@ -1255,16 +1273,12 @@ class SQLiteDLQRepository(TracingMixin):
             )
             await self._connection.commit()
 
-    async def get_failure_stats(self) -> dict[str, Any]:
+    async def get_failure_stats(self) -> DLQStats:
         """
         Get aggregate statistics about DLQ health.
 
         Returns:
-            Dictionary with failure statistics:
-            - total_failed: Number of entries in 'failed' status
-            - total_retrying: Number of entries in 'retrying' status
-            - affected_projections: Number of unique projections with failures
-            - oldest_failure: ISO timestamp of oldest failure, or None
+            DLQStats with failure statistics
         """
         with self._create_span_context(
             "eventsource.dlq.get_stats",
@@ -1284,24 +1298,19 @@ class SQLiteDLQRepository(TracingMixin):
             )
             row = await cursor.fetchone()
 
-            return {
-                "total_failed": row[0] if row and row[0] else 0,
-                "total_retrying": row[1] if row and row[1] else 0,
-                "affected_projections": row[2] if row and row[2] else 0,
-                "oldest_failure": row[3] if row else None,
-            }
+            return DLQStats(
+                total_failed=row[0] if row and row[0] else 0,
+                total_retrying=row[1] if row and row[1] else 0,
+                affected_projections=row[2] if row and row[2] else 0,
+                oldest_failure=row[3] if row else None,
+            )
 
-    async def get_projection_failure_counts(self) -> list[dict[str, Any]]:
+    async def get_projection_failure_counts(self) -> list[ProjectionFailureCount]:
         """
         Get failure counts grouped by projection.
 
         Returns:
-            List of projection failure statistics, sorted by failure count descending.
-            Each entry contains:
-            - projection_name: Name of the projection
-            - failure_count: Number of failures for this projection
-            - oldest_failure: ISO timestamp of oldest failure
-            - most_recent_failure: ISO timestamp of most recent failure
+            List of ProjectionFailureCount for each affected projection
         """
         with self._create_span_context(
             "eventsource.dlq.get_projection_counts",
@@ -1323,12 +1332,12 @@ class SQLiteDLQRepository(TracingMixin):
             rows = await cursor.fetchall()
 
             return [
-                {
-                    "projection_name": row[0],
-                    "failure_count": row[1],
-                    "oldest_failure": row[2],
-                    "most_recent_failure": row[3],
-                }
+                ProjectionFailureCount(
+                    projection_name=row[0],
+                    failure_count=row[1],
+                    oldest_failure=row[2],
+                    most_recent_failure=row[3],
+                )
                 for row in rows
             ]
 
