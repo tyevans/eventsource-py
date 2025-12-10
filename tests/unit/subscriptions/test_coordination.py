@@ -43,20 +43,8 @@ class TestLeaderElectorProtocol:
 
     def test_protocol_has_required_methods(self) -> None:
         """Test that protocol defines all required abstract methods."""
-        # Get the protocol's required attributes (version-compatible)
-        # Python 3.12+ uses __protocol_attrs__, Python 3.11 uses annotations/members
-        if hasattr(LeaderElector, "__protocol_attrs__"):
-            protocol_attrs = LeaderElector.__protocol_attrs__
-        else:
-            # For Python 3.11, check annotations and defined methods
-            protocol_attrs = set(LeaderElector.__annotations__.keys()) | {
-                name
-                for name in dir(LeaderElector)
-                if not name.startswith("_") and callable(getattr(LeaderElector, name, None))
-            }
-
-        # Verify all expected methods are present
-        expected_methods = {
+        # Verify all expected methods/properties are present on the protocol
+        expected_members = {
             "identity",
             "is_leader",
             "current_leader",
@@ -66,7 +54,9 @@ class TestLeaderElectorProtocol:
             "on_leader_change",
             "remove_leader_change_callback",
         }
-        assert expected_methods.issubset(protocol_attrs)
+        # Simply check that all expected members exist on the protocol class
+        for member in expected_members:
+            assert hasattr(LeaderElector, member), f"Missing member: {member}"
 
     def test_mock_implementation_satisfies_protocol(self) -> None:
         """Test that a mock class satisfying the protocol passes isinstance check."""
@@ -134,27 +124,24 @@ class TestLeaderElectorWithLeaseProtocol:
 
     def test_protocol_extends_leader_elector(self) -> None:
         """Test that LeaderElectorWithLease extends LeaderElector."""
+        # Check that extended protocol has all base protocol members
+        base_members = {
+            "identity",
+            "is_leader",
+            "current_leader",
+            "try_acquire",
+            "release",
+            "renew",
+            "on_leader_change",
+            "remove_leader_change_callback",
+        }
+        for member in base_members:
+            assert hasattr(LeaderElectorWithLease, member), f"Missing base member: {member}"
 
-        # Get protocol attrs in a version-compatible way
-        def get_protocol_attrs(protocol_cls: type) -> set[str]:
-            if hasattr(protocol_cls, "__protocol_attrs__"):
-                return protocol_cls.__protocol_attrs__
-            # For Python 3.11, check annotations and defined methods
-            return set(protocol_cls.__annotations__.keys()) | {
-                name
-                for name in dir(protocol_cls)
-                if not name.startswith("_") and callable(getattr(protocol_cls, name, None))
-            }
-
-        base_attrs = get_protocol_attrs(LeaderElector)
-        extended_attrs = get_protocol_attrs(LeaderElectorWithLease)
-
-        # Extended should have all base attrs
-        assert base_attrs.issubset(extended_attrs)
-
-        # Plus the new lease-specific attrs
-        expected_new = {"lease_duration_seconds", "lease_remaining_seconds", "wait_for_leadership"}
-        assert expected_new.issubset(extended_attrs)
+        # Plus the new lease-specific members
+        lease_members = {"lease_duration_seconds", "lease_remaining_seconds", "wait_for_leadership"}
+        for member in lease_members:
+            assert hasattr(LeaderElectorWithLease, member), f"Missing lease member: {member}"
 
     def test_mock_lease_implementation_satisfies_protocol(self) -> None:
         """Test that mock with lease methods passes extended protocol check."""
