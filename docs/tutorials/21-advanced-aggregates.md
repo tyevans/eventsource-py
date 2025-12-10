@@ -2317,9 +2317,6 @@ Your event sourcing journey continues beyond these tutorials:
 
 ## Related Documentation
 
-- [API Reference](../api/index.md) - Complete API documentation
-- [Guides](../guides/index.md) - Topic-specific deep dives
-- [Examples](../examples/index.md) - Complete code examples
 - [FAQ](../faq.md) - Frequently asked questions
 
 ---

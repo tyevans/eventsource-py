@@ -1507,7 +1507,7 @@ Continue to [Tutorial 9: Error Handling and Recovery](09-error-handling.md) to l
 
 ## Related Documentation
 
-- [Testing Guide](../guides/testing.md) - Comprehensive testing reference
+- [Testing Guide](../development/testing.md) - Comprehensive testing reference
 - [API Reference: Aggregates](../api/aggregates.md) - Complete aggregate API
 - [API Reference: Projections](../api/projections.md) - Complete projection API
 - [Tutorial 3: First Aggregate](03-first-aggregate.md) - Aggregate fundamentals

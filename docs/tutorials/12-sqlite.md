@@ -1367,6 +1367,6 @@ Continue to [Tutorial 13: Subscription Management](13-subscriptions.md) to learn
 ## Related Documentation
 
 - [SQLite Backend Guide](../guides/sqlite-backend.md) - Detailed SQLite configuration
-- [Testing Guide](../guides/testing.md) - Comprehensive testing patterns
+- [Testing Guide](../development/testing.md) - Comprehensive testing patterns
 - [Tutorial 8: Testing](08-testing.md) - Testing fundamentals
 - [Tutorial 11: PostgreSQL](11-postgresql.md) - Production database setup

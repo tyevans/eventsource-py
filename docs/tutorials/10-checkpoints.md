@@ -1196,6 +1196,5 @@ Continue to [Tutorial 11: Using PostgreSQL Event Store](11-postgresql.md) to lea
 ## Related Documentation
 
 - [Projections API Reference](../api/projections.md) - Complete projections API
-- [Repositories API Reference](../api/repositories.md) - Checkpoint repository details
 - [Tutorial 6: Projections](06-projections.md) - Projection fundamentals
 - [Tutorial 13: Subscription Management](13-subscriptions.md) - Advanced event processing

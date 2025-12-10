@@ -1317,4 +1317,4 @@ Continue to [Tutorial 7: Distributing Events with Event Bus](07-event-bus.md) to
 - [Projections API Reference](../api/projections.md) - Complete projections API
 - [Error Handling Guide](../guides/error-handling.md) - Handling projection errors
 - [Tutorial 10: Checkpoint Tracking](10-checkpoints.md) - Production checkpoint management
-- [Tutorial 11: PostgreSQL Projections](11-postgresql-projections.md) - Database-backed read models
+- [Tutorial 11: PostgreSQL](11-postgresql.md) - Database-backed read models

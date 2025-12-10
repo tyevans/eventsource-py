@@ -11,7 +11,7 @@
 Before starting this tutorial, ensure you have:
 
 - Completed [Tutorial 13: Subscription Management](13-subscriptions.md)
-- Understanding of aggregates from [Tutorial 3: Aggregates](03-aggregates.md)
+- Understanding of aggregates from [Tutorial 3: First Aggregate](03-first-aggregate.md)
 - Understanding of repositories from [Tutorial 5: Repositories](05-repositories.md)
 - Python 3.11+ installed
 - eventsource-py installed (`pip install eventsource-py`)
@@ -1060,4 +1060,4 @@ Continue to [Tutorial 15: Production Deployment Guide](15-production.md) to lear
 - [Snapshotting Guide](../guides/snapshotting.md) - Comprehensive snapshotting reference
 - [Snapshotting Migration Guide](../guides/snapshotting-migration.md) - Adding snapshots to existing systems
 - [Tutorial 5: Repositories](05-repositories.md) - Repository pattern fundamentals
-- [Tutorial 3: Aggregates](03-aggregates.md) - Aggregate basics
+- [Tutorial 3: First Aggregate](03-first-aggregate.md) - Aggregate basics

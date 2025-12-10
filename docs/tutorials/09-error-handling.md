@@ -1309,6 +1309,5 @@ You now understand how to handle errors gracefully in event-sourced applications
 ## Related Documentation
 
 - [Error Handling Guide](../guides/error-handling.md) - Comprehensive error handling strategies
-- [API Reference: Exceptions](../api/exceptions.md) - Complete exception API
 - [Tutorial 6: Projections](06-projections.md) - Projection fundamentals
 - [Tutorial 15: Production Patterns](15-production.md) - Production error handling

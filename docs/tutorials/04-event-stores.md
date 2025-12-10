@@ -1122,5 +1122,5 @@ Continue to [Tutorial 5: Repositories Pattern](05-repositories.md) to learn the 
 
 - [API Reference: Event Stores](../api/stores.md) - Complete event store API documentation
 - [Error Handling Guide](../guides/error-handling.md) - Detailed error handling strategies
-- [Tutorial 11: PostgreSQL Event Store](11-postgresql-setup.md) - Production store setup
-- [Tutorial 12: SQLite Event Store](12-sqlite-setup.md) - Development store setup
+- [Tutorial 11: PostgreSQL Event Store](11-postgresql.md) - Production store setup
+- [Tutorial 12: SQLite Event Store](12-sqlite.md) - Development store setup
