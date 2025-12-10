@@ -578,7 +578,7 @@ class TestInMemoryDLQRepositoryConcurrency:
         # All stats calls completed without error
         assert len(stats_results) == 10
         for stats in stats_results:
-            assert "total_failed" in stats
+            assert hasattr(stats, "total_failed")
 
     @pytest.mark.asyncio
     async def test_concurrent_multiple_projections(self, repo: InMemoryDLQRepository):
