@@ -333,35 +333,56 @@ class TaskListProjection(DeclarativeProjection):
         return [t for t in self.tasks.values() if t["assigned_to"] == user_id]
 ```
 
-## Step 8: Add Event Bus (Optional)
+## Step 8: Add Event Bus with SubscriptionManager (Recommended)
 
-The event bus distributes events to handlers in real-time.
+For production use, use `SubscriptionManager` to manage projections. It handles:
+- **Catch-up**: Processing historical events on startup
+- **Live events**: Real-time event delivery
+- **Checkpoints**: Resumable processing after restarts
 
 ```python
-from eventsource import InMemoryEventBus
+from eventsource import InMemoryEventBus, InMemoryCheckpointRepository
+from eventsource.subscriptions import SubscriptionManager, SubscriptionConfig
 
 event_bus = InMemoryEventBus()
+checkpoint_repo = InMemoryCheckpointRepository()
 
 # Create repository with event publishing
 repo = AggregateRepository(
     event_store=event_store,
     aggregate_factory=TaskAggregate,
     aggregate_type="Task",
-    event_publisher=event_bus,  # Events published on save
+    event_publisher=event_bus,
 )
 
-# Subscribe projection
-projection = TaskListProjection()
-event_bus.subscribe_all(projection)
+# Set up SubscriptionManager
+manager = SubscriptionManager(
+    event_store=event_store,
+    event_bus=event_bus,
+    checkpoint_repo=checkpoint_repo,
+)
 
-# Now when you save an aggregate, events are published to the projection
+# Subscribe projection with catch-up from beginning
+projection = TaskListProjection()
+config = SubscriptionConfig(start_from="beginning")
+await manager.subscribe(projection, config=config, name="TaskList")
+
+# Start the manager (catches up, then goes live)
+await manager.start()
+
+# Now when you save an aggregate, events flow to the projection
 task = repo.create_new(uuid4())
 task.create(title="New task", description="Description")
 await repo.save(task)
 
-# Projection is automatically updated
+# Projection has both historical and new events
 print(projection.get_pending_tasks())
+
+# When done, stop gracefully
+await manager.stop()
 ```
+
+See the [Subscriptions Guide](guides/subscriptions.md) for comprehensive documentation.
 
 ## Next Steps
 
@@ -373,10 +394,10 @@ print(projection.get_pending_tasks())
 
 ## Complete Example
 
-Here's a complete working example:
+Here's a complete working example using SubscriptionManager:
 
 ```python
-"""Complete event sourcing example."""
+"""Complete event sourcing example with SubscriptionManager."""
 import asyncio
 from uuid import UUID, uuid4
 
@@ -387,9 +408,10 @@ from eventsource import (
     AggregateRoot,
     InMemoryEventStore,
     InMemoryEventBus,
+    InMemoryCheckpointRepository,
     AggregateRepository,
 )
-from eventsource.projections import DeclarativeProjection, handles
+from eventsource.subscriptions import SubscriptionManager, SubscriptionConfig
 
 
 # Events
@@ -448,30 +470,27 @@ class TaskAggregate(AggregateRoot[TaskState]):
         ))
 
 
-# Projection
-class TaskProjection(DeclarativeProjection):
+# Projection - implements Subscriber protocol
+class TaskProjection:
     def __init__(self):
-        super().__init__()
         self.tasks = {}
 
-    @handles(TaskCreated)
-    async def _on_created(self, event: TaskCreated) -> None:
-        self.tasks[event.aggregate_id] = {"title": event.title, "status": "pending"}
+    def subscribed_to(self) -> list[type[DomainEvent]]:
+        return [TaskCreated, TaskCompleted]
 
-    @handles(TaskCompleted)
-    async def _on_completed(self, event: TaskCompleted) -> None:
-        if event.aggregate_id in self.tasks:
-            self.tasks[event.aggregate_id]["status"] = "completed"
-
-    async def _truncate_read_models(self) -> None:
-        self.tasks.clear()
+    async def handle(self, event: DomainEvent) -> None:
+        if isinstance(event, TaskCreated):
+            self.tasks[event.aggregate_id] = {"title": event.title, "status": "pending"}
+        elif isinstance(event, TaskCompleted):
+            if event.aggregate_id in self.tasks:
+                self.tasks[event.aggregate_id]["status"] = "completed"
 
 
 async def main():
-    # Setup
+    # Setup infrastructure
     store = InMemoryEventStore()
     bus = InMemoryEventBus()
-    projection = TaskProjection()
+    checkpoint_repo = InMemoryCheckpointRepository()
 
     repo = AggregateRepository(
         event_store=store,
@@ -480,7 +499,17 @@ async def main():
         event_publisher=bus,
     )
 
-    bus.subscribe_all(projection)
+    # Set up SubscriptionManager with projection
+    manager = SubscriptionManager(
+        event_store=store,
+        event_bus=bus,
+        checkpoint_repo=checkpoint_repo,
+    )
+
+    projection = TaskProjection()
+    config = SubscriptionConfig(start_from="beginning")
+    await manager.subscribe(projection, config=config, name="TaskList")
+    await manager.start()
 
     # Create tasks
     for i in range(3):
@@ -488,16 +517,24 @@ async def main():
         task.create(f"Task {i + 1}")
         await repo.save(task)
 
+    # Wait for events to be processed
+    await asyncio.sleep(0.1)
+
     # Complete first task
     first_task_id = list(projection.tasks.keys())[0]
     task = await repo.load(first_task_id)
     task.complete()
     await repo.save(task)
 
+    await asyncio.sleep(0.1)
+
     # Show results
     print("All tasks:")
     for task_id, data in projection.tasks.items():
         print(f"  - {data['title']}: {data['status']}")
+
+    # Graceful shutdown
+    await manager.stop()
 
 
 if __name__ == "__main__":

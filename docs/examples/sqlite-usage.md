@@ -553,20 +553,40 @@ async def test_projection_handles_event(projection):
 
 ### Integration Test with Full Stack
 
+For production-like testing, use `SubscriptionManager` to manage projections:
+
 ```python
+import asyncio
 import pytest
 from uuid import uuid4
-from eventsource import SQLiteEventStore, AggregateRepository, InMemoryEventBus
+from eventsource import (
+    SQLiteEventStore,
+    AggregateRepository,
+    InMemoryEventBus,
+    InMemoryCheckpointRepository,
+)
+from eventsource.subscriptions import SubscriptionManager, SubscriptionConfig
 
 @pytest.fixture
 async def full_stack():
-    """Complete stack for integration testing."""
+    """Complete stack for integration testing with SubscriptionManager."""
     async with SQLiteEventStore(":memory:") as store:
         await store.initialize()
 
         bus = InMemoryEventBus()
+        checkpoint_repo = InMemoryCheckpointRepository()
         projection = OrderListProjection()
-        bus.subscribe_all(projection)
+
+        # Set up SubscriptionManager for proper event delivery
+        manager = SubscriptionManager(
+            event_store=store,
+            event_bus=bus,
+            checkpoint_repo=checkpoint_repo,
+        )
+
+        config = SubscriptionConfig(start_from="beginning")
+        await manager.subscribe(projection, config=config, name="OrderList")
+        await manager.start()
 
         repo = AggregateRepository(
             event_store=store,
@@ -580,7 +600,11 @@ async def full_stack():
             "bus": bus,
             "projection": projection,
             "repo": repo,
+            "manager": manager,
         }
+
+        # Cleanup
+        await manager.stop()
 
 @pytest.mark.asyncio
 async def test_full_order_flow(full_stack):
@@ -594,6 +618,9 @@ async def test_full_order_flow(full_stack):
     order.add_item(product_id=uuid4(), name="Widget", quantity=2, price=25.00)
     order.submit()
     await repo.save(order)
+
+    # Wait for events to be processed
+    await asyncio.sleep(0.1)
 
     # Verify aggregate
     loaded = await repo.load(order_id)
