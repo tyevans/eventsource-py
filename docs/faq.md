@@ -239,6 +239,48 @@ def _apply(self, event: DomainEvent) -> None:
 
 **Best practice:** Always add new fields with defaults for backward compatibility.
 
+### Why does eventsource use integers for global ordering instead of UUIDs?
+
+Events have two identifiers with different purposes:
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `event_id` | UUID | **Identity** — Unique identifier for deduplication and idempotency |
+| `global_position` | Integer | **Ordering** — Strict ordering for subscriptions and projections |
+
+**Why not use UUIDs for ordering?**
+
+Standard UUIDs (v1-v4) are not naturally sortable. While UUID v7 adds timestamp-based ordering, we use database-assigned integers because:
+
+1. **Database guarantees strict ordering**: Auto-increment is atomic and sequential
+2. **No clock skew issues**: Multiple writers on different machines won't produce conflicting orderings
+3. **Works with any UUID version**: Your `event_id` can be any UUID version you prefer
+4. **Simple and proven**: This is the standard pattern used by EventStoreDB, Marten, and other event stores
+
+**How it works in the database:**
+
+```sql
+-- PostgreSQL
+CREATE TABLE events (
+    id BIGSERIAL PRIMARY KEY,        -- Global position (auto-increment)
+    event_id UUID NOT NULL UNIQUE,   -- Unique event identifier
+    ...
+);
+
+-- SQLite
+CREATE TABLE events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,  -- Global position
+    event_id TEXT NOT NULL UNIQUE,         -- Unique event identifier (UUID as text)
+    ...
+);
+```
+
+When you append an event, the database assigns the next sequential `id`. Subscriptions use this `global_position` to track progress and ensure gap-free event delivery.
+
+See the [Event Stores API Reference](api/stores.md#stream-position-vs-global-position) for more details.
+
+---
+
 ### What if I need to fix incorrect events?
 
 Events are immutable and cannot be modified. Instead, create compensating events:
