@@ -272,10 +272,10 @@ class TestInMemoryDLQRepository:
             )
 
         stats = await repo.get_failure_stats()
-        assert stats["total_failed"] == 3
-        assert stats["total_retrying"] == 0
-        assert stats["affected_projections"] == 2
-        assert stats["oldest_failure"] is not None
+        assert stats.total_failed == 3
+        assert stats.total_retrying == 0
+        assert stats.affected_projections == 2
+        assert stats.oldest_failure is not None
 
     @pytest.mark.asyncio
     async def test_get_failure_stats_with_retrying(self, repo: InMemoryDLQRepository):
@@ -295,18 +295,18 @@ class TestInMemoryDLQRepository:
         await repo.mark_retrying(events[0]["id"])
 
         stats = await repo.get_failure_stats()
-        assert stats["total_failed"] == 1
-        assert stats["total_retrying"] == 1
-        assert stats["affected_projections"] == 1
+        assert stats.total_failed == 1
+        assert stats.total_retrying == 1
+        assert stats.affected_projections == 1
 
     @pytest.mark.asyncio
     async def test_get_failure_stats_empty(self, repo: InMemoryDLQRepository):
         """Test failure stats with no failures."""
         stats = await repo.get_failure_stats()
-        assert stats["total_failed"] == 0
-        assert stats["total_retrying"] == 0
-        assert stats["affected_projections"] == 0
-        assert stats["oldest_failure"] is None
+        assert stats.total_failed == 0
+        assert stats.total_retrying == 0
+        assert stats.affected_projections == 0
+        assert stats.oldest_failure is None
 
     @pytest.mark.asyncio
     async def test_get_projection_failure_counts(self, repo: InMemoryDLQRepository):
@@ -326,10 +326,10 @@ class TestInMemoryDLQRepository:
         assert len(counts) == 2
 
         # Should be ordered by count descending
-        assert counts[0]["projection_name"] == "HighFailure"
-        assert counts[0]["failure_count"] == 3
-        assert counts[1]["projection_name"] == "LowFailure"
-        assert counts[1]["failure_count"] == 2
+        assert counts[0].projection_name == "HighFailure"
+        assert counts[0].failure_count == 3
+        assert counts[1].projection_name == "LowFailure"
+        assert counts[1].failure_count == 2
 
     @pytest.mark.asyncio
     async def test_delete_resolved_events(self, repo: InMemoryDLQRepository):
@@ -544,7 +544,7 @@ class TestInMemoryDLQRepositoryConcurrency:
         # Verify status transitions happened
         stats = await repo.get_failure_stats()
         # Some should be retrying, some resolved
-        assert stats["total_retrying"] + stats["total_failed"] <= num_events
+        assert stats.total_retrying + stats.total_failed <= num_events
 
     @pytest.mark.asyncio
     async def test_concurrent_stats_during_updates(self, repo: InMemoryDLQRepository):
@@ -606,8 +606,8 @@ class TestInMemoryDLQRepositoryConcurrency:
 
         # Verify all events were added
         stats = await repo.get_failure_stats()
-        assert stats["total_failed"] == num_projections * events_per_projection
-        assert stats["affected_projections"] == num_projections
+        assert stats.total_failed == num_projections * events_per_projection
+        assert stats.affected_projections == num_projections
 
 
 # ============================================================================
@@ -1131,10 +1131,10 @@ class TestSQLiteDLQRepository:
             )
 
         stats = await repo.get_failure_stats()
-        assert stats["total_failed"] == 3
-        assert stats["total_retrying"] == 0
-        assert stats["affected_projections"] == 2
-        assert stats["oldest_failure"] is not None
+        assert stats.total_failed == 3
+        assert stats.total_retrying == 0
+        assert stats.affected_projections == 2
+        assert stats.oldest_failure is not None
 
     @pytest.mark.asyncio
     async def test_get_failure_stats_with_retrying(self, repo: SQLiteDLQRepository):
@@ -1154,18 +1154,18 @@ class TestSQLiteDLQRepository:
         await repo.mark_retrying(events[0]["id"])
 
         stats = await repo.get_failure_stats()
-        assert stats["total_failed"] == 1
-        assert stats["total_retrying"] == 1
-        assert stats["affected_projections"] == 1
+        assert stats.total_failed == 1
+        assert stats.total_retrying == 1
+        assert stats.affected_projections == 1
 
     @pytest.mark.asyncio
     async def test_get_failure_stats_empty(self, repo: SQLiteDLQRepository):
         """Test failure stats with no failures."""
         stats = await repo.get_failure_stats()
-        assert stats["total_failed"] == 0
-        assert stats["total_retrying"] == 0
-        assert stats["affected_projections"] == 0
-        assert stats["oldest_failure"] is None
+        assert stats.total_failed == 0
+        assert stats.total_retrying == 0
+        assert stats.affected_projections == 0
+        assert stats.oldest_failure is None
 
     @pytest.mark.asyncio
     async def test_get_projection_failure_counts(self, repo: SQLiteDLQRepository):
@@ -1185,10 +1185,10 @@ class TestSQLiteDLQRepository:
         assert len(counts) == 2
 
         # Should be ordered by count descending
-        assert counts[0]["projection_name"] == "HighFailure"
-        assert counts[0]["failure_count"] == 3
-        assert counts[1]["projection_name"] == "LowFailure"
-        assert counts[1]["failure_count"] == 2
+        assert counts[0].projection_name == "HighFailure"
+        assert counts[0].failure_count == 3
+        assert counts[1].projection_name == "LowFailure"
+        assert counts[1].failure_count == 2
 
     @pytest.mark.asyncio
     async def test_delete_resolved_events(
