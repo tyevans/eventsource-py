@@ -491,7 +491,7 @@ outbox_id = await repo.add_event(event)
 pending = await repo.get_pending_events(limit=100)
 for entry in pending:
     await event_bus.publish(...)
-    await repo.mark_published(UUID(entry["id"]))
+    await repo.mark_published(entry.id)
 ```
 
 **Implementations:**

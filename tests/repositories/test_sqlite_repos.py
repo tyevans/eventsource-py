@@ -291,7 +291,7 @@ class TestSQLiteOutboxRepositoryAddEvent:
 
         pending = await sqlite_outbox_repo.get_pending_events()
         assert len(pending) == 1
-        assert pending[0]["event_type"] == "TestSampleEvent"
+        assert pending[0].event_type == "TestSampleEvent"
 
     async def test_add_event_preserves_tenant_id(
         self, sqlite_outbox_repo: SQLiteOutboxRepository
@@ -306,7 +306,7 @@ class TestSQLiteOutboxRepositoryAddEvent:
         await sqlite_outbox_repo.add_event(event)
 
         pending = await sqlite_outbox_repo.get_pending_events()
-        assert pending[0]["tenant_id"] == str(tenant_id)
+        assert pending[0].tenant_id == tenant_id
 
     async def test_add_event_without_tenant_id(
         self, sqlite_outbox_repo: SQLiteOutboxRepository
@@ -320,7 +320,7 @@ class TestSQLiteOutboxRepositoryAddEvent:
         await sqlite_outbox_repo.add_event(event)
 
         pending = await sqlite_outbox_repo.get_pending_events()
-        assert pending[0]["tenant_id"] is None
+        assert pending[0].tenant_id is None
 
 
 class TestSQLiteOutboxRepositoryGetPendingEvents:
@@ -350,9 +350,9 @@ class TestSQLiteOutboxRepositoryGetPendingEvents:
         assert len(pending) == 3
 
         # Verify FIFO order
-        assert "event_0" in pending[0]["event_data"]
-        assert "event_1" in pending[1]["event_data"]
-        assert "event_2" in pending[2]["event_data"]
+        assert "event_0" in pending[0].event_data
+        assert "event_1" in pending[1].event_data
+        assert "event_2" in pending[2].event_data
 
     async def test_get_pending_events_limit(
         self, sqlite_outbox_repo: SQLiteOutboxRepository
@@ -375,7 +375,7 @@ class TestSQLiteOutboxRepositoryMarkPublished:
         await sqlite_outbox_repo.add_event(event)
 
         pending = await sqlite_outbox_repo.get_pending_events()
-        outbox_id = int(pending[0]["id"])
+        outbox_id = pending[0].id
 
         await sqlite_outbox_repo.mark_published(outbox_id)
 
@@ -395,7 +395,7 @@ class TestSQLiteOutboxRepositoryMarkFailed:
         await sqlite_outbox_repo.add_event(event)
 
         pending = await sqlite_outbox_repo.get_pending_events()
-        outbox_id = int(pending[0]["id"])
+        outbox_id = pending[0].id
 
         await sqlite_outbox_repo.mark_failed(outbox_id, "Connection error")
 
@@ -415,13 +415,13 @@ class TestSQLiteOutboxRepositoryIncrementRetry:
         await sqlite_outbox_repo.add_event(event)
 
         pending = await sqlite_outbox_repo.get_pending_events()
-        outbox_id = int(pending[0]["id"])
+        outbox_id = pending[0].id
 
         await sqlite_outbox_repo.increment_retry(outbox_id, "First retry error")
         await sqlite_outbox_repo.increment_retry(outbox_id, "Second retry error")
 
         pending = await sqlite_outbox_repo.get_pending_events()
-        assert pending[0]["retry_count"] == 2
+        assert pending[0].retry_count == 2
 
 
 class TestSQLiteOutboxRepositoryCleanupPublished:
@@ -437,7 +437,7 @@ class TestSQLiteOutboxRepositoryCleanupPublished:
         await sqlite_outbox_repo.add_event(event)
 
         pending = await sqlite_outbox_repo.get_pending_events()
-        outbox_id = int(pending[0]["id"])
+        outbox_id = pending[0].id
         await sqlite_outbox_repo.mark_published(outbox_id)
 
         # Manually backdate the published_at
@@ -447,7 +447,7 @@ class TestSQLiteOutboxRepositoryCleanupPublished:
             SET published_at = datetime('now', '-10 days')
             WHERE id = ?
             """,
-            (outbox_id,),
+            (str(outbox_id),),
         )
         await sqlite_connection.commit()
 
@@ -460,7 +460,7 @@ class TestSQLiteOutboxRepositoryCleanupPublished:
         await sqlite_outbox_repo.add_event(event)
 
         pending = await sqlite_outbox_repo.get_pending_events()
-        outbox_id = int(pending[0]["id"])
+        outbox_id = pending[0].id
         await sqlite_outbox_repo.mark_published(outbox_id)
 
         deleted = await sqlite_outbox_repo.cleanup_published(days=7)
@@ -487,7 +487,7 @@ class TestSQLiteOutboxRepositoryGetStats:
             await sqlite_outbox_repo.add_event(event)
 
         pending = await sqlite_outbox_repo.get_pending_events()
-        outbox_ids = [int(p["id"]) for p in pending]
+        outbox_ids = [p.id for p in pending]
 
         # Publish 2, fail 1, leave 2 pending
         await sqlite_outbox_repo.mark_published(outbox_ids[0])
@@ -521,7 +521,7 @@ class TestSQLiteOutboxRepositoryMultipleEvents:
         assert len(pending) == 3
 
         for entry in pending:
-            assert entry["aggregate_id"] == str(aggregate_id)
+            assert entry.aggregate_id == aggregate_id
 
 
 # ============================================================================
