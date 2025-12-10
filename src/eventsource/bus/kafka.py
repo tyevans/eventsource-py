@@ -68,7 +68,7 @@ import ssl
 import time
 import uuid
 from collections import defaultdict
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import TracebackType
@@ -79,6 +79,7 @@ from eventsource.bus.interface import (
     EventHandlerFunc,
 )
 from eventsource.events.base import DomainEvent
+from eventsource.handlers.adapter import HandlerAdapter
 from eventsource.observability import OTEL_AVAILABLE, TracingMixin
 from eventsource.observability.attributes import (
     ATTR_AGGREGATE_ID,
@@ -738,10 +739,6 @@ class KafkaEventBusStats:
         }
 
 
-# Type alias for handler storage (follows Redis/RabbitMQ pattern)
-HandlerWrapper = tuple[Any, Callable[[DomainEvent], Any]]
-
-
 class KafkaEventBus(TracingMixin, EventBus):
     """Kafka implementation of the EventBus interface.
 
@@ -800,8 +797,8 @@ class KafkaEventBus(TracingMixin, EventBus):
         self._consume_task: asyncio.Task[None] | None = None
 
         # Handler storage (follows Redis/RabbitMQ pattern)
-        self._handlers: dict[str, list[HandlerWrapper]] = defaultdict(list)
-        self._wildcard_handlers: list[HandlerWrapper] = []
+        self._handlers: dict[str, list[HandlerAdapter]] = defaultdict(list)
+        self._wildcard_handlers: list[HandlerAdapter] = []
 
         # Statistics
         self._stats = KafkaEventBusStats()
@@ -1506,93 +1503,6 @@ class KafkaEventBus(TracingMixin, EventBus):
         return headers
 
     # =========================================================================
-    # Handler Normalization
-    # =========================================================================
-
-    def _normalize_handler(
-        self,
-        handler: FlexibleEventHandler | EventHandlerFunc,
-    ) -> HandlerWrapper:
-        """Normalize a handler to a consistent async callable format.
-
-        Converts both sync and async handlers to a unified format for
-        internal storage and invocation. This allows the bus to handle
-        any type of handler uniformly during event dispatch.
-
-        Args:
-            handler: The handler to normalize. Can be:
-                - An EventHandler instance with handle() method
-                - A sync callable (function or lambda)
-                - An async callable (coroutine function)
-
-        Returns:
-            Tuple of (original_handler, normalized_async_callable).
-            The original handler is preserved for identity comparison
-            during unsubscribe operations.
-
-        Raises:
-            TypeError: If handler is not a valid handler type.
-        """
-        # If it's an object with a handle method (EventHandler pattern)
-        if hasattr(handler, "handle"):
-            original = handler
-            method = handler.handle
-
-            if asyncio.iscoroutinefunction(method):
-                return (original, method)
-            else:
-                # Wrap sync method to be async
-                async def async_method_wrapper(event: DomainEvent) -> Any:
-                    result = method(event)
-                    # Handle case where method returns a coroutine unexpectedly
-                    if asyncio.iscoroutine(result):
-                        return await result
-                    return result
-
-                return (original, async_method_wrapper)
-
-        # It's a callable (function, lambda, or callable object)
-        elif callable(handler):
-            original = handler
-
-            if asyncio.iscoroutinefunction(handler):
-                return (original, handler)
-            else:
-                # Wrap sync callable to be async
-                callable_handler = handler
-
-                async def async_callable_wrapper(event: DomainEvent) -> Any:
-                    result = callable_handler(event)
-                    # Handle case where callable returns a coroutine unexpectedly
-                    if asyncio.iscoroutine(result):
-                        return await result
-                    return result
-
-                return (original, async_callable_wrapper)
-        else:
-            raise TypeError(
-                f"Handler must have a handle() method or be callable, got {type(handler)}"
-            )
-
-    def _get_handler_name(self, handler: Any) -> str:
-        """Get a descriptive name for a handler for logging.
-
-        Extracts the most meaningful name from a handler for use in
-        log messages and debugging.
-
-        Args:
-            handler: The handler to describe.
-
-        Returns:
-            A string name for the handler.
-        """
-        if hasattr(handler, "__name__"):
-            return str(handler.__name__)
-        if hasattr(handler, "__class__"):
-            return str(handler.__class__.__name__)
-        return repr(handler)
-
-    # =========================================================================
     # Subscribe Methods
     # =========================================================================
 
@@ -1622,14 +1532,14 @@ class KafkaEventBus(TracingMixin, EventBus):
             >>> bus.subscribe(OrderCreated, MyEventHandler())
         """
         event_type_name = event_type.__name__
-        wrapped = self._normalize_handler(handler)
-        self._handlers[event_type_name].append(wrapped)
+        adapter = HandlerAdapter(handler)
+        self._handlers[event_type_name].append(adapter)
 
         logger.debug(
             "Handler subscribed",
             extra={
                 "event_type": event_type_name,
-                "handler": self._get_handler_name(handler),
+                "handler": adapter.name,
                 "total_handlers": len(self._handlers[event_type_name]),
             },
         )
@@ -1659,6 +1569,7 @@ class KafkaEventBus(TracingMixin, EventBus):
             >>> bus.unsubscribe(OrderCreated, handler)  # Returns False
         """
         event_type_name = event_type.__name__
+        target_adapter = HandlerAdapter(handler)
 
         if event_type_name not in self._handlers:
             logger.debug(
@@ -1667,17 +1578,17 @@ class KafkaEventBus(TracingMixin, EventBus):
             )
             return False
 
-        # Find and remove the handler by identity
-        handlers = self._handlers[event_type_name]
-        for i, (original, _) in enumerate(handlers):
-            if original is handler:
-                handlers.pop(i)
+        # Find and remove the handler by identity (via HandlerAdapter equality)
+        adapters = self._handlers[event_type_name]
+        for i, adapter in enumerate(adapters):
+            if adapter == target_adapter:
+                adapters.pop(i)
                 logger.debug(
                     "Handler unsubscribed",
                     extra={
                         "event_type": event_type_name,
-                        "handler": self._get_handler_name(handler),
-                        "remaining_handlers": len(handlers),
+                        "handler": adapter.name,
+                        "remaining_handlers": len(adapters),
                     },
                 )
                 return True
@@ -1686,7 +1597,7 @@ class KafkaEventBus(TracingMixin, EventBus):
             "Handler not found for event type",
             extra={
                 "event_type": event_type_name,
-                "handler": self._get_handler_name(handler),
+                "handler": target_adapter.name,
             },
         )
         return False
@@ -1715,10 +1626,11 @@ class KafkaEventBus(TracingMixin, EventBus):
         for event_type in event_types:
             self.subscribe(event_type, subscriber)
 
+        adapter = HandlerAdapter(subscriber)
         logger.info(
             "Subscriber registered for all event types",
             extra={
-                "subscriber": self._get_handler_name(subscriber),
+                "subscriber": adapter.name,
                 "event_types": [et.__name__ for et in event_types],
                 "event_count": len(event_types),
             },
@@ -1747,13 +1659,13 @@ class KafkaEventBus(TracingMixin, EventBus):
             ...     await log_event(event)
             >>> bus.subscribe_to_all_events(audit_log)
         """
-        wrapped = self._normalize_handler(handler)
-        self._wildcard_handlers.append(wrapped)
+        adapter = HandlerAdapter(handler)
+        self._wildcard_handlers.append(adapter)
 
         logger.debug(
             "Wildcard handler subscribed",
             extra={
-                "handler": self._get_handler_name(handler),
+                "handler": adapter.name,
                 "total_wildcard_handlers": len(self._wildcard_handlers),
             },
         )
@@ -1776,13 +1688,15 @@ class KafkaEventBus(TracingMixin, EventBus):
             >>> bus.subscribe_to_all_events(audit_handler)
             >>> bus.unsubscribe_from_all_events(audit_handler)  # Returns True
         """
-        for i, (original, _) in enumerate(self._wildcard_handlers):
-            if original is handler:
+        target_adapter = HandlerAdapter(handler)
+
+        for i, adapter in enumerate(self._wildcard_handlers):
+            if adapter == target_adapter:
                 self._wildcard_handlers.pop(i)
                 logger.debug(
                     "Wildcard handler unsubscribed",
                     extra={
-                        "handler": self._get_handler_name(handler),
+                        "handler": adapter.name,
                         "remaining_wildcard_handlers": len(self._wildcard_handlers),
                     },
                 )
@@ -1790,7 +1704,7 @@ class KafkaEventBus(TracingMixin, EventBus):
 
         logger.debug(
             "Wildcard handler not found",
-            extra={"handler": self._get_handler_name(handler)},
+            extra={"handler": target_adapter.name},
         )
         return False
 
@@ -1849,7 +1763,7 @@ class KafkaEventBus(TracingMixin, EventBus):
         """
         return len(self._wildcard_handlers)
 
-    def get_handlers_for_event(self, event_type_name: str) -> list[HandlerWrapper]:
+    def get_handlers_for_event(self, event_type_name: str) -> list[HandlerAdapter]:
         """Get all handlers that should process an event type.
 
         Includes both type-specific handlers and wildcard handlers.
@@ -1859,17 +1773,17 @@ class KafkaEventBus(TracingMixin, EventBus):
             event_type_name: The event type name (e.g., "OrderCreated").
 
         Returns:
-            List of handler wrappers to invoke. Type-specific handlers
+            List of HandlerAdapter instances to invoke. Type-specific handlers
             come first, followed by wildcard handlers.
 
         Example:
             >>> handlers = bus.get_handlers_for_event("OrderCreated")
-            >>> for original, async_handler in handlers:
-            ...     await async_handler(event)
+            >>> for adapter in handlers:
+            ...     await adapter.handle(event)
         """
-        handlers = list(self._handlers.get(event_type_name, []))
-        handlers.extend(self._wildcard_handlers)
-        return handlers
+        adapters = list(self._handlers.get(event_type_name, []))
+        adapters.extend(self._wildcard_handlers)
+        return adapters
 
     # =========================================================================
     # Consumer Methods
@@ -2230,7 +2144,7 @@ class KafkaEventBus(TracingMixin, EventBus):
     async def _dispatch_to_handlers(
         self,
         event: DomainEvent,
-        handlers: list[HandlerWrapper],
+        handlers: list[HandlerAdapter],
     ) -> None:
         """Dispatch an event to all registered handlers with optional tracing.
 
@@ -2239,13 +2153,13 @@ class KafkaEventBus(TracingMixin, EventBus):
 
         Args:
             event: The event to dispatch.
-            handlers: List of handler wrappers to invoke.
+            handlers: List of HandlerAdapter instances to invoke.
 
         Raises:
             Exception: Re-raises any handler exception.
         """
-        for original, handler_func in handlers:
-            handler_name = self._get_handler_name(original)
+        for adapter in handlers:
+            handler_name = adapter.name
 
             # Start timing for handler duration histogram
             handler_start_time = time.perf_counter()
@@ -2271,7 +2185,7 @@ class KafkaEventBus(TracingMixin, EventBus):
                             },
                         )
 
-                        await handler_func(event)
+                        await adapter.handle(event)
 
                         # Record handler duration and increment counter on success
                         if self._metrics:
@@ -2345,7 +2259,7 @@ class KafkaEventBus(TracingMixin, EventBus):
                         },
                     )
 
-                    await handler_func(event)
+                    await adapter.handle(event)
 
                     # Record handler duration and increment counter on success
                     if self._metrics:
@@ -2894,7 +2808,6 @@ class KafkaEventBus(TracingMixin, EventBus):
 
 
 __all__ = [
-    "HandlerWrapper",
     "KAFKA_AVAILABLE",
     "KafkaEventBus",
     "KafkaEventBusConfig",

@@ -857,8 +857,14 @@ class TestRepositoryBackgroundSnapshot:
 # =============================================================================
 
 
-class TestShouldCreateSnapshot:
-    """Test _should_create_snapshot method logic."""
+class TestSnapshotStrategyLogic:
+    """Test snapshot strategy logic via SnapshotStrategy classes.
+
+    Note: These tests validate the strategy logic that was previously in
+    AggregateRepository._should_create_snapshot(). The logic was extracted
+    to SnapshotStrategy classes (ThresholdSnapshotStrategy, etc.) for SOLID
+    compliance. We test via the strategy classes directly.
+    """
 
     @pytest.fixture
     def event_store(self) -> InMemoryEventStore:
@@ -869,7 +875,7 @@ class TestShouldCreateSnapshot:
         return InMemorySnapshotStore()
 
     def test_returns_false_without_store(self, event_store: InMemoryEventStore) -> None:
-        """Returns False without snapshot store."""
+        """Without snapshot store, repository has no snapshot strategy."""
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,
@@ -877,114 +883,84 @@ class TestShouldCreateSnapshot:
             snapshot_threshold=100,
         )
 
-        aggregate = TestAggregate(uuid4())
-        aggregate._version = 100
-
-        assert repo._should_create_snapshot(aggregate) is False
+        # Without snapshot_store, no strategy is created
+        assert repo._snapshot_manager is None
 
     def test_returns_false_without_threshold(
         self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
-        """Returns False without threshold."""
-        repo = AggregateRepository(
-            event_store=event_store,
-            aggregate_factory=TestAggregate,
-            aggregate_type="Test",
-            snapshot_store=snapshot_store,
-        )
+        """Without threshold, ThresholdSnapshotStrategy.should_snapshot returns False."""
+        from eventsource.snapshots.strategies import ThresholdSnapshotStrategy
 
+        # Strategy with no threshold never triggers auto-snapshot
+        strategy = ThresholdSnapshotStrategy(threshold=None)
         aggregate = TestAggregate(uuid4())
         aggregate._version = 100
 
-        assert repo._should_create_snapshot(aggregate) is False
+        assert strategy.should_snapshot(aggregate, events_since_snapshot=100) is False
 
     def test_returns_false_in_manual_mode(
         self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
-        """Returns False in manual mode."""
-        repo = AggregateRepository(
-            event_store=event_store,
-            aggregate_factory=TestAggregate,
-            aggregate_type="Test",
-            snapshot_store=snapshot_store,
-            snapshot_threshold=100,
-            snapshot_mode="manual",
-        )
+        """Manual mode (NoSnapshotStrategy) doesn't auto-snapshot."""
+        from eventsource.snapshots.strategies import NoSnapshotStrategy
 
+        strategy = NoSnapshotStrategy()
         aggregate = TestAggregate(uuid4())
         aggregate._version = 100
 
-        assert repo._should_create_snapshot(aggregate) is False
+        # NoSnapshotStrategy.should_snapshot always returns False
+        assert strategy.should_snapshot(aggregate, events_since_snapshot=100) is False
 
     def test_returns_true_at_threshold(
         self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """Returns True at exact threshold."""
-        repo = AggregateRepository(
-            event_store=event_store,
-            aggregate_factory=TestAggregate,
-            aggregate_type="Test",
-            snapshot_store=snapshot_store,
-            snapshot_threshold=100,
-        )
+        from eventsource.snapshots.strategies import ThresholdSnapshotStrategy
 
+        strategy = ThresholdSnapshotStrategy(threshold=100)
         aggregate = TestAggregate(uuid4())
         aggregate._version = 100
 
-        assert repo._should_create_snapshot(aggregate) is True
+        assert strategy.should_snapshot(aggregate, events_since_snapshot=100) is True
 
     def test_returns_true_at_threshold_multiples(
         self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """Returns True at threshold multiples."""
-        repo = AggregateRepository(
-            event_store=event_store,
-            aggregate_factory=TestAggregate,
-            aggregate_type="Test",
-            snapshot_store=snapshot_store,
-            snapshot_threshold=100,
-        )
+        from eventsource.snapshots.strategies import ThresholdSnapshotStrategy
 
+        strategy = ThresholdSnapshotStrategy(threshold=100)
         aggregate = TestAggregate(uuid4())
 
         for version in [100, 200, 300, 500, 1000]:
             aggregate._version = version
-            assert repo._should_create_snapshot(aggregate) is True
+            assert strategy.should_snapshot(aggregate, events_since_snapshot=version) is True
 
     def test_returns_false_between_thresholds(
         self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """Returns False between threshold multiples."""
-        repo = AggregateRepository(
-            event_store=event_store,
-            aggregate_factory=TestAggregate,
-            aggregate_type="Test",
-            snapshot_store=snapshot_store,
-            snapshot_threshold=100,
-        )
+        from eventsource.snapshots.strategies import ThresholdSnapshotStrategy
 
+        strategy = ThresholdSnapshotStrategy(threshold=100)
         aggregate = TestAggregate(uuid4())
 
         for version in [1, 50, 99, 101, 150, 199]:
             aggregate._version = version
-            assert repo._should_create_snapshot(aggregate) is False
+            assert strategy.should_snapshot(aggregate, events_since_snapshot=version) is False
 
     def test_returns_false_at_version_zero(
         self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
-        """Returns False at version 0."""
-        repo = AggregateRepository(
-            event_store=event_store,
-            aggregate_factory=TestAggregate,
-            aggregate_type="Test",
-            snapshot_store=snapshot_store,
-            snapshot_threshold=100,
-        )
+        """Returns False at version zero."""
+        from eventsource.snapshots.strategies import ThresholdSnapshotStrategy
 
+        strategy = ThresholdSnapshotStrategy(threshold=100)
         aggregate = TestAggregate(uuid4())
         aggregate._version = 0
 
-        assert repo._should_create_snapshot(aggregate) is False
+        assert strategy.should_snapshot(aggregate, events_since_snapshot=0) is False
 
 
 # =============================================================================
