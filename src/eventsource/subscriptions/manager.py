@@ -32,16 +32,11 @@ Error Handling:
     >>> manager.on_critical_error(send_pager_alert)
 """
 
-import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from eventsource.observability.attributes import (
-    ATTR_EVENTS_PROCESSED,
-    ATTR_POSITION,
-    ATTR_SUBSCRIPTION_NAME,
-)
+from eventsource.observability.attributes import ATTR_SUBSCRIPTION_NAME
 from eventsource.observability.tracing import TracingMixin
 from eventsource.subscriptions.config import SubscriptionConfig
 from eventsource.subscriptions.error_handling import (
@@ -51,21 +46,18 @@ from eventsource.subscriptions.error_handling import (
     ErrorSeverity,
     SubscriptionErrorHandler,
 )
-from eventsource.subscriptions.exceptions import (
-    SubscriptionAlreadyExistsError,
-    SubscriptionError,
-)
 from eventsource.subscriptions.health import (
     HealthCheckConfig,
     HealthCheckResult,
-    HealthStatus,
     LivenessStatus,
     ManagerHealth,
-    ManagerHealthChecker,
     ReadinessStatus,
     SubscriptionHealth,
-    SubscriptionHealthChecker,
 )
+from eventsource.subscriptions.health_provider import HealthCheckProvider
+from eventsource.subscriptions.lifecycle import SubscriptionLifecycleManager
+from eventsource.subscriptions.pause_resume import PauseResumeController
+from eventsource.subscriptions.registry import SubscriptionRegistry
 from eventsource.subscriptions.shutdown import (
     ShutdownCoordinator,
     ShutdownPhase,
@@ -74,12 +66,7 @@ from eventsource.subscriptions.shutdown import (
 from eventsource.subscriptions.subscription import (
     PauseReason,
     Subscription,
-    SubscriptionState,
     SubscriptionStatus,
-)
-from eventsource.subscriptions.transition import (
-    StartFromResolver,
-    TransitionCoordinator,
 )
 
 if TYPE_CHECKING:
@@ -99,6 +86,13 @@ class SubscriptionManager(TracingMixin):
     The SubscriptionManager coordinates between the event store (for historical
     events) and the event bus (for live events), providing a seamless subscription
     experience for projections.
+
+    This class follows the Composition pattern, delegating to specialized
+    components for specific responsibilities:
+    - SubscriptionRegistry: Subscription CRUD operations
+    - SubscriptionLifecycleManager: Start/stop operations
+    - HealthCheckProvider: Health monitoring and probes
+    - PauseResumeController: Pause/resume operations
 
     Example:
         >>> from eventsource.subscriptions import SubscriptionManager, SubscriptionConfig
@@ -147,30 +141,50 @@ class SubscriptionManager(TracingMixin):
         self.event_bus = event_bus
         self.checkpoint_repo = checkpoint_repo
         self._dlq_repo = dlq_repo
-
-        self._subscriptions: dict[str, Subscription] = {}
-        self._coordinators: dict[str, TransitionCoordinator] = {}
         self._running = False
-        self._start_resolver = StartFromResolver(event_store, checkpoint_repo)
-        self._lock = asyncio.Lock()
+
+        # Configuration
+        self._error_handling_config = error_handling_config or ErrorHandlingConfig()
+        self._health_check_config = health_check_config or HealthCheckConfig()
+
+        # Error handlers (managed by manager, shared with health provider)
+        self._error_handlers: dict[str, SubscriptionErrorHandler] = {}
+        self._global_error_callbacks: list[ErrorCallback] = []
+
+        # Composed components
+        self._registry = SubscriptionRegistry()
+        self._lifecycle = SubscriptionLifecycleManager(
+            event_store=event_store,
+            event_bus=event_bus,
+            checkpoint_repo=checkpoint_repo,
+            enable_tracing=enable_tracing,
+        )
+        self._health_provider = HealthCheckProvider(
+            registry=self._registry,
+            error_handlers=self._error_handlers,
+            config=self._health_check_config,
+            lock=self._registry.lock,
+        )
+        self._pause_resume = PauseResumeController(
+            registry=self._registry,
+            lifecycle=self._lifecycle,
+            enable_tracing=enable_tracing,
+        )
+
+        # Shutdown coordination
         self._shutdown_coordinator = ShutdownCoordinator(
             timeout=shutdown_timeout,
             drain_timeout=drain_timeout,
         )
         self._last_shutdown_result: ShutdownResult | None = None
 
-        # Error handling
-        self._error_handling_config = error_handling_config or ErrorHandlingConfig()
-        self._error_handlers: dict[str, SubscriptionErrorHandler] = {}
-        self._global_error_callbacks: list[ErrorCallback] = []
-
-        # Health checks
-        self._health_check_config = health_check_config or HealthCheckConfig()
-        self._health_checkers: dict[str, SubscriptionHealthChecker] = {}
-
         # Manager tracking
         self._created_at = datetime.now(UTC)
         self._started_at: datetime | None = None
+
+    # =========================================================================
+    # Subscription Management (delegates to SubscriptionRegistry)
+    # =========================================================================
 
     async def subscribe(
         self,
@@ -202,57 +216,31 @@ class SubscriptionManager(TracingMixin):
             ...     SubscriptionConfig(start_from="beginning", batch_size=500)
             ... )
         """
-        # Use provided name or subscriber class name as subscription name
         subscription_name = name or subscriber.__class__.__name__
-        config = config or SubscriptionConfig()
 
         with self._create_span_context(
             "eventsource.subscription_manager.subscribe",
             {ATTR_SUBSCRIPTION_NAME: subscription_name},
         ):
-            async with self._lock:
-                if subscription_name in self._subscriptions:
-                    raise SubscriptionAlreadyExistsError(subscription_name)
+            subscription = await self._registry.register(subscriber, config, name)
 
-                subscription = Subscription(
-                    name=subscription_name,
-                    config=config,
-                    subscriber=subscriber,
-                )
+            # Create error handler for this subscription
+            error_handler = SubscriptionErrorHandler(
+                subscription_name=subscription_name,
+                config=self._error_handling_config,
+                dlq_repo=self._dlq_repo,
+            )
 
-                self._subscriptions[subscription_name] = subscription
+            # Register global callbacks on the subscription handler
+            for callback in self._global_error_callbacks:
+                error_handler.on_error(callback)
 
-                # Create error handler for this subscription
-                error_handler = SubscriptionErrorHandler(
-                    subscription_name=subscription_name,
-                    config=self._error_handling_config,
-                    dlq_repo=self._dlq_repo,
-                )
+            self._error_handlers[subscription_name] = error_handler
 
-                # Register global callbacks on the subscription handler
-                for callback in self._global_error_callbacks:
-                    error_handler.on_error(callback)
+            # Register with health provider
+            self._health_provider.register_subscription(subscription, error_handler)
 
-                self._error_handlers[subscription_name] = error_handler
-
-                # Create health checker for this subscription
-                health_checker = SubscriptionHealthChecker(
-                    subscription=subscription,
-                    config=self._health_check_config,
-                    error_handler=error_handler,
-                )
-                self._health_checkers[subscription_name] = health_checker
-
-                logger.info(
-                    "Subscription registered",
-                    extra={
-                        "subscription": subscription_name,
-                        "start_from": str(config.start_from),
-                        "batch_size": config.batch_size,
-                    },
-                )
-
-                return subscription
+            return subscription
 
     async def unsubscribe(self, name: str) -> bool:
         """
@@ -270,34 +258,64 @@ class SubscriptionManager(TracingMixin):
             "eventsource.subscription_manager.unsubscribe",
             {ATTR_SUBSCRIPTION_NAME: name},
         ):
-            async with self._lock:
-                if name not in self._subscriptions:
-                    return False
+            # Stop coordinator if running
+            coordinator = self._lifecycle.remove_coordinator(name)
+            if coordinator:
+                await coordinator.stop()
 
-                # Stop coordinator if running
-                if name in self._coordinators:
-                    coordinator = self._coordinators[name]
-                    await coordinator.stop()
-                    del self._coordinators[name]
+            # Unregister from registry
+            subscription = await self._registry.unregister(name)
+            if subscription is None:
+                return False
 
-                subscription = self._subscriptions[name]
-                if not subscription.is_terminal:
-                    await subscription.transition_to(SubscriptionState.STOPPED)
+            # Clean up error handler and health checker
+            self._error_handlers.pop(name, None)
+            self._health_provider.unregister_subscription(name)
 
-                del self._subscriptions[name]
+            return True
 
-                # Clean up error handler and health checker
-                if name in self._error_handlers:
-                    del self._error_handlers[name]
-                if name in self._health_checkers:
-                    del self._health_checkers[name]
+    @property
+    def subscriptions(self) -> list[Subscription]:
+        """Get all registered subscriptions."""
+        return self._registry.get_all()
 
-                logger.info(
-                    "Subscription unregistered",
-                    extra={"subscription": name},
-                )
+    @property
+    def subscription_names(self) -> list[str]:
+        """Get all registered subscription names."""
+        return self._registry.get_names()
 
-                return True
+    @property
+    def subscription_count(self) -> int:
+        """Get the number of registered subscriptions."""
+        return len(self._registry)
+
+    def get_subscription(self, name: str) -> Subscription | None:
+        """
+        Get a subscription by name.
+
+        Args:
+            name: The subscription name
+
+        Returns:
+            The Subscription, or None if not found
+        """
+        return self._registry.get(name)
+
+    def get_all_statuses(self) -> dict[str, SubscriptionStatus]:
+        """
+        Get status snapshots of all subscriptions.
+
+        Returns a dictionary mapping subscription names to their
+        SubscriptionStatus objects.
+
+        Returns:
+            Dictionary of subscription name to SubscriptionStatus
+        """
+        return self._registry.get_statuses()
+
+    # =========================================================================
+    # Lifecycle Management (delegates to SubscriptionLifecycleManager)
+    # =========================================================================
 
     async def start(
         self,
@@ -338,15 +356,14 @@ class SubscriptionManager(TracingMixin):
 
         self._running = True
         self._started_at = datetime.now(UTC)
+        self._health_provider.set_started(self._started_at)
 
         # Determine which subscriptions to start
         if subscription_names is None:
-            subscriptions_to_start = list(self._subscriptions.items())
+            subscriptions_to_start = self._registry.get_all()
         else:
             subscriptions_to_start = [
-                (name, sub)
-                for name, sub in self._subscriptions.items()
-                if name in subscription_names
+                sub for sub in self._registry.get_all() if sub.name in subscription_names
             ]
 
         logger.info(
@@ -357,152 +374,7 @@ class SubscriptionManager(TracingMixin):
             },
         )
 
-        results: dict[str, Exception | None] = {}
-
-        if concurrent and len(subscriptions_to_start) > 1:
-            # Start all subscriptions concurrently
-            tasks = []
-            for name, subscription in subscriptions_to_start:
-                task = asyncio.create_task(
-                    self._start_subscription_isolated(subscription),
-                    name=f"start_{name}",
-                )
-                tasks.append((name, task))
-
-            # Wait for all to complete (exceptions are returned, not raised)
-            for name, task in tasks:
-                try:
-                    result = await task
-                    results[name] = result
-                except Exception as e:
-                    # Should not happen with _start_subscription_isolated,
-                    # but handle it for safety
-                    results[name] = e
-                    logger.error(
-                        "Unexpected error starting subscription",
-                        extra={"subscription": name, "error": str(e)},
-                        exc_info=True,
-                    )
-        else:
-            # Start sequentially (single subscription or legacy mode)
-            for name, subscription in subscriptions_to_start:
-                result = await self._start_subscription_isolated(subscription)
-                results[name] = result
-
-        # Log summary
-        succeeded = sum(1 for r in results.values() if r is None)
-        failed = sum(1 for r in results.values() if r is not None)
-
-        if failed > 0:
-            logger.warning(
-                "Some subscriptions failed to start",
-                extra={
-                    "succeeded": succeeded,
-                    "failed": failed,
-                    "failures": {k: str(v) for k, v in results.items() if v is not None},
-                },
-            )
-        else:
-            logger.info(
-                "All subscriptions started successfully",
-                extra={"count": succeeded},
-            )
-
-        return results
-
-    async def _start_subscription_isolated(self, subscription: Subscription) -> Exception | None:
-        """
-        Start a single subscription with isolation.
-
-        This method catches and returns exceptions instead of raising them,
-        ensuring that one subscription failure does not affect others.
-
-        Args:
-            subscription: The subscription to start
-
-        Returns:
-            None if successful, Exception if failed
-        """
-        try:
-            await self._start_subscription(subscription)
-            return None
-        except Exception as e:
-            # Error is already logged and subscription state is set in _start_subscription
-            return e
-
-    async def _start_subscription(self, subscription: Subscription) -> None:
-        """
-        Start a single subscription.
-
-        Args:
-            subscription: The subscription to start
-        """
-        name = subscription.name
-
-        with self._create_span_context(
-            "eventsource.subscription_manager.start_subscription",
-            {ATTR_SUBSCRIPTION_NAME: name},
-        ) as span:
-            try:
-                # Resolve starting position
-                start_position = await self._start_resolver.resolve(subscription)
-                subscription.last_processed_position = start_position
-
-                if span:
-                    span.set_attribute(ATTR_POSITION, start_position)
-
-                logger.info(
-                    "Starting subscription",
-                    extra={
-                        "subscription": name,
-                        "start_position": start_position,
-                    },
-                )
-
-                # Create and execute transition coordinator
-                coordinator = TransitionCoordinator(
-                    event_store=self.event_store,
-                    event_bus=self.event_bus,
-                    checkpoint_repo=self.checkpoint_repo,
-                    subscription=subscription,
-                )
-                self._coordinators[name] = coordinator
-
-                # Execute transition (catch-up to live)
-                result = await coordinator.execute()
-
-                if not result.success:
-                    await subscription.set_error(
-                        result.error or SubscriptionError("Transition failed")
-                    )
-                    raise SubscriptionError(
-                        f"Subscription {name} failed to transition: {result.error}"
-                    )
-
-                if span:
-                    span.set_attribute(ATTR_EVENTS_PROCESSED, result.catchup_events_processed)
-
-                logger.info(
-                    "Subscription started successfully",
-                    extra={
-                        "subscription": name,
-                        "catchup_events": result.catchup_events_processed,
-                        "buffer_events": result.buffer_events_processed,
-                        "final_position": result.final_position,
-                    },
-                )
-
-            except Exception as e:
-                logger.error(
-                    "Failed to start subscription",
-                    extra={
-                        "subscription": name,
-                        "error": str(e),
-                    },
-                    exc_info=True,
-                )
-                await subscription.set_error(e)
-                raise
+        return await self._lifecycle.start_all(subscriptions_to_start, concurrent)
 
     async def stop(
         self,
@@ -527,124 +399,43 @@ class SubscriptionManager(TracingMixin):
 
             # Determine which subscriptions to stop
             if subscription_names is None:
-                names_to_stop = list(self._coordinators.keys())
-                subscriptions_to_stop = list(self._subscriptions.values())
+                subscriptions_to_stop = self._registry.get_all()
                 self._running = False
+                self._health_provider.clear_started()
             else:
-                names_to_stop = [name for name in subscription_names if name in self._coordinators]
                 subscriptions_to_stop = [
-                    sub for name, sub in self._subscriptions.items() if name in subscription_names
+                    sub for sub in self._registry.get_all() if sub.name in subscription_names
                 ]
 
             logger.info(
                 "Stopping subscription manager",
                 extra={
-                    "subscription_count": len(names_to_stop),
+                    "subscription_count": len(subscriptions_to_stop),
                     "timeout": timeout,
                 },
             )
 
-            # Stop all coordinators
-            stop_tasks = []
-            for name in names_to_stop:
-                if name in self._coordinators:
-                    coordinator = self._coordinators[name]
-                    stop_tasks.append(self._stop_subscription(name, coordinator, timeout))
-
-            if stop_tasks:
-                await asyncio.gather(*stop_tasks, return_exceptions=True)
-
-            # Update subscription states
-            for subscription in subscriptions_to_stop:
-                if not subscription.is_terminal:
-                    await subscription.transition_to(SubscriptionState.STOPPED)
+            await self._lifecycle.stop_all(subscriptions_to_stop, timeout)
 
             logger.info("Subscription manager stopped")
-
-    async def _stop_subscription(
-        self,
-        name: str,
-        coordinator: TransitionCoordinator,
-        timeout: float,
-    ) -> None:
-        """
-        Stop a single subscription.
-
-        Args:
-            name: Subscription name
-            coordinator: The subscription's coordinator
-            timeout: Shutdown timeout
-        """
-        with self._create_span_context(
-            "eventsource.subscription_manager.stop_subscription",
-            {ATTR_SUBSCRIPTION_NAME: name},
-        ):
-            try:
-                await asyncio.wait_for(coordinator.stop(), timeout=timeout)
-                logger.info(
-                    "Subscription stopped",
-                    extra={"subscription": name},
-                )
-            except TimeoutError:
-                logger.warning(
-                    "Subscription stop timed out",
-                    extra={
-                        "subscription": name,
-                        "timeout": timeout,
-                    },
-                )
-
-    @property
-    def subscriptions(self) -> list[Subscription]:
-        """Get all registered subscriptions."""
-        return list(self._subscriptions.values())
-
-    @property
-    def subscription_names(self) -> list[str]:
-        """Get all registered subscription names."""
-        return list(self._subscriptions.keys())
-
-    @property
-    def subscription_count(self) -> int:
-        """Get the number of registered subscriptions."""
-        return len(self._subscriptions)
 
     @property
     def is_running(self) -> bool:
         """Check if the manager is running."""
         return self._running
 
-    def get_subscription(self, name: str) -> Subscription | None:
-        """
-        Get a subscription by name.
+    # =========================================================================
+    # Coordinator Access (for backward compatibility)
+    # =========================================================================
 
-        Args:
-            name: The subscription name
+    @property
+    def _coordinators(self) -> dict[str, Any]:
+        """Get coordinators from lifecycle manager (backward compatibility)."""
+        return self._lifecycle.coordinators
 
-        Returns:
-            The Subscription, or None if not found
-        """
-        return self._subscriptions.get(name)
-
-    def get_all_statuses(self) -> dict[str, SubscriptionStatus]:
-        """
-        Get status snapshots of all subscriptions.
-
-        Returns a dictionary mapping subscription names to their
-        SubscriptionStatus objects. Useful for querying subscription
-        states and statistics.
-
-        Returns:
-            Dictionary of subscription name to SubscriptionStatus
-
-        Example:
-            >>> statuses = manager.get_all_statuses()
-            >>> for name, status in statuses.items():
-            ...     print(f"{name}: {status.state}, processed={status.events_processed}")
-        """
-        return {
-            name: subscription.get_status() for name, subscription in self._subscriptions.items()
-        }
+    # =========================================================================
+    # Legacy Health Methods (delegates to HealthCheckProvider)
+    # =========================================================================
 
     def get_health(self) -> dict[str, Any]:
         """
@@ -660,7 +451,7 @@ class SubscriptionManager(TracingMixin):
         has_errors = False
         all_live = True
 
-        for subscription in self._subscriptions.values():
+        for subscription in self._registry.get_all():
             status = subscription.get_status()
             subscription_statuses.append(status.to_dict())
 
@@ -683,9 +474,13 @@ class SubscriptionManager(TracingMixin):
         return {
             "status": overall_status,
             "running": self._running,
-            "subscription_count": len(self._subscriptions),
+            "subscription_count": len(self._registry),
             "subscriptions": subscription_statuses,
         }
+
+    # =========================================================================
+    # Signal Handling and Shutdown
+    # =========================================================================
 
     def register_signals(self) -> None:
         """
@@ -719,7 +514,7 @@ class SubscriptionManager(TracingMixin):
         """Handle shutdown signal by stopping the manager."""
         logger.info(
             "Shutdown signal received, stopping manager",
-            extra={"subscription_count": len(self._subscriptions)},
+            extra={"subscription_count": len(self._registry)},
         )
 
     async def run_until_shutdown(
@@ -763,7 +558,7 @@ class SubscriptionManager(TracingMixin):
         logger.info(
             "Starting manager in daemon mode",
             extra={
-                "subscription_count": len(self._subscriptions),
+                "subscription_count": len(self._registry),
                 "shutdown_timeout": self._shutdown_coordinator.timeout,
             },
         )
@@ -777,7 +572,7 @@ class SubscriptionManager(TracingMixin):
 
             logger.info(
                 "Manager running, waiting for shutdown signal",
-                extra={"subscriptions": list(self._subscriptions.keys())},
+                extra={"subscriptions": self._registry.get_names()},
             )
 
             # Wait for shutdown signal
@@ -821,7 +616,7 @@ class SubscriptionManager(TracingMixin):
         """Stop accepting new events by stopping all coordinators."""
         logger.info(
             "Stopping event acceptance",
-            extra={"subscription_count": len(self._coordinators)},
+            extra={"subscription_count": len(self._lifecycle.coordinators)},
         )
         await self.stop()
 
@@ -832,8 +627,6 @@ class SubscriptionManager(TracingMixin):
         Returns:
             Number of events drained
         """
-        # Currently, the stop() method waits for in-flight events
-        # This is a hook for future implementation of explicit draining
         logger.info("Draining in-flight events")
         return 0
 
@@ -845,8 +638,7 @@ class SubscriptionManager(TracingMixin):
             Number of checkpoints saved
         """
         saved_count = 0
-        for name, subscription in self._subscriptions.items():
-            # Skip if we don't have event info to save
+        for name, subscription in self._registry.items():
             if subscription.last_event_id is None or subscription.last_event_type is None:
                 logger.debug(
                     "Skipping checkpoint save - no event info",
@@ -1050,13 +842,13 @@ class SubscriptionManager(TracingMixin):
         return stats
 
     # =========================================================================
-    # Health Check Methods
+    # Health Check Methods (delegates to HealthCheckProvider)
     # =========================================================================
 
     def get_health_checker(
         self,
         subscription_name: str,
-    ) -> SubscriptionHealthChecker | None:
+    ) -> Any:
         """
         Get the health checker for a specific subscription.
 
@@ -1066,7 +858,7 @@ class SubscriptionManager(TracingMixin):
         Returns:
             SubscriptionHealthChecker or None if not found
         """
-        return self._health_checkers.get(subscription_name)
+        return self._health_provider.get_health_checker(subscription_name)
 
     def check_health(self, subscription_name: str) -> HealthCheckResult:
         """
@@ -1081,10 +873,7 @@ class SubscriptionManager(TracingMixin):
         Raises:
             KeyError: If subscription not found
         """
-        if subscription_name not in self._health_checkers:
-            raise KeyError(f"Subscription '{subscription_name}' not found")
-
-        return self._health_checkers[subscription_name].check()
+        return self._health_provider.check_health(subscription_name)
 
     def check_all_health(self) -> dict[str, Any]:
         """
@@ -1099,18 +888,7 @@ class SubscriptionManager(TracingMixin):
         Returns:
             Dictionary with overall and per-subscription health
         """
-        checker = ManagerHealthChecker(
-            subscriptions=list(self._subscriptions.values()),
-            config=self._health_check_config,
-            subscription_checkers=self._health_checkers,
-        )
-
-        health = checker.check()
-
-        # Add error stats
-        health["error_stats"] = self.get_error_stats()
-
-        return health
+        return self._health_provider.check_all_health(self._running)
 
     def get_comprehensive_health(self) -> dict[str, Any]:
         """
@@ -1126,33 +904,17 @@ class SubscriptionManager(TracingMixin):
         Returns:
             Complete health report dictionary
         """
-        health = self.check_all_health()
-
-        # Add recent errors per subscription
-        recent_errors: dict[str, list[dict[str, Any]]] = {}
-        for name, handler in self._error_handlers.items():
-            recent_errors[name] = [e.to_dict() for e in handler.recent_errors[-10:]]
-
-        health["recent_errors"] = recent_errors
-
-        # Add subscription-level DLQ counts
-        dlq_status: dict[str, int] = {}
-        for name, subscription in self._subscriptions.items():
-            dlq_status[name] = subscription.dlq_count
-
-        health["dlq_status"] = dlq_status
-
-        return health
+        return self._health_provider.get_comprehensive_health(self._running)
 
     @property
     def total_errors(self) -> int:
         """Get total error count across all subscriptions."""
-        return sum(handler.total_errors for handler in self._error_handlers.values())
+        return self._health_provider.total_errors
 
     @property
     def total_dlq_count(self) -> int:
         """Get total DLQ count across all subscriptions."""
-        return sum(handler.dlq_count for handler in self._error_handlers.values())
+        return self._health_provider.total_dlq_count
 
     @property
     def is_healthy(self) -> bool:
@@ -1162,11 +924,7 @@ class SubscriptionManager(TracingMixin):
         Returns:
             True if all subscriptions are healthy
         """
-        health = self.check_all_health()
-        return health.get("status") in (
-            HealthStatus.HEALTHY.value,
-            "healthy",
-        )
+        return self._health_provider.is_healthy(self._running)
 
     @property
     def uptime_seconds(self) -> float:
@@ -1176,12 +934,10 @@ class SubscriptionManager(TracingMixin):
         Returns:
             Seconds since manager was started, or 0 if not started.
         """
-        if self._started_at is None:
-            return 0.0
-        return (datetime.now(UTC) - self._started_at).total_seconds()
+        return self._health_provider.uptime_seconds
 
     # =========================================================================
-    # Health Check API (PHASE3-003)
+    # Health Check API (PHASE3-003) - delegates to HealthCheckProvider
     # =========================================================================
 
     async def health_check(self) -> ManagerHealth:
@@ -1209,94 +965,7 @@ class SubscriptionManager(TracingMixin):
             ...     await alert_ops_team(health.to_dict())
             >>> print(f"Healthy: {health.healthy_count}/{health.subscription_count}")
         """
-        # Collect health info for each subscription
-        subscription_health_list: list[SubscriptionHealth] = []
-        healthy = degraded = unhealthy = 0
-        total_lag = 0
-        total_processed = 0
-        total_failed = 0
-
-        for name, subscription in self._subscriptions.items():
-            # Get health check result from checker
-            checker = self._health_checkers.get(name)
-            if checker:
-                result = checker.check()
-                status = result.overall_status.value
-            else:
-                # Basic status determination without checker
-                from eventsource.subscriptions.subscription import SubscriptionState
-
-                if subscription.state == SubscriptionState.LIVE:
-                    if subscription.lag < self._health_check_config.max_lag_events_warning:
-                        status = "healthy"
-                    else:
-                        status = "degraded"
-                elif subscription.state in (
-                    SubscriptionState.CATCHING_UP,
-                    SubscriptionState.PAUSED,
-                ):
-                    status = "degraded"
-                elif subscription.state == SubscriptionState.ERROR:
-                    status = "unhealthy"
-                else:
-                    status = "unknown"
-
-            # Count by status
-            if status == "healthy":
-                healthy += 1
-            elif status == "degraded":
-                degraded += 1
-            else:  # unhealthy, critical, unknown
-                unhealthy += 1
-
-            # Get error rate from handler if available
-            error_rate = 0.0
-            handler = self._error_handlers.get(name)
-            if handler:
-                error_rate = handler.stats.error_rate_per_minute
-
-            # Build subscription health
-            sub_health = SubscriptionHealth(
-                name=name,
-                status=status,
-                state=subscription.state.value,
-                events_processed=subscription.events_processed,
-                events_failed=subscription.events_failed,
-                lag_events=subscription.lag,
-                error_rate=error_rate,
-                last_error=str(subscription.last_error) if subscription.last_error else None,
-                uptime_seconds=subscription.uptime_seconds,
-            )
-            subscription_health_list.append(sub_health)
-
-            # Aggregate metrics
-            total_lag += subscription.lag
-            total_processed += subscription.events_processed
-            total_failed += subscription.events_failed
-
-        # Determine overall status
-        if unhealthy > 0:
-            overall = "unhealthy"
-        elif degraded > 0:
-            overall = "degraded"
-        elif healthy > 0:
-            overall = "healthy"
-        else:
-            overall = "unknown"
-
-        return ManagerHealth(
-            status=overall,
-            running=self._running,
-            subscription_count=len(self._subscriptions),
-            healthy_count=healthy,
-            degraded_count=degraded,
-            unhealthy_count=unhealthy,
-            total_events_processed=total_processed,
-            total_events_failed=total_failed,
-            total_lag_events=total_lag,
-            uptime_seconds=self.uptime_seconds,
-            subscriptions=subscription_health_list,
-        )
+        return await self._health_provider.health_check(self._running)
 
     async def readiness_check(self) -> ReadinessStatus:
         """
@@ -1319,63 +988,9 @@ class SubscriptionManager(TracingMixin):
             >>> if not readiness.ready:
             ...     logger.warning(f"Not ready: {readiness.reason}")
         """
-        from eventsource.subscriptions.subscription import SubscriptionState
-
-        details: dict[str, Any] = {
-            "running": self._running,
-            "subscription_count": len(self._subscriptions),
-            "shutting_down": self.is_shutting_down,
-        }
-
-        # Check if shutting down
-        if self.is_shutting_down:
-            return ReadinessStatus(
-                ready=False,
-                reason="Manager is shutting down",
-                details=details,
-            )
-
-        # Check if running
-        if not self._running:
-            return ReadinessStatus(
-                ready=False,
-                reason="Manager is not running",
-                details=details,
-            )
-
-        # Check for error states
-        error_subscriptions = []
-        for name, subscription in self._subscriptions.items():
-            if subscription.state == SubscriptionState.ERROR:
-                error_subscriptions.append(name)
-
-        if error_subscriptions:
-            details["error_subscriptions"] = error_subscriptions
-            return ReadinessStatus(
-                ready=False,
-                reason=f"Subscriptions in error state: {', '.join(error_subscriptions)}",
-                details=details,
-            )
-
-        # Check for subscriptions still starting
-        starting_subscriptions = []
-        for name, subscription in self._subscriptions.items():
-            if subscription.state == SubscriptionState.STARTING:
-                starting_subscriptions.append(name)
-
-        if starting_subscriptions:
-            details["starting_subscriptions"] = starting_subscriptions
-            return ReadinessStatus(
-                ready=False,
-                reason=f"Subscriptions still starting: {', '.join(starting_subscriptions)}",
-                details=details,
-            )
-
-        # All checks passed
-        return ReadinessStatus(
-            ready=True,
-            reason="Manager is ready",
-            details=details,
+        return await self._health_provider.readiness_check(
+            self._running,
+            self.is_shutting_down,
         )
 
     async def liveness_check(self) -> LivenessStatus:
@@ -1398,57 +1013,7 @@ class SubscriptionManager(TracingMixin):
             >>> if not liveness.alive:
             ...     logger.critical(f"Manager not alive: {liveness.reason}")
         """
-        details: dict[str, Any] = {
-            "running": self._running,
-            "uptime_seconds": self.uptime_seconds,
-        }
-
-        # Try to acquire lock with timeout to detect deadlocks
-        try:
-            lock_acquired = await asyncio.wait_for(
-                self._try_acquire_lock(),
-                timeout=5.0,
-            )
-            details["lock_responsive"] = lock_acquired
-        except TimeoutError:
-            return LivenessStatus(
-                alive=False,
-                reason="Internal lock not responsive (possible deadlock)",
-                details=details,
-            )
-
-        # Check if we can enumerate subscriptions
-        try:
-            details["subscription_count"] = len(self._subscriptions)
-        except Exception as e:
-            return LivenessStatus(
-                alive=False,
-                reason=f"Error accessing subscriptions: {e}",
-                details=details,
-            )
-
-        # All checks passed
-        return LivenessStatus(
-            alive=True,
-            reason="Manager is alive and responsive",
-            details=details,
-        )
-
-    async def _try_acquire_lock(self) -> bool:
-        """
-        Try to acquire the internal lock.
-
-        Used by liveness check to detect deadlocks.
-
-        Returns:
-            True if lock was acquired (and released), False otherwise
-        """
-        try:
-            async with asyncio.timeout(1.0):
-                async with self._lock:
-                    return True
-        except TimeoutError:
-            return False
+        return await self._health_provider.liveness_check(self._running)
 
     def get_subscription_health(self, subscription_name: str) -> SubscriptionHealth | None:
         """
@@ -1465,54 +1030,10 @@ class SubscriptionManager(TracingMixin):
             >>> if health and health.status == "unhealthy":
             ...     await restart_subscription(health.name)
         """
-        subscription = self._subscriptions.get(subscription_name)
-        if subscription is None:
-            return None
-
-        # Get health check result from checker
-        checker = self._health_checkers.get(subscription_name)
-        if checker:
-            result = checker.check()
-            status = result.overall_status.value
-        else:
-            # Basic status determination
-            from eventsource.subscriptions.subscription import SubscriptionState
-
-            if subscription.state == SubscriptionState.LIVE:
-                if subscription.lag < self._health_check_config.max_lag_events_warning:
-                    status = "healthy"
-                else:
-                    status = "degraded"
-            elif subscription.state in (
-                SubscriptionState.CATCHING_UP,
-                SubscriptionState.PAUSED,
-            ):
-                status = "degraded"
-            elif subscription.state == SubscriptionState.ERROR:
-                status = "unhealthy"
-            else:
-                status = "unknown"
-
-        # Get error rate from handler if available
-        error_rate = 0.0
-        handler = self._error_handlers.get(subscription_name)
-        if handler:
-            error_rate = handler.stats.error_rate_per_minute
-
-        return SubscriptionHealth(
-            name=subscription_name,
-            status=status,
-            state=subscription.state.value,
-            events_processed=subscription.events_processed,
-            events_failed=subscription.events_failed,
-            lag_events=subscription.lag,
-            error_rate=error_rate,
-            last_error=str(subscription.last_error) if subscription.last_error else None,
-            uptime_seconds=subscription.uptime_seconds,
-        )
+        return self._health_provider.get_subscription_health(subscription_name)
 
     # =========================================================================
-    # Pause/Resume Methods (PHASE3-005)
+    # Pause/Resume Methods (delegates to PauseResumeController)
     # =========================================================================
 
     async def pause_subscription(
@@ -1538,46 +1059,7 @@ class SubscriptionManager(TracingMixin):
             >>> # ... do maintenance ...
             >>> await manager.resume_subscription("OrderProjection")
         """
-        from eventsource.subscriptions.subscription import PauseReason
-
-        with self._create_span_context(
-            "eventsource.subscription_manager.pause_subscription",
-            {ATTR_SUBSCRIPTION_NAME: name},
-        ):
-            subscription = self._subscriptions.get(name)
-            if subscription is None:
-                logger.warning(
-                    "Cannot pause subscription: not found",
-                    extra={"subscription": name},
-                )
-                return False
-
-            if not subscription.is_running:
-                logger.warning(
-                    "Cannot pause subscription: not running",
-                    extra={"subscription": name, "state": subscription.state.value},
-                )
-                return False
-
-            try:
-                pause_reason = reason or PauseReason.MANUAL
-                await subscription.pause(reason=pause_reason)
-                logger.info(
-                    "Subscription paused via manager",
-                    extra={
-                        "subscription": name,
-                        "reason": pause_reason.value,
-                        "position": subscription.last_processed_position,
-                    },
-                )
-                return True
-            except Exception as e:
-                logger.error(
-                    "Failed to pause subscription",
-                    extra={"subscription": name, "error": str(e)},
-                    exc_info=True,
-                )
-                return False
+        return await self._pause_resume.pause(name, reason)
 
     async def resume_subscription(self, name: str) -> bool:
         """
@@ -1597,58 +1079,7 @@ class SubscriptionManager(TracingMixin):
             >>> # ... do maintenance ...
             >>> await manager.resume_subscription("OrderProjection")
         """
-        with self._create_span_context(
-            "eventsource.subscription_manager.resume_subscription",
-            {ATTR_SUBSCRIPTION_NAME: name},
-        ):
-            subscription = self._subscriptions.get(name)
-            if subscription is None:
-                logger.warning(
-                    "Cannot resume subscription: not found",
-                    extra={"subscription": name},
-                )
-                return False
-
-            if not subscription.is_paused:
-                logger.warning(
-                    "Cannot resume subscription: not paused",
-                    extra={"subscription": name, "state": subscription.state.value},
-                )
-                return False
-
-            try:
-                await subscription.resume()
-
-                # Process any buffered events from the live runner
-                coordinator = self._coordinators.get(name)
-                if coordinator and coordinator.live_runner:
-                    pause_buffer_size = coordinator.live_runner.pause_buffer_size
-                    if pause_buffer_size > 0:
-                        processed = await coordinator.live_runner.process_pause_buffer()
-                        logger.info(
-                            "Processed pause buffer after resume",
-                            extra={
-                                "subscription": name,
-                                "events_processed": processed,
-                            },
-                        )
-
-                logger.info(
-                    "Subscription resumed via manager",
-                    extra={
-                        "subscription": name,
-                        "position": subscription.last_processed_position,
-                        "state": subscription.state.value,
-                    },
-                )
-                return True
-            except Exception as e:
-                logger.error(
-                    "Failed to resume subscription",
-                    extra={"subscription": name, "error": str(e)},
-                    exc_info=True,
-                )
-                return False
+        return await self._pause_resume.resume(name)
 
     async def pause_all(
         self,
@@ -1671,28 +1102,7 @@ class SubscriptionManager(TracingMixin):
             >>> paused_count = sum(1 for r in results.values() if r)
             >>> print(f"Paused {paused_count} subscriptions")
         """
-        from eventsource.subscriptions.subscription import PauseReason
-
-        pause_reason = reason or PauseReason.MANUAL
-        results: dict[str, bool] = {}
-
-        for name, subscription in self._subscriptions.items():
-            if subscription.is_running:
-                results[name] = await self.pause_subscription(name, reason=pause_reason)
-            else:
-                results[name] = False
-
-        paused_count = sum(1 for r in results.values() if r)
-        logger.info(
-            "Paused all subscriptions",
-            extra={
-                "reason": pause_reason.value,
-                "paused_count": paused_count,
-                "total_count": len(self._subscriptions),
-            },
-        )
-
-        return results
+        return await self._pause_resume.pause_all(reason)
 
     async def resume_all(self) -> dict[str, bool]:
         """
@@ -1711,24 +1121,7 @@ class SubscriptionManager(TracingMixin):
             >>> resumed_count = sum(1 for r in results.values() if r)
             >>> print(f"Resumed {resumed_count} subscriptions")
         """
-        results: dict[str, bool] = {}
-
-        for name, subscription in self._subscriptions.items():
-            if subscription.is_paused:
-                results[name] = await self.resume_subscription(name)
-            else:
-                results[name] = False
-
-        resumed_count = sum(1 for r in results.values() if r)
-        logger.info(
-            "Resumed all subscriptions",
-            extra={
-                "resumed_count": resumed_count,
-                "total_count": len(self._subscriptions),
-            },
-        )
-
-        return results
+        return await self._pause_resume.resume_all()
 
     @property
     def paused_subscriptions(self) -> list[Subscription]:
@@ -1738,7 +1131,7 @@ class SubscriptionManager(TracingMixin):
         Returns:
             List of subscriptions currently in PAUSED state
         """
-        return [sub for sub in self._subscriptions.values() if sub.is_paused]
+        return self._pause_resume.get_paused()
 
     @property
     def paused_subscription_names(self) -> list[str]:
@@ -1748,7 +1141,38 @@ class SubscriptionManager(TracingMixin):
         Returns:
             List of subscription names currently in PAUSED state
         """
-        return [name for name, sub in self._subscriptions.items() if sub.is_paused]
+        return self._pause_resume.get_paused_names()
+
+    # =========================================================================
+    # Health Checkers Dict (backward compatibility)
+    # =========================================================================
+
+    @property
+    def _health_checkers(self) -> dict[str, Any]:
+        """Get health checkers (backward compatibility)."""
+        return self._health_provider._health_checkers
+
+    # =========================================================================
+    # Internal Lock Access (backward compatibility for tests)
+    # =========================================================================
+
+    @property
+    def _lock(self) -> Any:
+        """Get the internal lock (backward compatibility)."""
+        return self._registry.lock
+
+    @property
+    def _started_at(self) -> datetime | None:
+        """Get started_at timestamp (backward compatibility)."""
+        return self._health_provider._started_at
+
+    @_started_at.setter
+    def _started_at(self, value: datetime | None) -> None:
+        """Set started_at timestamp (backward compatibility)."""
+        if value is not None:
+            self._health_provider.set_started(value)
+        else:
+            self._health_provider.clear_started()
 
 
 __all__ = [

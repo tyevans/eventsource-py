@@ -505,22 +505,31 @@ class TestGracefulShutdown:
         in_memory_event_bus,
         in_memory_checkpoint_repo,
     ):
-        """Test forced shutdown when timeout exceeded."""
-        await populate_event_store(in_memory_event_store, 10)
+        """Test forced shutdown when timeout exceeded.
 
-        # Very slow projection
-        class VerySlowProjection:
+        This test verifies that the manager.stop() returns within the timeout
+        even when the projection handler is slow. The actual handler may still
+        be running after stop() returns.
+        """
+        await populate_event_store(in_memory_event_store, 3)
+
+        # Track if stop was requested during handler execution
+        class SlowProjection:
             def __init__(self):
                 self.event_count = 0
+                self.handler_started = asyncio.Event()
 
             def subscribed_to(self):
                 return [SubTestOrderCreated]
 
             async def handle(self, event):
-                await asyncio.sleep(60)  # Way too slow
+                self.handler_started.set()
+                # Simulate slow processing with check for stop
+                for _ in range(20):
+                    await asyncio.sleep(0.05)  # 1 second total if all complete
                 self.event_count += 1
 
-        projection = VerySlowProjection()
+        projection = SlowProjection()
 
         manager = SubscriptionManager(
             event_store=in_memory_event_store,
@@ -531,16 +540,16 @@ class TestGracefulShutdown:
         await manager.subscribe(projection)
         await manager.start()
 
-        # Let event start processing
-        await asyncio.sleep(0.2)
+        # Wait for handler to start
+        await asyncio.wait_for(projection.handler_started.wait(), timeout=2.0)
 
-        # Short timeout should force stop
+        # Short timeout should cause stop to return quickly
         start = asyncio.get_event_loop().time()
-        await manager.stop(timeout=1.0)
+        await manager.stop(timeout=0.2)
         duration = asyncio.get_event_loop().time() - start
 
-        # Should have stopped within timeout (plus margin)
-        assert duration < 3.0
+        # Should have returned within timeout (plus small margin for overhead)
+        assert duration < 1.0, f"Stop took too long: {duration:.2f}s"
 
     async def test_shutdown_coordinator_phases(self):
         """Test shutdown coordinator goes through proper phases."""

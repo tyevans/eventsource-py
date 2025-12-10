@@ -1009,6 +1009,16 @@ class SQLiteDLQRepository(TracingMixin):
         self._init_tracing(__name__, enable_tracing)
         self._connection = connection
 
+    @staticmethod
+    def _parse_datetime(value: str | None) -> datetime | None:
+        """Parse ISO 8601 timestamp string to datetime."""
+        if value is None:
+            return None
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            return None
+
     async def add_failed_event(
         self,
         event_id: UUID,
@@ -1134,8 +1144,8 @@ class SQLiteDLQRepository(TracingMixin):
                     error_message=row[5],
                     error_stacktrace=row[6],
                     retry_count=row[7],
-                    first_failed_at=row[8],
-                    last_failed_at=row[9],
+                    first_failed_at=self._parse_datetime(row[8]),
+                    last_failed_at=self._parse_datetime(row[9]),
                     status=row[10],
                 )
                 for row in rows
@@ -1183,10 +1193,10 @@ class SQLiteDLQRepository(TracingMixin):
                 error_message=row[5],
                 error_stacktrace=row[6],
                 retry_count=row[7],
-                first_failed_at=row[8],
-                last_failed_at=row[9],
+                first_failed_at=self._parse_datetime(row[8]),
+                last_failed_at=self._parse_datetime(row[9]),
                 status=row[10],
-                resolved_at=row[11],
+                resolved_at=self._parse_datetime(row[11]),
                 resolved_by=row[12],
             )
 

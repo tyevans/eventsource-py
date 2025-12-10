@@ -101,6 +101,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Removed ~120 lines of duplicate serialization code from PostgreSQL and SQLite event stores by extracting to shared `TypeConverter`
 
+### Fixed
+
+- **SQLiteOutboxRepository**: `get_pending_events()` now returns `list[OutboxEntry]` instead of `list[dict]`, matching the protocol specification
+- **SQLiteOutboxRepository**: `add_event()` now properly stores and returns a UUID as the outbox ID, matching PostgreSQL behavior
+- **SQLiteDLQRepository**: `get_failed_events()` now properly parses timestamp fields (`first_failed_at`, `last_failed_at`) from ISO 8601 strings to `datetime` objects
+- **SQLiteDLQRepository**: `get_failed_event_by_id()` now properly parses timestamp fields (`first_failed_at`, `last_failed_at`, `resolved_at`) to `datetime` objects
+- **SQLite schema**: Event outbox table now uses `TEXT PRIMARY KEY` for the `id` column (UUID as string) instead of `INTEGER PRIMARY KEY AUTOINCREMENT` to match PostgreSQL schema
+
 ### Breaking Changes (Internal)
 
 - Internal methods `_is_uuid_field()` and `_convert_types()` on event stores have been removed
