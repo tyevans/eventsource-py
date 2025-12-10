@@ -131,6 +131,10 @@ class FlowController:
         self._paused = False
         self._pause_start: datetime | None = None
 
+        # Drain tracking
+        self._drain_event: asyncio.Event = asyncio.Event()
+        self._drain_event.set()  # Initially set (no events in flight)
+
         # Calculate backpressure trigger point
         self._backpressure_trigger = int(max_in_flight * backpressure_threshold)
 
@@ -166,6 +170,9 @@ class FlowController:
             self._in_flight += 1
             self._stats.total_acquisitions += 1
 
+            # Clear drain event when we have in-flight events
+            self._drain_event.clear()
+
             # Update peak
             if self._in_flight > self._stats.peak_in_flight:
                 self._stats.peak_in_flight = self._in_flight
@@ -189,6 +196,10 @@ class FlowController:
             self._in_flight -= 1
             self._stats.total_releases += 1
             self._stats.events_in_flight = self._in_flight
+
+            # Signal drain complete when no more in-flight events
+            if self._in_flight == 0:
+                self._drain_event.set()
 
             # Exit pause state when we drop below capacity
             if self._paused and self._in_flight < self.max_in_flight:
@@ -332,6 +343,57 @@ class FlowController:
         while self.available_capacity < min_capacity:
             # Brief sleep to avoid busy-waiting
             await asyncio.sleep(0.001)
+
+    async def wait_for_drain(self, timeout: float) -> int:
+        """
+        Wait for all in-flight events to complete.
+
+        Blocks until all in-flight events have been processed or the
+        timeout expires. This is used during graceful shutdown to ensure
+        all active handlers complete before proceeding.
+
+        Args:
+            timeout: Maximum seconds to wait for drain to complete
+
+        Returns:
+            Number of events still in-flight when wait completed.
+            Returns 0 if all events drained successfully.
+
+        Example:
+            >>> # During shutdown
+            >>> remaining = await controller.wait_for_drain(timeout=10.0)
+            >>> if remaining > 0:
+            ...     logger.warning(f"{remaining} events did not drain")
+        """
+        if self._in_flight == 0:
+            return 0
+
+        logger.debug(
+            "Waiting for drain",
+            extra={
+                "in_flight": self._in_flight,
+                "timeout": timeout,
+            },
+        )
+
+        try:
+            await asyncio.wait_for(
+                self._drain_event.wait(),
+                timeout=timeout,
+            )
+            remaining = 0
+        except TimeoutError:
+            remaining = self._in_flight
+
+        logger.debug(
+            "Drain wait completed",
+            extra={
+                "remaining": remaining,
+                "timed_out": remaining > 0,
+            },
+        )
+
+        return remaining
 
 
 @dataclass

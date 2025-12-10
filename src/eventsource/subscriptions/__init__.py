@@ -53,6 +53,27 @@ from eventsource.subscriptions.config import (
     create_catch_up_config,
     create_live_only_config,
 )
+from eventsource.subscriptions.coordination import (
+    COORDINATION_TOPIC_PREFIX,
+    HEARTBEAT_TOPIC,
+    SHUTDOWN_NOTIFICATIONS_TOPIC,
+    WORK_ASSIGNMENT_TOPIC,
+    HeartbeatCallback,
+    HeartbeatMessage,
+    InMemoryLeaderElector,
+    LeaderChangeCallback,
+    LeaderElector,
+    LeaderElectorWithLease,
+    PeerInfo,
+    PeerShutdownCallback,
+    PeerTimeoutCallback,
+    SharedLeaderState,
+    ShutdownIntent,
+    ShutdownNotification,
+    WorkAssignment,
+    WorkAssignmentCallback,
+    WorkRedistributionCoordinator,
+)
 from eventsource.subscriptions.error_handling import (
     ErrorCallback,
     ErrorCategory,
@@ -135,9 +156,20 @@ from eventsource.subscriptions.retry import (
     retry_async,
 )
 from eventsource.subscriptions.shutdown import (
+    OTEL_METRICS_AVAILABLE as SHUTDOWN_OTEL_METRICS_AVAILABLE,
+)
+from eventsource.subscriptions.shutdown import (
     ShutdownCoordinator,
+    ShutdownMetricsSnapshot,
     ShutdownPhase,
     ShutdownResult,
+    get_in_flight_at_shutdown,
+    record_drain_duration,
+    record_events_drained,
+    record_in_flight_at_shutdown,
+    record_shutdown_completed,
+    record_shutdown_initiated,
+    reset_shutdown_metrics,
 )
 from eventsource.subscriptions.subscriber import (
     BaseSubscriber,
@@ -218,6 +250,16 @@ __all__ = [
     "ShutdownCoordinator",
     "ShutdownPhase",
     "ShutdownResult",
+    "ShutdownMetricsSnapshot",
+    # Shutdown Metrics
+    "SHUTDOWN_OTEL_METRICS_AVAILABLE",
+    "record_shutdown_initiated",
+    "record_shutdown_completed",
+    "record_drain_duration",
+    "record_events_drained",
+    "record_in_flight_at_shutdown",
+    "get_in_flight_at_shutdown",
+    "reset_shutdown_metrics",
     # Retry and Circuit Breaker
     "RetryConfig",
     "RetryStats",
@@ -279,4 +321,25 @@ __all__ = [
     "get_metrics",
     "clear_metrics_registry",
     "reset_meter",
+    # Coordination (P3)
+    "LeaderElector",
+    "LeaderElectorWithLease",
+    "LeaderChangeCallback",
+    "InMemoryLeaderElector",
+    "SharedLeaderState",
+    # Work Redistribution Signals (P3-003)
+    "COORDINATION_TOPIC_PREFIX",
+    "SHUTDOWN_NOTIFICATIONS_TOPIC",
+    "HEARTBEAT_TOPIC",
+    "WORK_ASSIGNMENT_TOPIC",
+    "ShutdownIntent",
+    "ShutdownNotification",
+    "HeartbeatMessage",
+    "WorkAssignment",
+    "PeerShutdownCallback",
+    "HeartbeatCallback",
+    "WorkAssignmentCallback",
+    "PeerTimeoutCallback",
+    "PeerInfo",
+    "WorkRedistributionCoordinator",
 ]

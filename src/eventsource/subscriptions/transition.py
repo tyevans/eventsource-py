@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from eventsource.bus.interface import EventBus
     from eventsource.repositories.checkpoint import CheckpointRepository
     from eventsource.stores.interface import EventStore
+    from eventsource.subscriptions.flow_control import FlowController
 
 logger = logging.getLogger(__name__)
 
@@ -452,6 +453,21 @@ class TransitionCoordinator(TracingMixin):
             CatchUpRunner instance, or None if not yet created
         """
         return self._catchup_runner
+
+    @property
+    def flow_controller(self) -> "FlowController | None":
+        """
+        Get the FlowController for this subscription, if running.
+
+        The FlowController is accessed through the live runner and is
+        used for backpressure management and drain operations during shutdown.
+
+        Returns:
+            FlowController instance if live runner is active, None otherwise
+        """
+        if self._live_runner is not None:
+            return self._live_runner.flow_controller
+        return None
 
 
 class StartFromResolver:
