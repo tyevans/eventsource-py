@@ -641,7 +641,7 @@ class TestSQLiteOutboxRepository:
         # Create the event_outbox table (matching the SQLite schema)
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS event_outbox (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id TEXT PRIMARY KEY,
                 event_id TEXT NOT NULL,
                 event_type TEXT NOT NULL,
                 aggregate_id TEXT NOT NULL,
@@ -687,8 +687,8 @@ class TestSQLiteOutboxRepository:
         # Verify event is in pending queue
         pending = await repo.get_pending_events()
         assert len(pending) == 1
-        assert pending[0]["event_type"] == "SampleEvent"
-        assert pending[0]["aggregate_type"] == "SampleAggregate"
+        assert pending[0].event_type == "SampleEvent"
+        assert pending[0].aggregate_type == "SampleAggregate"
 
     @pytest.mark.asyncio
     async def test_add_event_serializes_data(
@@ -698,7 +698,7 @@ class TestSQLiteOutboxRepository:
         await repo.add_event(sample_event)
 
         pending = await repo.get_pending_events()
-        event_data = pending[0]["event_data"]
+        event_data = pending[0].event_data
 
         # Should be a JSON string
         assert isinstance(event_data, str)
@@ -721,9 +721,9 @@ class TestSQLiteOutboxRepository:
         assert len(pending) == 3
 
         # Should be in order of creation (oldest first)
-        assert "event_0" in pending[0]["event_data"]
-        assert "event_1" in pending[1]["event_data"]
-        assert "event_2" in pending[2]["event_data"]
+        assert "event_0" in pending[0].event_data
+        assert "event_1" in pending[1].event_data
+        assert "event_2" in pending[2].event_data
 
     @pytest.mark.asyncio
     async def test_get_pending_events_limit(self, repo: SQLiteOutboxRepository):
@@ -746,9 +746,9 @@ class TestSQLiteOutboxRepository:
         """Test marking an event as published."""
         await repo.add_event(sample_event)
 
-        # Get the outbox id from the database (SQLite uses autoincrement integer)
+        # Get the outbox id from the database
         pending = await repo.get_pending_events()
-        outbox_id = int(pending[0]["id"])
+        outbox_id = pending[0].id
 
         await repo.mark_published(outbox_id)
 
@@ -768,7 +768,7 @@ class TestSQLiteOutboxRepository:
 
         # Get the outbox id from the database
         pending = await repo.get_pending_events()
-        outbox_id = int(pending[0]["id"])
+        outbox_id = pending[0].id
 
         await repo.mark_failed(outbox_id, "Connection refused")
 
@@ -788,14 +788,14 @@ class TestSQLiteOutboxRepository:
 
         # Get the outbox id from the database
         pending = await repo.get_pending_events()
-        outbox_id = int(pending[0]["id"])
+        outbox_id = pending[0].id
 
         await repo.increment_retry(outbox_id, "Temporary error")
         await repo.increment_retry(outbox_id, "Another error")
 
         pending = await repo.get_pending_events()
         assert len(pending) == 1
-        assert pending[0]["retry_count"] == 2
+        assert pending[0].retry_count == 2
 
     @pytest.mark.asyncio
     async def test_cleanup_published(
@@ -808,7 +808,7 @@ class TestSQLiteOutboxRepository:
 
         # Get the outbox id and mark as published
         pending = await repo.get_pending_events()
-        outbox_id = int(pending[0]["id"])
+        outbox_id = pending[0].id
         await repo.mark_published(outbox_id)
 
         # Manually update published_at to be old (10 days ago)
@@ -818,7 +818,7 @@ class TestSQLiteOutboxRepository:
             SET published_at = datetime('now', '-10 days')
             WHERE id = ?
             """,
-            (outbox_id,),
+            (str(outbox_id),),
         )
         await db_connection.commit()
 
@@ -834,7 +834,7 @@ class TestSQLiteOutboxRepository:
 
         # Get the outbox id and mark as published
         pending = await repo.get_pending_events()
-        outbox_id = int(pending[0]["id"])
+        outbox_id = pending[0].id
         await repo.mark_published(outbox_id)
 
         # Try to cleanup (event is recent, should not be deleted)
@@ -851,7 +851,7 @@ class TestSQLiteOutboxRepository:
 
         # Get all pending events to get their IDs
         pending = await repo.get_pending_events()
-        outbox_ids = [int(p["id"]) for p in pending]
+        outbox_ids = [p.id for p in pending]
 
         # Mark some as published, some as failed
         await repo.mark_published(outbox_ids[0])
@@ -888,7 +888,7 @@ class TestSQLiteOutboxRepository:
 
         # Increment retries: 0, 2, 4
         for i, p in enumerate(pending):
-            outbox_id = int(p["id"])
+            outbox_id = p.id
             for _ in range(i * 2):
                 await repo.increment_retry(outbox_id, "Error")
 
@@ -909,7 +909,7 @@ class TestSQLiteOutboxRepository:
         await repo.add_event(event)
 
         pending = await repo.get_pending_events()
-        assert pending[0]["tenant_id"] == str(tenant_id)
+        assert pending[0].tenant_id == tenant_id
 
     @pytest.mark.asyncio
     async def test_event_without_tenant_id(self, repo: SQLiteOutboxRepository):
@@ -923,7 +923,7 @@ class TestSQLiteOutboxRepository:
         await repo.add_event(event)
 
         pending = await repo.get_pending_events()
-        assert pending[0]["tenant_id"] is None
+        assert pending[0].tenant_id is None
 
     @pytest.mark.asyncio
     async def test_multiple_events_same_aggregate(self, repo: SQLiteOutboxRepository):
@@ -942,7 +942,7 @@ class TestSQLiteOutboxRepository:
 
         # All should have same aggregate_id
         for entry in pending:
-            assert entry["aggregate_id"] == str(aggregate_id)
+            assert entry.aggregate_id == aggregate_id
 
     @pytest.mark.asyncio
     async def test_pending_event_fields(self, repo: SQLiteOutboxRepository):
@@ -961,15 +961,15 @@ class TestSQLiteOutboxRepository:
         assert len(pending) == 1
 
         entry = pending[0]
-        assert "id" in entry
-        assert entry["event_id"] == str(event.event_id)
-        assert entry["event_type"] == "SampleEvent"
-        assert entry["aggregate_id"] == str(aggregate_id)
-        assert entry["aggregate_type"] == "SampleAggregate"
-        assert entry["tenant_id"] == str(tenant_id)
-        assert "event_data" in entry
-        assert "created_at" in entry
-        assert entry["retry_count"] == 0
+        assert entry.id is not None
+        assert entry.event_id == event.event_id
+        assert entry.event_type == "SampleEvent"
+        assert entry.aggregate_id == aggregate_id
+        assert entry.aggregate_type == "SampleAggregate"
+        assert entry.tenant_id == tenant_id
+        assert entry.event_data is not None
+        assert entry.created_at is not None
+        assert entry.retry_count == 0
 
 
 @pytest.mark.skipif(not AIOSQLITE_AVAILABLE, reason="aiosqlite not installed")
@@ -983,7 +983,7 @@ class TestSQLiteOutboxRepositoryProtocol:
 
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS event_outbox (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id TEXT PRIMARY KEY,
                 event_id TEXT NOT NULL,
                 event_type TEXT NOT NULL,
                 aggregate_id TEXT NOT NULL,

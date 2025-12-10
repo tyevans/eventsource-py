@@ -693,7 +693,7 @@ async def sqlite_outbox_repo(
     # Create the event_outbox table
     await sqlite_connection.execute("""
         CREATE TABLE IF NOT EXISTS event_outbox (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id TEXT PRIMARY KEY,
             event_id TEXT NOT NULL,
             event_type TEXT NOT NULL,
             aggregate_id TEXT NOT NULL,
