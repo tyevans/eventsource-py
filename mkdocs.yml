@@ -74,12 +74,15 @@ nav:
       - Projections: api/projections.md
       - Event Bus: api/bus.md
   - Guides:
-      - Observability: guides/observability.md
-      - Multi-Tenancy: guides/multi-tenant.md
+      - Repository Pattern: guides/repository-pattern.md
       - Snapshotting: guides/snapshotting.md
       - Snapshotting Migration: guides/snapshotting-migration.md
+      - Event Bus: guides/event-bus.md
       - Kafka Event Bus: guides/kafka-event-bus.md
       - Kafka Metrics: guides/kafka-metrics.md
+      - Subscription Manager: guides/subscriptions.md
+      - Multi-Tenancy: guides/multi-tenant.md
+      - Observability: guides/observability.md
       - Error Handling: guides/error-handling.md
       - Authentication: guides/authentication.md
       - Production Deployment: guides/production.md

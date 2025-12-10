@@ -23,6 +23,9 @@ Welcome to the eventsource-py documentation. This library provides a production-
 
 ## Guides
 
+- [Repository Pattern Guide](guides/repository-pattern.md) - Loading, saving, and managing aggregates
+- [Event Bus Guide](guides/event-bus.md) - In-memory, Redis, RabbitMQ, and Kafka event distribution
+- [Kafka Event Bus Guide](guides/kafka-event-bus.md) - High-throughput Kafka configuration and best practices
 - [Subscription Manager Guide](guides/subscriptions.md) - Catch-up subscriptions, live streaming, and projections
 - [Observability Guide](guides/observability.md) - OpenTelemetry tracing and distributed tracing
 - [Snapshotting Guide](guides/snapshotting.md) - Enable aggregate state caching for performance

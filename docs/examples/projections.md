@@ -1,15 +1,6 @@
 # Building Read Models with Projections
 
-Projections consume domain events and build read-optimized views of your data. They are the "query" side in CQRS (Command Query Responsibility Segregation) architecture, transforming append-only event streams into queryable data structures.
-
-## Overview
-
-In event sourcing, the event store is optimized for writes (appending immutable events). However, querying the raw event stream for every read operation is inefficient. Projections solve this by:
-
-1. **Subscribing** to domain events
-2. **Transforming** events into read-optimized views
-3. **Storing** results in queryable data structures (databases, caches, etc.)
-4. **Tracking progress** via checkpoints for resumable processing
+Projections transform append-only event streams into queryable read models. They are the "query" side in CQRS (Command Query Responsibility Segregation) architecture.
 
 ```
 Event Store                    Projections                    Read Models
@@ -18,39 +9,33 @@ Event Store                    Projections                    Read Models
 | OrderCreated  | ----------> | OrderProjection  | ---------> | orders table   |
 | OrderShipped  |             |                  |            |                |
 | OrderCancelled|             | StatsProjection  | ---------> | metrics table  |
-|     ...       |             |                  |            |                |
 +---------------+             +------------------+            +----------------+
 ```
 
 ---
 
-## Projection Types
-
-The eventsource library provides several projection base classes:
+## Projection Class Hierarchy
 
 | Class | Use Case |
 |-------|----------|
 | `Projection` | Simple async projection (implement `handle()` and `reset()`) |
 | `SyncProjection` | Synchronous projection for non-async contexts |
 | `CheckpointTrackingProjection` | Adds checkpoint, retry, and DLQ support |
-| `DeclarativeProjection` | Uses `@handles` decorator for cleaner routing |
+| `DeclarativeProjection` | Uses `@handles` decorator (in-memory projections) |
+| `DatabaseProjection` | `@handles` with database connection injection |
 
-For production use, **`DeclarativeProjection`** is recommended as it combines declarative event routing with checkpoint tracking and error handling.
+**Recommendation**: Use `DeclarativeProjection` for in-memory/simple projections, `DatabaseProjection` for database-backed read models.
 
 ---
 
 ## Quick Start: DeclarativeProjection
 
-The simplest way to create a projection is using `DeclarativeProjection` with the `@handles` decorator:
-
 ```python
-from uuid import UUID
+from uuid import UUID, uuid4
 from eventsource import DomainEvent, register_event
 from eventsource.projections import DeclarativeProjection, handles
-from eventsource.repositories import InMemoryCheckpointRepository, InMemoryDLQRepository
 
 
-# Define your events
 @register_event
 class OrderCreated(DomainEvent):
     event_type: str = "OrderCreated"
@@ -66,285 +51,149 @@ class OrderShipped(DomainEvent):
     tracking_number: str
 
 
-# Create a projection
 class OrderSummaryProjection(DeclarativeProjection):
-    """Builds a summary view of orders."""
+    """In-memory projection for order summaries."""
 
     def __init__(self):
-        super().__init__(
-            checkpoint_repo=InMemoryCheckpointRepository(),
-            dlq_repo=InMemoryDLQRepository(),
-        )
-        # In-memory read model (use a database in production)
+        super().__init__()  # Uses in-memory checkpoint/DLQ by default
         self.orders: dict[UUID, dict] = {}
 
     @handles(OrderCreated)
-    async def _on_order_created(self, event: OrderCreated) -> None:
-        """Create order entry in read model."""
+    async def _on_created(self, event: OrderCreated) -> None:
         self.orders[event.aggregate_id] = {
             "order_id": event.aggregate_id,
             "customer_id": event.customer_id,
             "total_amount": event.total_amount,
             "status": "created",
-            "created_at": event.occurred_at,
         }
 
     @handles(OrderShipped)
-    async def _on_order_shipped(self, event: OrderShipped) -> None:
-        """Update order status to shipped."""
+    async def _on_shipped(self, event: OrderShipped) -> None:
         if event.aggregate_id in self.orders:
-            self.orders[event.aggregate_id].update({
-                "status": "shipped",
-                "tracking_number": event.tracking_number,
-                "shipped_at": event.occurred_at,
-            })
+            self.orders[event.aggregate_id]["status"] = "shipped"
+            self.orders[event.aggregate_id]["tracking"] = event.tracking_number
 
     async def _truncate_read_models(self) -> None:
-        """Clear all data for rebuild."""
         self.orders.clear()
 
-    # Query methods for the read model
+    # Query methods
     def get_order(self, order_id: UUID) -> dict | None:
         return self.orders.get(order_id)
 
-    def get_orders_by_status(self, status: str) -> list[dict]:
-        return [o for o in self.orders.values() if o["status"] == status]
-```
 
-### Using the Projection
-
-```python
-import asyncio
-
+# Usage
 async def main():
     projection = OrderSummaryProjection()
 
-    # Process events (typically from event bus subscription)
-    event1 = OrderCreated(
+    event = OrderCreated(
         aggregate_id=uuid4(),
         customer_id=uuid4(),
         total_amount=99.99,
         aggregate_version=1,
     )
-    await projection.handle(event1)
+    await projection.handle(event)
 
-    # Query the read model
-    order = projection.get_order(event1.aggregate_id)
-    print(f"Order status: {order['status']}")  # Output: Order status: created
-
-asyncio.run(main())
+    order = projection.get_order(event.aggregate_id)
+    print(f"Status: {order['status']}")  # Output: Status: created
 ```
 
 ---
 
 ## The @handles Decorator
 
-The `@handles` decorator marks methods as event handlers for specific event types. This creates a clean, declarative mapping between events and handler methods.
-
-### Basic Usage
+The `@handles` decorator marks methods as event handlers for specific event types.
 
 ```python
 from eventsource.projections import handles
 
-@handles(OrderCreated)
-async def _handle_order_created(self, event: OrderCreated) -> None:
-    # Handler code here
-    pass
-```
-
-### Handler Signature Requirements
-
-Handlers **must be async functions** and accept either 1 or 2 parameters:
-
-```python
-# Single parameter: event only
+# DeclarativeProjection: single parameter (event only)
 @handles(OrderCreated)
 async def _handle_created(self, event: OrderCreated) -> None:
     await self._save_order(event)
 
-# Two parameters: connection and event
+# DatabaseProjection: two parameters (connection + event)
 @handles(OrderCreated)
 async def _handle_created(self, conn, event: OrderCreated) -> None:
-    # conn is passed by _process_event; None by default
-    await conn.execute("INSERT INTO orders ...")
+    await conn.execute(text("INSERT INTO orders ..."))
 ```
 
-### Automatic Subscription Discovery
-
-`DeclarativeProjection` automatically generates `subscribed_to()` from the `@handles` decorators:
-
-```python
-projection = OrderSummaryProjection()
-
-# Auto-generated from @handles decorators
-print(projection.subscribed_to())
-# Output: [<class 'OrderCreated'>, <class 'OrderShipped'>]
-```
-
-### Handler Validation
-
-At initialization, `DeclarativeProjection` validates handlers:
-
-- **Non-async handlers raise ValueError:**
-  ```python
-  @handles(OrderCreated)
-  def _handle_created(self, event):  # Missing 'async'
-      pass
-  # Raises: ValueError: Handler _handle_created must be async
-  ```
-
-- **Wrong parameter count raises ValueError:**
-  ```python
-  @handles(OrderCreated)
-  async def _handle_created(self, a, b, c):  # Too many params
-      pass
-  # Raises: ValueError: Handler must accept 1 or 2 parameters
-  ```
+**Key behaviors:**
+- Auto-generates `subscribed_to()` from decorated methods
+- Validates handlers at initialization (must be async, correct param count)
+- Works with both `DeclarativeProjection` and `DatabaseProjection`
 
 ---
 
 ## Checkpoint Tracking
 
-Checkpoints track which events have been processed, enabling:
-
-- **Resumable processing**: After restart, continue from last checkpoint
-- **Exactly-once semantics**: Avoid reprocessing events
-- **Lag monitoring**: Measure how far behind a projection is
-
-### How Checkpoints Work
-
-1. Event arrives at projection
-2. Handler processes the event
-3. On success, checkpoint is updated with event ID
-4. On failure, retry logic kicks in (see [Error Handling](#error-handling))
+Checkpoints track processed events, enabling resumable processing and lag monitoring.
 
 ```python
-# After processing events, check the checkpoint
+# Get last processed event
 checkpoint = await projection.get_checkpoint()
-print(f"Last processed event: {checkpoint}")
-# Output: Last processed event: 550e8400-e29b-41d4-a716-446655440000
-```
+print(f"Last processed: {checkpoint}")
 
-### Checkpoint Repositories
-
-Two implementations are provided:
-
-| Implementation | Use Case |
-|----------------|----------|
-| `InMemoryCheckpointRepository` | Testing, development |
-| `PostgreSQLCheckpointRepository` | Production |
-
-```python
-from eventsource.repositories import (
-    InMemoryCheckpointRepository,
-    PostgreSQLCheckpointRepository,
-)
-
-# For testing
-checkpoint_repo = InMemoryCheckpointRepository()
-
-# For production
-checkpoint_repo = PostgreSQLCheckpointRepository(engine)
-```
-
-### Lag Metrics
-
-Monitor projection health with lag metrics:
-
-```python
+# Get lag metrics
 metrics = await projection.get_lag_metrics()
 if metrics:
-    print(f"Projection: {metrics['projection_name']}")
-    print(f"Last event ID: {metrics['last_event_id']}")
+    print(f"Lag: {metrics['lag_seconds']} seconds")
     print(f"Events processed: {metrics['events_processed']}")
-    print(f"Lag (seconds): {metrics['lag_seconds']}")
-    print(f"Last processed at: {metrics['last_processed_at']}")
 ```
+
+**Repository implementations:**
+- `InMemoryCheckpointRepository` - Testing/development
+- `PostgreSQLCheckpointRepository` - Production
 
 ---
 
 ## Error Handling
 
-Projections use a **retry-with-dead-letter-queue (DLQ)** strategy for robust error handling. For detailed rationale, see [ADR-0004: Projection Error Handling](../adrs/0004-projection-error-handling.md).
-
-### Retry Behavior
-
-When event processing fails:
-
-1. **First failure**: Log error, wait 1 second, retry
-2. **Second failure**: Log error, wait 2 seconds, retry
-3. **Third failure**: Log error, send to DLQ, re-raise exception
+Projections use a **retry-with-dead-letter-queue (DLQ)** strategy. See [ADR-0004](../adrs/0004-projection-error-handling.md) for design rationale.
 
 ```
-Event arrives
-    |
-    v
-Process (attempt 1) --[success]--> Update checkpoint --> Done
-    |
-    +--[failure]--> Wait 1s --> Process (attempt 2) --[success]--> Done
-                                     |
-                                     +--[failure]--> Wait 2s --> Process (attempt 3)
-                                                                      |
-                                                                      +--[success]--> Done
-                                                                      |
-                                                                      +--[failure]--> DLQ --> Re-raise
+Event --> Process --> [success] --> Checkpoint --> Done
+              |
+              +--[failure]--> Backoff --> Retry (up to max_retries)
+                                              |
+                                              +--[exhausted]--> DLQ --> Re-raise
 ```
 
 ### Configuring Retry Behavior
 
-Override class attributes to customize retry behavior:
-
 ```python
-class HighReliabilityProjection(DeclarativeProjection):
-    # Increase retries for transient failures
-    MAX_RETRIES = 5
-    RETRY_BACKOFF_BASE = 3  # Backoff: 3s, 9s, 27s, 81s
+from eventsource.projections.retry import ExponentialBackoffRetryPolicy
+from eventsource.subscriptions.retry import RetryConfig
 
-    @handles(OrderCreated)
-    async def _handle_created(self, event: OrderCreated) -> None:
-        await self._call_external_service(event)  # May have transient failures
+# Custom retry policy
+policy = ExponentialBackoffRetryPolicy(
+    config=RetryConfig(max_retries=5, initial_delay=1.0)
+)
+
+projection = MyProjection(retry_policy=policy)
 ```
 
-### Dead Letter Queue (DLQ)
+### Dead Letter Queue
 
-Events that fail all retries are preserved in the DLQ with full context:
+Failed events are preserved with full context for debugging:
 
 ```python
-from eventsource.repositories import InMemoryDLQRepository
-
-# Access DLQ through the projection
-dlq_repo = projection._dlq_repo
-
 # Get failed events
-failed_events = await dlq_repo.get_failed_events(
+failed = await projection._dlq_repo.get_failed_events(
     projection_name="OrderSummaryProjection",
-    status="failed",
     limit=100,
 )
 
-for entry in failed_events:
-    print(f"Event ID: {entry.event_id}")
-    print(f"Event type: {entry.event_type}")
-    print(f"Error: {entry.error_message}")
-    print(f"Retry count: {entry.retry_count}")
-    print(f"First failed: {entry.first_failed_at}")
-    print(f"---")
+for entry in failed:
+    print(f"Event: {entry.event_id}, Error: {entry.error_message}")
 
-# Mark as resolved after manual intervention
-await dlq_repo.mark_resolved(dlq_id=entry.id, resolved_by="admin")
-
-# Get DLQ statistics
-stats = await dlq_repo.get_failure_stats()
-print(f"Total failed: {stats['total_failed']}")
-print(f"Affected projections: {stats['affected_projections']}")
+# Mark as resolved after manual fix
+await projection._dlq_repo.mark_resolved(dlq_id=entry.id, resolved_by="admin")
 ```
 
 ### Best Practice: Let Errors Propagate
 
-Don't catch exceptions in handlers; let them propagate to trigger retry/DLQ:
-
 ```python
-# GOOD: Let CheckpointTrackingProjection handle errors
+# GOOD: Let retry/DLQ handle errors
 @handles(OrderCreated)
 async def _handle_created(self, event: OrderCreated) -> None:
     await self._db.execute(...)  # May raise - that's OK
@@ -355,99 +204,59 @@ async def _handle_created(self, event: OrderCreated) -> None:
     try:
         await self._db.execute(...)
     except Exception:
-        pass  # Error is lost, checkpoint still updated!
+        pass  # Error is lost!
 ```
 
 ---
 
 ## Rebuilding Projections
 
-Projections can be rebuilt from scratch by replaying all events. This is useful when:
-
-- Bug fixes require reprocessing events
-- Adding new fields to read models
-- Recovering from data corruption
-
-### Basic Rebuild
+Projections can be rebuilt by replaying events (useful for bug fixes, schema changes, or recovery).
 
 ```python
 async def rebuild_projection(projection, event_store):
     """Rebuild a projection from scratch."""
-    # Step 1: Reset checkpoint and clear read model
-    await projection.reset()
+    await projection.reset()  # Clear checkpoint + read model
 
-    # Step 2: Replay all relevant events
     async for stored_event in event_store.read_all():
-        event = stored_event.event
-        # Only process events this projection handles
-        if type(event) in projection.subscribed_to():
-            await projection.handle(event)
+        if type(stored_event.event) in projection.subscribed_to():
+            await projection.handle(stored_event.event)
 
-    print(f"Rebuild complete. Checkpoint: {await projection.get_checkpoint()}")
+    print(f"Rebuild complete: {await projection.get_checkpoint()}")
 ```
 
-### Using ProjectionCoordinator for Rebuilds
-
-The `ProjectionCoordinator` provides rebuild utilities:
+### Using ProjectionCoordinator
 
 ```python
 from eventsource.projections import ProjectionCoordinator, ProjectionRegistry
 
-# Create registry and coordinator
 registry = ProjectionRegistry()
-registry.register_projection(order_summary_projection)
-registry.register_projection(customer_stats_projection)
+registry.register_projection(order_projection)
 
 coordinator = ProjectionCoordinator(registry=registry)
 
 # Rebuild all projections
-events = [e async for e in event_store.read_all()]
-await coordinator.rebuild_all(events=[e.event for e in events])
+await coordinator.rebuild_all(all_events)
 
 # Rebuild single projection
-await coordinator.rebuild_projection(
-    projection=order_summary_projection,
-    events=[e.event for e in events if type(e.event) in order_summary_projection.subscribed_to()],
-)
-```
+await coordinator.rebuild_projection(order_projection, relevant_events)
 
-### Production Rebuild Considerations
-
-For large event stores, consider:
-
-1. **Batching**: Process events in batches to avoid memory issues
-2. **Progress logging**: Log progress for long-running rebuilds
-3. **Downtime**: Consider read model availability during rebuilds
-
-```python
-async def rebuild_with_progress(projection, event_store, batch_size=1000):
-    """Rebuild with batching and progress logging."""
-    await projection.reset()
-
-    count = 0
-    async for stored_event in event_store.read_all():
-        if type(stored_event.event) in projection.subscribed_to():
-            await projection.handle(stored_event.event)
-            count += 1
-
-            if count % batch_size == 0:
-                print(f"Processed {count} events...")
-
-    print(f"Rebuild complete: {count} events processed")
+# Catch up without reset
+await coordinator.catchup(order_projection, missed_events)
 ```
 
 ---
 
-## Projection with Database Persistence
+## DatabaseProjection (Production Pattern)
 
-For production use, projections typically write to a database. Here's a complete example:
+For production database-backed projections, use `DatabaseProjection` which provides automatic transaction handling:
 
 ```python
 from uuid import UUID
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from eventsource import DomainEvent, register_event
-from eventsource.projections import DeclarativeProjection, handles
+from eventsource.projections import DatabaseProjection, handles
 from eventsource.repositories import PostgreSQLCheckpointRepository, PostgreSQLDLQRepository
 
 
@@ -456,7 +265,6 @@ class OrderCreated(DomainEvent):
     event_type: str = "OrderCreated"
     aggregate_type: str = "Order"
     customer_id: UUID
-    customer_name: str
     total_amount: float
 
 
@@ -467,241 +275,126 @@ class OrderShipped(DomainEvent):
     tracking_number: str
 
 
-@register_event
-class OrderCancelled(DomainEvent):
-    event_type: str = "OrderCancelled"
-    aggregate_type: str = "Order"
-    reason: str
-
-
-class OrderDashboardProjection(DeclarativeProjection):
+class OrderDashboardProjection(DatabaseProjection):
     """
-    Production projection that writes to PostgreSQL.
+    Production projection with automatic transaction handling.
 
-    Read model tables:
-    - orders: Current order state
-    - daily_revenue: Aggregated daily metrics
+    Handler operations share the same database transaction,
+    committed on success, rolled back on error.
     """
-
-    def __init__(self, session_factory: async_sessionmaker[AsyncSession]):
-        self._session_factory = session_factory
-        super().__init__(
-            checkpoint_repo=PostgreSQLCheckpointRepository(session_factory),
-            dlq_repo=PostgreSQLDLQRepository(session_factory),
-        )
 
     @handles(OrderCreated)
-    async def _handle_order_created(self, event: OrderCreated) -> None:
-        async with self._session_factory() as session:
-            # Insert order record (idempotent with ON CONFLICT)
-            await session.execute(
-                text("""
-                    INSERT INTO orders (
-                        id, customer_id, customer_name, total_amount,
-                        status, created_at
-                    ) VALUES (
-                        :id, :customer_id, :customer_name, :total_amount,
-                        'created', :created_at
-                    )
-                    ON CONFLICT (id) DO NOTHING
-                """),
-                {
-                    "id": event.aggregate_id,
-                    "customer_id": event.customer_id,
-                    "customer_name": event.customer_name,
-                    "total_amount": event.total_amount,
-                    "created_at": event.occurred_at,
-                }
-            )
+    async def _handle_order_created(self, conn, event: OrderCreated) -> None:
+        # Insert order (idempotent with ON CONFLICT)
+        await conn.execute(
+            text("""
+                INSERT INTO orders (id, customer_id, total_amount, status, created_at)
+                VALUES (:id, :customer_id, :total_amount, 'created', :created_at)
+                ON CONFLICT (id) DO NOTHING
+            """),
+            {
+                "id": str(event.aggregate_id),
+                "customer_id": str(event.customer_id),
+                "total_amount": event.total_amount,
+                "created_at": event.occurred_at,
+            }
+        )
 
-            # Update daily revenue metrics
-            await session.execute(
-                text("""
-                    INSERT INTO daily_revenue (date, order_count, total_revenue)
-                    VALUES (DATE(:date), 1, :amount)
-                    ON CONFLICT (date) DO UPDATE SET
-                        order_count = daily_revenue.order_count + 1,
-                        total_revenue = daily_revenue.total_revenue + :amount
-                """),
-                {"date": event.occurred_at, "amount": event.total_amount}
-            )
-
-            await session.commit()
+        # Update daily metrics (same transaction)
+        await conn.execute(
+            text("""
+                INSERT INTO daily_revenue (date, order_count, total_revenue)
+                VALUES (DATE(:date), 1, :amount)
+                ON CONFLICT (date) DO UPDATE SET
+                    order_count = daily_revenue.order_count + 1,
+                    total_revenue = daily_revenue.total_revenue + :amount
+            """),
+            {"date": event.occurred_at, "amount": event.total_amount}
+        )
 
     @handles(OrderShipped)
-    async def _handle_order_shipped(self, event: OrderShipped) -> None:
-        async with self._session_factory() as session:
-            await session.execute(
-                text("""
-                    UPDATE orders
-                    SET status = 'shipped',
-                        tracking_number = :tracking,
-                        shipped_at = :shipped_at
-                    WHERE id = :id
-                """),
-                {
-                    "id": event.aggregate_id,
-                    "tracking": event.tracking_number,
-                    "shipped_at": event.occurred_at,
-                }
-            )
-            await session.commit()
-
-    @handles(OrderCancelled)
-    async def _handle_order_cancelled(self, event: OrderCancelled) -> None:
-        async with self._session_factory() as session:
-            # Update order status
-            await session.execute(
-                text("""
-                    UPDATE orders
-                    SET status = 'cancelled',
-                        cancellation_reason = :reason,
-                        cancelled_at = :cancelled_at
-                    WHERE id = :id
-                """),
-                {
-                    "id": event.aggregate_id,
-                    "reason": event.reason,
-                    "cancelled_at": event.occurred_at,
-                }
-            )
-
-            # Subtract from daily revenue (for the original order date)
-            # Note: This is simplified; real implementation would track order date
-            await session.commit()
-
-    async def _truncate_read_models(self) -> None:
-        """Clear all read model tables for rebuild."""
-        async with self._session_factory() as session:
-            await session.execute(text("TRUNCATE TABLE orders, daily_revenue"))
-            await session.commit()
+    async def _handle_order_shipped(self, conn, event: OrderShipped) -> None:
+        await conn.execute(
+            text("""
+                UPDATE orders SET status = 'shipped', tracking_number = :tracking
+                WHERE id = :id
+            """),
+            {"id": str(event.aggregate_id), "tracking": event.tracking_number}
+        )
 
 
 # Usage
-async def setup_projection():
-    engine = create_async_engine("postgresql+asyncpg://localhost/mydb")
-    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+engine = create_async_engine("postgresql+asyncpg://localhost/mydb")
+session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
-    projection = OrderDashboardProjection(session_factory)
-    return projection
+projection = OrderDashboardProjection(
+    session_factory=session_factory,
+    checkpoint_repo=PostgreSQLCheckpointRepository(session_factory),
+    dlq_repo=PostgreSQLDLQRepository(session_factory),
+)
 ```
 
 ---
 
-## Integrating with SubscriptionManager (Recommended)
+## Integrating with SubscriptionManager
 
-For production use, use `SubscriptionManager` to coordinate catch-up subscriptions (historical events) with live subscriptions (real-time events). This ensures projections receive all events, including those that occurred before the projection was started.
+For production use, `SubscriptionManager` coordinates catch-up (historical) and live (real-time) event delivery:
 
 ```python
-from eventsource import (
-    InMemoryEventBus,
-    InMemoryEventStore,
-    InMemoryCheckpointRepository,
-    AggregateRepository,
-)
+from eventsource import InMemoryEventBus, InMemoryEventStore, InMemoryCheckpointRepository
 from eventsource.subscriptions import SubscriptionManager, SubscriptionConfig
 
-async def setup_system():
-    # Infrastructure
-    event_store = InMemoryEventStore()
-    event_bus = InMemoryEventBus()
-    checkpoint_repo = InMemoryCheckpointRepository()
+# Setup
+event_store = InMemoryEventStore()
+event_bus = InMemoryEventBus()
+checkpoint_repo = InMemoryCheckpointRepository()
 
-    # Create SubscriptionManager - coordinates catch-up and live events
-    manager = SubscriptionManager(
-        event_store=event_store,
-        event_bus=event_bus,
-        checkpoint_repo=checkpoint_repo,
-    )
+manager = SubscriptionManager(
+    event_store=event_store,
+    event_bus=event_bus,
+    checkpoint_repo=checkpoint_repo,
+)
 
-    # Projections
-    order_summary = OrderSummaryProjection()
-    customer_stats = CustomerStatsProjection()
+# Subscribe projections
+config = SubscriptionConfig(start_from="beginning", batch_size=100)
+await manager.subscribe(order_projection, config=config, name="Orders")
+await manager.subscribe(stats_projection, config=config, name="Stats")
 
-    # Subscribe projections via SubscriptionManager
-    # start_from="beginning" ensures all historical events are processed
-    config = SubscriptionConfig(start_from="beginning", batch_size=100)
-    await manager.subscribe(order_summary, config=config, name="OrderSummary")
-    await manager.subscribe(customer_stats, config=config, name="CustomerStats")
+# Start (catch-up then live)
+await manager.start()
 
-    # Start the manager (begins catch-up, then transitions to live)
-    await manager.start()
+# ... process events ...
 
-    # Repository publishes events to bus after saving
-    repo = AggregateRepository(
-        event_store=event_store,
-        aggregate_factory=OrderAggregate,
-        aggregate_type="Order",
-        event_publisher=event_bus,
-    )
-
-    return repo, manager, order_summary, customer_stats
-
-
-async def demo():
-    repo, manager, order_summary, customer_stats = await setup_system()
-
-    # Create an order - events flow to projections via SubscriptionManager
-    order_id = uuid4()
-    order = repo.create_new(order_id)
-    order.create(customer_id=uuid4(), total_amount=150.00)
-    await repo.save(order)
-
-    # Projections are updated with both historical and live events
-    print(f"Orders in projection: {len(order_summary.orders)}")
-
-    # When done, stop gracefully (saves checkpoints)
-    await manager.stop()
+# Graceful shutdown
+await manager.stop()
 ```
 
-**Why use SubscriptionManager instead of direct EventBus subscription?**
+**Why SubscriptionManager?**
 
-| Feature | `event_bus.subscribe_all()` | `SubscriptionManager` |
-|---------|-----------------------------|-----------------------|
-| Live events | ✅ | ✅ |
-| Historical catch-up | ❌ | ✅ |
-| Checkpoint tracking | ❌ | ✅ |
-| Resumable after restart | ❌ | ✅ |
-| Graceful shutdown | ❌ | ✅ |
-| Health monitoring | ❌ | ✅ |
-
-See the [Subscriptions Guide](../guides/subscriptions.md) for comprehensive documentation.
+| Feature | Direct EventBus | SubscriptionManager |
+|---------|-----------------|---------------------|
+| Live events | Yes | Yes |
+| Historical catch-up | No | Yes |
+| Checkpoint tracking | No | Yes |
+| Resumable after restart | No | Yes |
 
 ---
 
-## Best Practices Summary
+## Best Practices
 
-### Design Guidelines
-
-1. **Make handlers idempotent**: Use UPSERT patterns (`ON CONFLICT DO ...`)
-2. **Let errors propagate**: Don't catch exceptions; let retry/DLQ handle them
-3. **Keep projections focused**: One projection per read model / query pattern
-4. **Use transactions**: Update read models atomically
-
-### Performance Tips
-
-1. **Batch operations**: For bulk updates, accumulate and batch writes
-2. **Index read models**: Add appropriate indexes for query patterns
-3. **Monitor lag**: Set up alerts for projection lag metrics
-
-### Operational Procedures
-
-1. **Monitor DLQ**: Check for failed events regularly
-2. **Document rebuild process**: Know how to rebuild each projection
-3. **Test rebuilds**: Verify rebuild procedures in staging
+1. **Idempotent handlers**: Use `ON CONFLICT DO NOTHING/UPDATE` patterns
+2. **Let errors propagate**: Don't catch exceptions; retry/DLQ handles them
+3. **One projection per read model**: Keep projections focused
+4. **Use transactions**: `DatabaseProjection` handles this automatically
+5. **Monitor DLQ**: Check for failed events regularly
+6. **Test rebuilds**: Verify rebuild procedures work correctly
 
 ---
 
-## Complete Example
+## Example Code
 
-See the full working example in `examples/projection_example.py`, which demonstrates:
+See `examples/projection_example.py` for a complete working example:
 
-- Multiple projections (`OrderListProjection`, `CustomerStatsProjection`, `DailyRevenueProjection`)
-- Event bus integration
-- Checkpoint tracking
-- Projection rebuilds
-
-Run it with:
 ```bash
 python -m examples.projection_example
 ```
@@ -711,6 +404,4 @@ python -m examples.projection_example
 ## See Also
 
 - [Projections API Reference](../api/projections.md) - Complete API documentation
-- [ADR-0004: Projection Error Handling](../adrs/0004-projection-error-handling.md) - Error handling design rationale
-- [ADR-0001: Async-First Design](../adrs/0001-async-first-design.md) - Why projections are async
-- [Testing Patterns](./testing.md) - Testing projections
+- [ADR-0004: Projection Error Handling](../adrs/0004-projection-error-handling.md) - Error handling rationale

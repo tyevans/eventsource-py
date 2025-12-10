@@ -232,7 +232,7 @@ asyncio.run(main())
 - **Aggregates** - Consistency boundaries that reconstruct state from event streams.
 - **Repository** - Abstracts loading/saving aggregates from/to the event store.
 - **Projections** - Build read-optimized views from event streams.
-- **Event Bus** - Distributes events to subscribers for async processing.
+- **Event Bus** - Distributes events to subscribers for async processing. Supports In-Memory, Redis, RabbitMQ, and Kafka backends.
 
 ## Documentation
 

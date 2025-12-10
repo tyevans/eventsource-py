@@ -6,26 +6,46 @@ This document covers the event bus system for publishing and subscribing to doma
 
 The event bus decouples event producers from consumers, allowing projections and other handlers to react to events independently.
 
+**Implementations:**
+
+| Implementation | Backend | Use Case |
+|----------------|---------|----------|
+| `InMemoryEventBus` | None | Development, testing, single-process |
+| `RedisEventBus` | Redis Streams | Real-time distributed systems |
+| `RabbitMQEventBus` | RabbitMQ AMQP | Enterprise messaging with routing |
+| `KafkaEventBus` | Apache Kafka | High-throughput event streaming |
+
+For a comprehensive guide, see [Event Bus Guide](../guides/event-bus.md).
+
 ```python
 from eventsource import (
-    # Interface
+    # Interface and base classes
     EventBus,
     EventHandler,
     EventSubscriber,
     EventHandlerFunc,
     AsyncEventHandler,
 
-    # Implementations
+    # In-memory (always available)
     InMemoryEventBus,
+
+    # Redis (requires: pip install eventsource[redis])
     RedisEventBus,
     RedisEventBusConfig,
     RedisEventBusStats,
+    REDIS_AVAILABLE,
+
+    # RabbitMQ (requires: pip install eventsource[rabbitmq])
     RabbitMQEventBus,
     RabbitMQEventBusConfig,
     RabbitMQEventBusStats,
+    RABBITMQ_AVAILABLE,
+
+    # Kafka (requires: pip install eventsource[kafka])
     KafkaEventBus,
     KafkaEventBusConfig,
     KafkaEventBusStats,
+    KAFKA_AVAILABLE,
 )
 ```
 
@@ -279,20 +299,20 @@ Distributed event bus using Redis Streams.
 ### Setup
 
 ```python
-from eventsource import RedisEventBus, RedisEventBusConfig
+from eventsource.bus import RedisEventBus, RedisEventBusConfig
 
 config = RedisEventBusConfig(
     redis_url="redis://localhost:6379",
-    stream_name="events",
+    stream_prefix="myapp",
     consumer_group="my-app",
     consumer_name="worker-1",
-    max_stream_length=10000,
     block_ms=5000,
-    batch_size=10,
+    batch_size=100,
 )
 
-bus = RedisEventBus(config)
-await bus.start()  # Start consuming
+bus = RedisEventBus(config=config)
+await bus.connect()
+await bus.start_consuming()
 ```
 
 ### Configuration
@@ -301,40 +321,48 @@ await bus.start()  # Start consuming
 @dataclass
 class RedisEventBusConfig:
     redis_url: str = "redis://localhost:6379"
-    stream_name: str = "events"
+    stream_prefix: str = "events"             # Stream name: {prefix}:stream
     consumer_group: str = "default"
-    consumer_name: str = "consumer-1"
-    max_stream_length: int = 10000      # Stream trimming
-    block_ms: int = 5000                 # Block time for reads
-    batch_size: int = 10                 # Events per batch
-    claim_min_idle_time: int = 60000     # Claim idle messages (ms)
-    enable_dead_letter: bool = True      # Enable DLQ
-    max_retries: int = 3                 # Max processing attempts
+    consumer_name: str | None = None          # Auto-generated if None
+    batch_size: int = 100                     # Events per batch
+    block_ms: int = 5000                      # Block time for reads (ms)
+    max_retries: int = 3                      # Max processing attempts
+    pending_idle_ms: int = 60000              # Claim idle messages (ms)
+    enable_dlq: bool = True                   # Enable DLQ
+    dlq_stream_suffix: str = "_dlq"           # DLQ stream: {prefix}:stream_dlq
+    socket_timeout: float = 5.0               # Socket timeout (seconds)
+    socket_connect_timeout: float = 5.0       # Connection timeout (seconds)
+    enable_tracing: bool = True               # OpenTelemetry tracing
+    retry_key_prefix: str = "retry"           # Retry count key prefix
+    retry_key_expiry_seconds: int = 86400     # Retry key expiry (24h)
 ```
 
 ### Usage
 
 ```python
-bus = RedisEventBus(config)
+bus = RedisEventBus(config=config)
+await bus.connect()
 
 # Subscribe handlers (same as InMemoryEventBus)
 bus.subscribe(OrderCreated, order_handler)
 bus.subscribe_all(order_projection)
 
-# Start consuming
-await bus.start()
+# Start consuming (blocks until stopped)
+await bus.start_consuming()
 
 # Publish events
 await bus.publish([order_created_event])
 
 # Get statistics
-stats = bus.get_stats()
-print(f"Pending: {stats.pending_count}")
-print(f"Processed: {stats.processed_count}")
-print(f"Failed: {stats.failed_count}")
+stats = bus.get_stats_dict()
+print(f"Published: {stats['events_published']}")
+print(f"Consumed: {stats['events_consumed']}")
+print(f"Success: {stats['events_processed_success']}")
+print(f"Failed: {stats['events_processed_failed']}")
+print(f"DLQ: {stats['messages_sent_to_dlq']}")
 
 # Shutdown
-await bus.stop()
+await bus.shutdown()
 ```
 
 ### Consumer Groups
@@ -359,17 +387,65 @@ bus2 = RedisEventBus(config2)
 # Events are distributed between workers
 ```
 
+### Dead Letter Queue
+
+```python
+# Get DLQ messages
+messages = await bus.get_dlq_messages(count=100)
+for msg in messages:
+    print(f"ID: {msg['message_id']}")
+    print(f"Data: {msg['data']}")
+
+# Replay a DLQ message back to main stream
+success = await bus.replay_dlq_message(message_id)
+```
+
+### Pending Message Recovery
+
+Recover messages that were read but never acknowledged:
+
+```python
+# Manually trigger recovery (also runs automatically)
+stats = await bus.recover_pending_messages(
+    min_idle_time_ms=60000,  # Messages idle for 1 minute
+    max_retries=3,            # Send to DLQ after 3 attempts
+)
+print(f"Checked: {stats['checked']}")
+print(f"Reprocessed: {stats['reprocessed']}")
+print(f"Sent to DLQ: {stats['dlq']}")
+```
+
+### Stream Information
+
+```python
+info = await bus.get_stream_info()
+# {
+#     "connected": True,
+#     "stream": {
+#         "name": "myapp:stream",
+#         "length": 1000,
+#         "first_entry_id": "1234567890-0",
+#         "last_entry_id": "1234567899-0",
+#     },
+#     "consumer_groups": [...],
+#     "pending_messages": 5,
+#     "dlq_messages": 2,
+#     "active_consumers": 3,
+#     "stats": {...},
+# }
+```
+
 ### Availability Check
 
 ```python
-from eventsource import REDIS_AVAILABLE, RedisNotAvailableError
+from eventsource.bus import REDIS_AVAILABLE, RedisNotAvailableError
 
 if not REDIS_AVAILABLE:
     print("Redis support not installed")
     # pip install eventsource[redis]
 
 try:
-    bus = RedisEventBus(config)
+    bus = RedisEventBus(config=config)
 except RedisNotAvailableError:
     print("Redis package not available")
 ```

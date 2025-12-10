@@ -33,20 +33,24 @@ Execute the generated SQL:
 
 ```sql
 CREATE TABLE IF NOT EXISTS snapshots (
+    id BIGSERIAL PRIMARY KEY,
     aggregate_id UUID NOT NULL,
     aggregate_type VARCHAR(255) NOT NULL,
-    version BIGINT NOT NULL,
+    version INTEGER NOT NULL,
     schema_version INTEGER NOT NULL DEFAULT 1,
     state JSONB NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (aggregate_id, aggregate_type)
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_snapshots_aggregate UNIQUE (aggregate_id, aggregate_type)
 );
 
-CREATE INDEX IF NOT EXISTS idx_snapshots_type
-    ON snapshots (aggregate_type);
-
+CREATE INDEX IF NOT EXISTS idx_snapshots_aggregate_lookup
+    ON snapshots(aggregate_id, aggregate_type);
+CREATE INDEX IF NOT EXISTS idx_snapshots_aggregate_type
+    ON snapshots(aggregate_type);
 CREATE INDEX IF NOT EXISTS idx_snapshots_schema_version
-    ON snapshots (aggregate_type, schema_version);
+    ON snapshots(aggregate_type, schema_version);
+CREATE INDEX IF NOT EXISTS idx_snapshots_created_at
+    ON snapshots(created_at);
 ```
 
 ### SQLite
@@ -54,25 +58,29 @@ CREATE INDEX IF NOT EXISTS idx_snapshots_schema_version
 ```python
 from eventsource.migrations import get_schema
 
-sql = get_schema("snapshots", dialect="sqlite")
+sql = get_schema("snapshots", backend="sqlite")
 ```
 
 ```sql
 CREATE TABLE IF NOT EXISTS snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     aggregate_id TEXT NOT NULL,
     aggregate_type TEXT NOT NULL,
     version INTEGER NOT NULL,
     schema_version INTEGER NOT NULL DEFAULT 1,
     state TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    PRIMARY KEY (aggregate_id, aggregate_type)
+    UNIQUE (aggregate_id, aggregate_type)
 );
 
-CREATE INDEX IF NOT EXISTS idx_snapshots_type
-    ON snapshots (aggregate_type);
-
+CREATE INDEX IF NOT EXISTS idx_snapshots_aggregate_lookup
+    ON snapshots(aggregate_id, aggregate_type);
+CREATE INDEX IF NOT EXISTS idx_snapshots_aggregate_type
+    ON snapshots(aggregate_type);
 CREATE INDEX IF NOT EXISTS idx_snapshots_schema_version
-    ON snapshots (aggregate_type, schema_version);
+    ON snapshots(aggregate_type, schema_version);
+CREATE INDEX IF NOT EXISTS idx_snapshots_created_at
+    ON snapshots(created_at);
 ```
 
 ---

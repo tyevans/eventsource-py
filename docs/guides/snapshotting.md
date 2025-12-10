@@ -133,13 +133,18 @@ Best for: Embedded applications, single-instance deployments
 ```python
 from eventsource.snapshots import SQLiteSnapshotStore
 
+# File-based database
 snapshot_store = SQLiteSnapshotStore("./snapshots.db")
+
+# In-memory database for testing
+snapshot_store = SQLiteSnapshotStore(":memory:")
 ```
 
 **Pros:**
 - File-based persistence
 - No external database server
 - Lightweight
+- OpenTelemetry tracing support
 
 **Cons:**
 - Single-writer limitation
@@ -408,6 +413,8 @@ CREATE INDEX IF NOT EXISTS idx_snapshots_aggregate_type
     ON snapshots(aggregate_type);
 CREATE INDEX IF NOT EXISTS idx_snapshots_schema_version
     ON snapshots(aggregate_type, schema_version);
+CREATE INDEX IF NOT EXISTS idx_snapshots_created_at
+    ON snapshots(created_at);
 ```
 
 ---
@@ -536,13 +543,14 @@ Track snapshot metrics:
 - Creation time
 - Load time improvement
 
-With OpenTelemetry:
+OpenTelemetry tracing is enabled by default when the library is installed:
 
 ```python
-from opentelemetry import trace
+# Tracing enabled by default
+snapshot_store = PostgreSQLSnapshotStore(session_factory)
 
-tracer = trace.get_tracer(__name__)
-snapshot_store = PostgreSQLSnapshotStore(session_factory, tracer=tracer)
+# Explicitly disable if needed
+snapshot_store = PostgreSQLSnapshotStore(session_factory, enable_tracing=False)
 ```
 
 ### 4. Test with Snapshots

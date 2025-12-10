@@ -23,6 +23,15 @@ from eventsource.snapshots import (
     SnapshotSchemaVersionError,
     SnapshotNotFoundError,
 )
+
+# Snapshot strategies (advanced usage)
+from eventsource.snapshots.strategies import (
+    SnapshotStrategy,
+    ThresholdSnapshotStrategy,
+    BackgroundSnapshotStrategy,
+    NoSnapshotStrategy,
+    create_snapshot_strategy,
+)
 ```
 
 ---
@@ -264,12 +273,19 @@ await store.clear()  # Reset state between tests
 count = store.snapshot_count  # Get current count
 ```
 
+### Constructor Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enable_tracing` | `bool` | `True` | Enable OpenTelemetry tracing (if available) |
+
 ### Characteristics
 
 - **Thread-safe**: Uses asyncio.Lock for concurrent access
 - **Non-persistent**: Data lost when process terminates
 - **Fast**: All operations in memory
 - **Full delete_snapshots_by_type support**: Efficient in-memory filtering
+- **OpenTelemetry tracing**: Automatic tracing when OpenTelemetry is available
 
 ### Additional Methods
 
@@ -330,31 +346,34 @@ store = PostgreSQLSnapshotStore(session_factory)
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `session_factory` | `async_sessionmaker` | Required | SQLAlchemy async session factory |
-| `tracer` | `Tracer \| None` | `None` | Optional OpenTelemetry tracer |
+| `enable_tracing` | `bool` | `True` | Enable OpenTelemetry tracing (if available) |
 
 ### Features
 
 - **Upsert semantics**: INSERT ON CONFLICT UPDATE for atomic save
 - **Efficient queries**: Single-row lookups by aggregate_id + aggregate_type
 - **Bulk operations**: delete_snapshots_by_type with schema version filtering
-- **OpenTelemetry tracing**: Optional distributed tracing support
+- **OpenTelemetry tracing**: Automatic tracing when OpenTelemetry is available
 - **Optimized EXISTS**: snapshot_exists uses SQL EXISTS for efficiency
 
-### With OpenTelemetry Tracing
+### OpenTelemetry Tracing
+
+Tracing is enabled by default when OpenTelemetry is installed:
 
 ```python
-from opentelemetry import trace
+# Tracing enabled by default
+store = PostgreSQLSnapshotStore(session_factory)
 
-tracer = trace.get_tracer(__name__)
-store = PostgreSQLSnapshotStore(session_factory, tracer=tracer)
+# Explicitly disable tracing
+store = PostgreSQLSnapshotStore(session_factory, enable_tracing=False)
 ```
 
 Traced operations include:
-- `snapshot_store.save`
-- `snapshot_store.get`
-- `snapshot_store.delete`
-- `snapshot_store.exists`
-- `snapshot_store.delete_by_type`
+- `eventsource.snapshot.save`
+- `eventsource.snapshot.get`
+- `eventsource.snapshot.delete`
+- `eventsource.snapshot.exists`
+- `eventsource.snapshot.delete_by_type`
 
 ### Database Schema
 
@@ -387,6 +406,8 @@ CREATE INDEX IF NOT EXISTS idx_snapshots_aggregate_type
     ON snapshots(aggregate_type);
 CREATE INDEX IF NOT EXISTS idx_snapshots_schema_version
     ON snapshots(aggregate_type, schema_version);
+CREATE INDEX IF NOT EXISTS idx_snapshots_created_at
+    ON snapshots(created_at);
 ```
 
 ---
@@ -415,9 +436,10 @@ store = SQLiteSnapshotStore(":memory:")
 
 ### Constructor Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `database_path` | `str` | Path to SQLite file or `:memory:` |
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `database_path` | `str` | Required | Path to SQLite file or `:memory:` |
+| `enable_tracing` | `bool` | `True` | Enable OpenTelemetry tracing (if available) |
 
 ### Features
 
@@ -425,6 +447,7 @@ store = SQLiteSnapshotStore(":memory:")
 - **No external database**: Self-contained in a single file
 - **Async operations**: Uses aiosqlite driver
 - **INSERT OR REPLACE**: Efficient upsert for save operations
+- **OpenTelemetry tracing**: Automatic tracing when OpenTelemetry is available
 
 ### Database Schema
 
@@ -450,13 +473,21 @@ CREATE TABLE IF NOT EXISTS snapshots (
     created_at TEXT NOT NULL,
     UNIQUE(aggregate_id, aggregate_type)
 );
+
+CREATE INDEX IF NOT EXISTS idx_snapshots_aggregate_lookup
+    ON snapshots(aggregate_id, aggregate_type);
+CREATE INDEX IF NOT EXISTS idx_snapshots_aggregate_type
+    ON snapshots(aggregate_type);
+CREATE INDEX IF NOT EXISTS idx_snapshots_schema_version
+    ON snapshots(aggregate_type, schema_version);
+CREATE INDEX IF NOT EXISTS idx_snapshots_created_at
+    ON snapshots(created_at);
 ```
 
 ### Limitations
 
 - **Single writer**: Only one write operation at a time
 - **Local only**: Cannot share database across machines
-- **No tracing**: OpenTelemetry not supported (use PostgreSQL for production)
 
 ### When to Use
 
@@ -465,6 +496,87 @@ CREATE TABLE IF NOT EXISTS snapshots (
 - Single-instance deployments
 - Desktop applications
 - Edge computing scenarios
+
+---
+
+## Snapshot Strategies
+
+Strategies encapsulate when and how snapshots are created. The repository uses strategies internally based on the `snapshot_mode` parameter.
+
+### Strategy Protocol
+
+```python
+from eventsource.snapshots.strategies import SnapshotStrategy
+
+class SnapshotStrategy(Protocol):
+    def should_snapshot(
+        self,
+        aggregate: AggregateRoot[Any],
+        events_since_snapshot: int,
+    ) -> bool: ...
+
+    async def execute_snapshot(
+        self,
+        aggregate: AggregateRoot[Any],
+        snapshot_store: SnapshotStore,
+        aggregate_type: str,
+    ) -> Snapshot | None: ...
+```
+
+### ThresholdSnapshotStrategy
+
+Creates snapshots synchronously at threshold boundaries.
+
+```python
+from eventsource.snapshots.strategies import ThresholdSnapshotStrategy
+
+strategy = ThresholdSnapshotStrategy(threshold=100)
+# Snapshots created at versions 100, 200, 300, etc.
+```
+
+**Best for:** Development, testing, low-throughput scenarios.
+
+### BackgroundSnapshotStrategy
+
+Creates snapshots asynchronously in background tasks.
+
+```python
+from eventsource.snapshots.strategies import BackgroundSnapshotStrategy
+
+strategy = BackgroundSnapshotStrategy(threshold=100)
+
+# Wait for pending snapshots (useful in tests)
+count = await strategy.await_pending()
+print(f"Pending: {strategy.pending_count}")
+```
+
+**Best for:** High-throughput production scenarios.
+
+### NoSnapshotStrategy
+
+Never creates snapshots automatically (manual mode).
+
+```python
+from eventsource.snapshots.strategies import NoSnapshotStrategy
+
+strategy = NoSnapshotStrategy()
+strategy.should_snapshot(aggregate, 1000)  # Always returns False
+```
+
+**Best for:** Full control over snapshot timing.
+
+### Factory Function
+
+Create strategies from mode strings (used internally by repository):
+
+```python
+from eventsource.snapshots.strategies import create_snapshot_strategy
+
+# Equivalent ways to create strategies
+strategy = create_snapshot_strategy("sync", threshold=100)
+strategy = create_snapshot_strategy("background", threshold=100)
+strategy = create_snapshot_strategy("manual")
+```
 
 ---
 
