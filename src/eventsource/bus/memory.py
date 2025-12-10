@@ -11,13 +11,13 @@ import asyncio
 import logging
 import threading
 from collections import defaultdict
-from typing import Any
 
 from eventsource.bus.interface import (
     EventBus,
     EventHandlerFunc,
 )
 from eventsource.events.base import DomainEvent
+from eventsource.handlers.adapter import HandlerAdapter
 from eventsource.observability import TracingMixin
 from eventsource.observability.attributes import (
     ATTR_AGGREGATE_ID,
@@ -33,10 +33,6 @@ from eventsource.protocols import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-# Type for normalized handler (always async callable)
-HandlerWrapper = tuple[Any, Any]  # (original_handler, normalized_async_handler)
 
 
 class InMemoryEventBus(EventBus, TracingMixin):
@@ -72,10 +68,10 @@ class InMemoryEventBus(EventBus, TracingMixin):
             enable_tracing: If True and OpenTelemetry is available, emit traces.
                            Defaults to True for consistency with other components.
         """
-        # Map of event type -> list of (original_handler, normalized_handler) tuples
-        self._subscribers: dict[type[DomainEvent], list[HandlerWrapper]] = defaultdict(list)
+        # Map of event type -> list of HandlerAdapter instances
+        self._subscribers: dict[type[DomainEvent], list[HandlerAdapter]] = defaultdict(list)
         # List of wildcard handlers
-        self._all_event_handlers: list[HandlerWrapper] = []
+        self._all_event_handlers: list[HandlerAdapter] = []
         # Lock for thread-safe subscription management
         self._lock = threading.RLock()
         # Track background tasks to prevent orphaned coroutines
@@ -91,61 +87,6 @@ class InMemoryEventBus(EventBus, TracingMixin):
 
         # Tracing configuration - simplified with TracingMixin
         self._init_tracing(__name__, enable_tracing)
-
-    def _normalize_handler(
-        self, handler: FlexibleEventHandler | EventHandlerFunc
-    ) -> HandlerWrapper:
-        """
-        Normalize a handler to an async callable.
-
-        Args:
-            handler: Object with handle() method or callable
-
-        Returns:
-            Tuple of (original_handler, async_handler_func)
-        """
-        # If it's an object with a handle method
-        if hasattr(handler, "handle"):
-            handle_method = handler.handle
-            if asyncio.iscoroutinefunction(handle_method):
-                # Already async
-                return (handler, handle_method)
-            else:
-                # Wrap sync method
-                async def async_wrapper(event: DomainEvent) -> None:
-                    result = handle_method(event)
-                    # Handle case where sync method returns a coroutine (shouldn't happen but be safe)
-                    if asyncio.iscoroutine(result):
-                        await result
-
-                return (handler, async_wrapper)
-        # It's a callable (function or lambda)
-        elif callable(handler):
-            if asyncio.iscoroutinefunction(handler):
-                return (handler, handler)
-            else:
-                # Wrap sync callable - we know handler is callable at this point
-                callable_handler = handler
-
-                async def async_callable_wrapper(event: DomainEvent) -> None:
-                    result = callable_handler(event)
-                    if asyncio.iscoroutine(result):
-                        await result
-
-                return (handler, async_callable_wrapper)
-        else:
-            raise TypeError(
-                f"Handler must have a handle() method or be callable, got {type(handler)}"
-            )
-
-    def _get_handler_name(self, handler: Any) -> str:
-        """Get a descriptive name for a handler for logging."""
-        if hasattr(handler, "__class__"):
-            return str(handler.__class__.__name__)
-        elif hasattr(handler, "__name__"):
-            return str(handler.__name__)
-        else:
-            return repr(handler)
 
     async def publish(
         self,
@@ -253,29 +194,26 @@ class InMemoryEventBus(EventBus, TracingMixin):
         ):
             await self._invoke_handlers(handlers, event)
 
-    async def _invoke_handlers(self, handlers: list[HandlerWrapper], event: DomainEvent) -> None:
+    async def _invoke_handlers(self, handlers: list[HandlerAdapter], event: DomainEvent) -> None:
         """
         Invoke all handlers for an event concurrently.
 
         Args:
-            handlers: List of (original_handler, async_handler) tuples
+            handlers: List of HandlerAdapter instances
             event: The event to handle
         """
         # Process handlers concurrently but wait for all to complete
-        tasks = [self._safe_handle(handler, event) for handler in handlers]
+        tasks = [self._safe_handle(adapter, event) for adapter in handlers]
         await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def _safe_handle(self, handler_wrapper: HandlerWrapper, event: DomainEvent) -> None:
+    async def _safe_handle(self, adapter: HandlerAdapter, event: DomainEvent) -> None:
         """
         Safely execute a handler, catching and logging exceptions.
 
         Args:
-            handler_wrapper: Tuple of (original_handler, async_handler)
+            adapter: The HandlerAdapter wrapping the handler
             event: The event to handle
         """
-        original_handler, async_handler = handler_wrapper
-        handler_name = self._get_handler_name(original_handler)
-
         # Trace handler execution with dynamic attributes and error recording
         with self._create_span_context(
             "eventsource.event_bus.handle",
@@ -283,18 +221,18 @@ class InMemoryEventBus(EventBus, TracingMixin):
                 ATTR_EVENT_TYPE: type(event).__name__,
                 ATTR_EVENT_ID: str(event.event_id),
                 ATTR_AGGREGATE_ID: str(event.aggregate_id),
-                ATTR_HANDLER_NAME: handler_name,
+                ATTR_HANDLER_NAME: adapter.name,
             },
         ) as span:
             try:
-                await async_handler(event)
+                await adapter.handle(event)
                 if span:
                     span.set_attribute(ATTR_HANDLER_SUCCESS, True)
                 self._stats["handlers_invoked"] += 1
                 logger.debug(
-                    f"Handler {handler_name} processed {type(event).__name__}",
+                    f"Handler {adapter.name} processed {type(event).__name__}",
                     extra={
-                        "handler": handler_name,
+                        "handler": adapter.name,
                         "event_type": type(event).__name__,
                         "event_id": str(event.event_id),
                     },
@@ -305,10 +243,10 @@ class InMemoryEventBus(EventBus, TracingMixin):
                     span.record_exception(e)
                 self._stats["handler_errors"] += 1
                 logger.error(
-                    f"Handler {handler_name} failed processing {type(event).__name__}: {e}",
+                    f"Handler {adapter.name} failed processing {type(event).__name__}: {e}",
                     exc_info=True,
                     extra={
-                        "handler": handler_name,
+                        "handler": adapter.name,
                         "event_type": type(event).__name__,
                         "event_id": str(event.event_id),
                         "error": str(e),
@@ -329,16 +267,15 @@ class InMemoryEventBus(EventBus, TracingMixin):
             event_type: The event class to subscribe to
             handler: Object with handle() method or callable
         """
-        wrapper = self._normalize_handler(handler)
-        handler_name = self._get_handler_name(handler)
+        adapter = HandlerAdapter(handler)
 
         with self._lock:
-            self._subscribers[event_type].append(wrapper)
+            self._subscribers[event_type].append(adapter)
 
         logger.info(
-            f"Registered handler {handler_name} for {event_type.__name__}",
+            f"Registered handler {adapter.name} for {event_type.__name__}",
             extra={
-                "handler": handler_name,
+                "handler": adapter.name,
                 "event_type": event_type.__name__,
             },
         )
@@ -360,26 +297,27 @@ class InMemoryEventBus(EventBus, TracingMixin):
         Returns:
             True if the handler was found and removed, False otherwise
         """
-        handler_name = self._get_handler_name(handler)
+        # Create adapter for comparison (uses identity comparison on original)
+        target_adapter = HandlerAdapter(handler)
 
         with self._lock:
-            handlers = self._subscribers.get(event_type, [])
-            for i, (orig_handler, _) in enumerate(handlers):
-                if orig_handler is handler:
-                    handlers.pop(i)
+            adapters = self._subscribers.get(event_type, [])
+            for i, adapter in enumerate(adapters):
+                if adapter == target_adapter:
+                    adapters.pop(i)
                     logger.info(
-                        f"Unsubscribed handler {handler_name} from {event_type.__name__}",
+                        f"Unsubscribed handler {adapter.name} from {event_type.__name__}",
                         extra={
-                            "handler": handler_name,
+                            "handler": adapter.name,
                             "event_type": event_type.__name__,
                         },
                     )
                     return True
 
         logger.debug(
-            f"Handler {handler_name} not found for {event_type.__name__}",
+            f"Handler {target_adapter.name} not found for {event_type.__name__}",
             extra={
-                "handler": handler_name,
+                "handler": target_adapter.name,
                 "event_type": event_type.__name__,
             },
         )
@@ -409,15 +347,14 @@ class InMemoryEventBus(EventBus, TracingMixin):
         Args:
             handler: Handler that will receive all events
         """
-        wrapper = self._normalize_handler(handler)
-        handler_name = self._get_handler_name(handler)
+        adapter = HandlerAdapter(handler)
 
         with self._lock:
-            self._all_event_handlers.append(wrapper)
+            self._all_event_handlers.append(adapter)
 
         logger.info(
-            f"Registered wildcard handler {handler_name}",
-            extra={"handler": handler_name},
+            f"Registered wildcard handler {adapter.name}",
+            extra={"handler": adapter.name},
         )
 
     def unsubscribe_from_all_events(
@@ -435,21 +372,22 @@ class InMemoryEventBus(EventBus, TracingMixin):
         Returns:
             True if the handler was found and removed, False otherwise
         """
-        handler_name = self._get_handler_name(handler)
+        # Create adapter for comparison (uses identity comparison on original)
+        target_adapter = HandlerAdapter(handler)
 
         with self._lock:
-            for i, (orig_handler, _) in enumerate(self._all_event_handlers):
-                if orig_handler is handler:
+            for i, adapter in enumerate(self._all_event_handlers):
+                if adapter == target_adapter:
                     self._all_event_handlers.pop(i)
                     logger.info(
-                        f"Unsubscribed wildcard handler {handler_name}",
-                        extra={"handler": handler_name},
+                        f"Unsubscribed wildcard handler {adapter.name}",
+                        extra={"handler": adapter.name},
                     )
                     return True
 
         logger.debug(
-            f"Wildcard handler {handler_name} not found",
-            extra={"handler": handler_name},
+            f"Wildcard handler {target_adapter.name} not found",
+            extra={"handler": target_adapter.name},
         )
         return False
 

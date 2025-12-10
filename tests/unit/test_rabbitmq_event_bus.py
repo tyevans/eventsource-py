@@ -1465,96 +1465,105 @@ class TestRabbitMQSubscriptionManagement:
 
 
 class TestRabbitMQHandlerNormalization:
-    """Tests for handler normalization in RabbitMQEventBus (P1-009)."""
+    """Tests for handler normalization via HandlerAdapter (P1-009).
 
-    @pytest.fixture
-    def bus(self) -> RabbitMQEventBus:
-        """Create a bus instance for testing."""
-        return RabbitMQEventBus()
+    Note: The normalization logic was extracted to HandlerAdapter as part of
+    SOLID refactoring. These tests now validate the adapter directly and
+    verify that RabbitMQ bus correctly uses it.
+    """
 
-    def test_normalize_async_function(self, bus: RabbitMQEventBus) -> None:
-        """Test normalizing an async function handler."""
+    def test_normalize_async_function(self) -> None:
+        """Test normalizing an async function handler via HandlerAdapter."""
         import asyncio
+
+        from eventsource.handlers.adapter import HandlerAdapter
 
         async def async_handler(event: DomainEvent) -> None:
             pass
 
-        original, wrapped = bus._normalize_handler(async_handler)
-        assert original is async_handler
-        assert asyncio.iscoroutinefunction(wrapped)
-        # For async handlers, wrapped should be the same function
-        assert wrapped is async_handler
+        adapter = HandlerAdapter(async_handler)
+        assert adapter._original is async_handler
+        assert asyncio.iscoroutinefunction(adapter.handle)
 
-    def test_normalize_sync_function(self, bus: RabbitMQEventBus) -> None:
-        """Test normalizing a sync function handler."""
+    def test_normalize_sync_function(self) -> None:
+        """Test normalizing a sync function handler via HandlerAdapter."""
         import asyncio
+
+        from eventsource.handlers.adapter import HandlerAdapter
 
         def sync_handler(event: DomainEvent) -> None:
             pass
 
-        original, wrapped = bus._normalize_handler(sync_handler)
-        assert original is sync_handler
-        assert asyncio.iscoroutinefunction(wrapped)
-        # Wrapped should be different from original (it's an async wrapper)
-        assert wrapped is not sync_handler
+        adapter = HandlerAdapter(sync_handler)
+        assert adapter._original is sync_handler
+        assert asyncio.iscoroutinefunction(adapter.handle)
 
-    def test_normalize_async_handler_class(self, bus: RabbitMQEventBus) -> None:
+    def test_normalize_async_handler_class(self) -> None:
         """Test normalizing a handler class with async handle method."""
         import asyncio
+
+        from eventsource.handlers.adapter import HandlerAdapter
 
         class AsyncHandler:
             async def handle(self, event: DomainEvent) -> None:
                 pass
 
         handler = AsyncHandler()
-        original, wrapped = bus._normalize_handler(handler)
-        assert original is handler
-        assert asyncio.iscoroutinefunction(wrapped)
-        # Wrapped should be a bound method pointing to the handler's handle method
-        # Note: methods are created anew each time you access them, so we check __self__
-        assert wrapped.__self__ is handler
+        adapter = HandlerAdapter(handler)
+        assert adapter._original is handler
+        assert asyncio.iscoroutinefunction(adapter.handle)
 
-    def test_normalize_sync_handler_class(self, bus: RabbitMQEventBus) -> None:
+    def test_normalize_sync_handler_class(self) -> None:
         """Test normalizing a handler class with sync handle method."""
         import asyncio
+
+        from eventsource.handlers.adapter import HandlerAdapter
 
         class SyncHandler:
             def handle(self, event: DomainEvent) -> None:
                 pass
 
         handler = SyncHandler()
-        original, wrapped = bus._normalize_handler(handler)
-        assert original is handler
-        assert asyncio.iscoroutinefunction(wrapped)
+        adapter = HandlerAdapter(handler)
+        assert adapter._original is handler
+        assert asyncio.iscoroutinefunction(adapter.handle)
 
-    def test_normalize_invalid_handler_raises_type_error(self, bus: RabbitMQEventBus) -> None:
+    def test_normalize_invalid_handler_raises_type_error(self) -> None:
         """Test that normalizing an invalid handler raises TypeError."""
-        with pytest.raises(TypeError, match="Handler must have a handle\\(\\) method"):
-            bus._normalize_handler("not a handler")  # type: ignore[arg-type]
+        from eventsource.handlers.adapter import HandlerAdapter
 
-    def test_normalize_invalid_handler_with_number(self, bus: RabbitMQEventBus) -> None:
+        with pytest.raises(TypeError, match="Handler must have a handle\\(\\) method"):
+            HandlerAdapter("not a handler")  # type: ignore[arg-type]
+
+    def test_normalize_invalid_handler_with_number(self) -> None:
         """Test that normalizing a number raises TypeError."""
-        with pytest.raises(TypeError, match="Handler must have a handle\\(\\) method"):
-            bus._normalize_handler(42)  # type: ignore[arg-type]
+        from eventsource.handlers.adapter import HandlerAdapter
 
-    def test_normalize_lambda(self, bus: RabbitMQEventBus) -> None:
+        with pytest.raises(TypeError, match="Handler must have a handle\\(\\) method"):
+            HandlerAdapter(42)  # type: ignore[arg-type]
+
+    def test_normalize_lambda(self) -> None:
         """Test normalizing a lambda handler."""
         import asyncio
 
+        from eventsource.handlers.adapter import HandlerAdapter
+
         handler = lambda event: None  # noqa: E731
-        original, wrapped = bus._normalize_handler(handler)
-        assert original is handler
-        assert asyncio.iscoroutinefunction(wrapped)
+        adapter = HandlerAdapter(handler)
+        assert adapter._original is handler
+        assert asyncio.iscoroutinefunction(adapter.handle)
 
     @pytest.mark.asyncio
-    async def test_normalized_sync_handler_invocation(self, bus: RabbitMQEventBus) -> None:
+    async def test_normalized_sync_handler_invocation(self) -> None:
         """Test that normalized sync handler can be invoked."""
+        from eventsource.handlers.adapter import HandlerAdapter
+
         results: list[DomainEvent] = []
 
         def sync_handler(event: DomainEvent) -> None:
             results.append(event)
 
-        _, wrapped = bus._normalize_handler(sync_handler)
+        adapter = HandlerAdapter(sync_handler)
 
         # Create a test event - need a concrete subclass with event_type
         class TestEvent(DomainEvent):
@@ -1563,21 +1572,23 @@ class TestRabbitMQHandlerNormalization:
 
         event = TestEvent(aggregate_id=uuid4())
 
-        # Invoke the wrapped handler
-        await wrapped(event)
+        # Invoke the adapter
+        await adapter.handle(event)
 
         assert len(results) == 1
         assert results[0] is event
 
     @pytest.mark.asyncio
-    async def test_normalized_async_handler_invocation(self, bus: RabbitMQEventBus) -> None:
+    async def test_normalized_async_handler_invocation(self) -> None:
         """Test that normalized async handler can be invoked."""
+        from eventsource.handlers.adapter import HandlerAdapter
+
         results: list[DomainEvent] = []
 
         async def async_handler(event: DomainEvent) -> None:
             results.append(event)
 
-        _, wrapped = bus._normalize_handler(async_handler)
+        adapter = HandlerAdapter(async_handler)
 
         # Create a test event - need a concrete subclass with event_type
         class TestEvent(DomainEvent):
@@ -1586,15 +1597,17 @@ class TestRabbitMQHandlerNormalization:
 
         event = TestEvent(aggregate_id=uuid4())
 
-        # Invoke the wrapped handler
-        await wrapped(event)
+        # Invoke the adapter
+        await adapter.handle(event)
 
         assert len(results) == 1
         assert results[0] is event
 
     @pytest.mark.asyncio
-    async def test_normalized_handler_class_invocation(self, bus: RabbitMQEventBus) -> None:
+    async def test_normalized_handler_class_invocation(self) -> None:
         """Test that normalized handler class can be invoked."""
+        from eventsource.handlers.adapter import HandlerAdapter
+
         results: list[DomainEvent] = []
 
         class TestHandler:
@@ -1602,7 +1615,7 @@ class TestRabbitMQHandlerNormalization:
                 results.append(event)
 
         handler = TestHandler()
-        _, wrapped = bus._normalize_handler(handler)
+        adapter = HandlerAdapter(handler)
 
         # Create a test event - need a concrete subclass with event_type
         class TestEvent(DomainEvent):
@@ -1611,95 +1624,105 @@ class TestRabbitMQHandlerNormalization:
 
         event = TestEvent(aggregate_id=uuid4())
 
-        # Invoke the wrapped handler
-        await wrapped(event)
+        # Invoke the adapter
+        await adapter.handle(event)
 
         assert len(results) == 1
         assert results[0] is event
 
 
 class TestRabbitMQGetHandlerName:
-    """Tests for _get_handler_name method (P1-009)."""
+    """Tests for HandlerAdapter.name property (formerly _get_handler_name method) (P1-009).
 
-    @pytest.fixture
-    def bus(self) -> RabbitMQEventBus:
-        """Create a bus instance for testing."""
-        return RabbitMQEventBus()
+    Note: The handler naming logic was extracted to HandlerAdapter as part of
+    SOLID refactoring. These tests now validate the adapter directly.
+    """
 
-    def test_get_handler_name_from_class(self, bus: RabbitMQEventBus) -> None:
+    def test_get_handler_name_from_class(self) -> None:
         """Test getting name from a class instance."""
+        from eventsource.handlers.adapter import HandlerAdapter
 
         class MyHandler:
             async def handle(self, event: DomainEvent) -> None:
                 pass
 
         handler = MyHandler()
-        name = bus._get_handler_name(handler)
-        assert name == "MyHandler"
+        adapter = HandlerAdapter(handler)
+        assert adapter.name == "MyHandler"
 
-    def test_get_handler_name_from_function(self, bus: RabbitMQEventBus) -> None:
+    def test_get_handler_name_from_function(self) -> None:
         """Test getting name from a function."""
+        from eventsource.handlers.adapter import HandlerAdapter
 
         def my_handler_func(event: DomainEvent) -> None:
             pass
 
-        # Functions have __class__ (function), so this returns the class name
-        name = bus._get_handler_name(my_handler_func)
-        assert name == "function"
+        adapter = HandlerAdapter(my_handler_func)
+        assert adapter.name == "my_handler_func"
 
-    def test_get_handler_name_from_lambda(self, bus: RabbitMQEventBus) -> None:
+    def test_get_handler_name_from_lambda(self) -> None:
         """Test getting name from a lambda."""
-        handler = lambda event: None  # noqa: E731
-        name = bus._get_handler_name(handler)
-        assert name == "function"
+        from eventsource.handlers.adapter import HandlerAdapter
 
-    def test_get_handler_name_from_mock(self, bus: RabbitMQEventBus) -> None:
+        handler = lambda event: None  # noqa: E731
+        adapter = HandlerAdapter(handler)
+        assert adapter.name == "<lambda>"
+
+    def test_get_handler_name_from_mock(self) -> None:
         """Test getting name from a MagicMock."""
+        from eventsource.handlers.adapter import HandlerAdapter
+
         handler = MagicMock()
-        name = bus._get_handler_name(handler)
-        assert "MagicMock" in name
+        adapter = HandlerAdapter(handler)
+        assert "MagicMock" in adapter.name
 
 
 class TestRabbitMQSubscriptionIntegration:
-    """Integration tests for subscription management with handler wrappers (P1-009)."""
+    """Integration tests for subscription management with HandlerAdapter (P1-009)."""
 
     @pytest.fixture
     def bus(self) -> RabbitMQEventBus:
         """Create a bus instance for testing."""
         return RabbitMQEventBus()
 
-    def test_subscribe_creates_valid_wrapper(self, bus: RabbitMQEventBus) -> None:
-        """Test that subscribe creates a valid handler wrapper."""
+    def test_subscribe_creates_valid_adapter(self, bus: RabbitMQEventBus) -> None:
+        """Test that subscribe creates a valid HandlerAdapter."""
         import asyncio
+
+        from eventsource.handlers.adapter import HandlerAdapter
 
         handler = MagicMock()
         bus.subscribe(DomainEvent, handler)
 
-        # Access the internal subscribers dict to verify wrapper structure
-        handlers = bus._subscribers[DomainEvent]
-        assert len(handlers) == 1
+        # Access the internal subscribers dict to verify adapter structure
+        adapters = bus._subscribers[DomainEvent]
+        assert len(adapters) == 1
 
-        original, wrapped = handlers[0]
-        assert original is handler
-        assert asyncio.iscoroutinefunction(wrapped)
+        adapter = adapters[0]
+        assert isinstance(adapter, HandlerAdapter)
+        assert adapter._original is handler
+        assert asyncio.iscoroutinefunction(adapter.handle)
 
-    def test_wildcard_subscribe_creates_valid_wrapper(self, bus: RabbitMQEventBus) -> None:
-        """Test that subscribe_to_all_events creates a valid handler wrapper."""
+    def test_wildcard_subscribe_creates_valid_adapter(self, bus: RabbitMQEventBus) -> None:
+        """Test that subscribe_to_all_events creates a valid HandlerAdapter."""
         import asyncio
+
+        from eventsource.handlers.adapter import HandlerAdapter
 
         handler = MagicMock()
         bus.subscribe_to_all_events(handler)
 
         # Access the internal all_event_handlers list
-        handlers = bus._all_event_handlers
-        assert len(handlers) == 1
+        adapters = bus._all_event_handlers
+        assert len(adapters) == 1
 
-        original, wrapped = handlers[0]
-        assert original is handler
-        assert asyncio.iscoroutinefunction(wrapped)
+        adapter = adapters[0]
+        assert isinstance(adapter, HandlerAdapter)
+        assert adapter._original is handler
+        assert asyncio.iscoroutinefunction(adapter.handle)
 
     def test_unsubscribe_uses_identity_comparison(self, bus: RabbitMQEventBus) -> None:
-        """Test that unsubscribe uses identity comparison (is), not equality."""
+        """Test that unsubscribe uses identity comparison via HandlerAdapter equality."""
         # Two different mock objects that might be equal
         handler1 = MagicMock()
         handler2 = MagicMock()
@@ -4546,19 +4569,20 @@ class TestRabbitMQConsumerStatistics:
 
 
 class TestRabbitMQHandlerNormalizationEdgeCases:
-    """Additional edge case tests for handler normalization."""
+    """Additional edge case tests for handler normalization via HandlerAdapter.
 
-    @pytest.fixture
-    def bus(self) -> RabbitMQEventBus:
-        """Create a bus instance for testing."""
-        return RabbitMQEventBus()
+    Note: The normalization logic was extracted to HandlerAdapter as part of
+    SOLID refactoring. These tests now validate the adapter directly.
+    """
 
     @pytest.mark.asyncio
-    async def test_normalize_sync_method_returning_coroutine(self, bus: RabbitMQEventBus) -> None:
+    async def test_normalize_sync_method_returning_coroutine(self) -> None:
         """Test normalizing a sync method that returns a coroutine.
 
         This tests the `if asyncio.iscoroutine(result)` branch in the sync wrapper.
         """
+        from eventsource.handlers.adapter import HandlerAdapter
+
         results: list[DomainEvent] = []
 
         class HybridHandler:
@@ -4570,24 +4594,26 @@ class TestRabbitMQHandlerNormalizationEdgeCases:
                 return coro()
 
         handler = HybridHandler()
-        _, wrapped = bus._normalize_handler(handler)
+        adapter = HandlerAdapter(handler)
 
         class TestEvent(DomainEvent):
             event_type: str = "TestEvent"
             aggregate_type: str = "TestAggregate"
 
         event = TestEvent(aggregate_id=uuid4())
-        await wrapped(event)
+        await adapter.handle(event)
 
         assert len(results) == 1
         assert results[0] is event
 
     @pytest.mark.asyncio
-    async def test_normalize_sync_callable_returning_coroutine(self, bus: RabbitMQEventBus) -> None:
+    async def test_normalize_sync_callable_returning_coroutine(self) -> None:
         """Test normalizing a sync callable that returns a coroutine.
 
         This tests the `if asyncio.iscoroutine(result)` branch in the callable wrapper.
         """
+        from eventsource.handlers.adapter import HandlerAdapter
+
         results: list[DomainEvent] = []
 
         def hybrid_handler(event: DomainEvent) -> object:
@@ -4596,33 +4622,33 @@ class TestRabbitMQHandlerNormalizationEdgeCases:
 
             return coro()
 
-        _, wrapped = bus._normalize_handler(hybrid_handler)
+        adapter = HandlerAdapter(hybrid_handler)
 
         class TestEvent(DomainEvent):
             event_type: str = "TestEvent"
             aggregate_type: str = "TestAggregate"
 
         event = TestEvent(aggregate_id=uuid4())
-        await wrapped(event)
+        await adapter.handle(event)
 
         assert len(results) == 1
         assert results[0] is event
 
 
 class TestRabbitMQGetHandlerNameEdgeCases:
-    """Additional edge case tests for _get_handler_name."""
+    """Additional edge case tests for HandlerAdapter.name property (formerly _get_handler_name).
 
-    @pytest.fixture
-    def bus(self) -> RabbitMQEventBus:
-        """Create a bus instance for testing."""
-        return RabbitMQEventBus()
+    Note: The handler naming logic was extracted to HandlerAdapter as part of
+    SOLID refactoring. These tests now validate the adapter directly.
+    """
 
-    def test_get_handler_name_from_object_without_class(self, bus: RabbitMQEventBus) -> None:
+    def test_get_handler_name_from_object_without_class(self) -> None:
         """Test getting name from an object without __class__ attribute.
 
         Note: In practice, everything in Python has __class__, but we test
         the fallback path by using an object that has __name__ instead.
         """
+        from eventsource.handlers.adapter import HandlerAdapter
 
         # Create an object that pretends to not have __class__ by overriding
         # hasattr check - this is tricky since everything has __class__
@@ -4634,24 +4660,26 @@ class TestRabbitMQGetHandlerNameEdgeCases:
                 pass
 
         handler = MockWithName()
+        adapter = HandlerAdapter(handler)
         # Since MockWithName has __class__, it will use __class__.__name__
-        name = bus._get_handler_name(handler)
-        assert name == "MockWithName"
+        assert adapter.name == "MockWithName"
 
-    def test_get_handler_name_repr_fallback(self, bus: RabbitMQEventBus) -> None:
-        """Test that _get_handler_name falls back to repr for unusual objects.
+    def test_get_handler_name_repr_fallback(self) -> None:
+        """Test that HandlerAdapter.name works with mocks.
 
         Note: This is hard to test since almost everything has __class__,
         but we can verify the behavior with mocks.
         """
+        from eventsource.handlers.adapter import HandlerAdapter
+
         # Test with a MagicMock to verify it handles objects properly
         handler = MagicMock(spec=[])  # Empty spec removes __class__ from mock
         handler.__class__ = MagicMock
         handler.__class__.__name__ = "TestMock"
 
-        name = bus._get_handler_name(handler)
+        adapter = HandlerAdapter(handler)
         # Should still work since mock has __class__
-        assert "Mock" in name
+        assert "Mock" in adapter.name
 
 
 class TestRabbitMQConsumerLoopErrorHandling:
@@ -5499,7 +5527,9 @@ class TestRabbitMQProcessMessageWithDLQTracking:
             raise ValueError("Intentional failure")
 
         # Subscribe as wildcard handler (receives all events)
-        bus._all_event_handlers.append((failing_handler, failing_handler))
+        from eventsource.handlers.adapter import HandlerAdapter
+
+        bus._all_event_handlers.append(HandlerAdapter(failing_handler))
 
         # Mock deserialize to return an event
         mock_event = MagicMock(spec=DomainEvent)
@@ -5531,7 +5561,9 @@ class TestRabbitMQProcessMessageWithDLQTracking:
             raise ValueError("Intentional failure")
 
         # Subscribe as wildcard handler (receives all events)
-        bus._all_event_handlers.append((failing_handler, failing_handler))
+        from eventsource.handlers.adapter import HandlerAdapter
+
+        bus._all_event_handlers.append(HandlerAdapter(failing_handler))
 
         mock_event = MagicMock(spec=DomainEvent)
         mock_event.event_id = uuid4()
@@ -6068,7 +6100,9 @@ class TestProcessMessageWithRetry:
         async def failing_handler(event: DomainEvent) -> None:
             raise ValueError("Intentional failure")
 
-        bus._all_event_handlers.append((failing_handler, failing_handler))
+        from eventsource.handlers.adapter import HandlerAdapter
+
+        bus._all_event_handlers.append(HandlerAdapter(failing_handler))
 
         await bus._process_message(mock_message)
 
@@ -6090,7 +6124,9 @@ class TestProcessMessageWithRetry:
         async def failing_handler(event: DomainEvent) -> None:
             raise ValueError("Intentional failure")
 
-        bus._all_event_handlers.append((failing_handler, failing_handler))
+        from eventsource.handlers.adapter import HandlerAdapter
+
+        bus._all_event_handlers.append(HandlerAdapter(failing_handler))
 
         await bus._process_message(mock_message)
 
@@ -6104,6 +6140,8 @@ class TestProcessMessageWithRetry:
         self, bus: RabbitMQEventBus, mock_message: AsyncMock
     ) -> None:
         """Test that successful processing does not trigger retry logic."""
+        from eventsource.handlers.adapter import HandlerAdapter
+
         mock_exchange = AsyncMock()
         bus._exchange = mock_exchange
 
@@ -6111,7 +6149,7 @@ class TestProcessMessageWithRetry:
         async def success_handler(event: DomainEvent) -> None:
             pass
 
-        bus._all_event_handlers.append((success_handler, success_handler))
+        bus._all_event_handlers.append(HandlerAdapter(success_handler))
 
         await bus._process_message(mock_message)
 
@@ -6131,7 +6169,9 @@ class TestProcessMessageWithRetry:
         async def failing_handler(event: DomainEvent) -> None:
             raise ValueError("Intentional failure")
 
-        bus._all_event_handlers.append((failing_handler, failing_handler))
+        from eventsource.handlers.adapter import HandlerAdapter
+
+        bus._all_event_handlers.append(HandlerAdapter(failing_handler))
 
         await bus._process_message(mock_message)
 

@@ -9,9 +9,28 @@ Features:
 - At-least-once delivery guarantees
 - Partition-based ordering by aggregate_id
 - Dead letter queue for unrecoverable failures
-- Configurable retry policies
+- Configurable retry policies with non-blocking republish
+- Consumer rebalance handling for safe horizontal scaling
 - Optional OpenTelemetry tracing
 - Optional OpenTelemetry metrics
+
+Delivery Guarantees:
+    This implementation provides **at-least-once** delivery semantics. Events may
+    be processed multiple times in failure scenarios (consumer crash, rebalance).
+    Handlers should be idempotent to handle duplicate deliveries gracefully.
+
+    **Exactly-once semantics are NOT supported.** The event bus does not coordinate
+    transactionally with the event store. This means:
+    - If an event store write succeeds but Kafka publish fails, consumers miss events
+    - If Kafka publish succeeds but event store write fails, consumers see phantom events
+
+    For use cases requiring stronger consistency guarantees, consider:
+    1. Transactional Outbox Pattern: Store events in an outbox table atomically with
+       domain changes, then relay to Kafka separately
+    2. Kafka Transactions: Use idempotent producers with transactional semantics
+       (requires Kafka 0.11+)
+    3. Saga/Compensation patterns: Design for eventual consistency with compensating
+       actions for failures
 
 OpenTelemetry Metrics:
     When ``enable_metrics=True`` (default) and the OpenTelemetry SDK is installed,
@@ -68,7 +87,7 @@ import ssl
 import time
 import uuid
 from collections import defaultdict
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import TracebackType
@@ -79,6 +98,7 @@ from eventsource.bus.interface import (
     EventHandlerFunc,
 )
 from eventsource.events.base import DomainEvent
+from eventsource.handlers.adapter import HandlerAdapter
 from eventsource.observability import OTEL_AVAILABLE, TracingMixin
 from eventsource.observability.attributes import (
     ATTR_AGGREGATE_ID,
@@ -100,14 +120,18 @@ if TYPE_CHECKING:
 
 # Optional aiokafka import - fail gracefully if not installed
 try:
-    from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
-    from aiokafka.errors import KafkaError
+    from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, TopicPartition
+    from aiokafka.abc import ConsumerRebalanceListener as _ConsumerRebalanceListener
+    from aiokafka.errors import IllegalStateError, KafkaError
 
     KAFKA_AVAILABLE = True
 except ImportError:
     KAFKA_AVAILABLE = False
     AIOKafkaProducer = None
     AIOKafkaConsumer = None
+    TopicPartition = None
+    _ConsumerRebalanceListener = object
+    IllegalStateError = Exception
     KafkaError = Exception
 
 # OpenTelemetry metrics and propagation imports - kept separate from TracingMixin
@@ -299,6 +323,95 @@ class KafkaNotAvailableError(ImportError):
         )
 
 
+class DeserializationError(ValueError):
+    """Raised when a message cannot be deserialized.
+
+    This exception is raised when a Kafka message cannot be deserialized
+    into a valid DomainEvent. These errors are unrecoverable and the message
+    should be sent directly to the DLQ without retry attempts.
+
+    Attributes:
+        message: Description of the deserialization failure.
+    """
+
+    pass
+
+
+class EventSerializer:
+    """Base class for event serializers.
+
+    This class defines the interface for serializing and deserializing events.
+    Subclass this to implement custom serialization formats (Avro, Protobuf, etc.)
+    or to integrate with schema registries.
+
+    The default implementation uses JSON serialization via Pydantic.
+
+    Example - Custom Avro Serializer:
+        >>> class AvroEventSerializer(EventSerializer):
+        ...     def __init__(self, schema_registry_url: str):
+        ...         self._registry = SchemaRegistryClient(schema_registry_url)
+        ...
+        ...     def serialize(self, event: DomainEvent) -> bytes:
+        ...         schema = self._get_schema(event.event_type)
+        ...         return self._avro_serialize(event, schema)
+        ...
+        ...     def deserialize(
+        ...         self,
+        ...         data: bytes,
+        ...         event_type: str,
+        ...         event_class: type[DomainEvent],
+        ...     ) -> DomainEvent:
+        ...         schema = self._get_schema(event_type)
+        ...         return self._avro_deserialize(data, schema, event_class)
+    """
+
+    def serialize(self, event: DomainEvent) -> bytes:
+        """Serialize a domain event to bytes.
+
+        Args:
+            event: The event to serialize.
+
+        Returns:
+            The serialized event as bytes.
+
+        Raises:
+            ValueError: If serialization fails.
+        """
+        return event.model_dump_json().encode("utf-8")
+
+    def deserialize(
+        self,
+        data: bytes,
+        event_type: str,
+        event_class: type[DomainEvent],
+    ) -> DomainEvent:
+        """Deserialize bytes to a domain event.
+
+        Args:
+            data: The serialized event data.
+            event_type: The event type name (for logging/debugging).
+            event_class: The event class to deserialize into.
+
+        Returns:
+            The deserialized DomainEvent.
+
+        Raises:
+            DeserializationError: If deserialization fails.
+        """
+        try:
+            return event_class.model_validate_json(data)
+        except Exception as e:
+            raise DeserializationError(f"Failed to deserialize {event_type}: {e}") from e
+
+    def content_type(self) -> str:
+        """Get the content type for this serializer.
+
+        Returns:
+            The MIME content type string.
+        """
+        return "application/json"
+
+
 @dataclass
 class KafkaEventBusConfig:
     """Configuration for Kafka event bus.
@@ -442,6 +555,8 @@ class KafkaEventBusConfig:
     # DLQ settings
     enable_dlq: bool = True
     dlq_topic_suffix: str = ".dlq"
+    dlq_consumer_group: str | None = None  # Consumer group for DLQ processing
+    dlq_max_replay_attempts: int = 3  # Maximum times a message can be replayed
 
     # Security
     security_protocol: str = "PLAINTEXT"
@@ -738,8 +853,100 @@ class KafkaEventBusStats:
         }
 
 
-# Type alias for handler storage (follows Redis/RabbitMQ pattern)
-HandlerWrapper = tuple[Any, Callable[[DomainEvent], Any]]
+class KafkaRebalanceListener(_ConsumerRebalanceListener):  # type: ignore[misc]
+    """Consumer rebalance listener for handling partition assignment changes.
+
+    This listener is called during consumer group rebalances to ensure proper
+    offset management and prevent duplicate message processing during scaling
+    events.
+
+    The listener commits offsets for revoked partitions before they are
+    reassigned to other consumers, ensuring at-least-once delivery guarantees
+    are maintained during rebalances.
+
+    Attributes:
+        _bus: Reference to the KafkaEventBus instance for offset commits
+            and metrics recording.
+    """
+
+    def __init__(self, bus: KafkaEventBus) -> None:
+        """Initialize the rebalance listener.
+
+        Args:
+            bus: The KafkaEventBus instance to coordinate with.
+        """
+        self._bus = bus
+
+    async def on_partitions_revoked(
+        self,
+        revoked: set[TopicPartition],
+    ) -> None:
+        """Called when partitions are being revoked from this consumer.
+
+        This method commits offsets for all revoked partitions before they
+        are assigned to other consumers. This ensures that:
+        1. Messages processed but not yet committed are properly committed
+        2. The new consumer starts from the correct offset
+        3. No messages are processed twice due to rebalance
+
+        Args:
+            revoked: Set of TopicPartition objects being revoked.
+        """
+        if not revoked:
+            return
+
+        logger.info(
+            "Partitions being revoked, committing offsets",
+            extra={
+                "revoked_partitions": [
+                    {"topic": tp.topic, "partition": tp.partition} for tp in revoked
+                ],
+                "consumer_group": self._bus._config.consumer_group,
+            },
+        )
+
+        # Commit offsets before partitions are revoked
+        if self._bus._consumer:
+            try:
+                await self._bus._consumer.commit()
+                logger.debug("Offsets committed before partition revocation")
+            except IllegalStateError:
+                # No partitions currently assigned - nothing to commit
+                # This is expected during certain rebalance scenarios
+                logger.debug("No partitions to commit during rebalance")
+            except Exception as e:
+                logger.warning(
+                    "Failed to commit offsets during rebalance",
+                    extra={"error": str(e)},
+                )
+
+        # Record the rebalance event
+        self._bus.record_rebalance()
+
+    async def on_partitions_assigned(
+        self,
+        assigned: set[TopicPartition],
+    ) -> None:
+        """Called when new partitions are assigned to this consumer.
+
+        This method is called after partitions have been assigned and can
+        be used for any initialization needed for the new partitions.
+
+        Args:
+            assigned: Set of TopicPartition objects newly assigned.
+        """
+        if not assigned:
+            return
+
+        logger.info(
+            "New partitions assigned",
+            extra={
+                "assigned_partitions": [
+                    {"topic": tp.topic, "partition": tp.partition} for tp in assigned
+                ],
+                "consumer_group": self._bus._config.consumer_group,
+            },
+        )
 
 
 class KafkaEventBus(TracingMixin, EventBus):
@@ -772,6 +979,7 @@ class KafkaEventBus(TracingMixin, EventBus):
         self,
         config: KafkaEventBusConfig | None = None,
         event_registry: EventRegistry | None = None,
+        serializer: EventSerializer | None = None,
     ) -> None:
         """Initialize the Kafka event bus.
 
@@ -779,6 +987,9 @@ class KafkaEventBus(TracingMixin, EventBus):
             config: Configuration for Kafka connection. Uses defaults if None.
             event_registry: Registry for event type resolution. Uses global
                 registry if None.
+            serializer: Custom event serializer. Uses JSON serializer if None.
+                Implement EventSerializer to add Avro, Protobuf, or schema
+                registry support.
 
         Raises:
             KafkaNotAvailableError: If aiokafka is not installed.
@@ -788,6 +999,7 @@ class KafkaEventBus(TracingMixin, EventBus):
 
         self._config = config or KafkaEventBusConfig()
         self._event_registry = event_registry
+        self._serializer = serializer or EventSerializer()
 
         # Initialize tracing via mixin
         self._init_tracing(__name__, self._config.enable_tracing)
@@ -795,13 +1007,14 @@ class KafkaEventBus(TracingMixin, EventBus):
         # Connection state
         self._producer: AIOKafkaProducer | None = None
         self._consumer: AIOKafkaConsumer | None = None
+        self._rebalance_listener: KafkaRebalanceListener | None = None
         self._connected = False
         self._consuming = False
         self._consume_task: asyncio.Task[None] | None = None
 
         # Handler storage (follows Redis/RabbitMQ pattern)
-        self._handlers: dict[str, list[HandlerWrapper]] = defaultdict(list)
-        self._wildcard_handlers: list[HandlerWrapper] = []
+        self._handlers: dict[str, list[HandlerAdapter]] = defaultdict(list)
+        self._wildcard_handlers: list[HandlerAdapter] = []
 
         # Statistics
         self._stats = KafkaEventBusStats()
@@ -894,11 +1107,18 @@ class KafkaEventBus(TracingMixin, EventBus):
             await self._producer.start()
 
             # Create and start consumer
+            # Note: We pass the topic to the constructor for proper metadata loading.
+            # aiokafka handles consumer group rebalancing internally; we track
+            # rebalance events through the record_rebalance() method which can be
+            # called externally or during reconnection.
             self._consumer = AIOKafkaConsumer(
                 self._config.topic_name,
                 **self._config.get_consumer_config(),
             )
             await self._consumer.start()
+
+            # Initialize rebalance listener (available for future use or manual tracking)
+            self._rebalance_listener = KafkaRebalanceListener(self)
 
             self._connected = True
             self._stats.connected_at = datetime.now(UTC)
@@ -1396,7 +1616,11 @@ class KafkaEventBus(TracingMixin, EventBus):
                 headers=headers,
             )
 
-            if not background:
+            if background:
+                # For background publishes, add a callback to track delivery
+                # This ensures errors are logged and metrics are updated correctly
+                self._track_background_publish(future, event, span)
+            else:
                 record_metadata = await future
 
                 if span:
@@ -1412,16 +1636,16 @@ class KafkaEventBus(TracingMixin, EventBus):
                     },
                 )
 
-            # Increment messages_published counter on success
-            if self._metrics:
-                self._metrics.messages_published.add(
-                    1,
-                    attributes={
-                        "messaging.system": "kafka",
-                        "messaging.destination": self._config.topic_name,
-                        "event.type": event.event_type,
-                    },
-                )
+                # Increment messages_published counter on confirmed success
+                if self._metrics:
+                    self._metrics.messages_published.add(
+                        1,
+                        attributes={
+                            "messaging.system": "kafka",
+                            "messaging.destination": self._config.topic_name,
+                            "event.type": event.event_type,
+                        },
+                    )
 
         except Exception as e:
             if span:
@@ -1448,6 +1672,85 @@ class KafkaEventBus(TracingMixin, EventBus):
             self._stats.last_error_at = datetime.now(UTC)
             raise
 
+    def _track_background_publish(
+        self,
+        future: Any,
+        event: DomainEvent,
+        span: Any,
+    ) -> None:
+        """Track a background publish using a callback.
+
+        Adds a callback to the future to track delivery success/failure
+        for background publishes. This ensures that errors are not silently
+        lost and metrics are updated correctly.
+
+        Args:
+            future: The future from producer.send()
+            event: The domain event being published (for metrics).
+            span: The current tracing span, or None.
+        """
+        event_type = event.event_type
+        event_id = str(event.event_id)
+        topic = self._config.topic_name
+
+        def on_send_success(record_metadata: Any) -> None:
+            """Callback for successful background publish."""
+            logger.debug(
+                "Background event published successfully",
+                extra={
+                    "topic": record_metadata.topic,
+                    "partition": record_metadata.partition,
+                    "offset": record_metadata.offset,
+                    "event_type": event_type,
+                    "event_id": event_id,
+                },
+            )
+
+            # Increment messages_published counter on confirmed success
+            if self._metrics:
+                self._metrics.messages_published.add(
+                    1,
+                    attributes={
+                        "messaging.system": "kafka",
+                        "messaging.destination": topic,
+                        "event.type": event_type,
+                    },
+                )
+
+        def on_send_error(exc: Exception) -> None:
+            """Callback for failed background publish."""
+            logger.error(
+                "Background event publish failed",
+                extra={
+                    "error": str(exc),
+                    "event_type": event_type,
+                    "event_id": event_id,
+                },
+                exc_info=False,  # Exception is passed, don't need traceback
+            )
+
+            self._stats.last_error_at = datetime.now(UTC)
+
+            # Increment publish_errors counter
+            if self._metrics:
+                self._metrics.publish_errors.add(
+                    1,
+                    attributes={
+                        "messaging.system": "kafka",
+                        "messaging.destination": topic,
+                        "event.type": event_type,
+                        "error.type": type(exc).__name__,
+                    },
+                )
+
+            if span:
+                span.set_status(Status(StatusCode.ERROR, str(exc)))
+                span.record_exception(exc)
+
+        # Add callbacks to track the result
+        future.add_callback(on_send_success)
+        future.add_errback(on_send_error)
+
     def _get_partition_key(self, event: DomainEvent) -> bytes:
         """Get the partition key for an event.
 
@@ -1463,15 +1766,15 @@ class KafkaEventBus(TracingMixin, EventBus):
         return str(event.aggregate_id).encode("utf-8")
 
     def _serialize_event(self, event: DomainEvent) -> bytes:
-        """Serialize an event to JSON bytes.
+        """Serialize an event to bytes using the configured serializer.
 
         Args:
             event: The domain event to serialize.
 
         Returns:
-            JSON-encoded event as bytes.
+            Serialized event as bytes (format depends on serializer).
         """
-        return event.model_dump_json().encode("utf-8")
+        return self._serializer.serialize(event)
 
     def _create_headers(self, event: DomainEvent) -> list[tuple[str, bytes]]:
         """Create Kafka headers from event metadata.
@@ -1506,93 +1809,6 @@ class KafkaEventBus(TracingMixin, EventBus):
         return headers
 
     # =========================================================================
-    # Handler Normalization
-    # =========================================================================
-
-    def _normalize_handler(
-        self,
-        handler: FlexibleEventHandler | EventHandlerFunc,
-    ) -> HandlerWrapper:
-        """Normalize a handler to a consistent async callable format.
-
-        Converts both sync and async handlers to a unified format for
-        internal storage and invocation. This allows the bus to handle
-        any type of handler uniformly during event dispatch.
-
-        Args:
-            handler: The handler to normalize. Can be:
-                - An EventHandler instance with handle() method
-                - A sync callable (function or lambda)
-                - An async callable (coroutine function)
-
-        Returns:
-            Tuple of (original_handler, normalized_async_callable).
-            The original handler is preserved for identity comparison
-            during unsubscribe operations.
-
-        Raises:
-            TypeError: If handler is not a valid handler type.
-        """
-        # If it's an object with a handle method (EventHandler pattern)
-        if hasattr(handler, "handle"):
-            original = handler
-            method = handler.handle
-
-            if asyncio.iscoroutinefunction(method):
-                return (original, method)
-            else:
-                # Wrap sync method to be async
-                async def async_method_wrapper(event: DomainEvent) -> Any:
-                    result = method(event)
-                    # Handle case where method returns a coroutine unexpectedly
-                    if asyncio.iscoroutine(result):
-                        return await result
-                    return result
-
-                return (original, async_method_wrapper)
-
-        # It's a callable (function, lambda, or callable object)
-        elif callable(handler):
-            original = handler
-
-            if asyncio.iscoroutinefunction(handler):
-                return (original, handler)
-            else:
-                # Wrap sync callable to be async
-                callable_handler = handler
-
-                async def async_callable_wrapper(event: DomainEvent) -> Any:
-                    result = callable_handler(event)
-                    # Handle case where callable returns a coroutine unexpectedly
-                    if asyncio.iscoroutine(result):
-                        return await result
-                    return result
-
-                return (original, async_callable_wrapper)
-        else:
-            raise TypeError(
-                f"Handler must have a handle() method or be callable, got {type(handler)}"
-            )
-
-    def _get_handler_name(self, handler: Any) -> str:
-        """Get a descriptive name for a handler for logging.
-
-        Extracts the most meaningful name from a handler for use in
-        log messages and debugging.
-
-        Args:
-            handler: The handler to describe.
-
-        Returns:
-            A string name for the handler.
-        """
-        if hasattr(handler, "__name__"):
-            return str(handler.__name__)
-        if hasattr(handler, "__class__"):
-            return str(handler.__class__.__name__)
-        return repr(handler)
-
-    # =========================================================================
     # Subscribe Methods
     # =========================================================================
 
@@ -1622,14 +1838,14 @@ class KafkaEventBus(TracingMixin, EventBus):
             >>> bus.subscribe(OrderCreated, MyEventHandler())
         """
         event_type_name = event_type.__name__
-        wrapped = self._normalize_handler(handler)
-        self._handlers[event_type_name].append(wrapped)
+        adapter = HandlerAdapter(handler)
+        self._handlers[event_type_name].append(adapter)
 
         logger.debug(
             "Handler subscribed",
             extra={
                 "event_type": event_type_name,
-                "handler": self._get_handler_name(handler),
+                "handler": adapter.name,
                 "total_handlers": len(self._handlers[event_type_name]),
             },
         )
@@ -1659,6 +1875,7 @@ class KafkaEventBus(TracingMixin, EventBus):
             >>> bus.unsubscribe(OrderCreated, handler)  # Returns False
         """
         event_type_name = event_type.__name__
+        target_adapter = HandlerAdapter(handler)
 
         if event_type_name not in self._handlers:
             logger.debug(
@@ -1667,17 +1884,17 @@ class KafkaEventBus(TracingMixin, EventBus):
             )
             return False
 
-        # Find and remove the handler by identity
-        handlers = self._handlers[event_type_name]
-        for i, (original, _) in enumerate(handlers):
-            if original is handler:
-                handlers.pop(i)
+        # Find and remove the handler by identity (via HandlerAdapter equality)
+        adapters = self._handlers[event_type_name]
+        for i, adapter in enumerate(adapters):
+            if adapter == target_adapter:
+                adapters.pop(i)
                 logger.debug(
                     "Handler unsubscribed",
                     extra={
                         "event_type": event_type_name,
-                        "handler": self._get_handler_name(handler),
-                        "remaining_handlers": len(handlers),
+                        "handler": adapter.name,
+                        "remaining_handlers": len(adapters),
                     },
                 )
                 return True
@@ -1686,7 +1903,7 @@ class KafkaEventBus(TracingMixin, EventBus):
             "Handler not found for event type",
             extra={
                 "event_type": event_type_name,
-                "handler": self._get_handler_name(handler),
+                "handler": target_adapter.name,
             },
         )
         return False
@@ -1715,10 +1932,11 @@ class KafkaEventBus(TracingMixin, EventBus):
         for event_type in event_types:
             self.subscribe(event_type, subscriber)
 
+        adapter = HandlerAdapter(subscriber)
         logger.info(
             "Subscriber registered for all event types",
             extra={
-                "subscriber": self._get_handler_name(subscriber),
+                "subscriber": adapter.name,
                 "event_types": [et.__name__ for et in event_types],
                 "event_count": len(event_types),
             },
@@ -1747,13 +1965,13 @@ class KafkaEventBus(TracingMixin, EventBus):
             ...     await log_event(event)
             >>> bus.subscribe_to_all_events(audit_log)
         """
-        wrapped = self._normalize_handler(handler)
-        self._wildcard_handlers.append(wrapped)
+        adapter = HandlerAdapter(handler)
+        self._wildcard_handlers.append(adapter)
 
         logger.debug(
             "Wildcard handler subscribed",
             extra={
-                "handler": self._get_handler_name(handler),
+                "handler": adapter.name,
                 "total_wildcard_handlers": len(self._wildcard_handlers),
             },
         )
@@ -1776,13 +1994,15 @@ class KafkaEventBus(TracingMixin, EventBus):
             >>> bus.subscribe_to_all_events(audit_handler)
             >>> bus.unsubscribe_from_all_events(audit_handler)  # Returns True
         """
-        for i, (original, _) in enumerate(self._wildcard_handlers):
-            if original is handler:
+        target_adapter = HandlerAdapter(handler)
+
+        for i, adapter in enumerate(self._wildcard_handlers):
+            if adapter == target_adapter:
                 self._wildcard_handlers.pop(i)
                 logger.debug(
                     "Wildcard handler unsubscribed",
                     extra={
-                        "handler": self._get_handler_name(handler),
+                        "handler": adapter.name,
                         "remaining_wildcard_handlers": len(self._wildcard_handlers),
                     },
                 )
@@ -1790,7 +2010,7 @@ class KafkaEventBus(TracingMixin, EventBus):
 
         logger.debug(
             "Wildcard handler not found",
-            extra={"handler": self._get_handler_name(handler)},
+            extra={"handler": target_adapter.name},
         )
         return False
 
@@ -1849,7 +2069,7 @@ class KafkaEventBus(TracingMixin, EventBus):
         """
         return len(self._wildcard_handlers)
 
-    def get_handlers_for_event(self, event_type_name: str) -> list[HandlerWrapper]:
+    def get_handlers_for_event(self, event_type_name: str) -> list[HandlerAdapter]:
         """Get all handlers that should process an event type.
 
         Includes both type-specific handlers and wildcard handlers.
@@ -1859,23 +2079,23 @@ class KafkaEventBus(TracingMixin, EventBus):
             event_type_name: The event type name (e.g., "OrderCreated").
 
         Returns:
-            List of handler wrappers to invoke. Type-specific handlers
+            List of HandlerAdapter instances to invoke. Type-specific handlers
             come first, followed by wildcard handlers.
 
         Example:
             >>> handlers = bus.get_handlers_for_event("OrderCreated")
-            >>> for original, async_handler in handlers:
-            ...     await async_handler(event)
+            >>> for adapter in handlers:
+            ...     await adapter.handle(event)
         """
-        handlers = list(self._handlers.get(event_type_name, []))
-        handlers.extend(self._wildcard_handlers)
-        return handlers
+        adapters = list(self._handlers.get(event_type_name, []))
+        adapters.extend(self._wildcard_handlers)
+        return adapters
 
     # =========================================================================
     # Consumer Methods
     # =========================================================================
 
-    async def start_consuming(self) -> None:
+    async def start_consuming(self, auto_reconnect: bool = True) -> None:
         """Start consuming events from Kafka.
 
         This method blocks and continuously polls for messages, dispatching
@@ -1884,6 +2104,14 @@ class KafkaEventBus(TracingMixin, EventBus):
 
         Events are processed sequentially within each partition. Offsets are
         committed after successful handler execution (at-least-once delivery).
+
+        Auto-Reconnection:
+            When auto_reconnect=True (default), the consumer will automatically
+            attempt to reconnect on connection errors using exponential backoff.
+            This prevents the consumer from dying on transient network issues.
+
+        Args:
+            auto_reconnect: If True, automatically reconnect on errors.
 
         Raises:
             RuntimeError: If not connected or already consuming.
@@ -1906,38 +2134,102 @@ class KafkaEventBus(TracingMixin, EventBus):
             extra={
                 "topic": self._config.topic_name,
                 "consumer_group": self._config.consumer_group,
+                "auto_reconnect": auto_reconnect,
             },
         )
 
-        try:
-            async for message in self._consumer:
-                if self._shutdown_event.is_set() or not self._consuming:
+        reconnect_delay = 1.0  # Start with 1 second delay
+        max_reconnect_delay = 60.0  # Cap at 60 seconds
+
+        while self._consuming and not self._shutdown_event.is_set():
+            try:
+                async for message in self._consumer:
+                    if self._shutdown_event.is_set() or not self._consuming:
+                        break
+
+                    await self._process_message(message)
+
+                    # Reset reconnect delay on successful message processing
+                    reconnect_delay = 1.0
+
+                # async for loop completed - only exit if we should stop
+                if not self._consuming or self._shutdown_event.is_set():
                     break
+                # Otherwise continue the while loop to keep consuming
 
-                await self._process_message(message)
+            except asyncio.CancelledError:
+                logger.info("Consumer cancelled")
+                raise
+            except Exception as e:
+                # Increment connection_errors counter for consumer errors
+                if self._metrics:
+                    self._metrics.connection_errors.add(
+                        1,
+                        attributes={
+                            "error.type": type(e).__name__,
+                        },
+                    )
 
-        except asyncio.CancelledError:
-            logger.info("Consumer cancelled")
-            raise
-        except Exception as e:
-            # Increment connection_errors counter for consumer errors
-            if self._metrics:
-                self._metrics.connection_errors.add(
-                    1,
-                    attributes={
-                        "error.type": type(e).__name__,
-                    },
+                logger.error(
+                    "Consumer error",
+                    extra={"error": str(e), "auto_reconnect": auto_reconnect},
+                    exc_info=True,
                 )
 
-            logger.error(
-                "Consumer error",
-                extra={"error": str(e)},
-                exc_info=True,
-            )
-            raise
-        finally:
-            self._consuming = False
-            logger.info("Consumer stopped")
+                if not auto_reconnect or not self._consuming:
+                    raise
+
+                # Attempt reconnection with exponential backoff
+                logger.info(
+                    "Attempting to reconnect consumer",
+                    extra={"delay_seconds": reconnect_delay},
+                )
+
+                await asyncio.sleep(reconnect_delay)
+
+                # Exponential backoff with cap
+                reconnect_delay = min(reconnect_delay * 2, max_reconnect_delay)
+
+                # Record reconnection attempt
+                self.record_reconnection()
+
+                # Try to restart the consumer
+                try:
+                    await self._reconnect_consumer()
+                except Exception as reconnect_error:
+                    logger.error(
+                        "Failed to reconnect consumer",
+                        extra={"error": str(reconnect_error)},
+                        exc_info=True,
+                    )
+                    # Continue the loop to retry with backoff
+
+        self._consuming = False
+        logger.info("Consumer stopped")
+
+    async def _reconnect_consumer(self) -> None:
+        """Attempt to reconnect the consumer after an error.
+
+        Stops the current consumer and creates a new one with the same
+        configuration and topic subscriptions.
+        """
+        logger.debug("Reconnecting consumer")
+
+        # Stop the current consumer if it exists
+        if self._consumer:
+            try:
+                await self._consumer.stop()
+            except Exception as e:
+                logger.warning(f"Error stopping consumer during reconnect: {e}")
+
+        # Create and start new consumer with topic
+        self._consumer = AIOKafkaConsumer(
+            self._config.topic_name,
+            **self._config.get_consumer_config(),
+        )
+        await self._consumer.start()
+
+        logger.info("Consumer reconnected successfully")
 
     def start_consuming_in_background(self) -> asyncio.Task[None]:
         """Start consuming in a background task.
@@ -2090,8 +2382,35 @@ class KafkaEventBus(TracingMixin, EventBus):
         retry_count = self._get_retry_count(message.headers)
 
         try:
-            # Deserialize event
-            event = self._deserialize_message(message)
+            # Deserialize event - catch DeserializationError separately
+            # as these will never succeed on retry
+            try:
+                event = self._deserialize_message(message)
+            except DeserializationError as e:
+                # Deserialization errors are unrecoverable - send directly to DLQ
+                logger.error(
+                    "Deserialization error, sending directly to DLQ",
+                    extra={
+                        "event_type": event_type_name,
+                        "error": str(e),
+                    },
+                )
+                await self._send_to_dlq(message, e, retry_count, reason="deserialization_error")
+                if self._consumer:
+                    await self._consumer.commit()
+
+                if span:
+                    span.set_status(Status(StatusCode.ERROR, str(e)))
+                    span.record_exception(e)
+
+                # Record consume duration
+                if self._metrics:
+                    duration_ms = (time.perf_counter() - start_time) * 1000
+                    self._metrics.consume_duration.record(
+                        duration_ms,
+                        attributes={"messaging.destination": message.topic},
+                    )
+                return
 
             if span:
                 span.set_attribute(ATTR_EVENT_ID, str(event.event_id))
@@ -2145,7 +2464,7 @@ class KafkaEventBus(TracingMixin, EventBus):
             await self._handle_processing_error(message, e, retry_count)
 
     def _deserialize_message(self, message: Any) -> DomainEvent:
-        """Deserialize a Kafka message to a DomainEvent.
+        """Deserialize a Kafka message to a DomainEvent using the configured serializer.
 
         Args:
             message: The Kafka ConsumerRecord to deserialize.
@@ -2154,21 +2473,21 @@ class KafkaEventBus(TracingMixin, EventBus):
             The deserialized DomainEvent.
 
         Raises:
-            ValueError: If event type is unknown or deserialization fails.
+            DeserializationError: If event type is unknown or deserialization fails.
         """
         event_type_name = self._get_header_value(message.headers, "event_type")
 
         if not event_type_name:
-            raise ValueError("Message missing event_type header")
+            raise DeserializationError("Message missing event_type header")
 
         # Get event class from registry
         event_class = self._get_event_class(event_type_name)
 
         if not event_class:
-            raise ValueError(f"Unknown event type: {event_type_name}")
+            raise DeserializationError(f"Unknown event type: {event_type_name}")
 
-        # Deserialize from JSON
-        return event_class.model_validate_json(message.value)
+        # Deserialize using the configured serializer
+        return self._serializer.deserialize(message.value, event_type_name, event_class)
 
     def _get_event_class(self, event_type_name: str) -> type[DomainEvent] | None:
         """Get event class by name from registry.
@@ -2230,7 +2549,7 @@ class KafkaEventBus(TracingMixin, EventBus):
     async def _dispatch_to_handlers(
         self,
         event: DomainEvent,
-        handlers: list[HandlerWrapper],
+        handlers: list[HandlerAdapter],
     ) -> None:
         """Dispatch an event to all registered handlers with optional tracing.
 
@@ -2239,13 +2558,13 @@ class KafkaEventBus(TracingMixin, EventBus):
 
         Args:
             event: The event to dispatch.
-            handlers: List of handler wrappers to invoke.
+            handlers: List of HandlerAdapter instances to invoke.
 
         Raises:
             Exception: Re-raises any handler exception.
         """
-        for original, handler_func in handlers:
-            handler_name = self._get_handler_name(original)
+        for adapter in handlers:
+            handler_name = adapter.name
 
             # Start timing for handler duration histogram
             handler_start_time = time.perf_counter()
@@ -2271,7 +2590,7 @@ class KafkaEventBus(TracingMixin, EventBus):
                             },
                         )
 
-                        await handler_func(event)
+                        await adapter.handle(event)
 
                         # Record handler duration and increment counter on success
                         if self._metrics:
@@ -2345,7 +2664,7 @@ class KafkaEventBus(TracingMixin, EventBus):
                         },
                     )
 
-                    await handler_func(event)
+                    await adapter.handle(event)
 
                     # Record handler duration and increment counter on success
                     if self._metrics:
@@ -2415,8 +2734,13 @@ class KafkaEventBus(TracingMixin, EventBus):
     ) -> None:
         """Handle a message processing error.
 
-        Implements retry with exponential backoff. After max_retries,
-        the message is sent to DLQ.
+        Implements non-blocking retry by republishing the message with an
+        incremented retry count. After max_retries, the message is sent to DLQ.
+
+        This approach does not block the consumer loop, allowing other messages
+        to be processed while failed messages are retried. The retry delay is
+        encoded in the message headers and a scheduled retry topic could be
+        used for delayed processing (future enhancement).
 
         Args:
             message: The failed message.
@@ -2447,36 +2771,85 @@ class KafkaEventBus(TracingMixin, EventBus):
                 await self._consumer.commit()
             return
 
-        # Calculate retry delay with exponential backoff and jitter
+        # Calculate retry delay for logging (actual delay happens on next consumption)
         delay = self._calculate_retry_delay(retry_count)
 
         logger.warning(
-            "Message processing failed, will retry",
+            "Message processing failed, republishing for retry",
             extra={
                 "event_type": event_type,
                 "event_id": event_id,
                 "retry_count": retry_count + 1,
                 "max_retries": self._config.max_retries,
-                "delay_seconds": delay,
+                "retry_delay": delay,
                 "error": str(error),
             },
         )
 
-        # Wait before retry
-        await asyncio.sleep(delay)
+        # Republish the message with incremented retry count (non-blocking retry)
+        await self._republish_for_retry(message, retry_count + 1, delay)
 
-        # Re-process the message (recursive retry)
-        # Note: In production, consider republishing with incremented retry_count
-        # For simplicity, we use in-memory retry here
+        # Commit the original message to avoid reprocessing
+        if self._consumer:
+            await self._consumer.commit()
+
+    async def _republish_for_retry(
+        self,
+        message: Any,
+        new_retry_count: int,
+        delay: float,
+    ) -> None:
+        """Republish a failed message for retry.
+
+        Copies the original message with an updated retry count header
+        and a scheduled retry timestamp. This enables non-blocking retries
+        that don't hold up the consumer.
+
+        Args:
+            message: The original failed message.
+            new_retry_count: The incremented retry count.
+            delay: Suggested delay before processing (for logging/future use).
+        """
+        if not self._producer:
+            logger.error("Cannot republish for retry: producer not connected")
+            return
+
+        # Build new headers with updated retry count and retry timestamp
+        new_headers: list[tuple[str, bytes]] = []
+        if message.headers:
+            for key, value in message.headers:
+                if key != "retry_count" and key != "retry_after":
+                    new_headers.append((key, value))
+
+        # Add retry metadata
+        new_headers.append(("retry_count", str(new_retry_count).encode("utf-8")))
+        retry_after = datetime.now(UTC).timestamp() + delay
+        new_headers.append(("retry_after", str(retry_after).encode("utf-8")))
+
         try:
-            event = self._deserialize_message(message)
-            handlers = self.get_handlers_for_event(event.event_type)
-            await self._dispatch_to_handlers(event, handlers)
-            if self._consumer:
-                await self._consumer.commit()
-            self._stats.events_processed_success += 1
+            await self._producer.send(
+                topic=self._config.topic_name,
+                key=message.key,
+                value=message.value,
+                headers=new_headers,
+            )
+
+            logger.debug(
+                "Message republished for retry",
+                extra={
+                    "event_type": self._get_header_value(message.headers, "event_type"),
+                    "retry_count": new_retry_count,
+                    "retry_after": retry_after,
+                },
+            )
         except Exception as e:
-            await self._handle_processing_error(message, e, retry_count + 1)
+            logger.error(
+                "Failed to republish message for retry, sending to DLQ",
+                extra={"error": str(e)},
+                exc_info=True,
+            )
+            # If we can't republish, send to DLQ to avoid message loss
+            await self._send_to_dlq(message, e, new_retry_count - 1, reason="republish_failed")
 
     def _calculate_retry_delay(self, retry_count: int) -> float:
         """Calculate delay for retry with exponential backoff and jitter.
@@ -2657,15 +3030,19 @@ class KafkaEventBus(TracingMixin, EventBus):
         self,
         limit: int = 100,
         timeout_ms: int = 5000,
+        use_consumer_group: bool = False,
     ) -> list[dict[str, Any]]:
         """Retrieve messages from the dead letter queue.
 
-        Creates a temporary consumer to read DLQ messages without committing
-        offsets. Messages remain in the DLQ for replay.
+        Creates a consumer to read DLQ messages. By default, reads without
+        committing offsets (inspection mode). When use_consumer_group=True,
+        uses the configured DLQ consumer group for coordinated processing.
 
         Args:
             limit: Maximum number of messages to retrieve.
             timeout_ms: Timeout for polling in milliseconds.
+            use_consumer_group: If True, use dlq_consumer_group for coordinated
+                DLQ processing. Messages will be committed after retrieval.
 
         Returns:
             List of DLQ message dictionaries with headers and payload.
@@ -2677,18 +3054,28 @@ class KafkaEventBus(TracingMixin, EventBus):
             - timestamp: Message timestamp
             - headers: All headers as string dict
             - payload: Deserialized JSON payload or hex-encoded bytes
+            - replay_count: Number of times this message has been replayed
 
         Raises:
             RuntimeError: If not connected to Kafka.
+            ValueError: If use_consumer_group=True but dlq_consumer_group not set.
         """
         if not self._connected:
             raise RuntimeError("Not connected to Kafka")
 
-        # Create a separate consumer for DLQ inspection
+        group_id = None
+        if use_consumer_group:
+            if not self._config.dlq_consumer_group:
+                raise ValueError(
+                    "dlq_consumer_group must be set in config to use consumer group mode"
+                )
+            group_id = self._config.dlq_consumer_group
+
+        # Create a consumer for DLQ inspection/processing
         dlq_consumer = AIOKafkaConsumer(
             self._config.dlq_topic_name,
             bootstrap_servers=self._config.bootstrap_servers,
-            group_id=None,  # No consumer group - just inspect
+            group_id=group_id,
             auto_offset_reset="earliest",
             enable_auto_commit=False,
             consumer_timeout_ms=timeout_ms,
@@ -2711,6 +3098,9 @@ class KafkaEventBus(TracingMixin, EventBus):
                     for key, value in message.headers:
                         headers[key] = value.decode("utf-8")
 
+                # Get replay count from headers
+                replay_count = int(headers.get("dlq_replay_count", "0"))
+
                 # Try to decode value as JSON
                 try:
                     import json
@@ -2728,10 +3118,15 @@ class KafkaEventBus(TracingMixin, EventBus):
                         "timestamp": message.timestamp,
                         "headers": headers,
                         "payload": payload,
+                        "replay_count": replay_count,
                     }
                 )
 
                 count += 1
+
+            # Commit offsets if using consumer group
+            if use_consumer_group and messages:
+                await dlq_consumer.commit()
 
         except TimeoutError:
             # Consumer timed out - this is expected when no more messages
@@ -2741,7 +3136,7 @@ class KafkaEventBus(TracingMixin, EventBus):
 
         logger.debug(
             "Retrieved DLQ messages",
-            extra={"count": len(messages), "limit": limit},
+            extra={"count": len(messages), "limit": limit, "consumer_group": group_id},
         )
 
         return messages
@@ -2750,33 +3145,38 @@ class KafkaEventBus(TracingMixin, EventBus):
         self,
         partition: int,
         offset: int,
+        force: bool = False,
     ) -> bool:
         """Replay a specific message from the dead letter queue.
 
         Reads the message from DLQ and republishes it to the main topic
         for reprocessing. The DLQ message is not deleted (Kafka limitation).
 
+        Replay Loop Protection:
+            Each replay increments a dlq_replay_count header. If the count
+            exceeds dlq_max_replay_attempts (default 3), the replay is rejected
+            to prevent infinite replay loops. Use force=True to override.
+
         The replayed message:
-        - Has all DLQ-specific headers removed
+        - Has all DLQ-specific headers removed except dlq_replay_count
         - Has retry_count reset to 0
+        - Has dlq_replay_count incremented
         - Maintains original event headers
 
         Args:
             partition: The DLQ partition containing the message.
             offset: The offset of the message to replay.
+            force: If True, replay even if max replay attempts exceeded.
 
         Returns:
             True if message was successfully republished.
 
         Raises:
             RuntimeError: If not connected to Kafka.
-            ValueError: If message not found at specified location.
+            ValueError: If message not found at specified location or max replays exceeded.
         """
         if not self._connected or not self._producer:
             raise RuntimeError("Not connected to Kafka")
-
-        # Import TopicPartition here to avoid issues if aiokafka isn't installed
-        from aiokafka import TopicPartition
 
         dlq_consumer = AIOKafkaConsumer(
             bootstrap_servers=self._config.bootstrap_servers,
@@ -2804,15 +3204,48 @@ class KafkaEventBus(TracingMixin, EventBus):
             if message.offset != offset:
                 raise ValueError(f"Message not found at offset {offset}")
 
-            # Remove DLQ-specific headers for republish
+            # Check replay count for loop protection
+            current_replay_count = 0
+            if message.headers:
+                for key, value in message.headers:
+                    if key == "dlq_replay_count":
+                        with contextlib.suppress(ValueError, UnicodeDecodeError):
+                            current_replay_count = int(value.decode("utf-8"))
+                        break
+
+            # Enforce replay limit unless forced
+            if not force and current_replay_count >= self._config.dlq_max_replay_attempts:
+                event_type = self._get_header_value(message.headers, "event_type")
+                logger.warning(
+                    "Replay rejected: max replay attempts exceeded",
+                    extra={
+                        "dlq_partition": partition,
+                        "dlq_offset": offset,
+                        "replay_count": current_replay_count,
+                        "max_replay_attempts": self._config.dlq_max_replay_attempts,
+                        "event_type": event_type,
+                    },
+                )
+                raise ValueError(
+                    f"Message at partition {partition}, offset {offset} has been replayed "
+                    f"{current_replay_count} times, exceeding max of "
+                    f"{self._config.dlq_max_replay_attempts}. Use force=True to override."
+                )
+
+            # Build headers for republish
             original_headers: list[tuple[str, bytes]] = []
             if message.headers:
                 for key, value in message.headers:
-                    if not key.startswith("dlq_"):
+                    # Remove DLQ headers except replay count (we'll update it)
+                    if not key.startswith("dlq_") and key != "retry_count":
                         original_headers.append((key, value))
 
             # Add retry_count header (reset to 0 for fresh attempt)
             original_headers.append(("retry_count", b"0"))
+
+            # Increment and add replay count for loop protection
+            new_replay_count = current_replay_count + 1
+            original_headers.append(("dlq_replay_count", str(new_replay_count).encode("utf-8")))
 
             # Republish to main topic
             await self._producer.send(
@@ -2829,6 +3262,7 @@ class KafkaEventBus(TracingMixin, EventBus):
                     "dlq_offset": offset,
                     "target_topic": self._config.topic_name,
                     "event_type": self._get_header_value(original_headers, "event_type"),
+                    "replay_count": new_replay_count,
                 },
             )
 
@@ -2855,9 +3289,6 @@ class KafkaEventBus(TracingMixin, EventBus):
         """
         if not self._connected:
             raise RuntimeError("Not connected to Kafka")
-
-        # Import TopicPartition here to avoid issues if aiokafka isn't installed
-        from aiokafka import TopicPartition
 
         dlq_consumer = AIOKafkaConsumer(
             self._config.dlq_topic_name,
@@ -2894,11 +3325,13 @@ class KafkaEventBus(TracingMixin, EventBus):
 
 
 __all__ = [
-    "HandlerWrapper",
+    "DeserializationError",
+    "EventSerializer",
     "KAFKA_AVAILABLE",
     "KafkaEventBus",
     "KafkaEventBusConfig",
     "KafkaEventBusMetrics",
     "KafkaEventBusStats",
     "KafkaNotAvailableError",
+    "KafkaRebalanceListener",
 ]

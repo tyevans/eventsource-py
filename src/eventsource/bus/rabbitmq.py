@@ -38,7 +38,6 @@ import socket
 import ssl
 import uuid
 from collections import defaultdict
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -48,6 +47,7 @@ from eventsource.bus.interface import (
     EventHandlerFunc,
 )
 from eventsource.events.base import DomainEvent
+from eventsource.handlers.adapter import HandlerAdapter
 from eventsource.observability import OTEL_AVAILABLE, TracingMixin
 from eventsource.observability.attributes import (
     ATTR_AGGREGATE_ID,
@@ -584,10 +584,6 @@ class HealthCheckResult:
     details: dict[str, Any] | None = None
 
 
-# Type for normalized handler (always async callable)
-HandlerWrapper = tuple[Any, Callable[[DomainEvent], Any]]
-
-
 class RabbitMQEventBus(TracingMixin, EventBus):
     """Event bus implementation using RabbitMQ.
 
@@ -651,8 +647,8 @@ class RabbitMQEventBus(TracingMixin, EventBus):
         self._dlq_queue: AbstractQueue | None = None
 
         # Subscriber management (implemented in P1-009)
-        self._subscribers: dict[type[DomainEvent], list[HandlerWrapper]] = defaultdict(list)
-        self._all_event_handlers: list[HandlerWrapper] = []
+        self._subscribers: dict[type[DomainEvent], list[HandlerAdapter]] = defaultdict(list)
+        self._all_event_handlers: list[HandlerAdapter] = []
         self._lock = asyncio.Lock()
 
         # Statistics
@@ -2279,74 +2275,8 @@ class RabbitMQEventBus(TracingMixin, EventBus):
         return default_registry.get_or_none(event_type_name)
 
     # =========================================================================
-    # Handler Normalization and Subscription Management (P1-009)
+    # Subscription Management (P1-009)
     # =========================================================================
-
-    def _normalize_handler(
-        self,
-        handler: FlexibleEventHandler | EventHandlerFunc,
-    ) -> HandlerWrapper:
-        """Normalize a handler to an async callable.
-
-        Wraps synchronous handlers in async wrappers to provide
-        a consistent async interface for event dispatch.
-
-        Args:
-            handler: Object with handle() method or callable
-
-        Returns:
-            Tuple of (original_handler, async_handler_func)
-
-        Raises:
-            TypeError: If handler is not valid (no handle method and not callable)
-        """
-        # If it's an object with a handle method
-        if hasattr(handler, "handle"):
-            handle_method = handler.handle
-            if asyncio.iscoroutinefunction(handle_method):
-                return (handler, handle_method)
-            else:
-                # Wrap sync method
-                async def async_wrapper(event: DomainEvent) -> None:
-                    result = handle_method(event)
-                    if asyncio.iscoroutine(result):
-                        await result
-
-                return (handler, async_wrapper)
-
-        # It's a callable (function or lambda)
-        elif callable(handler):
-            if asyncio.iscoroutinefunction(handler):
-                return (handler, handler)
-            else:
-                callable_handler = handler
-
-                async def async_callable_wrapper(event: DomainEvent) -> None:
-                    result = callable_handler(event)
-                    if asyncio.iscoroutine(result):
-                        await result
-
-                return (handler, async_callable_wrapper)
-        else:
-            raise TypeError(
-                f"Handler must have a handle() method or be callable, got {type(handler)}"
-            )
-
-    def _get_handler_name(self, handler: Any) -> str:
-        """Get a descriptive name for a handler for logging.
-
-        Args:
-            handler: The handler object or function
-
-        Returns:
-            Human-readable name for the handler
-        """
-        if hasattr(handler, "__class__"):
-            return str(handler.__class__.__name__)
-        elif hasattr(handler, "__name__"):
-            return str(handler.__name__)
-        else:
-            return repr(handler)
 
     def subscribe(
         self,
@@ -2365,16 +2295,15 @@ class RabbitMQEventBus(TracingMixin, EventBus):
             event_type: The event class to subscribe to
             handler: Object with handle() method or callable
         """
-        wrapper = self._normalize_handler(handler)
-        handler_name = self._get_handler_name(handler)
+        adapter = HandlerAdapter(handler)
 
         # Thread-safe append (GIL protects list operations)
-        self._subscribers[event_type].append(wrapper)
+        self._subscribers[event_type].append(adapter)
 
         self._logger.info(
-            f"Registered handler {handler_name} for {event_type.__name__}",
+            f"Registered handler {adapter.name} for {event_type.__name__}",
             extra={
-                "handler": handler_name,
+                "handler": adapter.name,
                 "event_type": event_type.__name__,
             },
         )
@@ -2393,25 +2322,25 @@ class RabbitMQEventBus(TracingMixin, EventBus):
         Returns:
             True if the handler was found and removed, False otherwise
         """
-        handler_name = self._get_handler_name(handler)
+        target_adapter = HandlerAdapter(handler)
 
-        handlers = self._subscribers.get(event_type, [])
-        for i, (orig_handler, _) in enumerate(handlers):
-            if orig_handler is handler:
-                handlers.pop(i)
+        adapters = self._subscribers.get(event_type, [])
+        for i, adapter in enumerate(adapters):
+            if adapter == target_adapter:
+                adapters.pop(i)
                 self._logger.info(
-                    f"Unsubscribed handler {handler_name} from {event_type.__name__}",
+                    f"Unsubscribed handler {adapter.name} from {event_type.__name__}",
                     extra={
-                        "handler": handler_name,
+                        "handler": adapter.name,
                         "event_type": event_type.__name__,
                     },
                 )
                 return True
 
         self._logger.debug(
-            f"Handler {handler_name} not found for {event_type.__name__}",
+            f"Handler {target_adapter.name} not found for {event_type.__name__}",
             extra={
-                "handler": handler_name,
+                "handler": target_adapter.name,
                 "event_type": event_type.__name__,
             },
         )
@@ -2443,14 +2372,13 @@ class RabbitMQEventBus(TracingMixin, EventBus):
         Args:
             handler: Handler that will receive all events
         """
-        wrapper = self._normalize_handler(handler)
-        handler_name = self._get_handler_name(handler)
+        adapter = HandlerAdapter(handler)
 
-        self._all_event_handlers.append(wrapper)
+        self._all_event_handlers.append(adapter)
 
         self._logger.info(
-            f"Registered wildcard handler {handler_name}",
-            extra={"handler": handler_name},
+            f"Registered wildcard handler {adapter.name}",
+            extra={"handler": adapter.name},
         )
 
     def unsubscribe_from_all_events(
@@ -2465,20 +2393,20 @@ class RabbitMQEventBus(TracingMixin, EventBus):
         Returns:
             True if the handler was found and removed, False otherwise
         """
-        handler_name = self._get_handler_name(handler)
+        target_adapter = HandlerAdapter(handler)
 
-        for i, (orig_handler, _) in enumerate(self._all_event_handlers):
-            if orig_handler is handler:
+        for i, adapter in enumerate(self._all_event_handlers):
+            if adapter == target_adapter:
                 self._all_event_handlers.pop(i)
                 self._logger.info(
-                    f"Unsubscribed wildcard handler {handler_name}",
-                    extra={"handler": handler_name},
+                    f"Unsubscribed wildcard handler {adapter.name}",
+                    extra={"handler": adapter.name},
                 )
                 return True
 
         self._logger.debug(
-            f"Wildcard handler {handler_name} not found",
-            extra={"handler": handler_name},
+            f"Wildcard handler {target_adapter.name} not found",
+            extra={"handler": target_adapter.name},
         )
         return False
 
@@ -3421,8 +3349,8 @@ class RabbitMQEventBus(TracingMixin, EventBus):
         )
 
         # Process handlers sequentially for ordering guarantees
-        for original_handler, async_handler in handlers:
-            handler_name = self._get_handler_name(original_handler)
+        for adapter in handlers:
+            handler_name = adapter.name
             handler_start = datetime.now(UTC)
             handler_span = None
 
@@ -3444,7 +3372,7 @@ class RabbitMQEventBus(TracingMixin, EventBus):
                 )
 
             try:
-                await async_handler(event)
+                await adapter.handle(event)
 
                 handler_duration = (datetime.now(UTC) - handler_start).total_seconds()
 
