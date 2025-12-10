@@ -656,7 +656,7 @@ Check these common causes:
        projection_name="MyProjection"
    )
    for entry in failed:
-       logger.error(f"Failed: {entry['error_message']}")
+       logger.error(f"Failed: {entry.error_message}")
    ```
 
 4. **Single-threaded processing:**
@@ -719,9 +719,9 @@ print(f"Events processed: {metrics['events_processed']}")
        limit=10
    )
    for entry in entries:
-       print(f"Event: {entry['event_id']}")
-       print(f"Error: {entry['error_message']}")
-       print(f"Traceback: {entry['error_traceback']}")
+       print(f"Event: {entry.event_id}")
+       print(f"Error: {entry.error_message}")
+       print(f"Traceback: {entry.error_stacktrace}")
    ```
 
 ### Events aren't being deserialized correctly

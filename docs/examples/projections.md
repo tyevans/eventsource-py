@@ -323,15 +323,15 @@ failed_events = await dlq_repo.get_failed_events(
 )
 
 for entry in failed_events:
-    print(f"Event ID: {entry['event_id']}")
-    print(f"Event type: {entry['event_type']}")
-    print(f"Error: {entry['error_message']}")
-    print(f"Retry count: {entry['retry_count']}")
-    print(f"First failed: {entry['first_failed_at']}")
+    print(f"Event ID: {entry.event_id}")
+    print(f"Event type: {entry.event_type}")
+    print(f"Error: {entry.error_message}")
+    print(f"Retry count: {entry.retry_count}")
+    print(f"First failed: {entry.first_failed_at}")
     print(f"---")
 
 # Mark as resolved after manual intervention
-await dlq_repo.mark_resolved(dlq_id=entry['id'], resolved_by="admin")
+await dlq_repo.mark_resolved(dlq_id=entry.id, resolved_by="admin")
 
 # Get DLQ statistics
 stats = await dlq_repo.get_failure_stats()

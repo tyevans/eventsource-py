@@ -343,16 +343,16 @@ async def publish_outbox_events():
             for entry in pending:
                 try:
                     # Simulate publishing to message bus
-                    print(f"Publishing event {entry['event_type']}")
-                    # await message_bus.publish(entry['event_data'])
+                    print(f"Publishing event {entry.event_type}")
+                    # await message_bus.publish(entry.event_data)
 
                     # Mark as published
-                    await outbox.mark_published(entry["id"])
-                    print(f"Marked as published: {entry['id']}")
+                    await outbox.mark_published(entry.id)
+                    print(f"Marked as published: {entry.id}")
 
                 except Exception as e:
                     # Increment retry count on failure
-                    await outbox.increment_retry(entry["id"], str(e))
+                    await outbox.increment_retry(entry.id, str(e))
                     print(f"Failed to publish: {e}")
 
             break  # Exit loop for example

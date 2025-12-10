@@ -763,7 +763,6 @@ class SQLiteOutboxRepository(TracingMixin):
     - Uses `?` positional parameters instead of named parameters
     - Uses `datetime('now', '-' || ? || ' days')` for interval arithmetic
     - Uses `SUM(CASE WHEN ... THEN 1 ELSE 0 END)` instead of `COUNT(*) FILTER`
-    - Uses `cursor.lastrowid` for inserted row ID
 
     Example:
         >>> async with aiosqlite.connect("events.db") as db:
@@ -774,7 +773,7 @@ class SQLiteOutboxRepository(TracingMixin):
         >>> pending = await repo.get_pending_events(limit=100)
         >>> for entry in pending:
         ...     # Publish to event bus
-        ...     await repo.mark_published(UUID(entry["id"]))
+        ...     await repo.mark_published(entry.id)
     """
 
     def __init__(
@@ -791,6 +790,16 @@ class SQLiteOutboxRepository(TracingMixin):
         """
         self._init_tracing(__name__, enable_tracing)
         self._connection = connection
+
+    @staticmethod
+    def _parse_datetime(value: str | None) -> datetime:
+        """Parse ISO 8601 timestamp string to datetime."""
+        if value is None:
+            return datetime.now(UTC)
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            return datetime.now(UTC)
 
     async def add_event(self, event: DomainEvent) -> UUID:
         """
@@ -828,11 +837,12 @@ class SQLiteOutboxRepository(TracingMixin):
             await self._connection.execute(
                 """
                 INSERT INTO event_outbox
-                    (event_id, event_type, aggregate_id, aggregate_type,
+                    (id, event_id, event_type, aggregate_id, aggregate_type,
                      tenant_id, event_data, created_at, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')
                 """,
                 (
+                    str(outbox_id),
                     str(event.event_id),
                     event.event_type,
                     str(event.aggregate_id),
@@ -846,7 +856,7 @@ class SQLiteOutboxRepository(TracingMixin):
 
             return outbox_id
 
-    async def get_pending_events(self, limit: int = 100) -> list[dict[str, Any]]:
+    async def get_pending_events(self, limit: int = 100) -> list[OutboxEntry]:
         """
         Get pending events that need to be published.
 
@@ -854,7 +864,7 @@ class SQLiteOutboxRepository(TracingMixin):
             limit: Maximum number of events to return
 
         Returns:
-            List of pending outbox records
+            List of OutboxEntry instances
         """
         with self._create_span_context(
             "eventsource.outbox.get_pending",
@@ -877,29 +887,30 @@ class SQLiteOutboxRepository(TracingMixin):
             rows = await cursor.fetchall()
 
             entries = [
-                {
-                    "id": str(row[0]),
-                    "event_id": str(row[1]),
-                    "event_type": row[2],
-                    "aggregate_id": str(row[3]),
-                    "aggregate_type": row[4],
-                    "tenant_id": str(row[5]) if row[5] else None,
-                    "event_data": row[6],
-                    "created_at": row[7],
-                    "retry_count": row[8],
-                }
+                OutboxEntry(
+                    id=UUID(row[0]),
+                    event_id=UUID(row[1]),
+                    event_type=row[2],
+                    aggregate_id=UUID(row[3]),
+                    aggregate_type=row[4],
+                    tenant_id=UUID(row[5]) if row[5] else None,
+                    event_data=row[6],
+                    created_at=self._parse_datetime(row[7]),
+                    status="pending",
+                    retry_count=row[8] or 0,
+                )
                 for row in rows
             ]
             if span:
                 span.set_attribute(ATTR_EVENT_COUNT, len(entries))
             return entries
 
-    async def mark_published(self, outbox_id: UUID | int) -> None:
+    async def mark_published(self, outbox_id: UUID) -> None:
         """
         Mark an outbox event as successfully published.
 
         Args:
-            outbox_id: Outbox record ID (UUID or integer for SQLite)
+            outbox_id: Outbox record ID
         """
         with self._create_span_context(
             "eventsource.outbox.mark_published",
@@ -916,16 +927,16 @@ class SQLiteOutboxRepository(TracingMixin):
                     published_at = ?
                 WHERE id = ?
                 """,
-                (now.isoformat(), str(outbox_id) if isinstance(outbox_id, UUID) else outbox_id),
+                (now.isoformat(), str(outbox_id)),
             )
             await self._connection.commit()
 
-    async def increment_retry(self, outbox_id: UUID | int, error: str | None = None) -> None:
+    async def increment_retry(self, outbox_id: UUID, error: str | None = None) -> None:
         """
         Increment retry count for a failed publishing attempt.
 
         Args:
-            outbox_id: Outbox record ID (UUID or integer for SQLite)
+            outbox_id: Outbox record ID
             error: Error message (optional)
         """
         with self._create_span_context(
@@ -943,16 +954,16 @@ class SQLiteOutboxRepository(TracingMixin):
                     last_error = ?
                 WHERE id = ?
                 """,
-                (error, str(outbox_id) if isinstance(outbox_id, UUID) else outbox_id),
+                (error, str(outbox_id)),
             )
             await self._connection.commit()
 
-    async def mark_failed(self, outbox_id: UUID | int, error: str) -> None:
+    async def mark_failed(self, outbox_id: UUID, error: str) -> None:
         """
         Mark an outbox event as permanently failed.
 
         Args:
-            outbox_id: Outbox record ID (UUID or integer for SQLite)
+            outbox_id: Outbox record ID
             error: Error message
         """
         with self._create_span_context(
@@ -970,7 +981,7 @@ class SQLiteOutboxRepository(TracingMixin):
                     last_error = ?
                 WHERE id = ?
                 """,
-                (error, str(outbox_id) if isinstance(outbox_id, UUID) else outbox_id),
+                (error, str(outbox_id)),
             )
             await self._connection.commit()
 
