@@ -120,6 +120,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Basic projection example
   - Multi-subscriber example
   - Resilient projection with error handling
+- **Updated all projection examples to use SubscriptionManager pattern**:
+  - `examples/projection_example.py` now demonstrates SubscriptionManager with catch-up, live subscriptions, and checkpoint tracking
+  - `docs/getting-started.md` updated with SubscriptionManager as the recommended approach
+  - `docs/examples/projections.md` now recommends SubscriptionManager over direct `event_bus.subscribe_all()`
+  - `docs/examples/sqlite-usage.md` integration tests updated to use SubscriptionManager
+- Added comparison table showing benefits of SubscriptionManager vs direct EventBus subscription
 
 ### Tests
 

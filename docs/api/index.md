@@ -312,6 +312,8 @@ repo = AggregateRepository(
 )
 ```
 
+> **💡 Tip:** For production projections, use [SubscriptionManager](subscriptions.md) instead of direct `subscribe_all()` to get historical catch-up, checkpoint tracking, and health monitoring.
+
 [Read the full Event Bus API documentation](bus.md)
 
 ---
