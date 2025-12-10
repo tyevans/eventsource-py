@@ -1077,7 +1077,7 @@ class SQLiteDLQRepository(TracingMixin):
         projection_name: str | None = None,
         status: str = "failed",
         limit: int = 100,
-    ) -> list[dict[str, Any]]:
+    ) -> list[DLQEntry]:
         """
         Get failed events from the DLQ.
 
@@ -1087,7 +1087,7 @@ class SQLiteDLQRepository(TracingMixin):
             limit: Maximum number of events to return
 
         Returns:
-            List of failed event records
+            List of DLQEntry instances
         """
         span_attributes: dict[str, Any] = {
             "limit": limit,
@@ -1125,23 +1125,23 @@ class SQLiteDLQRepository(TracingMixin):
             rows = await cursor.fetchall()
 
             return [
-                {
-                    "id": row[0],
-                    "event_id": str(row[1]),
-                    "projection_name": row[2],
-                    "event_type": row[3],
-                    "event_data": row[4],
-                    "error_message": row[5],
-                    "error_stacktrace": row[6],
-                    "retry_count": row[7],
-                    "first_failed_at": row[8],
-                    "last_failed_at": row[9],
-                    "status": row[10],
-                }
+                DLQEntry(
+                    id=row[0],
+                    event_id=UUID(row[1]),
+                    projection_name=row[2],
+                    event_type=row[3],
+                    event_data=row[4],
+                    error_message=row[5],
+                    error_stacktrace=row[6],
+                    retry_count=row[7],
+                    first_failed_at=row[8],
+                    last_failed_at=row[9],
+                    status=row[10],
+                )
                 for row in rows
             ]
 
-    async def get_failed_event_by_id(self, dlq_id: int | str) -> dict[str, Any] | None:
+    async def get_failed_event_by_id(self, dlq_id: int | str) -> DLQEntry | None:
         """
         Get a specific failed event by its DLQ ID.
 
@@ -1149,7 +1149,7 @@ class SQLiteDLQRepository(TracingMixin):
             dlq_id: DLQ record ID
 
         Returns:
-            Failed event record, or None if not found
+            DLQEntry instance, or None if not found
         """
         with self._create_span_context(
             "eventsource.dlq.get_by_id",
@@ -1174,21 +1174,21 @@ class SQLiteDLQRepository(TracingMixin):
             if not row:
                 return None
 
-            return {
-                "id": row[0],
-                "event_id": str(row[1]),
-                "projection_name": row[2],
-                "event_type": row[3],
-                "event_data": row[4],
-                "error_message": row[5],
-                "error_stacktrace": row[6],
-                "retry_count": row[7],
-                "first_failed_at": row[8],
-                "last_failed_at": row[9],
-                "status": row[10],
-                "resolved_at": row[11],
-                "resolved_by": row[12],
-            }
+            return DLQEntry(
+                id=row[0],
+                event_id=UUID(row[1]),
+                projection_name=row[2],
+                event_type=row[3],
+                event_data=row[4],
+                error_message=row[5],
+                error_stacktrace=row[6],
+                retry_count=row[7],
+                first_failed_at=row[8],
+                last_failed_at=row[9],
+                status=row[10],
+                resolved_at=row[11],
+                resolved_by=row[12],
+            )
 
     async def mark_resolved(self, dlq_id: int | str, resolved_by: str | UUID) -> None:
         """
