@@ -102,6 +102,8 @@ from eventsource.subscriptions.health import (
     SubscriptionHealth,
     SubscriptionHealthChecker,
 )
+from eventsource.subscriptions.health_provider import HealthCheckProvider
+from eventsource.subscriptions.lifecycle import SubscriptionLifecycleManager
 from eventsource.subscriptions.manager import SubscriptionManager
 from eventsource.subscriptions.metrics import (
     OTEL_METRICS_AVAILABLE,
@@ -116,6 +118,8 @@ from eventsource.subscriptions.metrics import (
     get_metrics,
     reset_meter,
 )
+from eventsource.subscriptions.pause_resume import PauseResumeController
+from eventsource.subscriptions.registry import SubscriptionRegistry
 from eventsource.subscriptions.retry import (
     TRANSIENT_EXCEPTIONS,
     CircuitBreaker,
@@ -164,8 +168,12 @@ from eventsource.subscriptions.transition import (
 )
 
 __all__ = [
-    # Manager
+    # Manager and Components
     "SubscriptionManager",
+    "SubscriptionRegistry",
+    "SubscriptionLifecycleManager",
+    "HealthCheckProvider",
+    "PauseResumeController",
     # Configuration
     "SubscriptionConfig",
     "StartPosition",
