@@ -211,6 +211,37 @@ class OutboxRepository(Protocol):
         """
         ...
 
+    async def increment_retry(self, outbox_id: UUID, error: str | None = None) -> None:
+        """
+        Increment retry count for a failed publishing attempt.
+
+        Args:
+            outbox_id: Outbox record ID
+            error: Error message (optional)
+        """
+        ...
+
+    async def cleanup_published(self, days: int = 7) -> int:
+        """
+        Clean up published events older than specified days.
+
+        Args:
+            days: Number of days to retain published events
+
+        Returns:
+            Number of records deleted
+        """
+        ...
+
+    async def get_stats(self) -> OutboxStats:
+        """
+        Get outbox statistics.
+
+        Returns:
+            OutboxStats with outbox metrics
+        """
+        ...
+
 
 class PostgreSQLOutboxRepository(TracingMixin):
     """
@@ -460,12 +491,12 @@ class PostgreSQLOutboxRepository(TracingMixin):
                 span.set_attribute("deleted_count", deleted)
             return deleted
 
-    async def get_stats(self) -> dict[str, Any]:
+    async def get_stats(self) -> OutboxStats:
         """
         Get outbox statistics.
 
         Returns:
-            Dictionary with outbox metrics
+            OutboxStats with outbox metrics
         """
         with self._create_span_context(
             "eventsource.outbox.get_stats",
@@ -487,21 +518,21 @@ class PostgreSQLOutboxRepository(TracingMixin):
 
             # Aggregate query always returns a row
             if row is None:
-                return {
-                    "pending_count": 0,
-                    "published_count": 0,
-                    "failed_count": 0,
-                    "oldest_pending": None,
-                    "avg_retries": 0.0,
-                }
+                return OutboxStats(
+                    pending_count=0,
+                    published_count=0,
+                    failed_count=0,
+                    oldest_pending=None,
+                    avg_retries=0.0,
+                )
 
-            return {
-                "pending_count": row[0] or 0,
-                "published_count": row[1] or 0,
-                "failed_count": row[2] or 0,
-                "oldest_pending": row[3],
-                "avg_retries": float(row[4]) if row[4] else 0.0,
-            }
+            return OutboxStats(
+                pending_count=row[0] or 0,
+                published_count=row[1] or 0,
+                failed_count=row[2] or 0,
+                oldest_pending=row[3],
+                avg_retries=float(row[4]) if row[4] else 0.0,
+            )
 
 
 class InMemoryOutboxRepository(TracingMixin):
@@ -707,12 +738,12 @@ class InMemoryOutboxRepository(TracingMixin):
                 span.set_attribute("deleted_count", deleted)
             return deleted
 
-    async def get_stats(self) -> dict[str, Any]:
+    async def get_stats(self) -> OutboxStats:
         """
         Get outbox statistics.
 
         Returns:
-            Dictionary with outbox metrics
+            OutboxStats with outbox metrics
         """
         with self._create_span_context(
             "eventsource.outbox.get_stats",
@@ -733,13 +764,13 @@ class InMemoryOutboxRepository(TracingMixin):
                 if pending:
                     avg_retries = sum(e.retry_count for e in pending) / len(pending)
 
-                return {
-                    "pending_count": len(pending),
-                    "published_count": len(published),
-                    "failed_count": len(failed),
-                    "oldest_pending": oldest_pending,
-                    "avg_retries": avg_retries,
-                }
+                return OutboxStats(
+                    pending_count=len(pending),
+                    published_count=len(published),
+                    failed_count=len(failed),
+                    oldest_pending=oldest_pending,
+                    avg_retries=avg_retries,
+                )
 
     async def clear(self) -> None:
         """Clear all entries. Useful for test setup/teardown."""
@@ -1017,17 +1048,12 @@ class SQLiteOutboxRepository(TracingMixin):
                 span.set_attribute("deleted_count", deleted)
             return deleted
 
-    async def get_stats(self) -> dict[str, Any]:
+    async def get_stats(self) -> OutboxStats:
         """
         Get outbox statistics.
 
         Returns:
-            Dictionary with outbox metrics including:
-            - pending_count: Number of pending events
-            - published_count: Number of published events
-            - failed_count: Number of failed events
-            - oldest_pending: Timestamp of oldest pending event
-            - avg_retries: Average retry count for pending events
+            OutboxStats with outbox metrics
         """
         with self._create_span_context(
             "eventsource.outbox.get_stats",
@@ -1049,13 +1075,13 @@ class SQLiteOutboxRepository(TracingMixin):
 
             # Aggregate query always returns a row, but values may be NULL
             if row is None:
-                return {
-                    "pending_count": 0,
-                    "published_count": 0,
-                    "failed_count": 0,
-                    "oldest_pending": None,
-                    "avg_retries": 0.0,
-                }
+                return OutboxStats(
+                    pending_count=0,
+                    published_count=0,
+                    failed_count=0,
+                    oldest_pending=None,
+                    avg_retries=0.0,
+                )
 
             # Parse oldest_pending from ISO 8601 string to datetime
             oldest_pending = None
@@ -1065,13 +1091,13 @@ class SQLiteOutboxRepository(TracingMixin):
                 except (ValueError, TypeError):
                     oldest_pending = None
 
-            return {
-                "pending_count": row[0] or 0,
-                "published_count": row[1] or 0,
-                "failed_count": row[2] or 0,
-                "oldest_pending": oldest_pending,
-                "avg_retries": float(row[4]) if row[4] else 0.0,
-            }
+            return OutboxStats(
+                pending_count=row[0] or 0,
+                published_count=row[1] or 0,
+                failed_count=row[2] or 0,
+                oldest_pending=oldest_pending,
+                avg_retries=float(row[4]) if row[4] else 0.0,
+            )
 
 
 # Type alias for backwards compatibility
