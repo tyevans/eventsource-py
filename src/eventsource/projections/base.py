@@ -13,7 +13,6 @@ maintaining read models optimized for specific query patterns.
 """
 
 import asyncio
-import inspect
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Coroutine
@@ -23,7 +22,7 @@ if TYPE_CHECKING:
     from opentelemetry.trace import Span
 
 from eventsource.events.base import DomainEvent
-from eventsource.exceptions import UnhandledEventError
+from eventsource.handlers.registry import HandlerRegistry
 from eventsource.observability import TracingMixin
 from eventsource.observability.attributes import (
     ATTR_EVENT_ID,
@@ -32,7 +31,12 @@ from eventsource.observability.attributes import (
     ATTR_PROJECTION_NAME,
     ATTR_RETRY_COUNT,
 )
-from eventsource.projections.decorators import get_handled_event_type
+from eventsource.projections.checkpoint_manager import ProjectionCheckpointManager
+from eventsource.projections.dlq_manager import ProjectionDLQManager
+from eventsource.projections.retry import (
+    ExponentialBackoffRetryPolicy,
+    RetryPolicy,
+)
 from eventsource.protocols import EventSubscriber
 from eventsource.repositories.checkpoint import (
     CheckpointRepository,
@@ -164,7 +168,7 @@ class CheckpointTrackingProjection(TracingMixin, EventSubscriber, ABC):
     Provides:
     - Automatic checkpoint management after each event
     - Idempotent event processing
-    - Retry logic with exponential backoff
+    - Retry logic with exponential backoff (configurable via RetryPolicy)
     - Dead letter queue for permanent failures
     - Lag monitoring support
     - Optional OpenTelemetry tracing support (disabled by default)
@@ -175,8 +179,9 @@ class CheckpointTrackingProjection(TracingMixin, EventSubscriber, ABC):
     - _truncate_read_models(): Table truncation for reset
 
     Configuration:
-    - MAX_RETRIES: Number of retry attempts (default: 3)
-    - RETRY_BACKOFF_BASE: Base for exponential backoff in seconds (default: 2)
+    - retry_policy: RetryPolicy instance for configurable retry behavior
+    - MAX_RETRIES: Number of retry attempts (default: 3) - DEPRECATED, use retry_policy
+    - RETRY_BACKOFF_BASE: Base for exponential backoff in seconds (default: 2) - DEPRECATED
 
     Tracing:
     - Tracing is disabled by default for projections (high-frequency processing)
@@ -195,11 +200,14 @@ class CheckpointTrackingProjection(TracingMixin, EventSubscriber, ABC):
         ...     async def _truncate_read_models(self, conn) -> None:
         ...         await conn.execute(text("TRUNCATE TABLE orders"))
         >>>
-        >>> # With tracing enabled
-        >>> projection = OrderProjection(enable_tracing=True)
+        >>> # With custom retry policy
+        >>> from eventsource.projections.retry import ExponentialBackoffRetryPolicy
+        >>> from eventsource.subscriptions.retry import RetryConfig
+        >>> policy = ExponentialBackoffRetryPolicy(RetryConfig(max_retries=5))
+        >>> projection = OrderProjection(retry_policy=policy, enable_tracing=True)
     """
 
-    # Retry configuration
+    # Retry configuration - DEPRECATED: use retry_policy parameter instead
     MAX_RETRIES: int = 3
     RETRY_BACKOFF_BASE: int = 2  # seconds (exponential: 2s, 4s, 8s)
 
@@ -207,6 +215,7 @@ class CheckpointTrackingProjection(TracingMixin, EventSubscriber, ABC):
         self,
         checkpoint_repo: CheckpointRepository | None = None,
         dlq_repo: DLQRepository | None = None,
+        retry_policy: RetryPolicy | None = None,
         enable_tracing: bool = False,
     ) -> None:
         """
@@ -217,14 +226,52 @@ class CheckpointTrackingProjection(TracingMixin, EventSubscriber, ABC):
                            If None, uses InMemoryCheckpointRepository.
             dlq_repo: Repository for dead letter queue.
                      If None, uses InMemoryDLQRepository.
+            retry_policy: Policy for retry behavior.
+                         If None, uses ExponentialBackoffRetryPolicy with defaults.
             enable_tracing: If True and OpenTelemetry is available, emit traces.
                           Default is False (tracing off for high-frequency projections).
         """
         self._projection_name = self.__class__.__name__
-        self._checkpoint_repo = checkpoint_repo or InMemoryCheckpointRepository()
-        self._dlq_repo = dlq_repo or InMemoryDLQRepository()
         # Initialize tracing via TracingMixin (default OFF for projections)
         self._init_tracing(__name__, enable_tracing)
+
+        # Use new managers for checkpoint and DLQ operations
+        self._checkpoint_manager = ProjectionCheckpointManager(
+            projection_name=self._projection_name,
+            checkpoint_repo=checkpoint_repo or InMemoryCheckpointRepository(),
+            enable_tracing=enable_tracing,
+        )
+        self._dlq_manager = ProjectionDLQManager(
+            projection_name=self._projection_name,
+            dlq_repo=dlq_repo or InMemoryDLQRepository(),
+            enable_tracing=enable_tracing,
+        )
+
+        # Use retry policy if provided, otherwise create one from class attributes
+        # for backward compatibility with MAX_RETRIES and RETRY_BACKOFF_BASE
+        if retry_policy is not None:
+            self._retry_policy = retry_policy
+        else:
+            # Use class attributes for backward compatibility
+            # Note: Old MAX_RETRIES meant total attempts, new max_retries is retries only
+            # So MAX_RETRIES=3 means 2 retries (3 total attempts - 1 initial)
+            from eventsource.subscriptions.retry import RetryConfig
+
+            max_retries = max(0, self.MAX_RETRIES - 1)  # Convert to retries count
+            # RetryConfig requires initial_delay > 0, use 0.001 for "no backoff" cases
+            initial_delay = float(self.RETRY_BACKOFF_BASE) if self.RETRY_BACKOFF_BASE > 0 else 0.001
+            self._retry_policy = ExponentialBackoffRetryPolicy(
+                config=RetryConfig(
+                    max_retries=max_retries,
+                    initial_delay=initial_delay,
+                    exponential_base=2.0,
+                    jitter=0.0 if self.RETRY_BACKOFF_BASE == 0 else 0.1,
+                )
+            )
+
+        # Keep references for backward compatibility
+        self._checkpoint_repo = self._checkpoint_manager.checkpoint_repo
+        self._dlq_repo = self._dlq_manager.dlq_repo
 
     async def handle(self, event: DomainEvent) -> None:
         """
@@ -253,26 +300,21 @@ class CheckpointTrackingProjection(TracingMixin, EventSubscriber, ABC):
         """
         Internal method that implements retry logic for event handling.
 
+        Uses the configured RetryPolicy for backoff and retry decisions.
+
         Args:
             event: The domain event to process
             span: Optional OpenTelemetry span for adding attributes
         """
-        from typing import TYPE_CHECKING
+        max_attempts = self._retry_policy.max_retries + 1  # Include initial attempt
 
-        if TYPE_CHECKING:
-            pass
-
-        for attempt in range(self.MAX_RETRIES):
+        for attempt in range(max_attempts):
             try:
                 # Process the event in projection-specific logic
                 await self._process_event(event)
 
-                # Update checkpoint after successful processing
-                await self._checkpoint_repo.update_checkpoint(
-                    projection_name=self._projection_name,
-                    event_id=event.event_id,
-                    event_type=event.event_type,
-                )
+                # Update checkpoint after successful processing via manager
+                await self._checkpoint_manager.update(event)
 
                 # Add success attribute to span if tracing enabled
                 if span is not None:
@@ -298,7 +340,7 @@ class CheckpointTrackingProjection(TracingMixin, EventSubscriber, ABC):
                     self._projection_name,
                     event.event_id,
                     attempt + 1,
-                    self.MAX_RETRIES,
+                    max_attempts,
                     e,
                     exc_info=True,
                     extra={
@@ -306,22 +348,23 @@ class CheckpointTrackingProjection(TracingMixin, EventSubscriber, ABC):
                         "event_id": str(event.event_id),
                         "event_type": event.event_type,
                         "attempt": attempt + 1,
-                        "max_attempts": self.MAX_RETRIES,
+                        "max_attempts": max_attempts,
                         "error": str(e),
                     },
                 )
 
-                # Last attempt failed - send to DLQ and re-raise
-                if attempt == self.MAX_RETRIES - 1:
+                # Check if we should retry
+                if not self._retry_policy.should_retry(attempt, e):
                     # Add retry count to span before final failure
                     if span is not None:
                         span.set_attribute(ATTR_RETRY_COUNT, attempt + 1)
 
-                    await self._send_to_dlq(event, e, attempt + 1)
+                    # Send to DLQ via manager
+                    await self._dlq_manager.send_to_dlq(event, e, attempt + 1)
                     logger.critical(
                         "Event %s sent to DLQ after %d attempts",
                         event.event_id,
-                        self.MAX_RETRIES,
+                        attempt + 1,
                         extra={
                             "projection": self._projection_name,
                             "event_id": str(event.event_id),
@@ -332,10 +375,10 @@ class CheckpointTrackingProjection(TracingMixin, EventSubscriber, ABC):
                     # Re-raise the exception after exhausting all retries
                     raise
                 else:
-                    # Exponential backoff before retry
-                    backoff = self.RETRY_BACKOFF_BASE**attempt
+                    # Get backoff from policy
+                    backoff = self._retry_policy.get_backoff(attempt)
                     logger.info(
-                        "Retrying in %d seconds...",
+                        "Retrying in %.1f seconds...",
                         backoff,
                         extra={
                             "projection": self._projection_name,
@@ -349,34 +392,15 @@ class CheckpointTrackingProjection(TracingMixin, EventSubscriber, ABC):
         """
         Send failed event to dead letter queue.
 
+        DEPRECATED: This method is kept for backward compatibility.
+        Internally delegates to ProjectionDLQManager.
+
         Args:
             event: The event that failed processing
             error: The exception that occurred
             retry_count: Number of retry attempts made
         """
-        try:
-            await self._dlq_repo.add_failed_event(
-                event_id=event.event_id,
-                projection_name=self._projection_name,
-                event_type=event.event_type,
-                event_data=event.model_dump(mode="json"),
-                error=error,
-                retry_count=retry_count,
-            )
-        except Exception as dlq_error:
-            # DLQ write failed - log but don't crash
-            logger.critical(
-                "Failed to write event %s to DLQ: %s",
-                event.event_id,
-                dlq_error,
-                exc_info=True,
-                extra={
-                    "projection": self._projection_name,
-                    "event_id": str(event.event_id),
-                    "original_error": str(error),
-                    "dlq_error": str(dlq_error),
-                },
-            )
+        await self._dlq_manager.send_to_dlq(event, error, retry_count)
 
     @abstractmethod
     async def _process_event(self, event: DomainEvent) -> None:
@@ -398,8 +422,7 @@ class CheckpointTrackingProjection(TracingMixin, EventSubscriber, ABC):
         Returns:
             Last processed event ID as string, or None if no checkpoint exists
         """
-        event_id = await self._checkpoint_repo.get_checkpoint(self._projection_name)
-        return str(event_id) if event_id else None
+        return await self._checkpoint_manager.get_checkpoint()
 
     async def get_lag_metrics(self) -> dict[str, Any] | None:
         """
@@ -408,20 +431,9 @@ class CheckpointTrackingProjection(TracingMixin, EventSubscriber, ABC):
         Returns:
             Dictionary with lag information, or None if no checkpoint exists
         """
-        metrics = await self._checkpoint_repo.get_lag_metrics(
-            self._projection_name,
+        return await self._checkpoint_manager.get_lag_metrics(
             event_types=[et.__name__ for et in self.subscribed_to()],
         )
-        if metrics is None:
-            return None
-        return {
-            "projection_name": metrics.projection_name,
-            "last_event_id": metrics.last_event_id,
-            "latest_event_id": metrics.latest_event_id,
-            "lag_seconds": metrics.lag_seconds,
-            "events_processed": metrics.events_processed,
-            "last_processed_at": metrics.last_processed_at,
-        }
 
     async def reset(self) -> None:
         """
@@ -435,8 +447,8 @@ class CheckpointTrackingProjection(TracingMixin, EventSubscriber, ABC):
             extra={"projection": self._projection_name},
         )
 
-        # Reset checkpoint
-        await self._checkpoint_repo.reset_checkpoint(self._projection_name)
+        # Reset checkpoint via manager
+        await self._checkpoint_manager.reset()
 
         # Subclass truncates its read model tables
         await self._truncate_read_models()
@@ -518,7 +530,8 @@ class DeclarativeProjection(CheckpointTrackingProjection):
         """
         Initialize the declarative projection.
 
-        Discovers all @handles decorated methods and builds a routing map.
+        Discovers all @handles decorated methods and builds a routing map
+        using HandlerRegistry for handler management.
 
         Args:
             checkpoint_repo: Repository for checkpoint storage.
@@ -526,60 +539,27 @@ class DeclarativeProjection(CheckpointTrackingProjection):
             enable_tracing: If True and OpenTelemetry is available, emit traces.
                           Default is False (tracing off for high-frequency projections).
         """
-        # Initialize handlers dict before calling super().__init__()
+        # Initialize registry before calling super().__init__()
         # in case subscribed_to() is called during parent initialization
-        self._handlers: dict[type[DomainEvent], Callable[..., Coroutine[Any, Any, None]]] = {}
+        # Note: We use require_async=True since DeclarativeProjection requires async handlers
+        self._handler_registry = HandlerRegistry(
+            self,
+            require_async=True,
+            unregistered_event_handling=self.unregistered_event_handling,  # type: ignore[arg-type]
+            validate_on_init=True,
+        )
+
+        # Keep _handlers dict for backward compatibility
+        self._handlers: dict[type[DomainEvent], Callable[..., Coroutine[Any, Any, None]]] = {
+            event_type: info.handler  # type: ignore[misc]
+            for event_type, info in self._handler_registry.get_all_handlers().items()
+        }
 
         super().__init__(
             checkpoint_repo=checkpoint_repo,
             dlq_repo=dlq_repo,
             enable_tracing=enable_tracing,
         )
-
-        # Discover all handler methods
-        for attr_name in dir(self):
-            if attr_name.startswith("_") and not attr_name.startswith("__"):
-                # Skip private methods that aren't handlers
-                attr = getattr(self, attr_name, None)
-                if attr is None:
-                    continue
-                event_type = get_handled_event_type(attr)
-                if event_type is not None:
-                    # Skip if event_type is not a proper type (e.g., it's a mock)
-                    if not isinstance(event_type, type):
-                        continue
-                    self._handlers[event_type] = attr
-                    logger.debug(
-                        "Registered handler %s for %s",
-                        attr_name,
-                        event_type.__name__,
-                        extra={
-                            "projection": self._projection_name,
-                            "handler": attr_name,
-                            "event_type": event_type.__name__,
-                        },
-                    )
-            elif not attr_name.startswith("_"):
-                # Also check public methods for @handles decorator
-                attr = getattr(self, attr_name, None)
-                if attr is None:
-                    continue
-                event_type = get_handled_event_type(attr)
-                if event_type is not None and isinstance(event_type, type):
-                    self._handlers[event_type] = attr
-                    logger.debug(
-                        "Registered handler %s for %s",
-                        attr_name,
-                        event_type.__name__,
-                        extra={
-                            "projection": self._projection_name,
-                            "handler": attr_name,
-                            "event_type": event_type.__name__,
-                        },
-                    )
-
-        # Validate handler signatures
-        self._validate_handlers()
 
     def subscribed_to(self) -> list[type[DomainEvent]]:
         """
@@ -591,65 +571,7 @@ class DeclarativeProjection(CheckpointTrackingProjection):
         Returns:
             List of event type classes
         """
-        return list(self._handlers.keys())
-
-    def _validate_handlers(self) -> None:
-        """
-        Validate handler signatures to ensure correctness.
-
-        Checks that all handler methods:
-        1. Have the correct signature: (self, conn, event: EventType) or just (self, event: EventType)
-        2. Are async functions
-        3. Have event type annotations matching the @handles decorator (warning if mismatch)
-
-        Raises:
-            ValueError: If a handler has an incorrect signature or is not async
-        """
-        for event_type, handler in self._handlers.items():
-            handler_name = handler.__name__
-
-            # Check if handler is async
-            if not inspect.iscoroutinefunction(handler):
-                raise ValueError(
-                    f"Handler {handler_name} in {self._projection_name} must be async. "
-                    f"Add 'async def' to the method definition."
-                )
-
-            # Check handler signature
-            sig = inspect.signature(handler)
-            params = list(sig.parameters.values())
-
-            # Should have 1 or 2 parameters (event only, or conn + event)
-            # Note: self is not in params for bound methods
-            if len(params) < 1 or len(params) > 2:
-                raise ValueError(
-                    f"Handler {handler_name} in {self._projection_name} must accept "
-                    f"1 or 2 parameters (event) or (conn, event), but has {len(params)} parameters: "
-                    f"{', '.join(p.name for p in params)}"
-                )
-
-            # Get the event parameter (last parameter)
-            event_param = params[-1]
-
-            # Check event type annotation matches @handles decorator
-            if (
-                event_param.annotation != inspect.Parameter.empty
-                and isinstance(event_param.annotation, type)
-                and event_param.annotation != event_type
-            ):
-                logger.warning(
-                    "Handler %s in %s: Event type annotation %s doesn't match @handles(%s)",
-                    handler_name,
-                    self._projection_name,
-                    event_param.annotation.__name__,
-                    event_type.__name__,
-                    extra={
-                        "projection": self._projection_name,
-                        "handler": handler_name,
-                        "expected_type": event_type.__name__,
-                        "actual_annotation": event_param.annotation.__name__,
-                    },
-                )
+        return self._handler_registry.get_subscribed_events()
 
     async def _process_event(self, event: DomainEvent) -> None:
         """
@@ -664,15 +586,14 @@ class DeclarativeProjection(CheckpointTrackingProjection):
         Raises:
             UnhandledEventError: If unregistered_event_handling="error" and no handler found
         """
-        event_type = type(event)
+        handler_info = self._handler_registry.get_handler(type(event))
 
-        if event_type not in self._handlers:
-            # No handler found - handle based on configuration
-            self._handle_unregistered_event(event)
+        if handler_info is None:
+            # Delegate unregistered event handling to registry
+            await self._handler_registry.dispatch(event, context=None)
             return
 
-        handler = self._handlers[event_type]
-        handler_name = handler.__name__
+        handler_name = handler_info.handler_name
 
         # Dispatch to handler with optional tracing
         with self._create_span_context(
@@ -683,61 +604,9 @@ class DeclarativeProjection(CheckpointTrackingProjection):
                 ATTR_HANDLER_NAME: handler_name,
             },
         ):
-            # Check handler signature to determine how to call it
-            sig = inspect.signature(handler)
-            params = list(sig.parameters.values())
-
-            if len(params) == 1:
-                # Single parameter handler: just event
-                await handler(event)
-            else:
-                # Two parameter handler: conn, event
-                # Pass None for conn since we don't have a database connection in base class
-                # Subclasses that need database access should override _process_event
-                await handler(None, event)
-
-    def _handle_unregistered_event(self, event: DomainEvent) -> None:
-        """
-        Handle an event that has no registered handler.
-
-        Behavior depends on the unregistered_event_handling class attribute:
-        - "ignore": Do nothing (silent)
-        - "warn": Log a warning
-        - "error": Raise UnhandledEventError
-
-        Args:
-            event: The event that has no handler
-
-        Raises:
-            UnhandledEventError: If unregistered_event_handling="error"
-        """
-        event_type = type(event)
-        available_handlers = [et.__name__ for et in self._handlers]
-
-        if self.unregistered_event_handling == "error":
-            raise UnhandledEventError(
-                event_type=event_type.__name__,
-                event_id=event.event_id,
-                handler_class=self.__class__.__name__,
-                available_handlers=available_handlers,
-            )
-        elif self.unregistered_event_handling == "warn":
-            logger.warning(
-                "No handler registered for event type %s in %s. "
-                "Available handlers: %s. "
-                "Add @handles(%s) decorator to handle this event.",
-                event_type.__name__,
-                self._projection_name,
-                ", ".join(available_handlers) if available_handlers else "none",
-                event_type.__name__,
-                extra={
-                    "projection": self._projection_name,
-                    "event_type": event_type.__name__,
-                    "event_id": str(event.event_id),
-                    "available_handlers": available_handlers,
-                },
-            )
-        # "ignore" mode: do nothing (silent)
+            # Dispatch via registry, passing None for context
+            # Subclasses (DatabaseProjection) override _process_event to provide real connection
+            await self._handler_registry.dispatch(event, context=None)
 
 
 class DatabaseProjection(DeclarativeProjection):
@@ -890,29 +759,37 @@ class DatabaseProjection(DeclarativeProjection):
             RuntimeError: If called without an active database connection
                          (i.e., not called via handle())
         """
-        event_type = type(event)
+        handler_info = self._handler_registry.get_handler(type(event))
 
-        if event_type not in self._handlers:
+        if handler_info is None:
             # Use parent class warning behavior for unhandled events
             return await super()._process_event(event)
 
-        handler = self._handlers[event_type]
-        sig = inspect.signature(handler)
-        params = list(sig.parameters.values())
+        handler_name = handler_info.handler_name
 
-        if len(params) == 1:
-            # Single parameter handler: just event (no database needed)
-            await handler(event)
-        else:
-            # Two parameter handler: provide real connection
-            conn = self._current_connection
-            if conn is None:
-                raise RuntimeError(
-                    f"Handler {handler.__name__} requires database connection "
-                    f"but DatabaseProjection.handle() was not used. "
-                    f"Ensure you call handle() rather than _process_event() directly."
-                )
-            await handler(conn, event)
+        # Dispatch to handler with tracing
+        with self._create_span_context(
+            "eventsource.projection.handler",
+            {
+                ATTR_PROJECTION_NAME: self._projection_name,
+                ATTR_EVENT_TYPE: type(event).__name__,
+                ATTR_HANDLER_NAME: handler_name,
+            },
+        ):
+            # Check if handler needs connection (2-param) or not (1-param)
+            if handler_info.param_count == 1:
+                # Single parameter handler: just event (no database needed)
+                await self._handler_registry.dispatch(event, context=None)
+            else:
+                # Two parameter handler: provide real connection
+                conn = self._current_connection
+                if conn is None:
+                    raise RuntimeError(
+                        f"Handler {handler_name} requires database connection "
+                        f"but DatabaseProjection.handle() was not used. "
+                        f"Ensure you call handle() rather than _process_event() directly."
+                    )
+                await self._handler_registry.dispatch(event, context=conn)
 
 
 # Type hints for SQLAlchemy (imported at runtime if available)

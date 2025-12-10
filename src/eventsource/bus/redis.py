@@ -36,7 +36,6 @@ import logging
 import socket
 import uuid
 from collections import defaultdict
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -46,6 +45,7 @@ from eventsource.bus.interface import (
     EventHandlerFunc,
 )
 from eventsource.events.base import DomainEvent
+from eventsource.handlers.adapter import HandlerAdapter
 from eventsource.observability import TracingMixin
 from eventsource.observability.attributes import (
     ATTR_AGGREGATE_ID,
@@ -181,10 +181,6 @@ class RedisEventBusStats:
     reconnections: int = 0
 
 
-# Type for normalized handler (always async callable)
-HandlerWrapper = tuple[Any, Callable[[DomainEvent], Any]]
-
-
 class RedisEventBus(TracingMixin, EventBus):
     """
     Event bus using Redis Streams for durable event distribution.
@@ -241,8 +237,8 @@ class RedisEventBus(TracingMixin, EventBus):
         self._consuming = False
 
         # Subscriber management
-        self._subscribers: dict[type[DomainEvent], list[HandlerWrapper]] = defaultdict(list)
-        self._all_event_handlers: list[HandlerWrapper] = []
+        self._subscribers: dict[type[DomainEvent], list[HandlerAdapter]] = defaultdict(list)
+        self._all_event_handlers: list[HandlerAdapter] = []
         self._lock = asyncio.Lock()
 
         # Statistics
@@ -363,58 +359,6 @@ class RedisEventBus(TracingMixin, EventBus):
             else:
                 logger.error(f"Failed to create consumer group: {e}")
                 raise
-
-    def _normalize_handler(
-        self, handler: FlexibleEventHandler | EventHandlerFunc
-    ) -> HandlerWrapper:
-        """
-        Normalize a handler to an async callable.
-
-        Args:
-            handler: Object with handle() method or callable
-
-        Returns:
-            Tuple of (original_handler, async_handler_func)
-        """
-        # If it's an object with a handle method
-        if hasattr(handler, "handle"):
-            handle_method = handler.handle
-            if asyncio.iscoroutinefunction(handle_method):
-                return (handler, handle_method)
-            else:
-                # Wrap sync method
-                async def async_wrapper(event: DomainEvent) -> None:
-                    result = handle_method(event)
-                    if asyncio.iscoroutine(result):
-                        await result
-
-                return (handler, async_wrapper)
-        # It's a callable (function or lambda)
-        elif callable(handler):
-            if asyncio.iscoroutinefunction(handler):
-                return (handler, handler)
-            else:
-                callable_handler = handler
-
-                async def async_callable_wrapper(event: DomainEvent) -> None:
-                    result = callable_handler(event)
-                    if asyncio.iscoroutine(result):
-                        await result
-
-                return (handler, async_callable_wrapper)
-        else:
-            raise TypeError(
-                f"Handler must have a handle() method or be callable, got {type(handler)}"
-            )
-
-    def _get_handler_name(self, handler: Any) -> str:
-        """Get a descriptive name for a handler for logging."""
-        if hasattr(handler, "__class__"):
-            return str(handler.__class__.__name__)
-        elif hasattr(handler, "__name__"):
-            return str(handler.__name__)
-        else:
-            return repr(handler)
 
     async def publish(
         self,
@@ -552,17 +496,16 @@ class RedisEventBus(TracingMixin, EventBus):
             event_type: The event class to subscribe to
             handler: Object with handle() method or callable
         """
-        wrapper = self._normalize_handler(handler)
-        handler_name = self._get_handler_name(handler)
+        adapter = HandlerAdapter(handler)
 
         # Use asyncio.Lock in non-async context requires different approach
         # Since subscribe is sync, we use a simple list append (thread-safe for GIL)
-        self._subscribers[event_type].append(wrapper)
+        self._subscribers[event_type].append(adapter)
 
         logger.info(
-            f"Registered handler {handler_name} for {event_type.__name__}",
+            f"Registered handler {adapter.name} for {event_type.__name__}",
             extra={
-                "handler": handler_name,
+                "handler": adapter.name,
                 "event_type": event_type.__name__,
             },
         )
@@ -582,25 +525,25 @@ class RedisEventBus(TracingMixin, EventBus):
         Returns:
             True if the handler was found and removed, False otherwise
         """
-        handler_name = self._get_handler_name(handler)
+        target_adapter = HandlerAdapter(handler)
 
-        handlers = self._subscribers.get(event_type, [])
-        for i, (orig_handler, _) in enumerate(handlers):
-            if orig_handler is handler:
-                handlers.pop(i)
+        adapters = self._subscribers.get(event_type, [])
+        for i, adapter in enumerate(adapters):
+            if adapter == target_adapter:
+                adapters.pop(i)
                 logger.info(
-                    f"Unsubscribed handler {handler_name} from {event_type.__name__}",
+                    f"Unsubscribed handler {adapter.name} from {event_type.__name__}",
                     extra={
-                        "handler": handler_name,
+                        "handler": adapter.name,
                         "event_type": event_type.__name__,
                     },
                 )
                 return True
 
         logger.debug(
-            f"Handler {handler_name} not found for {event_type.__name__}",
+            f"Handler {target_adapter.name} not found for {event_type.__name__}",
             extra={
-                "handler": handler_name,
+                "handler": target_adapter.name,
                 "event_type": event_type.__name__,
             },
         )
@@ -630,14 +573,13 @@ class RedisEventBus(TracingMixin, EventBus):
         Args:
             handler: Handler that will receive all events
         """
-        wrapper = self._normalize_handler(handler)
-        handler_name = self._get_handler_name(handler)
+        adapter = HandlerAdapter(handler)
 
-        self._all_event_handlers.append(wrapper)
+        self._all_event_handlers.append(adapter)
 
         logger.info(
-            f"Registered wildcard handler {handler_name}",
-            extra={"handler": handler_name},
+            f"Registered wildcard handler {adapter.name}",
+            extra={"handler": adapter.name},
         )
 
     def unsubscribe_from_all_events(
@@ -653,20 +595,20 @@ class RedisEventBus(TracingMixin, EventBus):
         Returns:
             True if the handler was found and removed, False otherwise
         """
-        handler_name = self._get_handler_name(handler)
+        target_adapter = HandlerAdapter(handler)
 
-        for i, (orig_handler, _) in enumerate(self._all_event_handlers):
-            if orig_handler is handler:
+        for i, adapter in enumerate(self._all_event_handlers):
+            if adapter == target_adapter:
                 self._all_event_handlers.pop(i)
                 logger.info(
-                    f"Unsubscribed wildcard handler {handler_name}",
-                    extra={"handler": handler_name},
+                    f"Unsubscribed wildcard handler {adapter.name}",
+                    extra={"handler": adapter.name},
                 )
                 return True
 
         logger.debug(
-            f"Wildcard handler {handler_name} not found",
-            extra={"handler": handler_name},
+            f"Wildcard handler {target_adapter.name} not found",
+            extra={"handler": target_adapter.name},
         )
         return False
 
@@ -969,13 +911,12 @@ class RedisEventBus(TracingMixin, EventBus):
             },
         ):
             # Process handlers sequentially for ordering guarantees
-            for original_handler, async_handler in handlers:
-                await self._invoke_handler(original_handler, async_handler, event, message_id)
+            for adapter in handlers:
+                await self._invoke_handler(adapter, event, message_id)
 
     async def _invoke_handler(
         self,
-        original_handler: Any,
-        async_handler: Callable[[DomainEvent], Any],
+        adapter: HandlerAdapter,
         event: DomainEvent,
         message_id: str,
     ) -> None:
@@ -983,13 +924,10 @@ class RedisEventBus(TracingMixin, EventBus):
         Invoke a single handler with tracing support.
 
         Args:
-            original_handler: The original handler object
-            async_handler: The normalized async handler function
+            adapter: The HandlerAdapter wrapping the handler
             event: The event to handle
             message_id: Redis message ID for logging
         """
-        handler_name = self._get_handler_name(original_handler)
-
         # Trace handler execution with dynamic attributes and error recording
         with self._create_span_context(
             "eventsource.event_bus.handle",
@@ -997,18 +935,18 @@ class RedisEventBus(TracingMixin, EventBus):
                 ATTR_EVENT_TYPE: type(event).__name__,
                 ATTR_EVENT_ID: str(event.event_id),
                 ATTR_AGGREGATE_ID: str(event.aggregate_id),
-                ATTR_HANDLER_NAME: handler_name,
+                ATTR_HANDLER_NAME: adapter.name,
                 ATTR_MESSAGING_SYSTEM: "redis",
             },
         ) as span:
             try:
-                await async_handler(event)
+                await adapter.handle(event)
                 if span:
                     span.set_attribute(ATTR_HANDLER_SUCCESS, True)
                 logger.debug(
-                    f"Handler {handler_name} processed {event.event_type}",
+                    f"Handler {adapter.name} processed {event.event_type}",
                     extra={
-                        "handler": handler_name,
+                        "handler": adapter.name,
                         "event_type": event.event_type,
                         "event_id": str(event.event_id),
                     },
@@ -1019,10 +957,10 @@ class RedisEventBus(TracingMixin, EventBus):
                     span.record_exception(e)
                 self._stats.handler_errors += 1
                 logger.error(
-                    f"Handler {handler_name} failed: {e}",
+                    f"Handler {adapter.name} failed: {e}",
                     exc_info=True,
                     extra={
-                        "handler": handler_name,
+                        "handler": adapter.name,
                         "event_type": event.event_type,
                         "event_id": str(event.event_id),
                         "message_id": message_id,
