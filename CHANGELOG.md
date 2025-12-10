@@ -77,6 +77,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - `ShutdownCoordinator` with phased shutdown sequence
     - Configurable shutdown timeout
     - In-flight event completion before shutdown
+    - `FlowController.wait_for_drain()` for tracking in-flight events during shutdown
+    - `ShutdownReason` enum for tracking shutdown triggers (SIGNAL_SIGTERM, SIGNAL_SIGINT, PROGRAMMATIC, HEALTH_CHECK, TIMEOUT, DOUBLE_SIGNAL)
+    - Pre-shutdown hooks (`on_pre_shutdown()`) for cleanup before shutdown (e.g., load balancer deregistration)
+    - Post-shutdown hooks (`on_post_shutdown()`) for actions after shutdown completes
+    - Shutdown deadline support (`set_shutdown_deadline()`) for Kubernetes `terminationGracePeriodSeconds` compliance
+    - Periodic checkpoint saves during drain phase (`checkpoint_interval` parameter)
+    - Shutdown metrics with OpenTelemetry integration (`ShutdownMetricsSnapshot`)
+  - Multi-instance coordination (`eventsource.subscriptions.coordination`):
+    - `LeaderElector` protocol for distributed leadership election
+    - `LeaderElectorWithLease` extended protocol for lease-based leadership
+    - `InMemoryLeaderElector` implementation for single-instance and testing scenarios
+    - `WorkRedistributionCoordinator` for coordinating work handoff during shutdown
+    - `ShutdownNotification` and `HeartbeatMessage` for peer-to-peer coordination
+    - Support for graceful work redistribution when instances shut down
   - Event filtering (`eventsource.subscriptions.filtering`):
     - Filter events by type, aggregate, or custom predicates
   - Global position support in event stores:
@@ -134,6 +148,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `docs/examples/projections.md` now recommends SubscriptionManager over direct `event_bus.subscribe_all()`
   - `docs/examples/sqlite-usage.md` integration tests updated to use SubscriptionManager
 - Added comparison table showing benefits of SubscriptionManager vs direct EventBus subscription
+- Added Kubernetes deployment guide (`docs/guides/kubernetes-deployment.md`) covering:
+  - Pod lifecycle integration and graceful shutdown
+  - Health probe configuration (liveness, readiness, startup)
+  - `terminationGracePeriodSeconds` configuration with shutdown deadline
+  - Example Deployment, Service, and PodDisruptionBudget manifests
+  - Spot instance and preemptible VM considerations (AWS, GCP, Azure)
+  - Shutdown metrics and observability
+  - Troubleshooting guide for common Kubernetes issues
 
 ### Tests
 
@@ -144,6 +166,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Health check and metrics tests
   - Pause/resume functionality tests
   - Backpressure and flow control tests
+  - Drain functionality tests (`test_drain.py`) for shutdown coordination
+  - Coordination protocol tests (`test_coordination.py`) for leader election and work redistribution
+  - Shutdown tests for pre/post hooks, deadline, metrics, and reason tracking
 
 ## [0.2.0] - 2025-12-08
 
