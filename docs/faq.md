@@ -48,14 +48,19 @@ The library follows Python best practices with clean abstractions that work well
 | `SQLiteEventStore` | Lightweight deployments | `pip install eventsource-py[sqlite]` |
 | `PostgreSQLEventStore` | Production | `pip install eventsource-py[postgresql]` |
 
-**Event Bus:**
+**Event Buses:**
 
 | Backend | Use Case | Installation |
 |---------|----------|--------------|
-| `InMemoryEventBus` | Single-process | Included |
+| `InMemoryEventBus` | Development, testing, single-process | Included |
 | `RedisEventBus` | Distributed systems | `pip install eventsource-py[redis]` |
+| `RabbitMQEventBus` | Enterprise messaging | `pip install eventsource-py[rabbitmq]` |
+| `KafkaEventBus` | High-throughput streaming | `pip install eventsource-py[kafka]` |
 
-PostgreSQL is the recommended production database. The library uses async SQLAlchemy with asyncpg for optimal performance.
+PostgreSQL is the recommended production event store. For distributed deployments, choose an event bus based on your infrastructure:
+- **Redis**: Simple setup, good for Redis-native environments
+- **RabbitMQ**: Traditional message broker with advanced routing
+- **Kafka**: Highest throughput, best for event streaming at scale
 
 ### Is eventsource-py production-ready?
 
@@ -86,11 +91,16 @@ pip install eventsource-py[postgresql]
 # With SQLite support
 pip install eventsource-py[sqlite]
 
-# With Redis event bus
-pip install eventsource-py[redis]
+# Event bus options
+pip install eventsource-py[redis]      # Redis Streams
+pip install eventsource-py[rabbitmq]   # RabbitMQ/AMQP
+pip install eventsource-py[kafka]      # Apache Kafka
 
 # With OpenTelemetry tracing
 pip install eventsource-py[telemetry]
+
+# Kafka with Schema Registry support
+pip install eventsource-py[kafka-schema-registry]
 
 # All optional dependencies
 pip install eventsource-py[all]
@@ -508,6 +518,83 @@ config = RedisEventBusConfig(
     consumer_name="worker-1",  # Unique per instance
 )
 bus = RedisEventBus(config)
+```
+
+**RabbitMQ event bus** with consumer groups:
+
+```python
+from eventsource.bus.rabbitmq import RabbitMQEventBus, RabbitMQEventBusConfig
+
+config = RabbitMQEventBusConfig(
+    rabbitmq_url="amqp://guest:guest@localhost:5672/",
+    exchange_name="events",
+    exchange_type="topic",  # or "direct", "fanout", "headers"
+    consumer_group="projection-workers",
+    prefetch_count=10,
+    enable_dlq=True,
+)
+bus = RabbitMQEventBus(config=config)
+```
+
+**Kafka event bus** with consumer groups:
+
+```python
+from eventsource.bus.kafka import KafkaEventBus, KafkaEventBusConfig
+
+config = KafkaEventBusConfig(
+    bootstrap_servers="localhost:9092",
+    topic_prefix="events",
+    consumer_group="projection-workers",
+    enable_metrics=True,  # OpenTelemetry metrics
+)
+bus = KafkaEventBus(config=config)
+```
+
+### Which event bus should I choose?
+
+| Scenario | Recommended Bus | Why |
+|----------|-----------------|-----|
+| Development/Testing | `InMemoryEventBus` | No external dependencies |
+| Simple distributed | `RedisEventBus` | Minimal setup if you already use Redis |
+| Enterprise messaging | `RabbitMQEventBus` | Advanced routing, mature ecosystem |
+| High throughput | `KafkaEventBus` | Designed for event streaming at scale |
+
+**Key differences:**
+
+- **InMemoryEventBus**: Events lost on process restart. No distribution.
+- **RedisEventBus**: Uses Redis Streams with consumer groups. At-least-once delivery.
+- **RabbitMQEventBus**: AMQP protocol with exchange types (topic, direct, fanout, headers).
+- **KafkaEventBus**: Partition-based ordering by aggregate_id, comprehensive metrics.
+
+All distributed buses support:
+- Dead letter queues (DLQ)
+- At-least-once delivery guarantees
+- OpenTelemetry tracing
+- Horizontal scaling via consumer groups
+
+### What delivery guarantees do event buses provide?
+
+All distributed event buses (Redis, RabbitMQ, Kafka) provide **at-least-once** delivery semantics:
+
+- Events may be processed multiple times in failure scenarios
+- Handlers should be **idempotent** to handle duplicate deliveries
+- **Exactly-once semantics are NOT supported** out of the box
+
+For stronger consistency, consider:
+1. **Transactional Outbox Pattern**: Store events atomically with domain changes
+2. **Idempotency keys**: Use `event_id` to deduplicate in handlers
+3. **Saga/Compensation patterns**: Design for eventual consistency
+
+```python
+# Example idempotent handler
+@handles(OrderCreated)
+async def _on_order_created(self, event: OrderCreated) -> None:
+    # Check if already processed using event_id
+    if await self._db.event_processed(event.event_id):
+        return  # Skip duplicate
+
+    await self._db.create_order(event)
+    await self._db.mark_event_processed(event.event_id)
 ```
 
 ### What monitoring should I set up?
