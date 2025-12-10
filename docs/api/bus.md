@@ -147,6 +147,13 @@ projection = OrderProjection()
 event_bus.subscribe_all(projection)  # Subscribes to all declared types
 ```
 
+> **💡 Recommended:** For production projections, use [`SubscriptionManager`](subscriptions.md) instead of direct `subscribe_all()`. It provides:
+> - Historical event catch-up from the event store
+> - Checkpoint tracking for resumable processing
+> - Health monitoring and graceful shutdown
+>
+> See the [Subscriptions Guide](../guides/subscriptions.md) for details.
+
 ### EventHandlerFunc
 
 Type alias for function-based handlers:

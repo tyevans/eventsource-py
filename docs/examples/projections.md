@@ -588,50 +588,84 @@ async def setup_projection():
 
 ---
 
-## Integrating with Event Bus
+## Integrating with SubscriptionManager (Recommended)
 
-Projections typically subscribe to an event bus for real-time updates:
+For production use, use `SubscriptionManager` to coordinate catch-up subscriptions (historical events) with live subscriptions (real-time events). This ensures projections receive all events, including those that occurred before the projection was started.
 
 ```python
-from eventsource import InMemoryEventBus, InMemoryEventStore, AggregateRepository
+from eventsource import (
+    InMemoryEventBus,
+    InMemoryEventStore,
+    InMemoryCheckpointRepository,
+    AggregateRepository,
+)
+from eventsource.subscriptions import SubscriptionManager, SubscriptionConfig
 
 async def setup_system():
     # Infrastructure
     event_store = InMemoryEventStore()
     event_bus = InMemoryEventBus()
+    checkpoint_repo = InMemoryCheckpointRepository()
+
+    # Create SubscriptionManager - coordinates catch-up and live events
+    manager = SubscriptionManager(
+        event_store=event_store,
+        event_bus=event_bus,
+        checkpoint_repo=checkpoint_repo,
+    )
 
     # Projections
     order_summary = OrderSummaryProjection()
     customer_stats = CustomerStatsProjection()
 
-    # Subscribe projections to event bus
-    # subscribe_all sends all events to the projection
-    event_bus.subscribe_all(order_summary)
-    event_bus.subscribe_all(customer_stats)
+    # Subscribe projections via SubscriptionManager
+    # start_from="beginning" ensures all historical events are processed
+    config = SubscriptionConfig(start_from="beginning", batch_size=100)
+    await manager.subscribe(order_summary, config=config, name="OrderSummary")
+    await manager.subscribe(customer_stats, config=config, name="CustomerStats")
+
+    # Start the manager (begins catch-up, then transitions to live)
+    await manager.start()
 
     # Repository publishes events to bus after saving
     repo = AggregateRepository(
         event_store=event_store,
         aggregate_factory=OrderAggregate,
         aggregate_type="Order",
-        event_publisher=event_bus,  # Events go here after save
+        event_publisher=event_bus,
     )
 
-    return repo, order_summary, customer_stats
+    return repo, manager, order_summary, customer_stats
 
 
 async def demo():
-    repo, order_summary, customer_stats = await setup_system()
+    repo, manager, order_summary, customer_stats = await setup_system()
 
-    # Create an order - events automatically flow to projections
+    # Create an order - events flow to projections via SubscriptionManager
     order_id = uuid4()
     order = repo.create_new(order_id)
     order.create(customer_id=uuid4(), total_amount=150.00)
-    await repo.save(order)  # Publishes OrderCreated to event bus
+    await repo.save(order)
 
-    # Projections are now updated
+    # Projections are updated with both historical and live events
     print(f"Orders in projection: {len(order_summary.orders)}")
+
+    # When done, stop gracefully (saves checkpoints)
+    await manager.stop()
 ```
+
+**Why use SubscriptionManager instead of direct EventBus subscription?**
+
+| Feature | `event_bus.subscribe_all()` | `SubscriptionManager` |
+|---------|-----------------------------|-----------------------|
+| Live events | ✅ | ✅ |
+| Historical catch-up | ❌ | ✅ |
+| Checkpoint tracking | ❌ | ✅ |
+| Resumable after restart | ❌ | ✅ |
+| Graceful shutdown | ❌ | ✅ |
+| Health monitoring | ❌ | ✅ |
+
+See the [Subscriptions Guide](../guides/subscriptions.md) for comprehensive documentation.
 
 ---
 
