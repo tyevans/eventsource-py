@@ -1,270 +1,203 @@
 # eventsource-py
 
-[![Python Version](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![PyPI version](https://img.shields.io/pypi/v/eventsource-py.svg)](https://pypi.org/project/eventsource-py/)
+[![Python Version](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![CI](https://github.com/tyevans/eventsource-py/actions/workflows/ci.yml/badge.svg)](https://github.com/tyevans/eventsource-py/actions)
-[![Documentation](https://img.shields.io/badge/docs-GitHub%20Pages-blue.svg)](https://tyevans.github.io/eventsource-py)
-[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
-A production-ready event sourcing library for Python 3.11+.
+**Stop losing data. Start capturing history.**
 
-## Features
+Traditional databases overwrite state on every update. Event sourcing captures *what happened* as a sequence of immutable events, giving you:
 
-- **Event Store** - PostgreSQL, SQLite, and In-Memory backends with optimistic locking
-- **Domain Events** - Immutable event classes with Pydantic validation and versioning
-- **Event Registry** - Thread-safe event type registration for serialization/deserialization
-- **Aggregate Pattern** - Base classes for event-sourced aggregates with state reconstruction
-- **Repository Pattern** - Clean abstractions for loading and saving aggregates
-- **Aggregate Snapshotting** - Optimize load performance for long-lived aggregates
-- **Projection System** - Checkpoint tracking, retry logic, and dead letter queue support
-- **Event Bus** - In-Memory, Redis Streams, RabbitMQ, and Kafka backends for event distribution
-- **Transactional Outbox** - Reliable event publishing pattern
-- **Multi-tenancy** - Built-in tenant isolation support
-- **Observability** - Optional OpenTelemetry integration
+- **Complete audit trail** - Know exactly what changed, when, and why
+- **Time travel** - Reconstruct state at any point in history
+- **Multiple views** - Build different read models from the same events
+- **Reliable debugging** - Replay events to reproduce any bug
 
-## Installation
-
-### Basic Installation
+eventsource-py makes this practical for Python applications with a clean, async-first API.
 
 ```bash
 pip install eventsource-py
 ```
 
-### With Optional Dependencies
-
-eventsource uses optional dependencies to keep the core package lightweight. Install only what you need:
-
-```bash
-# PostgreSQL support - production event store with asyncpg
-pip install eventsource-py[postgresql]
-
-# SQLite support - lightweight deployments
-pip install eventsource-py[sqlite]
-
-# Redis support - distributed event bus with Redis Streams
-pip install eventsource-py[redis]
-
-# RabbitMQ support - distributed event bus with RabbitMQ
-pip install eventsource-py[rabbitmq]
-
-# Kafka support - distributed event bus with Apache Kafka
-pip install eventsource-py[kafka]
-
-# Telemetry support - OpenTelemetry tracing integration
-pip install eventsource-py[telemetry]
-
-# All optional dependencies
-pip install eventsource-py[all]
-
-# Multiple extras
-pip install eventsource-py[postgresql,redis,telemetry]
-```
-
-| Extra | Enables | Dependencies |
-|-------|---------|--------------|
-| `postgresql` | `PostgreSQLEventStore`, checkpoint/outbox/DLQ repositories | asyncpg |
-| `sqlite` | `SQLiteEventStore` for lightweight deployments | aiosqlite |
-| `redis` | `RedisEventBus` with consumer groups and DLQ | redis |
-| `rabbitmq` | `RabbitMQEventBus` with exchange routing and DLQ | aio-pika |
-| `kafka` | `KafkaEventBus` with consumer groups, DLQ, and tracing | aiokafka |
-| `telemetry` | Distributed tracing for event operations | opentelemetry-api, opentelemetry-sdk |
-| `all` | All of the above | All of the above |
-| `dev` | Development tools | pytest, mypy, ruff, pre-commit |
-
-For detailed installation instructions, troubleshooting, and version compatibility, see the [Installation Guide](docs/installation.md).
-
-## Requirements
-
-- Python 3.11+
-- pydantic >= 2.0
-- sqlalchemy >= 2.0
-
 ## Quick Start
 
-### 1. Define Your Events
-
 ```python
-from uuid import UUID
-from eventsource import DomainEvent, register_event
+import asyncio
+from uuid import UUID, uuid4
+from pydantic import BaseModel
+from eventsource import (
+    DomainEvent, register_event, AggregateRoot, AggregateRepository,
+    InMemoryEventStore, InMemoryEventBus, InMemoryCheckpointRepository,
+)
+from eventsource.subscriptions import SubscriptionManager, SubscriptionConfig
 
+# 1. Define events - immutable facts that capture what happened
 @register_event
-class OrderCreated(DomainEvent):
-    """Event emitted when an order is created."""
-    event_type: str = "OrderCreated"
+class OrderPlaced(DomainEvent):
+    event_type: str = "OrderPlaced"
     aggregate_type: str = "Order"
     customer_id: UUID
-    total_amount: float
+    total: float
 
 @register_event
 class OrderShipped(DomainEvent):
-    """Event emitted when an order is shipped."""
     event_type: str = "OrderShipped"
     aggregate_type: str = "Order"
     tracking_number: str
-```
 
-### 2. Define Your Aggregate State
-
-```python
-from pydantic import BaseModel
-
+# 2. Define aggregate state and business logic
 class OrderState(BaseModel):
-    """State of an Order aggregate."""
     order_id: UUID
     customer_id: UUID | None = None
-    total_amount: float = 0.0
+    total: float = 0.0
     status: str = "draft"
-    tracking_number: str | None = None
-```
 
-### 3. Create Your Aggregate
-
-```python
-from eventsource import AggregateRoot
-
-class OrderAggregate(AggregateRoot[OrderState]):
-    """Event-sourced Order aggregate."""
+class Order(AggregateRoot[OrderState]):
     aggregate_type = "Order"
 
     def _get_initial_state(self) -> OrderState:
         return OrderState(order_id=self.aggregate_id)
 
     def _apply(self, event: DomainEvent) -> None:
-        if isinstance(event, OrderCreated):
-            self._state = OrderState(
-                order_id=self.aggregate_id,
-                customer_id=event.customer_id,
-                total_amount=event.total_amount,
-                status="created",
-            )
-        elif isinstance(event, OrderShipped):
-            if self._state:
-                self._state = self._state.model_copy(
-                    update={
-                        "status": "shipped",
-                        "tracking_number": event.tracking_number,
-                    }
+        match event:
+            case OrderPlaced():
+                self._state = OrderState(
+                    order_id=self.aggregate_id,
+                    customer_id=event.customer_id,
+                    total=event.total,
+                    status="placed",
                 )
+            case OrderShipped():
+                self._state = self._state.model_copy(update={"status": "shipped"})
 
-    def create(self, customer_id: UUID, total_amount: float) -> None:
-        """Command: Create the order."""
+    def place(self, customer_id: UUID, total: float) -> None:
         if self.version > 0:
-            raise ValueError("Order already created")
-
-        event = OrderCreated(
+            raise ValueError("Order already placed")
+        self.apply_event(OrderPlaced(
             aggregate_id=self.aggregate_id,
             customer_id=customer_id,
-            total_amount=total_amount,
+            total=total,
             aggregate_version=self.get_next_version(),
-        )
-        self.apply_event(event)
+        ))
 
     def ship(self, tracking_number: str) -> None:
-        """Command: Ship the order."""
-        if not self.state or self.state.status != "created":
-            raise ValueError("Order must be created before shipping")
-
-        event = OrderShipped(
+        if self.state.status != "placed":
+            raise ValueError("Order must be placed before shipping")
+        self.apply_event(OrderShipped(
             aggregate_id=self.aggregate_id,
             tracking_number=tracking_number,
             aggregate_version=self.get_next_version(),
-        )
-        self.apply_event(event)
-```
+        ))
 
-### 4. Use the Repository
+# 3. Define a projection - build read models from the event stream
+class SalesReport:
+    """Read model that tracks sales metrics from events."""
+    def __init__(self):
+        self.total_revenue = 0.0
+        self.orders_placed = 0
+        self.orders_shipped = 0
 
-```python
-import asyncio
-from uuid import uuid4
-from eventsource import InMemoryEventStore, AggregateRepository
+    def subscribed_to(self) -> list[type[DomainEvent]]:
+        return [OrderPlaced, OrderShipped]
 
+    async def handle(self, event: DomainEvent) -> None:
+        match event:
+            case OrderPlaced():
+                self.total_revenue += event.total
+                self.orders_placed += 1
+            case OrderShipped():
+                self.orders_shipped += 1
+
+# 4. Wire it together
 async def main():
-    # Set up event store and repository
-    event_store = InMemoryEventStore()
+    # Infrastructure
+    store = InMemoryEventStore()
+    bus = InMemoryEventBus()
     repo = AggregateRepository(
-        event_store=event_store,
-        aggregate_factory=OrderAggregate,
+        event_store=store,
+        aggregate_factory=Order,
         aggregate_type="Order",
+        event_publisher=bus,  # Publishes events to the bus after saving
     )
 
-    # Create and save a new order
-    order_id = uuid4()
-    order = repo.create_new(order_id)
-    order.create(customer_id=uuid4(), total_amount=99.99)
-    await repo.save(order)
+    # Set up subscription manager with our projection
+    manager = SubscriptionManager(store, bus, InMemoryCheckpointRepository())
+    report = SalesReport()
+    await manager.subscribe(report, SubscriptionConfig(start_from="beginning"), name="SalesReport")
+    await manager.start()
 
-    # Load the order and ship it
-    loaded_order = await repo.load(order_id)
-    loaded_order.ship(tracking_number="TRACK-123")
-    await repo.save(loaded_order)
+    # Create some orders
+    for i in range(3):
+        order = repo.create_new(uuid4())
+        order.place(customer_id=uuid4(), total=100.0 * (i + 1))
+        await repo.save(order)
 
-    # Verify the state
-    final_order = await repo.load(order_id)
-    print(f"Order status: {final_order.state.status}")
-    print(f"Tracking: {final_order.state.tracking_number}")
+        if i == 0:  # Ship the first order
+            order.ship(tracking_number="TRACK-001")
+            await repo.save(order)
+
+    await asyncio.sleep(0.1)  # Let events propagate
+
+    # The projection built a read model from the event stream
+    print(f"Revenue: ${report.total_revenue}")      # Revenue: $600.0
+    print(f"Orders placed: {report.orders_placed}")  # Orders placed: 3
+    print(f"Orders shipped: {report.orders_shipped}")  # Orders shipped: 1
+
+    # Events are the source of truth - reload aggregate from its event history
+    order = await repo.load(order.aggregate_id)
+    print(f"Order status: {order.state.status}")  # Order status: shipped
+    print(f"Order version: {order.version}")      # Order version: 2 (placed + shipped)
+
+    await manager.stop()
 
 asyncio.run(main())
 ```
 
-## Architecture
+## Production Ready
 
-```
-+-------------------+     +-------------------+     +-------------------+
-|                   |     |                   |     |                   |
-|    Commands       |---->|    Aggregates     |---->|   Event Store     |
-|                   |     |                   |     |                   |
-+-------------------+     +-------------------+     +--------+----------+
-                                                             |
-                                                             v
-+-------------------+     +-------------------+     +-------------------+
-|                   |     |                   |     |                   |
-|   Read Models     |<----|   Projections     |<----|   Event Bus       |
-|                   |     |                   |     |                   |
-+-------------------+     +-------------------+     +-------------------+
+Swap in production backends when you're ready to deploy:
+
+| Component | Development | Production |
+|-----------|-------------|------------|
+| Event Store | `InMemoryEventStore` | `PostgreSQLEventStore`, `SQLiteEventStore` |
+| Event Bus | `InMemoryEventBus` | `RedisEventBus`, `RabbitMQEventBus`, `KafkaEventBus` |
+| Checkpoints | `InMemoryCheckpointRepository` | `PostgreSQLCheckpointRepository` |
+
+```bash
+# Add PostgreSQL + Redis for production
+pip install eventsource-py[postgresql,redis]
 ```
 
-### Core Concepts
+<details>
+<summary>All installation options</summary>
 
-- **Events** - Immutable facts that capture state changes. Events are never deleted or modified.
-- **Event Store** - Persists events with ordering and optimistic locking guarantees.
-- **Aggregates** - Consistency boundaries that reconstruct state from event streams.
-- **Repository** - Abstracts loading/saving aggregates from/to the event store.
-- **Projections** - Build read-optimized views from event streams.
-- **Event Bus** - Distributes events to subscribers for async processing. Supports In-Memory, Redis, RabbitMQ, and Kafka backends.
+```bash
+pip install eventsource-py[postgresql]  # PostgreSQL event store
+pip install eventsource-py[sqlite]      # SQLite event store
+pip install eventsource-py[redis]       # Redis event bus
+pip install eventsource-py[rabbitmq]    # RabbitMQ event bus
+pip install eventsource-py[kafka]       # Kafka event bus
+pip install eventsource-py[telemetry]   # OpenTelemetry tracing
+pip install eventsource-py[all]         # Everything
+```
+
+</details>
+
+## Features
+
+- **Event Stores** - PostgreSQL, SQLite, In-Memory with optimistic concurrency
+- **Event Bus** - Redis Streams, RabbitMQ, Kafka, In-Memory with consumer groups
+- **Subscriptions** - Catch-up from history, live events, checkpointing, graceful shutdown
+- **Projections** - Declarative handlers, retry logic, dead letter queues
+- **Snapshots** - Optimize aggregate loading for long event streams
+- **Multi-tenancy** - Built-in tenant isolation
+- **Observability** - OpenTelemetry integration
 
 ## Documentation
 
-📚 **[Full Documentation](https://tyevans.github.io/eventsource-py)**
-
-- [Getting Started Guide](https://tyevans.github.io/eventsource-py/getting-started/) - Installation and first steps
-- [Architecture Overview](https://tyevans.github.io/eventsource-py/architecture/) - System design and concepts
-- [API Reference](https://tyevans.github.io/eventsource-py/api/) - Complete API documentation
-- [FAQ](https://tyevans.github.io/eventsource-py/faq/) - Frequently asked questions
-
-## Development
-
-```bash
-# Install in development mode
-pip install -e ".[dev]"
-
-# Run tests
-pytest
-
-# Run tests with coverage
-pytest --cov=eventsource --cov-report=html
-
-# Run type checking
-mypy src/eventsource
-
-# Run linting
-ruff check src/eventsource
-
-# Format code
-ruff format src/eventsource
-```
+**[Full Documentation](https://tyevans.github.io/eventsource-py)** - Guides, examples, and API reference
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT
