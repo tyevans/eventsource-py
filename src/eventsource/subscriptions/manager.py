@@ -32,6 +32,7 @@ Error Handling:
     >>> manager.on_critical_error(send_pager_alert)
 """
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -624,11 +625,113 @@ class SubscriptionManager(TracingMixin):
         """
         Drain in-flight events from all subscriptions.
 
+        Waits for all active event handlers to complete, up to drain_timeout.
+        Each subscription's FlowController is queried for in-flight events,
+        and we wait for them to complete or timeout.
+
         Returns:
-            Number of events drained
+            Number of events that were in-flight at drain start.
+            This helps track how many events were being processed when
+            shutdown was initiated.
         """
-        logger.info("Draining in-flight events")
-        return 0
+        total_in_flight = 0
+        drain_tasks: list[tuple[str, asyncio.Task[int]]] = []
+
+        # Collect all FlowControllers and their current in-flight counts
+        for name, coordinator in self._lifecycle.coordinators.items():
+            flow_controller = coordinator.flow_controller
+            if flow_controller is None:
+                logger.debug(
+                    "No flow controller for subscription",
+                    extra={"subscription": name},
+                )
+                continue
+
+            in_flight = flow_controller.in_flight
+            total_in_flight += in_flight
+
+            if in_flight > 0:
+                logger.info(
+                    "Draining in-flight events for subscription",
+                    extra={
+                        "subscription": name,
+                        "in_flight_count": in_flight,
+                    },
+                )
+
+                # Create drain task with timeout from shutdown coordinator
+                drain_task = asyncio.create_task(
+                    flow_controller.wait_for_drain(self._shutdown_coordinator.drain_timeout),
+                    name=f"drain-{name}",
+                )
+                drain_tasks.append((name, drain_task))
+
+        logger.info(
+            "Draining in-flight events",
+            extra={
+                "total_in_flight": total_in_flight,
+                "subscriptions_with_events": len(drain_tasks),
+            },
+        )
+
+        if not drain_tasks:
+            return total_in_flight
+
+        # Wait for all drain tasks to complete
+        try:
+            results = await asyncio.gather(
+                *(task for _, task in drain_tasks),
+                return_exceptions=True,
+            )
+
+            # Log results per subscription
+            total_remaining = 0
+            for (name, _), result in zip(drain_tasks, results, strict=True):
+                if isinstance(result, BaseException):
+                    logger.error(
+                        "Drain task failed",
+                        extra={
+                            "subscription": name,
+                            "error": str(result),
+                        },
+                    )
+                elif result > 0:
+                    total_remaining += result
+                    logger.warning(
+                        "Subscription did not fully drain",
+                        extra={
+                            "subscription": name,
+                            "remaining_events": result,
+                        },
+                    )
+                else:
+                    logger.debug(
+                        "Subscription drained successfully",
+                        extra={"subscription": name},
+                    )
+
+            if total_remaining > 0:
+                logger.warning(
+                    "Some events did not drain before timeout",
+                    extra={
+                        "total_remaining": total_remaining,
+                        "drain_timeout": self._shutdown_coordinator.drain_timeout,
+                    },
+                )
+            else:
+                logger.info(
+                    "All events drained successfully",
+                    extra={"total_drained": total_in_flight},
+                )
+
+        except Exception as e:
+            logger.error(
+                "Error during drain phase",
+                extra={"error": str(e)},
+                exc_info=True,
+            )
+
+        return total_in_flight
 
     async def _save_final_checkpoints(self) -> int:
         """

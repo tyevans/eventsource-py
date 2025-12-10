@@ -370,17 +370,17 @@ class TestPostgreSQLDLQRepositoryStatistics:
         counts = await postgres_dlq_repo.get_projection_failure_counts()
 
         # Should be sorted by failure count descending
-        high = next((c for c in counts if c["projection_name"] == "HighFailure"), None)
-        low = next((c for c in counts if c["projection_name"] == "LowFailure"), None)
+        high = next((c for c in counts if c.projection_name == "HighFailure"), None)
+        low = next((c for c in counts if c.projection_name == "LowFailure"), None)
 
         assert high is not None
-        assert high["failure_count"] == 3
+        assert high.failure_count == 3
         assert low is not None
-        assert low["failure_count"] == 1
+        assert low.failure_count == 1
 
         # High should come before low in results
-        high_idx = next(i for i, c in enumerate(counts) if c["projection_name"] == "HighFailure")
-        low_idx = next(i for i, c in enumerate(counts) if c["projection_name"] == "LowFailure")
+        high_idx = next(i for i, c in enumerate(counts) if c.projection_name == "HighFailure")
+        low_idx = next(i for i, c in enumerate(counts) if c.projection_name == "LowFailure")
         assert high_idx < low_idx
 
 
