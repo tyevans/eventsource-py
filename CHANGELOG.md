@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Multi-Tenant Live Migration** - Zero-downtime tenant migration between event stores (`eventsource.migration`)
+  - `MigrationCoordinator` orchestrating full migration lifecycle with pause/resume/abort controls
+  - `BulkCopier` for streaming historical event migration with checkpointing and configurable batch sizes
+  - `DualWriteInterceptor` for simultaneous writes to source and target stores during migration
+  - `CutoverManager` for sub-100ms atomic tenant routing switch with rollback capability
+  - `ConsistencyVerifier` for data integrity validation with COUNT, HASH, and FULL verification modes
+  - `SubscriptionMigrator` for checkpoint position translation between stores
+  - `TenantStoreRouter` for tenant-aware read/write routing during and after migration
+  - `WritePauseManager` for coordinated write pausing during cutover
+  - `SyncLagTracker` for monitoring replication lag between stores
+  - Real-time status streaming via `StatusStreamer` for migration monitoring
+  - Position mapping for checkpoint translation between source and target stores
+  - Comprehensive error classification with retry policies and circuit breaker pattern
+  - Audit logging for all migration operations
+  - OpenTelemetry metrics integration (`eventsource.migration.metrics`)
+- **PostgreSQL Advisory Locks** - Distributed locking for migration coordination (`eventsource.locks`)
+  - `PostgreSQLAdvisoryLock` for session-level and transaction-level advisory locks
+  - Lock context managers for safe acquisition and release
+  - Lock timeout and retry configuration
+- **Migration Exceptions** - Comprehensive exception hierarchy (`eventsource.migration.exceptions`)
+  - `MigrationError`, `MigrationStateError`, `MigrationNotFoundError`
+  - `BulkCopyError`, `DualWriteError`, `CutoverError`
+  - `ConsistencyError`, `RoutingError`, `LockError`
+  - Error classification with `ErrorCategory` and `ErrorSeverity` enums
+- **Migration Documentation** - Comprehensive guides in `docs/migration/`:
+  - Architecture overview and component documentation
+  - Step-by-step migration guide
+  - API reference for all migration components
+  - Operational runbooks and troubleshooting guides
+  - Monitoring and alerting setup
+
 - **Subscription Tracing** - OpenTelemetry tracing for all subscription components
   - `SubscriptionManager` tracing for subscription lifecycle operations:
     - `subscribe`, `unsubscribe`, `start_subscription`, `stop`, `stop_subscription`
@@ -159,6 +190,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
+- Added comprehensive migration test suite (~950 new tests):
+  - Unit tests for all migration components (`tests/unit/migration/`)
+  - Integration tests for PostgreSQL locks and migration schema
+  - Chaos tests for failure scenarios and recovery
+  - Load testing benchmarks for performance validation
+  - Phase integration tests for bulk copy, dual write, and cutover
 - Added comprehensive subscription manager test suite:
   - Unit tests for all subscription components (`tests/unit/subscriptions/`)
   - Integration tests for catch-up, live, and transition flows (`tests/integration/subscriptions/`)

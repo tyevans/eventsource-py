@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Literal
+from uuid import UUID
 
 if TYPE_CHECKING:
     from eventsource.events.base import DomainEvent
@@ -61,6 +62,10 @@ class SubscriptionConfig:
         shutdown_timeout: Max seconds to wait during graceful shutdown
         event_types: Event types to filter (None = all types)
         aggregate_types: Aggregate types to filter (None = all types)
+        tenant_id: Tenant ID to filter events by (None = all tenants).
+            When specified, only events belonging to the specified tenant
+            are processed. Useful for tenant-specific migrations and
+            multi-tenant event streaming scenarios.
         continue_on_error: Whether to continue after DLQ'd events
 
     Example:
@@ -69,6 +74,13 @@ class SubscriptionConfig:
         ...     batch_size=500,
         ...     max_in_flight=2000,
         ...     backpressure_threshold=0.8,
+        ... )
+        >>>
+        >>> # Tenant-scoped subscription for multi-tenant migration
+        >>> from uuid import UUID
+        >>> tenant_config = SubscriptionConfig(
+        ...     tenant_id=UUID("12345678-1234-5678-1234-567812345678"),
+        ...     start_from="beginning",
         ... )
     """
 
@@ -93,6 +105,7 @@ class SubscriptionConfig:
     # Filtering (optional)
     event_types: tuple[type[DomainEvent], ...] | None = None
     aggregate_types: tuple[str, ...] | None = None
+    tenant_id: UUID | None = None
 
     # Error handling
     continue_on_error: bool = True
