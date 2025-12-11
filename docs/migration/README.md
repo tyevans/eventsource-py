@@ -121,4 +121,4 @@ await coordinator.initiate_cutover(migration_id)
 For issues or questions:
 1. Check the [Troubleshooting Guide](./troubleshooting.md)
 2. Review logs with migration_id filter
-3. Check the [task documentation](../tasks/multi-tenant-live-migration/)
+3. Check the [task documentation](../tasks/multi-tenant-live-migration/_index.md)
