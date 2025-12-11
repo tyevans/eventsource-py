@@ -177,13 +177,13 @@ class LiveRunner(TracingMixin):
                 if self._metrics:
                     self._metrics.record_state("live")
 
-            logger.info(
-                "Live runner started",
-                extra={
-                    "subscription": self.subscription.name,
-                    "buffer_enabled": buffer_events,
-                },
-            )
+            log_extra: dict[str, object] = {
+                "subscription": self.subscription.name,
+                "buffer_enabled": buffer_events,
+            }
+            if self.config.tenant_id:
+                log_extra["tenant_id"] = str(self.config.tenant_id)
+            logger.info("Live runner started", extra=log_extra)
 
     def _subscribe_to_bus(self) -> None:
         """Subscribe to the event bus with our internal handler."""

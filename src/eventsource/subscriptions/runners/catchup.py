@@ -185,16 +185,16 @@ class CatchUpRunner(TracingMixin):
             self._last_checkpoint_time = time.monotonic()
             total_processed = 0
 
-            logger.info(
-                "Starting catch-up",
-                extra={
-                    "subscription": self.subscription.name,
-                    "from_position": start_position,
-                    "to_position": target_position,
-                    "batch_size": self.config.batch_size,
-                    "checkpoint_strategy": self.config.checkpoint_strategy.value,
-                },
-            )
+            log_extra: dict[str, object] = {
+                "subscription": self.subscription.name,
+                "from_position": start_position,
+                "to_position": target_position,
+                "batch_size": self.config.batch_size,
+                "checkpoint_strategy": self.config.checkpoint_strategy.value,
+            }
+            if self.config.tenant_id:
+                log_extra["tenant_id"] = str(self.config.tenant_id)
+            logger.info("Starting catch-up", extra=log_extra)
 
             try:
                 # Transition to CATCHING_UP state
@@ -385,6 +385,7 @@ class CatchUpRunner(TracingMixin):
             direction=ReadDirection.FORWARD,
             from_position=from_position,
             limit=limit,
+            tenant_id=self.config.tenant_id,
         )
 
         async def read_batch() -> list[StoredEvent]:

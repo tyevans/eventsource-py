@@ -48,6 +48,7 @@ SchemaName = Literal[
     "checkpoints",
     "dlq",
     "snapshots",
+    "migration",
     "all",
 ]
 
@@ -302,6 +303,7 @@ OUTBOX_SCHEMA = "outbox"
 CHECKPOINTS_SCHEMA = "checkpoints"
 DLQ_SCHEMA = "dlq"
 SNAPSHOTS_SCHEMA = "snapshots"
+MIGRATION_SCHEMA = "migration"
 
 __all__ = [
     "get_schema",
@@ -317,6 +319,7 @@ __all__ = [
     "CHECKPOINTS_SCHEMA",
     "DLQ_SCHEMA",
     "SNAPSHOTS_SCHEMA",
+    "MIGRATION_SCHEMA",
     "SchemaName",
     "BackendName",
 ]

@@ -32,6 +32,7 @@ import fnmatch
 import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 if TYPE_CHECKING:
     from eventsource.events.base import DomainEvent
@@ -95,12 +96,13 @@ class FilterStats:
 @dataclass
 class EventFilter:
     """
-    Filters events based on type and aggregate criteria.
+    Filters events based on type, aggregate, and tenant criteria.
 
     The EventFilter supports:
     - Exact event type matching via event type classes
     - Pattern matching on event type names (e.g., "Order*")
     - Aggregate type filtering
+    - Tenant ID filtering for multi-tenant systems
 
     Pattern matching uses fnmatch-style patterns:
     - "*" matches everything
@@ -114,6 +116,10 @@ class EventFilter:
         event_types: Exact event type classes to match (optional)
         event_type_patterns: Wildcard patterns for event type names (optional)
         aggregate_types: Aggregate types to match (optional)
+        tenant_id: Tenant ID to filter events by (optional).
+            When specified, only events belonging to the specified tenant
+            are matched. Useful for tenant-specific subscriptions during
+            multi-tenant migrations.
 
     Example:
         >>> # Match specific event types
@@ -125,10 +131,15 @@ class EventFilter:
         >>> # Match aggregate types
         >>> filter = EventFilter(aggregate_types=("Order", "Payment"))
         >>>
+        >>> # Match specific tenant
+        >>> from uuid import UUID
+        >>> filter = EventFilter(tenant_id=UUID("12345678-1234-5678-1234-567812345678"))
+        >>>
         >>> # Combine filters (all must match)
         >>> filter = EventFilter(
         ...     event_type_patterns=("*Created",),
         ...     aggregate_types=("Order",),
+        ...     tenant_id=my_tenant_id,
         ... )
     """
 
@@ -140,6 +151,9 @@ class EventFilter:
 
     # Aggregate type matching
     aggregate_types: tuple[str, ...] | None = None
+
+    # Tenant ID filtering
+    tenant_id: UUID | None = None
 
     # Internal state
     _event_type_set: set[type[DomainEvent]] | None = field(default=None, init=False, repr=False)
@@ -172,6 +186,7 @@ class EventFilter:
         return cls(
             event_types=config.event_types,
             aggregate_types=config.aggregate_types,
+            tenant_id=config.tenant_id,
         )
 
     @classmethod
@@ -220,6 +235,7 @@ class EventFilter:
         return cls(
             event_types=event_types,
             aggregate_types=config.aggregate_types,
+            tenant_id=config.tenant_id,
         )
 
     @classmethod
@@ -252,6 +268,7 @@ class EventFilter:
             self.event_types is not None
             or self.event_type_patterns is not None
             or self.aggregate_types is not None
+            or self.tenant_id is not None
         )
 
     @property
@@ -271,6 +288,7 @@ class EventFilter:
         - event_types: Event type must be in the set
         - event_type_patterns: Event type name must match at least one pattern
         - aggregate_types: Event's aggregate type must be in the set
+        - tenant_id: Event's tenant_id must match the configured tenant_id
 
         Args:
             event: The event to check
@@ -295,6 +313,11 @@ class EventFilter:
 
         # Check aggregate type
         if not self._matches_aggregate_type(event):
+            self._stats.record_skip()
+            return False
+
+        # Check tenant ID
+        if not self._matches_tenant_id(event):
             self._stats.record_skip()
             return False
 
@@ -353,6 +376,20 @@ class EventFilter:
             return True
         return event.aggregate_type in self._aggregate_type_set
 
+    def _matches_tenant_id(self, event: DomainEvent) -> bool:
+        """
+        Check if event's tenant_id matches the configured tenant_id.
+
+        Args:
+            event: The event to check
+
+        Returns:
+            True if tenant_id matches or no tenant_id configured
+        """
+        if self.tenant_id is None:
+            return True
+        return event.tenant_id == self.tenant_id
+
     @property
     def event_type_names(self) -> list[str] | None:
         """
@@ -392,6 +429,8 @@ class EventFilter:
             parts.append(f"patterns={list(self.event_type_patterns)}")
         if self.aggregate_types:
             parts.append(f"aggregates={list(self.aggregate_types)}")
+        if self.tenant_id:
+            parts.append(f"tenant_id={self.tenant_id}")
 
         if not parts:
             return "EventFilter(all)"
