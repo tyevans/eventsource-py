@@ -34,17 +34,13 @@ async def migration_schema_engine(postgres_engine: AsyncEngine) -> AsyncEngine:
 
     Creates the migration schema tables and cleans them up after test.
     """
-    # Get the migration schema SQL and split into individual statements
     schema_sql = get_schema("migration")
 
-    # Split on semicolons, filter empty statements
-    statements = [s.strip() for s in schema_sql.split(";") if s.strip()]
-
+    # Use raw asyncpg connection to execute multi-statement SQL script
+    # SQLAlchemy's exec_driver_sql doesn't support multiple statements
     async with postgres_engine.begin() as conn:
-        for statement in statements:
-            # Skip empty statements and comments-only statements
-            if statement and not statement.startswith("--"):
-                await conn.execute(text(statement))
+        raw_conn = await conn.get_raw_connection()
+        await raw_conn.driver_connection.execute(schema_sql)
 
     yield postgres_engine
 
@@ -97,13 +93,11 @@ class TestMigrationSchemaCreation:
         """Test that schema can be applied multiple times safely."""
         # Get the migration schema SQL
         schema_sql = get_schema("migration")
-        statements = [s.strip() for s in schema_sql.split(";") if s.strip()]
 
-        # Apply schema again - should not raise
+        # Apply schema again - should not raise (uses IF NOT EXISTS)
         async with migration_schema_engine.begin() as conn:
-            for statement in statements:
-                if statement and not statement.startswith("--"):
-                    await conn.execute(text(statement))
+            raw_conn = await conn.get_raw_connection()
+            await raw_conn.driver_connection.execute(schema_sql)
 
         # Verify tables still exist
         async with migration_schema_engine.begin() as conn:
