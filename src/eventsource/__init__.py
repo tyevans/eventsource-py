@@ -102,6 +102,9 @@ from eventsource.protocols import (
     SyncEventHandler,
 )
 
+# ReadModel Projections (Phase 3)
+from eventsource.readmodels import ReadModelProjection
+
 # Repository infrastructure (Task 12)
 from eventsource.repositories import (
     CheckpointData,
@@ -269,6 +272,8 @@ __all__ = [
     "CheckpointTrackingProjection",
     "DeclarativeProjection",
     "DatabaseProjection",
+    # ReadModel Projections (Phase 3)
+    "ReadModelProjection",
     # Snapshots
     "Snapshot",
     "SnapshotStore",
