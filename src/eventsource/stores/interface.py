@@ -108,6 +108,7 @@ class ReadOptions:
     - Direction (forward/backward)
     - Starting position
     - Maximum number of events to retrieve
+    - Tenant filtering for multi-tenant systems
 
     Attributes:
         direction: Whether to read forward or backward (default: forward)
@@ -115,6 +116,9 @@ class ReadOptions:
         limit: Maximum number of events to retrieve (None for no limit)
         from_timestamp: Only get events after this timestamp
         to_timestamp: Only get events before this timestamp
+        tenant_id: Filter events by tenant ID (None for all tenants).
+            When provided, only events belonging to the specified tenant
+            are returned. Useful for tenant-specific migrations and queries.
 
     Example:
         >>> # Read first 100 events forward
@@ -128,6 +132,9 @@ class ReadOptions:
         >>>
         >>> # Read events from position 50
         >>> options = ReadOptions(from_position=50, limit=100)
+        >>>
+        >>> # Read all events for a specific tenant
+        >>> options = ReadOptions(tenant_id=my_tenant_uuid)
     """
 
     direction: ReadDirection = ReadDirection.FORWARD
@@ -135,6 +142,7 @@ class ReadOptions:
     limit: int | None = None
     from_timestamp: datetime | None = None
     to_timestamp: datetime | None = None
+    tenant_id: UUID | None = None
 
     def __post_init__(self) -> None:
         """Validate options."""
@@ -566,7 +574,7 @@ class EventStore(ABC):
         need to process all events.
 
         Args:
-            options: Options for reading (direction, limit, etc.)
+            options: Options for reading (direction, limit, tenant_id, etc.)
 
         Yields:
             StoredEvent instances with global position metadata
@@ -575,9 +583,18 @@ class EventStore(ABC):
             This is an optional operation. Implementations may raise
             NotImplementedError if global ordering is not supported.
 
+            When options.tenant_id is provided, only events for that tenant
+            are returned. This is useful for tenant-specific migrations
+            and multi-tenant event streaming.
+
         Example:
             >>> async for stored_event in store.read_all():
             ...     projection.handle(stored_event.event)
+            >>>
+            >>> # Read all events for a specific tenant
+            >>> options = ReadOptions(tenant_id=my_tenant_uuid)
+            >>> async for stored_event in store.read_all(options):
+            ...     migrate_event(stored_event.event)
         """
         raise NotImplementedError(
             "read_all() is not implemented by default. "

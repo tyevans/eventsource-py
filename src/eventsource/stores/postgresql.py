@@ -810,14 +810,23 @@ class PostgreSQLEventStore(TracingMixin, EventStore):
         need to process all events.
 
         Args:
-            options: Options for reading (direction, limit, etc.)
+            options: Options for reading (direction, limit, tenant_id, etc.)
 
         Yields:
             StoredEvent instances with global position metadata
 
+        Note:
+            When options.tenant_id is provided, only events for that tenant
+            are returned. This is useful for tenant-specific migrations.
+
         Example:
             >>> async for stored_event in store.read_all():
             ...     projection.handle(stored_event.event)
+            >>>
+            >>> # Read all events for a specific tenant
+            >>> options = ReadOptions(tenant_id=my_tenant_uuid)
+            >>> async for stored_event in store.read_all(options):
+            ...     migrate_event(stored_event.event)
         """
         if options is None:
             options = ReadOptions()
@@ -846,6 +855,10 @@ class PostgreSQLEventStore(TracingMixin, EventStore):
             if options.to_timestamp:
                 query_parts.append("AND timestamp <= :to_timestamp")
                 params["to_timestamp"] = options.to_timestamp
+
+            if options.tenant_id is not None:
+                query_parts.append("AND tenant_id = :tenant_id")
+                params["tenant_id"] = str(options.tenant_id)
 
             # Add ordering based on direction
             if options.direction == ReadDirection.BACKWARD:

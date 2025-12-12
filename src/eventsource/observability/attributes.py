@@ -179,6 +179,56 @@ ATTR_QUERY_LIMIT = "eventsource.query.limit"
 """Limit value for a query (-1 if no limit) (integer)."""
 
 # =============================================================================
+# Migration Attributes
+# =============================================================================
+
+ATTR_MIGRATION_ID = "eventsource.migration.id"
+"""Unique identifier for the migration (UUID string)."""
+
+ATTR_MIGRATION_PHASE = "eventsource.migration.phase"
+"""Current migration phase (e.g., 'pending', 'bulk_copy', 'dual_write')."""
+
+ATTR_MIGRATION_TENANT_ID = "eventsource.migration.tenant_id"
+"""Tenant identifier being migrated (UUID string)."""
+
+ATTR_MIGRATION_SOURCE_STORE = "eventsource.migration.source_store"
+"""Source event store identifier."""
+
+ATTR_MIGRATION_TARGET_STORE = "eventsource.migration.target_store"
+"""Target event store identifier."""
+
+ATTR_MIGRATION_EVENTS_COPIED = "eventsource.migration.events_copied"
+"""Number of events copied during migration (integer)."""
+
+ATTR_MIGRATION_EVENTS_TOTAL = "eventsource.migration.events_total"
+"""Total events to migrate (integer)."""
+
+ATTR_MIGRATION_PROGRESS_PERCENT = "eventsource.migration.progress_percent"
+"""Migration progress percentage (0-100, float)."""
+
+ATTR_MIGRATION_SYNC_LAG_EVENTS = "eventsource.migration.sync_lag_events"
+"""Current sync lag in number of events (integer)."""
+
+ATTR_MIGRATION_SYNC_LAG_MS = "eventsource.migration.sync_lag_ms"
+"""Current sync lag in milliseconds (float)."""
+
+# =============================================================================
+# Lock Attributes
+# =============================================================================
+
+ATTR_LOCK_KEY = "eventsource.lock.key"
+"""Lock key identifier (string)."""
+
+ATTR_LOCK_ID = "eventsource.lock.id"
+"""Unique lock identifier (string)."""
+
+ATTR_LOCK_TIMEOUT = "eventsource.lock.timeout"
+"""Lock timeout in milliseconds (integer)."""
+
+ATTR_LOCK_ACQUIRED = "eventsource.lock.acquired"
+"""Whether lock was acquired (boolean)."""
+
+# =============================================================================
 # Module Exports
 # =============================================================================
 
@@ -232,4 +282,20 @@ __all__ = [
     "ATTR_READMODEL_OPERATION",
     "ATTR_QUERY_FILTER_COUNT",
     "ATTR_QUERY_LIMIT",
+    # Migration
+    "ATTR_MIGRATION_ID",
+    "ATTR_MIGRATION_PHASE",
+    "ATTR_MIGRATION_TENANT_ID",
+    "ATTR_MIGRATION_SOURCE_STORE",
+    "ATTR_MIGRATION_TARGET_STORE",
+    "ATTR_MIGRATION_EVENTS_COPIED",
+    "ATTR_MIGRATION_EVENTS_TOTAL",
+    "ATTR_MIGRATION_PROGRESS_PERCENT",
+    "ATTR_MIGRATION_SYNC_LAG_EVENTS",
+    "ATTR_MIGRATION_SYNC_LAG_MS",
+    # Lock
+    "ATTR_LOCK_KEY",
+    "ATTR_LOCK_ID",
+    "ATTR_LOCK_TIMEOUT",
+    "ATTR_LOCK_ACQUIRED",
 ]
