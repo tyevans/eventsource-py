@@ -1,77 +1,13 @@
 # Tutorial 13: Subscription Management with SubscriptionManager
 
-**Estimated Time:** 60-75 minutes
 **Difficulty:** Intermediate-Advanced
 **Progress:** Tutorial 13 of 21 | Phase 3: Production Readiness
 
 ---
 
-## Prerequisites
+## Overview
 
-Before starting this tutorial, ensure you have:
-
-- Completed [Tutorial 12: Using SQLite](12-sqlite.md) (or Tutorial 11 for PostgreSQL)
-- Understanding of projections from [Tutorial 6: Projections](06-projections.md)
-- Understanding of checkpoints from [Tutorial 10: Checkpoints](10-checkpoints.md)
-- Python 3.11+ installed
-- eventsource-py installed (`pip install eventsource-py`)
-
-This tutorial introduces **subscription management**, the production-ready approach to coordinating catch-up and live event processing for projections.
-
----
-
-## Learning Objectives
-
-By the end of this tutorial, you will be able to:
-
-1. Explain how SubscriptionManager coordinates catch-up and live events
-2. Configure subscriptions with appropriate checkpoint strategies
-3. Implement health checks for subscription monitoring
-4. Handle errors and graceful shutdown properly
-5. Run projections as daemon processes with signal handling
-
----
-
-## What is SubscriptionManager?
-
-The `SubscriptionManager` is the central coordinator for event subscriptions in eventsource-py. It bridges the gap between the **event store** (historical events) and the **event bus** (live events), providing a seamless subscription experience for projections.
-
-### The Problem: Catch-Up and Live Events
-
-Without a subscription manager, you have to handle a complex problem manually:
-
-```
-Timeline:
-  t0: Application starts
-  t1: Events 1-1000 exist in the event store (historical)
-  t2: Projection starts reading from position 0
-  t3: Events 1001, 1002 are published (live)
-  t4: Projection reaches position 500
-  t5: Events 1003, 1004 are published (live)
-  t6: Projection reaches position 1000
-  t7: How do we switch to live events without losing 1001-1004?
-```
-
-Managing this transition manually is error-prone:
-
-- **Gap risk**: Missing events during the switchover
-- **Duplicate risk**: Processing the same event twice
-- **Race conditions**: Events arriving while catching up
-- **Checkpoint management**: Tracking position across both phases
-
-### The Solution: Unified Subscription
-
-The `SubscriptionManager` handles this transition automatically using a **watermark approach**:
-
-```
-1. Get watermark (current max position in event store)
-2. Subscribe to live events (buffering mode)
-3. Catch up from checkpoint to watermark
-4. Process buffered live events (filtering duplicates)
-5. Switch to live mode
-```
-
-This ensures **gap-free** and **duplicate-free** event delivery.
+`SubscriptionManager` coordinates catch-up (historical events from event store) and live events (from event bus) for projections, handling the seamless transition between them using a watermark approach to ensure gap-free, duplicate-free delivery.
 
 ```python
 from eventsource.subscriptions import SubscriptionManager, SubscriptionConfig
@@ -95,19 +31,9 @@ await manager.run_until_shutdown()
 
 ---
 
-## Creating a SubscriptionManager
+## Basic Setup
 
-### Required Dependencies
-
-The SubscriptionManager requires three core components:
-
-| Component | Purpose | Example |
-|-----------|---------|---------|
-| `EventStore` | Source of historical events | `PostgreSQLEventStore`, `SQLiteEventStore`, `InMemoryEventStore` |
-| `EventBus` | Source of live events | `InMemoryEventBus`, `RedisEventBus` |
-| `CheckpointRepository` | Checkpoint persistence | `PostgreSQLCheckpointRepository`, `InMemoryCheckpointRepository` |
-
-### Basic Setup
+Required components: `EventStore` (historical events), `EventBus` (live events), `CheckpointRepository` (persistence).
 
 ```python
 import asyncio
@@ -203,536 +129,120 @@ async def main():
 asyncio.run(main())
 ```
 
-### Constructor Parameters
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `event_store` | `EventStore` | Required | Source of historical events |
-| `event_bus` | `EventBus` | Required | Source of live events |
-| `checkpoint_repo` | `CheckpointRepository` | Required | Checkpoint storage |
-| `shutdown_timeout` | `float` | `30.0` | Total graceful shutdown timeout (seconds) |
-| `drain_timeout` | `float` | `10.0` | Time to drain in-flight events (seconds) |
-| `dlq_repo` | `DLQRepository` | `None` | Dead letter queue for failed events |
-| `error_handling_config` | `ErrorHandlingConfig` | `None` | Error handling configuration |
-| `health_check_config` | `HealthCheckConfig` | `None` | Health check thresholds |
-| `enable_tracing` | `bool` | `True` | Enable OpenTelemetry tracing |
-
 ---
 
 ## Subscribing Projections
 
-### Simple Subscription
-
-The simplest way to subscribe a projection uses default configuration:
-
 ```python
-# Subscribe with defaults
+# Simple subscription (uses defaults)
 subscription = await manager.subscribe(my_projection)
 
-# The subscription name defaults to the class name
-print(subscription.name)  # "MyProjection"
-```
-
-You can also specify a custom name:
-
-```python
-subscription = await manager.subscribe(
-    my_projection,
-    name="order-summary-v2",
-)
-```
-
-### Configured Subscription
-
-For production use, configure subscriptions explicitly using `SubscriptionConfig`:
-
-```python
-from eventsource.subscriptions import SubscriptionConfig, CheckpointStrategy
-
+# With configuration
 config = SubscriptionConfig(
-    # Where to start reading events
-    start_from="checkpoint",  # Resume from last position
-
-    # Batch processing settings
-    batch_size=100,           # Events per batch during catch-up
-    max_in_flight=1000,       # Maximum concurrent events
-
-    # Checkpoint timing
+    start_from="checkpoint",  # "checkpoint", "beginning", "end", or position number
+    batch_size=100,
     checkpoint_strategy=CheckpointStrategy.EVERY_BATCH,
-
-    # Error handling
-    continue_on_error=True,   # Continue after errors (vs stop)
-
-    # Timeouts
-    processing_timeout=30.0,  # Max time per event (seconds)
+    continue_on_error=True,
+    processing_timeout=30.0,
 )
-
-subscription = await manager.subscribe(
-    my_projection,
-    config=config,
-    name="order-projection",
-)
+subscription = await manager.subscribe(my_projection, config=config, name="order-projection")
 ```
-
-### SubscriptionConfig Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `start_from` | `StartPosition` | `"checkpoint"` | Where to start reading |
-| `batch_size` | `int` | `100` | Events per batch during catch-up |
-| `max_in_flight` | `int` | `1000` | Maximum concurrent events |
-| `backpressure_threshold` | `float` | `0.8` | Fraction (0-1) to signal backpressure |
-| `checkpoint_strategy` | `CheckpointStrategy` | `EVERY_BATCH` | When to save checkpoints |
-| `checkpoint_interval_seconds` | `float` | `5.0` | Interval for PERIODIC strategy |
-| `processing_timeout` | `float` | `30.0` | Max seconds per event |
-| `continue_on_error` | `bool` | `True` | Continue after errors |
-
-### StartPosition Options
-
-The `start_from` parameter controls where a subscription begins reading:
-
-```python
-from eventsource.subscriptions import SubscriptionConfig
-
-# Resume from last checkpoint (default, recommended)
-config = SubscriptionConfig(start_from="checkpoint")
-
-# Start from the very beginning (for new projections)
-config = SubscriptionConfig(start_from="beginning")
-
-# Start from the end (live-only, skip historical events)
-config = SubscriptionConfig(start_from="end")
-
-# Start from a specific global position
-config = SubscriptionConfig(start_from=1000)
-```
-
-**Best Practice:** Use `"checkpoint"` in production. If no checkpoint exists, it automatically starts from the beginning.
 
 ---
 
-## Subscription Lifecycle
-
-### Starting Subscriptions
-
-The `start()` method begins event processing for all subscribed projections:
+## Lifecycle Management
 
 ```python
-# Start all subscriptions
-results = await manager.start()
-
-# Check for failures
-for name, error in results.items():
-    if error:
-        print(f"Failed to start {name}: {error}")
-    else:
-        print(f"Started {name}")
-```
-
-You can also start specific subscriptions:
-
-```python
-# Start only specific subscriptions
-results = await manager.start(subscription_names=["order-projection"])
-```
-
-### Checking Manager State
-
-```python
-# Is the manager running?
-if manager.is_running:
-    print("Manager is processing events")
-
-# How many subscriptions?
-print(f"Subscription count: {manager.subscription_count}")
-
-# List subscription names
-print(f"Subscriptions: {manager.subscription_names}")
-
-# Get a specific subscription
-sub = manager.get_subscription("order-projection")
-if sub:
-    print(f"State: {sub.state.value}")
-    print(f"Position: {sub.last_processed_position}")
-```
-
-### Stopping Subscriptions
-
-The `stop()` method gracefully shuts down subscriptions:
-
-```python
-# Stop all subscriptions (default 30 second timeout)
+# Start/stop manually
+await manager.start()
 await manager.stop()
 
-# Stop with custom timeout
-await manager.stop(timeout=60.0)
+# Production daemon with signal handling
+result = await manager.run_until_shutdown()  # Blocks until SIGTERM/SIGINT
 
-# Stop specific subscriptions
-await manager.stop(subscription_names=["order-projection"])
-```
-
-Graceful shutdown:
-1. Stops accepting new events
-2. Drains in-flight events
-3. Saves final checkpoints
-4. Closes connections
-
-### Daemon Mode with Signal Handling
-
-For production services, use `run_until_shutdown()`:
-
-```python
-async def main():
-    manager = SubscriptionManager(
-        event_store=event_store,
-        event_bus=event_bus,
-        checkpoint_repo=checkpoint_repo,
-    )
-
+# Context manager
+async with SubscriptionManager(...) as manager:
     await manager.subscribe(my_projection)
+    # Auto-starts and stops
 
-    # Runs until SIGTERM or SIGINT
-    result = await manager.run_until_shutdown()
+# Check state
+print(manager.is_running, manager.subscription_count, manager.subscription_names)
 
-    # Check shutdown result
-    print(f"Shutdown phase: {result.phase.value}")
-    print(f"Duration: {result.duration_seconds:.2f}s")
-    print(f"Events drained: {result.events_drained}")
-    print(f"Checkpoints saved: {result.checkpoints_saved}")
-
-    if result.forced:
-        print("Warning: Shutdown was forced due to timeout")
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-This method:
-1. Registers SIGTERM/SIGINT signal handlers
-2. Starts all subscriptions
-3. Blocks until a shutdown signal is received
-4. Executes graceful shutdown
-5. Returns detailed shutdown results
-
-### Context Manager Usage
-
-The SubscriptionManager supports async context manager:
-
-```python
-async def main():
-    async with SubscriptionManager(
-        event_store=event_store,
-        event_bus=event_bus,
-        checkpoint_repo=checkpoint_repo,
-    ) as manager:
-        await manager.subscribe(my_projection)
-        # Manager automatically starts
-
-        # ... your application logic ...
-
-    # Manager automatically stops on exit
+# Pause/resume
+await manager.pause_subscription("order-projection")
+await manager.resume_subscription("order-projection")
 ```
 
 ---
 
 ## Checkpoint Strategies
 
-The checkpoint strategy determines when checkpoints are persisted, balancing durability against performance.
-
-### CheckpointStrategy.EVERY_EVENT
-
-Saves checkpoint after every single event:
-
-```python
-config = SubscriptionConfig(
-    checkpoint_strategy=CheckpointStrategy.EVERY_EVENT,
-)
-```
-
-**Characteristics:**
-- **Safest**: Maximum durability, minimal replay on restart
-- **Slowest**: One checkpoint write per event
-- **Use case**: Critical financial data, audit logs
-
-### CheckpointStrategy.EVERY_BATCH (Default)
-
-Saves checkpoint after each batch of events:
+| Strategy | Durability | Performance | Replay on Crash | Use Case |
+|----------|------------|-------------|-----------------|----------|
+| `EVERY_EVENT` | Highest | Lowest | 0-1 events | Critical financial data |
+| `EVERY_BATCH` (default) | High | Medium | Up to batch_size | Most production workloads |
+| `PERIODIC` | Lower | Highest | Interval's events | High-throughput, replay-tolerant |
 
 ```python
 config = SubscriptionConfig(
     checkpoint_strategy=CheckpointStrategy.EVERY_BATCH,
-    batch_size=100,  # Checkpoint every 100 events
+    batch_size=100,  # For EVERY_BATCH
+    checkpoint_interval_seconds=5.0,  # For PERIODIC
 )
 ```
-
-**Characteristics:**
-- **Balanced**: Good durability with acceptable performance
-- **Moderate**: One checkpoint write per batch
-- **Use case**: Most production workloads (recommended default)
-
-### CheckpointStrategy.PERIODIC
-
-Saves checkpoint on a time interval:
-
-```python
-config = SubscriptionConfig(
-    checkpoint_strategy=CheckpointStrategy.PERIODIC,
-    checkpoint_interval_seconds=5.0,  # Every 5 seconds
-)
-```
-
-**Characteristics:**
-- **Fastest**: Fewest checkpoint writes
-- **Riskiest**: May replay more events on restart
-- **Use case**: High-throughput, replay-tolerant projections
-
-### Choosing a Strategy
-
-| Strategy | Durability | Performance | Replay on Crash |
-|----------|------------|-------------|-----------------|
-| EVERY_EVENT | Highest | Lowest | Minimal (0-1 events) |
-| EVERY_BATCH | High | Medium | Up to batch_size events |
-| PERIODIC | Lower | Highest | Up to interval worth of events |
 
 ---
 
 ## Error Handling
 
-### Error Callbacks
-
-Register callbacks to be notified when errors occur:
-
 ```python
-from eventsource.subscriptions import ErrorInfo, ErrorSeverity
+from eventsource.subscriptions import ErrorInfo, ErrorSeverity, ErrorCategory
 
-async def log_all_errors(error_info: ErrorInfo):
-    """Called for all errors."""
-    print(f"Error in {error_info.subscription_name}")
-    print(f"  Event: {error_info.event_type}")
-    print(f"  Error: {error_info.error_message}")
-    print(f"  Severity: {error_info.classification.severity.value}")
+# Register error callbacks
+async def log_errors(error_info: ErrorInfo):
+    print(f"Error: {error_info.subscription_name} - {error_info.error_message}")
 
-async def alert_critical_errors(error_info: ErrorInfo):
-    """Called only for critical errors."""
-    await send_pagerduty_alert(
-        message=f"Critical error in {error_info.subscription_name}",
-        details=error_info.to_dict(),
-    )
+manager.on_error(log_errors)  # All errors
+manager.on_error_severity(ErrorSeverity.CRITICAL, alert_critical)  # Critical only
+manager.on_error_category(ErrorCategory.TRANSIENT, handle_transient)  # Network/timeout
 
-# Register callbacks on the manager
-manager.on_error(log_all_errors)
-manager.on_error_severity(ErrorSeverity.CRITICAL, alert_critical_errors)
-```
+# Continue or stop on error
+config = SubscriptionConfig(continue_on_error=True)  # Default: True
 
-### Error Categories and Severity
-
-Errors are automatically classified:
-
-```python
-from eventsource.subscriptions import ErrorCategory, ErrorSeverity
-
-# Register for specific error categories
-async def handle_transient_errors(error_info: ErrorInfo):
-    # Network issues, timeouts - typically retry
-    pass
-
-manager.on_error_category(ErrorCategory.TRANSIENT, handle_transient_errors)
-```
-
-**Error Categories:**
-- `TRANSIENT`: Temporary failures (network, timeouts) - retryable
-- `PERMANENT`: Data/validation errors - not retryable
-- `INFRASTRUCTURE`: System failures (DB down)
-- `APPLICATION`: Code bugs, business logic errors
-
-**Error Severities:**
-- `LOW`: Minor issues
-- `MEDIUM`: Affects some processing
-- `HIGH`: Significant, needs attention
-- `CRITICAL`: Requires immediate action
-
-### Continue on Error
-
-The `continue_on_error` setting controls behavior after failures:
-
-```python
-# Continue processing after errors (default)
-config = SubscriptionConfig(continue_on_error=True)
-
-# Stop processing on first error
-config = SubscriptionConfig(continue_on_error=False)
-```
-
-### Error Statistics
-
-Get aggregate error statistics:
-
-```python
+# Get error stats
 stats = manager.get_error_stats()
-
-print(f"Total errors: {stats['total_errors']}")
-print(f"Events in DLQ: {stats['total_dlq_count']}")
-
-for name, sub_stats in stats['subscriptions'].items():
-    print(f"  {name}: {sub_stats['total_errors']} errors")
 ```
+
+Categories: `TRANSIENT` (retryable), `PERMANENT`, `INFRASTRUCTURE`, `APPLICATION`
+Severities: `LOW`, `MEDIUM`, `HIGH`, `CRITICAL`
 
 ---
 
 ## Health Monitoring
 
-### Health Check API
-
-The SubscriptionManager provides comprehensive health checks:
-
 ```python
-# Get overall health status
-health = await manager.health_check()
+# Overall health
+health = await manager.health_check()  # healthy, degraded, unhealthy, critical
 
-print(f"Status: {health.status}")  # healthy, degraded, unhealthy, critical
-print(f"Running: {health.running}")
-print(f"Subscriptions: {health.subscription_count}")
-print(f"Healthy: {health.healthy_count}")
-print(f"Degraded: {health.degraded_count}")
-print(f"Unhealthy: {health.unhealthy_count}")
-print(f"Total events processed: {health.total_events_processed}")
-print(f"Total lag: {health.total_lag_events}")
-```
+# K8s-style probes
+readiness = await manager.readiness_check()  # Ready to process?
+liveness = await manager.liveness_check()    # Still alive?
 
-### Kubernetes-Style Probes
-
-For container orchestration, use readiness and liveness probes:
-
-```python
-# Readiness probe - ready to accept work?
-readiness = await manager.readiness_check()
-if readiness.ready:
-    print("Ready to process events")
-else:
-    print(f"Not ready: {readiness.reason}")
-
-# Liveness probe - is the manager alive?
-liveness = await manager.liveness_check()
-if liveness.alive:
-    print("Manager is alive and responsive")
-else:
-    print(f"Manager may be stuck: {liveness.reason}")
-```
-
-Use these in HTTP health endpoints:
-
-```python
-# FastAPI example
-from fastapi import FastAPI, Response
-
-app = FastAPI()
-
-@app.get("/health/ready")
-async def readiness():
-    status = await manager.readiness_check()
-    if status.ready:
-        return {"status": "ready"}
-    return Response(
-        content={"status": "not_ready", "reason": status.reason},
-        status_code=503,
-    )
-
-@app.get("/health/live")
-async def liveness():
-    status = await manager.liveness_check()
-    if status.alive:
-        return {"status": "alive"}
-    return Response(
-        content={"status": "not_alive", "reason": status.reason},
-        status_code=503,
-    )
-```
-
-### Per-Subscription Health
-
-Get health status for individual subscriptions:
-
-```python
+# Per-subscription
 sub_health = manager.get_subscription_health("order-projection")
 
-if sub_health:
-    print(f"Subscription: {sub_health.name}")
-    print(f"Status: {sub_health.status}")
-    print(f"State: {sub_health.state}")
-    print(f"Events processed: {sub_health.events_processed}")
-    print(f"Events failed: {sub_health.events_failed}")
-    print(f"Lag: {sub_health.lag_events}")
-    print(f"Error rate: {sub_health.error_rate}/min")
-```
-
-### Health Check Configuration
-
-Configure health check thresholds:
-
-```python
+# Configure thresholds
 from eventsource.subscriptions import HealthCheckConfig
-
 health_config = HealthCheckConfig(
-    # Error thresholds
     max_error_rate_per_minute=10.0,
-    max_errors_warning=10,
-    max_errors_critical=100,
-
-    # Lag thresholds
     max_lag_events_warning=1000,
-    max_lag_events_critical=10000,
-
-    # DLQ thresholds
-    max_dlq_events_warning=10,
-    max_dlq_events_critical=100,
 )
-
-manager = SubscriptionManager(
-    event_store=event_store,
-    event_bus=event_bus,
-    checkpoint_repo=checkpoint_repo,
-    health_check_config=health_config,
-)
-```
-
----
-
-## Pause and Resume
-
-For maintenance operations, you can pause and resume subscriptions:
-
-```python
-# Pause a specific subscription
-await manager.pause_subscription("order-projection")
-
-# Check if paused
-if "order-projection" in manager.paused_subscription_names:
-    print("Subscription is paused")
-
-# Resume
-await manager.resume_subscription("order-projection")
-```
-
-Pause all subscriptions:
-
-```python
-# Pause all for maintenance
-results = await manager.pause_all()
-print(f"Paused: {sum(results.values())} subscriptions")
-
-# Do maintenance work...
-
-# Resume all
-results = await manager.resume_all()
-print(f"Resumed: {sum(results.values())} subscriptions")
+manager = SubscriptionManager(..., health_check_config=health_config)
 ```
 
 ---
 
 ## Complete Example
-
-Here is a complete, runnable example demonstrating subscription management:
 
 ```python
 """
@@ -1140,172 +650,10 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-Save this as `tutorial_13_subscriptions.py` and run it:
-
-```bash
-python tutorial_13_subscriptions.py
-```
-
----
-
-## Exercises
-
-### Exercise 1: Production Subscription Setup
-
-**Objective:** Create a production-ready projection with subscription management.
-
-**Time:** 25-30 minutes
-
-**Requirements:**
-
-1. Create an event store (SQLite or InMemory)
-2. Create a SubscriptionManager with appropriate timeouts
-3. Configure a projection subscription with:
-   - Appropriate checkpoint strategy
-   - Error handling with callbacks
-   - Health monitoring
-4. Implement a health check function
-5. Demonstrate graceful shutdown
-
-**Starter Code:**
-
-```python
-"""
-Tutorial 13 - Exercise 1: Production Subscription Setup
-
-Your task: Create a production-ready subscription setup with
-health monitoring and graceful shutdown.
-"""
-import asyncio
-from uuid import uuid4
-
-from eventsource import (
-    DomainEvent,
-    register_event,
-    DeclarativeProjection,
-    handles,
-    InMemoryEventStore,
-    InMemoryEventBus,
-    InMemoryCheckpointRepository,
-)
-from eventsource.subscriptions import (
-    SubscriptionManager,
-    SubscriptionConfig,
-    CheckpointStrategy,
-)
-
-
-@register_event
-class ProductAdded(DomainEvent):
-    event_type: str = "ProductAdded"
-    aggregate_type: str = "Inventory"
-    name: str
-    quantity: int
-
-
-@register_event
-class ProductSold(DomainEvent):
-    event_type: str = "ProductSold"
-    aggregate_type: str = "Inventory"
-    quantity: int
-
-
-class InventoryProjection(DeclarativeProjection):
-    """Tracks inventory levels."""
-
-    def __init__(self):
-        super().__init__()
-        self.products: dict[str, int] = {}
-        self.total_items = 0
-
-    # TODO: Implement event handlers using @handles decorator
-
-    async def _truncate_read_models(self) -> None:
-        self.products.clear()
-        self.total_items = 0
-
-
-async def health_check(manager: SubscriptionManager) -> dict:
-    """
-    TODO: Implement health check that returns status dict with:
-    - status: "healthy", "degraded", or "unhealthy"
-    - subscription_count
-    - total_events_processed
-    """
-    pass
-
-
-async def main():
-    print("=== Exercise 13-1: Production Subscription Setup ===\n")
-
-    # TODO: Step 1 - Create infrastructure (event store, bus, checkpoint repo)
-
-    # TODO: Step 2 - Create SubscriptionManager with appropriate settings
-
-    # TODO: Step 3 - Create and configure the projection subscription
-
-    # TODO: Step 4 - Set up error handling callbacks
-
-    # TODO: Step 5 - Start the manager and create test events
-
-    # TODO: Step 6 - Perform health check
-
-    # TODO: Step 7 - Graceful shutdown
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-**Hints:**
-
-- Use `SubscriptionConfig` with `CheckpointStrategy.EVERY_BATCH`
-- Register an error callback with `manager.on_error()`
-- Use `manager.health_check()` for comprehensive health status
-- Remember to await `manager.stop()` for graceful shutdown
-
-The solution is available at: `docs/tutorials/exercises/solutions/13-1.py`
-
----
-
-## Summary
-
-In this tutorial, you learned:
-
-- **SubscriptionManager** coordinates catch-up and live event subscriptions seamlessly
-- **SubscriptionConfig** controls start position, batching, checkpoints, and error handling
-- **Checkpoint strategies** balance durability vs performance (EVERY_EVENT, EVERY_BATCH, PERIODIC)
-- **Health checks** enable monitoring with Kubernetes-style readiness and liveness probes
-- **Error callbacks** allow custom handling and alerting for processing failures
-- **Graceful shutdown** ensures no events are lost using `run_until_shutdown()`
-
----
-
-## Key Takeaways
-
-!!! note "Remember"
-    - Always use SubscriptionManager in production for reliable event processing
-    - Choose checkpoint strategy based on durability requirements
-    - Monitor subscription health continuously with readiness/liveness probes
-    - Handle shutdown gracefully to preserve checkpoints
-
-!!! tip "Best Practice"
-    Use `start_from="checkpoint"` in production. This automatically starts from the beginning if no checkpoint exists, and resumes from the last position otherwise.
-
-!!! warning "Common Mistake"
-    Do not forget to call `await manager.stop()` or use `run_until_shutdown()`. Abrupt termination may lose in-flight events and fail to save checkpoints.
+Run with: `python tutorial_13_subscriptions.py`
 
 ---
 
 ## Next Steps
 
 Continue to [Tutorial 14: Optimizing with Aggregate Snapshotting](14-snapshotting.md) to learn about performance optimization for aggregates with many events.
-
----
-
-## Related Documentation
-
-- [Subscriptions API Reference](../api/subscriptions.md) - Complete subscriptions API
-- [Tutorial 6: Projections](06-projections.md) - Projection fundamentals
-- [Tutorial 10: Checkpoints](10-checkpoints.md) - Checkpoint management
-- [Tutorial 11: PostgreSQL](11-postgresql.md) - Production persistence
