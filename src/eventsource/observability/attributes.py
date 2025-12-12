@@ -160,6 +160,25 @@ ATTR_ERROR_TYPE = "eventsource.error.type"
 """Type of error encountered (exception class name)."""
 
 # =============================================================================
+# ReadModel Attributes
+# =============================================================================
+
+ATTR_READMODEL_TYPE = "eventsource.readmodel.type"
+"""Type name of the read model class (e.g., 'OrderSummary')."""
+
+ATTR_READMODEL_ID = "eventsource.readmodel.id"
+"""Unique identifier for the read model instance (UUID string)."""
+
+ATTR_READMODEL_OPERATION = "eventsource.readmodel.operation"
+"""Read model operation type (e.g., 'get', 'save', 'find', 'delete')."""
+
+ATTR_QUERY_FILTER_COUNT = "eventsource.query.filter_count"
+"""Number of filters in a query (integer)."""
+
+ATTR_QUERY_LIMIT = "eventsource.query.limit"
+"""Limit value for a query (-1 if no limit) (integer)."""
+
+# =============================================================================
 # Migration Attributes
 # =============================================================================
 
@@ -257,6 +276,12 @@ __all__ = [
     # Error/Retry
     "ATTR_RETRY_COUNT",
     "ATTR_ERROR_TYPE",
+    # ReadModel
+    "ATTR_READMODEL_TYPE",
+    "ATTR_READMODEL_ID",
+    "ATTR_READMODEL_OPERATION",
+    "ATTR_QUERY_FILTER_COUNT",
+    "ATTR_QUERY_LIMIT",
     # Migration
     "ATTR_MIGRATION_ID",
     "ATTR_MIGRATION_PHASE",

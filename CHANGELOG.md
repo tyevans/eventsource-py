@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **ReadModel Persistence Tooling** - Standardized read model persistence infrastructure (`eventsource.readmodels`)
+  - **Phase 1 - Core Components**:
+    - `ReadModel` base class with standard fields (id, timestamps, version, deleted_at)
+    - `ReadModelRepository` protocol with 13 methods for CRUD, querying, and lifecycle management
+    - `Query` and `Filter` classes for flexible, type-safe querying with operators (eq, ne, lt, gt, le, ge, in_, contains, startswith)
+    - `InMemoryReadModelRepository` implementation for testing and development
+  - **Phase 2 - SQL Backends**:
+    - `PostgreSQLReadModelRepository` with full async support via asyncpg
+    - `SQLiteReadModelRepository` with async support via aiosqlite
+    - Schema generation utilities (`generate_postgresql_schema()`, `generate_sqlite_schema()`) for automatic table creation from ReadModel classes
+  - **Phase 3 - Projection Integration**:
+    - `ReadModelProjection` base class integrating with `DatabaseProjection`
+    - `HandlerRegistry` integration with `@handles` decorator for event-driven updates
+    - Automatic repository injection into event handlers
+  - **Phase 4 - Enhanced Features**:
+    - Soft delete support with `get_deleted()` and `find_deleted()` methods
+    - Optimistic locking via `save_with_version_check()` for concurrent update safety
+    - `OptimisticLockError` and `ReadModelNotFoundError` exceptions
+  - Public exports from `eventsource.readmodels`: `ReadModel`, `ReadModelRepository`, `ReadModelProjection`, `Query`, `Filter`, `InMemoryReadModelRepository`, `PostgreSQLReadModelRepository`, `SQLiteReadModelRepository`
+  - New observability attributes: `ATTR_READ_MODEL_TYPE`, `ATTR_READ_MODEL_ID`
 - **Multi-Tenant Live Migration** - Zero-downtime tenant migration between event stores (`eventsource.migration`)
   - `MigrationCoordinator` orchestrating full migration lifecycle with pause/resume/abort controls
   - `BulkCopier` for streaming historical event migration with checkpointing and configurable batch sizes
@@ -190,6 +210,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
+- Added comprehensive ReadModel persistence test suite:
+  - Unit tests for all ReadModel components (`tests/unit/readmodels/`)
+    - Base class and field validation tests
+    - Query and Filter class tests
+    - Repository protocol compliance tests
+    - In-memory repository tests
+    - PostgreSQL and SQLite repository tests
+    - Schema generation tests
+    - Projection integration tests
+    - Handler registry integration tests
+  - Integration tests (`tests/integration/readmodels/`)
+    - Repository CRUD operations across all backends
+    - Projection event handling flows
+    - Enhanced features (soft delete, optimistic locking)
 - Added comprehensive migration test suite (~950 new tests):
   - Unit tests for all migration components (`tests/unit/migration/`)
   - Integration tests for PostgreSQL locks and migration schema
