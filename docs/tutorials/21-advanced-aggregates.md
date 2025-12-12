@@ -1,6 +1,5 @@
 # Tutorial 21: Advanced Aggregate Patterns
 
-**Estimated Time:** 90-120 minutes
 **Difficulty:** Expert
 **Progress:** Tutorial 21 of 21 | Phase 4: Advanced Patterns (Complete!)
 

@@ -1,6 +1,5 @@
 # Tutorial 20: Observability with OpenTelemetry
 
-**Estimated Time:** 60-75 minutes
 **Difficulty:** Advanced
 **Progress:** Tutorial 20 of 21 | Phase 4: Advanced Patterns
 
