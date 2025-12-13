@@ -9224,26 +9224,27 @@ class TestOpenTelemetryTracing:
     def test_tracer_is_none_when_tracing_disabled(
         self, config_no_tracing: RabbitMQEventBusConfig
     ) -> None:
-        """Test that _tracer is None when tracing is disabled (TracingMixin pattern)."""
+        """Test that _tracer is disabled when tracing is disabled."""
         bus = RabbitMQEventBus(config=config_no_tracing)
 
-        # TracingMixin sets _tracer to None when tracing disabled
-        assert bus._tracer is None
+        # With composition-based tracing, _tracer is always set but disabled
+        assert bus._tracer is not None
+        assert bus._tracer.enabled is False
         assert bus._enable_tracing is False
 
     def test_tracer_set_when_enabled_and_available(self, config: RabbitMQEventBusConfig) -> None:
-        """Test that _tracer is set when enabled and available (TracingMixin pattern)."""
+        """Test that _tracer is set when enabled and available."""
         from eventsource.bus.rabbitmq import OTEL_AVAILABLE
 
         bus = RabbitMQEventBus(config=config)
 
+        # With composition-based tracing, _tracer is always set
+        assert bus._tracer is not None
         if OTEL_AVAILABLE:
-            # Should have a tracer via TracingMixin
-            assert bus._tracer is not None
             assert bus._enable_tracing is True
+            assert bus._tracer.enabled is True
         else:
-            # Should be None if OpenTelemetry not installed
-            assert bus._tracer is None
+            assert bus._tracer.enabled is False
 
     @patch("eventsource.bus.rabbitmq.aio_pika")
     @pytest.mark.asyncio
@@ -9390,8 +9391,9 @@ class TestOpenTelemetryTracing:
         bus = RabbitMQEventBus(config=config_no_tracing)
         await bus.connect()
 
-        # Verify _tracer is None when tracing is disabled (TracingMixin pattern)
-        assert bus._tracer is None
+        # With composition-based tracing, _tracer is always set but disabled
+        assert bus._tracer is not None
+        assert bus._tracer.enabled is False
         assert bus._enable_tracing is False
 
         # Publish should still work without tracing
@@ -9742,20 +9744,21 @@ class TestOpenTelemetryGracefulDegradation:
         )
 
     def test_tracer_none_when_otel_unavailable(self, config: RabbitMQEventBusConfig) -> None:
-        """Test that _tracer is None gracefully when OTEL unavailable (TracingMixin pattern)."""
-        # The TracingMixin checks OTEL_AVAILABLE during _init_tracing
-        # When OTEL is not available, _tracer should be None
+        """Test that _tracer is disabled gracefully when OTEL unavailable."""
+        # With composition-based tracing, _tracer is always set but may be disabled
         bus = RabbitMQEventBus(config=config)
 
-        # If OTEL is available in test environment, check that bus has _tracer set
-        # If OTEL is not available, _tracer should be None
+        # _tracer is always set with composition-based tracing
+        assert bus._tracer is not None
+
         from eventsource.bus.rabbitmq import OTEL_AVAILABLE
 
         if not OTEL_AVAILABLE:
-            assert bus._tracer is None
+            # When OTEL is not available, _tracer should be a NullTracer (disabled)
+            assert bus._tracer.enabled is False
         else:
-            # When OTEL is available, verify TracingMixin behavior by checking tracing_enabled
-            assert bus.tracing_enabled is True
+            # When OTEL is available, tracer should be enabled
+            assert bus._tracer.enabled is True
 
     @patch("eventsource.bus.rabbitmq.aio_pika")
     @pytest.mark.asyncio

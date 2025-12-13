@@ -636,8 +636,8 @@ def handles(event_type: type[DomainEvent]) -> Callable[[Callable[..., None]], Ca
     Decorator to register an event handler method.
 
     .. deprecated:: 0.1.0
-        Import from `eventsource.projections.decorators` or `eventsource` instead.
-        This location will be removed in version 0.3.0.
+        Import from `eventsource.handlers` or `eventsource` instead.
+        This location will be removed in version 0.4.0.
 
     Use this decorator on methods in a DeclarativeAggregate subclass
     to automatically register them as handlers for specific event types.
@@ -649,7 +649,7 @@ def handles(event_type: type[DomainEvent]) -> Callable[[Callable[..., None]], Ca
         Decorator function that marks the method as a handler
 
     Example:
-        >>> from eventsource.projections.decorators import handles  # Preferred import
+        >>> from eventsource.handlers import handles  # Preferred import
         >>> # or: from eventsource import handles
         >>>
         >>> class OrderAggregate(DeclarativeAggregate[OrderState]):
@@ -659,13 +659,13 @@ def handles(event_type: type[DomainEvent]) -> Callable[[Callable[..., None]], Ca
     """
     import warnings
 
-    from eventsource.projections.decorators import handles as _canonical_handles
+    from eventsource.handlers.decorators import handles as _canonical_handles
 
     warnings.warn(
         "Importing 'handles' from eventsource.aggregates.base is deprecated. "
-        "Use 'from eventsource.projections.decorators import handles' or "
+        "Use 'from eventsource.handlers import handles' or "
         "'from eventsource import handles' instead. "
-        "This import will be removed in version 0.3.0.",
+        "This import will be removed in version 0.4.0.",
         DeprecationWarning,
         stacklevel=2,
     )

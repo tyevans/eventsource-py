@@ -15,6 +15,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_BATCH_SIZE,
     ATTR_EVENT_ID,
@@ -25,7 +26,6 @@ from eventsource.observability.attributes import (
     ATTR_SUBSCRIPTION_NAME,
     ATTR_TO_POSITION,
 )
-from eventsource.observability.tracing import TracingMixin
 from eventsource.stores.interface import ReadDirection, ReadOptions, StoredEvent
 from eventsource.subscriptions.config import CheckpointStrategy
 from eventsource.subscriptions.filtering import EventFilter, FilterStats
@@ -70,7 +70,7 @@ class CatchUpResult:
         return self.completed and self.error is None
 
 
-class CatchUpRunner(TracingMixin):
+class CatchUpRunner:
     """
     Reads historical events from the event store and delivers to subscriber.
 
@@ -96,6 +96,7 @@ class CatchUpRunner(TracingMixin):
         checkpoint_repo: "CheckpointRepository",
         subscription: Subscription,
         event_filter: EventFilter | None = None,
+        tracer: Tracer | None = None,
         enable_metrics: bool = True,
         enable_tracing: bool = True,
     ) -> None:
@@ -108,10 +109,15 @@ class CatchUpRunner(TracingMixin):
             subscription: The subscription being processed
             event_filter: Optional event filter. If not provided, creates one
                          from config and subscriber.
+            tracer: Optional custom Tracer instance. If not provided, one is
+                   created based on enable_tracing setting.
             enable_metrics: Whether to enable OpenTelemetry metrics (default True)
-            enable_tracing: Whether to enable OpenTelemetry tracing (default True)
+            enable_tracing: Whether to enable OpenTelemetry tracing (default True).
+                          Ignored if tracer is explicitly provided.
         """
-        self._init_tracing(__name__, enable_tracing)
+        # Composition-based tracing (replaces TracingMixin)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
 
         self.event_store = event_store
         self.checkpoint_repo = checkpoint_repo
@@ -171,7 +177,7 @@ class CatchUpRunner(TracingMixin):
         """
         start_position = self.subscription.last_processed_position
 
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.catchup_runner.run_until_position",
             {
                 ATTR_SUBSCRIPTION_NAME: self.subscription.name,
@@ -410,7 +416,7 @@ class CatchUpRunner(TracingMixin):
         Raises:
             Exception: If continue_on_error is False and handler fails
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.catchup_runner.deliver_event",
             {
                 ATTR_SUBSCRIPTION_NAME: self.subscription.name,

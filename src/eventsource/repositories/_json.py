@@ -1,84 +1,44 @@
 """
 Shared JSON encoder for UUID and datetime serialization.
 
-This module provides utilities for JSON serialization of common types
-that are not natively JSON-serializable, such as UUIDs and datetimes.
+.. deprecated::
+    This module is deprecated. Import from eventsource.serialization instead:
+    ``from eventsource.serialization import json_dumps, EventSourceJSONEncoder``
+
+    This import path will be removed in version 0.4.0.
 """
 
-import json
-from datetime import datetime
-from typing import Any
-from uuid import UUID
+import warnings
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from eventsource.serialization.json import (
+        EventSourceJSONEncoder as EventSourceJSONEncoder,
+    )
+    from eventsource.serialization.json import (
+        json_dumps as json_dumps,
+    )
+    from eventsource.serialization.json import (
+        json_loads as json_loads,
+    )
 
 
-class EventSourceJSONEncoder(json.JSONEncoder):
-    """
-    Custom JSON encoder that handles UUID and datetime objects.
+def __getattr__(name: str) -> object:
+    """Lazy import with deprecation warning for backward compatibility."""
+    if name in ("EventSourceJSONEncoder", "json_dumps", "json_loads"):
+        warnings.warn(
+            f"Importing '{name}' from eventsource.repositories._json is deprecated. "
+            f"Use 'from eventsource.serialization import {name}' instead. "
+            "This import will be removed in version 0.4.0.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        from eventsource.serialization import json as json_module
 
-    This encoder extends the standard JSONEncoder to support serialization of:
-    - UUID objects: Converted to string representation
-    - datetime objects: Converted to ISO 8601 format string
-
-    Example:
-        >>> import json
-        >>> from uuid import uuid4
-        >>> from datetime import datetime, UTC
-        >>>
-        >>> data = {"id": uuid4(), "timestamp": datetime.now(UTC)}
-        >>> json_str = json.dumps(data, cls=EventSourceJSONEncoder)
-    """
-
-    def default(self, obj: Any) -> Any:
-        """
-        Convert non-serializable objects to JSON-serializable formats.
-
-        Args:
-            obj: Object to serialize
-
-        Returns:
-            JSON-serializable representation
-
-        Raises:
-            TypeError: If object type is not supported
-        """
-        if isinstance(obj, UUID):
-            return str(obj)
-        if isinstance(obj, datetime):
-            return obj.isoformat()
-        return super().default(obj)
+        return getattr(json_module, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-def json_dumps(obj: Any) -> str:
-    """
-    Serialize object to JSON string with UUID and datetime support.
-
-    Convenience function that uses EventSourceJSONEncoder.
-
-    Args:
-        obj: Object to serialize
-
-    Returns:
-        JSON string representation
-
-    Example:
-        >>> data = {"event_id": uuid4()}
-        >>> json_str = json_dumps(data)
-    """
-    return json.dumps(obj, cls=EventSourceJSONEncoder)
-
-
-def json_loads(s: str) -> Any:
-    """
-    Deserialize JSON string to Python object.
-
-    Note: This is a simple wrapper around json.loads.
-    UUID and datetime strings are NOT automatically converted
-    back to their original types - that's the application's responsibility.
-
-    Args:
-        s: JSON string to deserialize
-
-    Returns:
-        Python object representation
-    """
-    return json.loads(s)
+def __dir__() -> list[str]:
+    """List available names for tab completion."""
+    return ["EventSourceJSONEncoder", "json_dumps", "json_loads"]

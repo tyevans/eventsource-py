@@ -245,9 +245,9 @@ class TestHandlesDecoratorConsolidation:
     - AC5: Both imports functionally equivalent
     """
 
-    def test_canonical_import_from_projections_decorators(self) -> None:
-        """@handles from projections.decorators is the canonical import."""
-        from eventsource.projections.decorators import handles as canonical_handles
+    def test_canonical_import_from_handlers(self) -> None:
+        """@handles from handlers is the canonical import."""
+        from eventsource.handlers import handles as canonical_handles
 
         @canonical_handles(OrderCreated)
         def handler(self, event: OrderCreated) -> None:
@@ -255,6 +255,21 @@ class TestHandlesDecoratorConsolidation:
 
         assert hasattr(handler, "_handles_event_type")
         assert handler._handles_event_type is OrderCreated
+
+    def test_deprecated_import_from_projections_decorators(self) -> None:
+        """@handles from projections.decorators is deprecated but functional."""
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            from eventsource.projections.decorators import handles as deprecated_handles
+
+            @deprecated_handles(OrderCreated)
+            def handler(self, event: OrderCreated) -> None:
+                pass
+
+            assert hasattr(handler, "_handles_event_type")
+            assert handler._handles_event_type is OrderCreated
 
     def test_canonical_import_from_eventsource(self) -> None:
         """@handles from eventsource package is the canonical re-export."""
@@ -297,8 +312,8 @@ class TestHandlesDecoratorConsolidation:
             assert len(deprecation_warnings) >= 1
             warning_msg = str(deprecation_warnings[0].message)
             assert "eventsource.aggregates.base" in warning_msg
-            assert "eventsource.projections.decorators" in warning_msg
-            assert "0.3.0" in warning_msg
+            assert "eventsource.handlers" in warning_msg
+            assert "0.4.0" in warning_msg
 
     def test_deprecated_import_still_functions(self) -> None:
         """Deprecated import still works correctly."""
@@ -321,6 +336,12 @@ class TestHandlesDecoratorConsolidation:
 
         assert "handles" in eventsource.__all__
 
+    def test_handles_in_handlers_all(self) -> None:
+        """'handles' is in eventsource.handlers.__all__ for IDE autocomplete."""
+        from eventsource import handlers
+
+        assert "handles" in handlers.__all__
+
     def test_handles_in_projections_all(self) -> None:
         """'handles' is in eventsource.projections.__all__ for IDE autocomplete."""
         from eventsource import projections
@@ -337,7 +358,7 @@ class TestHandlesDecoratorConsolidation:
         """Both canonical and deprecated imports produce equivalent results."""
         import warnings
 
-        from eventsource.projections.decorators import handles as canonical_handles
+        from eventsource.handlers import handles as canonical_handles
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)

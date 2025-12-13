@@ -60,7 +60,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from eventsource.migration.exceptions import MigrationError, PositionMappingError
-from eventsource.observability import TracingMixin
+from eventsource.observability import Tracer, create_tracer
 
 if TYPE_CHECKING:
     from eventsource.migration.position_mapper import PositionMapper
@@ -265,7 +265,7 @@ class MigrationSummary:
         }
 
 
-class SubscriptionMigrator(TracingMixin):
+class SubscriptionMigrator:
     """
     Migrates subscription checkpoints from source to target store positions.
 
@@ -310,6 +310,7 @@ class SubscriptionMigrator(TracingMixin):
         position_mapper: PositionMapper,
         checkpoint_repo: CheckpointRepository,
         *,
+        tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ) -> None:
         """
@@ -318,9 +319,12 @@ class SubscriptionMigrator(TracingMixin):
         Args:
             position_mapper: Position mapper for checkpoint translation.
             checkpoint_repo: Repository for reading/writing checkpoints.
+            tracer: Optional custom Tracer instance.
             enable_tracing: Whether to enable OpenTelemetry tracing.
         """
-        self._init_tracing(__name__, enable_tracing)
+        # Composition-based tracing (replaces TracingMixin)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
         self._position_mapper = position_mapper
         self._checkpoint_repo = checkpoint_repo
 
@@ -353,7 +357,7 @@ class SubscriptionMigrator(TracingMixin):
             >>> for m in plan.planned_migrations:
             ...     print(f"{m.subscription_name}: {m.current_position} -> {m.planned_target_position}")
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.subscription_migrator.plan_migration",
             {
                 "migration.id": str(migration_id),
@@ -507,7 +511,7 @@ class SubscriptionMigrator(TracingMixin):
             >>> if summary.all_successful:
             ...     print("All subscriptions migrated successfully")
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.subscription_migrator.migrate_subscriptions",
             {
                 "migration.id": str(migration_id),
@@ -628,7 +632,7 @@ class SubscriptionMigrator(TracingMixin):
         Returns:
             SubscriptionMigrationResult or None if subscription was skipped.
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.subscription_migrator.migrate_single",
             {
                 "migration.id": str(migration_id),
@@ -766,7 +770,7 @@ class SubscriptionMigrator(TracingMixin):
             ...     tenant_id=tenant_id,
             ... )
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.subscription_migrator.migrate_tenant_subscriptions",
             {
                 "migration.id": str(migration_id),
@@ -821,7 +825,7 @@ class SubscriptionMigrator(TracingMixin):
             ... )
             >>> all_verified = all(verification.values())
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.subscription_migrator.verify_migration",
             {
                 "migration.id": str(migration_id),

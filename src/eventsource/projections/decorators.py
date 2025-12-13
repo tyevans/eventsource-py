@@ -1,130 +1,46 @@
 """
-Event handler decorators.
+Event handler decorators (deprecated location).
 
-This module contains the @handles decorator for declarative event handling,
-enabling automatic event routing based on decorated handler methods.
+.. deprecated::
+    This module re-exports decorators from eventsource.handlers.decorators
+    for backward compatibility. Use ``from eventsource.handlers import handles``
+    instead.
 
-The @handles decorator is the canonical location for marking methods as event
-handlers, and works with both:
-- DeclarativeAggregate: For sync handlers that apply events to aggregate state
-- DeclarativeProjection: For async handlers that build read models
-
-Example:
-    >>> from eventsource.projections.decorators import handles
-    >>> # or: from eventsource import handles
+This import path will be removed in version 0.4.0.
 """
 
-from collections.abc import Callable
-from typing import Any, TypeVar
+import warnings
+from typing import TYPE_CHECKING
 
-from eventsource.events.base import DomainEvent
-
-# Type variable for handler functions - preserves the exact type of the decorated function
-F = TypeVar("F", bound=Callable[..., Any])
-
-
-def handles(event_type: type[DomainEvent]) -> Callable[[F], F]:
-    """
-    Decorator to mark a method as an event handler for a specific event type.
-
-    This is the canonical decorator for event handling in the eventsource library.
-    It works with both DeclarativeAggregate (for aggregates) and DeclarativeProjection
-    (for projections), enabling automatic event routing based on event type.
-
-    The decorator attaches the event type to the function, which is then discovered
-    during class initialization by both aggregate and projection base classes.
-
-    Args:
-        event_type: The DomainEvent subclass this handler processes
-
-    Returns:
-        A decorator function that marks the handler and preserves the original function
-
-    Example (Aggregate):
-        >>> from eventsource.projections.decorators import handles
-        >>> from eventsource.aggregates import DeclarativeAggregate
-        >>>
-        >>> class OrderAggregate(DeclarativeAggregate[OrderState]):
-        ...     @handles(OrderCreated)
-        ...     def _on_order_created(self, event: OrderCreated) -> None:
-        ...         self._state = OrderState(
-        ...             order_id=self.aggregate_id,
-        ...             status="created",
-        ...         )
-        ...
-        ...     @handles(OrderShipped)
-        ...     def _on_order_shipped(self, event: OrderShipped) -> None:
-        ...         self._state = self._state.model_copy(
-        ...             update={"status": "shipped"}
-        ...         )
-
-    Example (Projection):
-        >>> from eventsource.projections.decorators import handles
-        >>> from eventsource.projections import DeclarativeProjection
-        >>>
-        >>> class OrderProjection(DeclarativeProjection):
-        ...     @handles(OrderCreated)
-        ...     async def _handle_order_created(self, conn, event: OrderCreated) -> None:
-        ...         await conn.execute(...)
-        ...
-        ...     @handles(OrderShipped)
-        ...     async def _handle_order_shipped(self, conn, event: OrderShipped) -> None:
-        ...         await conn.execute(...)
-
-    Notes:
-        - For aggregates: Handler signature is (self, event: EventType) -> None (sync)
-        - For projections: Handler signature is (self, conn, event: EventType) -> None (async)
-        - The event type in the @handles decorator should match the event parameter type
-        - Base classes will validate signatures and discover handlers at initialization
-    """
-
-    def decorator(func: F) -> F:
-        # Attach the event type to the function for later discovery
-        func._handles_event_type = event_type  # type: ignore[attr-defined]
-        return func
-
-    return decorator
+if TYPE_CHECKING:
+    # For type checkers, expose the actual types
+    from eventsource.handlers.decorators import (
+        get_handled_event_type as get_handled_event_type,
+    )
+    from eventsource.handlers.decorators import (
+        handles as handles,
+    )
+    from eventsource.handlers.decorators import (
+        is_event_handler as is_event_handler,
+    )
 
 
-def get_handled_event_type(func: Callable[..., Any]) -> type[DomainEvent] | None:
-    """
-    Get the event type handled by a decorated function.
+def __getattr__(name: str) -> object:
+    """Lazy import with deprecation warning for backward compatibility."""
+    if name in ("handles", "get_handled_event_type", "is_event_handler"):
+        warnings.warn(
+            f"Importing '{name}' from eventsource.projections.decorators is deprecated. "
+            f"Use 'from eventsource.handlers import {name}' instead. "
+            "This import will be removed in version 0.4.0.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        from eventsource.handlers import decorators
 
-    This is a utility function to inspect handler methods and determine
-    what event type they handle.
-
-    Args:
-        func: A function potentially decorated with @handles
-
-    Returns:
-        The event type if decorated with @handles, None otherwise
-
-    Example:
-        >>> @handles(OrderCreated)
-        ... async def my_handler(self, conn, event): pass
-        >>> get_handled_event_type(my_handler)
-        <class 'OrderCreated'>
-    """
-    return getattr(func, "_handles_event_type", None)
+        return getattr(decorators, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-def is_event_handler(func: Callable[..., Any]) -> bool:
-    """
-    Check if a function is decorated as an event handler.
-
-    Args:
-        func: A function to check
-
-    Returns:
-        True if the function is decorated with @handles, False otherwise
-
-    Example:
-        >>> @handles(OrderCreated)
-        ... async def my_handler(self, conn, event): pass
-        >>> is_event_handler(my_handler)
-        True
-        >>> def regular_function(): pass
-        >>> is_event_handler(regular_function)
-        False
-    """
-    return hasattr(func, "_handles_event_type")
+def __dir__() -> list[str]:
+    """List available names for tab completion."""
+    return ["handles", "get_handled_event_type", "is_event_handler"]

@@ -7,6 +7,7 @@ Tests cover:
 - FlexibleEventHandler protocol
 - EventSubscriber abstract class
 - FlexibleEventSubscriber protocol
+- AsyncEventHandler abstract class (ABF-01)
 - Deprecation warnings from old import locations
 - Protocol runtime checking
 """
@@ -20,6 +21,7 @@ from pydantic import Field
 
 from eventsource.events.base import DomainEvent
 from eventsource.protocols import (
+    AsyncEventHandler,
     EventHandler,
     EventSubscriber,
     FlexibleEventHandler,
@@ -380,3 +382,145 @@ class TestCanonicalExports:
         assert hasattr(projections, "EventHandler")
         assert hasattr(projections, "SyncEventHandler")
         assert hasattr(projections, "EventSubscriber")
+
+    def test_eventsource_root_exports_async_event_handler(self) -> None:
+        """Root eventsource module exports AsyncEventHandler."""
+        import eventsource
+
+        assert hasattr(eventsource, "AsyncEventHandler")
+
+
+class TestAsyncEventHandler:
+    """Tests for AsyncEventHandler abstract base class."""
+
+    def test_canonical_import_works(self) -> None:
+        """Importing AsyncEventHandler from protocols works."""
+
+        assert AsyncEventHandler is not None
+
+    def test_cannot_instantiate_directly(self) -> None:
+        """AsyncEventHandler cannot be instantiated directly."""
+
+        with pytest.raises(TypeError, match="abstract"):
+            AsyncEventHandler()  # type: ignore[abstract]
+
+    @pytest.mark.asyncio
+    async def test_complete_handler_works(self) -> None:
+        """Complete AsyncEventHandler subclass works."""
+
+        events_handled: list[DomainEvent] = []
+
+        class MyHandler(AsyncEventHandler):
+            def event_types(self) -> list[type[DomainEvent]]:
+                return [OrderCreated, OrderShipped]
+
+            async def handle(self, event: DomainEvent) -> None:
+                events_handled.append(event)
+
+        handler = MyHandler()
+
+        assert OrderCreated in handler.event_types()
+        assert OrderShipped in handler.event_types()
+        assert len(handler.event_types()) == 2
+
+        event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
+        await handler.handle(event)
+
+        assert len(events_handled) == 1
+
+    def test_can_handle_default_implementation(self) -> None:
+        """can_handle method correctly checks event types."""
+
+        class MyHandler(AsyncEventHandler):
+            def event_types(self) -> list[type[DomainEvent]]:
+                return [OrderCreated]
+
+            async def handle(self, event: DomainEvent) -> None:
+                pass
+
+        handler = MyHandler()
+
+        created_event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
+        shipped_event = OrderShipped(aggregate_id=uuid4(), tracking_number="TRK-001")
+
+        assert handler.can_handle(created_event) is True
+        assert handler.can_handle(shipped_event) is False
+
+    def test_missing_event_types_raises_error(self) -> None:
+        """Subclass missing event_types raises TypeError."""
+
+        with pytest.raises(TypeError, match="abstract"):
+
+            class IncompleteHandler(AsyncEventHandler):
+                async def handle(self, event: DomainEvent) -> None:
+                    pass
+
+            IncompleteHandler()  # type: ignore[abstract]
+
+    def test_missing_handle_raises_error(self) -> None:
+        """Subclass missing handle raises TypeError."""
+
+        with pytest.raises(TypeError, match="abstract"):
+
+            class IncompleteHandler(AsyncEventHandler):
+                def event_types(self) -> list[type[DomainEvent]]:
+                    return [OrderCreated]
+
+            IncompleteHandler()  # type: ignore[abstract]
+
+
+class TestAsyncEventHandlerDeprecationWarnings:
+    """Tests for AsyncEventHandler deprecation warnings from old locations."""
+
+    def test_bus_interface_async_event_handler_warns(self) -> None:
+        """Importing AsyncEventHandler from bus.interface emits warning."""
+        import sys
+
+        interface = sys.modules.get("eventsource.bus.interface")
+        if interface:
+            with pytest.warns(DeprecationWarning, match="eventsource.protocols"):
+                _ = interface.__getattr__("AsyncEventHandler")
+
+    def test_projections_protocols_async_event_handler_warns(self) -> None:
+        """Importing AsyncEventHandler from projections.protocols emits warning."""
+        import sys
+
+        protocols = sys.modules.get("eventsource.projections.protocols")
+        if protocols:
+            with pytest.warns(DeprecationWarning, match="eventsource.protocols"):
+                _ = protocols.__getattr__("AsyncEventHandler")
+
+    def test_all_imports_resolve_to_same_class(self) -> None:
+        """All AsyncEventHandler imports resolve to the same class."""
+        import warnings
+
+        from eventsource.protocols import AsyncEventHandler as Canonical
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            import sys
+
+            bus_interface = sys.modules.get("eventsource.bus.interface")
+            proj_protocols = sys.modules.get("eventsource.projections.protocols")
+
+            if bus_interface:
+                bus_handler = bus_interface.__getattr__("AsyncEventHandler")
+                assert Canonical is bus_handler
+
+            if proj_protocols:
+                proj_handler = proj_protocols.__getattr__("AsyncEventHandler")
+                assert Canonical is proj_handler
+
+    def test_top_level_import_works(self) -> None:
+        """Top-level eventsource import works."""
+        from eventsource import AsyncEventHandler
+        from eventsource.protocols import AsyncEventHandler as Canonical
+
+        assert AsyncEventHandler is Canonical
+
+    def test_handlers_adapter_import_works(self) -> None:
+        """Import from handlers.adapter works."""
+        from eventsource.handlers.adapter import AsyncEventHandler
+        from eventsource.protocols import AsyncEventHandler as Canonical
+
+        assert AsyncEventHandler is Canonical

@@ -60,7 +60,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from eventsource.migration.models import PositionMapping
-from eventsource.observability import TracingMixin
+from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import ATTR_DB_SYSTEM
 from eventsource.repositories._connection import execute_with_connection
 
@@ -280,7 +280,7 @@ class PositionMappingRepository(Protocol):
         ...
 
 
-class PostgreSQLPositionMappingRepository(TracingMixin):
+class PostgreSQLPositionMappingRepository:
     """
     PostgreSQL implementation of PositionMappingRepository.
 
@@ -308,6 +308,7 @@ class PostgreSQLPositionMappingRepository(TracingMixin):
     def __init__(
         self,
         conn: AsyncConnection | AsyncEngine,
+        tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ):
         """
@@ -315,9 +316,12 @@ class PostgreSQLPositionMappingRepository(TracingMixin):
 
         Args:
             conn: Database connection or engine
+            tracer: Optional custom Tracer instance.
             enable_tracing: Whether to enable OpenTelemetry tracing
         """
-        self._init_tracing(__name__, enable_tracing)
+        # Composition-based tracing (replaces TracingMixin)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
         self._conn = conn
 
     async def create(self, mapping: PositionMapping) -> int:
@@ -333,7 +337,7 @@ class PostgreSQLPositionMappingRepository(TracingMixin):
         Returns:
             The database ID of the created mapping
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.position_mapping_repo.create",
             {
                 "migration.id": str(mapping.migration_id),
@@ -386,7 +390,7 @@ class PostgreSQLPositionMappingRepository(TracingMixin):
         if not mappings:
             return 0
 
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.position_mapping_repo.create_batch",
             {
                 "batch_size": len(mappings),
@@ -435,7 +439,7 @@ class PostgreSQLPositionMappingRepository(TracingMixin):
         Returns:
             PositionMapping instance or None if not found
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.position_mapping_repo.get",
             {
                 "mapping.id": mapping_id,
@@ -477,7 +481,7 @@ class PostgreSQLPositionMappingRepository(TracingMixin):
         Returns:
             PositionMapping instance or None if not found
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.position_mapping_repo.find_by_source_position",
             {
                 "migration.id": str(migration_id),
@@ -528,7 +532,7 @@ class PostgreSQLPositionMappingRepository(TracingMixin):
         Returns:
             PositionMapping instance or None if not found
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.position_mapping_repo.find_by_target_position",
             {
                 "migration.id": str(migration_id),
@@ -581,7 +585,7 @@ class PostgreSQLPositionMappingRepository(TracingMixin):
             PositionMapping with highest source_position <= given position,
             or None if no such mapping exists
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.position_mapping_repo.find_nearest_source_position",
             {
                 "migration.id": str(migration_id),
@@ -633,7 +637,7 @@ class PostgreSQLPositionMappingRepository(TracingMixin):
         Returns:
             PositionMapping instance or None if not found
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.position_mapping_repo.find_by_event_id",
             {
                 "migration.id": str(migration_id),
@@ -685,7 +689,7 @@ class PostgreSQLPositionMappingRepository(TracingMixin):
         Returns:
             List of PositionMapping instances
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.position_mapping_repo.list_by_migration",
             {
                 "migration.id": str(migration_id),
@@ -737,7 +741,7 @@ class PostgreSQLPositionMappingRepository(TracingMixin):
         Returns:
             List of PositionMapping instances ordered by source_position
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.position_mapping_repo.list_in_source_range",
             {
                 "migration.id": str(migration_id),
@@ -780,7 +784,7 @@ class PostgreSQLPositionMappingRepository(TracingMixin):
         Returns:
             Number of mappings
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.position_mapping_repo.count_by_migration",
             {
                 "migration.id": str(migration_id),
@@ -814,7 +818,7 @@ class PostgreSQLPositionMappingRepository(TracingMixin):
         Returns:
             Tuple of (min_source_position, max_source_position) or None if no mappings
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.position_mapping_repo.get_position_bounds",
             {
                 "migration.id": str(migration_id),
@@ -849,7 +853,7 @@ class PostgreSQLPositionMappingRepository(TracingMixin):
         Returns:
             Number of mappings deleted
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.position_mapping_repo.delete_by_migration",
             {
                 "migration.id": str(migration_id),

@@ -5,6 +5,9 @@ Tests for:
 - UUID serialization
 - datetime serialization
 - Convenience functions
+
+Note: These tests use the new canonical import path from eventsource.serialization.
+For backward compatibility tests, see tests/unit/serialization/test_json.py.
 """
 
 import json
@@ -13,7 +16,7 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.repositories._json import (
+from eventsource.serialization import (
     EventSourceJSONEncoder,
     json_dumps,
     json_loads,

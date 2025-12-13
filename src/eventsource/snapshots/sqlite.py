@@ -20,7 +20,7 @@ import logging
 from datetime import datetime
 from uuid import UUID
 
-from eventsource.observability import TracingMixin
+from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_AGGREGATE_ID,
     ATTR_AGGREGATE_TYPE,
@@ -50,7 +50,7 @@ class SQLiteNotAvailableError(ImportError):
         )
 
 
-class SQLiteSnapshotStore(SnapshotStore, TracingMixin):
+class SQLiteSnapshotStore(SnapshotStore):
     """
     SQLite implementation of SnapshotStore.
 
@@ -89,6 +89,8 @@ class SQLiteSnapshotStore(SnapshotStore, TracingMixin):
     def __init__(
         self,
         database_path: str,
+        *,
+        tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ) -> None:
         """
@@ -97,7 +99,10 @@ class SQLiteSnapshotStore(SnapshotStore, TracingMixin):
         Args:
             database_path: Path to the SQLite database file.
                           Use ":memory:" for in-memory database.
-            enable_tracing: Whether to enable OpenTelemetry tracing (default True)
+            tracer: Optional custom Tracer instance. If not provided, one is
+                   created based on enable_tracing setting.
+            enable_tracing: Whether to enable OpenTelemetry tracing (default True).
+                          Ignored if tracer is explicitly provided.
 
         Raises:
             SQLiteNotAvailableError: If aiosqlite is not installed.
@@ -105,7 +110,8 @@ class SQLiteSnapshotStore(SnapshotStore, TracingMixin):
         if not SQLITE_AVAILABLE:
             raise SQLiteNotAvailableError()
 
-        self._init_tracing(__name__, enable_tracing)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
         self._database_path = database_path
         logger.debug("SQLiteSnapshotStore initialized with %s", database_path)
 
@@ -116,7 +122,7 @@ class SQLiteSnapshotStore(SnapshotStore, TracingMixin):
         Args:
             snapshot: The snapshot to save
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.snapshot.save",
             {
                 ATTR_AGGREGATE_ID: str(snapshot.aggregate_id),
@@ -169,7 +175,7 @@ class SQLiteSnapshotStore(SnapshotStore, TracingMixin):
         Returns:
             The snapshot if found, None otherwise
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.snapshot.get",
             {
                 ATTR_AGGREGATE_ID: str(aggregate_id),
@@ -236,7 +242,7 @@ class SQLiteSnapshotStore(SnapshotStore, TracingMixin):
         Returns:
             True if a snapshot was deleted, False otherwise
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.snapshot.delete",
             {
                 ATTR_AGGREGATE_ID: str(aggregate_id),
@@ -285,7 +291,7 @@ class SQLiteSnapshotStore(SnapshotStore, TracingMixin):
         Returns:
             True if snapshot exists, False otherwise
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.snapshot.exists",
             {
                 ATTR_AGGREGATE_ID: str(aggregate_id),
@@ -322,7 +328,7 @@ class SQLiteSnapshotStore(SnapshotStore, TracingMixin):
         Returns:
             Number of snapshots deleted
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.snapshot.delete_by_type",
             {
                 ATTR_AGGREGATE_TYPE: aggregate_type,

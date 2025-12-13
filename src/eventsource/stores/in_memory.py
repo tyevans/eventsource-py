@@ -21,7 +21,8 @@ from eventsource.observability import (
     ATTR_FROM_VERSION,
     ATTR_POSITION,
     ATTR_STREAM_ID,
-    TracingMixin,
+    Tracer,
+    create_tracer,
 )
 from eventsource.stores._compat import normalize_timestamp
 from eventsource.stores.interface import (
@@ -35,7 +36,7 @@ from eventsource.stores.interface import (
 )
 
 
-class InMemoryEventStore(TracingMixin, EventStore):
+class InMemoryEventStore(EventStore):
     """
     In-memory implementation of the event store.
 
@@ -58,7 +59,7 @@ class InMemoryEventStore(TracingMixin, EventStore):
         production use, prefer PostgreSQLEventStore.
 
     Features:
-        - OpenTelemetry tracing support via TracingMixin
+        - OpenTelemetry tracing support via Tracer composition
 
     Example:
         >>> store = InMemoryEventStore()
@@ -78,15 +79,24 @@ class InMemoryEventStore(TracingMixin, EventStore):
         _global_position: Counter for global position
     """
 
-    def __init__(self, enable_tracing: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        tracer: Tracer | None = None,
+        enable_tracing: bool = True,
+    ) -> None:
         """
         Initialize an empty in-memory event store.
 
         Args:
-            enable_tracing: If True and OpenTelemetry is available, emit traces (default: True)
+            tracer: Optional custom Tracer instance. If not provided, one is
+                   created based on enable_tracing setting.
+            enable_tracing: If True and OpenTelemetry is available, emit traces (default: True).
+                          Ignored if tracer is explicitly provided.
         """
-        # Initialize tracing via TracingMixin
-        self._init_tracing(__name__, enable_tracing)
+        # Initialize tracing via composition (replaces TracingMixin)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
 
         # Store events by aggregate_id
         self._events: dict[UUID, list[DomainEvent]] = defaultdict(list)
@@ -144,7 +154,7 @@ class InMemoryEventStore(TracingMixin, EventStore):
         if not events:
             return AppendResult.successful(expected_version)
 
-        with self._create_span_context(
+        with self._tracer.span(
             "inmemory_event_store.append_events",
             {
                 ATTR_AGGREGATE_ID: str(aggregate_id),
@@ -250,7 +260,7 @@ class InMemoryEventStore(TracingMixin, EventStore):
             >>> for event in stream.events:
             ...     aggregate.apply_event(event, is_new=False)
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "inmemory_event_store.get_events",
             {
                 ATTR_AGGREGATE_ID: str(aggregate_id),
@@ -417,7 +427,7 @@ class InMemoryEventStore(TracingMixin, EventStore):
         if options is None:
             options = ReadOptions()
 
-        with self._create_span_context(
+        with self._tracer.span(
             "inmemory_event_store.read_stream",
             {
                 ATTR_STREAM_ID: stream_id,
@@ -533,7 +543,7 @@ class InMemoryEventStore(TracingMixin, EventStore):
         if options is None:
             options = ReadOptions()
 
-        with self._create_span_context(
+        with self._tracer.span(
             "inmemory_event_store.read_all",
             {
                 ATTR_POSITION: options.from_position,

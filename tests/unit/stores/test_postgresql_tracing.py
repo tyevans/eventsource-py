@@ -2,7 +2,7 @@
 Unit tests for PostgreSQLEventStore tracing functionality.
 
 Tests for:
-- TracingMixin integration
+- Composition-based Tracer integration
 - Span creation for append_events and get_events
 - Correct span attributes using standard ATTR_* constants
 - Tracing disabled behavior
@@ -24,7 +24,6 @@ from eventsource.observability import (
     ATTR_EVENT_TYPE,
     ATTR_EXPECTED_VERSION,
     ATTR_FROM_VERSION,
-    TracingMixin,
 )
 from eventsource.stores.postgresql import PostgreSQLEventStore
 
@@ -43,21 +42,30 @@ class PostgreSQLTracingTestEvent(DomainEvent):
 
 
 # ============================================================================
-# TracingMixin Integration Tests
+# Composition-based Tracer Integration Tests
 # ============================================================================
 
 
 class TestPostgreSQLEventStoreTracingMixin:
-    """Tests for PostgreSQLEventStore TracingMixin integration."""
+    """Tests for PostgreSQLEventStore composition-based Tracer integration."""
 
     @pytest.fixture
     def mock_session_factory(self):
         """Create a mock session factory for testing."""
         return MagicMock()
 
-    def test_inherits_from_tracing_mixin(self):
-        """PostgreSQLEventStore inherits from TracingMixin."""
-        assert issubclass(PostgreSQLEventStore, TracingMixin)
+    def test_uses_composition_based_tracer(self, mock_session_factory):
+        """PostgreSQLEventStore uses composition-based Tracer (not inheritance)."""
+        registry = EventRegistry()
+        store = PostgreSQLEventStore(
+            mock_session_factory,
+            event_registry=registry,
+            enable_tracing=True,
+        )
+        # Tracer is always set (either NullTracer or OpenTelemetryTracer)
+        assert store._tracer is not None
+        assert hasattr(store._tracer, "span")
+        assert hasattr(store._tracer, "enabled")
 
     def test_tracing_enabled_by_default(self, mock_session_factory):
         """Tracing is enabled by default when OTEL is available."""
@@ -78,10 +86,12 @@ class TestPostgreSQLEventStoreTracingMixin:
         )
 
         assert store._enable_tracing is False
-        assert store._tracer is None
+        # With composition-based tracing, _tracer is always set but disabled
+        assert store._tracer is not None
+        assert store._tracer.enabled is False
 
-    def test_has_tracing_enabled_property(self, mock_session_factory):
-        """Store exposes tracing_enabled property from mixin."""
+    def test_tracer_has_span_method(self, mock_session_factory):
+        """Store's tracer exposes span() context manager method."""
         registry = EventRegistry()
         store = PostgreSQLEventStore(
             mock_session_factory,
@@ -89,9 +99,9 @@ class TestPostgreSQLEventStoreTracingMixin:
             enable_tracing=True,
         )
 
-        # tracing_enabled is a property from TracingMixin
-        assert hasattr(store, "tracing_enabled")
-        assert isinstance(store.tracing_enabled, bool)
+        # Tracer uses span() method for creating spans
+        assert hasattr(store._tracer, "span")
+        assert callable(store._tracer.span)
 
 
 # ============================================================================
@@ -112,9 +122,11 @@ class TestPostgreSQLEventStoreSpanCreation:
         """Create a mock tracer with span context manager."""
         tracer = Mock()
         span = MagicMock()
-        span.__enter__ = Mock(return_value=span)
-        span.__exit__ = Mock(return_value=None)
-        tracer.start_as_current_span.return_value = span
+        span_cm = MagicMock()
+        span_cm.__enter__ = Mock(return_value=span)
+        span_cm.__exit__ = Mock(return_value=None)
+        tracer.span.return_value = span_cm
+        tracer.enabled = True
         return tracer
 
     @pytest.fixture
@@ -164,8 +176,8 @@ class TestPostgreSQLEventStoreSpanCreation:
         )
 
         # Verify span was created with correct name
-        mock_tracer.start_as_current_span.assert_called()
-        call_args = mock_tracer.start_as_current_span.call_args
+        mock_tracer.span.assert_called()
+        call_args = mock_tracer.span.call_args
         assert call_args[0][0] == "postgresql_event_store.append_events"
 
     @pytest.mark.asyncio
@@ -194,8 +206,8 @@ class TestPostgreSQLEventStoreSpanCreation:
         )
 
         # Verify correct attributes using standard constants
-        call_args = mock_tracer.start_as_current_span.call_args
-        attributes = call_args[1]["attributes"]
+        call_args = mock_tracer.span.call_args
+        attributes = call_args[0][1]
 
         assert ATTR_AGGREGATE_ID in attributes
         assert attributes[ATTR_AGGREGATE_ID] == str(aggregate_id)
@@ -230,8 +242,8 @@ class TestPostgreSQLEventStoreSpanCreation:
         )
 
         # Verify span was created with correct name
-        mock_tracer.start_as_current_span.assert_called()
-        call_args = mock_tracer.start_as_current_span.call_args
+        mock_tracer.span.assert_called()
+        call_args = mock_tracer.span.call_args
         assert call_args[0][0] == "postgresql_event_store.get_events"
 
     @pytest.mark.asyncio
@@ -254,8 +266,8 @@ class TestPostgreSQLEventStoreSpanCreation:
         )
 
         # Verify correct attributes using standard constants
-        call_args = mock_tracer.start_as_current_span.call_args
-        attributes = call_args[1]["attributes"]
+        call_args = mock_tracer.span.call_args
+        attributes = call_args[0][1]
 
         assert ATTR_AGGREGATE_ID in attributes
         assert attributes[ATTR_AGGREGATE_ID] == str(aggregate_id)
@@ -411,18 +423,18 @@ class TestPostgreSQLEventStoreStandardAttributes:
         count = int(result.stdout.strip())
         assert count >= 5, f"Expected at least 5 ATTR_* usages, found {count}"
 
-    def test_uses_create_span_context(self):
-        """Verify PostgreSQLEventStore uses _create_span_context method."""
+    def test_uses_tracer_span_method(self):
+        """Verify PostgreSQLEventStore uses self._tracer.span() method."""
         import subprocess
 
         result = subprocess.run(
-            ["grep", "-c", "_create_span_context", "src/eventsource/stores/postgresql.py"],
+            ["grep", "-c", "self._tracer.span", "src/eventsource/stores/postgresql.py"],
             capture_output=True,
             text=True,
         )
         # Should find at least 2 usages (append_events and get_events)
         count = int(result.stdout.strip())
-        assert count >= 2, f"Expected at least 2 _create_span_context usages, found {count}"
+        assert count >= 2, f"Expected at least 2 self._tracer.span usages, found {count}"
 
 
 # ============================================================================
@@ -443,9 +455,11 @@ class TestPostgreSQLEventStoreTracingMultipleEvents:
         """Create a mock tracer with span context manager."""
         tracer = Mock()
         span = MagicMock()
-        span.__enter__ = Mock(return_value=span)
-        span.__exit__ = Mock(return_value=None)
-        tracer.start_as_current_span.return_value = span
+        span_cm = MagicMock()
+        span_cm.__enter__ = Mock(return_value=span)
+        span_cm.__exit__ = Mock(return_value=None)
+        tracer.span.return_value = span_cm
+        tracer.enabled = True
         return tracer
 
     @pytest.mark.asyncio
@@ -489,8 +503,8 @@ class TestPostgreSQLEventStoreTracingMultipleEvents:
             expected_version=0,
         )
 
-        call_args = mock_tracer.start_as_current_span.call_args
-        attributes = call_args[1]["attributes"]
+        call_args = mock_tracer.span.call_args
+        attributes = call_args[0][1]
 
         assert attributes[ATTR_EVENT_COUNT] == 3
         assert "PostgreSQLTracingTestEvent" in attributes[ATTR_EVENT_TYPE]
@@ -521,4 +535,4 @@ class TestPostgreSQLEventStoreTracingMultipleEvents:
         assert result.success is True
 
         # No span should be created for empty events
-        mock_tracer.start_as_current_span.assert_not_called()
+        mock_tracer.span.assert_not_called()

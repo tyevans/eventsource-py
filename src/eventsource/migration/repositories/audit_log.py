@@ -59,7 +59,7 @@ from eventsource.migration.models import (
     MigrationAuditEntry,
     MigrationPhase,
 )
-from eventsource.observability import TracingMixin
+from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import ATTR_DB_SYSTEM
 from eventsource.repositories._connection import execute_with_connection
 
@@ -160,7 +160,7 @@ class MigrationAuditLogRepository(Protocol):
         ...
 
 
-class PostgreSQLMigrationAuditLogRepository(TracingMixin):
+class PostgreSQLMigrationAuditLogRepository:
     """
     PostgreSQL implementation of MigrationAuditLogRepository.
 
@@ -188,6 +188,7 @@ class PostgreSQLMigrationAuditLogRepository(TracingMixin):
     def __init__(
         self,
         conn: AsyncConnection | AsyncEngine,
+        tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ):
         """
@@ -195,9 +196,12 @@ class PostgreSQLMigrationAuditLogRepository(TracingMixin):
 
         Args:
             conn: Database connection or engine
+            tracer: Optional custom Tracer instance.
             enable_tracing: Whether to enable OpenTelemetry tracing
         """
-        self._init_tracing(__name__, enable_tracing)
+        # Composition-based tracing (replaces TracingMixin)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
         self._conn = conn
 
     async def record(self, entry: MigrationAuditEntry) -> int:
@@ -213,7 +217,7 @@ class PostgreSQLMigrationAuditLogRepository(TracingMixin):
         Returns:
             The generated ID for the audit entry
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.audit_log_repo.record",
             {
                 "migration.id": str(entry.migration_id),
@@ -274,7 +278,7 @@ class PostgreSQLMigrationAuditLogRepository(TracingMixin):
         Returns:
             List of audit entries, ordered by occurred_at ascending
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.audit_log_repo.get_by_migration",
             {
                 "migration.id": str(migration_id),
@@ -327,7 +331,7 @@ class PostgreSQLMigrationAuditLogRepository(TracingMixin):
         Returns:
             The audit entry or None if not found
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.audit_log_repo.get_by_id",
             {
                 "audit.entry_id": entry_id,
@@ -368,7 +372,7 @@ class PostgreSQLMigrationAuditLogRepository(TracingMixin):
         Returns:
             The most recent audit entry or None if none exist
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.audit_log_repo.get_latest",
             {
                 "migration.id": str(migration_id),
@@ -428,7 +432,7 @@ class PostgreSQLMigrationAuditLogRepository(TracingMixin):
         Returns:
             Number of matching audit entries
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.audit_log_repo.count_by_migration",
             {
                 "migration.id": str(migration_id),

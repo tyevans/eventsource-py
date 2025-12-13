@@ -33,8 +33,8 @@ def __getattr__(name: str) -> type:
     """
     Handle deprecated imports with warnings.
 
-    This enables deprecation warnings when importing EventHandler or
-    EventSubscriber from this module.
+    This enables deprecation warnings when importing EventHandler,
+    EventSubscriber, or AsyncEventHandler from this module.
     """
     if name == "EventHandler":
         warnings.warn(
@@ -55,6 +55,17 @@ def __getattr__(name: str) -> type:
             stacklevel=2,
         )
         return _FlexibleEventSubscriber
+    elif name == "AsyncEventHandler":
+        warnings.warn(
+            "Importing 'AsyncEventHandler' from eventsource.bus.interface is deprecated. "
+            "Use 'from eventsource.protocols import AsyncEventHandler' instead. "
+            "This import will be removed in version 0.4.0.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        from eventsource.protocols import AsyncEventHandler
+
+        return AsyncEventHandler
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -267,6 +278,10 @@ class EventBus(ABC):
 class AsyncEventHandler(ABC):
     """
     Base class for async event handlers.
+
+    .. deprecated::
+        This class is deprecated. Use ``from eventsource.protocols import AsyncEventHandler``
+        instead. This class will be removed in version 0.4.0.
 
     Provides a more structured approach than the EventHandler protocol
     for handlers that need additional methods like event filtering.

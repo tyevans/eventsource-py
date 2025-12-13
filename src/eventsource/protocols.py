@@ -179,10 +179,71 @@ class FlexibleEventSubscriber(Protocol):
         ...
 
 
+class AsyncEventHandler(ABC):
+    """
+    Base class for async event handlers.
+
+    Provides a more structured approach than the EventHandler protocol
+    for handlers that need additional methods like event filtering.
+
+    This is the canonical location for AsyncEventHandler.
+
+    Example:
+        >>> from eventsource.protocols import AsyncEventHandler
+        >>>
+        >>> class OrderEmailHandler(AsyncEventHandler):
+        ...     def event_types(self) -> list[type[DomainEvent]]:
+        ...         return [OrderCreated, OrderShipped]
+        ...
+        ...     async def handle(self, event: DomainEvent) -> None:
+        ...         if isinstance(event, OrderCreated):
+        ...             await self.send_confirmation_email(event)
+    """
+
+    @abstractmethod
+    async def handle(self, event: DomainEvent) -> None:
+        """
+        Handle an event asynchronously.
+
+        Args:
+            event: The event to handle
+
+        Raises:
+            Exception: If handling fails
+        """
+        pass
+
+    def can_handle(self, event: DomainEvent) -> bool:
+        """
+        Check if this handler can handle the given event.
+
+        By default, checks if event type is in the handler's event types.
+        Override for custom filtering logic.
+
+        Args:
+            event: The event to check
+
+        Returns:
+            True if this handler can handle the event
+        """
+        return type(event) in self.event_types()
+
+    @abstractmethod
+    def event_types(self) -> list[type[DomainEvent]]:
+        """
+        Return list of event types this handler supports.
+
+        Returns:
+            List of event classes this handler can process
+        """
+        pass
+
+
 __all__ = [
     "EventHandler",
     "SyncEventHandler",
     "FlexibleEventHandler",
     "EventSubscriber",
     "FlexibleEventSubscriber",
+    "AsyncEventHandler",
 ]

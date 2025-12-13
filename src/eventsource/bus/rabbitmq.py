@@ -48,7 +48,7 @@ from eventsource.bus.interface import (
 )
 from eventsource.events.base import DomainEvent
 from eventsource.handlers.adapter import HandlerAdapter
-from eventsource.observability import OTEL_AVAILABLE, TracingMixin
+from eventsource.observability import OTEL_AVAILABLE, SpanKindEnum, Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_AGGREGATE_ID,
     ATTR_EVENT_COUNT,
@@ -584,7 +584,7 @@ class HealthCheckResult:
     details: dict[str, Any] | None = None
 
 
-class RabbitMQEventBus(TracingMixin, EventBus):
+class RabbitMQEventBus(EventBus):
     """Event bus implementation using RabbitMQ.
 
     This implementation provides distributed event delivery with:
@@ -616,6 +616,8 @@ class RabbitMQEventBus(TracingMixin, EventBus):
         self,
         config: RabbitMQEventBusConfig | None = None,
         event_registry: EventRegistry | None = None,
+        *,
+        tracer: Tracer | None = None,
     ) -> None:
         """Initialize the RabbitMQ event bus.
 
@@ -624,6 +626,8 @@ class RabbitMQEventBus(TracingMixin, EventBus):
                    Defaults to RabbitMQEventBusConfig() with default values.
             event_registry: Event registry for deserializing events.
                           If None, uses the default registry.
+            tracer: Optional custom Tracer instance. If not provided, one is
+                   created based on config.enable_tracing setting.
 
         Raises:
             RabbitMQNotAvailableError: If aio-pika package is not installed
@@ -667,8 +671,9 @@ class RabbitMQEventBus(TracingMixin, EventBus):
         # Logger
         self._logger = logging.getLogger(__name__)
 
-        # Initialize tracing via mixin
-        self._init_tracing(__name__, self._config.enable_tracing)
+        # Initialize tracing via composition (replaces TracingMixin)
+        self._tracer = tracer or create_tracer(__name__, self._config.enable_tracing)
+        self._enable_tracing = self._tracer.enabled
 
     @property
     def config(self) -> RabbitMQEventBusConfig:
@@ -2571,12 +2576,12 @@ class RabbitMQEventBus(TracingMixin, EventBus):
         routing_key = self._get_routing_key(event)
         span = None
 
-        # Use TracingMixin's _tracer for span creation with SpanKind.PRODUCER
+        # Use Tracer's start_span with SpanKindEnum.PRODUCER for distributed tracing
         # This is needed for context propagation (inject trace context into message)
-        if self._enable_tracing and self._tracer is not None and PROPAGATION_AVAILABLE:
+        if self._enable_tracing and PROPAGATION_AVAILABLE:
             span = self._tracer.start_span(
                 "eventsource.event_bus.publish",
-                kind=SpanKind.PRODUCER,
+                kind=SpanKindEnum.PRODUCER,
                 attributes={
                     ATTR_MESSAGING_SYSTEM: "rabbitmq",
                     ATTR_MESSAGING_DESTINATION: self._config.exchange_name,
@@ -2714,10 +2719,10 @@ class RabbitMQEventBus(TracingMixin, EventBus):
 
         # Create parent span for batch operation if tracing is enabled
         span = None
-        if self._enable_tracing and self._tracer is not None and PROPAGATION_AVAILABLE:
+        if self._enable_tracing and PROPAGATION_AVAILABLE:
             span = self._tracer.start_span(
                 "eventsource.event_bus.publish_batch",
-                kind=SpanKind.PRODUCER,
+                kind=SpanKindEnum.PRODUCER,
                 attributes={
                     ATTR_MESSAGING_SYSTEM: "rabbitmq",
                     ATTR_MESSAGING_DESTINATION: self._config.exchange_name,
@@ -3188,17 +3193,16 @@ class RabbitMQEventBus(TracingMixin, EventBus):
         span = None
         ctx = None
 
-        # Use TracingMixin's _tracer for span creation with SpanKind.CONSUMER
+        # Use Tracer's start_span with SpanKindEnum.CONSUMER for distributed tracing
         # Extract trace context from message headers to link consumer span to publisher span
-        if self._enable_tracing and self._tracer is not None and PROPAGATION_AVAILABLE:
+        if self._enable_tracing and PROPAGATION_AVAILABLE:
             # Extract trace context from message headers for distributed tracing
             if extract is not None:
                 ctx = extract(dict(headers))
 
             span = self._tracer.start_span(
                 "eventsource.event_bus.consume",
-                context=ctx,
-                kind=SpanKind.CONSUMER,
+                kind=SpanKindEnum.CONSUMER,
                 attributes={
                     ATTR_MESSAGING_SYSTEM: "rabbitmq",
                     ATTR_MESSAGING_DESTINATION: self._config.queue_name,
@@ -3207,6 +3211,7 @@ class RabbitMQEventBus(TracingMixin, EventBus):
                     ATTR_EVENT_TYPE: event_type_name,
                     "messaging.rabbitmq.routing_key": message.routing_key or "",
                 },
+                context=ctx,
             )
 
         try:
@@ -3354,16 +3359,11 @@ class RabbitMQEventBus(TracingMixin, EventBus):
             handler_start = datetime.now(UTC)
             handler_span = None
 
-            # Create handler span if tracing is enabled (using mixin's _tracer)
-            if (
-                self._enable_tracing
-                and self._tracer is not None
-                and parent_span
-                and PROPAGATION_AVAILABLE
-            ):
+            # Create handler span if tracing is enabled (using composition-based tracer)
+            if self._enable_tracing and parent_span and PROPAGATION_AVAILABLE:
                 handler_span = self._tracer.start_span(
                     "eventsource.event_bus.handle",
-                    kind=SpanKind.INTERNAL,
+                    kind=SpanKindEnum.INTERNAL,
                     attributes={
                         ATTR_HANDLER_NAME: handler_name,
                         ATTR_EVENT_TYPE: event.event_type,

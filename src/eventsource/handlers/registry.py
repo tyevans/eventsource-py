@@ -33,12 +33,68 @@ from typing import Any, Literal
 
 from eventsource.events.base import DomainEvent
 from eventsource.exceptions import UnhandledEventError
-from eventsource.projections.decorators import get_handled_event_type
+from eventsource.handlers.decorators import get_handled_event_type
 
 logger = logging.getLogger(__name__)
 
 # Type alias for unregistered event handling mode
 UnregisteredEventHandling = Literal["ignore", "warn", "error"]
+
+
+class HandlerSignatureError(ValueError):
+    """
+    Raised when an event handler has an invalid signature.
+
+    This exception provides detailed guidance on how to fix invalid handler
+    signatures, including expected signature patterns and hints for common
+    mistakes.
+
+    Attributes:
+        handler_name: Name of the handler method
+        owner_name: Name of the class containing the handler
+        event_type: The event type from @handles decorator
+        param_count: Actual number of parameters (excluding self)
+        is_async_required: Whether async is required for this handler
+
+    Example:
+        >>> from eventsource.handlers import handles, HandlerRegistry
+        >>>
+        >>> class BadProjection:
+        ...     @handles(OrderCreated)
+        ...     async def _handle(self, a, b, c, event):  # Too many params
+        ...         pass
+        ...
+        >>> # Raises HandlerSignatureError with helpful message
+    """
+
+    def __init__(
+        self,
+        handler_name: str,
+        owner_name: str,
+        event_type: type,
+        param_count: int,
+        is_async_required: bool = True,
+    ) -> None:
+        self.handler_name = handler_name
+        self.owner_name = owner_name
+        self.event_type = event_type
+        self.param_count = param_count
+        self.is_async_required = is_async_required
+
+        event_name = event_type.__name__
+        async_prefix = "async " if is_async_required else ""
+
+        message = (
+            f"Handler '{handler_name}' in {owner_name} has invalid signature "
+            f"for @handles({event_name}).\n\n"
+            f"Expected one of:\n"
+            f"  {async_prefix}def {handler_name}(self, event: {event_name}) -> None\n"
+            f"  {async_prefix}def {handler_name}(self, context, event: {event_name}) -> None\n\n"
+            f"Got: {param_count} parameter(s) (excluding self)\n\n"
+            f"Hint: Ensure your handler has exactly 1 or 2 parameters after 'self'."
+        )
+
+        super().__init__(message)
 
 
 @dataclass
@@ -210,13 +266,19 @@ class HandlerRegistry:
 
     def _validate_handler(self, handler_info: HandlerInfo) -> None:
         """
-        Validate a single handler.
+        Validate a single handler's signature.
+
+        Checks that the handler:
+        1. Is async if require_async=True
+        2. Has correct parameter count (1 or 2 after self)
+        3. Has matching event type annotation (warning only)
 
         Args:
             handler_info: Handler metadata to validate
 
         Raises:
-            ValueError: If handler has invalid signature
+            HandlerSignatureError: If handler has invalid parameter count
+            ValueError: If handler is not async when required
         """
         handler = handler_info.handler
         handler_name = handler_info.handler_name
@@ -224,17 +286,23 @@ class HandlerRegistry:
 
         # Check async requirement
         if self._require_async and not handler_info.is_async:
+            event_name = event_type.__name__
             raise ValueError(
-                f"Handler {handler_name} in {self._owner_name} must be async. "
-                f"Add 'async def' to the method definition."
+                f"Handler '{handler_name}' in {self._owner_name} must be async.\n\n"
+                f"Change:\n"
+                f"  def {handler_name}(self, ...)\n\n"
+                f"To:\n"
+                f"  async def {handler_name}(self, event: {event_name}) -> None"
             )
 
-        # Check parameter count (1 for event-only, 2 for conn+event)
+        # Check parameter count (1 for event-only, 2 for context+event)
         if handler_info.param_count < 1 or handler_info.param_count > 2:
-            raise ValueError(
-                f"Handler {handler_name} in {self._owner_name} must accept "
-                f"1 or 2 parameters (event) or (conn, event), but has "
-                f"{handler_info.param_count} parameters."
+            raise HandlerSignatureError(
+                handler_name=handler_name,
+                owner_name=self._owner_name,
+                event_type=event_type,
+                param_count=handler_info.param_count,
+                is_async_required=self._require_async,
             )
 
         # Check event type annotation (warning only)
@@ -415,5 +483,6 @@ class HandlerRegistry:
 __all__ = [
     "HandlerRegistry",
     "HandlerInfo",
+    "HandlerSignatureError",
     "UnregisteredEventHandling",
 ]

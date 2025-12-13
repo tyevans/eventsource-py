@@ -55,7 +55,7 @@ from uuid import UUID
 
 from eventsource.migration.exceptions import PositionMappingError
 from eventsource.migration.models import PositionMapping
-from eventsource.observability import TracingMixin
+from eventsource.observability import Tracer, create_tracer
 
 if TYPE_CHECKING:
     from eventsource.migration.repositories.position_mapping import (
@@ -109,7 +109,7 @@ class ReverseTranslationResult:
     nearest_target_position: int | None = None
 
 
-class PositionMapper(TracingMixin):
+class PositionMapper:
     """
     Maps event positions between source and target stores.
 
@@ -142,6 +142,7 @@ class PositionMapper(TracingMixin):
         self,
         position_mapping_repo: PositionMappingRepository,
         *,
+        tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ) -> None:
         """
@@ -149,9 +150,12 @@ class PositionMapper(TracingMixin):
 
         Args:
             position_mapping_repo: Repository for storing/retrieving mappings.
+            tracer: Optional custom Tracer instance.
             enable_tracing: Whether to enable OpenTelemetry tracing.
         """
-        self._init_tracing(__name__, enable_tracing)
+        # Composition-based tracing (replaces TracingMixin)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
         self._repo = position_mapping_repo
 
     async def record_mapping(
@@ -180,7 +184,7 @@ class PositionMapper(TracingMixin):
         Raises:
             PositionMappingError: If recording the mapping fails.
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.position_mapper.record_mapping",
             {
                 "migration.id": str(migration_id),
@@ -241,7 +245,7 @@ class PositionMapper(TracingMixin):
         if not mappings:
             return 0
 
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.position_mapper.record_mappings_batch",
             {
                 "migration.id": str(migration_id),
@@ -302,7 +306,7 @@ class PositionMapper(TracingMixin):
         Raises:
             PositionMappingError: If no mapping can be found.
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.position_mapper.translate_position",
             {
                 "migration.id": str(migration_id),
@@ -378,7 +382,7 @@ class PositionMapper(TracingMixin):
         Raises:
             PositionMappingError: If no mapping can be found.
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.position_mapper.translate_position_reverse",
             {
                 "migration.id": str(migration_id),
@@ -437,7 +441,7 @@ class PositionMapper(TracingMixin):
         if not source_positions:
             return []
 
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.position_mapper.translate_positions_batch",
             {
                 "migration.id": str(migration_id),
@@ -526,7 +530,7 @@ class PositionMapper(TracingMixin):
         Returns:
             PositionMapping if found, None otherwise.
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.position_mapper.get_mapping_by_event_id",
             {
                 "migration.id": str(migration_id),
@@ -551,7 +555,7 @@ class PositionMapper(TracingMixin):
         Returns:
             Tuple of (min_position, max_position) or None if no mappings.
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.position_mapper.get_position_bounds",
             {"migration.id": str(migration_id)},
         ):
@@ -570,7 +574,7 @@ class PositionMapper(TracingMixin):
         Returns:
             Number of mappings recorded.
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.position_mapper.get_mapping_count",
             {"migration.id": str(migration_id)},
         ):
@@ -591,7 +595,7 @@ class PositionMapper(TracingMixin):
         Returns:
             Number of mappings deleted.
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.position_mapper.clear_mappings",
             {"migration.id": str(migration_id)},
         ):

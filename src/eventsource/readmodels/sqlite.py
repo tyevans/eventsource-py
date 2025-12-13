@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Generic
 from uuid import UUID
 
-from eventsource.observability import TracingMixin
+from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_BATCH_SIZE,
     ATTR_DB_OPERATION,
@@ -45,7 +45,7 @@ from eventsource.readmodels.base import ReadModel as _BaseReadModel
 TModel = TypeVar("TModel", bound=_BaseReadModel)
 
 
-class SQLiteReadModelRepository(TracingMixin, Generic[TModel]):
+class SQLiteReadModelRepository(Generic[TModel]):
     """
     SQLite implementation of ReadModelRepository.
 
@@ -79,6 +79,7 @@ class SQLiteReadModelRepository(TracingMixin, Generic[TModel]):
         self,
         connection: aiosqlite.Connection,
         model_class: type[TModel],
+        tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ) -> None:
         """
@@ -87,9 +88,11 @@ class SQLiteReadModelRepository(TracingMixin, Generic[TModel]):
         Args:
             connection: aiosqlite database connection
             model_class: The ReadModel subclass this repository will manage
+            tracer: Optional tracer for tracing (if not provided, one will be created)
             enable_tracing: Whether to enable OpenTelemetry tracing (default True)
         """
-        self._init_tracing(__name__, enable_tracing)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
         self._connection = connection
         self._model_class = model_class
         self._table_name = model_class.table_name()
@@ -105,7 +108,7 @@ class SQLiteReadModelRepository(TracingMixin, Generic[TModel]):
         Returns:
             The read model if found and not soft-deleted, None otherwise
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.readmodel.get",
             {
                 ATTR_READMODEL_TYPE: self._model_class.__name__,
@@ -145,7 +148,7 @@ class SQLiteReadModelRepository(TracingMixin, Generic[TModel]):
         if not ids:
             return []
 
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.readmodel.get_many",
             {
                 ATTR_READMODEL_TYPE: self._model_class.__name__,
@@ -181,7 +184,7 @@ class SQLiteReadModelRepository(TracingMixin, Generic[TModel]):
         Args:
             model: The read model to save
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.readmodel.save",
             {
                 ATTR_READMODEL_TYPE: self._model_class.__name__,
@@ -223,7 +226,7 @@ class SQLiteReadModelRepository(TracingMixin, Generic[TModel]):
         if not models:
             return
 
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.readmodel.save_many",
             {
                 ATTR_READMODEL_TYPE: self._model_class.__name__,
@@ -265,7 +268,7 @@ class SQLiteReadModelRepository(TracingMixin, Generic[TModel]):
         Returns:
             True if a record was deleted, False if the ID was not found
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.readmodel.delete",
             {
                 ATTR_READMODEL_TYPE: self._model_class.__name__,
@@ -294,7 +297,7 @@ class SQLiteReadModelRepository(TracingMixin, Generic[TModel]):
             True if a record was soft-deleted, False if not found
             or already soft-deleted
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.readmodel.soft_delete",
             {
                 ATTR_READMODEL_TYPE: self._model_class.__name__,
@@ -328,7 +331,7 @@ class SQLiteReadModelRepository(TracingMixin, Generic[TModel]):
             True if a record was restored, False if not found
             or was not soft-deleted
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.readmodel.restore",
             {
                 ATTR_READMODEL_TYPE: self._model_class.__name__,
@@ -360,7 +363,7 @@ class SQLiteReadModelRepository(TracingMixin, Generic[TModel]):
         Returns:
             The soft-deleted read model if found, None otherwise
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.readmodel.get_deleted",
             {
                 ATTR_READMODEL_TYPE: self._model_class.__name__,
@@ -396,7 +399,7 @@ class SQLiteReadModelRepository(TracingMixin, Generic[TModel]):
         if query is None:
             query = Query()
 
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.readmodel.find_deleted",
             {
                 ATTR_READMODEL_TYPE: self._model_class.__name__,
@@ -426,7 +429,7 @@ class SQLiteReadModelRepository(TracingMixin, Generic[TModel]):
             True if the read model exists and is not soft-deleted,
             False otherwise
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.readmodel.exists",
             {
                 ATTR_READMODEL_TYPE: self._model_class.__name__,
@@ -462,7 +465,7 @@ class SQLiteReadModelRepository(TracingMixin, Generic[TModel]):
         if query is None:
             query = Query()
 
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.readmodel.find",
             {
                 ATTR_READMODEL_TYPE: self._model_class.__name__,
@@ -496,7 +499,7 @@ class SQLiteReadModelRepository(TracingMixin, Generic[TModel]):
         if query is None:
             query = Query()
 
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.readmodel.count",
             {
                 ATTR_READMODEL_TYPE: self._model_class.__name__,
@@ -523,7 +526,7 @@ class SQLiteReadModelRepository(TracingMixin, Generic[TModel]):
         Returns:
             Number of records deleted
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.readmodel.truncate",
             {
                 ATTR_READMODEL_TYPE: self._model_class.__name__,
@@ -561,7 +564,7 @@ class SQLiteReadModelRepository(TracingMixin, Generic[TModel]):
             ... except OptimisticLockError as e:
             ...     print(f"Conflict: expected v{e.expected_version}")
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.readmodel.save_with_version_check",
             {
                 ATTR_READMODEL_TYPE: self._model_class.__name__,

@@ -46,7 +46,7 @@ from eventsource.bus.interface import (
 )
 from eventsource.events.base import DomainEvent
 from eventsource.handlers.adapter import HandlerAdapter
-from eventsource.observability import TracingMixin
+from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_AGGREGATE_ID,
     ATTR_EVENT_COUNT,
@@ -181,7 +181,7 @@ class RedisEventBusStats:
     reconnections: int = 0
 
 
-class RedisEventBus(TracingMixin, EventBus):
+class RedisEventBus(EventBus):
     """
     Event bus using Redis Streams for durable event distribution.
 
@@ -214,6 +214,8 @@ class RedisEventBus(TracingMixin, EventBus):
         self,
         config: RedisEventBusConfig | None = None,
         event_registry: EventRegistry | None = None,
+        *,
+        tracer: Tracer | None = None,
     ) -> None:
         """
         Initialize the Redis event bus.
@@ -223,6 +225,8 @@ class RedisEventBus(TracingMixin, EventBus):
                    Defaults to RedisEventBusConfig() with default values.
             event_registry: Event registry for deserializing events.
                           If None, uses the default registry.
+            tracer: Optional custom Tracer instance. If not provided, one is
+                   created based on config.enable_tracing setting.
 
         Raises:
             RedisNotAvailableError: If redis package is not installed
@@ -247,8 +251,9 @@ class RedisEventBus(TracingMixin, EventBus):
         # Background tasks
         self._consumer_task: asyncio.Task[None] | None = None
 
-        # Initialize tracing via mixin
-        self._init_tracing(__name__, self._config.enable_tracing)
+        # Initialize tracing via composition (replaces TracingMixin)
+        self._tracer = tracer or create_tracer(__name__, self._config.enable_tracing)
+        self._enable_tracing = self._tracer.enabled
 
     @property
     def config(self) -> RedisEventBusConfig:
@@ -389,7 +394,7 @@ class RedisEventBus(TracingMixin, EventBus):
         if not self._redis:
             raise RuntimeError("Redis client not initialized")
 
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.event_bus.publish",
             {
                 ATTR_EVENT_COUNT: len(events),
@@ -724,7 +729,7 @@ class RedisEventBus(TracingMixin, EventBus):
 
         processing_start = datetime.now(UTC)
 
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.event_bus.process",
             {
                 ATTR_EVENT_TYPE: event_type_name,
@@ -900,7 +905,7 @@ class RedisEventBus(TracingMixin, EventBus):
         )
 
         # Trace event dispatch with dynamic attributes
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.event_bus.dispatch",
             {
                 ATTR_EVENT_TYPE: event_type.__name__,
@@ -929,7 +934,7 @@ class RedisEventBus(TracingMixin, EventBus):
             message_id: Redis message ID for logging
         """
         # Trace handler execution with dynamic attributes and error recording
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.event_bus.handle",
             {
                 ATTR_EVENT_TYPE: type(event).__name__,

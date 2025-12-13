@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from eventsource.events.base import DomainEvent
+from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_BUFFER_SIZE,
     ATTR_EVENT_ID,
@@ -26,7 +27,6 @@ from eventsource.observability.attributes import (
     ATTR_POSITION,
     ATTR_SUBSCRIPTION_NAME,
 )
-from eventsource.observability.tracing import TracingMixin
 from eventsource.subscriptions.config import CheckpointStrategy
 from eventsource.subscriptions.filtering import EventFilter, FilterStats
 from eventsource.subscriptions.flow_control import FlowController, FlowControlStats
@@ -66,7 +66,7 @@ class LiveRunnerStats:
 
 
 @dataclass
-class LiveRunner(TracingMixin):
+class LiveRunner:
     """
     Receives real-time events from the event bus and delivers to subscriber.
 
@@ -94,6 +94,7 @@ class LiveRunner(TracingMixin):
     event_bus: "EventBus"
     checkpoint_repo: "CheckpointRepository"
     subscription: Subscription
+    tracer: Tracer | None = None
     enable_metrics: bool = True
     enable_tracing: bool = True
 
@@ -121,7 +122,9 @@ class LiveRunner(TracingMixin):
 
     def __post_init__(self) -> None:
         """Initialize config reference, flow controller, filter, retry mechanism, metrics and tracing."""
-        self._init_tracing(__name__, self.enable_tracing)
+        # Composition-based tracing (replaces TracingMixin)
+        self._tracer = self.tracer or create_tracer(__name__, self.enable_tracing)
+        self._enable_tracing = self._tracer.enabled
 
         self.config = self.subscription.config
         self._flow_controller = FlowController(
@@ -158,7 +161,7 @@ class LiveRunner(TracingMixin):
             buffer_events: If True, buffer events instead of processing immediately.
                           Used during catch-up to live transition.
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.live_runner.start",
             {ATTR_SUBSCRIPTION_NAME: self.subscription.name},
         ):
@@ -261,7 +264,7 @@ class LiveRunner(TracingMixin):
         if position is None:
             position = self._get_event_position(event)
 
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.live_runner.process_event",
             {
                 ATTR_SUBSCRIPTION_NAME: self.subscription.name,
@@ -500,7 +503,7 @@ class LiveRunner(TracingMixin):
         Returns:
             Number of events processed from buffer
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.live_runner.process_buffer",
             {
                 ATTR_SUBSCRIPTION_NAME: self.subscription.name,
@@ -558,7 +561,7 @@ class LiveRunner(TracingMixin):
         Returns:
             Number of events processed from pause buffer
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.live_runner.process_pause_buffer",
             {
                 ATTR_SUBSCRIPTION_NAME: self.subscription.name,
@@ -606,7 +609,7 @@ class LiveRunner(TracingMixin):
 
         Unsubscribes from the event bus and stops processing.
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.live_runner.stop",
             {ATTR_SUBSCRIPTION_NAME: self.subscription.name},
         ):

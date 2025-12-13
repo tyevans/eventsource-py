@@ -37,7 +37,8 @@ from eventsource.observability import (
     ATTR_EVENT_TYPE,
     ATTR_EXPECTED_VERSION,
     ATTR_FROM_VERSION,
-    TracingMixin,
+    Tracer,
+    create_tracer,
 )
 from eventsource.stores._compat import normalize_timestamp
 from eventsource.stores._type_converter import (
@@ -57,7 +58,7 @@ from eventsource.stores.interface import (
 logger = logging.getLogger(__name__)
 
 
-class SQLiteEventStore(TracingMixin, EventStore):
+class SQLiteEventStore(EventStore):
     """
     SQLite implementation of the event store.
 
@@ -70,7 +71,7 @@ class SQLiteEventStore(TracingMixin, EventStore):
     - WAL mode for better concurrency (optional)
     - Multi-tenancy support
     - Full EventStore interface compliance
-    - OpenTelemetry tracing support via TracingMixin
+    - OpenTelemetry tracing support via Tracer composition
 
     SQLite-specific adaptations:
     - UUIDs stored as TEXT (36 characters, hyphenated format)
@@ -104,6 +105,7 @@ class SQLiteEventStore(TracingMixin, EventStore):
         *,
         wal_mode: bool = True,
         busy_timeout: int = 5000,
+        tracer: Tracer | None = None,
         enable_tracing: bool = True,
         type_converter: TypeConverter | None = None,
         uuid_fields: set[str] | None = None,
@@ -118,7 +120,10 @@ class SQLiteEventStore(TracingMixin, EventStore):
             event_registry: Event registry for deserialization (defaults to module registry)
             wal_mode: If True, enable WAL mode for better concurrency (default: True)
             busy_timeout: Timeout in milliseconds when database is locked (default: 5000)
-            enable_tracing: If True and OpenTelemetry is available, emit traces (default: True)
+            tracer: Optional custom Tracer instance. If not provided, one is
+                   created based on enable_tracing setting.
+            enable_tracing: If True and OpenTelemetry is available, emit traces (default: True).
+                          Ignored if tracer is explicitly provided.
             type_converter: Custom TypeConverter for field type conversion.
                 If not provided, a DefaultTypeConverter is created using
                 the uuid_fields, string_id_fields, and auto_detect_uuid params.
@@ -157,8 +162,9 @@ class SQLiteEventStore(TracingMixin, EventStore):
         self._busy_timeout = busy_timeout
         self._connection: aiosqlite.Connection | None = None
 
-        # Initialize tracing via TracingMixin
-        self._init_tracing(__name__, enable_tracing)
+        # Initialize tracing via composition (replaces TracingMixin)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
 
         # Initialize type converter
         if type_converter is not None:
@@ -377,7 +383,7 @@ class SQLiteEventStore(TracingMixin, EventStore):
         if not events:
             return AppendResult.successful(expected_version)
 
-        with self._create_span_context(
+        with self._tracer.span(
             "sqlite_event_store.append_events",
             {
                 ATTR_AGGREGATE_ID: str(aggregate_id),
@@ -554,7 +560,7 @@ class SQLiteEventStore(TracingMixin, EventStore):
             >>> for event in stream.events:
             ...     aggregate.apply(event)
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "sqlite_event_store.get_events",
             {
                 ATTR_AGGREGATE_ID: str(aggregate_id),

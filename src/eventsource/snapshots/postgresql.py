@@ -15,7 +15,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from eventsource.observability import TracingMixin
+from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_AGGREGATE_ID,
     ATTR_AGGREGATE_TYPE,
@@ -26,7 +26,7 @@ from eventsource.snapshots.interface import Snapshot, SnapshotStore
 logger = logging.getLogger(__name__)
 
 
-class PostgreSQLSnapshotStore(SnapshotStore, TracingMixin):
+class PostgreSQLSnapshotStore(SnapshotStore):
     """
     PostgreSQL implementation of SnapshotStore.
 
@@ -69,6 +69,8 @@ class PostgreSQLSnapshotStore(SnapshotStore, TracingMixin):
     def __init__(
         self,
         session_factory: async_sessionmaker[AsyncSession],
+        *,
+        tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ) -> None:
         """
@@ -78,9 +80,13 @@ class PostgreSQLSnapshotStore(SnapshotStore, TracingMixin):
             session_factory: SQLAlchemy async session factory.
                            Should be configured with expire_on_commit=False
                            for best performance.
-            enable_tracing: Whether to enable OpenTelemetry tracing (default True)
+            tracer: Optional custom Tracer instance. If not provided, one is
+                   created based on enable_tracing setting.
+            enable_tracing: Whether to enable OpenTelemetry tracing (default True).
+                          Ignored if tracer is explicitly provided.
         """
-        self._init_tracing(__name__, enable_tracing)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
         self._session_factory = session_factory
         logger.debug("PostgreSQLSnapshotStore initialized")
 
@@ -94,7 +100,7 @@ class PostgreSQLSnapshotStore(SnapshotStore, TracingMixin):
         Args:
             snapshot: The snapshot to save
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.snapshot.save",
             {
                 ATTR_AGGREGATE_ID: str(snapshot.aggregate_id),
@@ -159,7 +165,7 @@ class PostgreSQLSnapshotStore(SnapshotStore, TracingMixin):
         Returns:
             The snapshot if found, None otherwise
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.snapshot.get",
             {
                 ATTR_AGGREGATE_ID: str(aggregate_id),
@@ -233,7 +239,7 @@ class PostgreSQLSnapshotStore(SnapshotStore, TracingMixin):
         Returns:
             True if a snapshot was deleted, False otherwise
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.snapshot.delete",
             {
                 ATTR_AGGREGATE_ID: str(aggregate_id),
@@ -286,7 +292,7 @@ class PostgreSQLSnapshotStore(SnapshotStore, TracingMixin):
         Returns:
             True if snapshot exists, False otherwise
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.snapshot.exists",
             {
                 ATTR_AGGREGATE_ID: str(aggregate_id),
@@ -329,7 +335,7 @@ class PostgreSQLSnapshotStore(SnapshotStore, TracingMixin):
         Returns:
             Number of snapshots deleted
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.snapshot.delete_by_type",
             {
                 ATTR_AGGREGATE_TYPE: aggregate_type,

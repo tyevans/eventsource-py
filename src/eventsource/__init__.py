@@ -25,7 +25,6 @@ from eventsource.aggregates.repository import AggregateRepository
 
 # Event bus (Task 10)
 from eventsource.bus.interface import (
-    AsyncEventHandler,
     EventBus,
     EventHandlerFunc,
 )
@@ -82,6 +81,9 @@ from eventsource.exceptions import (
     ProjectionError,
 )
 
+# Decorators - canonical location for @handles (TD-006)
+from eventsource.handlers import handles
+
 # Projections (Task 09)
 from eventsource.projections.base import (
     CheckpointTrackingProjection,
@@ -90,11 +92,9 @@ from eventsource.projections.base import (
     Projection,
 )
 
-# Decorators - canonical location for @handles (TD-006)
-from eventsource.projections.decorators import handles
-
 # Protocols - canonical location (TD-007)
 from eventsource.protocols import (
+    AsyncEventHandler,
     EventHandler,
     EventSubscriber,
     FlexibleEventHandler,
@@ -112,7 +112,6 @@ from eventsource.repositories import (
     DLQEntry,
     DLQRepository,
     DLQStats,
-    EventSourceJSONEncoder,
     InMemoryCheckpointRepository,
     InMemoryDLQRepository,
     InMemoryOutboxRepository,
@@ -125,6 +124,9 @@ from eventsource.repositories import (
     PostgreSQLOutboxRepository,
     ProjectionFailureCount,
 )
+
+# Serialization utilities
+from eventsource.serialization import EventSourceJSONEncoder
 
 # Snapshots
 from eventsource.snapshots import (

@@ -94,6 +94,14 @@ from eventsource.observability.attributes import (
     ATTR_VERSION,
     ATTR_WATERMARK,
 )
+from eventsource.observability.tracer import (
+    MockTracer,
+    NullTracer,
+    OpenTelemetryTracer,
+    SpanKindEnum,
+    Tracer,
+    create_tracer,
+)
 from eventsource.observability.tracing import (
     OTEL_AVAILABLE,
     TracingMixin,
@@ -103,12 +111,19 @@ from eventsource.observability.tracing import (
 )
 
 __all__ = [
-    # Tracing
+    # Tracing (legacy inheritance-based API)
     "OTEL_AVAILABLE",
     "TracingMixin",
     "get_tracer",
     "should_trace",
     "traced",
+    # Tracer (new composition-based API)
+    "Tracer",
+    "NullTracer",
+    "OpenTelemetryTracer",
+    "MockTracer",
+    "SpanKindEnum",
+    "create_tracer",
     # Attributes - Aggregate
     "ATTR_AGGREGATE_ID",
     "ATTR_AGGREGATE_TYPE",

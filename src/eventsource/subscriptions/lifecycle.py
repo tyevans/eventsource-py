@@ -21,12 +21,12 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
+from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_EVENTS_PROCESSED,
     ATTR_POSITION,
     ATTR_SUBSCRIPTION_NAME,
 )
-from eventsource.observability.tracing import TracingMixin
 from eventsource.subscriptions.exceptions import SubscriptionError
 from eventsource.subscriptions.subscription import Subscription, SubscriptionState
 from eventsource.subscriptions.transition import StartFromResolver, TransitionCoordinator
@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class SubscriptionLifecycleManager(TracingMixin):
+class SubscriptionLifecycleManager:
     """
     Manages subscription lifecycle operations.
 
@@ -62,6 +62,7 @@ class SubscriptionLifecycleManager(TracingMixin):
         event_store: "EventStore",
         event_bus: "EventBus",
         checkpoint_repo: "CheckpointRepository",
+        tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ) -> None:
         """
@@ -71,9 +72,14 @@ class SubscriptionLifecycleManager(TracingMixin):
             event_store: Event store for historical events
             event_bus: Event bus for live events
             checkpoint_repo: Checkpoint repository for position tracking
-            enable_tracing: Whether to enable OpenTelemetry tracing
+            tracer: Optional custom Tracer instance. If not provided, one is
+                   created based on enable_tracing setting.
+            enable_tracing: Whether to enable OpenTelemetry tracing.
+                          Ignored if tracer is explicitly provided.
         """
-        self._init_tracing(__name__, enable_tracing)
+        # Composition-based tracing (replaces TracingMixin)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
 
         self.event_store = event_store
         self.event_bus = event_bus
@@ -97,7 +103,7 @@ class SubscriptionLifecycleManager(TracingMixin):
         """
         name = subscription.name
 
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.lifecycle.start_subscription",
             {ATTR_SUBSCRIPTION_NAME: name},
         ) as span:
@@ -267,7 +273,7 @@ class SubscriptionLifecycleManager(TracingMixin):
             name: Subscription name
             timeout: Shutdown timeout in seconds
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.lifecycle.stop_subscription",
             {ATTR_SUBSCRIPTION_NAME: name},
         ):

@@ -20,7 +20,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-from eventsource.observability import TracingMixin
+from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_DB_SYSTEM,
     ATTR_ERROR_TYPE,
@@ -30,7 +30,7 @@ from eventsource.observability.attributes import (
     ATTR_RETRY_COUNT,
 )
 from eventsource.repositories._connection import execute_with_connection
-from eventsource.repositories._json import json_dumps
+from eventsource.serialization import json_dumps
 
 
 @dataclass
@@ -282,8 +282,44 @@ class DLQRepository(Protocol):
         """
         ...
 
+    async def list_failed_events(
+        self,
+        projection_name: str | None = None,
+        status: str = "failed",
+        limit: int = 100,
+    ) -> list[DLQEntry]:
+        """
+        List failed events from the DLQ.
 
-class PostgreSQLDLQRepository(TracingMixin):
+        This is an alias for get_failed_events() for naming consistency.
+        Prefer this method when fetching multiple entries.
+
+        Args:
+            projection_name: Filter by projection name (optional)
+            status: Filter by status (default: "failed")
+            limit: Maximum number of events to return
+
+        Returns:
+            List of DLQEntry instances
+        """
+        ...
+
+    async def get_failed_event(self, dlq_id: int | str) -> DLQEntry | None:
+        """
+        Get a specific failed event by its DLQ ID.
+
+        This is an alias for get_failed_event_by_id() for naming consistency.
+
+        Args:
+            dlq_id: DLQ record ID
+
+        Returns:
+            DLQEntry instance, or None if not found
+        """
+        ...
+
+
+class PostgreSQLDLQRepository:
     """
     PostgreSQL implementation of DLQ repository.
 
@@ -304,6 +340,7 @@ class PostgreSQLDLQRepository(TracingMixin):
     def __init__(
         self,
         conn: AsyncConnection | AsyncEngine,
+        tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ):
         """
@@ -311,9 +348,11 @@ class PostgreSQLDLQRepository(TracingMixin):
 
         Args:
             conn: Database connection or engine
+            tracer: Optional tracer for tracing (if not provided, one will be created)
             enable_tracing: Whether to enable OpenTelemetry tracing (default True)
         """
-        self._init_tracing(__name__, enable_tracing)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
         self.conn = conn
 
     async def add_failed_event(
@@ -336,7 +375,7 @@ class PostgreSQLDLQRepository(TracingMixin):
             error: Exception that occurred
             retry_count: Number of retry attempts
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.dlq.add",
             {
                 ATTR_EVENT_ID: str(event_id),
@@ -402,7 +441,7 @@ class PostgreSQLDLQRepository(TracingMixin):
         if projection_name:
             span_attributes[ATTR_PROJECTION_NAME] = projection_name
 
-        with self._create_span_context("eventsource.dlq.get", span_attributes):
+        with self._tracer.span("eventsource.dlq.get", span_attributes):
             # Build query dynamically based on filters
             where_clauses = ["status = :status"]
             params: dict[str, Any] = {"status": status, "limit": limit}
@@ -455,7 +494,7 @@ class PostgreSQLDLQRepository(TracingMixin):
         Returns:
             DLQEntry instance, or None if not found
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.dlq.get_by_id",
             {
                 "dlq.id": str(dlq_id),
@@ -502,7 +541,7 @@ class PostgreSQLDLQRepository(TracingMixin):
             dlq_id: DLQ record ID
             resolved_by: User ID or identifier of resolver
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.dlq.resolve",
             {
                 "dlq.id": str(dlq_id),
@@ -534,7 +573,7 @@ class PostgreSQLDLQRepository(TracingMixin):
         Args:
             dlq_id: DLQ record ID
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.dlq.retry",
             {
                 "dlq.id": str(dlq_id),
@@ -557,7 +596,7 @@ class PostgreSQLDLQRepository(TracingMixin):
         Returns:
             DLQStats with failure statistics
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.dlq.get_stats",
             {ATTR_DB_SYSTEM: "postgresql"},
         ):
@@ -589,7 +628,7 @@ class PostgreSQLDLQRepository(TracingMixin):
         Returns:
             List of ProjectionFailureCount for each affected projection
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.dlq.get_projection_counts",
             {ATTR_DB_SYSTEM: "postgresql"},
         ):
@@ -631,7 +670,7 @@ class PostgreSQLDLQRepository(TracingMixin):
         Returns:
             Number of events deleted
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.dlq.delete_resolved",
             {
                 "older_than_days": older_than_days,
@@ -649,8 +688,21 @@ class PostgreSQLDLQRepository(TracingMixin):
                 result = await conn.execute(query, {"days": older_than_days})
                 return len(result.fetchall())
 
+    async def list_failed_events(
+        self,
+        projection_name: str | None = None,
+        status: str = "failed",
+        limit: int = 100,
+    ) -> list[DLQEntry]:
+        """Alias for get_failed_events() - preferred for naming consistency."""
+        return await self.get_failed_events(projection_name, status, limit)
 
-class InMemoryDLQRepository(TracingMixin):
+    async def get_failed_event(self, dlq_id: int | str) -> DLQEntry | None:
+        """Alias for get_failed_event_by_id() - preferred for naming consistency."""
+        return await self.get_failed_event_by_id(dlq_id)
+
+
+class InMemoryDLQRepository:
     """
     In-memory implementation of DLQ repository for testing.
 
@@ -667,14 +719,20 @@ class InMemoryDLQRepository(TracingMixin):
         ... )
     """
 
-    def __init__(self, enable_tracing: bool = True) -> None:
+    def __init__(
+        self,
+        tracer: Tracer | None = None,
+        enable_tracing: bool = True,
+    ) -> None:
         """
         Initialize an empty in-memory DLQ repository.
 
         Args:
+            tracer: Optional tracer for tracing (if not provided, one will be created)
             enable_tracing: Whether to enable OpenTelemetry tracing (default True)
         """
-        self._init_tracing(__name__, enable_tracing)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
         self._entries: dict[str, DLQEntry] = {}  # key: "{event_id}:{projection_name}"
         self._id_counter: int = 0
         self._lock: asyncio.Lock = asyncio.Lock()
@@ -703,7 +761,7 @@ class InMemoryDLQRepository(TracingMixin):
             error: Exception that occurred
             retry_count: Number of retry attempts
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.dlq.add",
             {
                 ATTR_EVENT_ID: str(event_id),
@@ -768,7 +826,7 @@ class InMemoryDLQRepository(TracingMixin):
         if projection_name:
             span_attributes[ATTR_PROJECTION_NAME] = projection_name
 
-        with self._create_span_context("eventsource.dlq.get", span_attributes):
+        with self._tracer.span("eventsource.dlq.get", span_attributes):
             async with self._lock:
                 entries = list(self._entries.values())
 
@@ -795,7 +853,7 @@ class InMemoryDLQRepository(TracingMixin):
         Returns:
             DLQEntry instance, or None if not found
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.dlq.get_by_id",
             {
                 "dlq.id": str(dlq_id),
@@ -816,7 +874,7 @@ class InMemoryDLQRepository(TracingMixin):
             dlq_id: DLQ record ID
             resolved_by: User ID or identifier of resolver
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.dlq.resolve",
             {
                 "dlq.id": str(dlq_id),
@@ -840,7 +898,7 @@ class InMemoryDLQRepository(TracingMixin):
         Args:
             dlq_id: DLQ record ID
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.dlq.retry",
             {
                 "dlq.id": str(dlq_id),
@@ -860,7 +918,7 @@ class InMemoryDLQRepository(TracingMixin):
         Returns:
             DLQStats with failure statistics
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.dlq.get_stats",
             {ATTR_DB_SYSTEM: "memory"},
         ):
@@ -895,7 +953,7 @@ class InMemoryDLQRepository(TracingMixin):
         Returns:
             List of ProjectionFailureCount for each affected projection
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.dlq.get_projection_counts",
             {ATTR_DB_SYSTEM: "memory"},
         ):
@@ -945,7 +1003,7 @@ class InMemoryDLQRepository(TracingMixin):
         Returns:
             Number of events deleted
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.dlq.delete_resolved",
             {
                 "older_than_days": older_than_days,
@@ -975,9 +1033,22 @@ class InMemoryDLQRepository(TracingMixin):
 
             return deleted
 
+    async def list_failed_events(
+        self,
+        projection_name: str | None = None,
+        status: str = "failed",
+        limit: int = 100,
+    ) -> list[DLQEntry]:
+        """Alias for get_failed_events() - preferred for naming consistency."""
+        return await self.get_failed_events(projection_name, status, limit)
+
+    async def get_failed_event(self, dlq_id: int | str) -> DLQEntry | None:
+        """Alias for get_failed_event_by_id() - preferred for naming consistency."""
+        return await self.get_failed_event_by_id(dlq_id)
+
     async def clear(self) -> None:
         """Clear all entries. Useful for test setup/teardown."""
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.dlq.clear",
             {ATTR_DB_SYSTEM: "memory"},
         ):
@@ -986,7 +1057,7 @@ class InMemoryDLQRepository(TracingMixin):
                 self._id_counter = 0
 
 
-class SQLiteDLQRepository(TracingMixin):
+class SQLiteDLQRepository:
     """
     SQLite implementation of DLQ repository.
 
@@ -1015,6 +1086,7 @@ class SQLiteDLQRepository(TracingMixin):
     def __init__(
         self,
         connection: Any,
+        tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ) -> None:
         """
@@ -1022,9 +1094,11 @@ class SQLiteDLQRepository(TracingMixin):
 
         Args:
             connection: aiosqlite database connection
+            tracer: Optional tracer for tracing (if not provided, one will be created)
             enable_tracing: Whether to enable OpenTelemetry tracing (default True)
         """
-        self._init_tracing(__name__, enable_tracing)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
         self._connection = connection
 
     @staticmethod
@@ -1060,7 +1134,7 @@ class SQLiteDLQRepository(TracingMixin):
             error: Exception that occurred
             retry_count: Number of retry attempts
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.dlq.add",
             {
                 ATTR_EVENT_ID: str(event_id),
@@ -1125,7 +1199,7 @@ class SQLiteDLQRepository(TracingMixin):
         if projection_name:
             span_attributes[ATTR_PROJECTION_NAME] = projection_name
 
-        with self._create_span_context("eventsource.dlq.get", span_attributes):
+        with self._tracer.span("eventsource.dlq.get", span_attributes):
             # Build query dynamically based on filters
             where_clauses = ["status = ?"]
             params: list[Any] = [status]
@@ -1179,7 +1253,7 @@ class SQLiteDLQRepository(TracingMixin):
         Returns:
             DLQEntry instance, or None if not found
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.dlq.get_by_id",
             {
                 "dlq.id": str(dlq_id),
@@ -1226,7 +1300,7 @@ class SQLiteDLQRepository(TracingMixin):
             dlq_id: DLQ record ID
             resolved_by: User ID or identifier of resolver
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.dlq.resolve",
             {
                 "dlq.id": str(dlq_id),
@@ -1256,7 +1330,7 @@ class SQLiteDLQRepository(TracingMixin):
         Args:
             dlq_id: DLQ record ID
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.dlq.retry",
             {
                 "dlq.id": str(dlq_id),
@@ -1280,7 +1354,7 @@ class SQLiteDLQRepository(TracingMixin):
         Returns:
             DLQStats with failure statistics
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.dlq.get_stats",
             {ATTR_DB_SYSTEM: "sqlite"},
         ):
@@ -1312,7 +1386,7 @@ class SQLiteDLQRepository(TracingMixin):
         Returns:
             List of ProjectionFailureCount for each affected projection
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.dlq.get_projection_counts",
             {ATTR_DB_SYSTEM: "sqlite"},
         ):
@@ -1353,7 +1427,7 @@ class SQLiteDLQRepository(TracingMixin):
         Returns:
             Number of events deleted
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.dlq.delete_resolved",
             {
                 "older_than_days": older_than_days,
@@ -1371,6 +1445,19 @@ class SQLiteDLQRepository(TracingMixin):
             await self._connection.commit()
             rowcount: int = cursor.rowcount
             return rowcount
+
+    async def list_failed_events(
+        self,
+        projection_name: str | None = None,
+        status: str = "failed",
+        limit: int = 100,
+    ) -> list[DLQEntry]:
+        """Alias for get_failed_events() - preferred for naming consistency."""
+        return await self.get_failed_events(projection_name, status, limit)
+
+    async def get_failed_event(self, dlq_id: int | str) -> DLQEntry | None:
+        """Alias for get_failed_event_by_id() - preferred for naming consistency."""
+        return await self.get_failed_event_by_id(dlq_id)
 
 
 # Type alias for backwards compatibility

@@ -32,6 +32,7 @@ def __getattr__(name: str) -> type:
     Handle deprecated imports with warnings.
 
     This enables deprecation warnings when importing protocols
+    (EventHandler, SyncEventHandler, EventSubscriber, AsyncEventHandler)
     from this module.
     """
     if name == "EventHandler":
@@ -61,6 +62,17 @@ def __getattr__(name: str) -> type:
             stacklevel=2,
         )
         return _EventSubscriber
+    elif name == "AsyncEventHandler":
+        warnings.warn(
+            "Importing 'AsyncEventHandler' from eventsource.projections.protocols is deprecated. "
+            "Use 'from eventsource.protocols import AsyncEventHandler' instead. "
+            "This import will be removed in version 0.4.0.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        from eventsource.protocols import AsyncEventHandler
+
+        return AsyncEventHandler
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -74,6 +86,10 @@ EventSubscriber = _EventSubscriber
 class AsyncEventHandler(ABC):
     """
     Base class for async event handlers.
+
+    .. deprecated::
+        This class is deprecated. Use ``from eventsource.protocols import AsyncEventHandler``
+        instead. This class will be removed in version 0.4.0.
 
     Handlers process events asynchronously and can be used
     for projections, notifications, and other side effects.

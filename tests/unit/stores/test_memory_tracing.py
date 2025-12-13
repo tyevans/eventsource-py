@@ -2,7 +2,7 @@
 Unit tests for InMemoryEventStore tracing functionality.
 
 Tests for:
-- TracingMixin integration
+- Composition-based Tracer integration
 - Span creation for append_events, get_events, read_stream, read_all
 - Correct span attributes using standard ATTR_* constants
 - Tracing disabled behavior
@@ -25,7 +25,6 @@ from eventsource.observability import (
     ATTR_FROM_VERSION,
     ATTR_POSITION,
     ATTR_STREAM_ID,
-    TracingMixin,
 )
 from eventsource.stores.in_memory import InMemoryEventStore
 
@@ -44,16 +43,20 @@ class MemoryTracingTestEvent(DomainEvent):
 
 
 # ============================================================================
-# TracingMixin Integration Tests
+# Composition-based Tracer Integration Tests
 # ============================================================================
 
 
 class TestInMemoryEventStoreTracingMixin:
-    """Tests for InMemoryEventStore TracingMixin integration."""
+    """Tests for InMemoryEventStore composition-based Tracer integration."""
 
-    def test_inherits_from_tracing_mixin(self):
-        """InMemoryEventStore inherits from TracingMixin."""
-        assert issubclass(InMemoryEventStore, TracingMixin)
+    def test_uses_composition_based_tracer(self):
+        """InMemoryEventStore uses composition-based Tracer (not inheritance)."""
+        store = InMemoryEventStore(enable_tracing=True)
+        # Tracer is always set (either NullTracer or OpenTelemetryTracer)
+        assert store._tracer is not None
+        assert hasattr(store._tracer, "span")
+        assert hasattr(store._tracer, "enabled")
 
     def test_tracing_enabled_by_default(self):
         """Tracing is enabled by default when OTEL is available."""
@@ -68,15 +71,17 @@ class TestInMemoryEventStoreTracingMixin:
         store = InMemoryEventStore(enable_tracing=False)
 
         assert store._enable_tracing is False
-        assert store._tracer is None
+        # With composition-based tracing, _tracer is always set but disabled
+        assert store._tracer is not None
+        assert store._tracer.enabled is False
 
-    def test_has_tracing_enabled_property(self):
-        """Store exposes tracing_enabled property from mixin."""
+    def test_tracer_has_span_method(self):
+        """Store's tracer exposes span() context manager method."""
         store = InMemoryEventStore(enable_tracing=True)
 
-        # tracing_enabled is a property from TracingMixin
-        assert hasattr(store, "tracing_enabled")
-        assert isinstance(store.tracing_enabled, bool)
+        # Tracer uses span() method for creating spans
+        assert hasattr(store._tracer, "span")
+        assert callable(store._tracer.span)
 
     def test_backward_compatible_constructor(self):
         """Constructor without enable_tracing should work (default True)."""
@@ -98,9 +103,11 @@ class TestInMemoryEventStoreSpanCreation:
         """Create a mock tracer with span context manager."""
         tracer = Mock()
         span = MagicMock()
-        span.__enter__ = Mock(return_value=span)
-        span.__exit__ = Mock(return_value=None)
-        tracer.start_as_current_span.return_value = span
+        span_cm = MagicMock()
+        span_cm.__enter__ = Mock(return_value=span)
+        span_cm.__exit__ = Mock(return_value=None)
+        tracer.span.return_value = span_cm
+        tracer.enabled = True
         return tracer
 
     @pytest.fixture
@@ -130,8 +137,8 @@ class TestInMemoryEventStoreSpanCreation:
         )
 
         # Verify span was created with correct name
-        mock_tracer.start_as_current_span.assert_called()
-        call_args = mock_tracer.start_as_current_span.call_args
+        mock_tracer.span.assert_called()
+        call_args = mock_tracer.span.call_args
         assert call_args[0][0] == "inmemory_event_store.append_events"
 
     @pytest.mark.asyncio
@@ -152,8 +159,8 @@ class TestInMemoryEventStoreSpanCreation:
         )
 
         # Verify correct attributes using standard constants
-        call_args = mock_tracer.start_as_current_span.call_args
-        attributes = call_args[1]["attributes"]
+        call_args = mock_tracer.span.call_args
+        attributes = call_args[0][1]
 
         assert ATTR_AGGREGATE_ID in attributes
         assert attributes[ATTR_AGGREGATE_ID] == str(aggregate_id)
@@ -174,8 +181,8 @@ class TestInMemoryEventStoreSpanCreation:
         )
 
         # Verify span was created with correct name
-        mock_tracer.start_as_current_span.assert_called()
-        call_args = mock_tracer.start_as_current_span.call_args
+        mock_tracer.span.assert_called()
+        call_args = mock_tracer.span.call_args
         assert call_args[0][0] == "inmemory_event_store.get_events"
 
     @pytest.mark.asyncio
@@ -189,8 +196,8 @@ class TestInMemoryEventStoreSpanCreation:
         )
 
         # Verify correct attributes using standard constants
-        call_args = mock_tracer.start_as_current_span.call_args
-        attributes = call_args[1]["attributes"]
+        call_args = mock_tracer.span.call_args
+        attributes = call_args[0][1]
 
         assert ATTR_AGGREGATE_ID in attributes
         assert attributes[ATTR_AGGREGATE_ID] == str(aggregate_id)
@@ -210,8 +217,8 @@ class TestInMemoryEventStoreSpanCreation:
             pass
 
         # Verify span was created with correct name
-        mock_tracer.start_as_current_span.assert_called()
-        call_args = mock_tracer.start_as_current_span.call_args
+        mock_tracer.span.assert_called()
+        call_args = mock_tracer.span.call_args
         assert call_args[0][0] == "inmemory_event_store.read_stream"
 
     @pytest.mark.asyncio
@@ -225,8 +232,8 @@ class TestInMemoryEventStoreSpanCreation:
             pass
 
         # Verify correct attributes using standard constants
-        call_args = mock_tracer.start_as_current_span.call_args
-        attributes = call_args[1]["attributes"]
+        call_args = mock_tracer.span.call_args
+        attributes = call_args[0][1]
 
         assert ATTR_STREAM_ID in attributes
         assert attributes[ATTR_STREAM_ID] == stream_id
@@ -241,8 +248,8 @@ class TestInMemoryEventStoreSpanCreation:
             pass
 
         # Verify span was created with correct name
-        mock_tracer.start_as_current_span.assert_called()
-        call_args = mock_tracer.start_as_current_span.call_args
+        mock_tracer.span.assert_called()
+        call_args = mock_tracer.span.call_args
         assert call_args[0][0] == "inmemory_event_store.read_all"
 
     @pytest.mark.asyncio
@@ -253,8 +260,8 @@ class TestInMemoryEventStoreSpanCreation:
             pass
 
         # Verify correct attributes using standard constants
-        call_args = mock_tracer.start_as_current_span.call_args
-        attributes = call_args[1]["attributes"]
+        call_args = mock_tracer.span.call_args
+        attributes = call_args[0][1]
 
         assert ATTR_POSITION in attributes
         assert attributes[ATTR_POSITION] == 0
@@ -439,9 +446,11 @@ class TestInMemoryEventStoreTracingMultipleEvents:
         """Create a mock tracer with span context manager."""
         tracer = Mock()
         span = MagicMock()
-        span.__enter__ = Mock(return_value=span)
-        span.__exit__ = Mock(return_value=None)
-        tracer.start_as_current_span.return_value = span
+        span_cm = MagicMock()
+        span_cm.__enter__ = Mock(return_value=span)
+        span_cm.__exit__ = Mock(return_value=None)
+        tracer.span.return_value = span_cm
+        tracer.enabled = True
         return tracer
 
     @pytest.mark.asyncio
@@ -468,8 +477,8 @@ class TestInMemoryEventStoreTracingMultipleEvents:
             expected_version=0,
         )
 
-        call_args = mock_tracer.start_as_current_span.call_args
-        attributes = call_args[1]["attributes"]
+        call_args = mock_tracer.span.call_args
+        attributes = call_args[0][1]
 
         assert attributes[ATTR_EVENT_COUNT] == 3
 
@@ -491,7 +500,7 @@ class TestInMemoryEventStoreTracingMultipleEvents:
         assert result.success is True
 
         # No span should be created for empty events
-        mock_tracer.start_as_current_span.assert_not_called()
+        mock_tracer.span.assert_not_called()
 
 
 # ============================================================================
@@ -507,9 +516,11 @@ class TestInMemoryEventStoreTracingWithEvents:
         """Create a mock tracer with span context manager."""
         tracer = Mock()
         span = MagicMock()
-        span.__enter__ = Mock(return_value=span)
-        span.__exit__ = Mock(return_value=None)
-        tracer.start_as_current_span.return_value = span
+        span_cm = MagicMock()
+        span_cm.__enter__ = Mock(return_value=span)
+        span_cm.__exit__ = Mock(return_value=None)
+        tracer.span.return_value = span_cm
+        tracer.enabled = True
         return tracer
 
     @pytest.mark.asyncio
@@ -545,7 +556,7 @@ class TestInMemoryEventStoreTracingWithEvents:
             read_events.append(stored_event)
 
         assert len(read_events) == 3
-        mock_tracer.start_as_current_span.assert_called()
+        mock_tracer.span.assert_called()
 
     @pytest.mark.asyncio
     async def test_read_all_with_events(self, mock_tracer):
@@ -579,4 +590,4 @@ class TestInMemoryEventStoreTracingWithEvents:
             read_events.append(stored_event)
 
         assert len(read_events) == 3
-        mock_tracer.start_as_current_span.assert_called()
+        mock_tracer.span.assert_called()

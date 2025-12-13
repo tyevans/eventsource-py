@@ -1117,15 +1117,18 @@ class TestOpenTelemetryTracing:
         event_registry: EventRegistry,
     ) -> None:
         """Test that tracing is disabled when OTEL is not available."""
-        import eventsource.observability.tracing as tracing_module
+        import eventsource.observability.tracer as tracer_module
 
-        with patch.object(tracing_module, "OTEL_AVAILABLE", False):
+        # Patch OTEL_AVAILABLE in the tracer module where create_tracer uses it
+        with patch.object(tracer_module, "OTEL_AVAILABLE", False):
             store = PostgreSQLEventStore(
                 session_factory=mock_session_factory,
                 event_registry=event_registry,
                 enable_tracing=True,  # Even if True, should be disabled
             )
-            assert store._tracer is None
+            # With composition-based tracing, _tracer is always set but disabled
+            assert store._tracer is not None
+            assert store._tracer.enabled is False
 
     def test_tracing_disabled_when_explicitly_disabled(
         self,
@@ -1138,7 +1141,9 @@ class TestOpenTelemetryTracing:
             event_registry=event_registry,
             enable_tracing=False,
         )
-        assert store._tracer is None
+        # With composition-based tracing, _tracer is always set but disabled
+        assert store._tracer is not None
+        assert store._tracer.enabled is False
 
 
 # --- Import Tests ---

@@ -71,7 +71,7 @@ from eventsource.migration.models import (
     MigrationConfig,
     TenantMigrationState,
 )
-from eventsource.observability import ATTR_TENANT_ID, TracingMixin
+from eventsource.observability import ATTR_TENANT_ID, Tracer, create_tracer
 
 if TYPE_CHECKING:
     from eventsource.locks import PostgreSQLLockManager
@@ -92,7 +92,7 @@ ATTR_SYNC_LAG_EVENTS = "eventsource.cutover.sync_lag_events"
 ATTR_TARGET_STORE_ID = "eventsource.cutover.target_store_id"
 
 
-class CutoverManager(TracingMixin):
+class CutoverManager:
     """
     Manages the atomic cutover from source to target store.
 
@@ -147,6 +147,7 @@ class CutoverManager(TracingMixin):
         routing_repo: TenantRoutingRepository,
         *,
         lock_acquisition_timeout: float = 0.5,
+        tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ) -> None:
         """
@@ -158,9 +159,12 @@ class CutoverManager(TracingMixin):
             routing_repo: Repository for updating tenant routing state.
             lock_acquisition_timeout: Timeout in seconds for acquiring the advisory lock.
                 Defaults to 0.5 seconds (500ms) as per requirements.
+            tracer: Optional custom Tracer instance.
             enable_tracing: Whether to enable OpenTelemetry tracing.
         """
-        self._init_tracing(__name__, enable_tracing)
+        # Composition-based tracing (replaces TracingMixin)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
         self._lock_manager = lock_manager
         self._router = router
         self._routing_repo = routing_repo
@@ -212,7 +216,7 @@ class CutoverManager(TracingMixin):
         config = config or MigrationConfig()
         effective_timeout_ms = timeout_ms if timeout_ms is not None else config.cutover_timeout_ms
 
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.cutover.execute",
             {
                 ATTR_MIGRATION_ID: str(migration_id),
@@ -487,7 +491,7 @@ class CutoverManager(TracingMixin):
         Returns:
             True if rollback was successful, False otherwise.
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.cutover.rollback",
             {
                 ATTR_TENANT_ID: str(tenant_id),
@@ -547,7 +551,7 @@ class CutoverManager(TracingMixin):
         """
         config = config or MigrationConfig()
 
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.cutover.validate_readiness",
             {
                 ATTR_TENANT_ID: str(tenant_id),

@@ -161,6 +161,36 @@ class TracingMixin:
     """
     Mixin class providing OpenTelemetry tracing utilities.
 
+    .. deprecated:: 0.4.0
+        TracingMixin is deprecated in favor of the composition-based Tracer protocol.
+        Use ``create_tracer()`` and inject the ``Tracer`` as a dependency instead.
+        See the ``eventsource.observability.tracer`` module for the new approach.
+
+        Migration example::
+
+            # Old pattern (TracingMixin inheritance):
+            class MyStore(TracingMixin):
+                def __init__(self, enable_tracing: bool = True):
+                    self._init_tracing(__name__, enable_tracing)
+
+            # New pattern (composition-based Tracer):
+            from eventsource.observability import Tracer, create_tracer
+
+            class MyStore:
+                def __init__(
+                    self,
+                    tracer: Tracer | None = None,
+                    enable_tracing: bool = True,
+                ):
+                    self._tracer = tracer or create_tracer(__name__, enable_tracing)
+                    self._enable_tracing = self._tracer.enabled
+
+        Benefits of the new pattern:
+        - Composition over inheritance (single responsibility)
+        - Easier to test (just inject a NullTracer or MockTracer)
+        - No inheritance hierarchy issues
+        - Type-safe Tracer protocol
+
     Classes using this mixin gain standardized tracing support with
     minimal boilerplate. The mixin provides:
 

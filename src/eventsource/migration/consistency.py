@@ -55,7 +55,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from eventsource.migration.exceptions import ConsistencyError
-from eventsource.observability import TracingMixin
+from eventsource.observability import Tracer, create_tracer
 from eventsource.stores.interface import ReadOptions, StoredEvent
 
 if TYPE_CHECKING:
@@ -240,7 +240,7 @@ class VerificationReport:
         }
 
 
-class ConsistencyVerifier(TracingMixin):
+class ConsistencyVerifier:
     """
     Verifies data consistency between source and target stores.
 
@@ -285,6 +285,7 @@ class ConsistencyVerifier(TracingMixin):
         source_store: EventStore,
         target_store: EventStore,
         *,
+        tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ) -> None:
         """
@@ -293,9 +294,14 @@ class ConsistencyVerifier(TracingMixin):
         Args:
             source_store: EventStore to verify from (source of truth).
             target_store: EventStore to verify against (migration target).
+            tracer: Optional custom Tracer instance. If not provided, one is
+                   created based on enable_tracing setting.
             enable_tracing: Whether to enable OpenTelemetry tracing.
+                          Ignored if tracer is explicitly provided.
         """
-        self._init_tracing(__name__, enable_tracing)
+        # Composition-based tracing (replaces TracingMixin)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
         self._source = source_store
         self._target = target_store
 
@@ -330,7 +336,7 @@ class ConsistencyVerifier(TracingMixin):
                 f"sample_percentage must be between 0 and 100, got {sample_percentage}"
             )
 
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.consistency_verifier.verify_tenant",
             {
                 "tenant_id": str(tenant_id),
@@ -459,7 +465,7 @@ class ConsistencyVerifier(TracingMixin):
         Returns:
             Tuple of (all_match, violations_list).
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.consistency_verifier.verify_checksums",
             {"tenant_id": str(tenant_id), "sample_percentage": sample_percentage},
         ):
@@ -494,7 +500,7 @@ class ConsistencyVerifier(TracingMixin):
         Returns:
             Tuple of (all_match, violations_list).
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.consistency_verifier.verify_aggregate_versions",
             {"tenant_id": str(tenant_id)},
         ):

@@ -37,8 +37,8 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import ATTR_SUBSCRIPTION_NAME
-from eventsource.observability.tracing import TracingMixin
 from eventsource.subscriptions.config import SubscriptionConfig
 from eventsource.subscriptions.error_handling import (
     ErrorCallback,
@@ -80,7 +80,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class SubscriptionManager(TracingMixin):
+class SubscriptionManager:
     """
     Manages catch-up and live event subscriptions.
 
@@ -120,6 +120,7 @@ class SubscriptionManager(TracingMixin):
         dlq_repo: "DLQRepository | None" = None,
         error_handling_config: ErrorHandlingConfig | None = None,
         health_check_config: HealthCheckConfig | None = None,
+        tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ) -> None:
         """
@@ -134,9 +135,14 @@ class SubscriptionManager(TracingMixin):
             dlq_repo: Optional DLQ repository for dead letter handling
             error_handling_config: Configuration for error handling behavior
             health_check_config: Configuration for health check thresholds
-            enable_tracing: Whether to enable OpenTelemetry tracing (default True)
+            tracer: Optional custom Tracer instance. If not provided, one is
+                   created based on enable_tracing setting.
+            enable_tracing: Whether to enable OpenTelemetry tracing (default True).
+                          Ignored if tracer is explicitly provided.
         """
-        self._init_tracing(__name__, enable_tracing)
+        # Composition-based tracing (replaces TracingMixin)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
 
         self.event_store = event_store
         self.event_bus = event_bus
@@ -219,7 +225,7 @@ class SubscriptionManager(TracingMixin):
         """
         subscription_name = name or subscriber.__class__.__name__
 
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.subscription_manager.subscribe",
             {ATTR_SUBSCRIPTION_NAME: subscription_name},
         ):
@@ -255,7 +261,7 @@ class SubscriptionManager(TracingMixin):
         Returns:
             True if the subscription was found and removed, False otherwise
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.subscription_manager.unsubscribe",
             {ATTR_SUBSCRIPTION_NAME: name},
         ):
@@ -392,7 +398,7 @@ class SubscriptionManager(TracingMixin):
             subscription_names: Optional list of subscription names to stop.
                               If None, stops all subscriptions.
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.subscription_manager.stop",
         ):
             if not self._running and subscription_names is None:

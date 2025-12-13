@@ -4,7 +4,7 @@ This module verifies that all EventBus implementations follow the standardized
 tracing patterns documented in the EventBus ABC and FRD.
 
 The tests ensure:
-1. All bus implementations inherit from TracingMixin
+1. All bus implementations use Tracer composition (accept tracer parameter)
 2. All buses accept enable_tracing parameter
 3. Standard span naming conventions are followed
 4. Standard attribute constants are used
@@ -16,7 +16,7 @@ import inspect
 import pytest
 
 from eventsource.bus.interface import EventBus
-from eventsource.observability import TracingMixin
+from eventsource.observability import NullTracer
 
 
 class TestEventBusABCDocumentation:
@@ -61,11 +61,15 @@ class TestEventBusABCDocumentation:
 class TestInMemoryEventBusTracingCompliance:
     """Tests for InMemoryEventBus tracing compliance."""
 
-    def test_inherits_from_tracing_mixin(self) -> None:
-        """InMemoryEventBus should inherit from TracingMixin."""
+    def test_uses_tracer_composition(self) -> None:
+        """InMemoryEventBus should use Tracer composition pattern."""
         from eventsource.bus.memory import InMemoryEventBus
 
-        assert issubclass(InMemoryEventBus, TracingMixin)
+        sig = inspect.signature(InMemoryEventBus.__init__)
+        params = sig.parameters
+
+        # Should accept tracer parameter for dependency injection
+        assert "tracer" in params
 
     def test_inherits_from_eventbus(self) -> None:
         """InMemoryEventBus should inherit from EventBus."""
@@ -84,20 +88,30 @@ class TestInMemoryEventBusTracingCompliance:
         assert params["enable_tracing"].default is True
 
     def test_init_tracing_called(self) -> None:
-        """InMemoryEventBus should call _init_tracing during construction."""
+        """InMemoryEventBus should initialize tracer during construction."""
         from eventsource.bus.memory import InMemoryEventBus
 
         bus = InMemoryEventBus(enable_tracing=True)
         assert hasattr(bus, "_enable_tracing")
         assert hasattr(bus, "_tracer")
+        # Tracer should be set (either OpenTelemetry or NullTracer)
+        assert bus._tracer is not None
 
-    def test_tracing_disabled_sets_tracer_none(self) -> None:
-        """When tracing disabled, _tracer should be None."""
+    def test_tracing_disabled_uses_null_tracer(self) -> None:
+        """When tracing disabled, _tracer should be NullTracer."""
         from eventsource.bus.memory import InMemoryEventBus
 
         bus = InMemoryEventBus(enable_tracing=False)
-        assert bus._tracer is None
+        assert isinstance(bus._tracer, NullTracer)
         assert bus._enable_tracing is False
+
+    def test_custom_tracer_can_be_injected(self) -> None:
+        """Custom tracer can be injected via constructor."""
+        from eventsource.bus.memory import InMemoryEventBus
+
+        custom_tracer = NullTracer()
+        bus = InMemoryEventBus(tracer=custom_tracer)
+        assert bus._tracer is custom_tracer
 
     def test_uses_standard_span_names(self) -> None:
         """InMemoryEventBus should use standard span names."""
@@ -151,11 +165,15 @@ class TestRedisEventBusTracingCompliance:
         except ImportError:
             pytest.skip("redis package not installed")
 
-    def test_inherits_from_tracing_mixin(self, check_redis_available: None) -> None:
-        """RedisEventBus should inherit from TracingMixin."""
+    def test_uses_tracer_composition(self, check_redis_available: None) -> None:
+        """RedisEventBus should use Tracer composition pattern."""
         from eventsource.bus.redis import RedisEventBus
 
-        assert issubclass(RedisEventBus, TracingMixin)
+        sig = inspect.signature(RedisEventBus.__init__)
+        params = sig.parameters
+
+        # Should accept tracer parameter for dependency injection
+        assert "tracer" in params
 
     def test_inherits_from_eventbus(self, check_redis_available: None) -> None:
         """RedisEventBus should inherit from EventBus."""
@@ -218,11 +236,15 @@ class TestRabbitMQEventBusTracingCompliance:
         except ImportError:
             pytest.skip("aio-pika package not installed")
 
-    def test_inherits_from_tracing_mixin(self, check_rabbitmq_available: None) -> None:
-        """RabbitMQEventBus should inherit from TracingMixin."""
+    def test_uses_tracer_composition(self, check_rabbitmq_available: None) -> None:
+        """RabbitMQEventBus should use Tracer composition pattern."""
         from eventsource.bus.rabbitmq import RabbitMQEventBus
 
-        assert issubclass(RabbitMQEventBus, TracingMixin)
+        sig = inspect.signature(RabbitMQEventBus.__init__)
+        params = sig.parameters
+
+        # Should accept tracer parameter for dependency injection
+        assert "tracer" in params
 
     def test_inherits_from_eventbus(self, check_rabbitmq_available: None) -> None:
         """RabbitMQEventBus should inherit from EventBus."""
@@ -308,13 +330,15 @@ class TestKafkaEventBusTracingCompliance:
         assert hasattr(config, "enable_tracing")
         assert config.enable_tracing is True
 
-    def test_inherits_from_tracing_mixin(self, check_kafka_available: None) -> None:
-        """KafkaEventBus should inherit from TracingMixin."""
+    def test_uses_tracer_composition(self, check_kafka_available: None) -> None:
+        """KafkaEventBus should use Tracer composition pattern."""
         from eventsource.bus.kafka import KafkaEventBus
-        from eventsource.observability import TracingMixin
 
-        # Kafka now uses TracingMixin like other buses
-        assert issubclass(KafkaEventBus, TracingMixin)
+        sig = inspect.signature(KafkaEventBus.__init__)
+        params = sig.parameters
+
+        # Should accept tracer parameter for dependency injection
+        assert "tracer" in params
 
     def test_has_context_propagation(self, check_kafka_available: None) -> None:
         """KafkaEventBus should have context propagation support."""
@@ -326,37 +350,34 @@ class TestKafkaEventBusTracingCompliance:
         assert "from opentelemetry.propagate import extract, inject" in source
 
 
-class TestTracingMixinIntegration:
-    """Tests for TracingMixin integration across all buses."""
+class TestTracerCompositionIntegration:
+    """Tests for Tracer composition integration across all buses."""
 
-    def test_all_buses_have_create_span_context(self) -> None:
-        """All bus implementations with TracingMixin should have _create_span_context."""
+    def test_all_buses_have_tracer(self) -> None:
+        """All bus implementations should have _tracer attribute."""
         from eventsource.bus.memory import InMemoryEventBus
 
         bus = InMemoryEventBus()
-        assert hasattr(bus, "_create_span_context")
-        assert callable(bus._create_span_context)
+        assert hasattr(bus, "_tracer")
+        assert bus._tracer is not None
 
-    def test_tracing_enabled_property_available(self) -> None:
-        """Buses with TracingMixin should have tracing_enabled property."""
+    def test_tracer_has_span_method(self) -> None:
+        """Buses tracer should have span method for creating spans."""
         from eventsource.bus.memory import InMemoryEventBus
 
         bus = InMemoryEventBus()
-        assert hasattr(bus, "tracing_enabled")
-        # Property should return a boolean
-        assert isinstance(bus.tracing_enabled, bool)
+        assert hasattr(bus._tracer, "span")
+        assert callable(bus._tracer.span)
 
-    def test_tracingmixin_nullcontext_when_disabled(self) -> None:
-        """TracingMixin should return nullcontext when tracing disabled."""
-
+    def test_tracer_span_works_as_context_manager(self) -> None:
+        """Tracer span should work as context manager."""
         from eventsource.bus.memory import InMemoryEventBus
 
         bus = InMemoryEventBus(enable_tracing=False)
-        ctx = bus._create_span_context("test.span", {})
 
-        # Should be a nullcontext or similar no-op context
-        with ctx as span:
-            # When disabled, span should be None
+        # Should work as context manager without errors
+        with bus._tracer.span("test.span", {}) as span:
+            # When using NullTracer, span should be None
             assert span is None
 
 
