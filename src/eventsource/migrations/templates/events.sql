@@ -17,8 +17,11 @@
 -- Each event represents a fact that occurred in the business domain.
 
 CREATE TABLE IF NOT EXISTS events (
-    -- Primary event identifier (UUID v4 recommended)
-    event_id UUID PRIMARY KEY,
+    -- Global position for ordered replay across all streams
+    global_position BIGSERIAL PRIMARY KEY,
+
+    -- Unique event identifier (UUID v4 recommended)
+    event_id UUID NOT NULL UNIQUE,
 
     -- Aggregate identification
     aggregate_id UUID NOT NULL,
