@@ -25,8 +25,14 @@
 --   2. All unique constraints
 -- This is a PostgreSQL requirement for partition pruning.
 
+-- Sequence for global ordering (partitioned tables can't use BIGSERIAL)
+CREATE SEQUENCE IF NOT EXISTS events_global_position_seq;
+
 CREATE TABLE IF NOT EXISTS events (
-    -- Primary event identifier
+    -- Global position for ordered replay across all streams
+    global_position BIGINT NOT NULL DEFAULT nextval('events_global_position_seq'),
+
+    -- Unique event identifier
     event_id UUID NOT NULL,
 
     -- Aggregate identification
@@ -56,13 +62,19 @@ CREATE TABLE IF NOT EXISTS events (
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
 
     -- Primary key MUST include partition key
-    PRIMARY KEY (event_id, timestamp),
+    PRIMARY KEY (global_position, timestamp),
+
+    -- Unique constraint on event_id MUST include partition key
+    CONSTRAINT uq_events_event_id_partitioned UNIQUE (event_id, timestamp),
 
     -- Unique constraint MUST include partition key
     -- This ensures aggregate version uniqueness within partition boundaries
     CONSTRAINT uq_events_aggregate_version_partitioned
         UNIQUE (aggregate_id, aggregate_type, version, timestamp)
 ) PARTITION BY RANGE (timestamp);
+
+-- Make sequence owned by table
+ALTER SEQUENCE events_global_position_seq OWNED BY events.global_position;
 
 -- =============================================================================
 -- Indexes (created on parent, inherited by partitions)

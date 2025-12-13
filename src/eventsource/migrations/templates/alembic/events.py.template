@@ -40,7 +40,8 @@ def _create_events_table() -> None:
     """Create non-partitioned events table."""
     op.create_table(
         'events',
-        sa.Column('event_id', postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column('global_position', sa.BigInteger(), sa.Identity(always=True), primary_key=True),
+        sa.Column('event_id', postgresql.UUID(as_uuid=True), nullable=False, unique=True),
         sa.Column('aggregate_id', postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column('aggregate_type', sa.String(255), nullable=False),
         sa.Column('event_type', sa.String(255), nullable=False),
@@ -74,9 +75,13 @@ def _create_events_table() -> None:
 
 def _create_partitioned_events_table() -> None:
     """Create partitioned events table with pg_partman support."""
+    # Create sequence for global ordering (partitioned tables can't use BIGSERIAL)
+    op.execute("CREATE SEQUENCE IF NOT EXISTS events_global_position_seq")
+
     # Create partitioned table using raw SQL
     op.execute("""
         CREATE TABLE events (
+            global_position BIGINT NOT NULL DEFAULT nextval('events_global_position_seq'),
             event_id UUID NOT NULL,
             aggregate_id UUID NOT NULL,
             aggregate_type VARCHAR(255) NOT NULL,
@@ -87,10 +92,14 @@ def _create_partitioned_events_table() -> None:
             timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
             payload JSONB NOT NULL,
             created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-            PRIMARY KEY (event_id, timestamp),
+            PRIMARY KEY (global_position, timestamp),
+            UNIQUE (event_id, timestamp),
             UNIQUE (aggregate_id, aggregate_type, version, timestamp)
         ) PARTITION BY RANGE (timestamp)
     """)
+
+    # Make sequence owned by table
+    op.execute("ALTER SEQUENCE events_global_position_seq OWNED BY events.global_position")
 
     # Create indexes on partitioned table
     op.create_index('idx_events_aggregate_id', 'events', ['aggregate_id'])

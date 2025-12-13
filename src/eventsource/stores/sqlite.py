@@ -833,7 +833,7 @@ class SQLiteEventStore(TracingMixin, EventStore):
         query_parts = [
             """
             SELECT
-                id, event_id, event_type, aggregate_type, aggregate_id,
+                global_position, event_id, event_type, aggregate_type, aggregate_id,
                 tenant_id, actor_id, version, timestamp, payload, created_at
             FROM events
             WHERE aggregate_id = ?
@@ -892,7 +892,7 @@ class SQLiteEventStore(TracingMixin, EventStore):
                 event=event,
                 stream_id=stream_id,
                 stream_position=row[7],  # version
-                global_position=row[0],  # id (auto-increment)
+                global_position=row[0],
                 stored_at=stored_at,
             )
 
@@ -938,7 +938,7 @@ class SQLiteEventStore(TracingMixin, EventStore):
         query_parts = [
             """
             SELECT
-                id, event_id, event_type, aggregate_type, aggregate_id,
+                global_position, event_id, event_type, aggregate_type, aggregate_id,
                 tenant_id, actor_id, version, timestamp, payload, created_at
             FROM events
             WHERE 1=1
@@ -947,7 +947,7 @@ class SQLiteEventStore(TracingMixin, EventStore):
         params: list[Any] = []
 
         if options.from_position > 0:
-            query_parts.append("AND id > ?")
+            query_parts.append("AND global_position > ?")
             params.append(options.from_position)
 
         if options.from_timestamp:
@@ -964,9 +964,9 @@ class SQLiteEventStore(TracingMixin, EventStore):
 
         # Add ordering based on direction
         if options.direction == ReadDirection.BACKWARD:
-            query_parts.append("ORDER BY id DESC")
+            query_parts.append("ORDER BY global_position DESC")
         else:
-            query_parts.append("ORDER BY id ASC")
+            query_parts.append("ORDER BY global_position ASC")
 
         if options.limit is not None:
             query_parts.append("LIMIT ?")
@@ -998,7 +998,7 @@ class SQLiteEventStore(TracingMixin, EventStore):
                 event=event,
                 stream_id=stream_id,
                 stream_position=row[7],  # version
-                global_position=row[0],  # id (auto-increment)
+                global_position=row[0],
                 stored_at=stored_at,
             )
 
@@ -1082,13 +1082,13 @@ class SQLiteEventStore(TracingMixin, EventStore):
         Get the current maximum global position in the event store.
 
         Returns:
-            The maximum global position (id), or 0 if empty.
+            The maximum global position, or 0 if empty.
 
         Raises:
             RuntimeError: If not connected to database
         """
         conn = self._ensure_connected()
 
-        cursor = await conn.execute("SELECT COALESCE(MAX(id), 0) FROM events")
+        cursor = await conn.execute("SELECT COALESCE(MAX(global_position), 0) FROM events")
         row = await cursor.fetchone()
         return row[0] if row else 0

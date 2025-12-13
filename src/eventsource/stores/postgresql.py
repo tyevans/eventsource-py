@@ -355,7 +355,7 @@ class PostgreSQLEventStore(TracingMixin, EventStore):
                                 :event_id, :event_type, :aggregate_type, :aggregate_id,
                                 :tenant_id, :actor_id, :version, :timestamp, :payload, NOW()
                             )
-                            RETURNING id
+                            RETURNING global_position
                             """
                         ),
                         {
@@ -738,7 +738,7 @@ class PostgreSQLEventStore(TracingMixin, EventStore):
             query_parts = [
                 """
                 SELECT
-                    id, event_id, event_type, aggregate_type, aggregate_id,
+                    global_position, event_id, event_type, aggregate_type, aggregate_id,
                     tenant_id, actor_id, version, timestamp, payload, created_at
                 FROM events
                 WHERE aggregate_id = :aggregate_id
@@ -794,7 +794,7 @@ class PostgreSQLEventStore(TracingMixin, EventStore):
                     event=event,
                     stream_id=stream_id,
                     stream_position=row[7],  # version
-                    global_position=row[0],  # id (serial/bigserial)
+                    global_position=row[0],
                     stored_at=row[10],  # created_at
                 )
 
@@ -836,7 +836,7 @@ class PostgreSQLEventStore(TracingMixin, EventStore):
             query_parts = [
                 """
                 SELECT
-                    id, event_id, event_type, aggregate_type, aggregate_id,
+                    global_position, event_id, event_type, aggregate_type, aggregate_id,
                     tenant_id, actor_id, version, timestamp, payload, created_at
                 FROM events
                 WHERE 1=1
@@ -845,7 +845,7 @@ class PostgreSQLEventStore(TracingMixin, EventStore):
             params: dict[str, Any] = {}
 
             if options.from_position > 0:
-                query_parts.append("AND id > :from_position")
+                query_parts.append("AND global_position > :from_position")
                 params["from_position"] = options.from_position
 
             if options.from_timestamp:
@@ -862,9 +862,9 @@ class PostgreSQLEventStore(TracingMixin, EventStore):
 
             # Add ordering based on direction
             if options.direction == ReadDirection.BACKWARD:
-                query_parts.append("ORDER BY id DESC")
+                query_parts.append("ORDER BY global_position DESC")
             else:
-                query_parts.append("ORDER BY id ASC")
+                query_parts.append("ORDER BY global_position ASC")
 
             if options.limit is not None:
                 query_parts.append("LIMIT :limit")
@@ -893,7 +893,7 @@ class PostgreSQLEventStore(TracingMixin, EventStore):
                     event=event,
                     stream_id=stream_id,
                     stream_position=row[7],  # version
-                    global_position=row[0],  # id (serial/bigserial)
+                    global_position=row[0],
                     stored_at=row[10],  # created_at
                 )
 
@@ -967,9 +967,9 @@ class PostgreSQLEventStore(TracingMixin, EventStore):
         Get the current maximum global position in the event store.
 
         Returns:
-            The maximum global position (id), or 0 if empty.
+            The maximum global position, or 0 if empty.
         """
-        query = text("SELECT COALESCE(MAX(id), 0) FROM events")
+        query = text("SELECT COALESCE(MAX(global_position), 0) FROM events")
 
         async with self._session_factory() as session:
             result = await session.execute(query)

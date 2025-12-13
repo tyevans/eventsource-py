@@ -40,7 +40,8 @@ def _create_events_table() -> None:
     """Create events table with indexes."""
     op.create_table(
         'events',
-        sa.Column('event_id', postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column('global_position', sa.BigInteger(), sa.Identity(always=True), primary_key=True),
+        sa.Column('event_id', postgresql.UUID(as_uuid=True), nullable=False, unique=True),
         sa.Column('aggregate_id', postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column('aggregate_type', sa.String(255), nullable=False),
         sa.Column('event_type', sa.String(255), nullable=False),
