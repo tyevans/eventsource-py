@@ -1378,7 +1378,7 @@ for msg in dlq_messages:
 Now that you understand Redis event distribution, explore other distributed event bus implementations:
 
 - [Tutorial 18: Kafka Event Bus](18-kafka.md) - Ultra-high throughput event streaming
-- [Tutorial 16: RabbitMQ Event Bus](16-rabbitmq.md) - Enterprise messaging with complex routing
+- [Tutorial 19: RabbitMQ Event Bus](19-rabbitmq.md) - Enterprise messaging with complex routing
 
 For production deployment:
 - [Tutorial 15: Production Deployment](15-production.md) - Health checks, monitoring, graceful shutdown
@@ -1387,7 +1387,7 @@ For production deployment:
 
 ## Additional Resources
 
-- [Redis Streams Documentation](https://redis.io/docs/data-types/streams/)
-- [Consumer Groups Tutorial](https://redis.io/docs/data-types/streams-tutorial/)
+- [Redis Streams Documentation](https://redis.io/docs/latest/develop/data-types/streams/)
+- [Consumer Groups Guide](https://redis.io/docs/latest/develop/data-types/streams/#consumer-groups)
 - `tests/integration/bus/test_redis.py` - Comprehensive integration tests
 - `src/eventsource/bus/redis.py` - RedisEventBus implementation

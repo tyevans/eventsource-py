@@ -1749,7 +1749,7 @@ config = KafkaEventBusConfig(
 Now that you understand Kafka event distribution, explore other messaging patterns:
 
 - [Tutorial 19: RabbitMQ Event Bus](19-rabbitmq.md) - Traditional message queue with complex routing
-- [Tutorial 20: Saga Orchestration](20-sagas.md) - Coordinating multi-aggregate workflows
+- [Tutorial 20: Observability](20-observability.md) - Distributed tracing, metrics, and logging
 
 For production deployment:
 - [Tutorial 15: Production Deployment](15-production.md) - Health checks, monitoring, graceful shutdown
