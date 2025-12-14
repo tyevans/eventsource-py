@@ -432,15 +432,6 @@ class SubscriptionManager:
         return self._running
 
     # =========================================================================
-    # Coordinator Access (for backward compatibility)
-    # =========================================================================
-
-    @property
-    def _coordinators(self) -> dict[str, Any]:
-        """Get coordinators from lifecycle manager (backward compatibility)."""
-        return self._lifecycle.coordinators
-
-    # =========================================================================
     # Legacy Health Methods (delegates to HealthCheckProvider)
     # =========================================================================
 
@@ -1251,37 +1242,6 @@ class SubscriptionManager:
             List of subscription names currently in PAUSED state
         """
         return self._pause_resume.get_paused_names()
-
-    # =========================================================================
-    # Health Checkers Dict (backward compatibility)
-    # =========================================================================
-
-    @property
-    def _health_checkers(self) -> dict[str, Any]:
-        """Get health checkers (backward compatibility)."""
-        return self._health_provider._health_checkers
-
-    # =========================================================================
-    # Internal Lock Access (backward compatibility for tests)
-    # =========================================================================
-
-    @property
-    def _lock(self) -> Any:
-        """Get the internal lock (backward compatibility)."""
-        return self._registry.lock
-
-    @property
-    def _started_at(self) -> datetime | None:
-        """Get started_at timestamp (backward compatibility)."""
-        return self._health_provider._started_at
-
-    @_started_at.setter
-    def _started_at(self, value: datetime | None) -> None:
-        """Set started_at timestamp (backward compatibility)."""
-        if value is not None:
-            self._health_provider.set_started(value)
-        else:
-            self._health_provider.clear_started()
 
 
 __all__ = [

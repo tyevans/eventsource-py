@@ -45,7 +45,8 @@ This section provides comprehensive API documentation for the eventsource librar
 | | [`get_tracer`](observability.md#get_tracer) | Get OpenTelemetry tracer if available |
 | | [`should_trace`](observability.md#should_trace) | Check if tracing should be active |
 | | [`@traced`](observability.md#traced-decorator) | Decorator for method-level tracing |
-| | [`TracingMixin`](observability.md#tracingmixin-class) | Mixin class for tracing support |
+| | [`Tracer`](observability.md#tracer-protocol) | Protocol for composition-based tracing |
+| | [`create_tracer`](observability.md#create_tracer) | Factory for creating tracers |
 | **Subscriptions** | [`SubscriptionManager`](subscriptions.md#subscriptionmanager) | Main entry point for subscription management |
 | | [`Subscription`](subscriptions.md#subscription) | Individual subscription state machine |
 | | [`SubscriptionConfig`](subscriptions.md#subscriptionconfig) | Configuration for subscriptions |
@@ -395,8 +396,11 @@ from eventsource.observability import (
     # Decorator
     traced,
 
-    # Mixin
-    TracingMixin,
+    # Composition-based Tracer API
+    Tracer,
+    create_tracer,
+    NullTracer,
+    MockTracer,
 )
 ```
 
@@ -408,16 +412,19 @@ from eventsource.observability import (
 
 - **`@traced`**: Decorator for adding tracing to methods with minimal boilerplate.
 
-- **`TracingMixin`**: Mixin class providing `_init_tracing()` and `_create_span_context()` methods for standardized tracing support.
+- **`create_tracer()`**: Factory function to create appropriate tracer based on configuration.
+
+- **`Tracer`**: Protocol for composition-based tracing with `span()` method.
 
 **Example:**
 
 ```python
-from eventsource.observability import traced, TracingMixin
+from eventsource.observability import traced, create_tracer
 
-class MyStore(TracingMixin):
+class MyStore:
     def __init__(self, enable_tracing: bool = True):
-        self._init_tracing(__name__, enable_tracing)
+        self._tracer = create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
 
     @traced("my_store.save")
     async def save(self, item_id: str) -> None:
@@ -426,7 +433,7 @@ class MyStore(TracingMixin):
 
     async def load(self, item_id: str) -> dict:
         # Dynamic attributes
-        with self._create_span_context(
+        with self._tracer.span(
             "my_store.load",
             {"item.id": item_id},
         ):

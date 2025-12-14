@@ -417,7 +417,7 @@ class TestUptimeSeconds:
         # Manually set started_at to simulate start
         from datetime import UTC, datetime, timedelta
 
-        manager._started_at = datetime.now(UTC) - timedelta(seconds=10)
+        manager._health_provider.set_started(datetime.now(UTC) - timedelta(seconds=10))
 
         uptime = manager.uptime_seconds
         assert uptime >= 10.0

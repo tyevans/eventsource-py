@@ -15,7 +15,6 @@ maintaining read models optimized for specific query patterns.
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -525,12 +524,6 @@ class DeclarativeProjection(CheckpointTrackingProjection):
             unregistered_event_handling=self.unregistered_event_handling,  # type: ignore[arg-type]
             validate_on_init=True,
         )
-
-        # Keep _handlers dict for backward compatibility
-        self._handlers: dict[type[DomainEvent], Callable[..., Coroutine[Any, Any, None]]] = {
-            event_type: info.handler  # type: ignore[misc]
-            for event_type, info in self._handler_registry.get_all_handlers().items()
-        }
 
         super().__init__(
             checkpoint_repo=checkpoint_repo,

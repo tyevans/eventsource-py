@@ -200,7 +200,7 @@ In-memory implementation for single-process deployments.
 - Support for sync and async handlers
 - Wildcard subscriptions
 - Error isolation (handler failures don't stop other handlers)
-- Optional OpenTelemetry tracing (via `TracingMixin`)
+- Optional OpenTelemetry tracing (via composition-based `Tracer`)
 - Background task management
 
 ### Constructor

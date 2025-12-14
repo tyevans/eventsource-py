@@ -178,7 +178,7 @@ class AggregateRepository(Generic[TAggregate]):
         self._aggregate_type = aggregate_type
         self._event_publisher = event_publisher
 
-        # Snapshot configuration (store references for backward compatibility)
+        # Snapshot configuration (exposed via public properties)
         self._snapshot_store = snapshot_store
         self._snapshot_threshold = snapshot_threshold
         self._snapshot_mode = snapshot_mode
