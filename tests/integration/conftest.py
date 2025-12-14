@@ -272,7 +272,7 @@ class TestOrderAggregate(DeclarativeAggregate[TestOrderState]):
 EVENTS_SCHEMA_STATEMENTS = [
     """
     CREATE TABLE IF NOT EXISTS events (
-        id BIGSERIAL PRIMARY KEY,
+        global_position BIGSERIAL PRIMARY KEY,
         event_id UUID NOT NULL UNIQUE,
         event_type VARCHAR(255) NOT NULL,
         aggregate_type VARCHAR(255) NOT NULL,
