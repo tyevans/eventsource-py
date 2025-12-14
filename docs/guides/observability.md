@@ -7,7 +7,7 @@ This guide covers observability features in eventsource-py: tracing, metrics, an
 - [Quick Start](#quick-start)
 - [Traced Components](#traced-components) - All traceable components and span names
 - [Standard Attributes](#standard-attributes) - Attribute constants for spans
-- [TracingMixin Usage](#tracingmixin-usage-guide) - Add tracing to custom components
+- [Custom Component Tracing](#custom-component-tracing) - Add tracing to custom components
 - [Distributed Tracing](#distributed-tracing) - Cross-service trace propagation
 - [Metrics](#metrics) - Kafka and subscription metrics
 - [Logging](#logging) - Structured logging configuration
@@ -210,25 +210,26 @@ All spans include standardized attributes from `eventsource.observability.attrib
 | `ATTR_RETRY_COUNT` | `eventsource.retry.count` | Retry attempts | `3` |
 | `ATTR_ERROR_TYPE` | `eventsource.error.type` | Exception class name | `"OptimisticLockError"` |
 
-## TracingMixin Usage Guide
+## Custom Component Tracing
 
-The `TracingMixin` class provides a consistent way to add tracing to your own components:
+Add tracing to your own components using the composition-based `Tracer` API:
 
 ```python
-from eventsource.observability import TracingMixin
+from eventsource.observability import create_tracer
 from eventsource.observability.attributes import (
     ATTR_AGGREGATE_ID,
     ATTR_EVENT_TYPE,
 )
 
-class MyCustomStore(TracingMixin):
+class MyCustomStore:
     def __init__(self, enable_tracing: bool = True):
-        # Initialize tracing via mixin
-        self._init_tracing(__name__, enable_tracing)
+        # Initialize tracing via composition
+        self._tracer = create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
 
     async def save(self, aggregate_id: str, data: dict) -> None:
         # Create span with dynamic attributes
-        with self._create_span_context(
+        with self._tracer.span(
             "my_store.save",
             {
                 ATTR_AGGREGATE_ID: aggregate_id,
@@ -243,31 +244,27 @@ class MyCustomStore(TracingMixin):
                 span.set_attribute("result.success", True)
 
             return result
-
-    @property
-    def tracing_enabled(self) -> bool:
-        """Check if tracing is currently enabled."""
-        return self._enable_tracing and self._tracer is not None
 ```
 
-### TracingMixin Methods
+### Tracer API
 
-| Method | Description |
-|--------|-------------|
-| `_init_tracing(tracer_name, enable_tracing)` | Initialize tracing attributes. Call in `__init__`. |
-| `_create_span_context(name, attributes)` | Create a span context manager that handles None tracer gracefully. |
-| `tracing_enabled` (property) | Check if tracing is currently enabled and available. |
+| Method/Property | Description |
+|-----------------|-------------|
+| `create_tracer(name, enable_tracing)` | Factory function to create appropriate tracer. |
+| `tracer.span(name, attributes)` | Create a span context manager. |
+| `tracer.enabled` (property) | Check if tracing is currently enabled and available. |
 
 ### Using the @traced Decorator
 
 For methods with only static attributes, use the `@traced` decorator:
 
 ```python
-from eventsource.observability import traced, TracingMixin
+from eventsource.observability import traced, create_tracer
 
-class MyService(TracingMixin):
+class MyService:
     def __init__(self, enable_tracing: bool = True):
-        self._init_tracing(__name__, enable_tracing)
+        self._tracer = create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
 
     @traced("my_service.operation", attributes={"db.system": "sqlite"})
     async def operation(self, item_id: str) -> None:

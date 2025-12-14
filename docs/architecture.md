@@ -387,7 +387,8 @@ from eventsource.observability import (
     OTEL_AVAILABLE,   # Single source of truth for availability
     get_tracer,       # Safe tracer acquisition
     traced,           # Decorator for method tracing
-    TracingMixin,     # Mixin for tracing support
+    create_tracer,    # Factory for composition-based tracing
+    Tracer,           # Tracer protocol
 )
 ```
 
@@ -406,15 +407,22 @@ from eventsource.observability import (
 
 ```python
 # Pattern 1: @traced decorator (for static attributes)
-class MyStore(TracingMixin):
+class MyStore:
+    def __init__(self, enable_tracing: bool = True):
+        self._tracer = create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
+
     @traced("my_store.operation")
     async def operation(self) -> None:
         pass
 
-# Pattern 2: _create_span_context (for dynamic attributes)
-class MyStore(TracingMixin):
+# Pattern 2: tracer.span() (for dynamic attributes)
+class MyStore:
+    def __init__(self, enable_tracing: bool = True):
+        self._tracer = create_tracer(__name__, enable_tracing)
+
     async def save(self, item_id: str) -> None:
-        with self._create_span_context(
+        with self._tracer.span(
             "my_store.save",
             {"item.id": item_id},
         ):

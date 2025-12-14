@@ -376,7 +376,7 @@ class TestProjectionHandlerRoutingBenchmarks:
             count = 0
             for _ in range(1000):
                 for event_type in subscribed:
-                    if event_type in projection._handlers:
+                    if projection._handler_registry.has_handler(event_type):
                         count += 1
             return count
 

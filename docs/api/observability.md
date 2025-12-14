@@ -18,8 +18,12 @@ from eventsource.observability import (
     # Decorator
     traced,
 
-    # Mixin class
-    TracingMixin,
+    # Composition-based Tracer API
+    Tracer,
+    NullTracer,
+    OpenTelemetryTracer,
+    MockTracer,
+    create_tracer,
 )
 ```
 
@@ -126,7 +130,7 @@ The decorated method's class must have:
 - `_tracer: Tracer | None` attribute
 - `_enable_tracing: bool` attribute
 
-These are typically provided by `TracingMixin` or manual initialization.
+These are typically provided by `create_tracer()` during initialization.
 
 **Behavior:**
 - If tracing is disabled or tracer is None, the decorator is a no-op
@@ -136,11 +140,12 @@ These are typically provided by `TracingMixin` or manual initialization.
 **Example:**
 
 ```python
-from eventsource.observability import traced, TracingMixin
+from eventsource.observability import traced, create_tracer
 
-class MyStore(TracingMixin):
+class MyStore:
     def __init__(self, enable_tracing: bool = True):
-        self._init_tracing(__name__, enable_tracing)
+        self._tracer = create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
 
     @traced("my_store.save")
     async def save(self, item_id: str) -> None:
@@ -153,115 +158,113 @@ class MyStore(TracingMixin):
         return await self._execute_query(sql)
 ```
 
-**Note:** For dynamic attributes that depend on method arguments, use `TracingMixin._create_span_context()` instead.
-
 ---
 
-## `TracingMixin` Class
+## Composition-Based Tracer API
 
-Mixin class providing standardized OpenTelemetry tracing support with minimal boilerplate.
+The `Tracer` protocol and its implementations provide a composition-based approach to tracing that replaces inheritance-based patterns.
+
+### `Tracer` Protocol
 
 ```python
-class TracingMixin:
-    _tracer: Tracer | None
-    _enable_tracing: bool
+class Tracer(Protocol):
+    def span(
+        self,
+        name: str,
+        attributes: dict[str, Any] | None = None,
+    ) -> AbstractContextManager[Span | None]: ...
+
+    @property
+    def enabled(self) -> bool: ...
+
+    def start_span(
+        self,
+        name: str,
+        kind: SpanKindEnum = SpanKindEnum.INTERNAL,
+        attributes: dict[str, Any] | None = None,
+        context: Any | None = None,
+    ) -> Span | None: ...
+
+    def span_with_kind(
+        self,
+        name: str,
+        kind: SpanKindEnum = SpanKindEnum.INTERNAL,
+        attributes: dict[str, Any] | None = None,
+        context: Any | None = None,
+    ) -> AbstractContextManager[Span | None]: ...
 ```
 
-### Attributes
+### `create_tracer()`
 
-| Attribute | Type | Description |
-|-----------|------|-------------|
-| `_tracer` | `Tracer \| None` | OpenTelemetry tracer instance (or None if unavailable) |
-| `_enable_tracing` | `bool` | Whether tracing is enabled for this instance |
-
-### Methods
-
-#### `_init_tracing()`
-
-Initialize tracing attributes. Call this in your `__init__` to set up tracing support.
+Factory function to create the appropriate tracer based on configuration.
 
 ```python
-def _init_tracing(
-    self,
-    tracer_name: str,
-    enable_tracing: bool = True,
-) -> None
+def create_tracer(name: str, enable_tracing: bool = True) -> Tracer
 ```
 
 **Parameters:**
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `tracer_name` | `str` | Required | Name for the tracer (typically `__name__`) |
-| `enable_tracing` | `bool` | `True` | Whether to enable tracing |
+| `name` | `str` | Required | Tracer name (typically `__name__`) |
+| `enable_tracing` | `bool` | `True` | Whether tracing should be enabled |
+
+**Returns:** `OpenTelemetryTracer` if enabled and available, `NullTracer` otherwise.
 
 **Example:**
 
 ```python
-class MyComponent(TracingMixin):
+from eventsource.observability import create_tracer
+
+class MyComponent:
     def __init__(self, enable_tracing: bool = True):
-        self._init_tracing(__name__, enable_tracing)
+        self._tracer = create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
+
+    async def operation(self, item_id: str) -> None:
+        with self._tracer.span("component.operation", {"item.id": item_id}):
+            await self._do_operation(item_id)
 ```
 
-#### `_create_span_context()`
+### `NullTracer`
 
-Create a span context that handles None tracer gracefully. Use this for operations requiring dynamic attributes computed at runtime.
+No-op tracer implementation for when tracing is disabled.
 
 ```python
-def _create_span_context(
-    self,
-    name: str,
-    attributes: dict[str, Any] | None = None,
-) -> AbstractContextManager[Span | None]
+from eventsource.observability import NullTracer
+
+tracer = NullTracer()
+with tracer.span("operation"):  # Does nothing
+    do_work()
+tracer.enabled  # False
 ```
 
-**Parameters:**
+### `OpenTelemetryTracer`
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `name` | `str` | Required | Span name (e.g., "event_bus.dispatch") |
-| `attributes` | `dict[str, Any]` | `None` | Dynamic attributes to include in span |
-
-**Returns:** Context manager that yields `Span` or `None`.
-
-**Behavior:**
-- Creates a span if tracing is enabled and tracer is available
-- Returns `nullcontext()` if tracing is disabled
-- The yielded span can be used to add additional attributes
-
-**Example:**
+OpenTelemetry tracer wrapper that creates real spans.
 
 ```python
-async def process(self, event: DomainEvent) -> None:
-    with self._create_span_context(
-        "processor.handle",
-        {
-            "event.type": type(event).__name__,
-            "event.id": str(event.event_id),
-        },
-    ) as span:
-        result = await self._do_process(event)
-        if span:
-            span.set_attribute("result.success", True)
-        return result
+from eventsource.observability import OTEL_AVAILABLE, OpenTelemetryTracer
+
+if OTEL_AVAILABLE:
+    tracer = OpenTelemetryTracer(__name__)
+    with tracer.span("operation"):
+        do_work()
 ```
 
-#### `tracing_enabled` Property
+### `MockTracer`
 
-Check if tracing is currently enabled.
-
-```python
-@property
-def tracing_enabled(self) -> bool
-```
-
-**Returns:** `True` if tracing is enabled and tracer is available.
-
-**Example:**
+Mock tracer for testing that records span information.
 
 ```python
-if self.tracing_enabled:
-    print("Tracing is active for this component")
+from eventsource.observability import MockTracer
+
+tracer = MockTracer()
+with tracer.span("operation", {"key": "value"}):
+    pass
+
+assert tracer.spans == [("operation", {"key": "value"})]
+assert tracer.span_names == ["operation"]
 ```
 
 ---
@@ -273,11 +276,12 @@ if self.tracing_enabled:
 Best for methods with static attributes or no attributes:
 
 ```python
-from eventsource.observability import traced, TracingMixin
+from eventsource.observability import traced, create_tracer
 
-class MyEventStore(TracingMixin):
+class MyEventStore:
     def __init__(self, enable_tracing: bool = True):
-        self._init_tracing(__name__, enable_tracing)
+        self._tracer = create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
 
     @traced("event_store.get_version")
     async def get_version(self, aggregate_id: UUID) -> int:
@@ -285,23 +289,23 @@ class MyEventStore(TracingMixin):
         pass
 ```
 
-### Pattern 2: Using `_create_span_context()` (Dynamic Attributes)
+### Pattern 2: Using `tracer.span()` (Dynamic Attributes)
 
 Best for methods needing runtime attributes:
 
 ```python
-from eventsource.observability import TracingMixin
+from eventsource.observability import create_tracer
 
-class MyEventStore(TracingMixin):
+class MyEventStore:
     def __init__(self, enable_tracing: bool = True):
-        self._init_tracing(__name__, enable_tracing)
+        self._tracer = create_tracer(__name__, enable_tracing)
 
     async def append_events(
         self,
         aggregate_id: UUID,
         events: list[DomainEvent],
     ) -> AppendResult:
-        with self._create_span_context(
+        with self._tracer.span(
             "event_store.append_events",
             {
                 "aggregate.id": str(aggregate_id),
@@ -316,13 +320,16 @@ class MyEventStore(TracingMixin):
 For complex scenarios requiring both:
 
 ```python
-class MyEventBus(TracingMixin):
+from eventsource.observability import traced, create_tracer
+
+class MyEventBus:
     def __init__(self, enable_tracing: bool = True):
-        self._init_tracing(__name__, enable_tracing)
+        self._tracer = create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
 
     async def dispatch(self, event: DomainEvent) -> None:
         # Outer span with dynamic event attributes
-        with self._create_span_context(
+        with self._tracer.span(
             f"event.dispatch.{type(event).__name__}",
             {"event.id": str(event.event_id)},
         ):
@@ -395,18 +402,18 @@ The following components use the observability module:
 
 | Component | Tracing Method | Configuration |
 |-----------|----------------|---------------|
-| `InMemoryEventBus` | `TracingMixin` | `enable_tracing` parameter |
-| `SQLiteEventStore` | Direct tracing | `enable_tracing` parameter |
-| `PostgreSQLEventStore` | Direct tracing | `enable_tracing` parameter |
-| `PostgreSQLSnapshotStore` | Direct tracing | `enable_tracing` parameter |
+| `InMemoryEventBus` | Composition | `enable_tracing` parameter |
+| `SQLiteEventStore` | Composition | `enable_tracing` parameter |
+| `PostgreSQLEventStore` | Composition | `enable_tracing` parameter |
+| `PostgreSQLSnapshotStore` | Composition | `enable_tracing` parameter |
 | `RedisEventBus` | Config-based | `RedisEventBusConfig.enable_tracing` |
 | `RabbitMQEventBus` | Config-based | `RabbitMQEventBusConfig.enable_tracing` |
-| `SubscriptionManager` | `TracingMixin` | `enable_tracing` parameter |
-| `TransitionCoordinator` | `TracingMixin` | `enable_tracing` parameter |
-| `CatchUpRunner` | `TracingMixin` | `enable_tracing` parameter |
-| `LiveRunner` | `TracingMixin` | `enable_tracing` parameter |
-| `PostgreSQLCheckpointRepository` | `TracingMixin` | `enable_tracing` parameter |
-| `PostgreSQLDLQRepository` | `TracingMixin` | `enable_tracing` parameter |
+| `SubscriptionManager` | Composition | `enable_tracing` parameter |
+| `TransitionCoordinator` | Composition | `enable_tracing` parameter |
+| `CatchUpRunner` | Composition | `enable_tracing` parameter |
+| `LiveRunner` | Composition | `enable_tracing` parameter |
+| `PostgreSQLCheckpointRepository` | Composition | `enable_tracing` parameter |
+| `PostgreSQLDLQRepository` | Composition | `enable_tracing` parameter |
 
 ---
 
@@ -420,7 +427,23 @@ store = SQLiteEventStore(":memory:", enable_tracing=False)
 bus = InMemoryEventBus(enable_tracing=False)
 ```
 
-### Mocking Tracers
+### Using MockTracer
+
+```python
+from eventsource.observability import MockTracer
+
+def test_my_component():
+    tracer = MockTracer()
+    component = MyComponent(tracer=tracer)
+
+    await component.operation("test-id")
+
+    # Verify spans were created
+    assert "component.operation" in tracer.span_names
+    assert tracer.spans[0] == ("component.operation", {"item.id": "test-id"})
+```
+
+### Mocking OpenTelemetry Directly
 
 ```python
 from unittest.mock import MagicMock, patch
