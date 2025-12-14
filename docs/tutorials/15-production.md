@@ -1,213 +1,450 @@
-# Tutorial 15: Production Deployment Guide
+# Tutorial 15: Production Deployment
 
 **Difficulty:** Advanced
-**Progress:** Tutorial 15 of 21 | Phase 3: Production Readiness
 
-Learn to deploy event-sourced applications to production with proper performance tuning, monitoring, scaling, and security.
+## Prerequisites
 
-**Prerequisites:** Tutorials 11-14, Docker basics, Python 3.11+
+- [Tutorial 1: Introduction to Event Sourcing](01-introduction.md)
+- [Tutorial 11: PostgreSQL Event Store](11-postgresql.md)
+- [Tutorial 13: Subscription Management](13-subscriptions.md)
+- [Tutorial 14: Optimizing with Aggregate Snapshotting](14-snapshotting.md)
+- Python 3.10 or higher
+- Understanding of async/await
+- Basic Docker and database administration knowledge
+- Understanding of production deployment concepts
 
-```bash
-pip install eventsource-py[postgresql]
-```
+## Learning Objectives
+
+By the end of this tutorial, you will be able to:
+
+1. Configure production-ready database connection pools
+2. Implement comprehensive health checks for Kubernetes deployments
+3. Set up structured logging for production observability
+4. Integrate OpenTelemetry tracing for distributed systems
+5. Configure graceful shutdown with signal handling
+6. Tune event processing for production workloads
+7. Implement monitoring and alerting strategies
+8. Apply security best practices for production deployments
 
 ---
 
-## Production Checklist
+## Production Readiness Checklist
 
-Verify before deploying:
+Before deploying to production, verify these key areas:
 
-**Infrastructure:** PostgreSQL configured, connection pooling, schema migrations, event indexes, backups (PITR), monitoring endpoints, structured logging, secrets management
+### Infrastructure
 
-**Application:** Health checks (readiness/liveness), graceful shutdown, DLQ for errors, checkpointing strategy, snapshots, tracing, retry policies, rate limiting
+- PostgreSQL configured with proper connection limits
+- Database indices created for event queries
+- Connection pooling configured based on instance count
+- Backup and point-in-time recovery (PITR) enabled
+- Secrets management for credentials
+- Network security and firewall rules
 
-**Operations:** Runbook, alerting rules, capacity planning, disaster recovery tested, performance baselines, on-call rotation
+### Application
+
+- Health check endpoints (liveness, readiness) implemented
+- Graceful shutdown with signal handling configured
+- Structured logging for aggregation
+- Error monitoring and alerting
+- Checkpoint strategy selected and configured
+- Snapshot thresholds tuned for workload
+- OpenTelemetry tracing enabled (optional)
+
+### Operations
+
+- Deployment runbook documented
+- Monitoring dashboards configured
+- Alert thresholds defined
+- Capacity planning completed
+- Disaster recovery plan tested
+- On-call rotation established
 
 ---
 
-## Performance Tuning
+## Database Connection Pool Configuration
 
-### Connection Pool Configuration
+Connection pooling is critical for production performance. Proper configuration prevents connection exhaustion and optimizes database resource usage.
+
+### Basic Connection Pool Setup
 
 ```python
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
-def create_production_engine(database_url: str, workload: str = "medium"):
-    pool_configs = {
-        "light": {"pool_size": 3, "max_overflow": 5},
-        "medium": {"pool_size": 10, "max_overflow": 15},
-        "heavy": {"pool_size": 20, "max_overflow": 30},
-    }
-    config = pool_configs.get(workload, pool_configs["medium"])
+def create_production_engine(
+    database_url: str,
+    pool_size: int = 10,
+    max_overflow: int = 20,
+):
+    """
+    Create production-ready database engine.
 
+    Args:
+        database_url: PostgreSQL connection URL
+        pool_size: Number of persistent connections
+        max_overflow: Additional connections under load
+    """
     return create_async_engine(
         database_url,
-        pool_size=config["pool_size"],
-        max_overflow=config["max_overflow"],
-        pool_timeout=30,
-        pool_recycle=1800,
-        pool_pre_ping=True,
-        echo=False,
-        connect_args={"server_settings": {"statement_timeout": "30000"}},
+        pool_size=pool_size,           # Persistent connections
+        max_overflow=max_overflow,      # Temporary overflow connections
+        pool_timeout=30.0,              # Wait time for connection
+        pool_recycle=1800,              # Recycle connections after 30 min
+        pool_pre_ping=True,             # Verify connection before use
+        echo=False,                     # Disable SQL logging
+        connect_args={
+            "server_settings": {
+                "statement_timeout": "30000",  # 30s query timeout
+            }
+        },
     )
 
-def create_production_session_factory(engine):
-    return async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+# Create session factory
+engine = create_production_engine(
+    "postgresql+asyncpg://user:pass@localhost:5432/mydb"
+)
+session_factory = async_sessionmaker(
+    engine,
+    expire_on_commit=False,  # Performance optimization
+)
 ```
 
-| Workload | Concurrent Requests | pool_size | max_overflow |
-|----------|-------------------|-----------|--------------|
-| Light | < 50 | 3-5 | 5-10 |
-| Medium | 50-500 | 10-15 | 15-20 |
-| Heavy | > 500 | 20-30 | 30-50 |
+### Connection Pool Sizing
 
-**Note:** Total connections across all instances must not exceed PostgreSQL's `max_connections` (default: 100).
+**Formula:** `total_connections = (pool_size + max_overflow) * instance_count`
 
-### Event Store Optimization
+**Constraint:** Must not exceed PostgreSQL `max_connections` (default: 100)
+
+| Workload | Instances | pool_size | max_overflow | Total |
+|----------|-----------|-----------|--------------|-------|
+| Development | 1 | 5 | 5 | 10 |
+| Light | 2 | 5 | 10 | 30 |
+| Medium | 4 | 10 | 15 | 100 |
+| Heavy | 8 | 5 | 7 | 96 |
+
+**Example calculation:**
+```python
+import os
+
+# Environment configuration
+instance_count = int(os.getenv("INSTANCE_COUNT", "1"))
+max_db_connections = int(os.getenv("MAX_DB_CONNECTIONS", "100"))
+
+# Reserve 10% for admin connections
+usable_connections = int(max_db_connections * 0.9)
+
+# Divide across instances
+connections_per_instance = usable_connections // instance_count
+
+# Split into pool_size and max_overflow (2:1 ratio)
+pool_size = max(2, connections_per_instance // 3)
+max_overflow = connections_per_instance - pool_size
+
+print(f"Pool config: pool_size={pool_size}, max_overflow={max_overflow}")
+```
+
+### Common Connection Pool Issues
+
+**Problem:** Connection pool exhausted
+
+**Symptoms:** `TimeoutError: QueuePool limit exceeded`
+
+**Solutions:**
+- Increase `pool_size` and `max_overflow`
+- Reduce `max_in_flight` in subscription configs
+- Check for connection leaks (unclosed sessions)
+
+**Problem:** Too many database connections
+
+**Symptoms:** PostgreSQL `FATAL: too many connections`
+
+**Solutions:**
+- Reduce `pool_size + max_overflow` per instance
+- Increase PostgreSQL `max_connections`
+- Use connection pooler like PgBouncer
+
+---
+
+## Event Processing Configuration
+
+Configure event stores and subscription managers for production workloads.
+
+### Production Event Store
 
 ```python
 from eventsource import PostgreSQLEventStore
 
-def create_production_event_store(session_factory):
-    return PostgreSQLEventStore(
-        session_factory,
-        outbox_enabled=True,
-        enable_tracing=True,
-        auto_detect_uuid=True,
-        string_id_fields={"stripe_id", "external_ref"},
-    )
+event_store = PostgreSQLEventStore(
+    session_factory,
+    enable_tracing=True,       # OpenTelemetry tracing
+    auto_detect_uuid=True,     # Automatically parse UUID strings
+)
 ```
 
-### Batch Processing Configuration
+### Production Subscription Manager
 
 ```python
 from eventsource.subscriptions import (
-    SubscriptionManager, SubscriptionConfig, CheckpointStrategy, HealthCheckConfig
+    SubscriptionManager,
+    SubscriptionConfig,
+    CheckpointStrategy,
+    HealthCheckConfig,
 )
 
-def create_production_subscription_config():
-    return SubscriptionConfig(
-        start_from="checkpoint",
-        batch_size=100,
-        max_in_flight=1000,
-        checkpoint_strategy=CheckpointStrategy.EVERY_BATCH,
-        continue_on_error=True,
-        processing_timeout=30.0,
-        backpressure_threshold=0.8,
-    )
+# Health check thresholds
+health_config = HealthCheckConfig(
+    max_error_rate_per_minute=10.0,    # Degraded at 10 errors/min
+    max_errors_warning=50,              # Warning threshold
+    max_errors_critical=200,            # Critical threshold
+    max_lag_events_warning=5000,        # Warn if 5k events behind
+    max_lag_events_critical=50000,      # Critical if 50k behind
+)
 
-def create_production_manager(event_store, event_bus, checkpoint_repo, dlq_repo=None):
-    health_config = HealthCheckConfig(
-        max_error_rate_per_minute=10.0,
-        max_errors_warning=10,
-        max_errors_critical=100,
-        max_lag_events_warning=1000,
-        max_lag_events_critical=10000,
-        max_dlq_events_warning=10,
-        max_dlq_events_critical=100,
-    )
+# Create manager
+manager = SubscriptionManager(
+    event_store=event_store,
+    event_bus=event_bus,
+    checkpoint_repo=checkpoint_repo,
+    shutdown_timeout=60.0,              # 60s graceful shutdown
+    drain_timeout=30.0,                 # 30s to drain in-flight
+    health_check_config=health_config,
+    enable_tracing=True,                # OpenTelemetry tracing
+)
 
-    return SubscriptionManager(
-        event_store=event_store,
-        event_bus=event_bus,
-        checkpoint_repo=checkpoint_repo,
-        shutdown_timeout=30.0,
-        drain_timeout=10.0,
-        dlq_repo=dlq_repo,
-        health_check_config=health_config,
-        enable_tracing=True,
-    )
+# Production subscription config
+config = SubscriptionConfig(
+    start_from="checkpoint",            # Resume from last position
+    batch_size=100,                     # Events per batch
+    max_in_flight=1000,                 # Concurrent processing limit
+    checkpoint_strategy=CheckpointStrategy.EVERY_BATCH,
+    processing_timeout=30.0,            # Max time per event
+    continue_on_error=True,             # Continue after DLQ
+    max_retries=5,                      # Retry attempts
+    circuit_breaker_enabled=True,       # Enable circuit breaker
+)
+
+# Subscribe projections
+await manager.subscribe(projection, config=config, name="orders")
 ```
 
-### Snapshot Configuration
+### Tuning Guidelines
 
-```python
-from eventsource import AggregateRepository
-from eventsource.snapshots import PostgreSQLSnapshotStore
+**Batch Size:**
+- **Small (10-50):** Low latency, higher database load
+- **Medium (50-200):** Balanced (recommended)
+- **Large (200-1000):** High throughput, higher latency
 
-def create_production_repository(
-    event_store, snapshot_session_factory, aggregate_factory,
-    aggregate_type: str, event_publisher=None
-):
-    snapshot_store = PostgreSQLSnapshotStore(snapshot_session_factory)
-    return AggregateRepository(
-        event_store=event_store,
-        aggregate_factory=aggregate_factory,
-        aggregate_type=aggregate_type,
-        event_publisher=event_publisher,
-        snapshot_store=snapshot_store,
-        snapshot_threshold=100,
-        snapshot_mode="background",
-        enable_tracing=True,
-    )
-```
+**Max In-Flight:**
+- Formula: `max_in_flight = batch_size * 10`
+- Higher values = more concurrency, more memory
+- Lower values = less memory, slower catch-up
 
-| Mode | Latency | Use Case |
-|------|---------|----------|
-| `sync` | Higher | Simple apps, low throughput |
-| `background` | Minimal | High-throughput production |
-| `manual` | None | Full control over timing |
+**Checkpoint Strategy:**
+- `EVERY_EVENT`: Maximum durability, slowest
+- `EVERY_BATCH`: Recommended for production
+- `PERIODIC`: Fastest, suitable for analytics
 
 ---
 
-## Monitoring and Observability
+## Health Check Endpoints
 
-### Health Check Endpoints
+Implement Kubernetes-compatible health checks for production deployments.
+
+### FastAPI Health Endpoints
 
 ```python
 from fastapi import FastAPI, Response
 from contextlib import asynccontextmanager
-from eventsource.subscriptions import SubscriptionManager
 
+# Global manager reference
 manager: SubscriptionManager | None = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Manage application lifecycle."""
     global manager
-    # Initialize infrastructure
-    event_store = InMemoryEventStore()
+
+    # Startup
+    event_store = PostgreSQLEventStore(session_factory)
     event_bus = InMemoryEventBus()
-    checkpoint_repo = InMemoryCheckpointRepository()
+    checkpoint_repo = PostgreSQLCheckpointRepository(session_factory)
+
     manager = SubscriptionManager(
-        event_store, event_bus, checkpoint_repo,
-        shutdown_timeout=30.0, drain_timeout=10.0
+        event_store=event_store,
+        event_bus=event_bus,
+        checkpoint_repo=checkpoint_repo,
+        shutdown_timeout=60.0,
+        drain_timeout=30.0,
     )
+
+    # Subscribe projections
+    await manager.subscribe(order_projection, name="orders")
+    await manager.subscribe(customer_projection, name="customers")
+
+    # Start manager
     await manager.start()
+
     yield
-    await manager.stop()
+
+    # Shutdown
+    if manager:
+        await manager.stop()
 
 app = FastAPI(lifespan=lifespan)
 
 @app.get("/health")
 async def health_check():
+    """
+    Overall health check endpoint.
+
+    Returns 200 if healthy/degraded, 503 if unhealthy/critical.
+    """
     if not manager:
-        return Response(content='{"status":"unhealthy"}', status_code=503)
+        return Response(
+            content='{"status":"unhealthy","reason":"manager not initialized"}',
+            status_code=503,
+            media_type="application/json",
+        )
+
     health = await manager.health_check()
+
+    # Return 503 for unhealthy or critical
     status_code = 200 if health.status in ("healthy", "degraded") else 503
-    return Response(content=health.model_dump_json(), status_code=status_code)
+
+    return Response(
+        content=health.model_dump_json(),
+        status_code=status_code,
+        media_type="application/json",
+    )
 
 @app.get("/health/ready")
 async def readiness_check():
+    """
+    Readiness probe for Kubernetes.
+
+    Returns 200 if ready to receive traffic, 503 otherwise.
+    """
     if not manager:
-        return Response(content='{"ready":false}', status_code=503)
+        return Response(
+            content='{"ready":false,"reason":"manager not initialized"}',
+            status_code=503,
+            media_type="application/json",
+        )
+
     readiness = await manager.readiness_check()
+    status_code = 200 if readiness.ready else 503
+
     return Response(
         content=readiness.model_dump_json(),
-        status_code=200 if readiness.ready else 503
+        status_code=status_code,
+        media_type="application/json",
     )
 
 @app.get("/health/live")
 async def liveness_check():
+    """
+    Liveness probe for Kubernetes.
+
+    Returns 200 if alive, 503 if needs restart.
+    """
     if not manager:
-        return Response(content='{"alive":false}', status_code=503)
+        return Response(
+            content='{"alive":false,"reason":"manager not initialized"}',
+            status_code=503,
+            media_type="application/json",
+        )
+
     liveness = await manager.liveness_check()
+    status_code = 200 if liveness.alive else 503
+
     return Response(
         content=liveness.model_dump_json(),
-        status_code=200 if liveness.alive else 503
+        status_code=status_code,
+        media_type="application/json",
     )
 ```
 
-### Structured Logging
+### Kubernetes Deployment
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: eventsource-app
+spec:
+  replicas: 3
+  template:
+    spec:
+      containers:
+      - name: app
+        image: myapp:latest
+        ports:
+        - containerPort: 8000
+
+        # Liveness probe - restart if fails
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+        # Readiness probe - stop sending traffic if fails
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 2
+```
+
+### Health Check Response Examples
+
+**Healthy:**
+```json
+{
+  "status": "healthy",
+  "running": true,
+  "subscription_count": 2,
+  "healthy_count": 2,
+  "degraded_count": 0,
+  "unhealthy_count": 0,
+  "total_events_processed": 125000,
+  "total_events_failed": 0,
+  "total_lag_events": 0,
+  "uptime_seconds": 3600.5,
+  "timestamp": "2024-01-15T12:00:00Z",
+  "subscriptions": [...]
+}
+```
+
+**Degraded:**
+```json
+{
+  "status": "degraded",
+  "running": true,
+  "subscription_count": 2,
+  "healthy_count": 1,
+  "degraded_count": 1,
+  "unhealthy_count": 0,
+  "total_events_processed": 125000,
+  "total_events_failed": 15,
+  "total_lag_events": 3000,
+  "uptime_seconds": 3600.5
+}
+```
+
+---
+
+## Structured Logging
+
+Production systems require structured logging for aggregation and analysis.
+
+### JSON Logging Configuration
 
 ```python
 import logging
@@ -216,37 +453,111 @@ import sys
 from datetime import datetime, UTC
 
 class JSONFormatter(logging.Formatter):
+    """Format log records as JSON for structured logging."""
+
     def format(self, record: logging.LogRecord) -> str:
+        """Format log record as JSON."""
         log_data = {
             "timestamp": datetime.now(UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
         }
+
+        # Add exception info if present
         if record.exc_info:
             log_data["exception"] = self.formatException(record.exc_info)
-        # Add extra fields from record.__dict__
+
+        # Add custom fields from extra parameter
         for key, value in record.__dict__.items():
-            if key not in ("name", "msg", "args", "levelname", "message"):
+            if key not in {
+                "name", "msg", "args", "created", "filename", "funcName",
+                "levelname", "levelno", "lineno", "module", "msecs",
+                "message", "pathname", "process", "processName",
+                "relativeCreated", "thread", "threadName", "exc_info",
+                "exc_text", "stack_info",
+            }:
                 log_data[key] = value
+
         return json.dumps(log_data)
 
-def configure_production_logging(level: str = "INFO"):
+def configure_production_logging(level: str = "INFO") -> logging.Logger:
+    """
+    Configure production logging with JSON format.
+
+    Args:
+        level: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+
+    Returns:
+        Configured root logger
+    """
     root_logger = logging.getLogger()
     root_logger.setLevel(getattr(logging, level.upper()))
+
+    # Remove existing handlers
     root_logger.handlers.clear()
+
+    # Add JSON handler
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(JSONFormatter())
     root_logger.addHandler(handler)
+
+    # Reduce SQLAlchemy noise
     logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+
     return root_logger
 
 # Usage
 logger = configure_production_logging("INFO")
-logger.info("Order processed", extra={"order_id": "12345", "total": 299.99})
+
+# Log with structured data
+logger.info(
+    "Order processed successfully",
+    extra={
+        "order_id": "550e8400-e29b-41d4-a716-446655440000",
+        "customer_id": "123",
+        "total": 99.99,
+        "duration_ms": 45.2,
+    }
+)
 ```
 
-### OpenTelemetry Integration
+**Output:**
+```json
+{
+  "timestamp": "2024-01-15T12:00:00.123456Z",
+  "level": "INFO",
+  "logger": "__main__",
+  "message": "Order processed successfully",
+  "order_id": "550e8400-e29b-41d4-a716-446655440000",
+  "customer_id": "123",
+  "total": 99.99,
+  "duration_ms": 45.2
+}
+```
+
+### Logging Best Practices
+
+**DO:**
+- Use structured logging with JSON format
+- Include correlation IDs for request tracing
+- Log at appropriate levels (INFO for events, ERROR for failures)
+- Include context (aggregate_id, event_type, etc.)
+- Use `extra={}` for structured fields
+
+**DON'T:**
+- Log sensitive data (passwords, credit cards, PII)
+- Log at DEBUG level in production
+- Use string concatenation for log messages
+- Log the same event multiple times
+
+---
+
+## OpenTelemetry Tracing
+
+Distributed tracing helps debug issues in production systems.
+
+### Tracing Configuration
 
 ```python
 from opentelemetry import trace
@@ -255,344 +566,491 @@ from opentelemetry.sdk.resources import Resource, SERVICE_NAME, SERVICE_VERSION
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-def configure_tracing(service_name: str, service_version: str, otlp_endpoint: str = "localhost:4317"):
-    resource = Resource.create({SERVICE_NAME: service_name, SERVICE_VERSION: service_version})
+def configure_tracing(
+    service_name: str,
+    service_version: str = "1.0.0",
+    otlp_endpoint: str = "localhost:4317",
+) -> TracerProvider:
+    """
+    Configure OpenTelemetry tracing.
+
+    Args:
+        service_name: Name of the service
+        service_version: Version of the service
+        otlp_endpoint: OTLP collector endpoint
+
+    Returns:
+        Configured tracer provider
+    """
+    # Create resource with service metadata
+    resource = Resource.create({
+        SERVICE_NAME: service_name,
+        SERVICE_VERSION: service_version,
+    })
+
+    # Create tracer provider
     provider = TracerProvider(resource=resource)
-    exporter = OTLPSpanExporter(endpoint=otlp_endpoint, insecure=True)
-    provider.add_span_processor(BatchSpanProcessor(exporter))
+
+    # Configure OTLP exporter
+    exporter = OTLPSpanExporter(
+        endpoint=otlp_endpoint,
+        insecure=True,  # Use TLS in production
+    )
+
+    # Add batch span processor
+    processor = BatchSpanProcessor(exporter)
+    provider.add_span_processor(processor)
+
+    # Set as global provider
     trace.set_tracer_provider(provider)
+
     return provider
 
 # Usage
 import os
+
 configure_tracing(
     service_name=os.getenv("SERVICE_NAME", "eventsource-app"),
     service_version=os.getenv("SERVICE_VERSION", "1.0.0"),
-    otlp_endpoint=os.getenv("OTLP_ENDPOINT", "localhost:4317")
+    otlp_endpoint=os.getenv("OTLP_ENDPOINT", "localhost:4317"),
+)
+
+# Enable tracing in components
+event_store = PostgreSQLEventStore(
+    session_factory,
+    enable_tracing=True,  # Traces database operations
+)
+
+manager = SubscriptionManager(
+    event_store=event_store,
+    event_bus=event_bus,
+    checkpoint_repo=checkpoint_repo,
+    enable_tracing=True,  # Traces subscription operations
+)
+
+repo = AggregateRepository(
+    event_store=event_store,
+    aggregate_factory=OrderAggregate,
+    aggregate_type="Order",
+    enable_tracing=True,  # Traces aggregate operations
 )
 ```
 
-### Error Monitoring
+### Trace Attributes
+
+eventsource-py automatically adds these attributes to spans:
+
+- `event.id`: Event UUID
+- `event.type`: Event type name
+- `aggregate.id`: Aggregate UUID
+- `aggregate.type`: Aggregate type name
+- `subscription.name`: Subscription name
+- `subscription.state`: Current state
+- `db.system`: Database type (postgresql)
+- `db.operation`: Database operation (select, insert, etc.)
+
+---
+
+## Graceful Shutdown
+
+Production systems must handle shutdown signals gracefully.
+
+### Signal Handling with SubscriptionManager
 
 ```python
+import asyncio
+import signal
 import logging
-from eventsource.subscriptions import SubscriptionManager, ErrorInfo, ErrorSeverity, ErrorCategory
+from typing import NoReturn
 
 logger = logging.getLogger(__name__)
 
-async def log_all_errors(error_info: ErrorInfo) -> None:
-    logger.error("Subscription error", extra={
-        "subscription_name": error_info.subscription_name,
-        "event_id": str(error_info.event_id),
-        "error_message": error_info.error_message,
-        "severity": error_info.classification.severity.value,
-    })
+async def run_production_service() -> NoReturn:
+    """
+    Run production service with graceful shutdown.
 
-async def alert_critical_errors(error_info: ErrorInfo) -> None:
-    logger.critical(f"CRITICAL: {error_info.error_message} in {error_info.subscription_name}")
-    # Integration point for PagerDuty, OpsGenie, Slack
+    Handles SIGTERM and SIGINT signals for graceful shutdown.
+    """
+    # Create infrastructure
+    engine = create_production_engine(
+        os.getenv("DATABASE_URL", "postgresql+asyncpg://..."),
+    )
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
-def configure_error_monitoring(manager: SubscriptionManager) -> None:
-    manager.on_error(log_all_errors)
-    manager.on_error_severity(ErrorSeverity.CRITICAL, alert_critical_errors)
+    event_store = PostgreSQLEventStore(session_factory, enable_tracing=True)
+    event_bus = InMemoryEventBus()
+    checkpoint_repo = PostgreSQLCheckpointRepository(session_factory)
+
+    manager = SubscriptionManager(
+        event_store=event_store,
+        event_bus=event_bus,
+        checkpoint_repo=checkpoint_repo,
+        shutdown_timeout=60.0,   # Max shutdown time
+        drain_timeout=30.0,      # Max drain time
+    )
+
+    # Subscribe projections
+    await manager.subscribe(order_projection, name="orders")
+    await manager.subscribe(customer_projection, name="customers")
+
+    logger.info("Starting subscription manager")
+
+    # Run until signal received
+    result = await manager.run_until_shutdown()
+
+    # Log shutdown details
+    logger.info(
+        "Shutdown complete",
+        extra={
+            "phase": result.phase.value,
+            "duration_seconds": result.duration_seconds,
+            "forced": result.forced,
+            "events_in_flight": result.events_in_flight,
+            "checkpoints_saved": result.checkpoints_saved,
+        }
+    )
+
+    # Cleanup
+    await engine.dispose()
+
+if __name__ == "__main__":
+    # Configure logging
+    configure_production_logging("INFO")
+
+    # Run service
+    asyncio.run(run_production_service())
+```
+
+### Shutdown Sequence
+
+1. **Signal received** (SIGTERM or SIGINT)
+2. **Stop accepting new events** - Coordinators stop reading
+3. **Drain in-flight events** - Wait up to `drain_timeout` for processing to complete
+4. **Save checkpoints** - Persist final positions
+5. **Cleanup resources** - Close database connections
+
+### Manual Shutdown Trigger
+
+```python
+# Programmatically request shutdown
+manager.request_shutdown()
+
+# Check shutdown status
+if manager.is_shutting_down:
+    logger.info(f"Shutdown phase: {manager.shutdown_phase.value}")
 ```
 
 ---
 
-## Scaling Strategies
+## Error Monitoring
 
-### Horizontal Scaling for Projections
+Production systems require comprehensive error monitoring and alerting.
+
+### Error Callbacks
+
+```python
+from eventsource.subscriptions import ErrorInfo, ErrorSeverity
+
+async def log_all_errors(error_info: ErrorInfo) -> None:
+    """Log all errors with structured data."""
+    logger.error(
+        "Subscription error",
+        extra={
+            "subscription": error_info.subscription_name,
+            "event_id": str(error_info.event_id),
+            "event_type": error_info.event_type,
+            "error_message": error_info.error_message,
+            "severity": error_info.classification.severity.value,
+            "category": error_info.classification.category.value,
+            "retry_count": error_info.retry_count,
+        }
+    )
+
+async def alert_critical_errors(error_info: ErrorInfo) -> None:
+    """Send alerts for critical errors."""
+    logger.critical(
+        f"CRITICAL ERROR in {error_info.subscription_name}",
+        extra={
+            "event_id": str(error_info.event_id),
+            "error_message": error_info.error_message,
+        }
+    )
+
+    # Integration points for alerting
+    # await send_pagerduty_alert(error_info)
+    # await send_slack_notification(error_info)
+    # await send_opsgenie_alert(error_info)
+
+# Register error callbacks
+manager.on_error(log_all_errors)
+manager.on_error_severity(ErrorSeverity.CRITICAL, alert_critical_errors)
+```
+
+### Error Statistics
+
+```python
+# Get error statistics
+stats = manager.get_error_stats()
+
+logger.info(
+    "Error statistics",
+    extra={
+        "total_errors": stats["total_errors"],
+        "total_dlq_count": stats["total_dlq_count"],
+        "subscriptions": stats["subscriptions"],
+    }
+)
+```
+
+---
+
+## Scaling Considerations
+
+### Horizontal Scaling
+
+Run multiple instances with partitioned event processing:
 
 ```python
 import hashlib
+import os
 
-def get_partition_for_aggregate(aggregate_id: str, num_partitions: int) -> int:
+def get_partition_for_aggregate(
+    aggregate_id: str,
+    num_partitions: int,
+) -> int:
     """Use consistent hashing to assign aggregates to partitions."""
     hash_value = int(hashlib.sha256(aggregate_id.encode()).hexdigest(), 16)
     return hash_value % num_partitions
 
 class PartitionedProjection:
-    """Base class for partitioned projections."""
+    """Projection that processes only its assigned partition."""
+
     def __init__(self, partition_id: int, num_partitions: int):
         self.partition_id = partition_id
         self.num_partitions = num_partitions
 
     def should_handle(self, aggregate_id: str) -> bool:
-        return get_partition_for_aggregate(aggregate_id, self.num_partitions) == self.partition_id
+        """Check if this instance should handle the aggregate."""
+        partition = get_partition_for_aggregate(aggregate_id, self.num_partitions)
+        return partition == self.partition_id
 
-    async def handle_event(self, event) -> None:
+    async def handle(self, event: DomainEvent) -> None:
+        """Handle event if it belongs to this partition."""
         if self.should_handle(str(event.aggregate_id)):
             await self._process_event(event)
 
-    async def _process_event(self, event) -> None:
-        raise NotImplementedError
+    async def _process_event(self, event: DomainEvent) -> None:
+        """Process the event."""
+        # Implementation here
+        pass
+
+# Configure from environment
+partition_id = int(os.getenv("PARTITION_ID", "0"))
+num_partitions = int(os.getenv("NUM_PARTITIONS", "1"))
+
+projection = PartitionedProjection(partition_id, num_partitions)
 ```
 
-### Database Connection Scaling
+### Connection Pool Scaling
 
 ```python
-import os
-from dataclasses import dataclass
+# Calculate pool size based on instance count
+instance_count = int(os.getenv("INSTANCE_COUNT", "1"))
+max_db_connections = int(os.getenv("MAX_DB_CONNECTIONS", "100"))
 
-@dataclass
-class ConnectionConfig:
-    host: str
-    port: int
-    database: str
-    user: str
-    password: str
-    pool_size: int
-    max_overflow: int
+# Reserve connections for admin
+usable = int(max_db_connections * 0.9)
+per_instance = usable // instance_count
 
-    @classmethod
-    def from_environment(cls) -> "ConnectionConfig":
-        instance_count = int(os.getenv("INSTANCE_COUNT", "1"))
-        max_db_connections = int(os.getenv("MAX_DB_CONNECTIONS", "100"))
-        connections_per_instance = max_db_connections // instance_count
-        pool_size = max(2, connections_per_instance // 2)
-        max_overflow = connections_per_instance - pool_size
+pool_size = max(2, per_instance // 3)
+max_overflow = per_instance - pool_size
 
-        return cls(
-            host=os.getenv("DB_HOST", "localhost"),
-            port=int(os.getenv("DB_PORT", "5432")),
-            database=os.getenv("DB_NAME", "eventsource"),
-            user=os.getenv("DB_USER", "postgres"),
-            password=os.getenv("DB_PASSWORD", ""),
-            pool_size=pool_size,
-            max_overflow=max_overflow,
-        )
-
-    @property
-    def url(self) -> str:
-        return f"postgresql+asyncpg://{self.user}:{self.password}@{self.host}:{self.port}/{self.database}"
-```
-
-### Event Store Partitioning
-
-```sql
--- Partition by time range for high volumes
-CREATE TABLE events (
-    event_id UUID NOT NULL,
-    aggregate_id UUID NOT NULL,
-    aggregate_type VARCHAR(255) NOT NULL,
-    event_type VARCHAR(255) NOT NULL,
-    version INTEGER NOT NULL,
-    timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
-    payload JSONB NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    CONSTRAINT pk_events PRIMARY KEY (event_id, created_at)
-) PARTITION BY RANGE (created_at);
-
-CREATE TABLE events_2024_01 PARTITION OF events
-    FOR VALUES FROM ('2024-01-01') TO ('2024-02-01');
-
-CREATE INDEX idx_events_aggregate_id ON events (aggregate_id);
-CREATE INDEX idx_events_aggregate_type ON events (aggregate_type);
+logger.info(
+    "Connection pool configuration",
+    extra={
+        "instance_count": instance_count,
+        "pool_size": pool_size,
+        "max_overflow": max_overflow,
+        "total_per_instance": pool_size + max_overflow,
+    }
+)
 ```
 
 ---
 
-## Backup and Recovery
+## Security Best Practices
 
-### Event Store Backup Strategy
-
-```python
-import json
-from pathlib import Path
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
-
-async def export_events_to_jsonl(session: AsyncSession, output_path: Path, batch_size: int = 1000) -> int:
-    """Export all events to JSONL for backup."""
-    total_exported = 0
-    offset = 0
-
-    with open(output_path, "w") as f:
-        while True:
-            result = await session.execute(
-                text("SELECT event_id::text, aggregate_id::text, aggregate_type, event_type, "
-                     "version, timestamp, payload, created_at FROM events "
-                     "ORDER BY created_at LIMIT :limit OFFSET :offset"),
-                {"limit": batch_size, "offset": offset}
-            )
-            rows = result.fetchall()
-            if not rows:
-                break
-
-            for row in rows:
-                event_data = {
-                    "event_id": row[0], "aggregate_id": row[1], "aggregate_type": row[2],
-                    "event_type": row[3], "version": row[4], "timestamp": row[5].isoformat(),
-                    "payload": row[6], "created_at": row[7].isoformat()
-                }
-                f.write(json.dumps(event_data) + "\n")
-                total_exported += 1
-
-            offset += batch_size
-
-    return total_exported
-
-async def import_events_from_jsonl(session: AsyncSession, input_path: Path, batch_size: int = 1000) -> int:
-    """Import events from JSONL backup."""
-    total_imported = 0
-    batch = []
-
-    with open(input_path, "r") as f:
-        for line in f:
-            batch.append(json.loads(line.strip()))
-            if len(batch) >= batch_size:
-                for event_data in batch:
-                    await session.execute(
-                        text("INSERT INTO events (event_id, aggregate_id, aggregate_type, event_type, "
-                             "version, timestamp, payload, created_at) VALUES (:event_id::uuid, "
-                             ":aggregate_id::uuid, :aggregate_type, :event_type, :version, "
-                             ":timestamp::timestamptz, :payload::jsonb, :created_at::timestamptz) "
-                             "ON CONFLICT DO NOTHING"),
-                        event_data
-                    )
-                await session.commit()
-                total_imported += len(batch)
-                batch = []
-
-    return total_imported
-```
-
-### Point-in-Time Recovery
-
-```bash
-# postgresql.conf settings for PITR
-archive_mode = on
-archive_command = 'cp %p /path/to/archive/%f'
-wal_level = replica
-wal_keep_size = 1GB
-checkpoint_timeout = 15min
-max_wal_size = 4GB
-```
-
-### Projection Rebuild
+### Database Connection Security
 
 ```python
-import asyncio
-from eventsource.subscriptions import SubscriptionManager, SubscriptionConfig
-
-async def rebuild_projection(manager: SubscriptionManager, projection, name: str):
-    """Rebuild a projection from the beginning."""
-    await projection._truncate_read_models()
-    await manager.subscribe(projection, name=name, config=SubscriptionConfig(
-        start_from="beginning", batch_size=500, checkpoint_strategy="every_batch"
-    ))
-    await manager.start(subscription_names=[name])
-
-    # Wait for catch-up
-    while True:
-        health = manager.get_subscription_health(name)
-        if health and health.lag_events == 0:
-            break
-        await asyncio.sleep(1.0)
-
-    return projection
-```
-
----
-
-## Security Considerations
-
-### Connection Security
-
-```python
-from sqlalchemy.ext.asyncio import create_async_engine
-
-def create_secure_engine(host: str, port: int, database: str, user: str, password: str,
-                         ssl_mode: str = "require", ssl_root_cert: str | None = None):
-    """Create a secure database engine with TLS."""
+def create_secure_engine(
+    host: str,
+    port: int,
+    database: str,
+    user: str,
+    password: str,
+    ssl_mode: str = "require",
+    ssl_root_cert: str | None = None,
+):
+    """Create database engine with SSL/TLS."""
     url = f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{database}"
+
     connect_args = {"ssl": ssl_mode}
     if ssl_root_cert:
         connect_args["ssl"] = {"ca": ssl_root_cert}
-    return create_async_engine(url, connect_args=connect_args, pool_pre_ping=True)
+
+    return create_async_engine(
+        url,
+        connect_args=connect_args,
+        pool_pre_ping=True,
+    )
 ```
 
-### Event Data Protection
+### Secrets Management
 
 ```python
-import hashlib
-from cryptography.fernet import Fernet
+import os
 
-class EventDataProtector:
-    """Protect sensitive event data with encryption and hashing."""
-    def __init__(self, encryption_key: bytes):
-        self.fernet = Fernet(encryption_key)
+# DO: Use environment variables
+database_url = os.getenv("DATABASE_URL")
 
-    def encrypt_field(self, value: str) -> str:
-        return self.fernet.encrypt(value.encode()).decode()
+# DO: Use secrets management systems
+# - Kubernetes Secrets
+# - AWS Secrets Manager
+# - HashiCorp Vault
+# - Azure Key Vault
 
-    def decrypt_field(self, encrypted: str) -> str:
-        return self.fernet.decrypt(encrypted.encode()).decode()
-
-    @staticmethod
-    def hash_field(value: str, salt: str = "") -> str:
-        """One-way hash for PII verification."""
-        return hashlib.sha256(f"{salt}{value}".encode()).hexdigest()
-
-    @staticmethod
-    def mask_field(value: str, visible_chars: int = 4) -> str:
-        """Mask sensitive data for display."""
-        if len(value) <= visible_chars:
-            return "*" * len(value)
-        return "*" * (len(value) - visible_chars) + value[-visible_chars:]
-```
-
-### Audit Logging
-
-```python
-import logging
-from datetime import datetime, UTC
-from uuid import UUID
-
-class AuditLogger:
-    """Track access and modifications."""
-    def __init__(self, logger_name: str = "audit"):
-        self.logger = logging.getLogger(logger_name)
-
-    def log_event_access(self, actor_id: str, aggregate_id: UUID, aggregate_type: str,
-                         action: str, ip_address: str | None = None):
-        self.logger.info("Event data access", extra={
-            "audit_type": "access", "timestamp": datetime.now(UTC).isoformat(),
-            "actor_id": actor_id, "aggregate_id": str(aggregate_id),
-            "aggregate_type": aggregate_type, "action": action, "ip_address": ip_address
-        })
+# DON'T: Hard-code credentials
+# database_url = "postgresql://user:password@localhost/db"  # WRONG!
 ```
 
 ---
 
 ## Complete Production Example
 
-Complete production-ready application setup:
-
 ```python
-"""Tutorial 15: Production Deployment - Run with: python tutorial_15_production.py"""
+"""
+Tutorial 15: Production Deployment
+
+Production-ready event-sourced application with:
+- Connection pooling
+- Health checks
+- Structured logging
+- Graceful shutdown
+- Error monitoring
+
+Run with: python tutorial_15_production.py
+"""
+
 import asyncio
 import logging
 import os
-import signal
-from typing import Any
-from uuid import uuid4
+import json
+import sys
+from datetime import datetime, UTC
+from uuid import UUID, uuid4
+
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-from eventsource import (DomainEvent, register_event, AggregateRoot, PostgreSQLEventStore,
-                         AggregateRepository, InMemoryEventBus, PostgreSQLCheckpointRepository)
-from eventsource.subscriptions import (SubscriptionManager, HealthCheckConfig, ErrorInfo, ErrorSeverity)
-from eventsource.snapshots import PostgreSQLSnapshotStore
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+
+from eventsource import (
+    AggregateRepository,
+    AggregateRoot,
+    DomainEvent,
+    InMemoryEventBus,
+    PostgreSQLEventStore,
+    PostgreSQLCheckpointRepository,
+    register_event,
+)
+from eventsource.subscriptions import (
+    CheckpointStrategy,
+    ErrorInfo,
+    ErrorSeverity,
+    HealthCheckConfig,
+    SubscriptionConfig,
+    SubscriptionManager,
+)
+
+
+# =============================================================================
+# Logging Configuration
+# =============================================================================
+
+class JSONFormatter(logging.Formatter):
+    """Format logs as JSON for production."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        log_data = {
+            "timestamp": datetime.now(UTC).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+
+        if record.exc_info:
+            log_data["exception"] = self.formatException(record.exc_info)
+
+        # Add extra fields
+        for key, value in record.__dict__.items():
+            if key not in {
+                "name", "msg", "args", "created", "filename", "funcName",
+                "levelname", "levelno", "lineno", "module", "msecs",
+                "message", "pathname", "process", "processName",
+                "relativeCreated", "thread", "threadName", "exc_info",
+                "exc_text", "stack_info",
+            }:
+                log_data[key] = value
+
+        return json.dumps(log_data)
+
+def configure_logging(level: str = "INFO") -> logging.Logger:
+    """Configure production logging."""
+    root_logger = logging.getLogger()
+    root_logger.setLevel(getattr(logging, level.upper()))
+    root_logger.handlers.clear()
+
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(JSONFormatter())
+    root_logger.addHandler(handler)
+
+    logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+
+    return root_logger
+
+
+# =============================================================================
+# Application Configuration
+# =============================================================================
 
 class AppConfig:
+    """Production application configuration."""
+
     def __init__(self):
-        self.database_url = os.getenv("DATABASE_URL",
-            "postgresql+asyncpg://postgres:postgres@localhost:5432/eventsource_prod")
-        self.pool_size = int(os.getenv("DB_POOL_SIZE", "10"))
-        self.max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "15"))
+        self.database_url = os.getenv(
+            "DATABASE_URL",
+            "postgresql+asyncpg://postgres:postgres@localhost:5432/eventsource_prod"
+        )
+
+        # Connection pool sizing
+        instance_count = int(os.getenv("INSTANCE_COUNT", "1"))
+        max_db_connections = int(os.getenv("MAX_DB_CONNECTIONS", "100"))
+        usable = int(max_db_connections * 0.9)
+        per_instance = usable // instance_count
+
+        self.pool_size = max(2, per_instance // 3)
+        self.max_overflow = per_instance - self.pool_size
+
+        # Timeouts
+        self.shutdown_timeout = float(os.getenv("SHUTDOWN_TIMEOUT", "60"))
+        self.drain_timeout = float(os.getenv("DRAIN_TIMEOUT", "30"))
+
+        # Logging
         self.log_level = os.getenv("LOG_LEVEL", "INFO")
-        self.shutdown_timeout = float(os.getenv("SHUTDOWN_TIMEOUT", "30"))
-        self.drain_timeout = float(os.getenv("DRAIN_TIMEOUT", "10"))
+
+
+# =============================================================================
+# Domain Model
+# =============================================================================
 
 @register_event
 class OrderCreated(DomainEvent):
@@ -608,7 +1066,7 @@ class OrderShipped(DomainEvent):
     tracking_number: str
 
 class OrderState(BaseModel):
-    order_id: str
+    order_id: UUID
     customer_id: str | None = None
     total: float = 0.0
     status: str = "draft"
@@ -618,133 +1076,229 @@ class OrderAggregate(AggregateRoot[OrderState]):
     aggregate_type = "Order"
 
     def _get_initial_state(self) -> OrderState:
-        return OrderState(order_id=str(self.aggregate_id))
+        return OrderState(order_id=self.aggregate_id)
 
     def _apply(self, event: DomainEvent) -> None:
         if isinstance(event, OrderCreated):
-            self._state = OrderState(order_id=str(self.aggregate_id),
-                customer_id=event.customer_id, total=event.total, status="created")
+            self._state = OrderState(
+                order_id=self.aggregate_id,
+                customer_id=event.customer_id,
+                total=event.total,
+                status="created",
+            )
         elif isinstance(event, OrderShipped):
             if self._state:
                 self._state = self._state.model_copy(
-                    update={"status": "shipped", "tracking_number": event.tracking_number})
+                    update={
+                        "status": "shipped",
+                        "tracking_number": event.tracking_number,
+                    }
+                )
 
     def create(self, customer_id: str, total: float) -> None:
+        """Create a new order."""
         if self.version > 0:
             raise ValueError("Order already exists")
-        self.apply_event(OrderCreated(aggregate_id=self.aggregate_id,
-            customer_id=customer_id, total=total, aggregate_version=self.get_next_version()))
+        self.apply_event(
+            OrderCreated(
+                aggregate_id=self.aggregate_id,
+                customer_id=customer_id,
+                total=total,
+                aggregate_version=self.get_next_version(),
+            )
+        )
 
     def ship(self, tracking_number: str) -> None:
+        """Ship the order."""
         if not self.state or self.state.status != "created":
             raise ValueError("Cannot ship order in current state")
-        self.apply_event(OrderShipped(aggregate_id=self.aggregate_id,
-            tracking_number=tracking_number, aggregate_version=self.get_next_version()))
+        self.apply_event(
+            OrderShipped(
+                aggregate_id=self.aggregate_id,
+                tracking_number=tracking_number,
+                aggregate_version=self.get_next_version(),
+            )
+        )
 
-def setup_logging(level: str = "INFO") -> logging.Logger:
-    logging.basicConfig(level=getattr(logging, level.upper()),
-        format='{"timestamp":"%(asctime)s","level":"%(levelname)s","message":"%(message)s"}')
-    logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
-    return logging.getLogger("eventsource.app")
 
-async def handle_error(error_info: ErrorInfo) -> None:
+# =============================================================================
+# Error Monitoring
+# =============================================================================
+
+async def log_all_errors(error_info: ErrorInfo) -> None:
+    """Log all subscription errors."""
     logger = logging.getLogger("eventsource.errors")
-    logger.error(f"Subscription error: {error_info.error_message}",
-        extra={"subscription": error_info.subscription_name, "event_id": str(error_info.event_id)})
+    logger.error(
+        "Subscription error",
+        extra={
+            "subscription": error_info.subscription_name,
+            "event_id": str(error_info.event_id),
+            "error_message": error_info.error_message,
+            "severity": error_info.classification.severity.value,
+        }
+    )
 
-async def handle_critical_error(error_info: ErrorInfo) -> None:
+async def alert_critical_errors(error_info: ErrorInfo) -> None:
+    """Alert on critical errors."""
     logger = logging.getLogger("eventsource.alerts")
-    logger.critical(f"CRITICAL: {error_info.error_message} in {error_info.subscription_name}")
+    logger.critical(
+        f"CRITICAL: {error_info.error_message}",
+        extra={"subscription": error_info.subscription_name}
+    )
+
+
+# =============================================================================
+# Production Application
+# =============================================================================
 
 class ProductionApp:
+    """Production application with full production features."""
+
     def __init__(self, config: AppConfig):
         self.config = config
-        self.logger = setup_logging(config.log_level)
+        self.logger = configure_logging(config.log_level)
         self.engine = None
         self.manager = None
         self.repo = None
 
     async def initialize(self) -> None:
-        self.logger.info("Initializing application...")
-        self.engine = create_async_engine(self.config.database_url,
-            pool_size=self.config.pool_size, max_overflow=self.config.max_overflow,
-            pool_timeout=30, pool_recycle=1800, pool_pre_ping=True)
-        session_factory = async_sessionmaker(self.engine, expire_on_commit=False, class_=AsyncSession)
+        """Initialize application infrastructure."""
+        self.logger.info("Initializing application")
 
-        event_store = PostgreSQLEventStore(session_factory, enable_tracing=True)
+        # Create database engine
+        self.engine = create_async_engine(
+            self.config.database_url,
+            pool_size=self.config.pool_size,
+            max_overflow=self.config.max_overflow,
+            pool_timeout=30.0,
+            pool_recycle=1800,
+            pool_pre_ping=True,
+        )
+
+        self.logger.info(
+            "Database engine created",
+            extra={
+                "pool_size": self.config.pool_size,
+                "max_overflow": self.config.max_overflow,
+            }
+        )
+
+        session_factory = async_sessionmaker(
+            self.engine,
+            expire_on_commit=False,
+        )
+
+        # Create infrastructure
+        event_store = PostgreSQLEventStore(session_factory, enable_tracing=False)
         event_bus = InMemoryEventBus()
         checkpoint_repo = PostgreSQLCheckpointRepository(session_factory)
-        snapshot_store = PostgreSQLSnapshotStore(session_factory)
 
-        health_config = HealthCheckConfig(max_error_rate_per_minute=10.0,
-            max_errors_warning=10, max_errors_critical=100,
-            max_lag_events_warning=1000, max_lag_events_critical=10000)
+        # Health check config
+        health_config = HealthCheckConfig(
+            max_error_rate_per_minute=10.0,
+            max_errors_warning=50,
+            max_errors_critical=200,
+            max_lag_events_warning=5000,
+            max_lag_events_critical=50000,
+        )
 
-        self.manager = SubscriptionManager(event_store=event_store, event_bus=event_bus,
-            checkpoint_repo=checkpoint_repo, shutdown_timeout=self.config.shutdown_timeout,
-            drain_timeout=self.config.drain_timeout, health_check_config=health_config,
-            enable_tracing=True)
+        # Create subscription manager
+        self.manager = SubscriptionManager(
+            event_store=event_store,
+            event_bus=event_bus,
+            checkpoint_repo=checkpoint_repo,
+            shutdown_timeout=self.config.shutdown_timeout,
+            drain_timeout=self.config.drain_timeout,
+            health_check_config=health_config,
+            enable_tracing=False,
+        )
 
-        self.manager.on_error(handle_error)
-        self.manager.on_error_severity(ErrorSeverity.CRITICAL, handle_critical_error)
+        # Register error callbacks
+        self.manager.on_error(log_all_errors)
+        self.manager.on_error_severity(ErrorSeverity.CRITICAL, alert_critical_errors)
 
-        self.repo = AggregateRepository(event_store=event_store, aggregate_factory=OrderAggregate,
-            aggregate_type="Order", event_publisher=event_bus, snapshot_store=snapshot_store,
-            snapshot_threshold=100, snapshot_mode="background", enable_tracing=True)
+        # Create repository
+        self.repo = AggregateRepository(
+            event_store=event_store,
+            aggregate_factory=OrderAggregate,
+            aggregate_type="Order",
+            event_publisher=event_bus,
+            enable_tracing=False,
+        )
 
         self.logger.info("Application initialized successfully")
 
     async def start(self) -> None:
-        self.logger.info("Starting application...")
+        """Start the application."""
+        self.logger.info("Starting application")
         await self.manager.start()
         self.logger.info("Application started")
 
     async def stop(self) -> None:
-        self.logger.info("Stopping application...")
+        """Stop the application gracefully."""
+        self.logger.info("Stopping application")
+
         if self.manager:
             result = await self.manager.stop()
-            self.logger.info(f"Manager stopped: {result.phase.value}, "
-                f"duration={result.duration_seconds:.2f}s")
+            self.logger.info(
+                "Manager stopped",
+                extra={
+                    "phase": result.phase.value,
+                    "duration_seconds": result.duration_seconds,
+                    "forced": result.forced,
+                }
+            )
+
         if self.engine:
             await self.engine.dispose()
+
         self.logger.info("Application stopped")
 
-    async def health_check(self) -> dict[str, Any]:
+    async def health_check(self) -> dict:
+        """Get application health status."""
         if not self.manager:
-            return {"status": "unhealthy"}
+            return {"status": "unhealthy", "reason": "manager not initialized"}
+
         health = await self.manager.health_check()
-        return {"status": health.status, "running": health.running,
-                "subscription_count": health.subscription_count,
-                "total_events_processed": health.total_events_processed}
+        return health.to_dict()
+
+
+# =============================================================================
+# Main Entry Point
+# =============================================================================
 
 async def main():
+    """Run production application."""
     config = AppConfig()
     app = ProductionApp(config)
-    shutdown_event = asyncio.Event()
-
-    def signal_handler(signum, frame):
-        app.logger.info(f"Received signal {signum}, initiating shutdown...")
-        shutdown_event.set()
-
-    signal.signal(signal.SIGTERM, signal_handler)
-    signal.signal(signal.SIGINT, signal_handler)
 
     try:
+        # Initialize
         await app.initialize()
         await app.start()
 
-        # Demo: Create and process an order
+        # Demo: Create an order
         order_id = uuid4()
         order = app.repo.create_new(order_id)
-        order.create(customer_id="cust-production", total=999.99)
+        order.create(customer_id="cust-prod-001", total=499.99)
         await app.repo.save(order)
-        app.logger.info(f"Created order: {order_id}")
 
+        app.logger.info(
+            "Order created",
+            extra={"order_id": str(order_id), "total": 499.99}
+        )
+
+        # Check health
         health = await app.health_check()
-        app.logger.info(f"Health status: {health['status']}")
+        app.logger.info(
+            "Health check",
+            extra={"status": health["status"]}
+        )
 
+        # Run for a bit
         app.logger.info("Application running. Press Ctrl+C to stop.")
-        await shutdown_event.wait()
+        await asyncio.sleep(5)
+
     finally:
         await app.stop()
 
@@ -752,19 +1306,30 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-Save this as `tutorial_15_production.py` and run it:
+---
 
-```bash
-# Set environment variables
-export DATABASE_URL="postgresql+asyncpg://postgres:postgres@localhost:5432/eventsource_prod"
-export LOG_LEVEL="INFO"
+## Key Takeaways
 
-# Run the application
-python tutorial_15_production.py
-```
+1. **Connection pools must be sized correctly**: Calculate based on instance count and database limits
+2. **Health checks are essential**: Implement liveness and readiness for Kubernetes
+3. **Structured logging enables observability**: Use JSON format for log aggregation
+4. **Graceful shutdown prevents data loss**: Handle signals and drain in-flight events
+5. **Error monitoring catches issues early**: Register callbacks for critical errors
+6. **OpenTelemetry provides visibility**: Enable tracing for distributed debugging
+7. **Security is non-negotiable**: Use SSL/TLS, secrets management, and proper authentication
+8. **Tune for your workload**: Adjust batch sizes, checkpoint strategies, and pool sizes based on metrics
 
 ---
 
 ## Next Steps
 
-Continue to [Tutorial 16: Multi-Tenancy](16-multi-tenancy.md).
+Continue to [Tutorial 16: Multi-Tenancy](16-multi-tenancy.md) to learn about:
+- Tenant isolation patterns
+- Tenant-scoped event stores
+- Multi-tenant projections
+- Tenant migration strategies
+
+For production deployment examples, see:
+- Examples: `examples/projection_example.py`
+- Tests: `tests/integration/subscriptions/test_resilience.py`
+- Documentation: Production deployment guides

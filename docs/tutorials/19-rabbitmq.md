@@ -1,39 +1,108 @@
-# Tutorial 19: Using RabbitMQ Event Bus
+# Tutorial 19: RabbitMQ Event Bus - Flexible Message Routing
 
-**Difficulty:** Advanced | **Progress:** Tutorial 19 of 21 | Phase 4: Advanced Patterns
+**Difficulty:** Advanced
 
 ## Prerequisites
 
-- [Tutorial 7: Distributing Events with Event Bus](07-event-bus.md) and [Tutorial 18: Using Kafka Event Bus](18-kafka.md)
-- Python 3.11+, RabbitMQ running locally (Docker recommended)
-- Basic AMQP understanding (exchanges, queues, bindings)
+- [Tutorial 1: Introduction to Event Sourcing](01-introduction.md)
+- [Tutorial 7: Event Bus - Distributing Events Across Your System](07-event-bus.md)
+- [Tutorial 17: Redis Event Bus - Distributed Event Distribution](17-redis.md)
+- [Tutorial 18: Kafka Event Bus - High-Throughput Event Streaming](18-kafka.md)
+- [Tutorial 11: PostgreSQL Event Store](11-postgresql.md)
+- [Tutorial 13: Subscription Management](13-subscriptions.md)
+- Python 3.10 or higher
+- Understanding of async/await
+- Basic AMQP/RabbitMQ knowledge helpful but not required
+- Docker for running RabbitMQ locally
 
-This tutorial covers RabbitMQ for flexible routing patterns and reliable message delivery.
+## Learning Objectives
 
-## When to Use RabbitMQ
+By the end of this tutorial, you will be able to:
 
-Choose based on your needs:
+1. Explain why RabbitMQ is ideal for flexible message routing patterns
+2. Install and configure RabbitMQ for event distribution
+3. Set up RabbitMQEventBus with proper configuration
+4. Understand exchange types (topic, direct, fanout) and routing keys
+5. Implement consumer groups with queue bindings
+6. Use dead letter queues for failed messages
+7. Configure retry policies with exponential backoff
+8. Monitor RabbitMQ event bus health and statistics
+9. Deploy with SSL/TLS for production security
+10. Choose between Redis, RabbitMQ, and Kafka event buses
 
-| Feature | RabbitMQ | Kafka | Redis |
-|---------|----------|-------|-------|
-| **Routing** | Flexible (topic, direct, fanout) | Partition-based | Stream-based |
-| **Protocol** | AMQP | Kafka protocol | RESP |
-| **Throughput** | Moderate (thousands/sec) | Very High (10,000+/sec) | High (1,000+/sec) |
-| **Ordering** | Per-queue | Per-partition | Per-stream |
-| **Retention** | Until consumed | Configurable (days/weeks) | Limited |
-| **Complexity** | Medium | High | Low |
-| **Best For** | Complex routing, enterprise | Event streaming, high volume | Moderate scale, caching |
+---
+
+## What is RabbitMQ Event Bus?
+
+The **RabbitMQEventBus** is a distributed event bus implementation that uses **RabbitMQ** (AMQP protocol) for flexible routing and reliable message delivery across multiple processes and servers. While `RedisEventBus` (from Tutorial 17) provides simple stream-based distribution and `KafkaEventBus` (from Tutorial 18) handles ultra-high throughput, RabbitMQEventBus excels at:
+
+- **Flexible routing**: Topic patterns, direct routing, fanout broadcasting, header-based routing
+- **Enterprise messaging**: Battle-tested broker used by thousands of companies
+- **At-least-once delivery**: Messages acknowledged only after successful processing
+- **Durable persistence**: Events replicated and survive broker restarts
+- **Consumer groups**: Automatic load balancing across workers via queue bindings
+- **Dead letter queues**: Configurable retry policies with automatic DLQ routing
+- **Management UI**: Built-in web interface for monitoring and debugging
+
+---
+
+## Why RabbitMQ?
+
+RabbitMQ is a mature message broker that implements the AMQP protocol. It's designed for reliability and flexible routing patterns:
+
+| Feature | Benefit |
+|---------|---------|
+| **Exchange Types** | Route messages with topic patterns, direct routing, fanout, or headers |
+| **Consumer Groups** | Multiple consumers share workload via queue bindings |
+| **Durability** | Messages and queues persist across broker restarts |
+| **Publisher Confirms** | Guaranteed delivery with broker acknowledgments |
+| **Prefetch Control** | Prevent overwhelming slow consumers with QoS settings |
+| **Dead Letter Exchanges** | Automatic routing of failed messages for later analysis |
+| **Management Plugin** | Web UI for monitoring queues, consumers, and message rates |
+| **SSL/TLS Support** | Mutual TLS for secure production deployments |
+
+### Comparing Event Bus Implementations
+
+| Implementation | Throughput | Routing | Durability | Complexity | Best For |
+|----------------|------------|---------|------------|------------|----------|
+| **InMemoryEventBus** | Low | None | None | Simple | Single instance, testing |
+| **RedisEventBus** | Medium (10k/s) | Stream-based | Good | Medium | Multi-instance, moderate scale |
+| **RabbitMQEventBus** | Medium (10k/s) | Very Flexible | Excellent | Medium | Complex routing, enterprise messaging |
+| **KafkaEventBus** | Very High (100k+/s) | Partition-based | Excellent | High | Event streaming, high throughput |
+
+### When to Use RabbitMQ Event Bus
+
+**Good for:**
+- Enterprise applications requiring flexible routing
+- Systems needing complex message routing patterns
+- Applications requiring strong delivery guarantees
+- Multi-tenant systems with per-tenant routing
+- RPC-style request/reply patterns
+- When operational maturity matters (RabbitMQ is very stable)
+- Teams familiar with traditional message queuing
+
+**Less suitable for:**
+- Single-instance applications (use InMemoryEventBus)
+- Ultra-high throughput (>50k events/sec - consider Kafka)
+- Simple pub/sub without routing (Redis may be simpler)
+- When operational complexity is a major concern
+
+---
 
 ## Installation
+
+Install RabbitMQ support for eventsource-py:
 
 ```bash
 pip install eventsource-py[rabbitmq]
 ```
 
-Verify installation:
+This installs the `aio-pika` package with async support for RabbitMQ.
+
+### Verify Installation
 
 ```python
-from eventsource.bus.rabbitmq import RABBITMQ_AVAILABLE, RabbitMQNotAvailableError
+from eventsource.bus import RABBITMQ_AVAILABLE
 
 if RABBITMQ_AVAILABLE:
     print("RabbitMQ support is available!")
@@ -41,15 +110,32 @@ else:
     print("RabbitMQ not available. Install with: pip install eventsource-py[rabbitmq]")
 ```
 
-## RabbitMQ Setup with Docker
+---
 
-Start RabbitMQ:
+## Setting Up RabbitMQ
+
+### Using Docker
+
+Start RabbitMQ with management plugin in a Docker container:
 
 ```bash
-docker run -d --name rabbitmq -p 5672:5672 -p 15672:15672 rabbitmq:3-management-alpine
+# Start RabbitMQ with management UI
+docker run -d \
+  --name rabbitmq \
+  -p 5672:5672 \
+  -p 15672:15672 \
+  rabbitmq:3-management-alpine
+
+# Verify RabbitMQ is running
+docker exec rabbitmq rabbitmq-diagnostics check_running
+# Output: Checking if RabbitMQ is running... yes
 ```
 
-Or with Docker Compose (`docker-compose.rabbitmq.yml`):
+Access the management UI at http://localhost:15672 (login: guest/guest)
+
+### Using Docker Compose
+
+Create `docker-compose.yml` for local development:
 
 ```yaml
 version: '3.8'
@@ -57,6 +143,7 @@ version: '3.8'
 services:
   rabbitmq:
     image: rabbitmq:3-management-alpine
+    container_name: rabbitmq
     ports:
       - "5672:5672"    # AMQP protocol
       - "15672:15672"  # Management UI
@@ -75,312 +162,709 @@ volumes:
   rabbitmq_data:
 ```
 
-Access Management UI at http://localhost:15672 (guest/guest).
+Start RabbitMQ:
 
-## Configuration
+```bash
+docker compose up -d
 
-Basic setup:
+# Check logs
+docker compose logs -f rabbitmq
+```
+
+---
+
+## Basic RabbitMQEventBus Setup
+
+### Minimal Configuration
 
 ```python
-from eventsource.bus.rabbitmq import RabbitMQEventBus, RabbitMQEventBusConfig
+from eventsource import EventRegistry, DomainEvent, register_event
+from eventsource.bus import RabbitMQEventBus, RabbitMQEventBusConfig
 
+@register_event
+class OrderPlaced(DomainEvent):
+    event_type: str = "OrderPlaced"
+    aggregate_type: str = "Order"
+
+    customer_id: str
+    total_amount: float
+
+# Create event registry
+registry = EventRegistry()
+registry.register(OrderPlaced)
+
+# Configure RabbitMQ event bus
 config = RabbitMQEventBusConfig(
     rabbitmq_url="amqp://guest:guest@localhost:5672/",
-    exchange_name="myapp.events",
-    exchange_type="topic",
+    exchange_name="events",
     consumer_group="projections",
 )
 
-bus = RabbitMQEventBus(config=config)
+# Create bus
+bus = RabbitMQEventBus(config=config, event_registry=registry)
+
+# Connect to RabbitMQ
+await bus.connect()
 ```
 
-Creates: Exchange `myapp.events`, Queue `myapp.events.projections`, DLQ exchange `myapp.events_dlq`, DLQ queue `myapp.events.projections.dlq`.
-
-Key parameters:
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `rabbitmq_url` | `"amqp://guest:guest@localhost:5672/"` | AMQP connection URL |
-| `exchange_name` | `"events"` | Exchange name |
-| `exchange_type` | `"topic"` | topic, direct, fanout, or headers |
-| `consumer_group` | `"default"` | Queue name prefix |
-| `prefetch_count` | `10` | Max unacknowledged messages |
-| `max_retries` | `3` | Retries before DLQ |
-| `enable_dlq` | `True` | Enable dead letter queue |
-| `durable` | `True` | Survive restarts |
-| `enable_tracing` | `True` | OpenTelemetry tracing |
-
-Exchange types:
+### Publishing Events
 
 ```python
-# Topic (default) - Pattern matching with * (one word) and # (zero or more words)
-config = RabbitMQEventBusConfig(exchange_type="topic", routing_key_pattern="Order.*")
-
-# Direct - Exact match
-config = RabbitMQEventBusConfig(exchange_type="direct", routing_key_pattern="Order.OrderCreated")
-
-# Fanout - Broadcast to all (ignores routing key)
-config = RabbitMQEventBusConfig(exchange_type="fanout")
-```
-
-## Connecting and Publishing
-
-```python
-import asyncio
 from uuid import uuid4
 
-from eventsource import DomainEvent, register_event, default_registry
-from eventsource.bus.rabbitmq import RabbitMQEventBus, RabbitMQEventBusConfig
+# Subscribe handler
+async def on_order_placed(event: OrderPlaced):
+    print(f"Order placed: {event.aggregate_id} - ${event.total_amount}")
 
-@register_event
-class OrderCreated(DomainEvent):
-    event_type: str = "OrderCreated"
-    aggregate_type: str = "Order"
-    customer_id: str
-    total: float
+bus.subscribe(OrderPlaced, on_order_placed)
 
-async def main():
-    config = RabbitMQEventBusConfig(
-        rabbitmq_url="amqp://guest:guest@localhost:5672/",
-        exchange_name="orders",
-        consumer_group="handlers",
-    )
+# Publish event
+event = OrderPlaced(
+    aggregate_id=uuid4(),
+    customer_id="cust-123",
+    total_amount=99.99,
+    aggregate_version=1,
+)
+await bus.publish([event])
 
-    # Context manager handles connect/disconnect
-    async with RabbitMQEventBus(config=config, event_registry=default_registry) as bus:
-        # Publish events
-        await bus.publish([
-            OrderCreated(
-                aggregate_id=uuid4(),
-                customer_id="CUST-001",
-                total=99.99,
-                aggregate_version=1,
-            )
-        ])
+# Start consuming (runs continuously)
+consumer_task = asyncio.create_task(bus.start_consuming())
 
-        # Batch publishing
-        events = [OrderCreated(aggregate_id=uuid4(), customer_id=f"CUST-{i:04d}",
-                               total=float(i * 10), aggregate_version=1)
-                  for i in range(100)]
-        await bus.publish(events)
+# ... application runs ...
 
-        # Advanced batch control
-        result = await bus.publish_batch(events, preserve_order=False)
-        print(f"Published {result['published']}/{result['total']}")
-
-asyncio.run(main())
-```
-
-Events get routing keys like `Order.OrderCreated` (format: `{aggregate_type}.{event_type}`).
-
-## Subscribing Handlers
-
-```python
-# Function handler
-async def handle_order_created(event: DomainEvent) -> None:
-    if isinstance(event, OrderCreated):
-        print(f"Processing order {event.aggregate_id}: ${event.total}")
-
-bus.subscribe(OrderCreated, handle_order_created)
-
-# Class-based handler
-class OrderNotificationHandler:
-    def __init__(self):
-        self.notifications_sent = 0
-
-    async def handle(self, event: DomainEvent) -> None:
-        if isinstance(event, OrderCreated):
-            self.notifications_sent += 1
-
-handler = OrderNotificationHandler()
-bus.subscribe(OrderCreated, handler)
-
-# Projection handler
-from eventsource import DeclarativeProjection, handles
-
-class OrderProjection(DeclarativeProjection):
-    def __init__(self):
-        super().__init__()
-        self.orders: dict = {}
-
-    @handles(OrderCreated)
-    async def _on_created(self, event: OrderCreated) -> None:
-        self.orders[str(event.aggregate_id)] = {
-            "customer": event.customer_id,
-            "total": event.total,
-            "status": "created",
-        }
-
-projection = OrderProjection()
-bus.subscribe_all(projection)
-
-# Wildcard handler (all events)
-async def audit_all_events(event: DomainEvent) -> None:
-    print(f"[AUDIT] {event.event_type} at {event.occurred_at}")
-
-bus.subscribe_to_all_events(audit_all_events)
-```
-
-## Consuming Events
-
-```python
-# Connect and start consuming (blocks)
-await bus.connect()
-bus.subscribe(OrderCreated, handle_order)
-await bus.start_consuming()
-
-# Background consumption
-task = bus.start_consuming_in_background()
-# ... do other work ...
+# Shutdown
 await bus.stop_consuming()
-await task
-
-# Time-limited consumption
-task = bus.start_consuming_in_background()
-await asyncio.sleep(seconds)
-await bus.stop_consuming()
-task.cancel()
-try:
-    await task
-except asyncio.CancelledError:
-    pass
+await consumer_task
+await bus.disconnect()
 ```
 
-Auto-reconnect enabled by default via RobustConnection.
+---
 
-## Consumer Groups
+## RabbitMQEventBusConfig Options
 
-Multiple services with independent queues:
+### Connection Settings
 
 ```python
-# Service 1: Only Order events
-order_config = RabbitMQEventBusConfig(
-    exchange_name="domain-events",
-    consumer_group="order-service",
+config = RabbitMQEventBusConfig(
+    # RabbitMQ connection
+    rabbitmq_url="amqp://guest:guest@localhost:5672/",  # AMQP connection URL
+
+    # Exchange and queue naming
+    exchange_name="events",                              # Exchange name
+    consumer_group="projections",                        # Queue group name
+    consumer_name=None,                                  # Auto-generated: hostname-uuid
+)
+```
+
+**URL format:** `amqp://[username]:[password]@[host]:[port]/[vhost]`
+
+- Standard AMQP: `amqp://guest:guest@localhost:5672/`
+- Secure AMQPS: `amqps://user:pass@rabbitmq.example.com:5671/`
+- Custom vhost: `amqp://guest:guest@localhost:5672/myapp`
+
+### Exchange Types
+
+```python
+config = RabbitMQEventBusConfig(
+    # Exchange type determines routing behavior
+    exchange_type="topic",                               # "topic" | "direct" | "fanout" | "headers"
+
+    # Topic exchange (default) - pattern matching
+    routing_key_pattern="#",                             # "#" = all, "Order.*" = Order events only
+
+    # Direct exchange - exact match required
+    # routing_key_pattern="OrderPlaced",
+
+    # Fanout exchange - broadcast to all (ignores routing keys)
+    # routing_key_pattern="#",
+)
+```
+
+**Exchange types explained:**
+
+- **topic** (default): Routes based on routing key patterns with wildcards
+  - `*` matches exactly one word: `Order.*` matches `Order.OrderPlaced`
+  - `#` matches zero or more words: `Order.#` matches `Order.OrderPlaced.v1`
+- **direct**: Routes to queues with exact routing key match
+- **fanout**: Broadcasts to all bound queues (ignores routing key)
+- **headers**: Routes based on message header attributes (advanced)
+
+### Consumer Settings
+
+```python
+config = RabbitMQEventBusConfig(
+    # Flow control
+    prefetch_count=10,                                   # Max unacknowledged messages
+
+    # Connection stability
+    heartbeat=60,                                        # Heartbeat interval (seconds)
+    reconnect_delay=1.0,                                 # Initial reconnection delay
+    max_reconnect_delay=30.0,                            # Max reconnection delay
+)
+```
+
+**prefetch_count** controls how many messages RabbitMQ delivers before waiting for acknowledgments. Lower values provide better load balancing, higher values improve throughput.
+
+### Durability Settings
+
+```python
+config = RabbitMQEventBusConfig(
+    # Persistence
+    durable=True,                                        # Survive broker restarts
+    auto_delete=False,                                   # Don't delete when consumers disconnect
+)
+```
+
+**Production:** Always set `durable=True` and `auto_delete=False` to prevent message loss.
+
+**Testing:** Use `durable=False` and `auto_delete=True` for easier cleanup.
+
+### Retry and DLQ Settings
+
+```python
+config = RabbitMQEventBusConfig(
+    # Retry policy
+    max_retries=3,                                       # Retries before DLQ
+    retry_base_delay=1.0,                                # Base delay (seconds)
+    retry_max_delay=60.0,                                # Max delay (seconds)
+    retry_jitter=0.1,                                    # 10% jitter to prevent thundering herd
+
+    # Dead letter queue
+    enable_dlq=True,                                     # Enable DLQ
+    dlq_exchange_suffix="_dlq",                          # DLQ exchange suffix
+    dlq_message_ttl=86400000,                            # DLQ message TTL (24h in milliseconds)
+    dlq_max_length=None,                                 # No limit on DLQ size
+)
+```
+
+**Exponential Backoff Formula:**
+```python
+delay = min(retry_base_delay * (2 ** attempt), retry_max_delay)
+delay *= (1 + random.uniform(-retry_jitter, retry_jitter))
+```
+
+### Batch Publishing
+
+```python
+config = RabbitMQEventBusConfig(
+    # Batch optimization
+    batch_size=100,                                      # Events per batch chunk
+    max_concurrent_publishes=10,                         # Concurrent publishes per chunk
+)
+```
+
+### Observability Settings
+
+```python
+config = RabbitMQEventBusConfig(
+    enable_tracing=True,                                 # OpenTelemetry tracing
+    shutdown_timeout=30.0,                               # Graceful shutdown timeout
+)
+```
+
+### Queue Naming
+
+RabbitMQEventBus creates queues and exchanges based on your configuration:
+
+```python
+config = RabbitMQEventBusConfig(
+    exchange_name="myapp.events",
+    consumer_group="order-projections",
+)
+
+# Main exchange: myapp.events
+# Main queue:    myapp.events.order-projections
+# DLQ exchange:  myapp.events_dlq
+# DLQ queue:     myapp.events.order-projections.dlq
+```
+
+Access names programmatically:
+
+```python
+print(config.queue_name)         # myapp.events.order-projections
+print(config.dlq_exchange_name)  # myapp.events_dlq
+print(config.dlq_queue_name)     # myapp.events.order-projections.dlq
+```
+
+---
+
+## Exchange Types and Routing
+
+RabbitMQ's flexibility comes from its exchange types. Each provides different routing semantics.
+
+### Topic Exchange (Default)
+
+Routes messages based on routing key patterns with wildcards:
+
+```python
+config = RabbitMQEventBusConfig(
+    exchange_type="topic",
+    routing_key_pattern="#",                             # Receive all events
+)
+
+# RabbitMQEventBus automatically generates routing keys:
+# Format: {aggregate_type}.{event_type}
+# Examples:
+#   Order.OrderPlaced
+#   Order.OrderShipped
+#   Payment.PaymentReceived
+```
+
+**Pattern matching:**
+
+```python
+# Receive all Order events
+config = RabbitMQEventBusConfig(
+    exchange_type="topic",
     routing_key_pattern="Order.*",
 )
 
-# Service 2: All events
-analytics_config = RabbitMQEventBusConfig(
-    exchange_name="domain-events",
-    consumer_group="analytics",
+# Receive all events
+config = RabbitMQEventBusConfig(
+    exchange_type="topic",
     routing_key_pattern="#",
 )
 
-# Load balancing: Same group, different workers
-config_1 = RabbitMQEventBusConfig(consumer_group="processors", consumer_name="worker-1")
-config_2 = RabbitMQEventBusConfig(consumer_group="processors", consumer_name="worker-2")
+# Receive specific event type
+config = RabbitMQEventBusConfig(
+    exchange_type="topic",
+    routing_key_pattern="*.OrderPlaced",
+)
 ```
 
-Dynamic bindings:
+### Direct Exchange
+
+Routes to queues with exact routing key match:
+
+```python
+config = RabbitMQEventBusConfig(
+    exchange_type="direct",
+    routing_key_pattern="Order.OrderPlaced",             # Only this event type
+)
+```
+
+**Use cases:**
+- Send events to specific services
+- Work queue patterns
+- Point-to-point messaging
+
+### Fanout Exchange
+
+Broadcasts to all bound queues (ignores routing key):
+
+```python
+config = RabbitMQEventBusConfig(
+    exchange_type="fanout",
+    # routing_key_pattern is ignored for fanout
+)
+```
+
+**Use cases:**
+- Broadcast notifications to all services
+- Cache invalidation across all instances
+- Audit logging that needs every event
+
+### Dynamic Routing Key Bindings
+
+Add bindings at runtime to receive additional event types:
 
 ```python
 await bus.connect()
-await bus.bind_routing_key("Order.*")
-await bus.bind_event_type(OrderCreated)
+
+# Add binding for specific event pattern
+await bus.bind_routing_key("Payment.*")
+
+# Add binding for specific event type
+await bus.bind_event_type(PaymentReceived)
 ```
+
+---
+
+## Consumer Groups and Load Balancing
+
+Consumer groups enable automatic load balancing: RabbitMQ distributes messages from a queue across all connected consumers.
+
+### Single Consumer Group (Load Balancing)
+
+```python
+# Worker 1
+config1 = RabbitMQEventBusConfig(
+    rabbitmq_url="amqp://guest:guest@localhost:5672/",
+    exchange_name="events",
+    consumer_group="order-processors",
+    consumer_name="worker-1",
+)
+bus1 = RabbitMQEventBus(config=config1, event_registry=registry)
+await bus1.connect()
+
+# Worker 2 (same group = same queue)
+config2 = RabbitMQEventBusConfig(
+    rabbitmq_url="amqp://guest:guest@localhost:5672/",
+    exchange_name="events",
+    consumer_group="order-processors",
+    consumer_name="worker-2",
+)
+bus2 = RabbitMQEventBus(config=config2, event_registry=registry)
+await bus2.connect()
+
+# Subscribe both workers
+bus1.subscribe(OrderPlaced, worker1_handler)
+bus2.subscribe(OrderPlaced, worker2_handler)
+
+# Start consuming
+task1 = asyncio.create_task(bus1.start_consuming())
+task2 = asyncio.create_task(bus2.start_consuming())
+
+# RabbitMQ automatically distributes messages:
+# - Worker 1 receives some messages
+# - Worker 2 receives other messages
+# Each message delivered to exactly one consumer
+```
+
+**Load balancing behavior:**
+- RabbitMQ uses round-robin distribution by default
+- Respects `prefetch_count` for flow control
+- If one worker is slow, fast workers get more messages
+- Worker failures don't lose messages (redelivered to other workers)
+
+### Multiple Consumer Groups (Fan-Out)
+
+Different consumer groups all receive the same events:
+
+```python
+# Projection consumer group
+projection_config = RabbitMQEventBusConfig(
+    exchange_name="events",
+    consumer_group="projections",
+)
+projection_bus = RabbitMQEventBus(config=projection_config, event_registry=registry)
+
+# Notification consumer group
+notification_config = RabbitMQEventBusConfig(
+    exchange_name="events",
+    consumer_group="notifications",
+)
+notification_bus = RabbitMQEventBus(config=notification_config, event_registry=registry)
+
+# Analytics consumer group
+analytics_config = RabbitMQEventBusConfig(
+    exchange_name="events",
+    consumer_group="analytics",
+)
+analytics_bus = RabbitMQEventBus(config=analytics_config, event_registry=registry)
+
+# Each group processes ALL events independently
+projection_bus.subscribe(OrderPlaced, update_projection)
+notification_bus.subscribe(OrderPlaced, send_notification)
+analytics_bus.subscribe(OrderPlaced, track_metrics)
+```
+
+**Result:** Each consumer group has its own queue and processes every event from the exchange.
+
+---
 
 ## Dead Letter Queue (DLQ)
 
-Failed messages go to DLQ after `max_retries`. DLQ naming: exchange `events` → DLQ exchange `events_dlq`, queue `events.group` → DLQ queue `events.group.dlq`.
+Messages that fail after `max_retries` are automatically sent to the DLQ for later analysis.
+
+### DLQ Configuration
 
 ```python
 config = RabbitMQEventBusConfig(
-    enable_dlq=True,
-    max_retries=3,
-    dlq_message_ttl=86400000,  # 24 hours in ms
-    retry_base_delay=1.0,
-    retry_max_delay=60.0,
+    enable_dlq=True,                                     # Enable DLQ
+    max_retries=3,                                       # Retries before DLQ
+    dlq_exchange_suffix="_dlq",                          # DLQ exchange name suffix
+    dlq_message_ttl=86400000,                            # 24 hours in milliseconds
+    dlq_max_length=10000,                                # Max 10k messages in DLQ
 )
+```
 
-# Monitor DLQ
+### How DLQ Works
+
+1. **Message delivered**: Handler receives message
+2. **Handler fails**: Exception raised during processing
+3. **Retry with backoff**: Message requeued with delay
+4. **Max retries exceeded**: After 3 failures (default)
+5. **Sent to DLQ**: Message routed to DLQ exchange
+6. **DLQ headers added**: Error reason, retry count, timestamps
+
+### Inspecting DLQ Messages
+
+```python
+# Get DLQ message count
 count = await bus.get_dlq_message_count()
-messages = await bus.get_dlq_messages(limit=10)
-for msg in messages:
-    print(f"{msg.event_type}: {msg.dlq_reason}")
+print(f"DLQ messages: {count}")
 
-# Replay or purge
-await bus.replay_dlq_message("message-id")
+# Get DLQ messages
+dlq_messages = await bus.get_dlq_messages(limit=100)
+
+for msg in dlq_messages:
+    print(f"Message ID: {msg['message_id']}")
+    print(f"Event Type: {msg['event_type']}")
+    print(f"Error: {msg.get('dlq_reason', 'Unknown')}")
+    print(f"Retry Count: {msg.get('retry_count', 0)}")
+    print(f"DLQ Timestamp: {msg.get('dlq_timestamp')}")
+    print("---")
+```
+
+### Replaying DLQ Messages
+
+After fixing the underlying issue, replay messages from DLQ:
+
+```python
+# Replay specific message by ID
+success = await bus.replay_dlq_message(message_id="msg-123")
+
+if success:
+    print("Message replayed successfully")
+else:
+    print("Message not found in DLQ")
+
+# Replay all messages (careful!)
+dlq_messages = await bus.get_dlq_messages(limit=1000)
+for msg in dlq_messages:
+    await bus.replay_dlq_message(msg['message_id'])
+```
+
+Replayed messages are:
+1. Removed from DLQ
+2. Published to main exchange with retry count reset
+3. Include `x-replayed-from-dlq` header with replay timestamp
+4. Processed by consumers normally
+
+### Purging DLQ
+
+```python
+# Remove all messages from DLQ (cannot be undone!)
 await bus.purge_dlq()
 ```
 
-## SSL/TLS
+### Monitoring DLQ
 
 ```python
-# Basic TLS (amqps:// auto-enables)
+# Set up alerts for DLQ
+count = await bus.get_dlq_message_count()
+
+if count > 100:
+    logger.warning(f"WARNING: {count} messages in DLQ!")
+    # Alert operations team
+    # Investigate root cause
+```
+
+---
+
+## SSL/TLS Security
+
+### Basic TLS (Server Verification)
+
+```python
 config = RabbitMQEventBusConfig(
+    # Use amqps:// for TLS
     rabbitmq_url="amqps://user:pass@rabbitmq.example.com:5671/",
+    verify_ssl=True,                                     # Verify server certificate
 )
+```
 
-# Custom CA
+### Custom CA Certificate
+
+```python
 config = RabbitMQEventBusConfig(
     rabbitmq_url="amqps://rabbitmq.internal:5671/",
-    ca_file="/path/to/ca.crt",
+    verify_ssl=True,
+    ca_file="/path/to/ca.crt",                          # Custom CA for verification
 )
+```
 
-# Mutual TLS
+### Mutual TLS (mTLS)
+
+```python
 config = RabbitMQEventBusConfig(
     rabbitmq_url="amqps://rabbitmq.internal:5671/",
-    ca_file="/path/to/ca.crt",
-    cert_file="/path/to/client.crt",
-    key_file="/path/to/client.key",
+    verify_ssl=True,
+    ca_file="/path/to/ca.crt",                          # Verify server
+    cert_file="/path/to/client.crt",                    # Client certificate
+    key_file="/path/to/client.key",                     # Client private key
 )
+```
 
-# Custom SSL context
+### Advanced SSL Configuration
+
+```python
 import ssl
+
+# Create custom SSL context
 ssl_context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
 ssl_context.load_verify_locations("/path/to/ca.crt")
-ssl_context.load_cert_chain(certfile="/path/to/client.crt", keyfile="/path/to/client.key")
-config = RabbitMQEventBusConfig(rabbitmq_url="amqps://...", ssl_context=ssl_context)
+ssl_context.load_cert_chain(
+    certfile="/path/to/client.crt",
+    keyfile="/path/to/client.key"
+)
+ssl_context.check_hostname = True
+ssl_context.verify_mode = ssl.CERT_REQUIRED
+
+config = RabbitMQEventBusConfig(
+    rabbitmq_url="amqps://rabbitmq.internal:5671/",
+    ssl_context=ssl_context,                            # Use custom context
+)
 ```
 
-## Monitoring
+---
+
+## Monitoring and Statistics
+
+### Event Bus Statistics
 
 ```python
-# Statistics
-stats = bus.stats
-print(f"Published: {stats.events_published}, Consumed: {stats.events_consumed}")
-stats_dict = bus.get_stats_dict()
+# Get statistics dictionary
+stats = bus.get_stats_dict()
 
-# Queue info
-info = await bus.get_queue_info()
-print(f"Queue: {info.name}, Messages: {info.message_count}")
-
-# Health check
-result = await bus.health_check()
-if not result.healthy:
-    print(f"Unhealthy: {result.error}")
+print(f"Events published: {stats['events_published']}")
+print(f"Events consumed: {stats['events_consumed']}")
+print(f"Successfully processed: {stats['events_processed_success']}")
+print(f"Failed processing: {stats['events_processed_failed']}")
+print(f"Messages in DLQ: {stats['messages_sent_to_dlq']}")
+print(f"Handler errors: {stats['handler_errors']}")
+print(f"Reconnections: {stats['reconnections']}")
+print(f"Last publish: {stats['last_publish_at']}")
+print(f"Last consume: {stats['last_consume_at']}")
 ```
 
-## Complete Example
+### Queue Information
 
-Here is a comprehensive example demonstrating RabbitMQ event bus usage:
+```python
+# Get queue details from RabbitMQ
+queue_info = await bus.get_queue_info()
+
+print(f"Queue name: {queue_info['name']}")
+print(f"Messages: {queue_info['message_count']}")
+print(f"Consumers: {queue_info['consumer_count']}")
+```
+
+### Health Check
+
+```python
+# Health check for monitoring
+health = await bus.health_check()
+
+if health.healthy:
+    print("RabbitMQ event bus is healthy")
+else:
+    print(f"Unhealthy: {health.error}")
+```
+
+### Subscriber Counts
+
+```python
+# Count subscribers
+total = bus.get_subscriber_count()
+order_count = bus.get_subscriber_count(OrderPlaced)
+wildcard_count = bus.get_wildcard_subscriber_count()
+
+print(f"Total subscribers: {total}")
+print(f"OrderPlaced subscribers: {order_count}")
+print(f"Wildcard subscribers: {wildcard_count}")
+```
+
+### RabbitMQ Management UI
+
+Access http://localhost:15672 to view:
+
+- **Queues**: Message counts, consumer counts, message rates
+- **Exchanges**: Bindings, publish rates
+- **Connections**: Active connections and channels
+- **Consumers**: Per-consumer statistics
+- **Messages**: Browse and purge messages
+
+---
+
+## Integration with Repository
+
+Connect RabbitMQEventBus to your repository for automatic event publishing:
+
+```python
+from eventsource import AggregateRepository, PostgreSQLEventStore
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
+# Create infrastructure
+session_factory = async_sessionmaker(...)
+event_store = PostgreSQLEventStore(session_factory)
+
+# Create RabbitMQ event bus
+config = RabbitMQEventBusConfig(
+    rabbitmq_url="amqp://guest:guest@localhost:5672/",
+    exchange_name="orders",
+    consumer_group="projections",
+)
+bus = RabbitMQEventBus(config=config, event_registry=registry)
+await bus.connect()
+
+# Create repository with event publishing
+repo = AggregateRepository(
+    event_store=event_store,
+    aggregate_factory=OrderAggregate,
+    aggregate_type="Order",
+    event_publisher=bus,                                # Events auto-published to RabbitMQ
+)
+
+# Subscribe handlers
+async def update_order_projection(event: DomainEvent):
+    # Update read model
+    pass
+
+bus.subscribe(OrderPlaced, update_order_projection)
+
+# Start consuming
+consume_task = asyncio.create_task(bus.start_consuming())
+
+# Create and save aggregate
+order = repo.create_new(uuid4())
+order.place(customer_id="cust-123", total_amount=99.99)
+await repo.save(order)                                  # Events automatically flow through RabbitMQ
+
+# Handler receives event automatically
+```
+
+**Publishing flow:**
+1. Repository saves events to PostgreSQL event store
+2. Repository publishes events to RabbitMQEventBus
+3. RabbitMQ routes events to bound queues based on exchange type
+4. Consumers in each group receive events
+5. Handlers process events and update projections
+
+---
+
+## Complete Working Example
 
 ```python
 """
-Tutorial 19: Using RabbitMQ Event Bus
+Tutorial 19: RabbitMQ Event Bus - Complete Example
+Demonstrates publishing, consuming, routing, and monitoring.
 
-This example demonstrates AMQP-based event distribution.
-Run with: python tutorial_19_rabbitmq.py
-
-Prerequisites:
-- RabbitMQ running on localhost:5672
+Requirements:
 - pip install eventsource-py[rabbitmq]
+- docker run -d --name rabbitmq -p 5672:5672 -p 15672:15672 rabbitmq:3-management
 """
+
 import asyncio
-from uuid import uuid4
+from uuid import UUID, uuid4
 
-from eventsource import DomainEvent, register_event, default_registry
+from pydantic import BaseModel
 
-# Check RabbitMQ availability
-from eventsource.bus.rabbitmq import (
+from eventsource import (
+    AggregateRoot,
+    DomainEvent,
+    EventRegistry,
+    register_event,
+)
+from eventsource.bus import (
     RABBITMQ_AVAILABLE,
     RabbitMQEventBus,
     RabbitMQEventBusConfig,
 )
 
 if not RABBITMQ_AVAILABLE:
-    print("RabbitMQ not available. Install with: pip install eventsource-py[rabbitmq]")
+    print("ERROR: RabbitMQ support not installed.")
+    print("Install with: pip install eventsource-py[rabbitmq]")
     exit(1)
 
 
@@ -388,198 +872,216 @@ if not RABBITMQ_AVAILABLE:
 # Events
 # =============================================================================
 
-@register_event
-class InventoryUpdated(DomainEvent):
-    event_type: str = "InventoryUpdated"
-    aggregate_type: str = "Inventory"
-    product_id: str
-    quantity_change: int
-
 
 @register_event
-class OrderFulfilled(DomainEvent):
-    event_type: str = "OrderFulfilled"
+class OrderPlaced(DomainEvent):
+    event_type: str = "OrderPlaced"
     aggregate_type: str = "Order"
+
     customer_id: str
+    total_amount: float
 
 
 @register_event
-class ShipmentCreated(DomainEvent):
-    event_type: str = "ShipmentCreated"
-    aggregate_type: str = "Shipment"
-    order_id: str
-    carrier: str
+class OrderShipped(DomainEvent):
+    event_type: str = "OrderShipped"
+    aggregate_type: str = "Order"
+
+    tracking_number: str
 
 
 # =============================================================================
-# Event Handlers
+# Aggregate
 # =============================================================================
 
-class InventoryHandler:
-    """Handles inventory events."""
+
+class OrderState(BaseModel):
+    order_id: UUID
+    customer_id: str | None = None
+    total_amount: float = 0.0
+    status: str = "draft"
+    tracking_number: str | None = None
+
+
+class OrderAggregate(AggregateRoot[OrderState]):
+    aggregate_type = "Order"
+
+    def _get_initial_state(self) -> OrderState:
+        return OrderState(order_id=self.aggregate_id)
+
+    def _apply(self, event: DomainEvent) -> None:
+        if isinstance(event, OrderPlaced):
+            self._state = OrderState(
+                order_id=self.aggregate_id,
+                customer_id=event.customer_id,
+                total_amount=event.total_amount,
+                status="placed",
+            )
+        elif isinstance(event, OrderShipped):
+            if self._state:
+                self._state = self._state.model_copy(
+                    update={
+                        "status": "shipped",
+                        "tracking_number": event.tracking_number,
+                    }
+                )
+
+    def place(self, customer_id: str, total_amount: float) -> None:
+        if self.version > 0:
+            raise ValueError("Order already placed")
+        self.apply_event(
+            OrderPlaced(
+                aggregate_id=self.aggregate_id,
+                customer_id=customer_id,
+                total_amount=total_amount,
+                aggregate_version=self.get_next_version(),
+            )
+        )
+
+    def ship(self, tracking_number: str) -> None:
+        if not self.state or self.state.status != "placed":
+            raise ValueError("Cannot ship order in current state")
+        self.apply_event(
+            OrderShipped(
+                aggregate_id=self.aggregate_id,
+                tracking_number=tracking_number,
+                aggregate_version=self.get_next_version(),
+            )
+        )
+
+
+# =============================================================================
+# Projections
+# =============================================================================
+
+
+class OrderStatisticsProjection:
+    """Maintains order statistics."""
 
     def __init__(self):
-        self.updates: list[dict] = []
+        self.total_orders = 0
+        self.total_revenue = 0.0
+        self.shipped_count = 0
+
+    def subscribed_to(self) -> list[type[DomainEvent]]:
+        return [OrderPlaced, OrderShipped]
 
     async def handle(self, event: DomainEvent) -> None:
-        if isinstance(event, InventoryUpdated):
-            self.updates.append({
-                "product": event.product_id,
-                "change": event.quantity_change,
-            })
-            print(f"  [Inventory] {event.product_id}: {event.quantity_change:+d}")
+        if isinstance(event, OrderPlaced):
+            self.total_orders += 1
+            self.total_revenue += event.total_amount
+            print(f"  [Stats] Order placed: ${event.total_amount:.2f}")
+        elif isinstance(event, OrderShipped):
+            self.shipped_count += 1
+            print(f"  [Stats] Order shipped: {event.tracking_number}")
 
 
-class FulfillmentHandler:
-    """Handles order fulfillment events."""
+class AuditLogger:
+    """Logs all events for audit trail."""
 
     def __init__(self):
-        self.orders_fulfilled = 0
+        self.log: list[dict] = []
 
     async def handle(self, event: DomainEvent) -> None:
-        if isinstance(event, OrderFulfilled):
-            self.orders_fulfilled += 1
-            print(f"  [Fulfillment] Order fulfilled for {event.customer_id}")
-
-
-class ShippingHandler:
-    """Handles shipping events."""
-
-    def __init__(self):
-        self.shipments: list[str] = []
-
-    async def handle(self, event: DomainEvent) -> None:
-        if isinstance(event, ShipmentCreated):
-            self.shipments.append(event.order_id)
-            print(f"  [Shipping] Shipment via {event.carrier} for order {event.order_id}")
+        entry = {
+            "event_type": event.event_type,
+            "aggregate_id": str(event.aggregate_id),
+            "timestamp": event.occurred_at.isoformat(),
+        }
+        self.log.append(entry)
 
 
 # =============================================================================
-# RabbitMQ Event Bus Examples
+# Demo Functions
 # =============================================================================
 
-async def basic_rabbitmq_example():
-    """Demonstrate basic RabbitMQ event bus usage."""
-    print("=== Basic RabbitMQ Event Bus ===\n")
 
-    # Create configuration
+async def demo_basic_publish_subscribe():
+    """Demo 1: Basic publishing and subscribing."""
+    print("\n" + "=" * 60)
+    print("Demo 1: Basic Publish/Subscribe")
+    print("=" * 60)
+
+    registry = EventRegistry()
+    registry.register(OrderPlaced)
+    registry.register(OrderShipped)
+
     config = RabbitMQEventBusConfig(
         rabbitmq_url="amqp://guest:guest@localhost:5672/",
-        exchange_name="tutorial_events",
+        exchange_name="demo1",
         exchange_type="topic",
-        consumer_group="demo-handlers",
-        prefetch_count=10,
-        enable_dlq=True,
-        enable_tracing=True,
+        consumer_group="demo-consumers",
     )
-
-    print(f"Exchange: {config.exchange_name} (type: {config.exchange_type})")
-    print(f"Queue: {config.queue_name}")
-    print(f"Consumer group: {config.consumer_group}")
-
-    # Create bus
-    bus = RabbitMQEventBus(config=config, event_registry=default_registry)
-
-    # Create handlers
-    inventory_handler = InventoryHandler()
-    fulfillment_handler = FulfillmentHandler()
-    shipping_handler = ShippingHandler()
-
-    # Subscribe handlers
-    bus.subscribe(InventoryUpdated, inventory_handler)
-    bus.subscribe(OrderFulfilled, fulfillment_handler)
-    bus.subscribe(ShipmentCreated, shipping_handler)
+    bus = RabbitMQEventBus(config=config, event_registry=registry)
 
     try:
-        # Connect to RabbitMQ
-        print("\nConnecting to RabbitMQ...")
         await bus.connect()
-        print("Connected!")
+        print("Connected to RabbitMQ")
 
-        # Publish events
-        print("\nPublishing events...")
+        received_events: list[DomainEvent] = []
 
-        await bus.publish([
-            InventoryUpdated(
-                aggregate_id=uuid4(),
-                product_id="SKU-001",
-                quantity_change=-5,
-                aggregate_version=1,
-            ),
-        ])
+        async def event_handler(event: DomainEvent) -> None:
+            received_events.append(event)
+            print(f"  Received: {event.event_type}")
 
-        await bus.publish([
-            OrderFulfilled(
-                aggregate_id=uuid4(),
-                customer_id="CUST-123",
-                aggregate_version=1,
-            ),
-        ])
+        bus.subscribe(OrderPlaced, event_handler)
+        print("Subscribed handler to OrderPlaced")
 
-        await bus.publish([
-            ShipmentCreated(
-                aggregate_id=uuid4(),
-                order_id="ORD-456",
-                carrier="FedEx",
-                aggregate_version=1,
-            ),
-        ])
-
-        print("Events published!")
+        # Publish event
+        order_id = uuid4()
+        event = OrderPlaced(
+            aggregate_id=order_id,
+            customer_id="cust-123",
+            total_amount=99.99,
+            aggregate_version=1,
+        )
+        await bus.publish([event])
+        print(f"Published OrderPlaced for {order_id}")
 
         # Start consuming
-        print("\nConsuming events...")
         consume_task = asyncio.create_task(bus.start_consuming())
-
-        # Wait for processing
-        await asyncio.sleep(3)
+        await asyncio.sleep(2.0)
 
         # Stop consuming
         await bus.stop_consuming()
-        consume_task.cancel()
         try:
-            await consume_task
-        except asyncio.CancelledError:
-            pass
+            await asyncio.wait_for(consume_task, timeout=2.0)
+        except asyncio.TimeoutError:
+            consume_task.cancel()
+            try:
+                await consume_task
+            except asyncio.CancelledError:
+                pass
 
-        print(f"\nResults:")
-        print(f"  Inventory updates: {len(inventory_handler.updates)}")
-        print(f"  Orders fulfilled: {fulfillment_handler.orders_fulfilled}")
-        print(f"  Shipments created: {len(shipping_handler.shipments)}")
-
-        # Show statistics
-        stats = bus.get_stats_dict()
-        print(f"\nStatistics:")
-        print(f"  Published: {stats['events_published']}")
-        print(f"  Consumed: {stats['events_consumed']}")
-        print(f"  Success: {stats['events_processed_success']}")
+        print(f"Received {len(received_events)} event(s)")
 
     finally:
         await bus.disconnect()
-        print("\nDisconnected from RabbitMQ")
 
 
-async def exchange_types_example():
-    """Explain exchange types."""
-    print("\n=== Exchange Types ===\n")
+async def demo_exchange_types():
+    """Demo 2: Different exchange types."""
+    print("\n" + "=" * 60)
+    print("Demo 2: Exchange Types and Routing")
+    print("=" * 60)
 
     print("RabbitMQ supports several exchange types:\n")
 
     print("1. TOPIC (default in eventsource)")
     print("   - Routes based on routing key patterns")
     print("   - Supports wildcards: * (one word), # (zero or more)")
-    print("   - Example: 'Order.*' matches 'Order.OrderCreated', 'Order.OrderShipped'")
+    print("   - Example: 'Order.*' matches 'Order.OrderPlaced', 'Order.OrderShipped'")
     print()
 
-    print("2. FANOUT")
+    print("2. DIRECT")
+    print("   - Routes based on exact routing key match")
+    print("   - Use for: specific service targeting, work queues")
+    print()
+
+    print("3. FANOUT")
     print("   - Broadcasts to all bound queues")
     print("   - Ignores routing key")
     print("   - Use for: notifications, audit logging, cache invalidation")
-    print()
-
-    print("3. DIRECT")
-    print("   - Routes based on exact routing key match")
-    print("   - Use for: specific service targeting, work queues")
     print()
 
     print("4. HEADERS")
@@ -587,279 +1089,518 @@ async def exchange_types_example():
     print("   - Most flexible but complex")
 
 
-async def dead_letter_example():
-    """Demonstrate DLQ concepts."""
-    print("\n=== Dead Letter Queue ===\n")
+async def demo_consumer_groups():
+    """Demo 3: Consumer groups for load balancing."""
+    print("\n" + "=" * 60)
+    print("Demo 3: Consumer Groups and Load Balancing")
+    print("=" * 60)
 
-    print("When enable_dlq=True, failed messages are routed to DLQ:\n")
-    print("Flow:")
-    print("  1. Message arrives at main queue")
-    print("  2. Handler throws exception")
-    print("  3. Message requeued with retry count incremented")
-    print("  4. After max_retries (default: 3), message goes to DLQ")
-    print()
-    print("DLQ naming:")
-    print("  Main exchange: 'events'")
-    print("  DLQ exchange:  'events_dlq'")
-    print("  Main queue:    'events.my-service'")
-    print("  DLQ queue:     'events.my-service.dlq'")
-    print()
-    print("DLQ message headers include:")
-    print("  - x-dlq-reason: Error message")
-    print("  - x-dlq-error-type: Exception class name")
-    print("  - x-dlq-retry-count: Retries before DLQ")
-    print("  - x-dlq-timestamp: When sent to DLQ")
-    print()
-    print("Monitor DLQ for investigation and manual replay.")
+    registry = EventRegistry()
+    registry.register(OrderPlaced)
+
+    base_config = {
+        "rabbitmq_url": "amqp://guest:guest@localhost:5672/",
+        "exchange_name": "demo3",
+        "consumer_group": "load-balanced-consumers",
+    }
+
+    config1 = RabbitMQEventBusConfig(**base_config, consumer_name="worker-1")
+    config2 = RabbitMQEventBusConfig(**base_config, consumer_name="worker-2")
+
+    bus1 = RabbitMQEventBus(config=config1, event_registry=registry)
+    bus2 = RabbitMQEventBus(config=config2, event_registry=registry)
+
+    worker1_events: list[str] = []
+    worker2_events: list[str] = []
+
+    async def worker1_handler(event: DomainEvent) -> None:
+        worker1_events.append(str(event.aggregate_id))
+        print(f"  Worker 1 processed: {event.aggregate_id}")
+
+    async def worker2_handler(event: DomainEvent) -> None:
+        worker2_events.append(str(event.aggregate_id))
+        print(f"  Worker 2 processed: {event.aggregate_id}")
+
+    try:
+        await bus1.connect()
+        await bus2.connect()
+        print("Both workers connected")
+
+        bus1.subscribe(OrderPlaced, worker1_handler)
+        bus2.subscribe(OrderPlaced, worker2_handler)
+
+        # Publish events
+        print("\nPublishing 10 events...")
+        for i in range(10):
+            event = OrderPlaced(
+                aggregate_id=uuid4(),
+                customer_id=f"cust-{i}",
+                total_amount=10.0 * (i + 1),
+                aggregate_version=1,
+            )
+            await bus1.publish([event])
+
+        # Both workers consume
+        task1 = asyncio.create_task(bus1.start_consuming())
+        task2 = asyncio.create_task(bus2.start_consuming())
+        await asyncio.sleep(3.0)
+
+        # Stop consuming
+        await bus1.stop_consuming()
+        await bus2.stop_consuming()
+
+        for task in [task1, task2]:
+            try:
+                await asyncio.wait_for(task, timeout=2.0)
+            except asyncio.TimeoutError:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
+        print(f"\nResults:")
+        print(f"  Worker 1 processed: {len(worker1_events)} events")
+        print(f"  Worker 2 processed: {len(worker2_events)} events")
+        print(f"  Total: {len(worker1_events) + len(worker2_events)} events")
+
+    finally:
+        await bus1.disconnect()
+        await bus2.disconnect()
+
+
+async def demo_with_projections():
+    """Demo 4: Integration with projections."""
+    print("\n" + "=" * 60)
+    print("Demo 4: Integration with Projections")
+    print("=" * 60)
+
+    registry = EventRegistry()
+    registry.register(OrderPlaced)
+    registry.register(OrderShipped)
+
+    config = RabbitMQEventBusConfig(
+        rabbitmq_url="amqp://guest:guest@localhost:5672/",
+        exchange_name="demo4",
+        consumer_group="projection-consumers",
+    )
+    bus = RabbitMQEventBus(config=config, event_registry=registry)
+
+    stats_projection = OrderStatisticsProjection()
+    auditor = AuditLogger()
+
+    try:
+        await bus.connect()
+
+        # Subscribe projection to its declared events
+        bus.subscribe_all(stats_projection)
+        print("Subscribed statistics projection")
+
+        # Subscribe auditor to all events
+        bus.subscribe_to_all_events(auditor)
+        print("Subscribed audit logger to all events")
+
+        # Create and process order
+        order_id = uuid4()
+        print(f"\nProcessing order: {order_id}")
+
+        await bus.publish([
+            OrderPlaced(
+                aggregate_id=order_id,
+                customer_id="premium-customer",
+                total_amount=499.99,
+                aggregate_version=1,
+            )
+        ])
+
+        await bus.publish([
+            OrderShipped(
+                aggregate_id=order_id,
+                tracking_number="TRACK-12345",
+                aggregate_version=2,
+            )
+        ])
+
+        # Start consuming
+        consume_task = asyncio.create_task(bus.start_consuming())
+        await asyncio.sleep(2.0)
+        await bus.stop_consuming()
+
+        try:
+            await asyncio.wait_for(consume_task, timeout=2.0)
+        except asyncio.TimeoutError:
+            consume_task.cancel()
+            try:
+                await consume_task
+            except asyncio.CancelledError:
+                pass
+
+        # Show results
+        print(f"\nProjection Results:")
+        print(f"  Total orders: {stats_projection.total_orders}")
+        print(f"  Total revenue: ${stats_projection.total_revenue:.2f}")
+        print(f"  Shipped count: {stats_projection.shipped_count}")
+        print(f"\nAudit log entries: {len(auditor.log)}")
+
+    finally:
+        await bus.disconnect()
 
 
 async def main():
-    print("Tutorial 19: RabbitMQ Event Bus\n")
+    """Run all demos."""
+    print("=" * 60)
+    print("Tutorial 19: RabbitMQ Event Bus")
     print("=" * 60)
 
     try:
-        await basic_rabbitmq_example()
-        await exchange_types_example()
-        await dead_letter_example()
+        await demo_basic_publish_subscribe()
+        await demo_exchange_types()
+        await demo_consumer_groups()
+        await demo_with_projections()
+
+        print("\n" + "=" * 60)
+        print("Tutorial 19 Complete!")
+        print("=" * 60)
+
     except Exception as e:
         print(f"\nError: {e}")
-        print("Make sure RabbitMQ is running:")
-        print("  docker run -d -p 5672:5672 -p 15672:15672 rabbitmq:3-management")
-
-    print("\n" + "=" * 60)
-    print("Tutorial complete!")
+        print("\nMake sure RabbitMQ is running:")
+        print("  docker run -d --name rabbitmq -p 5672:5672 -p 15672:15672 rabbitmq:3-management")
+        raise
 
 
 if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-Run with: `python tutorial_19_rabbitmq.py`
+**Expected output:**
 
-## Exercises
+```
+============================================================
+Tutorial 19: RabbitMQ Event Bus
+============================================================
 
-### Exercise 1: Event-Driven Microservices
+============================================================
+Demo 1: Basic Publish/Subscribe
+============================================================
+Connected to RabbitMQ
+Subscribed handler to OrderPlaced
+Published OrderPlaced for <uuid>
+  Received: OrderPlaced
+Received 1 event(s)
 
-Build microservices with topic-based routing. Create events for Customer, Order, and Payment domains. Configure handlers to receive only relevant events using routing patterns.
+============================================================
+Demo 2: Exchange Types and Routing
+============================================================
+RabbitMQ supports several exchange types:
 
-Starter code:
+1. TOPIC (default in eventsource)
+   - Routes based on routing key patterns
+   - Supports wildcards: * (one word), # (zero or more)
+   - Example: 'Order.*' matches 'Order.OrderPlaced', 'Order.OrderShipped'
 
-```python
-"""
-Tutorial 19 - Exercise 1: Event-Driven Microservices
+2. DIRECT
+   - Routes based on exact routing key match
+   - Use for: specific service targeting, work queues
 
-Your task: Build a microservices layer with topic-based routing.
-"""
-import asyncio
-from uuid import uuid4
+3. FANOUT
+   - Broadcasts to all bound queues
+   - Ignores routing key
+   - Use for: notifications, audit logging, cache invalidation
 
-from eventsource import DomainEvent, register_event, default_registry
-from eventsource.bus.rabbitmq import (
-    RabbitMQEventBus,
-    RabbitMQEventBusConfig,
-    RABBITMQ_AVAILABLE,
-)
+4. HEADERS
+   - Routes based on message headers
+   - Most flexible but complex
 
-if not RABBITMQ_AVAILABLE:
-    print("Install rabbitmq: pip install eventsource-py[rabbitmq]")
-    exit(1)
+============================================================
+Demo 3: Consumer Groups and Load Balancing
+============================================================
+Both workers connected
 
+Publishing 10 events...
+  Worker 1 processed: <uuid>
+  Worker 2 processed: <uuid>
+  Worker 1 processed: <uuid>
+  Worker 2 processed: <uuid>
+  ...
 
-# Step 1: Define events for different domains
-# TODO: Create CustomerCreated, OrderCreated, PaymentReceived events
+Results:
+  Worker 1 processed: 5 events
+  Worker 2 processed: 5 events
+  Total: 10 events
 
+============================================================
+Demo 4: Integration with Projections
+============================================================
+Subscribed statistics projection
+Subscribed audit logger to all events
 
-# Step 2: Create service handlers
-# TODO: CustomerService, OrderService, PaymentService handlers
+Processing order: <uuid>
+  [Stats] Order placed: $499.99
+  [Stats] Order shipped: TRACK-12345
 
+Projection Results:
+  Total orders: 1
+  Total revenue: $499.99
+  Shipped count: 1
 
-async def main():
-    print("=== Exercise 19-1: Event-Driven Microservices ===\n")
+Audit log entries: 2
 
-    # Step 3: Configure RabbitMQ with topic exchange
-    # TODO: Create RabbitMQEventBusConfig
-
-    # Step 4: Create bus and subscribe handlers
-    # TODO: Subscribe each service to its relevant events
-
-    # Step 5: Publish events from different domains
-    # TODO: Publish CustomerCreated, OrderCreated, PaymentReceived
-
-    # Step 6: Verify routing
-    # TODO: Check that each service received only its events
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+============================================================
+Tutorial 19 Complete!
+============================================================
 ```
 
-<details>
-<summary>Click to see the solution</summary>
+---
+
+## Production Deployment Patterns
+
+### Graceful Shutdown
 
 ```python
-"""
-Tutorial 19 - Exercise 1 Solution: Event-Driven Microservices
-"""
-import asyncio
-from uuid import uuid4
+import signal
 
-from eventsource import DomainEvent, register_event, default_registry
-from eventsource.bus.rabbitmq import (
-    RabbitMQEventBus,
-    RabbitMQEventBusConfig,
-    RABBITMQ_AVAILABLE,
-)
+class RabbitMQEventBusService:
+    def __init__(self, bus: RabbitMQEventBus):
+        self.bus = bus
+        self.consume_task: asyncio.Task | None = None
+        self.shutdown_event = asyncio.Event()
 
-if not RABBITMQ_AVAILABLE:
-    print("Install rabbitmq: pip install eventsource-py[rabbitmq]")
-    exit(1)
+    async def start(self):
+        """Start event bus service."""
+        await self.bus.connect()
 
+        # Start consumer
+        self.consume_task = asyncio.create_task(
+            self.bus.start_consuming()
+        )
 
-# Step 1: Define events for different domains
-@register_event
-class CustomerCreated(DomainEvent):
-    event_type: str = "CustomerCreated"
-    aggregate_type: str = "Customer"
-    name: str
-    email: str
+        # Wait for shutdown signal
+        await self.shutdown_event.wait()
 
+    async def shutdown(self):
+        """Graceful shutdown."""
+        print("Shutting down...")
+        self.shutdown_event.set()
 
-@register_event
-class OrderCreated(DomainEvent):
-    event_type: str = "OrderCreated"
-    aggregate_type: str = "Order"
-    customer_id: str
-    total: float
+        # Stop consuming
+        await self.bus.stop_consuming()
 
+        # Wait for consumer task
+        if self.consume_task:
+            try:
+                await asyncio.wait_for(self.consume_task, timeout=30.0)
+            except asyncio.TimeoutError:
+                self.consume_task.cancel()
 
-@register_event
-class PaymentReceived(DomainEvent):
-    event_type: str = "PaymentReceived"
-    aggregate_type: str = "Payment"
-    order_id: str
-    amount: float
+        # Disconnect
+        await self.bus.disconnect()
+        print("Shutdown complete")
 
-
-# Step 2: Create service handlers
-class CustomerService:
-    def __init__(self):
-        self.customers = {}
-
-    async def handle(self, event: DomainEvent):
-        if isinstance(event, CustomerCreated):
-            self.customers[str(event.aggregate_id)] = event.name
-            print(f"  [CustomerService] Registered: {event.name}")
-
-
-class OrderService:
-    def __init__(self):
-        self.orders = []
-
-    async def handle(self, event: DomainEvent):
-        if isinstance(event, OrderCreated):
-            self.orders.append(str(event.aggregate_id))
-            print(f"  [OrderService] Order ${event.total:.2f} for {event.customer_id}")
-
-
-class PaymentService:
-    def __init__(self):
-        self.payments = []
-
-    async def handle(self, event: DomainEvent):
-        if isinstance(event, PaymentReceived):
-            self.payments.append(str(event.aggregate_id))
-            print(f"  [PaymentService] Payment ${event.amount:.2f} for order {event.order_id}")
-
-
+# Setup signal handlers
 async def main():
-    print("=== Exercise 19-1: Event-Driven Microservices ===\n")
+    service = RabbitMQEventBusService(bus)
 
-    # Step 3: Configure RabbitMQ with topic exchange
-    print("Step 1: Configuring RabbitMQ bus with topic exchange...")
-    config = RabbitMQEventBusConfig(
-        rabbitmq_url="amqp://guest:guest@localhost:5672/",
-        exchange_name="microservices",
-        exchange_type="topic",
-        consumer_group="exercise19",
-        prefetch_count=10,
-    )
-    bus = RabbitMQEventBus(config=config, event_registry=default_registry)
-    print(f"   Exchange: {config.exchange_name}")
-    print(f"   Queue: {config.queue_name}")
+    loop = asyncio.get_running_loop()
 
-    # Step 4: Create bus and subscribe handlers
-    print("\nStep 2: Setting up service handlers...")
-    customer_svc = CustomerService()
-    order_svc = OrderService()
-    payment_svc = PaymentService()
+    def signal_handler():
+        asyncio.create_task(service.shutdown())
 
-    # Each service subscribes to relevant events
-    bus.subscribe(CustomerCreated, customer_svc)
-    bus.subscribe(OrderCreated, order_svc)
-    bus.subscribe(PaymentReceived, payment_svc)
-    print("   Services subscribed!")
+    loop.add_signal_handler(signal.SIGTERM, signal_handler)
+    loop.add_signal_handler(signal.SIGINT, signal_handler)
 
-    await bus.connect()
+    await service.start()
 
-    # Step 5: Publish events from different domains
-    print("\nStep 3: Publishing events...")
+asyncio.run(main())
+```
 
-    customer_id = uuid4()
-    await bus.publish([CustomerCreated(
-        aggregate_id=customer_id,
-        name="Alice Smith",
-        email="alice@example.com",
-        aggregate_version=1,
-    )])
-    print("   Published: CustomerCreated")
+### Health Check Endpoint
 
-    order_id = uuid4()
-    await bus.publish([OrderCreated(
-        aggregate_id=order_id,
-        customer_id=str(customer_id),
-        total=150.0,
-        aggregate_version=1,
-    )])
-    print("   Published: OrderCreated")
+```python
+async def health_check(bus: RabbitMQEventBus) -> dict:
+    """
+    Health check for Kubernetes liveness/readiness probes.
 
-    payment_id = uuid4()
-    await bus.publish([PaymentReceived(
-        aggregate_id=payment_id,
-        order_id=str(order_id),
-        amount=150.0,
-        aggregate_version=1,
-    )])
-    print("   Published: PaymentReceived")
-
-    # Consume events
-    print("\nStep 4: Consuming events...")
-    consume_task = asyncio.create_task(bus.start_consuming())
-    await asyncio.sleep(3)
-    await bus.stop_consuming()
-    consume_task.cancel()
+    Returns:
+        Health status dictionary
+    """
     try:
-        await consume_task
-    except asyncio.CancelledError:
-        pass
+        health = await bus.health_check()
+        stats = bus.get_stats_dict()
 
-    # Step 6: Verify routing
-    print("\nStep 5: Verifying service isolation:")
-    print(f"   CustomerService customers: {len(customer_svc.customers)}")
-    print(f"   OrderService orders: {len(order_svc.orders)}")
-    print(f"   PaymentService payments: {len(payment_svc.payments)}")
+        return {
+            "status": "healthy" if health.healthy else "unhealthy",
+            "error": health.error if not health.healthy else None,
+            "connected": bus._connected,
+            "consuming": bus._consuming,
+            "events_published": stats['events_published'],
+            "events_consumed": stats['events_consumed'],
+            "handler_errors": stats['handler_errors'],
+            "dlq_messages": stats.get('messages_sent_to_dlq', 0),
+        }
 
-    await bus.disconnect()
-    print("\n=== Exercise Complete! ===")
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "error": str(e),
+        }
 ```
 
-</details>
+### Production Configuration
 
-Solution: `docs/tutorials/exercises/solutions/19-1.py`
+```python
+import os
+
+config = RabbitMQEventBusConfig(
+    # Connection
+    rabbitmq_url=os.getenv(
+        "RABBITMQ_URL",
+        "amqps://user:pass@rabbitmq.example.com:5671/"
+    ),
+
+    # Exchange and queue
+    exchange_name=os.getenv("RABBITMQ_EXCHANGE", "myapp.events"),
+    exchange_type=os.getenv("RABBITMQ_EXCHANGE_TYPE", "topic"),
+    consumer_group=os.getenv("RABBITMQ_CONSUMER_GROUP", "default"),
+    consumer_name=os.getenv("HOSTNAME"),                # Kubernetes pod name
+
+    # Durability (production settings)
+    durable=True,                                       # Survive restarts
+    auto_delete=False,                                  # Don't auto-delete
+
+    # Flow control
+    prefetch_count=int(os.getenv("RABBITMQ_PREFETCH", "10")),
+
+    # Security
+    verify_ssl=True,
+    ca_file=os.getenv("RABBITMQ_CA_FILE"),
+    cert_file=os.getenv("RABBITMQ_CERT_FILE"),
+    key_file=os.getenv("RABBITMQ_KEY_FILE"),
+
+    # Error handling
+    max_retries=3,
+    enable_dlq=True,
+
+    # Observability
+    enable_tracing=True,
+)
+```
+
+---
+
+## Key Takeaways
+
+1. **RabbitMQEventBus enables flexible message routing** with topic patterns, direct routing, and fanout
+2. **Exchange types provide routing flexibility** - choose based on your distribution needs
+3. **Consumer groups enable load balancing** - multiple workers share queue automatically
+4. **Dead letter queues capture poison messages** - preventing processing blocks
+5. **Exponential backoff with jitter prevents thundering herd** during retries
+6. **SSL/TLS support for production security** - mutual TLS for client authentication
+7. **Management UI provides visibility** - monitor queues, consumers, and message rates
+8. **RabbitMQ excels at enterprise messaging** - battle-tested reliability and flexibility
+9. **Same EventBus interface as InMemory/Redis/Kafka** - easy migration between implementations
+10. **Production deployments require careful configuration** - durability, SSL, monitoring
+
+---
+
+## Troubleshooting
+
+### Consumer Not Receiving Events
+
+**Check connection:**
+```python
+assert bus._connected, "Not connected to RabbitMQ"
+```
+
+**Verify consumer is running:**
+```python
+assert bus._consuming, "Consumer not running"
+```
+
+**Check queue bindings:**
+Visit http://localhost:15672 → Queues → Click your queue → Bindings
+
+### High Unacknowledged Message Count
+
+**Check prefetch_count:**
+```python
+# Lower prefetch for better load balancing
+config = RabbitMQEventBusConfig(
+    prefetch_count=5,                                   # Was 10
+)
+```
+
+**Check handler performance:**
+```python
+import time
+
+async def slow_handler(event: DomainEvent):
+    start = time.time()
+    # ... process event ...
+    duration = time.time() - start
+    if duration > 1.0:
+        print(f"Slow handler: {duration:.2f}s for {event.event_type}")
+```
+
+### Messages in DLQ
+
+**Inspect DLQ:**
+```python
+count = await bus.get_dlq_message_count()
+print(f"DLQ messages: {count}")
+
+dlq_messages = await bus.get_dlq_messages(limit=10)
+for msg in dlq_messages:
+    print(f"Failed: {msg['event_type']}")
+    print(f"Error: {msg.get('dlq_reason')}")
+```
+
+**Fix and replay:**
+```python
+# Fix the underlying bug
+# Then replay all DLQ messages
+dlq_messages = await bus.get_dlq_messages(limit=1000)
+for msg in dlq_messages:
+    await bus.replay_dlq_message(msg['message_id'])
+```
+
+### Connection Issues
+
+**Check RabbitMQ is running:**
+```bash
+docker ps | grep rabbitmq
+```
+
+**Check logs:**
+```bash
+docker logs rabbitmq
+```
+
+**Test connection:**
+```bash
+# Using rabbitmq-diagnostics
+docker exec rabbitmq rabbitmq-diagnostics check_running
+```
+
+---
 
 ## Next Steps
 
-Continue to [Tutorial 20: Observability with OpenTelemetry](20-observability.md).
+Now that you understand RabbitMQ event distribution, continue exploring observability and advanced patterns:
+
+- [Tutorial 20: Observability with OpenTelemetry](20-observability.md) - Tracing and metrics for event-sourced systems
+
+For comparing distributed event buses:
+- [Tutorial 17: Redis Event Bus](17-redis.md) - Stream-based event distribution
+- [Tutorial 18: Kafka Event Bus](18-kafka.md) - Ultra-high throughput event streaming
+
+---
+
+## Additional Resources
+
+- [RabbitMQ Documentation](https://www.rabbitmq.com/documentation.html)
+- [AMQP Protocol](https://www.rabbitmq.com/tutorials/amqp-concepts.html)
+- [RabbitMQ Management Plugin](https://www.rabbitmq.com/management.html)
+- [aio-pika Documentation](https://aio-pika.readthedocs.io/)
+- `tests/integration/bus/test_rabbitmq.py` - Comprehensive integration tests
+- `src/eventsource/bus/rabbitmq.py` - RabbitMQEventBus implementation
