@@ -18,7 +18,7 @@ import logging
 from typing import Any
 
 from eventsource.events.base import DomainEvent
-from eventsource.observability import TracingMixin
+from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_EVENT_COUNT,
     ATTR_EVENT_ID,
@@ -30,7 +30,7 @@ from eventsource.protocols import EventSubscriber
 logger = logging.getLogger(__name__)
 
 
-class ProjectionRegistry(TracingMixin):
+class ProjectionRegistry:
     """
     Registry for managing multiple projections.
 
@@ -51,18 +51,26 @@ class ProjectionRegistry(TracingMixin):
         >>> registry = ProjectionRegistry(enable_tracing=True)
     """
 
-    def __init__(self, enable_tracing: bool = False) -> None:
+    def __init__(
+        self,
+        tracer: Tracer | None = None,
+        enable_tracing: bool = False,
+    ) -> None:
         """
         Initialize the projection registry.
 
         Args:
+            tracer: Optional custom Tracer instance. If not provided, one is
+                   created based on enable_tracing setting.
             enable_tracing: If True and OpenTelemetry is available, emit traces.
                           Default is False (tracing off for high-frequency operations).
+                          Ignored if tracer is explicitly provided.
         """
         self._projections: list[Projection] = []
         self._handlers: list[EventHandlerBase] = []
-        # Initialize tracing via TracingMixin (default OFF for projections)
-        self._init_tracing(__name__, enable_tracing)
+        # Composition-based tracing (replaces TracingMixin)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
 
     def register_projection(self, projection: Projection) -> None:
         """
@@ -147,7 +155,7 @@ class ProjectionRegistry(TracingMixin):
         Args:
             event: The event to dispatch
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.projection.registry.dispatch",
             {
                 ATTR_EVENT_TYPE: type(event).__name__,
@@ -250,7 +258,7 @@ class ProjectionRegistry(TracingMixin):
         return len(self._handlers)
 
 
-class ProjectionCoordinator(TracingMixin):
+class ProjectionCoordinator:
     """
     Coordinates event distribution from event store to projections.
 
@@ -283,6 +291,7 @@ class ProjectionCoordinator(TracingMixin):
         registry: ProjectionRegistry,
         batch_size: int = 100,
         poll_interval_seconds: float = 1.0,
+        tracer: Tracer | None = None,
         enable_tracing: bool = False,
     ) -> None:
         """
@@ -292,16 +301,20 @@ class ProjectionCoordinator(TracingMixin):
             registry: Registry containing projections
             batch_size: Number of events to process per batch
             poll_interval_seconds: How often to poll for new events
+            tracer: Optional custom Tracer instance. If not provided, one is
+                   created based on enable_tracing setting.
             enable_tracing: If True and OpenTelemetry is available, emit traces.
                           Default is False (tracing off for high-frequency operations).
+                          Ignored if tracer is explicitly provided.
         """
         self.registry = registry
         self.batch_size = batch_size
         self.poll_interval_seconds = poll_interval_seconds
         self._running = False
         self._task: asyncio.Task[None] | None = None
-        # Initialize tracing via TracingMixin (default OFF for projections)
-        self._init_tracing(__name__, enable_tracing)
+        # Composition-based tracing (replaces TracingMixin)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
 
     async def dispatch_events(self, events: list[DomainEvent]) -> int:
         """
@@ -313,7 +326,7 @@ class ProjectionCoordinator(TracingMixin):
         Returns:
             Number of events dispatched
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.projection.coordinate",
             {
                 ATTR_EVENT_COUNT: len(events),

@@ -2,7 +2,7 @@
 Unit tests for CheckpointRepository tracing functionality.
 
 Tests for:
-- TracingMixin integration for all checkpoint repository implementations
+- Tracer protocol integration for all checkpoint repository implementations
 - Span creation for get_checkpoint, update_checkpoint, get_lag_metrics, reset_checkpoint
 - Correct span attributes using standard ATTR_* constants
 - Tracing disabled behavior
@@ -11,7 +11,6 @@ Tests for:
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, Mock
 from uuid import uuid4
 
 import pytest
@@ -19,23 +18,26 @@ import pytest
 from eventsource.observability import (
     ATTR_EVENT_TYPE,
     ATTR_PROJECTION_NAME,
-    TracingMixin,
 )
+from eventsource.observability.tracer import MockTracer, NullTracer
 from eventsource.repositories.checkpoint import (
     InMemoryCheckpointRepository,
 )
 
 # ============================================================================
-# TracingMixin Integration Tests - InMemoryCheckpointRepository
+# Tracer Protocol Integration Tests - InMemoryCheckpointRepository
 # ============================================================================
 
 
-class TestInMemoryCheckpointRepositoryTracingMixin:
-    """Tests for InMemoryCheckpointRepository TracingMixin integration."""
+class TestInMemoryCheckpointRepositoryTracerIntegration:
+    """Tests for InMemoryCheckpointRepository Tracer protocol integration."""
 
-    def test_inherits_from_tracing_mixin(self):
-        """InMemoryCheckpointRepository inherits from TracingMixin."""
-        assert issubclass(InMemoryCheckpointRepository, TracingMixin)
+    def test_accepts_custom_tracer(self):
+        """InMemoryCheckpointRepository accepts a custom tracer."""
+        tracer = MockTracer()
+        repo = InMemoryCheckpointRepository(tracer=tracer)
+
+        assert repo._tracer is tracer
 
     def test_tracing_enabled_by_default(self):
         """Tracing is enabled by default when OTEL is available."""
@@ -50,15 +52,14 @@ class TestInMemoryCheckpointRepositoryTracingMixin:
         repo = InMemoryCheckpointRepository(enable_tracing=False)
 
         assert repo._enable_tracing is False
-        assert repo._tracer is None
+        assert isinstance(repo._tracer, NullTracer)
 
-    def test_has_tracing_enabled_property(self):
-        """Store exposes tracing_enabled property from mixin."""
-        repo = InMemoryCheckpointRepository(enable_tracing=True)
+    def test_tracer_enabled_property(self):
+        """Store exposes tracer.enabled property."""
+        repo = InMemoryCheckpointRepository(enable_tracing=False)
 
-        # tracing_enabled is a property from TracingMixin
-        assert hasattr(repo, "tracing_enabled")
-        assert isinstance(repo.tracing_enabled, bool)
+        # tracer.enabled reflects the tracer state
+        assert repo._tracer.enabled is False
 
     def test_backward_compatible_constructor(self):
         """Constructor without enable_tracing should work (default True)."""
@@ -77,22 +78,13 @@ class TestInMemoryCheckpointRepositorySpanCreation:
 
     @pytest.fixture
     def mock_tracer(self):
-        """Create a mock tracer with span context manager."""
-        tracer = Mock()
-        span = MagicMock()
-        span.__enter__ = Mock(return_value=span)
-        span.__exit__ = Mock(return_value=None)
-        tracer.start_as_current_span.return_value = span
-        return tracer
+        """Create a mock tracer that records span calls."""
+        return MockTracer()
 
     @pytest.fixture
     def traced_repo(self, mock_tracer):
         """Create a repository with injected mock tracer."""
-        repo = InMemoryCheckpointRepository(enable_tracing=True)
-        # Inject mock tracer
-        repo._tracer = mock_tracer
-        repo._enable_tracing = True
-        return repo
+        return InMemoryCheckpointRepository(tracer=mock_tracer)
 
     @pytest.mark.asyncio
     async def test_get_checkpoint_creates_span(self, traced_repo, mock_tracer):
@@ -102,9 +94,7 @@ class TestInMemoryCheckpointRepositorySpanCreation:
         await traced_repo.get_checkpoint(projection_name)
 
         # Verify span was created with correct name
-        mock_tracer.start_as_current_span.assert_called()
-        call_args = mock_tracer.start_as_current_span.call_args
-        assert call_args[0][0] == "eventsource.checkpoint.get_checkpoint"
+        assert "eventsource.checkpoint.get_checkpoint" in mock_tracer.span_names
 
     @pytest.mark.asyncio
     async def test_get_checkpoint_span_attributes(self, traced_repo, mock_tracer):
@@ -113,10 +103,9 @@ class TestInMemoryCheckpointRepositorySpanCreation:
 
         await traced_repo.get_checkpoint(projection_name)
 
-        # Verify correct attributes using standard constants
-        call_args = mock_tracer.start_as_current_span.call_args
-        attributes = call_args[1]["attributes"]
-
+        # Find the span and verify attributes
+        span_name, attributes = mock_tracer.spans[0]
+        assert span_name == "eventsource.checkpoint.get_checkpoint"
         assert ATTR_PROJECTION_NAME in attributes
         assert attributes[ATTR_PROJECTION_NAME] == projection_name
 
@@ -130,9 +119,7 @@ class TestInMemoryCheckpointRepositorySpanCreation:
         await traced_repo.update_checkpoint(projection_name, event_id, event_type)
 
         # Verify span was created with correct name
-        mock_tracer.start_as_current_span.assert_called()
-        call_args = mock_tracer.start_as_current_span.call_args
-        assert call_args[0][0] == "eventsource.checkpoint.update_checkpoint"
+        assert "eventsource.checkpoint.update_checkpoint" in mock_tracer.span_names
 
     @pytest.mark.asyncio
     async def test_update_checkpoint_span_attributes(self, traced_repo, mock_tracer):
@@ -143,10 +130,9 @@ class TestInMemoryCheckpointRepositorySpanCreation:
 
         await traced_repo.update_checkpoint(projection_name, event_id, event_type)
 
-        # Verify correct attributes using standard constants
-        call_args = mock_tracer.start_as_current_span.call_args
-        attributes = call_args[1]["attributes"]
-
+        # Find the span and verify attributes
+        span_name, attributes = mock_tracer.spans[0]
+        assert span_name == "eventsource.checkpoint.update_checkpoint"
         assert ATTR_PROJECTION_NAME in attributes
         assert attributes[ATTR_PROJECTION_NAME] == projection_name
         assert ATTR_EVENT_TYPE in attributes
@@ -160,9 +146,7 @@ class TestInMemoryCheckpointRepositorySpanCreation:
         await traced_repo.get_lag_metrics(projection_name)
 
         # Verify span was created with correct name
-        mock_tracer.start_as_current_span.assert_called()
-        call_args = mock_tracer.start_as_current_span.call_args
-        assert call_args[0][0] == "eventsource.checkpoint.get_lag_metrics"
+        assert "eventsource.checkpoint.get_lag_metrics" in mock_tracer.span_names
 
     @pytest.mark.asyncio
     async def test_get_lag_metrics_span_attributes(self, traced_repo, mock_tracer):
@@ -171,10 +155,9 @@ class TestInMemoryCheckpointRepositorySpanCreation:
 
         await traced_repo.get_lag_metrics(projection_name)
 
-        # Verify correct attributes using standard constants
-        call_args = mock_tracer.start_as_current_span.call_args
-        attributes = call_args[1]["attributes"]
-
+        # Find the span and verify attributes
+        span_name, attributes = mock_tracer.spans[0]
+        assert span_name == "eventsource.checkpoint.get_lag_metrics"
         assert ATTR_PROJECTION_NAME in attributes
         assert attributes[ATTR_PROJECTION_NAME] == projection_name
 
@@ -186,9 +169,7 @@ class TestInMemoryCheckpointRepositorySpanCreation:
         await traced_repo.reset_checkpoint(projection_name)
 
         # Verify span was created with correct name
-        mock_tracer.start_as_current_span.assert_called()
-        call_args = mock_tracer.start_as_current_span.call_args
-        assert call_args[0][0] == "eventsource.checkpoint.reset_checkpoint"
+        assert "eventsource.checkpoint.reset_checkpoint" in mock_tracer.span_names
 
     @pytest.mark.asyncio
     async def test_reset_checkpoint_span_attributes(self, traced_repo, mock_tracer):
@@ -197,10 +178,9 @@ class TestInMemoryCheckpointRepositorySpanCreation:
 
         await traced_repo.reset_checkpoint(projection_name)
 
-        # Verify correct attributes using standard constants
-        call_args = mock_tracer.start_as_current_span.call_args
-        attributes = call_args[1]["attributes"]
-
+        # Find the span and verify attributes
+        span_name, attributes = mock_tracer.spans[0]
+        assert span_name == "eventsource.checkpoint.reset_checkpoint"
         assert ATTR_PROJECTION_NAME in attributes
         assert attributes[ATTR_PROJECTION_NAME] == projection_name
 
@@ -210,9 +190,7 @@ class TestInMemoryCheckpointRepositorySpanCreation:
         await traced_repo.get_all_checkpoints()
 
         # Verify span was created with correct name
-        mock_tracer.start_as_current_span.assert_called()
-        call_args = mock_tracer.start_as_current_span.call_args
-        assert call_args[0][0] == "eventsource.checkpoint.get_all_checkpoints"
+        assert "eventsource.checkpoint.get_all_checkpoints" in mock_tracer.span_names
 
     @pytest.mark.asyncio
     async def test_clear_creates_span(self, traced_repo, mock_tracer):
@@ -220,9 +198,7 @@ class TestInMemoryCheckpointRepositorySpanCreation:
         await traced_repo.clear()
 
         # Verify span was created with correct name
-        mock_tracer.start_as_current_span.assert_called()
-        call_args = mock_tracer.start_as_current_span.call_args
-        assert call_args[0][0] == "eventsource.checkpoint.clear"
+        assert "eventsource.checkpoint.clear" in mock_tracer.span_names
 
 
 # ============================================================================
@@ -323,8 +299,8 @@ except ImportError:
 
 
 @pytest.mark.skipif(not AIOSQLITE_AVAILABLE, reason="aiosqlite not installed")
-class TestSQLiteCheckpointRepositoryTracingMixin:
-    """Tests for SQLiteCheckpointRepository TracingMixin integration."""
+class TestSQLiteCheckpointRepositoryTracerIntegration:
+    """Tests for SQLiteCheckpointRepository Tracer protocol integration."""
 
     @pytest.fixture
     async def db_connection(self) -> aiosqlite.Connection:
@@ -368,9 +344,12 @@ class TestSQLiteCheckpointRepositoryTracingMixin:
 
         await conn.close()
 
-    def test_inherits_from_tracing_mixin(self, db_connection: aiosqlite.Connection):
-        """SQLiteCheckpointRepository inherits from TracingMixin."""
-        assert issubclass(SQLiteCheckpointRepository, TracingMixin)
+    def test_accepts_custom_tracer(self, db_connection: aiosqlite.Connection):
+        """SQLiteCheckpointRepository accepts a custom tracer."""
+        tracer = MockTracer()
+        repo = SQLiteCheckpointRepository(db_connection, tracer=tracer)
+
+        assert repo._tracer is tracer
 
     def test_tracing_enabled_by_default(self, db_connection: aiosqlite.Connection):
         """Tracing is enabled by default when OTEL is available."""
@@ -385,15 +364,14 @@ class TestSQLiteCheckpointRepositoryTracingMixin:
         repo = SQLiteCheckpointRepository(db_connection, enable_tracing=False)
 
         assert repo._enable_tracing is False
-        assert repo._tracer is None
+        assert isinstance(repo._tracer, NullTracer)
 
-    def test_has_tracing_enabled_property(self, db_connection: aiosqlite.Connection):
-        """Store exposes tracing_enabled property from mixin."""
-        repo = SQLiteCheckpointRepository(db_connection, enable_tracing=True)
+    def test_tracer_enabled_property(self, db_connection: aiosqlite.Connection):
+        """Store exposes tracer.enabled property."""
+        repo = SQLiteCheckpointRepository(db_connection, enable_tracing=False)
 
-        # tracing_enabled is a property from TracingMixin
-        assert hasattr(repo, "tracing_enabled")
-        assert isinstance(repo.tracing_enabled, bool)
+        # tracer.enabled reflects the tracer state
+        assert repo._tracer.enabled is False
 
 
 @pytest.mark.skipif(not AIOSQLITE_AVAILABLE, reason="aiosqlite not installed")
@@ -442,22 +420,13 @@ class TestSQLiteCheckpointRepositorySpanCreation:
 
     @pytest.fixture
     def mock_tracer(self):
-        """Create a mock tracer with span context manager."""
-        tracer = Mock()
-        span = MagicMock()
-        span.__enter__ = Mock(return_value=span)
-        span.__exit__ = Mock(return_value=None)
-        tracer.start_as_current_span.return_value = span
-        return tracer
+        """Create a mock tracer that records span calls."""
+        return MockTracer()
 
     @pytest.fixture
     def traced_repo(self, db_connection: aiosqlite.Connection, mock_tracer):
         """Create a repository with injected mock tracer."""
-        repo = SQLiteCheckpointRepository(db_connection, enable_tracing=True)
-        # Inject mock tracer
-        repo._tracer = mock_tracer
-        repo._enable_tracing = True
-        return repo
+        return SQLiteCheckpointRepository(db_connection, tracer=mock_tracer)
 
     @pytest.mark.asyncio
     async def test_get_checkpoint_creates_span(self, traced_repo, mock_tracer):
@@ -467,9 +436,7 @@ class TestSQLiteCheckpointRepositorySpanCreation:
         await traced_repo.get_checkpoint(projection_name)
 
         # Verify span was created with correct name
-        mock_tracer.start_as_current_span.assert_called()
-        call_args = mock_tracer.start_as_current_span.call_args
-        assert call_args[0][0] == "eventsource.checkpoint.get_checkpoint"
+        assert "eventsource.checkpoint.get_checkpoint" in mock_tracer.span_names
 
     @pytest.mark.asyncio
     async def test_get_checkpoint_span_attributes(self, traced_repo, mock_tracer):
@@ -478,9 +445,8 @@ class TestSQLiteCheckpointRepositorySpanCreation:
 
         await traced_repo.get_checkpoint(projection_name)
 
-        call_args = mock_tracer.start_as_current_span.call_args
-        attributes = call_args[1]["attributes"]
-
+        span_name, attributes = mock_tracer.spans[0]
+        assert span_name == "eventsource.checkpoint.get_checkpoint"
         assert ATTR_PROJECTION_NAME in attributes
         assert attributes[ATTR_PROJECTION_NAME] == projection_name
 
@@ -493,9 +459,7 @@ class TestSQLiteCheckpointRepositorySpanCreation:
 
         await traced_repo.update_checkpoint(projection_name, event_id, event_type)
 
-        mock_tracer.start_as_current_span.assert_called()
-        call_args = mock_tracer.start_as_current_span.call_args
-        assert call_args[0][0] == "eventsource.checkpoint.update_checkpoint"
+        assert "eventsource.checkpoint.update_checkpoint" in mock_tracer.span_names
 
     @pytest.mark.asyncio
     async def test_update_checkpoint_span_attributes(self, traced_repo, mock_tracer):
@@ -506,9 +470,8 @@ class TestSQLiteCheckpointRepositorySpanCreation:
 
         await traced_repo.update_checkpoint(projection_name, event_id, event_type)
 
-        call_args = mock_tracer.start_as_current_span.call_args
-        attributes = call_args[1]["attributes"]
-
+        span_name, attributes = mock_tracer.spans[0]
+        assert span_name == "eventsource.checkpoint.update_checkpoint"
         assert ATTR_PROJECTION_NAME in attributes
         assert attributes[ATTR_PROJECTION_NAME] == projection_name
         assert ATTR_EVENT_TYPE in attributes
@@ -521,9 +484,7 @@ class TestSQLiteCheckpointRepositorySpanCreation:
 
         await traced_repo.get_lag_metrics(projection_name)
 
-        mock_tracer.start_as_current_span.assert_called()
-        call_args = mock_tracer.start_as_current_span.call_args
-        assert call_args[0][0] == "eventsource.checkpoint.get_lag_metrics"
+        assert "eventsource.checkpoint.get_lag_metrics" in mock_tracer.span_names
 
     @pytest.mark.asyncio
     async def test_reset_checkpoint_creates_span(self, traced_repo, mock_tracer):
@@ -532,18 +493,14 @@ class TestSQLiteCheckpointRepositorySpanCreation:
 
         await traced_repo.reset_checkpoint(projection_name)
 
-        mock_tracer.start_as_current_span.assert_called()
-        call_args = mock_tracer.start_as_current_span.call_args
-        assert call_args[0][0] == "eventsource.checkpoint.reset_checkpoint"
+        assert "eventsource.checkpoint.reset_checkpoint" in mock_tracer.span_names
 
     @pytest.mark.asyncio
     async def test_get_all_checkpoints_creates_span(self, traced_repo, mock_tracer):
         """get_all_checkpoints creates a span with correct name."""
         await traced_repo.get_all_checkpoints()
 
-        mock_tracer.start_as_current_span.assert_called()
-        call_args = mock_tracer.start_as_current_span.call_args
-        assert call_args[0][0] == "eventsource.checkpoint.get_all_checkpoints"
+        assert "eventsource.checkpoint.get_all_checkpoints" in mock_tracer.span_names
 
 
 @pytest.mark.skipif(not AIOSQLITE_AVAILABLE, reason="aiosqlite not installed")

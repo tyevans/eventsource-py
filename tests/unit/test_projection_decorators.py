@@ -10,7 +10,7 @@ Tests cover:
 from pydantic import Field
 
 from eventsource.events.base import DomainEvent
-from eventsource.projections.decorators import (
+from eventsource.handlers import (
     get_handled_event_type,
     handles,
     is_event_handler,
@@ -238,16 +238,13 @@ class TestHandlesDecoratorConsolidation:
     """Tests for consolidated @handles decorator (TD-006).
 
     These tests verify:
-    - AC1: @handles from projections.decorators works for aggregates
-    - AC2: @handles from aggregates.base emits deprecation warning
-    - AC3: Warning message includes correct import path
-    - AC4: IDE autocomplete suggests canonical import (verified via __all__)
-    - AC5: Both imports functionally equivalent
+    - AC1: @handles from handlers is the canonical import
+    - AC2: IDE autocomplete suggests canonical import (verified via __all__)
     """
 
-    def test_canonical_import_from_projections_decorators(self) -> None:
-        """@handles from projections.decorators is the canonical import."""
-        from eventsource.projections.decorators import handles as canonical_handles
+    def test_canonical_import_from_handlers(self) -> None:
+        """@handles from handlers is the canonical import."""
+        from eventsource.handlers import handles as canonical_handles
 
         @canonical_handles(OrderCreated)
         def handler(self, event: OrderCreated) -> None:
@@ -284,14 +281,14 @@ class TestHandlesDecoratorConsolidation:
 
         assert "handles" in eventsource.__all__
 
+    def test_handles_in_handlers_all(self) -> None:
+        """'handles' is in eventsource.handlers.__all__ for IDE autocomplete."""
+        from eventsource import handlers
+
+        assert "handles" in handlers.__all__
+
     def test_handles_in_projections_all(self) -> None:
         """'handles' is in eventsource.projections.__all__ for IDE autocomplete."""
         from eventsource import projections
 
         assert "handles" in projections.__all__
-
-    def test_handles_in_projections_decorators_module(self) -> None:
-        """'handles' is accessible from eventsource.projections.decorators."""
-        from eventsource.projections import decorators
-
-        assert hasattr(decorators, "handles")

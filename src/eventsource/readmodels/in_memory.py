@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from typing import Generic, TypeVar
 from uuid import UUID
 
-from eventsource.observability import TracingMixin
+from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_BATCH_SIZE,
     ATTR_EXPECTED_VERSION,
@@ -27,7 +27,7 @@ from eventsource.readmodels.query import Filter, Query
 TModel = TypeVar("TModel", bound=ReadModel)
 
 
-class InMemoryReadModelRepository(TracingMixin, Generic[TModel]):
+class InMemoryReadModelRepository(Generic[TModel]):
     """
     In-memory implementation of ReadModelRepository for testing.
 
@@ -58,6 +58,7 @@ class InMemoryReadModelRepository(TracingMixin, Generic[TModel]):
     def __init__(
         self,
         model_class: type[TModel],
+        tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ) -> None:
         """
@@ -65,9 +66,11 @@ class InMemoryReadModelRepository(TracingMixin, Generic[TModel]):
 
         Args:
             model_class: The ReadModel subclass this repository will manage
+            tracer: Optional tracer for tracing (if not provided, one will be created)
             enable_tracing: Whether to enable OpenTelemetry tracing (default True)
         """
-        self._init_tracing(__name__, enable_tracing)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
         self._model_class = model_class
         self._models: dict[UUID, TModel] = {}
         self._lock = asyncio.Lock()
@@ -82,7 +85,7 @@ class InMemoryReadModelRepository(TracingMixin, Generic[TModel]):
         Returns:
             The read model if found and not soft-deleted, None otherwise
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.readmodel.get",
             {
                 ATTR_READMODEL_TYPE: self._model_class.__name__,
@@ -105,7 +108,7 @@ class InMemoryReadModelRepository(TracingMixin, Generic[TModel]):
         Returns:
             List of found read models (soft-deleted excluded)
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.readmodel.get_many",
             {
                 ATTR_READMODEL_TYPE: self._model_class.__name__,
@@ -127,7 +130,7 @@ class InMemoryReadModelRepository(TracingMixin, Generic[TModel]):
         Args:
             model: The read model to save
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.readmodel.save",
             {
                 ATTR_READMODEL_TYPE: self._model_class.__name__,
@@ -155,7 +158,7 @@ class InMemoryReadModelRepository(TracingMixin, Generic[TModel]):
         Args:
             models: List of read models to save
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.readmodel.save_many",
             {
                 ATTR_READMODEL_TYPE: self._model_class.__name__,
@@ -185,7 +188,7 @@ class InMemoryReadModelRepository(TracingMixin, Generic[TModel]):
         Returns:
             True if deleted, False if not found
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.readmodel.delete",
             {
                 ATTR_READMODEL_TYPE: self._model_class.__name__,
@@ -208,7 +211,7 @@ class InMemoryReadModelRepository(TracingMixin, Generic[TModel]):
         Returns:
             True if soft-deleted, False if not found or already deleted
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.readmodel.soft_delete",
             {
                 ATTR_READMODEL_TYPE: self._model_class.__name__,
@@ -234,7 +237,7 @@ class InMemoryReadModelRepository(TracingMixin, Generic[TModel]):
         Returns:
             True if restored, False if not found or not deleted
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.readmodel.restore",
             {
                 ATTR_READMODEL_TYPE: self._model_class.__name__,
@@ -262,7 +265,7 @@ class InMemoryReadModelRepository(TracingMixin, Generic[TModel]):
         Returns:
             The soft-deleted read model if found, None otherwise
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.readmodel.get_deleted",
             {
                 ATTR_READMODEL_TYPE: self._model_class.__name__,
@@ -288,7 +291,7 @@ class InMemoryReadModelRepository(TracingMixin, Generic[TModel]):
         if query is None:
             query = Query()
 
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.readmodel.find_deleted",
             {
                 ATTR_READMODEL_TYPE: self._model_class.__name__,
@@ -330,7 +333,7 @@ class InMemoryReadModelRepository(TracingMixin, Generic[TModel]):
         Returns:
             True if exists and not soft-deleted, False otherwise
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.readmodel.exists",
             {
                 ATTR_READMODEL_TYPE: self._model_class.__name__,
@@ -354,7 +357,7 @@ class InMemoryReadModelRepository(TracingMixin, Generic[TModel]):
         if query is None:
             query = Query()
 
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.readmodel.find",
             {
                 ATTR_READMODEL_TYPE: self._model_class.__name__,
@@ -403,7 +406,7 @@ class InMemoryReadModelRepository(TracingMixin, Generic[TModel]):
         if query is None:
             query = Query()
 
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.readmodel.count",
             {
                 ATTR_READMODEL_TYPE: self._model_class.__name__,
@@ -430,7 +433,7 @@ class InMemoryReadModelRepository(TracingMixin, Generic[TModel]):
         Returns:
             Number of records deleted
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.readmodel.truncate",
             {ATTR_READMODEL_TYPE: self._model_class.__name__},
         ):
@@ -469,7 +472,7 @@ class InMemoryReadModelRepository(TracingMixin, Generic[TModel]):
             ... except OptimisticLockError as e:
             ...     print(f"Conflict: expected v{e.expected_version}")
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.readmodel.save_with_version_check",
             {
                 ATTR_READMODEL_TYPE: self._model_class.__name__,

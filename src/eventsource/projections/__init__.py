@@ -39,6 +39,13 @@ Example:
     >>> await projection.handle(event)
 """
 
+# Re-export handles from canonical location for backward compatibility
+# Users should import from eventsource.handlers instead
+from eventsource.handlers import (
+    get_handled_event_type,
+    handles,
+    is_event_handler,
+)
 from eventsource.projections.base import (
     CheckpointTrackingProjection,
     DatabaseProjection,
@@ -51,11 +58,6 @@ from eventsource.projections.coordinator import (
     ProjectionCoordinator,
     ProjectionRegistry,
     SubscriberRegistry,
-)
-from eventsource.projections.decorators import (
-    get_handled_event_type,
-    handles,
-    is_event_handler,
 )
 
 # Protocols from canonical location (TD-007)

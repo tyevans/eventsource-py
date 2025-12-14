@@ -59,7 +59,8 @@ from eventsource.observability import (
     ATTR_EVENT_COUNT,
     ATTR_EXPECTED_VERSION,
     ATTR_TENANT_ID,
-    TracingMixin,
+    Tracer,
+    create_tracer,
 )
 from eventsource.stores.interface import (
     AppendResult,
@@ -134,7 +135,7 @@ class FailureStats:
         }
 
 
-class DualWriteInterceptor(TracingMixin, EventStore):
+class DualWriteInterceptor(EventStore):
     """
     Intercepts writes to duplicate to both stores during migration.
 
@@ -177,6 +178,7 @@ class DualWriteInterceptor(TracingMixin, EventStore):
         target_store: EventStore,
         tenant_id: UUID,
         *,
+        tracer: Tracer | None = None,
         enable_tracing: bool = True,
         max_failure_history: int = 1000,
     ) -> None:
@@ -187,11 +189,14 @@ class DualWriteInterceptor(TracingMixin, EventStore):
             source_store: The authoritative source event store.
             target_store: The target event store being migrated to.
             tenant_id: The tenant ID this interceptor is for.
+            tracer: Optional custom Tracer instance.
             enable_tracing: Whether to enable OpenTelemetry tracing.
             max_failure_history: Maximum number of failures to track (older entries
                 are discarded to prevent unbounded memory growth).
         """
-        self._init_tracing(__name__, enable_tracing)
+        # Composition-based tracing (replaces TracingMixin)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
         self._source = source_store
         self._target = target_store
         self._tenant_id = tenant_id
@@ -342,7 +347,7 @@ class DualWriteInterceptor(TracingMixin, EventStore):
         if not events:
             raise ValueError("Cannot append empty event list")
 
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.dual_write.append_events",
             {
                 ATTR_AGGREGATE_ID: str(aggregate_id),

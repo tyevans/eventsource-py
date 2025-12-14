@@ -96,7 +96,7 @@ from eventsource.migration.subscription_migrator import (
     SubscriptionMigrator,
 )
 from eventsource.migration.sync_lag_tracker import SyncLagTracker
-from eventsource.observability import TracingMixin
+from eventsource.observability import Tracer, create_tracer
 from eventsource.stores.interface import EventStore
 
 if TYPE_CHECKING:
@@ -111,7 +111,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class MigrationCoordinator(TracingMixin):
+class MigrationCoordinator:
     """
     Orchestrates the complete migration lifecycle.
 
@@ -200,6 +200,7 @@ class MigrationCoordinator(TracingMixin):
         lock_manager: PostgreSQLLockManager | None = None,
         position_mapper: PositionMapper | None = None,
         checkpoint_repo: CheckpointRepository | None = None,
+        tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ):
         """
@@ -217,9 +218,12 @@ class MigrationCoordinator(TracingMixin):
                 Required for subscription migration in P3-005.
             checkpoint_repo: CheckpointRepository for subscription checkpoints.
                 Required for subscription migration in P3-005.
+            tracer: Optional custom Tracer instance.
             enable_tracing: Whether to enable OpenTelemetry tracing
         """
-        self._init_tracing(__name__, enable_tracing)
+        # Composition-based tracing (replaces TracingMixin)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
         self._source_store = source_store
         self._migration_repo = migration_repo
         self._routing_repo = routing_repo
@@ -285,7 +289,7 @@ class MigrationCoordinator(TracingMixin):
         Raises:
             MigrationAlreadyExistsError: If active migration exists for tenant
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.coordinator.start_migration",
             {
                 "tenant_id": str(tenant_id),
@@ -374,7 +378,7 @@ class MigrationCoordinator(TracingMixin):
         Raises:
             MigrationNotFoundError: If migration not found
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.coordinator.get_status",
             {"migration.id": str(migration_id)},
         ):
@@ -398,7 +402,7 @@ class MigrationCoordinator(TracingMixin):
             MigrationNotFoundError: If migration not found
             MigrationError: If migration cannot be paused (terminal state)
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.coordinator.pause_migration",
             {"migration.id": str(migration_id)},
         ):
@@ -443,7 +447,7 @@ class MigrationCoordinator(TracingMixin):
             MigrationNotFoundError: If migration not found
             MigrationError: If migration is not paused
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.coordinator.resume_migration",
             {"migration.id": str(migration_id)},
         ):
@@ -490,7 +494,7 @@ class MigrationCoordinator(TracingMixin):
             MigrationNotFoundError: If migration not found
             MigrationError: If migration cannot be aborted (terminal state)
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.coordinator.abort_migration",
             {"migration.id": str(migration_id)},
         ):
@@ -560,7 +564,7 @@ class MigrationCoordinator(TracingMixin):
         Returns:
             List of MigrationStatus for active migrations
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.coordinator.list_active_migrations",
             {},
         ):
@@ -724,7 +728,7 @@ class MigrationCoordinator(TracingMixin):
             ... ):
             ...     handle_status_update(status)
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.coordinator.stream_status",
             {
                 "migration.id": str(migration_id),
@@ -764,7 +768,7 @@ class MigrationCoordinator(TracingMixin):
             migration: Migration instance
             target_store: Target EventStore to copy to
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.coordinator.run_bulk_copy",
             {
                 "migration.id": str(migration.id),
@@ -833,7 +837,7 @@ class MigrationCoordinator(TracingMixin):
             migration: Migration instance
             target_store: Target EventStore to write to
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.coordinator.transition_to_dual_write",
             {
                 "migration.id": str(migration.id),
@@ -913,7 +917,7 @@ class MigrationCoordinator(TracingMixin):
             MigrationStateError: If migration is not in DUAL_WRITE phase.
             MigrationError: If lock_manager was not provided to coordinator.
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.coordinator.trigger_cutover",
             {"migration.id": str(migration_id)},
         ):
@@ -1479,7 +1483,7 @@ class MigrationCoordinator(TracingMixin):
             ...     for violation in report.violations:
             ...         print(f"Violation: {violation}")
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.coordinator.verify_consistency",
             {
                 "migration.id": str(migration_id),
@@ -1583,7 +1587,7 @@ class MigrationCoordinator(TracingMixin):
             ... else:
             ...     print(f"Failed: {summary.failed_count} subscriptions")
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.coordinator.migrate_subscriptions",
             {
                 "migration.id": str(migration_id),

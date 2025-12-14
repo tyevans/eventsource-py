@@ -19,8 +19,8 @@ Example:
 import logging
 from typing import TYPE_CHECKING
 
+from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import ATTR_SUBSCRIPTION_NAME
-from eventsource.observability.tracing import TracingMixin
 from eventsource.subscriptions.subscription import PauseReason, Subscription
 
 if TYPE_CHECKING:
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class PauseResumeController(TracingMixin):
+class PauseResumeController:
     """
     Controls pause and resume operations for subscriptions.
 
@@ -52,6 +52,7 @@ class PauseResumeController(TracingMixin):
         self,
         registry: "SubscriptionRegistry",
         lifecycle: "SubscriptionLifecycleManager",
+        tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ) -> None:
         """
@@ -60,9 +61,14 @@ class PauseResumeController(TracingMixin):
         Args:
             registry: Subscription registry
             lifecycle: Subscription lifecycle manager (for coordinator access)
-            enable_tracing: Whether to enable OpenTelemetry tracing
+            tracer: Optional custom Tracer instance. If not provided, one is
+                   created based on enable_tracing setting.
+            enable_tracing: Whether to enable OpenTelemetry tracing.
+                          Ignored if tracer is explicitly provided.
         """
-        self._init_tracing(__name__, enable_tracing)
+        # Composition-based tracing (replaces TracingMixin)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
 
         self._registry = registry
         self._lifecycle = lifecycle
@@ -85,7 +91,7 @@ class PauseResumeController(TracingMixin):
         Returns:
             True if subscription was paused, False if not found or not pausable
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.pause_resume.pause",
             {ATTR_SUBSCRIPTION_NAME: name},
         ):
@@ -137,7 +143,7 @@ class PauseResumeController(TracingMixin):
         Returns:
             True if subscription was resumed, False if not found or not paused
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.pause_resume.resume",
             {ATTR_SUBSCRIPTION_NAME: name},
         ):

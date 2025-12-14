@@ -25,7 +25,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 from uuid import UUID
 
-from eventsource.observability import TracingMixin
+from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_AGGREGATE_ID,
     ATTR_AGGREGATE_TYPE,
@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 TAggregate = TypeVar("TAggregate", bound="AggregateRoot[Any]")
 
 
-class AggregateSnapshotManager(TracingMixin, Generic[TAggregate]):
+class AggregateSnapshotManager(Generic[TAggregate]):
     """
     Manager for aggregate snapshot operations.
 
@@ -81,6 +81,7 @@ class AggregateSnapshotManager(TracingMixin, Generic[TAggregate]):
         snapshot_store: "SnapshotStore",
         aggregate_type: str,
         strategy: "SnapshotStrategy | None" = None,
+        tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ) -> None:
         """
@@ -91,10 +92,14 @@ class AggregateSnapshotManager(TracingMixin, Generic[TAggregate]):
             aggregate_type: Type name of the aggregate (e.g., "Order")
             strategy: Strategy for deciding when/how to create snapshots.
                      If None, snapshots are only created manually.
+            tracer: Optional custom Tracer instance. If not provided, one is
+                   created based on enable_tracing setting.
             enable_tracing: If True and OpenTelemetry is available, emit traces.
                           Default is True for consistency.
+                          Ignored if tracer is explicitly provided.
         """
-        self._init_tracing(__name__, enable_tracing)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
         self._snapshot_store = snapshot_store
         self._aggregate_type = aggregate_type
         self._strategy = strategy
@@ -135,7 +140,7 @@ class AggregateSnapshotManager(TracingMixin, Generic[TAggregate]):
             Returns None (doesn't raise) for any validation failure,
             enabling graceful fallback to full event replay.
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.snapshot_manager.load_valid_snapshot",
             {
                 ATTR_AGGREGATE_ID: str(aggregate_id),
@@ -212,7 +217,7 @@ class AggregateSnapshotManager(TracingMixin, Generic[TAggregate]):
         if not self._strategy.should_snapshot(aggregate, events_since_snapshot):
             return None
 
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.snapshot_manager.maybe_create_snapshot",
             {
                 ATTR_AGGREGATE_ID: str(aggregate.aggregate_id),
@@ -241,7 +246,7 @@ class AggregateSnapshotManager(TracingMixin, Generic[TAggregate]):
         """
         from eventsource.snapshots.interface import Snapshot
 
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.snapshot_manager.create_snapshot",
             {
                 ATTR_AGGREGATE_ID: str(aggregate.aggregate_id),

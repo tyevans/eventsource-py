@@ -10,7 +10,7 @@ handlers, and works with both:
 - DeclarativeProjection: For async handlers that build read models
 
 Example:
-    >>> from eventsource.projections.decorators import handles
+    >>> from eventsource.handlers import handles
     >>> # or: from eventsource import handles
 """
 
@@ -40,8 +40,28 @@ def handles(event_type: type[DomainEvent]) -> Callable[[F], F]:
     Returns:
         A decorator function that marks the handler and preserves the original function
 
+    Handler Signatures:
+        Valid handler signatures are:
+
+        For aggregates (sync):
+            def handler(self, event: EventType) -> None
+
+        For projections (async with context):
+            async def handler(self, context, event: EventType) -> None
+
+        For standalone handlers (async):
+            async def handler(self, event: EventType) -> None
+
+        Invalid signatures will raise HandlerSignatureError at class
+        initialization time with examples of valid signatures.
+
+    Raises:
+        HandlerSignatureError: If handler signature is invalid (at class init).
+            This occurs when the handler has the wrong number of parameters.
+            The error message includes expected signature patterns and hints.
+
     Example (Aggregate):
-        >>> from eventsource.projections.decorators import handles
+        >>> from eventsource.handlers import handles
         >>> from eventsource.aggregates import DeclarativeAggregate
         >>>
         >>> class OrderAggregate(DeclarativeAggregate[OrderState]):
@@ -51,24 +71,14 @@ def handles(event_type: type[DomainEvent]) -> Callable[[F], F]:
         ...             order_id=self.aggregate_id,
         ...             status="created",
         ...         )
-        ...
-        ...     @handles(OrderShipped)
-        ...     def _on_order_shipped(self, event: OrderShipped) -> None:
-        ...         self._state = self._state.model_copy(
-        ...             update={"status": "shipped"}
-        ...         )
 
     Example (Projection):
-        >>> from eventsource.projections.decorators import handles
+        >>> from eventsource.handlers import handles
         >>> from eventsource.projections import DeclarativeProjection
         >>>
         >>> class OrderProjection(DeclarativeProjection):
         ...     @handles(OrderCreated)
         ...     async def _handle_order_created(self, conn, event: OrderCreated) -> None:
-        ...         await conn.execute(...)
-        ...
-        ...     @handles(OrderShipped)
-        ...     async def _handle_order_shipped(self, conn, event: OrderShipped) -> None:
         ...         await conn.execute(...)
 
     Notes:
@@ -128,3 +138,10 @@ def is_event_handler(func: Callable[..., Any]) -> bool:
         False
     """
     return hasattr(func, "_handles_event_type")
+
+
+__all__ = [
+    "handles",
+    "get_handled_event_type",
+    "is_event_handler",
+]

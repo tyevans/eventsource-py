@@ -1,10 +1,10 @@
 """
 Unit tests for SnapshotStore tracing functionality.
 
-O11Y-010: Tests for SnapshotStore TracingMixin integration.
+O11Y-010: Tests for SnapshotStore Tracer composition integration.
 
 Tests cover:
-- TracingMixin inheritance for all implementations
+- Tracer composition for all implementations
 - enable_tracing parameter in constructor
 - Span creation for save, get, delete, exists methods
 - Correct span attributes using standard ATTR_* constants
@@ -14,9 +14,9 @@ Tests cover:
 
 from __future__ import annotations
 
+import inspect
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import MagicMock, Mock
 from uuid import uuid4
 
 import pytest
@@ -25,7 +25,8 @@ from eventsource.observability import (
     ATTR_AGGREGATE_ID,
     ATTR_AGGREGATE_TYPE,
     ATTR_VERSION,
-    TracingMixin,
+    MockTracer,
+    NullTracer,
 )
 from eventsource.snapshots import InMemorySnapshotStore, Snapshot
 
@@ -49,26 +50,25 @@ def sample_snapshot():
 
 @pytest.fixture
 def mock_tracer():
-    """Create a mock tracer with span context manager."""
-    tracer = Mock()
-    span = MagicMock()
-    span.__enter__ = Mock(return_value=span)
-    span.__exit__ = Mock(return_value=None)
-    tracer.start_as_current_span.return_value = span
-    return tracer
+    """Create a MockTracer for testing span creation."""
+    return MockTracer()
 
 
 # ============================================================================
-# InMemorySnapshotStore TracingMixin Tests
+# InMemorySnapshotStore TracingComposition Tests
 # ============================================================================
 
 
-class TestInMemorySnapshotStoreTracingMixin:
-    """Tests for InMemorySnapshotStore TracingMixin integration."""
+class TestInMemorySnapshotStoreTracingComposition:
+    """Tests for InMemorySnapshotStore Tracer composition integration."""
 
-    def test_inherits_from_tracing_mixin(self):
-        """InMemorySnapshotStore inherits from TracingMixin."""
-        assert issubclass(InMemorySnapshotStore, TracingMixin)
+    def test_uses_tracer_composition(self):
+        """InMemorySnapshotStore uses Tracer composition pattern."""
+        sig = inspect.signature(InMemorySnapshotStore.__init__)
+        params = sig.parameters
+
+        # Should accept tracer parameter for dependency injection
+        assert "tracer" in params
 
     def test_tracing_enabled_by_default(self):
         """Tracing is enabled by default when OTEL is available."""
@@ -77,27 +77,28 @@ class TestInMemorySnapshotStoreTracingMixin:
         # Check that tracing was initialized
         assert hasattr(store, "_enable_tracing")
         assert hasattr(store, "_tracer")
+        assert store._tracer is not None
 
-    def test_tracing_disabled_when_requested(self):
-        """Tracing can be disabled via constructor parameter."""
+    def test_tracing_disabled_uses_null_tracer(self):
+        """When tracing is disabled, NullTracer is used."""
         store = InMemorySnapshotStore(enable_tracing=False)
 
         assert store._enable_tracing is False
-        assert store._tracer is None
+        assert isinstance(store._tracer, NullTracer)
 
-    def test_has_tracing_enabled_property(self):
-        """Store exposes tracing_enabled property from mixin."""
-        store = InMemorySnapshotStore(enable_tracing=True)
+    def test_custom_tracer_can_be_injected(self):
+        """Custom tracer can be injected via constructor."""
+        custom_tracer = NullTracer()
+        store = InMemorySnapshotStore(tracer=custom_tracer)
 
-        # tracing_enabled is a property from TracingMixin
-        assert hasattr(store, "tracing_enabled")
-        assert isinstance(store.tracing_enabled, bool)
+        assert store._tracer is custom_tracer
 
     def test_backward_compatible_constructor(self):
         """Constructor without enable_tracing should work (default True)."""
         store = InMemorySnapshotStore()
         # Should not raise, tracing defaults to enabled
         assert hasattr(store, "_enable_tracing")
+        assert hasattr(store, "_tracer")
 
 
 # ============================================================================
@@ -111,10 +112,7 @@ class TestInMemorySnapshotStoreSpanCreation:
     @pytest.fixture
     def traced_store(self, mock_tracer):
         """Create a store with injected mock tracer."""
-        store = InMemorySnapshotStore(enable_tracing=True)
-        # Inject mock tracer
-        store._tracer = mock_tracer
-        store._enable_tracing = True
+        store = InMemorySnapshotStore(tracer=mock_tracer)
         return store
 
     @pytest.mark.asyncio
@@ -123,18 +121,17 @@ class TestInMemorySnapshotStoreSpanCreation:
         await traced_store.save_snapshot(sample_snapshot)
 
         # Verify span was created with correct name
-        mock_tracer.start_as_current_span.assert_called()
-        call_args = mock_tracer.start_as_current_span.call_args
-        assert call_args[0][0] == "eventsource.snapshot.save"
+        assert "eventsource.snapshot.save" in mock_tracer.span_names
 
     @pytest.mark.asyncio
     async def test_save_span_attributes(self, traced_store, mock_tracer, sample_snapshot):
         """save_snapshot span includes correct standard attributes."""
         await traced_store.save_snapshot(sample_snapshot)
 
-        # Verify correct attributes using standard constants
-        call_args = mock_tracer.start_as_current_span.call_args
-        attributes = call_args[1]["attributes"]
+        # Find the save span and verify attributes
+        save_spans = [(n, a) for n, a in mock_tracer.spans if n == "eventsource.snapshot.save"]
+        assert len(save_spans) > 0
+        _, attributes = save_spans[0]
 
         assert ATTR_AGGREGATE_ID in attributes
         assert attributes[ATTR_AGGREGATE_ID] == str(sample_snapshot.aggregate_id)
@@ -147,7 +144,7 @@ class TestInMemorySnapshotStoreSpanCreation:
     async def test_get_creates_span(self, traced_store, mock_tracer, sample_snapshot):
         """get_snapshot creates a span with correct name."""
         await traced_store.save_snapshot(sample_snapshot)
-        mock_tracer.reset_mock()
+        mock_tracer.clear()
 
         await traced_store.get_snapshot(
             sample_snapshot.aggregate_id,
@@ -155,24 +152,23 @@ class TestInMemorySnapshotStoreSpanCreation:
         )
 
         # Verify span was created with correct name
-        mock_tracer.start_as_current_span.assert_called()
-        call_args = mock_tracer.start_as_current_span.call_args
-        assert call_args[0][0] == "eventsource.snapshot.get"
+        assert "eventsource.snapshot.get" in mock_tracer.span_names
 
     @pytest.mark.asyncio
     async def test_get_span_attributes(self, traced_store, mock_tracer, sample_snapshot):
         """get_snapshot span includes correct standard attributes."""
         await traced_store.save_snapshot(sample_snapshot)
-        mock_tracer.reset_mock()
+        mock_tracer.clear()
 
         await traced_store.get_snapshot(
             sample_snapshot.aggregate_id,
             sample_snapshot.aggregate_type,
         )
 
-        # Verify correct attributes using standard constants
-        call_args = mock_tracer.start_as_current_span.call_args
-        attributes = call_args[1]["attributes"]
+        # Find the get span and verify attributes
+        get_spans = [(n, a) for n, a in mock_tracer.spans if n == "eventsource.snapshot.get"]
+        assert len(get_spans) > 0
+        _, attributes = get_spans[0]
 
         assert ATTR_AGGREGATE_ID in attributes
         assert attributes[ATTR_AGGREGATE_ID] == str(sample_snapshot.aggregate_id)
@@ -183,7 +179,7 @@ class TestInMemorySnapshotStoreSpanCreation:
     async def test_delete_creates_span(self, traced_store, mock_tracer, sample_snapshot):
         """delete_snapshot creates a span with correct name."""
         await traced_store.save_snapshot(sample_snapshot)
-        mock_tracer.reset_mock()
+        mock_tracer.clear()
 
         await traced_store.delete_snapshot(
             sample_snapshot.aggregate_id,
@@ -191,24 +187,23 @@ class TestInMemorySnapshotStoreSpanCreation:
         )
 
         # Verify span was created with correct name
-        mock_tracer.start_as_current_span.assert_called()
-        call_args = mock_tracer.start_as_current_span.call_args
-        assert call_args[0][0] == "eventsource.snapshot.delete"
+        assert "eventsource.snapshot.delete" in mock_tracer.span_names
 
     @pytest.mark.asyncio
     async def test_delete_span_attributes(self, traced_store, mock_tracer, sample_snapshot):
         """delete_snapshot span includes correct standard attributes."""
         await traced_store.save_snapshot(sample_snapshot)
-        mock_tracer.reset_mock()
+        mock_tracer.clear()
 
         await traced_store.delete_snapshot(
             sample_snapshot.aggregate_id,
             sample_snapshot.aggregate_type,
         )
 
-        # Verify correct attributes using standard constants
-        call_args = mock_tracer.start_as_current_span.call_args
-        attributes = call_args[1]["attributes"]
+        # Find the delete span and verify attributes
+        delete_spans = [(n, a) for n, a in mock_tracer.spans if n == "eventsource.snapshot.delete"]
+        assert len(delete_spans) > 0
+        _, attributes = delete_spans[0]
 
         assert ATTR_AGGREGATE_ID in attributes
         assert attributes[ATTR_AGGREGATE_ID] == str(sample_snapshot.aggregate_id)
@@ -224,9 +219,7 @@ class TestInMemorySnapshotStoreSpanCreation:
         )
 
         # Verify span was created with correct name
-        mock_tracer.start_as_current_span.assert_called()
-        call_args = mock_tracer.start_as_current_span.call_args
-        assert call_args[0][0] == "eventsource.snapshot.exists"
+        assert "eventsource.snapshot.exists" in mock_tracer.span_names
 
     @pytest.mark.asyncio
     async def test_exists_span_attributes(self, traced_store, mock_tracer, sample_snapshot):
@@ -236,9 +229,10 @@ class TestInMemorySnapshotStoreSpanCreation:
             sample_snapshot.aggregate_type,
         )
 
-        # Verify correct attributes using standard constants
-        call_args = mock_tracer.start_as_current_span.call_args
-        attributes = call_args[1]["attributes"]
+        # Find the exists span and verify attributes
+        exists_spans = [(n, a) for n, a in mock_tracer.spans if n == "eventsource.snapshot.exists"]
+        assert len(exists_spans) > 0
+        _, attributes = exists_spans[0]
 
         assert ATTR_AGGREGATE_ID in attributes
         assert attributes[ATTR_AGGREGATE_ID] == str(sample_snapshot.aggregate_id)
@@ -251,18 +245,19 @@ class TestInMemorySnapshotStoreSpanCreation:
         await traced_store.delete_snapshots_by_type("Order")
 
         # Verify span was created with correct name
-        mock_tracer.start_as_current_span.assert_called()
-        call_args = mock_tracer.start_as_current_span.call_args
-        assert call_args[0][0] == "eventsource.snapshot.delete_by_type"
+        assert "eventsource.snapshot.delete_by_type" in mock_tracer.span_names
 
     @pytest.mark.asyncio
     async def test_delete_by_type_span_attributes(self, traced_store, mock_tracer):
         """delete_snapshots_by_type span includes correct attributes."""
         await traced_store.delete_snapshots_by_type("Order")
 
-        # Verify correct attributes
-        call_args = mock_tracer.start_as_current_span.call_args
-        attributes = call_args[1]["attributes"]
+        # Find the delete_by_type span and verify attributes
+        delete_spans = [
+            (n, a) for n, a in mock_tracer.spans if n == "eventsource.snapshot.delete_by_type"
+        ]
+        assert len(delete_spans) > 0
+        _, attributes = delete_spans[0]
 
         assert ATTR_AGGREGATE_TYPE in attributes
         assert attributes[ATTR_AGGREGATE_TYPE] == "Order"
@@ -273,9 +268,7 @@ class TestInMemorySnapshotStoreSpanCreation:
         await traced_store.clear()
 
         # Verify span was created with correct name
-        mock_tracer.start_as_current_span.assert_called()
-        call_args = mock_tracer.start_as_current_span.call_args
-        assert call_args[0][0] == "eventsource.snapshot.clear"
+        assert "eventsource.snapshot.clear" in mock_tracer.span_names
 
 
 # ============================================================================
@@ -488,26 +481,34 @@ class TestSnapshotStoreStandardAttributes:
 
 
 # ============================================================================
-# PostgreSQL and SQLite TracingMixin Inheritance Tests
+# PostgreSQL and SQLite TracerComposition Tests
 # ============================================================================
 
 
-class TestPostgreSQLSnapshotStoreTracingMixin:
-    """Tests for PostgreSQLSnapshotStore TracingMixin integration."""
+class TestPostgreSQLSnapshotStoreTracerComposition:
+    """Tests for PostgreSQLSnapshotStore Tracer composition integration."""
 
-    def test_inherits_from_tracing_mixin(self):
-        """PostgreSQLSnapshotStore inherits from TracingMixin."""
+    def test_uses_tracer_composition(self):
+        """PostgreSQLSnapshotStore uses Tracer composition pattern."""
         from eventsource.snapshots import PostgreSQLSnapshotStore
 
-        assert issubclass(PostgreSQLSnapshotStore, TracingMixin)
+        sig = inspect.signature(PostgreSQLSnapshotStore.__init__)
+        params = sig.parameters
+
+        # Should accept tracer parameter for dependency injection
+        assert "tracer" in params
 
 
-class TestSQLiteSnapshotStoreTracingMixin:
-    """Tests for SQLiteSnapshotStore TracingMixin integration."""
+class TestSQLiteSnapshotStoreTracerComposition:
+    """Tests for SQLiteSnapshotStore Tracer composition integration."""
 
-    def test_inherits_from_tracing_mixin(self):
-        """SQLiteSnapshotStore inherits from TracingMixin."""
+    def test_uses_tracer_composition(self):
+        """SQLiteSnapshotStore uses Tracer composition pattern."""
         from eventsource.snapshots import SQLiteSnapshotStore
 
         if SQLiteSnapshotStore is not None:
-            assert issubclass(SQLiteSnapshotStore, TracingMixin)
+            sig = inspect.signature(SQLiteSnapshotStore.__init__)
+            params = sig.parameters
+
+            # Should accept tracer parameter for dependency injection
+            assert "tracer" in params

@@ -1,13 +1,16 @@
 """Tests for RabbitMQEventBus tracing integration.
 
 This module tests the OpenTelemetry tracing functionality of RabbitMQEventBus,
-ensuring proper use of TracingMixin pattern and context propagation.
+ensuring proper use of Tracer composition pattern and context propagation.
 """
 
 import importlib.util
+import inspect
 from unittest.mock import MagicMock
 
 import pytest
+
+from eventsource.observability import NullTracer
 
 # Check if aio-pika is available for these tests
 AIO_PIKA_AVAILABLE = importlib.util.find_spec("aio_pika") is not None
@@ -37,60 +40,65 @@ class TestRabbitMQEventBusTracingConfig:
         assert config.enable_tracing is False
 
 
-class TestRabbitMQEventBusTracingMixin:
-    """Tests for RabbitMQEventBus TracingMixin integration."""
+class TestRabbitMQEventBusTracingComposition:
+    """Tests for RabbitMQEventBus Tracer composition integration."""
 
     @pytest.fixture
     def mock_registry(self) -> MagicMock:
         """Create a mock event registry."""
         return MagicMock()
 
-    def test_inherits_from_tracing_mixin(self) -> None:
-        """RabbitMQEventBus should inherit from TracingMixin."""
+    def test_uses_tracer_composition(self) -> None:
+        """RabbitMQEventBus should use Tracer composition pattern."""
         from eventsource.bus.rabbitmq import RabbitMQEventBus
-        from eventsource.observability import TracingMixin
 
-        assert issubclass(RabbitMQEventBus, TracingMixin)
+        sig = inspect.signature(RabbitMQEventBus.__init__)
+        params = sig.parameters
+
+        # Should accept tracer parameter for dependency injection
+        assert "tracer" in params
 
     def test_init_tracing_called_on_construction(self, mock_registry: MagicMock) -> None:
-        """The _init_tracing method should be called during construction."""
+        """Tracer should be initialized during construction."""
         from eventsource.bus.rabbitmq import RabbitMQEventBus, RabbitMQEventBusConfig
 
         config = RabbitMQEventBusConfig(enable_tracing=True)
         bus = RabbitMQEventBus(config=config, event_registry=mock_registry)
 
-        # _init_tracing sets _enable_tracing and _tracer attributes
+        # Tracer should be set
         assert hasattr(bus, "_enable_tracing")
         assert hasattr(bus, "_tracer")
+        assert bus._tracer is not None
 
-    def test_tracing_disabled_sets_tracer_to_none(self, mock_registry: MagicMock) -> None:
-        """When tracing is disabled, _tracer should be None."""
+    def test_tracing_disabled_uses_null_tracer(self, mock_registry: MagicMock) -> None:
+        """When tracing is disabled, _tracer should be NullTracer."""
         from eventsource.bus.rabbitmq import RabbitMQEventBus, RabbitMQEventBusConfig
 
         config = RabbitMQEventBusConfig(enable_tracing=False)
         bus = RabbitMQEventBus(config=config, event_registry=mock_registry)
 
         assert bus._enable_tracing is False
-        assert bus._tracer is None
+        assert isinstance(bus._tracer, NullTracer)
 
-    def test_tracing_enabled_property(self, mock_registry: MagicMock) -> None:
-        """The tracing_enabled property should reflect tracing state."""
+    def test_custom_tracer_can_be_injected(self, mock_registry: MagicMock) -> None:
+        """Custom tracer can be injected via constructor."""
         from eventsource.bus.rabbitmq import RabbitMQEventBus, RabbitMQEventBusConfig
 
-        # Disabled case
-        config_disabled = RabbitMQEventBusConfig(enable_tracing=False)
-        bus_disabled = RabbitMQEventBus(config=config_disabled, event_registry=mock_registry)
-        assert bus_disabled.tracing_enabled is False
+        custom_tracer = NullTracer()
+        config = RabbitMQEventBusConfig()
+        bus = RabbitMQEventBus(config=config, event_registry=mock_registry, tracer=custom_tracer)
 
-    def test_create_span_context_available(self, mock_registry: MagicMock) -> None:
-        """The _create_span_context method should be available from mixin."""
+        assert bus._tracer is custom_tracer
+
+    def test_tracer_has_span_method(self, mock_registry: MagicMock) -> None:
+        """The tracer should have span method for creating spans."""
         from eventsource.bus.rabbitmq import RabbitMQEventBus, RabbitMQEventBusConfig
 
         config = RabbitMQEventBusConfig()
         bus = RabbitMQEventBus(config=config, event_registry=mock_registry)
 
-        assert hasattr(bus, "_create_span_context")
-        assert callable(bus._create_span_context)
+        assert hasattr(bus._tracer, "span")
+        assert callable(bus._tracer.span)
 
 
 class TestRabbitMQEventBusNoOTELAvailable:

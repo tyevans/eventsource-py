@@ -18,7 +18,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-from eventsource.observability import TracingMixin
+from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_EVENT_TYPE,
     ATTR_PROJECTION_NAME,
@@ -188,7 +188,7 @@ class CheckpointRepository(Protocol):
         ...
 
 
-class PostgreSQLCheckpointRepository(TracingMixin):
+class PostgreSQLCheckpointRepository:
     """
     PostgreSQL implementation of checkpoint repository.
 
@@ -207,6 +207,7 @@ class PostgreSQLCheckpointRepository(TracingMixin):
     def __init__(
         self,
         conn: AsyncConnection | AsyncEngine,
+        tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ):
         """
@@ -214,9 +215,11 @@ class PostgreSQLCheckpointRepository(TracingMixin):
 
         Args:
             conn: Database connection or engine
+            tracer: Optional tracer for tracing (if not provided, one will be created)
             enable_tracing: Whether to enable OpenTelemetry tracing (default True)
         """
-        self._init_tracing(__name__, enable_tracing)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
         self.conn = conn
 
     async def get_checkpoint(self, projection_name: str) -> UUID | None:
@@ -229,7 +232,7 @@ class PostgreSQLCheckpointRepository(TracingMixin):
         Returns:
             Last processed event ID, or None if no checkpoint exists
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.checkpoint.get_checkpoint",
             {ATTR_PROJECTION_NAME: projection_name},
         ):
@@ -261,7 +264,7 @@ class PostgreSQLCheckpointRepository(TracingMixin):
             event_id: Event ID that was processed
             event_type: Type of event processed
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.checkpoint.update_checkpoint",
             {
                 ATTR_PROJECTION_NAME: projection_name,
@@ -306,7 +309,7 @@ class PostgreSQLCheckpointRepository(TracingMixin):
         Returns:
             LagMetrics if checkpoint exists, None otherwise
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.checkpoint.get_lag_metrics",
             {ATTR_PROJECTION_NAME: projection_name},
         ):
@@ -375,7 +378,7 @@ class PostgreSQLCheckpointRepository(TracingMixin):
         Args:
             projection_name: Name of the projection
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.checkpoint.reset_checkpoint",
             {ATTR_PROJECTION_NAME: projection_name},
         ):
@@ -399,7 +402,7 @@ class PostgreSQLCheckpointRepository(TracingMixin):
             Last processed global position, or None if no checkpoint exists
             or if checkpoint doesn't have position data.
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.checkpoint.get_position",
             {ATTR_PROJECTION_NAME: subscription_id},
         ):
@@ -434,7 +437,7 @@ class PostgreSQLCheckpointRepository(TracingMixin):
             event_id: Event ID that was processed
             event_type: Type of event processed
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.checkpoint.save_position",
             {
                 ATTR_PROJECTION_NAME: subscription_id,
@@ -477,7 +480,7 @@ class PostgreSQLCheckpointRepository(TracingMixin):
         Returns:
             List of CheckpointData for all projections
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.checkpoint.get_all_checkpoints",
             {},
         ):
@@ -505,7 +508,7 @@ class PostgreSQLCheckpointRepository(TracingMixin):
             ]
 
 
-class InMemoryCheckpointRepository(TracingMixin):
+class InMemoryCheckpointRepository:
     """
     In-memory implementation of checkpoint repository for testing.
 
@@ -517,14 +520,20 @@ class InMemoryCheckpointRepository(TracingMixin):
         >>> checkpoint = await repo.get_checkpoint("MyProjection")
     """
 
-    def __init__(self, enable_tracing: bool = True) -> None:
+    def __init__(
+        self,
+        tracer: Tracer | None = None,
+        enable_tracing: bool = True,
+    ) -> None:
         """
         Initialize an empty in-memory checkpoint repository.
 
         Args:
+            tracer: Optional tracer for tracing (if not provided, one will be created)
             enable_tracing: Whether to enable OpenTelemetry tracing (default True)
         """
-        self._init_tracing(__name__, enable_tracing)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
         self._checkpoints: dict[str, CheckpointData] = {}
         self._lock: asyncio.Lock = asyncio.Lock()
 
@@ -538,7 +547,7 @@ class InMemoryCheckpointRepository(TracingMixin):
         Returns:
             Last processed event ID, or None if no checkpoint exists
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.checkpoint.get_checkpoint",
             {ATTR_PROJECTION_NAME: projection_name},
         ):
@@ -560,7 +569,7 @@ class InMemoryCheckpointRepository(TracingMixin):
             event_id: Event ID that was processed
             event_type: Type of event processed
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.checkpoint.update_checkpoint",
             {
                 ATTR_PROJECTION_NAME: projection_name,
@@ -598,7 +607,7 @@ class InMemoryCheckpointRepository(TracingMixin):
         Returns:
             LagMetrics if checkpoint exists, None otherwise
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.checkpoint.get_lag_metrics",
             {ATTR_PROJECTION_NAME: projection_name},
         ):
@@ -629,7 +638,7 @@ class InMemoryCheckpointRepository(TracingMixin):
         Args:
             projection_name: Name of the projection
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.checkpoint.reset_checkpoint",
             {ATTR_PROJECTION_NAME: projection_name},
         ):
@@ -647,7 +656,7 @@ class InMemoryCheckpointRepository(TracingMixin):
             Last processed global position, or None if no checkpoint exists
             or if checkpoint doesn't have position data.
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.checkpoint.get_position",
             {ATTR_PROJECTION_NAME: subscription_id},
         ):
@@ -674,7 +683,7 @@ class InMemoryCheckpointRepository(TracingMixin):
             event_id: Event ID that was processed
             event_type: Type of event processed
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.checkpoint.save_position",
             {
                 ATTR_PROJECTION_NAME: subscription_id,
@@ -703,7 +712,7 @@ class InMemoryCheckpointRepository(TracingMixin):
         Returns:
             List of CheckpointData for all projections
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.checkpoint.get_all_checkpoints",
             {},
         ):
@@ -715,7 +724,7 @@ class InMemoryCheckpointRepository(TracingMixin):
 
     async def clear(self) -> None:
         """Clear all checkpoints. Useful for test setup/teardown."""
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.checkpoint.clear",
             {},
         ):
@@ -723,7 +732,7 @@ class InMemoryCheckpointRepository(TracingMixin):
                 self._checkpoints.clear()
 
 
-class SQLiteCheckpointRepository(TracingMixin):
+class SQLiteCheckpointRepository:
     """
     SQLite implementation of checkpoint repository.
 
@@ -748,6 +757,7 @@ class SQLiteCheckpointRepository(TracingMixin):
     def __init__(
         self,
         connection: "aiosqlite.Connection",
+        tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ) -> None:
         """
@@ -755,9 +765,11 @@ class SQLiteCheckpointRepository(TracingMixin):
 
         Args:
             connection: aiosqlite database connection
+            tracer: Optional tracer for tracing (if not provided, one will be created)
             enable_tracing: Whether to enable OpenTelemetry tracing (default True)
         """
-        self._init_tracing(__name__, enable_tracing)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
         self._connection = connection
 
     async def get_checkpoint(self, projection_name: str) -> UUID | None:
@@ -770,7 +782,7 @@ class SQLiteCheckpointRepository(TracingMixin):
         Returns:
             Last processed event ID, or None if no checkpoint exists
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.checkpoint.get_checkpoint",
             {ATTR_PROJECTION_NAME: projection_name},
         ):
@@ -803,7 +815,7 @@ class SQLiteCheckpointRepository(TracingMixin):
             event_id: Event ID that was processed
             event_type: Type of event processed
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.checkpoint.update_checkpoint",
             {
                 ATTR_PROJECTION_NAME: projection_name,
@@ -853,7 +865,7 @@ class SQLiteCheckpointRepository(TracingMixin):
         Returns:
             LagMetrics if checkpoint exists, None otherwise
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.checkpoint.get_lag_metrics",
             {ATTR_PROJECTION_NAME: projection_name},
         ):
@@ -946,7 +958,7 @@ class SQLiteCheckpointRepository(TracingMixin):
         Args:
             projection_name: Name of the projection
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.checkpoint.reset_checkpoint",
             {ATTR_PROJECTION_NAME: projection_name},
         ):
@@ -970,7 +982,7 @@ class SQLiteCheckpointRepository(TracingMixin):
             Last processed global position, or None if no checkpoint exists
             or if checkpoint doesn't have position data.
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.checkpoint.get_position",
             {ATTR_PROJECTION_NAME: subscription_id},
         ):
@@ -1004,7 +1016,7 @@ class SQLiteCheckpointRepository(TracingMixin):
             event_id: Event ID that was processed
             event_type: Type of event processed
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.checkpoint.save_position",
             {
                 ATTR_PROJECTION_NAME: subscription_id,
@@ -1047,7 +1059,7 @@ class SQLiteCheckpointRepository(TracingMixin):
         Returns:
             List of CheckpointData for all projections
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.checkpoint.get_all_checkpoints",
             {},
         ):

@@ -27,7 +27,7 @@ import logging
 from typing import Any
 
 from eventsource.events.base import DomainEvent
-from eventsource.observability import TracingMixin
+from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_EVENT_TYPE,
     ATTR_PROJECTION_NAME,
@@ -40,7 +40,7 @@ from eventsource.repositories.checkpoint import (
 logger = logging.getLogger(__name__)
 
 
-class ProjectionCheckpointManager(TracingMixin):
+class ProjectionCheckpointManager:
     """
     Manager for projection checkpoint operations.
 
@@ -77,6 +77,7 @@ class ProjectionCheckpointManager(TracingMixin):
         self,
         projection_name: str,
         checkpoint_repo: CheckpointRepository | None = None,
+        tracer: Tracer | None = None,
         enable_tracing: bool = False,
     ) -> None:
         """
@@ -86,10 +87,15 @@ class ProjectionCheckpointManager(TracingMixin):
             projection_name: Name of the projection (used as checkpoint key)
             checkpoint_repo: Repository for checkpoint storage.
                            If None, uses InMemoryCheckpointRepository.
+            tracer: Optional custom Tracer instance. If not provided, one is
+                   created based on enable_tracing setting.
             enable_tracing: If True and OpenTelemetry is available, emit traces.
                           Default is False for high-frequency projection operations.
+                          Ignored if tracer is explicitly provided.
         """
-        self._init_tracing(__name__, enable_tracing)
+        # Composition-based tracing (replaces TracingMixin)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
         self._projection_name = projection_name
         self._checkpoint_repo = checkpoint_repo or InMemoryCheckpointRepository()
 
@@ -113,7 +119,7 @@ class ProjectionCheckpointManager(TracingMixin):
         Args:
             event: The domain event that was processed
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.checkpoint_manager.update",
             {
                 ATTR_PROJECTION_NAME: self._projection_name,
@@ -145,7 +151,7 @@ class ProjectionCheckpointManager(TracingMixin):
         Returns:
             Last processed event ID as string, or None if no checkpoint exists
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.checkpoint_manager.get_checkpoint",
             {ATTR_PROJECTION_NAME: self._projection_name},
         ):
@@ -176,7 +182,7 @@ class ProjectionCheckpointManager(TracingMixin):
             - last_processed_at: When last event was processed
             Returns None if no checkpoint exists.
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.checkpoint_manager.get_lag_metrics",
             {ATTR_PROJECTION_NAME: self._projection_name},
         ):
@@ -206,7 +212,7 @@ class ProjectionCheckpointManager(TracingMixin):
 
         Use this when rebuilding a projection from scratch.
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.checkpoint_manager.reset",
             {ATTR_PROJECTION_NAME: self._projection_name},
         ):

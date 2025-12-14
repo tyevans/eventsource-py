@@ -12,7 +12,7 @@ from uuid import UUID
 from eventsource.aggregates.base import AggregateRoot
 from eventsource.aggregates.snapshot_manager import AggregateSnapshotManager
 from eventsource.exceptions import AggregateNotFoundError
-from eventsource.observability import TracingMixin
+from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_AGGREGATE_ID,
     ATTR_AGGREGATE_TYPE,
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 TAggregate = TypeVar("TAggregate", bound="AggregateRoot[Any]")
 
 
-class AggregateRepository(TracingMixin, Generic[TAggregate]):
+class AggregateRepository(Generic[TAggregate]):
     """
     Repository for event-sourced aggregates.
 
@@ -117,6 +117,7 @@ class AggregateRepository(TracingMixin, Generic[TAggregate]):
         snapshot_threshold: int | None = None,
         snapshot_mode: Literal["sync", "background", "manual"] = "sync",
         # Tracing configuration
+        tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ) -> None:
         """
@@ -138,8 +139,11 @@ class AggregateRepository(TracingMixin, Generic[TAggregate]):
                           - "background": Asynchronously after save
                           - "manual": Only via explicit create_snapshot() call
                           Default is "sync" for simplicity.
+            tracer: Optional custom Tracer instance. If not provided, one is
+                   created based on enable_tracing setting.
             enable_tracing: If True and OpenTelemetry is available, emit traces.
                           Defaults to True for consistency with other components.
+                          Ignored if tracer is explicitly provided.
 
         Example:
             >>> # Basic repository (no snapshots)
@@ -165,8 +169,9 @@ class AggregateRepository(TracingMixin, Generic[TAggregate]):
             This is useful when you want control over exactly when
             snapshots are taken (e.g., after major state transitions).
         """
-        # Initialize tracing via mixin
-        self._init_tracing(__name__, enable_tracing)
+        # Initialize tracing via composition (replaces TracingMixin)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
 
         self._event_store = event_store
         self._aggregate_factory = aggregate_factory
@@ -262,7 +267,7 @@ class AggregateRepository(TracingMixin, Generic[TAggregate]):
             >>> order = await repo.load(order_id)
             >>> print(f"Order status: {order.state.status}")
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.repository.load",
             {
                 ATTR_AGGREGATE_ID: str(aggregate_id),
@@ -403,7 +408,7 @@ class AggregateRepository(TracingMixin, Generic[TAggregate]):
             # No changes to persist
             return
 
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.repository.save",
             {
                 ATTR_AGGREGATE_ID: str(aggregate.aggregate_id),
@@ -493,7 +498,7 @@ class AggregateRepository(TracingMixin, Generic[TAggregate]):
                 "Provide a snapshot_store when creating the repository."
             )
 
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.repository.create_snapshot",
             {
                 ATTR_AGGREGATE_ID: str(aggregate.aggregate_id),
@@ -558,7 +563,7 @@ class AggregateRepository(TracingMixin, Generic[TAggregate]):
             >>> if await repo.exists(order_id):
             ...     order = await repo.load(order_id)
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.repository.exists",
             {
                 ATTR_AGGREGATE_ID: str(aggregate_id),

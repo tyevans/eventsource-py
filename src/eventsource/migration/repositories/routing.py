@@ -67,7 +67,7 @@ from eventsource.migration.models import (
     TenantMigrationState,
     TenantRouting,
 )
-from eventsource.observability import TracingMixin
+from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import ATTR_DB_SYSTEM, ATTR_TENANT_ID
 from eventsource.repositories._connection import execute_with_connection
 
@@ -196,7 +196,7 @@ class TenantRoutingRepository(Protocol):
         ...
 
 
-class PostgreSQLTenantRoutingRepository(TracingMixin):
+class PostgreSQLTenantRoutingRepository:
     """
     PostgreSQL implementation of TenantRoutingRepository.
 
@@ -225,6 +225,7 @@ class PostgreSQLTenantRoutingRepository(TracingMixin):
         self,
         conn: AsyncConnection | AsyncEngine,
         *,
+        tracer: Tracer | None = None,
         enable_tracing: bool = True,
         enable_cache: bool = True,
         cache_ttl_seconds: float = 5.0,
@@ -234,11 +235,14 @@ class PostgreSQLTenantRoutingRepository(TracingMixin):
 
         Args:
             conn: Database connection or engine
+            tracer: Optional custom Tracer instance.
             enable_tracing: Whether to enable OpenTelemetry tracing
             enable_cache: Whether to cache routing lookups
             cache_ttl_seconds: Cache TTL in seconds (default 5.0)
         """
-        self._init_tracing(__name__, enable_tracing)
+        # Composition-based tracing (replaces TracingMixin)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
         self._conn = conn
         self._enable_cache = enable_cache
         self._cache_ttl = cache_ttl_seconds
@@ -258,7 +262,7 @@ class PostgreSQLTenantRoutingRepository(TracingMixin):
         Returns:
             TenantRouting instance or None if not configured
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.routing_repo.get_routing",
             {
                 ATTR_TENANT_ID: str(tenant_id),
@@ -316,7 +320,7 @@ class PostgreSQLTenantRoutingRepository(TracingMixin):
         Returns:
             TenantRouting instance (existing or newly created)
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.routing_repo.get_or_default",
             {
                 ATTR_TENANT_ID: str(tenant_id),
@@ -390,7 +394,7 @@ class PostgreSQLTenantRoutingRepository(TracingMixin):
             tenant_id: Tenant UUID
             store_id: Target store identifier
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.routing_repo.set_routing",
             {
                 ATTR_TENANT_ID: str(tenant_id),
@@ -445,7 +449,7 @@ class PostgreSQLTenantRoutingRepository(TracingMixin):
             state: New migration state
             migration_id: Active migration ID (if applicable)
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.routing_repo.set_migration_state",
             {
                 ATTR_TENANT_ID: str(tenant_id),
@@ -509,7 +513,7 @@ class PostgreSQLTenantRoutingRepository(TracingMixin):
         Returns:
             List of TenantRouting instances
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.routing_repo.list_by_state",
             {
                 "migration_state": state.value,
@@ -545,7 +549,7 @@ class PostgreSQLTenantRoutingRepository(TracingMixin):
         Returns:
             List of TenantRouting instances
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.routing_repo.list_by_store",
             {
                 "store_id": store_id,
@@ -580,7 +584,7 @@ class PostgreSQLTenantRoutingRepository(TracingMixin):
         Returns:
             True if a row was deleted, False if no row existed
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.routing_repo.delete_routing",
             {
                 ATTR_TENANT_ID: str(tenant_id),

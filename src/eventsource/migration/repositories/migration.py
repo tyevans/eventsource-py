@@ -61,7 +61,7 @@ from eventsource.migration.models import (
     MigrationConfig,
     MigrationPhase,
 )
-from eventsource.observability import TracingMixin
+from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import ATTR_DB_SYSTEM, ATTR_TENANT_ID
 from eventsource.repositories._connection import execute_with_connection
 
@@ -231,7 +231,7 @@ class MigrationRepository(Protocol):
         ...
 
 
-class PostgreSQLMigrationRepository(TracingMixin):
+class PostgreSQLMigrationRepository:
     """
     PostgreSQL implementation of MigrationRepository.
 
@@ -252,6 +252,7 @@ class PostgreSQLMigrationRepository(TracingMixin):
     def __init__(
         self,
         conn: AsyncConnection | AsyncEngine,
+        tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ):
         """
@@ -259,9 +260,12 @@ class PostgreSQLMigrationRepository(TracingMixin):
 
         Args:
             conn: Database connection or engine
+            tracer: Optional custom Tracer instance.
             enable_tracing: Whether to enable OpenTelemetry tracing
         """
-        self._init_tracing(__name__, enable_tracing)
+        # Composition-based tracing (replaces TracingMixin)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
         self._conn = conn
 
     async def create(self, migration: Migration) -> UUID:
@@ -281,7 +285,7 @@ class PostgreSQLMigrationRepository(TracingMixin):
         Raises:
             MigrationAlreadyExistsError: If active migration exists for tenant
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.migration_repo.create",
             {
                 "migration.id": str(migration.id),
@@ -345,7 +349,7 @@ class PostgreSQLMigrationRepository(TracingMixin):
         Returns:
             Migration instance or None if not found
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.migration_repo.get",
             {
                 "migration.id": str(migration_id),
@@ -388,7 +392,7 @@ class PostgreSQLMigrationRepository(TracingMixin):
         Returns:
             Active Migration instance or None
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.migration_repo.get_by_tenant",
             {
                 ATTR_TENANT_ID: str(tenant_id),
@@ -440,7 +444,7 @@ class PostgreSQLMigrationRepository(TracingMixin):
             MigrationNotFoundError: If migration not found
             InvalidPhaseTransitionError: If transition is invalid
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.migration_repo.update_phase",
             {
                 "migration.id": str(migration_id),
@@ -504,7 +508,7 @@ class PostgreSQLMigrationRepository(TracingMixin):
             last_source_position: Last source position processed
             last_target_position: Last target position written (optional)
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.migration_repo.update_progress",
             {
                 "migration.id": str(migration_id),
@@ -563,7 +567,7 @@ class PostgreSQLMigrationRepository(TracingMixin):
             migration_id: UUID of the migration
             events_total: Total events to migrate
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.migration_repo.set_events_total",
             {
                 "migration.id": str(migration_id),
@@ -603,7 +607,7 @@ class PostgreSQLMigrationRepository(TracingMixin):
             migration_id: UUID of the migration
             error: Error message
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.migration_repo.record_error",
             {
                 "migration.id": str(migration_id),
@@ -649,7 +653,7 @@ class PostgreSQLMigrationRepository(TracingMixin):
             paused: Whether to pause or resume
             reason: Reason for pausing (if paused=True)
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.migration_repo.set_paused",
             {
                 "migration.id": str(migration_id),
@@ -701,7 +705,7 @@ class PostgreSQLMigrationRepository(TracingMixin):
         Returns:
             List of active Migration instances
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.migration_repo.list_active",
             {ATTR_DB_SYSTEM: "postgresql"},
         ):

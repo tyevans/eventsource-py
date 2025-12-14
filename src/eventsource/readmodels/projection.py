@@ -278,7 +278,7 @@ class ReadModelProjection(DatabaseProjection, Generic[TModel]):
 
         handler_name = handler_info.handler_name
 
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.projection.handler",
             {
                 ATTR_PROJECTION_NAME: self._projection_name,

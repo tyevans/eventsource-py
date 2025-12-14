@@ -22,7 +22,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from eventsource.events.base import DomainEvent
-from eventsource.observability import TracingMixin
+from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_AGGREGATE_ID,
     ATTR_AGGREGATE_TYPE,
@@ -32,7 +32,7 @@ from eventsource.observability.attributes import (
     ATTR_EVENT_TYPE,
 )
 from eventsource.repositories._connection import execute_with_connection
-from eventsource.repositories._json import EventSourceJSONEncoder, json_dumps
+from eventsource.serialization import EventSourceJSONEncoder, json_dumps
 
 if TYPE_CHECKING:
     import aiosqlite
@@ -179,8 +179,23 @@ class OutboxRepository(Protocol):
         """
         ...
 
+    async def list_pending_events(self, limit: int = 100) -> list[OutboxEntry]:
+        """
+        List pending events that need to be published.
 
-class PostgreSQLOutboxRepository(TracingMixin):
+        This is an alias for get_pending_events() for naming consistency.
+        Prefer this method when fetching multiple entries.
+
+        Args:
+            limit: Maximum number of events to return
+
+        Returns:
+            List of OutboxEntry instances
+        """
+        ...
+
+
+class PostgreSQLOutboxRepository:
     """
     PostgreSQL implementation of outbox repository.
 
@@ -201,6 +216,7 @@ class PostgreSQLOutboxRepository(TracingMixin):
     def __init__(
         self,
         conn: AsyncConnection | AsyncEngine,
+        tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ):
         """
@@ -208,9 +224,11 @@ class PostgreSQLOutboxRepository(TracingMixin):
 
         Args:
             conn: Database connection or engine
+            tracer: Optional tracer for tracing (if not provided, one will be created)
             enable_tracing: Whether to enable OpenTelemetry tracing (default True)
         """
-        self._init_tracing(__name__, enable_tracing)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
         self.conn = conn
 
     async def add_event(self, event: DomainEvent) -> UUID:
@@ -223,7 +241,7 @@ class PostgreSQLOutboxRepository(TracingMixin):
         Returns:
             Outbox record ID
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.outbox.add",
             {
                 ATTR_EVENT_ID: str(event.event_id),
@@ -280,7 +298,7 @@ class PostgreSQLOutboxRepository(TracingMixin):
         Returns:
             List of OutboxEntry instances
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.outbox.get_pending",
             {
                 "limit": limit,
@@ -326,7 +344,7 @@ class PostgreSQLOutboxRepository(TracingMixin):
         Args:
             outbox_id: Outbox record ID
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.outbox.mark_published",
             {
                 "outbox.id": str(outbox_id),
@@ -352,7 +370,7 @@ class PostgreSQLOutboxRepository(TracingMixin):
             outbox_id: Outbox record ID
             error: Error message (optional)
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.outbox.increment_retry",
             {
                 "outbox.id": str(outbox_id),
@@ -378,7 +396,7 @@ class PostgreSQLOutboxRepository(TracingMixin):
             outbox_id: Outbox record ID
             error: Error message
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.outbox.mark_failed",
             {
                 "outbox.id": str(outbox_id),
@@ -406,7 +424,7 @@ class PostgreSQLOutboxRepository(TracingMixin):
         Returns:
             Number of records deleted
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.outbox.cleanup",
             {
                 "older_than_days": days,
@@ -435,7 +453,7 @@ class PostgreSQLOutboxRepository(TracingMixin):
         Returns:
             OutboxStats with outbox metrics
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.outbox.get_stats",
             {ATTR_DB_SYSTEM: "postgresql"},
         ):
@@ -471,8 +489,12 @@ class PostgreSQLOutboxRepository(TracingMixin):
                 avg_retries=float(row[4]) if row[4] else 0.0,
             )
 
+    async def list_pending_events(self, limit: int = 100) -> list[OutboxEntry]:
+        """Alias for get_pending_events() - preferred for naming consistency."""
+        return await self.get_pending_events(limit)
 
-class InMemoryOutboxRepository(TracingMixin):
+
+class InMemoryOutboxRepository:
     """
     In-memory implementation of outbox repository for testing.
 
@@ -485,14 +507,20 @@ class InMemoryOutboxRepository(TracingMixin):
         >>> await repo.mark_published(pending[0].id)
     """
 
-    def __init__(self, enable_tracing: bool = True) -> None:
+    def __init__(
+        self,
+        tracer: Tracer | None = None,
+        enable_tracing: bool = True,
+    ) -> None:
         """
         Initialize an empty in-memory outbox repository.
 
         Args:
+            tracer: Optional tracer for tracing (if not provided, one will be created)
             enable_tracing: Whether to enable OpenTelemetry tracing (default True)
         """
-        self._init_tracing(__name__, enable_tracing)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
         self._entries: dict[UUID, OutboxEntry] = {}
         self._lock: asyncio.Lock = asyncio.Lock()
 
@@ -506,7 +534,7 @@ class InMemoryOutboxRepository(TracingMixin):
         Returns:
             Outbox record ID
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.outbox.add",
             {
                 ATTR_EVENT_ID: str(event.event_id),
@@ -554,7 +582,7 @@ class InMemoryOutboxRepository(TracingMixin):
         Returns:
             List of OutboxEntry instances
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.outbox.get_pending",
             {
                 "limit": limit,
@@ -577,7 +605,7 @@ class InMemoryOutboxRepository(TracingMixin):
         Args:
             outbox_id: Outbox record ID
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.outbox.mark_published",
             {
                 "outbox.id": str(outbox_id),
@@ -599,7 +627,7 @@ class InMemoryOutboxRepository(TracingMixin):
             outbox_id: Outbox record ID
             error: Error message (optional)
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.outbox.increment_retry",
             {
                 "outbox.id": str(outbox_id),
@@ -621,7 +649,7 @@ class InMemoryOutboxRepository(TracingMixin):
             outbox_id: Outbox record ID
             error: Error message
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.outbox.mark_failed",
             {
                 "outbox.id": str(outbox_id),
@@ -645,7 +673,7 @@ class InMemoryOutboxRepository(TracingMixin):
         Returns:
             Number of records deleted
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.outbox.cleanup",
             {
                 "older_than_days": days,
@@ -682,7 +710,7 @@ class InMemoryOutboxRepository(TracingMixin):
         Returns:
             OutboxStats with outbox metrics
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.outbox.get_stats",
             {ATTR_DB_SYSTEM: "memory"},
         ):
@@ -709,9 +737,13 @@ class InMemoryOutboxRepository(TracingMixin):
                     avg_retries=avg_retries,
                 )
 
+    async def list_pending_events(self, limit: int = 100) -> list[OutboxEntry]:
+        """Alias for get_pending_events() - preferred for naming consistency."""
+        return await self.get_pending_events(limit)
+
     async def clear(self) -> None:
         """Clear all entries. Useful for test setup/teardown."""
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.outbox.clear",
             {ATTR_DB_SYSTEM: "memory"},
         ):
@@ -719,7 +751,7 @@ class InMemoryOutboxRepository(TracingMixin):
                 self._entries.clear()
 
 
-class SQLiteOutboxRepository(TracingMixin):
+class SQLiteOutboxRepository:
     """
     SQLite implementation of outbox repository.
 
@@ -747,6 +779,7 @@ class SQLiteOutboxRepository(TracingMixin):
     def __init__(
         self,
         connection: "aiosqlite.Connection",
+        tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ) -> None:
         """
@@ -754,9 +787,11 @@ class SQLiteOutboxRepository(TracingMixin):
 
         Args:
             connection: aiosqlite database connection
+            tracer: Optional tracer for tracing (if not provided, one will be created)
             enable_tracing: Whether to enable OpenTelemetry tracing (default True)
         """
-        self._init_tracing(__name__, enable_tracing)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
         self._connection = connection
 
     @staticmethod
@@ -779,7 +814,7 @@ class SQLiteOutboxRepository(TracingMixin):
         Returns:
             Outbox record ID (generated UUID)
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.outbox.add",
             {
                 ATTR_EVENT_ID: str(event.event_id),
@@ -834,7 +869,7 @@ class SQLiteOutboxRepository(TracingMixin):
         Returns:
             List of OutboxEntry instances
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.outbox.get_pending",
             {
                 "limit": limit,
@@ -880,7 +915,7 @@ class SQLiteOutboxRepository(TracingMixin):
         Args:
             outbox_id: Outbox record ID
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.outbox.mark_published",
             {
                 "outbox.id": str(outbox_id),
@@ -907,7 +942,7 @@ class SQLiteOutboxRepository(TracingMixin):
             outbox_id: Outbox record ID
             error: Error message (optional)
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.outbox.increment_retry",
             {
                 "outbox.id": str(outbox_id),
@@ -934,7 +969,7 @@ class SQLiteOutboxRepository(TracingMixin):
             outbox_id: Outbox record ID
             error: Error message
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.outbox.mark_failed",
             {
                 "outbox.id": str(outbox_id),
@@ -963,7 +998,7 @@ class SQLiteOutboxRepository(TracingMixin):
         Returns:
             Number of records deleted
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.outbox.cleanup",
             {
                 "older_than_days": days,
@@ -992,7 +1027,7 @@ class SQLiteOutboxRepository(TracingMixin):
         Returns:
             OutboxStats with outbox metrics
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.outbox.get_stats",
             {ATTR_DB_SYSTEM: "sqlite"},
         ):
@@ -1035,6 +1070,10 @@ class SQLiteOutboxRepository(TracingMixin):
                 oldest_pending=oldest_pending,
                 avg_retries=float(row[4]) if row[4] else 0.0,
             )
+
+    async def list_pending_events(self, limit: int = 100) -> list[OutboxEntry]:
+        """Alias for get_pending_events() - preferred for naming consistency."""
+        return await self.get_pending_events(limit)
 
 
 # Type alias for backwards compatibility

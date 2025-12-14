@@ -23,7 +23,7 @@ Example:
 import logging
 
 from eventsource.events.base import DomainEvent
-from eventsource.observability import TracingMixin
+from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_EVENT_ID,
     ATTR_EVENT_TYPE,
@@ -35,7 +35,7 @@ from eventsource.repositories.dlq import DLQEntry, DLQRepository, InMemoryDLQRep
 logger = logging.getLogger(__name__)
 
 
-class ProjectionDLQManager(TracingMixin):
+class ProjectionDLQManager:
     """
     Manager for projection Dead Letter Queue operations.
 
@@ -69,6 +69,7 @@ class ProjectionDLQManager(TracingMixin):
         self,
         projection_name: str,
         dlq_repo: DLQRepository | None = None,
+        tracer: Tracer | None = None,
         enable_tracing: bool = False,
     ) -> None:
         """
@@ -78,10 +79,15 @@ class ProjectionDLQManager(TracingMixin):
             projection_name: Name of the projection (used in DLQ entries)
             dlq_repo: Repository for DLQ storage.
                      If None, uses InMemoryDLQRepository.
+            tracer: Optional custom Tracer instance. If not provided, one is
+                   created based on enable_tracing setting.
             enable_tracing: If True and OpenTelemetry is available, emit traces.
                           Default is False for high-frequency operations.
+                          Ignored if tracer is explicitly provided.
         """
-        self._init_tracing(__name__, enable_tracing)
+        # Composition-based tracing (replaces TracingMixin)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
         self._projection_name = projection_name
         self._dlq_repo = dlq_repo or InMemoryDLQRepository()
 
@@ -116,7 +122,7 @@ class ProjectionDLQManager(TracingMixin):
         Returns:
             True if event was successfully added to DLQ, False if DLQ write failed
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.dlq_manager.send_to_dlq",
             {
                 ATTR_PROJECTION_NAME: self._projection_name,
@@ -186,7 +192,7 @@ class ProjectionDLQManager(TracingMixin):
         Returns:
             List of failed event records with error information
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.dlq_manager.get_failed_events",
             {ATTR_PROJECTION_NAME: self._projection_name},
         ):

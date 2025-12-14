@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 from eventsource.events.base import DomainEvent
 from eventsource.handlers.registry import HandlerRegistry
-from eventsource.observability import TracingMixin
+from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_EVENT_ID,
     ATTR_EVENT_TYPE,
@@ -161,7 +161,7 @@ class EventHandlerBase(ABC):
         pass
 
 
-class CheckpointTrackingProjection(TracingMixin, EventSubscriber, ABC):
+class CheckpointTrackingProjection(EventSubscriber, ABC):
     """
     Base class for projections with automatic checkpoint tracking.
 
@@ -210,6 +210,7 @@ class CheckpointTrackingProjection(TracingMixin, EventSubscriber, ABC):
         checkpoint_repo: CheckpointRepository | None = None,
         dlq_repo: DLQRepository | None = None,
         retry_policy: RetryPolicy | None = None,
+        tracer: Tracer | None = None,
         enable_tracing: bool = False,
     ) -> None:
         """
@@ -222,12 +223,16 @@ class CheckpointTrackingProjection(TracingMixin, EventSubscriber, ABC):
                      If None, uses InMemoryDLQRepository.
             retry_policy: Policy for retry behavior.
                          If None, uses ExponentialBackoffRetryPolicy with defaults.
+            tracer: Optional custom Tracer instance. If not provided, one is
+                   created based on enable_tracing setting.
             enable_tracing: If True and OpenTelemetry is available, emit traces.
                           Default is False (tracing off for high-frequency projections).
+                          Ignored if tracer is explicitly provided.
         """
         self._projection_name = self.__class__.__name__
-        # Initialize tracing via TracingMixin (default OFF for projections)
-        self._init_tracing(__name__, enable_tracing)
+        # Composition-based tracing (replaces TracingMixin)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
 
         # Use new managers for checkpoint and DLQ operations
         self._checkpoint_manager = ProjectionCheckpointManager(
@@ -272,7 +277,7 @@ class CheckpointTrackingProjection(TracingMixin, EventSubscriber, ABC):
         Args:
             event: The domain event to process
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.projection.handle",
             {
                 ATTR_PROJECTION_NAME: self._projection_name,
@@ -568,7 +573,7 @@ class DeclarativeProjection(CheckpointTrackingProjection):
         handler_name = handler_info.handler_name
 
         # Dispatch to handler with optional tracing
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.projection.handler",
             {
                 ATTR_PROJECTION_NAME: self._projection_name,
@@ -740,7 +745,7 @@ class DatabaseProjection(DeclarativeProjection):
         handler_name = handler_info.handler_name
 
         # Dispatch to handler with tracing
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.projection.handler",
             {
                 ATTR_PROJECTION_NAME: self._projection_name,

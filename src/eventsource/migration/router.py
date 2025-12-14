@@ -48,7 +48,7 @@ from eventsource.migration.write_pause import (
     WritePausedError,
     WritePauseManager,
 )
-from eventsource.observability import TracingMixin
+from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_AGGREGATE_ID,
     ATTR_AGGREGATE_TYPE,
@@ -88,7 +88,7 @@ class StoreNotFoundError(Exception):
         super().__init__(f"Store not found: {store_id}")
 
 
-class TenantStoreRouter(TracingMixin, EventStore):
+class TenantStoreRouter(EventStore):
     """
     EventStore implementation that routes operations by tenant.
 
@@ -126,6 +126,7 @@ class TenantStoreRouter(TracingMixin, EventStore):
         *,
         default_store_id: str = "default",
         write_pause_timeout: float = 5.0,
+        tracer: Tracer | None = None,
         enable_tracing: bool = True,
         write_pause_manager: WritePauseManager | None = None,
     ):
@@ -138,12 +139,15 @@ class TenantStoreRouter(TracingMixin, EventStore):
             stores: Dictionary mapping store IDs to EventStore instances
             default_store_id: Identifier for the default store
             write_pause_timeout: Max seconds to wait during cutover pause
+            tracer: Optional custom Tracer instance.
             enable_tracing: Whether to enable OpenTelemetry tracing
             write_pause_manager: Optional WritePauseManager instance for
                 coordinating write pauses. If not provided, a default
                 instance will be created.
         """
-        self._init_tracing(__name__, enable_tracing)
+        # Composition-based tracing (replaces TracingMixin)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
         self._default_store = default_store
         self._default_store_id = default_store_id
         self._routing_repo = routing_repo
@@ -350,7 +354,7 @@ class TenantStoreRouter(TracingMixin, EventStore):
 
         tenant_id = self._extract_tenant_id(events)
 
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.router.append_events",
             {
                 ATTR_AGGREGATE_ID: str(aggregate_id),
@@ -398,7 +402,7 @@ class TenantStoreRouter(TracingMixin, EventStore):
         Returns:
             EventStream containing the aggregate's events
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.router.get_events",
             {
                 ATTR_AGGREGATE_ID: str(aggregate_id),
@@ -437,7 +441,7 @@ class TenantStoreRouter(TracingMixin, EventStore):
         Returns:
             List of events in chronological order
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.router.get_events_by_type",
             {
                 ATTR_AGGREGATE_TYPE: aggregate_type,
@@ -467,7 +471,7 @@ class TenantStoreRouter(TracingMixin, EventStore):
         Returns:
             True if event exists in any store
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.router.event_exists",
             {},
         ):
@@ -523,7 +527,7 @@ class TenantStoreRouter(TracingMixin, EventStore):
         """
         options = options or ReadOptions()
 
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.router.read_stream",
             {
                 "stream_id": stream_id,
@@ -556,7 +560,7 @@ class TenantStoreRouter(TracingMixin, EventStore):
         """
         options = options or ReadOptions()
 
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.router.read_all",
             {
                 ATTR_TENANT_ID: str(options.tenant_id) if options.tenant_id else "all",

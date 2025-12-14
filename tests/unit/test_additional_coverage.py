@@ -16,9 +16,9 @@ from uuid import uuid4
 import pytest
 
 from eventsource.aggregates.base import AggregateRoot, DeclarativeAggregate
-from eventsource.bus.interface import AsyncEventHandler
 from eventsource.bus.memory import InMemoryEventBus
 from eventsource.events.base import DomainEvent
+from eventsource.handlers import handles
 from eventsource.projections.base import (
     CheckpointTrackingProjection,
     DeclarativeProjection,
@@ -26,12 +26,12 @@ from eventsource.projections.base import (
     Projection,
     SyncProjection,
 )
-from eventsource.projections.decorators import handles
 from eventsource.protocols import (
-    FlexibleEventHandler as EventHandler,
+    AsyncEventHandler,
+    FlexibleEventSubscriber,
 )
 from eventsource.protocols import (
-    FlexibleEventSubscriber as EventSubscriber,
+    FlexibleEventHandler as EventHandler,
 )
 from eventsource.repositories.checkpoint import InMemoryCheckpointRepository
 from eventsource.stores.interface import (
@@ -451,7 +451,7 @@ class TestProtocolCompliance:
         assert isinstance(handler, EventHandler)
 
     def test_event_subscriber_protocol(self):
-        """Test that projections satisfy EventSubscriber protocol."""
+        """Test that projections satisfy FlexibleEventSubscriber protocol."""
 
         class MySubscriber:
             def subscribed_to(self):
@@ -461,7 +461,7 @@ class TestProtocolCompliance:
                 pass
 
         subscriber = MySubscriber()
-        assert isinstance(subscriber, EventSubscriber)
+        assert isinstance(subscriber, FlexibleEventSubscriber)
 
 
 # --- Read Options Tests ---

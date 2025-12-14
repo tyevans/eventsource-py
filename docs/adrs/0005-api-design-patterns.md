@@ -109,7 +109,7 @@ async for stored_event in store.read_all():
 The `@handles` decorator enables declarative event routing in projections, eliminating manual routing boilerplate and providing automatic handler discovery.
 
 ```python
-from eventsource.projections.decorators import handles
+from eventsource.handlers import handles
 from eventsource.projections.base import DeclarativeProjection
 
 class OrderProjection(DeclarativeProjection):

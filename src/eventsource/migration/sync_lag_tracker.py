@@ -51,7 +51,8 @@ from uuid import UUID
 from eventsource.migration.models import MigrationConfig, SyncLag
 from eventsource.observability import (
     ATTR_TENANT_ID,
-    TracingMixin,
+    Tracer,
+    create_tracer,
 )
 
 if TYPE_CHECKING:
@@ -124,7 +125,7 @@ class LagStats:
         }
 
 
-class SyncLagTracker(TracingMixin):
+class SyncLagTracker:
     """
     Tracks synchronization lag between source and target stores.
 
@@ -169,6 +170,7 @@ class SyncLagTracker(TracingMixin):
         config: MigrationConfig | None = None,
         tenant_id: UUID | None = None,
         *,
+        tracer: Tracer | None = None,
         enable_tracing: bool = True,
         max_sample_history: int = 100,
     ) -> None:
@@ -180,11 +182,14 @@ class SyncLagTracker(TracingMixin):
             target_store: The target event store being migrated to.
             config: Migration configuration (defaults to MigrationConfig()).
             tenant_id: Optional tenant ID for logging and tracing.
+            tracer: Optional custom Tracer instance.
             enable_tracing: Whether to enable OpenTelemetry tracing.
             max_sample_history: Maximum number of lag samples to retain
                 for statistics calculation.
         """
-        self._init_tracing(__name__, enable_tracing)
+        # Composition-based tracing (replaces TracingMixin)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
         self._source = source_store
         self._target = target_store
         self._config = config or MigrationConfig()
@@ -250,7 +255,7 @@ class SyncLagTracker(TracingMixin):
             >>> print(f"Target at {lag.target_position}")
             >>> print(f"Lag: {lag.events} events")
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.sync_lag.calculate_lag",
             {
                 ATTR_TENANT_ID: str(self._tenant_id) if self._tenant_id else None,
@@ -341,7 +346,7 @@ class SyncLagTracker(TracingMixin):
             >>> if tracker.is_sync_ready():
             ...     await cutover_manager.execute_cutover()
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.sync_lag.is_sync_ready",
             {
                 ATTR_TENANT_ID: str(self._tenant_id) if self._tenant_id else None,

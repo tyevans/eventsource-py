@@ -48,7 +48,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from eventsource.migration.models import MigrationStatus
-from eventsource.observability import TracingMixin
+from eventsource.observability import Tracer, create_tracer
 
 if TYPE_CHECKING:
     from eventsource.migration.coordinator import MigrationCoordinator
@@ -56,7 +56,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class StatusStreamer(TracingMixin):
+class StatusStreamer:
     """
     Real-time status streaming for migration monitoring.
 
@@ -95,6 +95,7 @@ class StatusStreamer(TracingMixin):
         coordinator: MigrationCoordinator,
         migration_id: UUID,
         *,
+        tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ):
         """
@@ -103,9 +104,12 @@ class StatusStreamer(TracingMixin):
         Args:
             coordinator: MigrationCoordinator instance for fetching status
             migration_id: UUID of the migration to stream
+            tracer: Optional custom Tracer instance.
             enable_tracing: Whether to enable OpenTelemetry tracing
         """
-        self._init_tracing(__name__, enable_tracing)
+        # Composition-based tracing (replaces TracingMixin)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
         self._coordinator = coordinator
         self._migration_id = migration_id
         self._subscribers: dict[int, asyncio.Queue[MigrationStatus]] = {}
@@ -170,7 +174,7 @@ class StatusStreamer(TracingMixin):
         if self._closed:
             raise RuntimeError("StatusStreamer has been closed")
 
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.status_streamer.stream_status",
             {
                 "migration.id": str(self._migration_id),
@@ -346,7 +350,7 @@ class StatusStreamer(TracingMixin):
         Marks the streamer as closed, which will cause all active
         stream_status() iterators to complete on their next iteration.
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.status_streamer.close",
             {"migration.id": str(self._migration_id)},
         ):
@@ -360,7 +364,7 @@ class StatusStreamer(TracingMixin):
             )
 
 
-class StatusStreamManager(TracingMixin):
+class StatusStreamManager:
     """
     Manager for multiple StatusStreamer instances.
 
@@ -397,6 +401,7 @@ class StatusStreamManager(TracingMixin):
         self,
         coordinator: MigrationCoordinator,
         *,
+        tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ):
         """
@@ -404,9 +409,12 @@ class StatusStreamManager(TracingMixin):
 
         Args:
             coordinator: MigrationCoordinator instance.
+            tracer: Optional custom Tracer instance.
             enable_tracing: Whether to enable OpenTelemetry tracing.
         """
-        self._init_tracing(__name__, enable_tracing)
+        # Composition-based tracing (replaces TracingMixin)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
         self._coordinator = coordinator
         self._streamers: dict[UUID, StatusStreamer] = {}
         self._lock = asyncio.Lock()
@@ -429,7 +437,7 @@ class StatusStreamManager(TracingMixin):
         Returns:
             StatusStreamer for the migration.
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.status_stream_manager.get_streamer",
             {"migration.id": str(migration_id)},
         ):
@@ -454,7 +462,7 @@ class StatusStreamManager(TracingMixin):
         Args:
             migration_id: UUID of the migration.
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.status_stream_manager.close_streamer",
             {"migration.id": str(migration_id)},
         ):
@@ -469,7 +477,7 @@ class StatusStreamManager(TracingMixin):
 
         Typically called during shutdown to clean up resources.
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.status_stream_manager.close_all",
             {},
         ):
@@ -490,7 +498,7 @@ class StatusStreamManager(TracingMixin):
         Returns:
             Number of streamers cleaned up.
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.status_stream_manager.cleanup_terminal_migrations",
             {},
         ):

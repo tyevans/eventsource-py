@@ -29,7 +29,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from eventsource.observability import TracingMixin
+from eventsource.observability import Tracer, create_tracer
 
 if TYPE_CHECKING:
     pass
@@ -90,7 +90,7 @@ class LockNotHeldError(Exception):
         super().__init__(f"Lock '{key}' is not held by this session")
 
 
-class PostgreSQLLockManager(TracingMixin):
+class PostgreSQLLockManager:
     """
     Manages PostgreSQL advisory locks for distributed coordination.
 
@@ -130,6 +130,7 @@ class PostgreSQLLockManager(TracingMixin):
         session_factory: async_sessionmaker[AsyncSession],
         *,
         holder_id: str | None = None,
+        tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ):
         """
@@ -138,9 +139,13 @@ class PostgreSQLLockManager(TracingMixin):
         Args:
             session_factory: SQLAlchemy async session factory for database access
             holder_id: Optional identifier for this lock holder (for debugging)
-            enable_tracing: Whether to enable OpenTelemetry tracing
+            tracer: Optional custom Tracer instance. If not provided, one is
+                   created based on enable_tracing setting.
+            enable_tracing: Whether to enable OpenTelemetry tracing.
+                          Ignored if tracer is explicitly provided.
         """
-        self._init_tracing(__name__, enable_tracing)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
         self._session_factory = session_factory
         self._holder_id = holder_id
         self._held_locks: dict[str, tuple[AsyncSession, int]] = {}
@@ -201,7 +206,7 @@ class PostgreSQLLockManager(TracingMixin):
         """
         lock_id = self._key_to_lock_id(key)
 
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.lock.acquire",
             {
                 "lock.key": key,
@@ -313,7 +318,7 @@ class PostgreSQLLockManager(TracingMixin):
             session: Session holding the lock
             lock_id: Numeric lock ID
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.lock.release",
             {
                 "lock.key": key,

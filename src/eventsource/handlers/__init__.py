@@ -5,44 +5,39 @@ This module provides utilities for working with event handlers:
 - HandlerAdapter: Normalizes sync/async handlers to consistent async interface
 - HandlerRegistry: Discovers and routes handlers for declarative projections
 - HandlerInfo: Metadata about registered handlers
+- handles: Decorator for marking event handler methods
+- get_handled_event_type: Get event type from decorated handler
+- is_event_handler: Check if function is an event handler
 
 Example:
-    >>> from eventsource.handlers import HandlerAdapter, HandlerRegistry
+    >>> from eventsource.handlers import handles, HandlerAdapter, HandlerRegistry
     >>>
-    >>> # Normalize handlers for event bus
+    >>> @handles(OrderCreated)
+    >>> async def my_handler(self, conn, event): pass
+    >>>
     >>> adapter = HandlerAdapter(my_sync_handler)
-    >>> await adapter.handle(event)  # Works with both sync and async handlers
-    >>>
-    >>> # Discover and route handlers for projections
-    >>> registry = HandlerRegistry(my_projection)
-    >>> await registry.dispatch(event)
+    >>> await adapter.handle(event)
 """
 
-# HandlerAdapter is safe to import directly - it has no circular dependencies
 from eventsource.handlers.adapter import HandlerAdapter, get_handler_name
-
-
-def __getattr__(name: str) -> object:
-    """Lazy import for HandlerRegistry and HandlerInfo to avoid circular imports.
-
-    The registry module imports from projections.decorators which imports from
-    projections.base which imports HandlerRegistry, creating a circular dependency.
-    Using lazy imports breaks this cycle.
-    """
-    if name == "HandlerRegistry":
-        from eventsource.handlers.registry import HandlerRegistry
-
-        return HandlerRegistry
-    elif name == "HandlerInfo":
-        from eventsource.handlers.registry import HandlerInfo
-
-        return HandlerInfo
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
+from eventsource.handlers.decorators import (
+    get_handled_event_type,
+    handles,
+    is_event_handler,
+)
+from eventsource.handlers.registry import (
+    HandlerInfo,
+    HandlerRegistry,
+    HandlerSignatureError,
+)
 
 __all__ = [
     "HandlerAdapter",
     "HandlerInfo",
     "HandlerRegistry",
+    "HandlerSignatureError",
     "get_handler_name",
+    "handles",
+    "get_handled_event_type",
+    "is_event_handler",
 ]

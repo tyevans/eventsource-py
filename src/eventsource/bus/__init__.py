@@ -67,7 +67,6 @@ For Kafka-based distributed event bus:
 """
 
 from eventsource.bus.interface import (
-    AsyncEventHandler,
     EventBus,
     EventHandlerFunc,
 )
@@ -102,6 +101,7 @@ from eventsource.bus.redis import (
 
 # Protocols from canonical location
 from eventsource.protocols import (
+    AsyncEventHandler,
     EventHandler,
     EventSubscriber,
     FlexibleEventHandler,

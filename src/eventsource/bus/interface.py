@@ -34,27 +34,24 @@ class EventBus(ABC):
     and asynchronous handlers.
 
     Tracing Support:
-        Implementations SHOULD inherit from ``TracingMixin`` from
+        Implementations SHOULD use the composition-based ``Tracer`` from
         ``eventsource.observability`` to provide standardized OpenTelemetry
         tracing. The standard tracing pattern includes:
 
-        1. **Inherit from TracingMixin:**
-           ``class MyEventBus(TracingMixin, EventBus): ...``
+        1. **Inject Tracer via composition:**
+           ``self._tracer = tracer or create_tracer(__name__, enable_tracing)``
 
         2. **Accept enable_tracing in constructor:**
            ``def __init__(self, ..., enable_tracing: bool = True): ...``
 
-        3. **Initialize tracing in constructor:**
-           ``self._init_tracing(__name__, enable_tracing)``
-
-        4. **Use standard span naming convention:**
+        3. **Use standard span naming convention:**
            - ``eventsource.event_bus.publish`` - For publish operations
            - ``eventsource.event_bus.dispatch`` - For dispatching to handlers
            - ``eventsource.event_bus.handle`` - For individual handler invocations
            - ``eventsource.event_bus.consume`` - For message consumption (distributed)
            - ``eventsource.event_bus.process`` - For message processing (distributed)
 
-        5. **Use standard attribute constants from eventsource.observability.attributes:**
+        4. **Use standard attribute constants from eventsource.observability.attributes:**
            - ``ATTR_EVENT_TYPE`` - Event class name
            - ``ATTR_EVENT_ID`` - Unique event identifier
            - ``ATTR_AGGREGATE_ID`` - Aggregate identifier
@@ -64,8 +61,8 @@ class EventBus(ABC):
            - ``ATTR_MESSAGING_SYSTEM`` - Backend system (e.g., 'redis', 'rabbitmq')
            - ``ATTR_MESSAGING_DESTINATION`` - Queue/stream name
 
-        6. **Create spans with dynamic attributes:**
-           Use ``self._create_span_context()`` for operations with runtime attributes.
+        5. **Create spans with dynamic attributes:**
+           Use ``self._tracer.start_span()`` for operations with runtime attributes.
 
         Distributed event buses (Redis, RabbitMQ, Kafka) should additionally:
         - Inject trace context into message headers on publish
@@ -79,18 +76,19 @@ class EventBus(ABC):
         >>> await event_bus.publish([OrderCreated(...)])
 
     Example Traced Implementation:
-        >>> from eventsource.observability import TracingMixin
+        >>> from eventsource.observability import create_tracer
         >>> from eventsource.observability.attributes import (
         ...     ATTR_EVENT_TYPE, ATTR_EVENT_ID, ATTR_HANDLER_NAME
         ... )
         >>>
-        >>> class MyEventBus(TracingMixin, EventBus):
+        >>> class MyEventBus(EventBus):
         ...     def __init__(self, enable_tracing: bool = True):
-        ...         self._init_tracing(__name__, enable_tracing)
+        ...         self._tracer = create_tracer(__name__, enable_tracing)
+        ...         self._enable_tracing = self._tracer.enabled
         ...         self._subscribers = {}
         ...
         ...     async def publish(self, events, background=False):
-        ...         with self._create_span_context(
+        ...         with self._tracer.start_span(
         ...             "eventsource.event_bus.publish",
         ...             {"eventsource.event.count": len(events)}
         ...         ):
@@ -98,7 +96,8 @@ class EventBus(ABC):
         ...             pass
 
     See Also:
-        - ``eventsource.observability.TracingMixin`` - Tracing mixin class
+        - ``eventsource.observability.Tracer`` - Tracer protocol
+        - ``eventsource.observability.create_tracer`` - Tracer factory function
         - ``eventsource.observability.attributes`` - Standard attribute constants
         - ``InMemoryEventBus`` - Reference implementation with tracing
     """
@@ -223,64 +222,7 @@ class EventBus(ABC):
         pass
 
 
-class AsyncEventHandler(ABC):
-    """
-    Base class for async event handlers.
-
-    Provides a more structured approach than the EventHandler protocol
-    for handlers that need additional methods like event filtering.
-
-    Example:
-        >>> class OrderEmailHandler(AsyncEventHandler):
-        ...     def event_types(self) -> list[type[DomainEvent]]:
-        ...         return [OrderCreated, OrderShipped]
-        ...
-        ...     async def handle(self, event: DomainEvent) -> None:
-        ...         if isinstance(event, OrderCreated):
-        ...             await self.send_confirmation_email(event)
-    """
-
-    @abstractmethod
-    async def handle(self, event: DomainEvent) -> None:
-        """
-        Handle an event asynchronously.
-
-        Args:
-            event: The event to handle
-
-        Raises:
-            Exception: If handling fails
-        """
-        pass
-
-    def can_handle(self, event: DomainEvent) -> bool:
-        """
-        Check if this handler can handle the given event.
-
-        By default, checks if event type is in the handler's event types.
-        Override for custom filtering logic.
-
-        Args:
-            event: The event to check
-
-        Returns:
-            True if this handler can handle the event
-        """
-        return type(event) in self.event_types()
-
-    @abstractmethod
-    def event_types(self) -> list[type[DomainEvent]]:
-        """
-        Return list of event types this handler supports.
-
-        Returns:
-            List of event classes this handler can process
-        """
-        pass
-
-
 __all__ = [
     "EventBus",
     "EventHandlerFunc",
-    "AsyncEventHandler",
 ]

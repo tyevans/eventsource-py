@@ -30,7 +30,8 @@ from eventsource.observability import (
     ATTR_EVENT_TYPE,
     ATTR_EXPECTED_VERSION,
     ATTR_FROM_VERSION,
-    TracingMixin,
+    Tracer,
+    create_tracer,
 )
 from eventsource.stores._compat import validate_timestamp
 from eventsource.stores._type_converter import (
@@ -53,7 +54,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class PostgreSQLEventStore(TracingMixin, EventStore):
+class PostgreSQLEventStore(EventStore):
     """
     PostgreSQL implementation of the event store.
 
@@ -112,6 +113,7 @@ class PostgreSQLEventStore(TracingMixin, EventStore):
         *,
         event_registry: EventRegistry | None = None,
         outbox_enabled: bool = False,
+        tracer: Tracer | None = None,
         enable_tracing: bool = True,
         type_converter: TypeConverter | None = None,
         uuid_fields: set[str] | None = None,
@@ -125,7 +127,10 @@ class PostgreSQLEventStore(TracingMixin, EventStore):
             session_factory: SQLAlchemy async session factory for database access
             event_registry: Event registry for deserialization (defaults to module registry)
             outbox_enabled: If True, write events to outbox table on append
-            enable_tracing: If True and OpenTelemetry is available, emit traces
+            tracer: Optional custom Tracer instance. If not provided, one is
+                   created based on enable_tracing setting.
+            enable_tracing: If True and OpenTelemetry is available, emit traces.
+                          Ignored if tracer is explicitly provided.
             type_converter: Custom TypeConverter for field type conversion.
                 If not provided, a DefaultTypeConverter is created using
                 the uuid_fields, string_id_fields, and auto_detect_uuid params.
@@ -167,8 +172,9 @@ class PostgreSQLEventStore(TracingMixin, EventStore):
         self._event_registry = event_registry or default_registry
         self._outbox_enabled = outbox_enabled
 
-        # Initialize tracing via TracingMixin
-        self._init_tracing(__name__, enable_tracing)
+        # Initialize tracing via composition (replaces TracingMixin)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
 
         # Initialize type converter
         if type_converter is not None:
@@ -257,7 +263,7 @@ class PostgreSQLEventStore(TracingMixin, EventStore):
         if not events:
             return AppendResult.successful(expected_version)
 
-        with self._create_span_context(
+        with self._tracer.span(
             "postgresql_event_store.append_events",
             {
                 ATTR_AGGREGATE_ID: str(aggregate_id),
@@ -477,7 +483,7 @@ class PostgreSQLEventStore(TracingMixin, EventStore):
             For partitioned tables, providing timestamp filters significantly
             improves query performance by enabling partition pruning.
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "postgresql_event_store.get_events",
             {
                 ATTR_AGGREGATE_ID: str(aggregate_id),

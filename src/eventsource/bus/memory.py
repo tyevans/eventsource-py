@@ -18,7 +18,7 @@ from eventsource.bus.interface import (
 )
 from eventsource.events.base import DomainEvent
 from eventsource.handlers.adapter import HandlerAdapter
-from eventsource.observability import TracingMixin
+from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_AGGREGATE_ID,
     ATTR_EVENT_ID,
@@ -35,7 +35,7 @@ from eventsource.protocols import (
 logger = logging.getLogger(__name__)
 
 
-class InMemoryEventBus(EventBus, TracingMixin):
+class InMemoryEventBus(EventBus):
     """
     In-memory event bus for event distribution.
 
@@ -60,13 +60,21 @@ class InMemoryEventBus(EventBus, TracingMixin):
         - Publishing should only be called from async context
     """
 
-    def __init__(self, *, enable_tracing: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        tracer: Tracer | None = None,
+        enable_tracing: bool = True,
+    ) -> None:
         """
         Initialize the event bus with empty subscriber registry.
 
         Args:
+            tracer: Optional custom Tracer instance. If not provided, one is
+                   created based on enable_tracing setting.
             enable_tracing: If True and OpenTelemetry is available, emit traces.
-                           Defaults to True for consistency with other components.
+                          Defaults to True for consistency with other components.
+                          Ignored if tracer is explicitly provided.
         """
         # Map of event type -> list of HandlerAdapter instances
         self._subscribers: dict[type[DomainEvent], list[HandlerAdapter]] = defaultdict(list)
@@ -85,8 +93,9 @@ class InMemoryEventBus(EventBus, TracingMixin):
             "background_tasks_completed": 0,
         }
 
-        # Tracing configuration - simplified with TracingMixin
-        self._init_tracing(__name__, enable_tracing)
+        # Tracing configuration - using composition (replaces TracingMixin)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
 
     async def publish(
         self,
@@ -183,7 +192,7 @@ class InMemoryEventBus(EventBus, TracingMixin):
         )
 
         # Trace event dispatch with dynamic attributes
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.event_bus.dispatch",
             {
                 ATTR_EVENT_TYPE: event_type.__name__,
@@ -215,7 +224,7 @@ class InMemoryEventBus(EventBus, TracingMixin):
             event: The event to handle
         """
         # Trace handler execution with dynamic attributes and error recording
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.event_bus.handle",
             {
                 ATTR_EVENT_TYPE: type(event).__name__,

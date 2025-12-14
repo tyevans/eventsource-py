@@ -282,7 +282,7 @@ class TestHandlerValidation:
     def test_zero_param_handler_raises_value_error(self, mock_session_factory) -> None:
         """Test that handlers with no parameters raise ValueError."""
 
-        with pytest.raises(ValueError, match="must accept"):
+        with pytest.raises(ValueError, match="invalid signature"):
 
             class BadProjection(ReadModelProjection[TestModel]):
                 @handles(TestEvent)
@@ -295,9 +295,11 @@ class TestHandlerValidation:
             )
 
     def test_three_param_handler_raises_value_error(self, mock_session_factory) -> None:
-        """Test that handlers with 3+ parameters raise ValueError."""
+        """Test that handlers with 3+ parameters raise ValueError.
 
-        with pytest.raises(ValueError, match="must accept"):
+        Note: The error message uses 'invalid signature' rather than 'must accept'."""
+
+        with pytest.raises(ValueError, match="invalid signature"):
 
             class BadProjection(ReadModelProjection[TestModel]):
                 @handles(TestEvent)
@@ -434,11 +436,11 @@ class TestNoCircularImports:
 
     def test_import_handles_from_projections(self) -> None:
         """Test importing handles from projections module."""
-        from eventsource.projections import handles
-        from eventsource.projections.decorators import (
+        from eventsource.handlers import (
             get_handled_event_type,
             is_event_handler,
         )
+        from eventsource.projections import handles
 
         assert handles is not None
         assert get_handled_event_type is not None

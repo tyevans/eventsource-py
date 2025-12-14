@@ -43,7 +43,7 @@ from uuid import UUID
 
 from eventsource.migration.exceptions import BulkCopyError
 from eventsource.migration.models import Migration
-from eventsource.observability import TracingMixin
+from eventsource.observability import Tracer, create_tracer
 from eventsource.stores.interface import EventStore, ReadOptions, StoredEvent
 
 if TYPE_CHECKING:
@@ -175,7 +175,7 @@ class RateLimiter:
                 self._tokens -= count
 
 
-class BulkCopier(TracingMixin):
+class BulkCopier:
     """
     Streams historical events from source to target store.
 
@@ -216,6 +216,7 @@ class BulkCopier(TracingMixin):
         migration_repo: MigrationRepository,
         *,
         position_mapper: PositionMapper | None = None,
+        tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ) -> None:
         """
@@ -226,9 +227,14 @@ class BulkCopier(TracingMixin):
             target_store: EventStore to write to.
             migration_repo: Repository for progress persistence.
             position_mapper: Optional mapper for tracking position translations.
+            tracer: Optional custom Tracer instance. If not provided, one is
+                   created based on enable_tracing setting.
             enable_tracing: Whether to enable OpenTelemetry tracing.
+                          Ignored if tracer is explicitly provided.
         """
-        self._init_tracing(__name__, enable_tracing)
+        # Composition-based tracing (replaces TracingMixin)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
         self._source = source_store
         self._target = target_store
         self._migration_repo = migration_repo
@@ -264,7 +270,7 @@ class BulkCopier(TracingMixin):
         config = migration.config
         tenant_id = migration.tenant_id
 
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.bulk_copier.run",
             {
                 "migration.id": str(migration.id),
@@ -472,7 +478,7 @@ class BulkCopier(TracingMixin):
         Returns:
             Total number of events for the tenant.
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.bulk_copier.count_events",
             {"tenant_id": str(tenant_id)},
         ):
@@ -528,7 +534,7 @@ class BulkCopier(TracingMixin):
         Returns:
             The last target position written.
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.bulk_copier.write_batch",
             {
                 "migration.id": str(migration_id),

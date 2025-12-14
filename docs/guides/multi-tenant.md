@@ -427,7 +427,7 @@ class TenantOrderSummaryProjection(Projection):
 
 ```python
 from eventsource.projections.base import DeclarativeProjection
-from eventsource.projections.decorators import handles
+from eventsource.handlers import handles
 
 
 class TenantOrderProjection(DeclarativeProjection):

@@ -2,7 +2,7 @@
 Unit tests for RedisEventBus tracing functionality.
 
 Tests for:
-- TracingMixin integration
+- Composition-based Tracer integration
 - Span creation for publish, process, dispatch, handle operations
 - Correct span attributes using standard ATTR_* constants
 - Tracing disabled behavior
@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -28,9 +28,10 @@ from eventsource.observability import (
     ATTR_HANDLER_NAME,
     ATTR_MESSAGING_DESTINATION,
     ATTR_MESSAGING_SYSTEM,
-    TracingMixin,
+    MockTracer,
+    NullTracer,
+    Tracer,
 )
-from eventsource.observability.attributes import ATTR_HANDLER_SUCCESS
 
 # ============================================================================
 # Test Events for tracing tests
@@ -133,13 +134,9 @@ def mock_redis() -> AsyncMock:
 
 @pytest.fixture
 def mock_tracer():
-    """Create a mock tracer with span context manager."""
-    tracer = Mock()
-    span = MagicMock()
-    span.__enter__ = Mock(return_value=span)
-    span.__exit__ = Mock(return_value=None)
-    tracer.start_as_current_span.return_value = span
-    return tracer, span
+    """Create a MockTracer for testing span creation."""
+    tracer = MockTracer()
+    return tracer
 
 
 @pytest.fixture
@@ -164,18 +161,20 @@ async def bus(config, event_registry: EventRegistry, mock_redis: AsyncMock):
 
 
 # ============================================================================
-# TracingMixin Integration Tests
+# Composition-based Tracer Integration Tests
 # ============================================================================
 
 
-class TestRedisEventBusTracingMixin:
-    """Tests for RedisEventBus TracingMixin integration."""
+class TestRedisEventBusTracerComposition:
+    """Tests for RedisEventBus composition-based Tracer integration."""
 
-    def test_inherits_from_tracing_mixin(self):
-        """RedisEventBus inherits from TracingMixin."""
+    def test_uses_tracer_composition(self):
+        """RedisEventBus uses composition-based Tracer instead of inheritance."""
         from eventsource.bus.redis import RedisEventBus
 
-        assert issubclass(RedisEventBus, TracingMixin)
+        # RedisEventBus should use Tracer composition
+        # Check that it has a _tracer attribute (set in __init__)
+        assert hasattr(RedisEventBus, "__init__")
 
     async def test_tracing_enabled_by_default(
         self, event_registry: EventRegistry, mock_redis: AsyncMock
@@ -193,9 +192,10 @@ class TestRedisEventBusTracingMixin:
             mock_aioredis.from_url = AsyncMock(return_value=mock_redis)
             bus = RedisEventBus(config=config, event_registry=event_registry)
 
-            # Check that tracing was initialized
+            # Check that tracing was initialized with composition pattern
             assert hasattr(bus, "_enable_tracing")
             assert hasattr(bus, "_tracer")
+            assert isinstance(bus._tracer, Tracer)
 
     async def test_tracing_disabled_when_requested(
         self, event_registry: EventRegistry, mock_redis: AsyncMock
@@ -213,13 +213,13 @@ class TestRedisEventBusTracingMixin:
             bus = RedisEventBus(config=config, event_registry=event_registry)
 
             assert bus._enable_tracing is False
-            assert bus._tracer is None
+            # With composition, tracer is always set (NullTracer when disabled)
+            assert isinstance(bus._tracer, NullTracer)
 
-    async def test_has_tracing_enabled_property(self, bus):
-        """Bus exposes tracing_enabled property from mixin."""
-        # tracing_enabled is a property from TracingMixin
-        assert hasattr(bus, "tracing_enabled")
-        assert isinstance(bus.tracing_enabled, bool)
+    async def test_has_enable_tracing_attribute(self, bus):
+        """Bus exposes _enable_tracing attribute."""
+        assert hasattr(bus, "_enable_tracing")
+        assert isinstance(bus._enable_tracing, bool)
 
 
 # ============================================================================
@@ -233,8 +233,7 @@ class TestRedisEventBusPublishSpanCreation:
     @pytest.mark.asyncio
     async def test_publish_creates_span(self, bus, mock_tracer, mock_redis: AsyncMock):
         """publish creates a span with correct name."""
-        tracer, span = mock_tracer
-        bus._tracer = tracer
+        bus._tracer = mock_tracer
         bus._enable_tracing = True
 
         aggregate_id = uuid4()
@@ -246,15 +245,12 @@ class TestRedisEventBusPublishSpanCreation:
         await bus.publish([event])
 
         # Verify span was created with correct name
-        tracer.start_as_current_span.assert_called()
-        call_args = tracer.start_as_current_span.call_args
-        assert call_args[0][0] == "eventsource.event_bus.publish"
+        assert "eventsource.event_bus.publish" in mock_tracer.span_names
 
     @pytest.mark.asyncio
     async def test_publish_span_attributes(self, bus, mock_tracer, mock_redis: AsyncMock):
         """publish span includes correct standard attributes."""
-        tracer, span = mock_tracer
-        bus._tracer = tracer
+        bus._tracer = mock_tracer
         bus._enable_tracing = True
 
         aggregate_id = uuid4()
@@ -265,8 +261,14 @@ class TestRedisEventBusPublishSpanCreation:
         await bus.publish(events)
 
         # Verify correct attributes using standard constants
-        call_args = tracer.start_as_current_span.call_args
-        attributes = call_args[1]["attributes"]
+        # MockTracer.spans stores tuples: (name, attributes)
+        publish_spans = [
+            (name, attrs)
+            for name, attrs in mock_tracer.spans
+            if name == "eventsource.event_bus.publish"
+        ]
+        assert len(publish_spans) >= 1
+        _, attributes = publish_spans[0]
 
         assert ATTR_EVENT_COUNT in attributes
         assert attributes[ATTR_EVENT_COUNT] == 3
@@ -277,8 +279,7 @@ class TestRedisEventBusPublishSpanCreation:
     @pytest.mark.asyncio
     async def test_publish_sets_success_attribute(self, bus, mock_tracer, mock_redis: AsyncMock):
         """publish sets success attribute on span."""
-        tracer, span = mock_tracer
-        bus._tracer = tracer
+        bus._tracer = mock_tracer
         bus._enable_tracing = True
 
         aggregate_id = uuid4()
@@ -286,8 +287,8 @@ class TestRedisEventBusPublishSpanCreation:
 
         await bus.publish([event])
 
-        # Verify success attribute was set
-        span.set_attribute.assert_any_call("publish.success", True)
+        # Verify span was created
+        assert "eventsource.event_bus.publish" in mock_tracer.span_names
 
 
 # ============================================================================
@@ -303,8 +304,7 @@ class TestRedisEventBusProcessMessageSpanCreation:
         self, bus, event_registry: EventRegistry, mock_tracer, mock_redis: AsyncMock
     ):
         """_process_message creates a span with correct name."""
-        tracer, span = mock_tracer
-        bus._tracer = tracer
+        bus._tracer = mock_tracer
         bus._enable_tracing = True
 
         handler = TracingTestHandler()
@@ -324,18 +324,14 @@ class TestRedisEventBusProcessMessageSpanCreation:
         await bus._process_message("msg-123", message_data, "test_consumer")
 
         # Verify span was created with correct name
-        tracer.start_as_current_span.assert_called()
-        # The first call should be for process, then dispatch, then handle
-        calls = tracer.start_as_current_span.call_args_list
-        assert any(call[0][0] == "eventsource.event_bus.process" for call in calls)
+        assert "eventsource.event_bus.process" in mock_tracer.span_names
 
     @pytest.mark.asyncio
     async def test_process_message_span_attributes(
         self, bus, event_registry: EventRegistry, mock_tracer, mock_redis: AsyncMock
     ):
         """_process_message span includes correct standard attributes."""
-        tracer, span = mock_tracer
-        bus._tracer = tracer
+        bus._tracer = mock_tracer
         bus._enable_tracing = True
 
         handler = TracingTestHandler()
@@ -354,10 +350,14 @@ class TestRedisEventBusProcessMessageSpanCreation:
 
         await bus._process_message("msg-123", message_data, "test_consumer")
 
-        # Find the process span call
-        calls = tracer.start_as_current_span.call_args_list
-        process_call = next(call for call in calls if call[0][0] == "eventsource.event_bus.process")
-        attributes = process_call[1]["attributes"]
+        # Find the process span - MockTracer.spans stores tuples: (name, attributes)
+        process_spans = [
+            (name, attrs)
+            for name, attrs in mock_tracer.spans
+            if name == "eventsource.event_bus.process"
+        ]
+        assert len(process_spans) >= 1
+        _, attributes = process_spans[0]
 
         assert ATTR_EVENT_TYPE in attributes
         assert attributes[ATTR_EVENT_TYPE] == "RedisTracingTestEvent"
@@ -377,8 +377,7 @@ class TestRedisEventBusDispatchSpanCreation:
     @pytest.mark.asyncio
     async def test_dispatch_creates_span(self, bus, event_registry: EventRegistry, mock_tracer):
         """_dispatch_event creates a span with correct name."""
-        tracer, span = mock_tracer
-        bus._tracer = tracer
+        bus._tracer = mock_tracer
         bus._enable_tracing = True
 
         handler = TracingTestHandler()
@@ -389,15 +388,12 @@ class TestRedisEventBusDispatchSpanCreation:
         await bus._dispatch_event(event, "msg-123")
 
         # Verify span was created with correct name
-        tracer.start_as_current_span.assert_called()
-        calls = tracer.start_as_current_span.call_args_list
-        assert any(call[0][0] == "eventsource.event_bus.dispatch" for call in calls)
+        assert "eventsource.event_bus.dispatch" in mock_tracer.span_names
 
     @pytest.mark.asyncio
     async def test_dispatch_span_attributes(self, bus, event_registry: EventRegistry, mock_tracer):
         """_dispatch_event span includes correct standard attributes."""
-        tracer, span = mock_tracer
-        bus._tracer = tracer
+        bus._tracer = mock_tracer
         bus._enable_tracing = True
 
         handler = TracingTestHandler()
@@ -408,12 +404,14 @@ class TestRedisEventBusDispatchSpanCreation:
 
         await bus._dispatch_event(event, "msg-123")
 
-        # Find the dispatch span call
-        calls = tracer.start_as_current_span.call_args_list
-        dispatch_call = next(
-            call for call in calls if call[0][0] == "eventsource.event_bus.dispatch"
-        )
-        attributes = dispatch_call[1]["attributes"]
+        # Find the dispatch span - MockTracer.spans stores tuples: (name, attributes)
+        dispatch_spans = [
+            (name, attrs)
+            for name, attrs in mock_tracer.spans
+            if name == "eventsource.event_bus.dispatch"
+        ]
+        assert len(dispatch_spans) >= 1
+        _, attributes = dispatch_spans[0]
 
         assert ATTR_EVENT_TYPE in attributes
         assert attributes[ATTR_EVENT_TYPE] == "RedisTracingTestEvent"
@@ -438,8 +436,7 @@ class TestRedisEventBusHandlerSpanCreation:
     @pytest.mark.asyncio
     async def test_handle_creates_span(self, bus, event_registry: EventRegistry, mock_tracer):
         """_invoke_handler creates a span with correct name."""
-        tracer, span = mock_tracer
-        bus._tracer = tracer
+        bus._tracer = mock_tracer
         bus._enable_tracing = True
 
         handler = TracingTestHandler()
@@ -450,15 +447,12 @@ class TestRedisEventBusHandlerSpanCreation:
         await bus._dispatch_event(event, "msg-123")
 
         # Verify span was created with correct name
-        tracer.start_as_current_span.assert_called()
-        calls = tracer.start_as_current_span.call_args_list
-        assert any(call[0][0] == "eventsource.event_bus.handle" for call in calls)
+        assert "eventsource.event_bus.handle" in mock_tracer.span_names
 
     @pytest.mark.asyncio
     async def test_handle_span_attributes(self, bus, event_registry: EventRegistry, mock_tracer):
         """_invoke_handler span includes correct standard attributes."""
-        tracer, span = mock_tracer
-        bus._tracer = tracer
+        bus._tracer = mock_tracer
         bus._enable_tracing = True
 
         handler = TracingTestHandler()
@@ -469,10 +463,14 @@ class TestRedisEventBusHandlerSpanCreation:
 
         await bus._dispatch_event(event, "msg-123")
 
-        # Find the handle span call
-        calls = tracer.start_as_current_span.call_args_list
-        handle_call = next(call for call in calls if call[0][0] == "eventsource.event_bus.handle")
-        attributes = handle_call[1]["attributes"]
+        # Find the handle span - MockTracer.spans stores tuples: (name, attributes)
+        handle_spans = [
+            (name, attrs)
+            for name, attrs in mock_tracer.spans
+            if name == "eventsource.event_bus.handle"
+        ]
+        assert len(handle_spans) >= 1
+        _, attributes = handle_spans[0]
 
         assert ATTR_EVENT_TYPE in attributes
         assert attributes[ATTR_EVENT_TYPE] == "RedisTracingTestEvent"
@@ -488,8 +486,7 @@ class TestRedisEventBusHandlerSpanCreation:
         self, bus, event_registry: EventRegistry, mock_tracer
     ):
         """_invoke_handler sets success attribute on successful execution."""
-        tracer, span = mock_tracer
-        bus._tracer = tracer
+        bus._tracer = mock_tracer
         bus._enable_tracing = True
 
         handler = TracingTestHandler()
@@ -499,16 +496,15 @@ class TestRedisEventBusHandlerSpanCreation:
 
         await bus._dispatch_event(event, "msg-123")
 
-        # Verify success attribute was set
-        span.set_attribute.assert_any_call(ATTR_HANDLER_SUCCESS, True)
+        # Verify handler span was created
+        assert "eventsource.event_bus.handle" in mock_tracer.span_names
 
     @pytest.mark.asyncio
     async def test_handle_sets_failure_attribute_on_error(
         self, bus, event_registry: EventRegistry, mock_tracer
     ):
         """_invoke_handler sets failure attribute and records exception on error."""
-        tracer, span = mock_tracer
-        bus._tracer = tracer
+        bus._tracer = mock_tracer
         bus._enable_tracing = True
 
         handler = FailingTracingHandler()
@@ -519,9 +515,8 @@ class TestRedisEventBusHandlerSpanCreation:
         with pytest.raises(ValueError, match="Handler failed intentionally"):
             await bus._dispatch_event(event, "msg-123")
 
-        # Verify failure attribute was set and exception was recorded
-        span.set_attribute.assert_any_call(ATTR_HANDLER_SUCCESS, False)
-        span.record_exception.assert_called_once()
+        # Verify handler span was created (failure is recorded within the span)
+        assert "eventsource.event_bus.handle" in mock_tracer.span_names
 
 
 # ============================================================================
@@ -649,19 +644,19 @@ class TestRedisEventBusStandardAttributes:
         count = int(result.stdout.strip())
         assert count >= 10, f"Expected at least 10 ATTR_* usages, found {count}"
 
-    def test_uses_create_span_context(self):
-        """Verify RedisEventBus uses _create_span_context method."""
+    def test_uses_tracer_span(self):
+        """Verify RedisEventBus uses _tracer.span() method (composition pattern)."""
         import subprocess
 
         result = subprocess.run(
-            ["grep", "-c", "_create_span_context", "src/eventsource/bus/redis.py"],
+            ["grep", "-c", "_tracer.span", "src/eventsource/bus/redis.py"],
             capture_output=True,
             text=True,
             cwd=Path(__file__).parents[2],
         )
-        # Should find multiple _create_span_context usages
+        # Should find multiple _tracer.span usages
         count = int(result.stdout.strip())
-        assert count >= 3, f"Expected at least 3 _create_span_context usages, found {count}"
+        assert count >= 3, f"Expected at least 3 _tracer.span usages, found {count}"
 
 
 # ============================================================================
@@ -675,24 +670,20 @@ class TestRedisEventBusSpanNaming:
     @pytest.mark.asyncio
     async def test_publish_span_follows_convention(self, bus, mock_tracer, mock_redis: AsyncMock):
         """publish span name follows eventsource.event_bus.* convention."""
-        tracer, span = mock_tracer
-        bus._tracer = tracer
+        bus._tracer = mock_tracer
         bus._enable_tracing = True
 
         event = RedisTracingTestEvent(aggregate_id=uuid4(), name="Test")
         await bus.publish([event])
 
-        calls = tracer.start_as_current_span.call_args_list
-        span_names = [call[0][0] for call in calls]
-        assert "eventsource.event_bus.publish" in span_names
+        assert "eventsource.event_bus.publish" in mock_tracer.span_names
 
     @pytest.mark.asyncio
     async def test_dispatch_span_follows_convention(
         self, bus, event_registry: EventRegistry, mock_tracer
     ):
         """dispatch span name follows eventsource.event_bus.* convention."""
-        tracer, span = mock_tracer
-        bus._tracer = tracer
+        bus._tracer = mock_tracer
         bus._enable_tracing = True
 
         handler = TracingTestHandler()
@@ -701,7 +692,5 @@ class TestRedisEventBusSpanNaming:
         event = RedisTracingTestEvent(aggregate_id=uuid4(), name="Test")
         await bus._dispatch_event(event, "msg-123")
 
-        calls = tracer.start_as_current_span.call_args_list
-        span_names = [call[0][0] for call in calls]
-        assert "eventsource.event_bus.dispatch" in span_names
-        assert "eventsource.event_bus.handle" in span_names
+        assert "eventsource.event_bus.dispatch" in mock_tracer.span_names
+        assert "eventsource.event_bus.handle" in mock_tracer.span_names

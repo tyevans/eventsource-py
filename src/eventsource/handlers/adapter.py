@@ -12,9 +12,12 @@ type checking throughout the codebase.
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Any, Protocol, TypeVar, runtime_checkable
+from typing import Any, TypeVar
 
 from eventsource.events.base import DomainEvent
+
+# Import canonical protocol definitions
+from eventsource.protocols import AsyncEventHandler, SyncEventHandler
 
 logger = logging.getLogger(__name__)
 
@@ -25,22 +28,9 @@ T = TypeVar("T")
 AsyncHandlerFunc = Callable[[DomainEvent], Awaitable[None]]
 
 
-@runtime_checkable
-class AsyncEventHandler(Protocol):
-    """Protocol for async event handlers with handle method."""
-
-    async def handle(self, event: DomainEvent) -> None:
-        """Handle a domain event asynchronously."""
-        ...
-
-
-@runtime_checkable
-class SyncEventHandler(Protocol):
-    """Protocol for sync event handlers with handle method."""
-
-    def handle(self, event: DomainEvent) -> None:
-        """Handle a domain event synchronously."""
-        ...
+# Note: AsyncEventHandler and SyncEventHandler are now imported from
+# eventsource.protocols. The imports above re-export them for backward
+# compatibility with code that imports from this module.
 
 
 def get_handler_name(handler: Any) -> str:

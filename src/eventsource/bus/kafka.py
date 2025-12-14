@@ -99,7 +99,7 @@ from eventsource.bus.interface import (
 )
 from eventsource.events.base import DomainEvent
 from eventsource.handlers.adapter import HandlerAdapter
-from eventsource.observability import OTEL_AVAILABLE, TracingMixin
+from eventsource.observability import OTEL_AVAILABLE, SpanKindEnum, Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_AGGREGATE_ID,
     ATTR_AGGREGATE_TYPE,
@@ -949,7 +949,7 @@ class KafkaRebalanceListener(_ConsumerRebalanceListener):  # type: ignore[misc]
         )
 
 
-class KafkaEventBus(TracingMixin, EventBus):
+class KafkaEventBus(EventBus):
     """Kafka implementation of the EventBus interface.
 
     Provides a distributed event bus using Apache Kafka for high-throughput
@@ -980,6 +980,8 @@ class KafkaEventBus(TracingMixin, EventBus):
         config: KafkaEventBusConfig | None = None,
         event_registry: EventRegistry | None = None,
         serializer: EventSerializer | None = None,
+        *,
+        tracer: Tracer | None = None,
     ) -> None:
         """Initialize the Kafka event bus.
 
@@ -990,6 +992,8 @@ class KafkaEventBus(TracingMixin, EventBus):
             serializer: Custom event serializer. Uses JSON serializer if None.
                 Implement EventSerializer to add Avro, Protobuf, or schema
                 registry support.
+            tracer: Optional custom Tracer instance. If not provided, one is
+                   created based on config.enable_tracing setting.
 
         Raises:
             KafkaNotAvailableError: If aiokafka is not installed.
@@ -1001,8 +1005,9 @@ class KafkaEventBus(TracingMixin, EventBus):
         self._event_registry = event_registry
         self._serializer = serializer or EventSerializer()
 
-        # Initialize tracing via mixin
-        self._init_tracing(__name__, self._config.enable_tracing)
+        # Initialize tracing via composition (replaces TracingMixin)
+        self._tracer = tracer or create_tracer(__name__, self._config.enable_tracing)
+        self._enable_tracing = self._tracer.enabled
 
         # Connection state
         self._producer: AIOKafkaProducer | None = None
@@ -1559,11 +1564,11 @@ class KafkaEventBus(TracingMixin, EventBus):
         value = self._serialize_event(event)
         headers = self._create_headers(event)
 
-        # Create span for publish using TracingMixin
-        if self._enable_tracing and self._tracer:
-            with self._tracer.start_as_current_span(
+        # Create span for publish using composition-based tracer
+        if self._enable_tracing:
+            with self._tracer.span_with_kind(
                 name=f"eventsource.event_bus.publish {event.event_type}",
-                kind=SpanKind.PRODUCER,
+                kind=SpanKindEnum.PRODUCER,
                 attributes={
                     ATTR_MESSAGING_SYSTEM: "kafka",
                     ATTR_MESSAGING_DESTINATION: self._config.topic_name,
@@ -2309,17 +2314,16 @@ class KafkaEventBus(TracingMixin, EventBus):
             },
         )
 
-        # Use TracingMixin pattern for tracing
-        if self._enable_tracing and self._tracer and PROPAGATION_AVAILABLE and extract is not None:
+        # Use composition-based tracer for tracing
+        if self._enable_tracing and PROPAGATION_AVAILABLE and extract is not None:
             # Extract trace context from headers for distributed tracing
             carrier = self._extract_trace_context(message.headers)
             context = extract(carrier)
 
             # Create span for consume
-            with self._tracer.start_as_current_span(
+            with self._tracer.span_with_kind(
                 name=f"eventsource.event_bus.consume {event_type_name}",
-                context=context,
-                kind=SpanKind.CONSUMER,
+                kind=SpanKindEnum.CONSUMER,
                 attributes={
                     ATTR_MESSAGING_SYSTEM: "kafka",
                     "messaging.source": message.topic,
@@ -2330,6 +2334,7 @@ class KafkaEventBus(TracingMixin, EventBus):
                     "messaging.kafka.consumer_group": self._config.consumer_group,
                     ATTR_EVENT_TYPE: event_type_name,
                 },
+                context=context,
             ) as span:
                 await self._process_message_with_span(message, event_type_name, span)
         else:
@@ -2569,11 +2574,11 @@ class KafkaEventBus(TracingMixin, EventBus):
             # Start timing for handler duration histogram
             handler_start_time = time.perf_counter()
 
-            # Use TracingMixin pattern for tracing
-            if self._enable_tracing and self._tracer:
-                with self._tracer.start_as_current_span(
+            # Use composition-based tracer for tracing
+            if self._enable_tracing:
+                with self._tracer.span_with_kind(
                     name=f"eventsource.event_bus.dispatch {handler_name}",
-                    kind=SpanKind.INTERNAL,
+                    kind=SpanKindEnum.INTERNAL,
                     attributes={
                         ATTR_HANDLER_NAME: handler_name,
                         ATTR_EVENT_TYPE: event.event_type,
@@ -2638,8 +2643,9 @@ class KafkaEventBus(TracingMixin, EventBus):
                                 },
                             )
 
-                        span.set_status(Status(StatusCode.ERROR, str(e)))
-                        span.record_exception(e)
+                        if span is not None:
+                            span.set_status(Status(StatusCode.ERROR, str(e)))
+                            span.record_exception(e)
                         self._stats.handler_errors += 1
 
                         logger.error(

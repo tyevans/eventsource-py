@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
+from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_BUFFER_SIZE,
     ATTR_EVENTS_PROCESSED,
@@ -25,7 +26,6 @@ from eventsource.observability.attributes import (
     ATTR_SUBSCRIPTION_PHASE,
     ATTR_WATERMARK,
 )
-from eventsource.observability.tracing import TracingMixin
 from eventsource.subscriptions.exceptions import TransitionError
 from eventsource.subscriptions.runners.catchup import CatchUpRunner
 from eventsource.subscriptions.runners.live import LiveRunner
@@ -90,7 +90,7 @@ class TransitionResult:
     error: Exception | None = None
 
 
-class TransitionCoordinator(TracingMixin):
+class TransitionCoordinator:
     """
     Coordinates the transition from catch-up to live event processing.
 
@@ -137,6 +137,7 @@ class TransitionCoordinator(TracingMixin):
         event_bus: "EventBus",
         checkpoint_repo: "CheckpointRepository",
         subscription: Subscription,
+        tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ) -> None:
         """
@@ -147,9 +148,14 @@ class TransitionCoordinator(TracingMixin):
             event_bus: Event bus for live subscription
             checkpoint_repo: Checkpoint repository for persistence
             subscription: The subscription being transitioned
-            enable_tracing: Whether to enable OpenTelemetry tracing (default True)
+            tracer: Optional custom Tracer instance. If not provided, one is
+                   created based on enable_tracing setting.
+            enable_tracing: Whether to enable OpenTelemetry tracing (default True).
+                          Ignored if tracer is explicitly provided.
         """
-        self._init_tracing(__name__, enable_tracing)
+        # Composition-based tracing (replaces TracingMixin)
+        self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        self._enable_tracing = self._tracer.enabled
 
         self.event_store = event_store
         self.event_bus = event_bus
@@ -179,7 +185,7 @@ class TransitionCoordinator(TracingMixin):
             After successful completion, access the live runner via
             the `live_runner` property for ongoing event processing.
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.transition_coordinator.execute",
             {
                 ATTR_SUBSCRIPTION_NAME: self.subscription.name,
@@ -391,7 +397,7 @@ class TransitionCoordinator(TracingMixin):
         Used for graceful shutdown during transition. Stops any
         active runners and releases resources.
         """
-        with self._create_span_context(
+        with self._tracer.span(
             "eventsource.transition_coordinator.stop",
             {
                 ATTR_SUBSCRIPTION_NAME: self.subscription.name,
