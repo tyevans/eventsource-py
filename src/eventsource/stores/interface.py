@@ -429,8 +429,7 @@ class EventStore(ABC):
         Args:
             aggregate_type: Type of aggregate (e.g., 'Order')
             tenant_id: Filter by tenant (optional, for multi-tenant systems)
-            from_timestamp: Only get events after this datetime (optional).
-                Previously accepted float (Unix timestamp) which is now deprecated.
+            from_timestamp: Only get events after this datetime (optional)
 
         Returns:
             List of events in chronological order

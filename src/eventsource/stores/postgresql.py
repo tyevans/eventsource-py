@@ -32,7 +32,7 @@ from eventsource.observability import (
     ATTR_FROM_VERSION,
     TracingMixin,
 )
-from eventsource.stores._compat import normalize_timestamp
+from eventsource.stores._compat import validate_timestamp
 from eventsource.stores._type_converter import (
     DefaultTypeConverter,
     TypeConverter,
@@ -586,7 +586,7 @@ class PostgreSQLEventStore(TracingMixin, EventStore):
         self,
         aggregate_type: str,
         tenant_id: UUID | None = None,
-        from_timestamp: datetime | float | None = None,
+        from_timestamp: datetime | None = None,
     ) -> list[DomainEvent]:
         """
         Get all events for a specific aggregate type.
@@ -594,14 +594,12 @@ class PostgreSQLEventStore(TracingMixin, EventStore):
         Args:
             aggregate_type: Type of aggregate (e.g., 'Order')
             tenant_id: Filter by tenant ID (optional)
-            from_timestamp: Only events after this datetime (optional).
-                Float (Unix timestamp) is deprecated and will emit a warning.
+            from_timestamp: Only events after this datetime (optional)
 
         Returns:
             List of events in chronological order
         """
-        # Normalize timestamp (handles deprecation warning for float)
-        normalized_timestamp = normalize_timestamp(from_timestamp, "from_timestamp")
+        validated_timestamp = validate_timestamp(from_timestamp, "from_timestamp")
 
         async with self._session_factory() as session:
             # Build query
@@ -620,9 +618,9 @@ class PostgreSQLEventStore(TracingMixin, EventStore):
                 query_parts.append("AND tenant_id = :tenant_id")
                 params["tenant_id"] = str(tenant_id)
 
-            if normalized_timestamp is not None:
+            if validated_timestamp is not None:
                 query_parts.append("AND timestamp > :from_timestamp")
-                params["from_timestamp"] = normalized_timestamp
+                params["from_timestamp"] = validated_timestamp
 
             query_parts.append("ORDER BY timestamp ASC")
             query = "\n".join(query_parts)

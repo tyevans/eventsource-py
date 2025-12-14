@@ -162,8 +162,10 @@ class TestCheckpointTrackingProjectionTracing:
     async def test_span_sets_retry_count_on_failure(self):
         """Failed event processing sets retry count attribute."""
         from eventsource.projections.base import CheckpointTrackingProjection
+        from eventsource.projections.retry import ExponentialBackoffRetryPolicy
         from eventsource.repositories.checkpoint import InMemoryCheckpointRepository
         from eventsource.repositories.dlq import InMemoryDLQRepository
+        from eventsource.subscriptions.retry import RetryConfig
 
         mock_tracer = Mock()
         mock_span = MagicMock()
@@ -171,29 +173,38 @@ class TestCheckpointTrackingProjectionTracing:
         mock_tracer.start_as_current_span.return_value.__exit__ = Mock(return_value=None)
 
         class FailingProjection(CheckpointTrackingProjection):
-            MAX_RETRIES = 2
-            RETRY_BACKOFF_BASE = 0  # No backoff for testing
-
             def subscribed_to(self) -> list[type[DomainEvent]]:
                 return [OrderCreated]
 
             async def _process_event(self, event: DomainEvent) -> None:
                 raise ValueError("Test error")
 
+        # Create a retry policy with 2 retries (3 total attempts) and minimal backoff
+        retry_policy = ExponentialBackoffRetryPolicy(
+            config=RetryConfig(
+                max_retries=2,
+                initial_delay=0.001,  # Minimal delay
+                exponential_base=1.01,  # Must be > 1.0
+                jitter=0.0,
+            )
+        )
+
         projection = FailingProjection(
             checkpoint_repo=InMemoryCheckpointRepository(),
             dlq_repo=InMemoryDLQRepository(),
+            retry_policy=retry_policy,
             enable_tracing=True,
         )
         projection._tracer = mock_tracer
 
         event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
 
+        # The event will go to DLQ after exhausting retries, then raise
         with pytest.raises(ValueError):
             await projection.handle(event)
 
-        # Verify retry count attribute was set
-        mock_span.set_attribute.assert_called_with(ATTR_RETRY_COUNT, 2)
+        # Verify retry count attribute was set (3 attempts = max_retries + 1)
+        mock_span.set_attribute.assert_called_with(ATTR_RETRY_COUNT, 3)
 
 
 class TestDeclarativeProjectionTracing:

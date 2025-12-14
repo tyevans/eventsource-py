@@ -9,13 +9,15 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.bus.interface import (
-    AsyncEventHandler,
-    EventHandler,
-    EventSubscriber,
-)
+from eventsource.bus.interface import AsyncEventHandler
 from eventsource.bus.memory import InMemoryEventBus
 from eventsource.events.base import DomainEvent
+from eventsource.protocols import (
+    FlexibleEventHandler as EventHandler,
+)
+from eventsource.protocols import (
+    FlexibleEventSubscriber as EventSubscriber,
+)
 
 # =============================================================================
 # Test Event Classes

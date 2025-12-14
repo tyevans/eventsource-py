@@ -15,7 +15,6 @@ Tests cover:
 All database interactions are mocked using unittest.mock.
 """
 
-import warnings
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -689,7 +688,7 @@ class TestEventFiltering:
         store: PostgreSQLEventStore,
         mock_session: AsyncMock,
     ) -> None:
-        """Test get_events_by_type with Unix timestamp filter (deprecated)."""
+        """Test get_events_by_type with datetime timestamp filter."""
         now = datetime.now(UTC)
         agg_id = uuid4()
         event = SampleEvent(aggregate_id=agg_id, data="new")
@@ -697,12 +696,8 @@ class TestEventFiltering:
 
         mock_session.execute.return_value = create_mock_result([create_event_row(event, version=1)])
 
-        # Use warnings.catch_warnings to suppress the deprecation warning
-        # since we're intentionally testing backward compatibility
-        from_ts = (now - timedelta(hours=1)).timestamp()
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            events = await store.get_events_by_type("TestAggregate", from_timestamp=from_ts)
+        from_ts = now - timedelta(hours=1)
+        events = await store.get_events_by_type("TestAggregate", from_timestamp=from_ts)
 
         assert len(events) == 1
 
