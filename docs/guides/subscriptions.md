@@ -412,16 +412,15 @@ await manager.resume_all()
 
 ### Event Buffering During Pause
 
-Events arriving during pause are buffered and processed on resume:
+Events arriving during pause are buffered and processed on resume. Use health checks to monitor subscription state:
 
 ```python
-# Check buffer size during pause
+# Check subscription state during pause
 sub = manager.get_subscription("OrderProjection")
 if sub.is_paused:
-    # Live runner buffers events during pause
-    coordinator = manager._coordinators.get("OrderProjection")
-    if coordinator and coordinator.live_runner:
-        print(f"Buffered: {coordinator.live_runner.pause_buffer_size} events")
+    status = sub.get_status()
+    print(f"Paused subscription: {status.name}")
+    print(f"Events processed before pause: {status.events_processed}")
 ```
 
 ---
