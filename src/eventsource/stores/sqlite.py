@@ -39,7 +39,7 @@ from eventsource.observability import (
     ATTR_FROM_VERSION,
     TracingMixin,
 )
-from eventsource.stores._compat import normalize_timestamp
+from eventsource.stores._compat import validate_timestamp
 from eventsource.stores._type_converter import (
     DefaultTypeConverter,
     TypeConverter,
@@ -659,7 +659,7 @@ class SQLiteEventStore(TracingMixin, EventStore):
         self,
         aggregate_type: str,
         tenant_id: UUID | None = None,
-        from_timestamp: datetime | float | None = None,
+        from_timestamp: datetime | None = None,
     ) -> list[DomainEvent]:
         """
         Get all events for a specific aggregate type.
@@ -667,8 +667,7 @@ class SQLiteEventStore(TracingMixin, EventStore):
         Args:
             aggregate_type: Type of aggregate (e.g., 'Order')
             tenant_id: Filter by tenant ID (optional)
-            from_timestamp: Only events after this timestamp (datetime preferred,
-                float/int Unix timestamp deprecated)
+            from_timestamp: Only events after this timestamp (optional)
 
         Returns:
             List of events in chronological order
@@ -681,8 +680,7 @@ class SQLiteEventStore(TracingMixin, EventStore):
         """
         conn = self._ensure_connected()
 
-        # Normalize timestamp (handles deprecation warning for float)
-        normalized_timestamp = normalize_timestamp(from_timestamp, "from_timestamp")
+        validated_timestamp = validate_timestamp(from_timestamp, "from_timestamp")
 
         # Build query
         query_parts = [
@@ -700,9 +698,9 @@ class SQLiteEventStore(TracingMixin, EventStore):
             query_parts.append("AND tenant_id = ?")
             params.append(str(tenant_id))
 
-        if normalized_timestamp is not None:
+        if validated_timestamp is not None:
             query_parts.append("AND timestamp > ?")
-            params.append(normalized_timestamp.isoformat())
+            params.append(validated_timestamp.isoformat())
 
         query_parts.append("ORDER BY timestamp ASC")
         query = "\n".join(query_parts)

@@ -15,8 +15,8 @@ import pytest
 from pydantic import Field
 
 from eventsource.events.base import DomainEvent
-from eventsource.projections.protocols import (
-    AsyncEventHandler,
+from eventsource.projections.protocols import AsyncEventHandler
+from eventsource.protocols import (
     EventHandler,
     EventSubscriber,
     SyncEventHandler,

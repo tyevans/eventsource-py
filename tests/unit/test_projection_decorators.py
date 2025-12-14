@@ -278,43 +278,6 @@ class TestHandlesDecoratorConsolidation:
         assert hasattr(handler, "_handles_event_type")
         assert handler._handles_event_type is OrderCreated
 
-    def test_deprecated_import_emits_warning(self) -> None:
-        """@handles from aggregates.base emits DeprecationWarning."""
-        import warnings
-
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            from eventsource.aggregates.base import handles as deprecated_handles
-
-            # Call it to trigger the warning (the warning is emitted when called)
-            deprecated_handles(OrderCreated)
-
-            # Check warning was issued
-            assert len(w) >= 1
-            deprecation_warnings = [
-                warning for warning in w if issubclass(warning.category, DeprecationWarning)
-            ]
-            assert len(deprecation_warnings) >= 1
-            warning_msg = str(deprecation_warnings[0].message)
-            assert "eventsource.aggregates.base" in warning_msg
-            assert "eventsource.projections.decorators" in warning_msg
-            assert "0.3.0" in warning_msg
-
-    def test_deprecated_import_still_functions(self) -> None:
-        """Deprecated import still works correctly."""
-        import warnings
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            from eventsource.aggregates.base import handles as deprecated_handles
-
-            @deprecated_handles(OrderCreated)
-            def handler(self, event: OrderCreated) -> None:
-                pass
-
-            assert hasattr(handler, "_handles_event_type")
-            assert handler._handles_event_type is OrderCreated
-
     def test_handles_in_main_package_all(self) -> None:
         """'handles' is in eventsource.__all__ for IDE autocomplete."""
         import eventsource
@@ -332,27 +295,3 @@ class TestHandlesDecoratorConsolidation:
         from eventsource.projections import decorators
 
         assert hasattr(decorators, "handles")
-
-    def test_canonical_and_deprecated_produce_same_result(self) -> None:
-        """Both canonical and deprecated imports produce equivalent results."""
-        import warnings
-
-        from eventsource.projections.decorators import handles as canonical_handles
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            from eventsource.aggregates.base import handles as deprecated_handles
-
-            @canonical_handles(OrderCreated)
-            def handler1(self, event: OrderCreated) -> None:
-                pass
-
-            @deprecated_handles(OrderShipped)
-            def handler2(self, event: OrderShipped) -> None:
-                pass
-
-            # Both should have the same attribute structure
-            assert hasattr(handler1, "_handles_event_type")
-            assert hasattr(handler2, "_handles_event_type")
-            assert handler1._handles_event_type is OrderCreated
-            assert handler2._handles_event_type is OrderShipped
