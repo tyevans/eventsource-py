@@ -1,7 +1,5 @@
 """Test that all modules can be imported without circular import errors."""
 
-import pytest
-
 
 def test_no_circular_imports():
     """Verify all public modules import cleanly."""
@@ -24,13 +22,6 @@ def test_handlers_registry_imports_from_handlers():
 
     source = inspect.getsource(registry)
     assert "from eventsource.handlers.decorators import" in source
-    assert "from eventsource.projections.decorators import" not in source
-
-
-def test_deprecated_projections_decorators_import_warns():
-    """Verify deprecated import path emits warning."""
-    with pytest.warns(DeprecationWarning, match="eventsource.handlers"):
-        pass
 
 
 def test_handlers_init_no_lazy_import():

@@ -5,11 +5,12 @@ This module provides reusable tracing utilities that reduce boilerplate
 and ensure consistent observability across all eventsource components.
 
 Example:
-    >>> from eventsource.observability import traced, TracingMixin, OTEL_AVAILABLE
+    >>> from eventsource.observability import traced, Tracer, create_tracer, OTEL_AVAILABLE
     >>>
-    >>> class MyStore(TracingMixin):
+    >>> class MyStore:
     ...     def __init__(self, enable_tracing: bool = True):
-    ...         self._init_tracing(__name__, enable_tracing)
+    ...         self._tracer = create_tracer(__name__, enable_tracing)
+    ...         self._enable_tracing = self._tracer.enabled
     ...
     ...     @traced("my_store.operation")
     ...     async def operation(self, item_id: str) -> None:
@@ -20,14 +21,12 @@ Example:
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import functools
 from collections.abc import Callable
-from contextlib import AbstractContextManager
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
 if TYPE_CHECKING:
-    from opentelemetry.trace import Span, Tracer
+    from opentelemetry.trace import Tracer
 
 # Optional OpenTelemetry import - single source of truth
 try:
@@ -157,150 +156,9 @@ def traced(
     return decorator
 
 
-class TracingMixin:
-    """
-    Mixin class providing OpenTelemetry tracing utilities.
-
-    .. deprecated:: 0.4.0
-        TracingMixin is deprecated in favor of the composition-based Tracer protocol.
-        Use ``create_tracer()`` and inject the ``Tracer`` as a dependency instead.
-        See the ``eventsource.observability.tracer`` module for the new approach.
-
-        Migration example::
-
-            # Old pattern (TracingMixin inheritance):
-            class MyStore(TracingMixin):
-                def __init__(self, enable_tracing: bool = True):
-                    self._init_tracing(__name__, enable_tracing)
-
-            # New pattern (composition-based Tracer):
-            from eventsource.observability import Tracer, create_tracer
-
-            class MyStore:
-                def __init__(
-                    self,
-                    tracer: Tracer | None = None,
-                    enable_tracing: bool = True,
-                ):
-                    self._tracer = tracer or create_tracer(__name__, enable_tracing)
-                    self._enable_tracing = self._tracer.enabled
-
-        Benefits of the new pattern:
-        - Composition over inheritance (single responsibility)
-        - Easier to test (just inject a NullTracer or MockTracer)
-        - No inheritance hierarchy issues
-        - Type-safe Tracer protocol
-
-    Classes using this mixin gain standardized tracing support with
-    minimal boilerplate. The mixin provides:
-
-    - `_tracer`: OpenTelemetry tracer instance (or None)
-    - `_enable_tracing`: Boolean flag for tracing state
-    - `_init_tracing()`: Initialize tracing attributes
-    - `_create_span_context()`: Create conditional span context manager
-
-    Example:
-        >>> class MyStore(TracingMixin):
-        ...     def __init__(self, enable_tracing: bool = True):
-        ...         self._init_tracing(__name__, enable_tracing)
-        ...
-        ...     async def save(self, item_id: str, data: dict) -> None:
-        ...         with self._create_span_context(
-        ...             "my_store.save",
-        ...             {"item.id": item_id, "data.size": len(data)},
-        ...         ):
-        ...             # Implementation with dynamic attributes
-        ...             await self._do_save(item_id, data)
-
-    Note:
-        For methods with only static attributes, prefer using the
-        @traced decorator which is more concise.
-    """
-
-    _tracer: Tracer | None
-    _enable_tracing: bool
-
-    def _init_tracing(
-        self,
-        tracer_name: str,
-        enable_tracing: bool = True,
-    ) -> None:
-        """
-        Initialize tracing attributes.
-
-        Call this in your __init__ to set up tracing support.
-
-        Args:
-            tracer_name: Name for the tracer (typically __name__)
-            enable_tracing: Whether to enable tracing (default True)
-
-        Example:
-            >>> def __init__(self, enable_tracing: bool = True):
-            ...     self._init_tracing(__name__, enable_tracing)
-        """
-        self._enable_tracing = enable_tracing and OTEL_AVAILABLE
-        if self._enable_tracing and trace is not None:
-            self._tracer = trace.get_tracer(tracer_name)
-        else:
-            self._tracer = None
-
-    def _create_span_context(
-        self,
-        name: str,
-        attributes: dict[str, Any] | None = None,
-    ) -> AbstractContextManager[Span | None]:
-        """
-        Create a span context that handles None tracer gracefully.
-
-        This method returns a context manager that:
-        - Creates a span if tracing is enabled and tracer is available
-        - Returns a nullcontext if tracing is disabled
-        - Handles dynamic attributes computed at runtime
-
-        Args:
-            name: Span name (e.g., "event_store.append_events")
-            attributes: Dynamic attributes to include in span
-
-        Returns:
-            Context manager that yields Span or None
-
-        Example:
-            >>> async def save(self, item_id: str) -> None:
-            ...     with self._create_span_context(
-            ...         "store.save",
-            ...         {"item.id": item_id},
-            ...     ) as span:
-            ...         result = await self._do_save(item_id)
-            ...         if span:
-            ...             span.set_attribute("result.success", True)
-            ...         return result
-        """
-        if not self._enable_tracing or self._tracer is None:
-            return contextlib.nullcontext()
-        return self._tracer.start_as_current_span(
-            name,
-            attributes=attributes or {},
-        )
-
-    @property
-    def tracing_enabled(self) -> bool:
-        """
-        Check if tracing is currently enabled.
-
-        Returns:
-            True if tracing is enabled and tracer is available
-
-        Example:
-            >>> if store.tracing_enabled:
-            ...     print("Tracing is active")
-        """
-        return self._enable_tracing and self._tracer is not None
-
-
 __all__ = [
     "OTEL_AVAILABLE",
     "get_tracer",
     "should_trace",
     "traced",
-    "TracingMixin",
 ]

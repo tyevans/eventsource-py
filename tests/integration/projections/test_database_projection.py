@@ -20,8 +20,8 @@ from pydantic import Field
 from sqlalchemy import text
 
 from eventsource.events.base import DomainEvent
+from eventsource.handlers import handles
 from eventsource.projections.base import DatabaseProjection
-from eventsource.projections.decorators import handles
 from eventsource.repositories.checkpoint import InMemoryCheckpointRepository
 from eventsource.repositories.dlq import InMemoryDLQRepository
 

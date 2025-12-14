@@ -9,13 +9,13 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.bus.interface import (
-    AsyncEventHandler,
-    EventHandler,
-    EventSubscriber,
-)
 from eventsource.bus.memory import InMemoryEventBus
 from eventsource.events.base import DomainEvent
+from eventsource.protocols import (
+    AsyncEventHandler,
+    EventHandler,
+    FlexibleEventSubscriber,
+)
 
 # =============================================================================
 # Test Event Classes
@@ -207,9 +207,9 @@ class TestEventSubscriberProtocol:
     """Tests for EventSubscriber protocol compliance."""
 
     def test_subscriber_implements_protocol(self) -> None:
-        """Test that subscriber implements EventSubscriber protocol."""
+        """Test that subscriber implements FlexibleEventSubscriber protocol."""
         subscriber = SelectiveSubscriber([OrderCreated])
-        assert isinstance(subscriber, EventSubscriber)
+        assert isinstance(subscriber, FlexibleEventSubscriber)
 
     def test_subscribed_to_returns_event_types(self) -> None:
         """Test that subscribed_to returns correct event types."""

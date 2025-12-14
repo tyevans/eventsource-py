@@ -469,47 +469,8 @@ class TestAsyncEventHandler:
             IncompleteHandler()  # type: ignore[abstract]
 
 
-class TestAsyncEventHandlerDeprecationWarnings:
-    """Tests for AsyncEventHandler deprecation warnings from old locations."""
-
-    def test_bus_interface_async_event_handler_warns(self) -> None:
-        """Importing AsyncEventHandler from bus.interface emits warning."""
-        import sys
-
-        interface = sys.modules.get("eventsource.bus.interface")
-        if interface:
-            with pytest.warns(DeprecationWarning, match="eventsource.protocols"):
-                _ = interface.__getattr__("AsyncEventHandler")
-
-    def test_projections_protocols_async_event_handler_warns(self) -> None:
-        """Importing AsyncEventHandler from projections.protocols emits warning."""
-        import sys
-
-        protocols = sys.modules.get("eventsource.projections.protocols")
-        if protocols:
-            with pytest.warns(DeprecationWarning, match="eventsource.protocols"):
-                _ = protocols.__getattr__("AsyncEventHandler")
-
-    def test_all_imports_resolve_to_same_class(self) -> None:
-        """All AsyncEventHandler imports resolve to the same class."""
-        import warnings
-
-        from eventsource.protocols import AsyncEventHandler as Canonical
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            import sys
-
-            bus_interface = sys.modules.get("eventsource.bus.interface")
-            proj_protocols = sys.modules.get("eventsource.projections.protocols")
-
-            if bus_interface:
-                bus_handler = bus_interface.__getattr__("AsyncEventHandler")
-                assert Canonical is bus_handler
-
-            if proj_protocols:
-                proj_handler = proj_protocols.__getattr__("AsyncEventHandler")
-                assert Canonical is proj_handler
+class TestAsyncEventHandlerImports:
+    """Tests for AsyncEventHandler imports from canonical location."""
 
     def test_top_level_import_works(self) -> None:
         """Top-level eventsource import works."""
@@ -521,6 +482,20 @@ class TestAsyncEventHandlerDeprecationWarnings:
     def test_handlers_adapter_import_works(self) -> None:
         """Import from handlers.adapter works."""
         from eventsource.handlers.adapter import AsyncEventHandler
+        from eventsource.protocols import AsyncEventHandler as Canonical
+
+        assert AsyncEventHandler is Canonical
+
+    def test_projections_protocols_import_works(self) -> None:
+        """Import from projections.protocols works (now direct, no deprecation)."""
+        from eventsource.projections.protocols import AsyncEventHandler
+        from eventsource.protocols import AsyncEventHandler as Canonical
+
+        assert AsyncEventHandler is Canonical
+
+    def test_bus_import_works(self) -> None:
+        """Import from bus module works."""
+        from eventsource.bus import AsyncEventHandler
         from eventsource.protocols import AsyncEventHandler as Canonical
 
         assert AsyncEventHandler is Canonical

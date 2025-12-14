@@ -17,8 +17,8 @@ from typing import Any
 from uuid import uuid4
 
 from eventsource.events.base import DomainEvent
+from eventsource.handlers import handles
 from eventsource.projections.base import DeclarativeProjection
-from eventsource.projections.decorators import handles
 from eventsource.repositories.checkpoint import InMemoryCheckpointRepository
 from tests.benchmarks.conftest import run_async
 from tests.fixtures import (

@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 from eventsource.aggregates.base import AggregateRoot, DeclarativeAggregate
 from eventsource.events.base import DomainEvent
-from eventsource.projections.decorators import handles
+from eventsource.handlers import handles
 from tests.fixtures.events import (
     CounterDecremented,
     CounterIncremented,

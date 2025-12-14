@@ -10,7 +10,7 @@ The utilities in this module are designed to:
 - Handle the case where OpenTelemetry is not installed
 
 Example:
-    >>> from eventsource.observability import OTEL_AVAILABLE, get_tracer, traced
+    >>> from eventsource.observability import OTEL_AVAILABLE, get_tracer, traced, create_tracer
     >>>
     >>> # Check if tracing is available
     >>> if OTEL_AVAILABLE:
@@ -19,10 +19,11 @@ Example:
     ...         # traced operation
     ...         pass
     >>>
-    >>> # Using the decorator
-    >>> class MyStore(TracingMixin):
-    ...     def __init__(self):
-    ...         self._init_tracing(__name__)
+    >>> # Using composition-based Tracer
+    >>> class MyStore:
+    ...     def __init__(self, enable_tracing: bool = True):
+    ...         self._tracer = create_tracer(__name__, enable_tracing)
+    ...         self._enable_tracing = self._tracer.enabled
     ...
     ...     @traced("my_store.save")
     ...     async def save(self, item_id: str) -> None:
@@ -104,20 +105,18 @@ from eventsource.observability.tracer import (
 )
 from eventsource.observability.tracing import (
     OTEL_AVAILABLE,
-    TracingMixin,
     get_tracer,
     should_trace,
     traced,
 )
 
 __all__ = [
-    # Tracing (legacy inheritance-based API)
+    # Tracing utilities
     "OTEL_AVAILABLE",
-    "TracingMixin",
     "get_tracer",
     "should_trace",
     "traced",
-    # Tracer (new composition-based API)
+    # Tracer (composition-based API)
     "Tracer",
     "NullTracer",
     "OpenTelemetryTracer",

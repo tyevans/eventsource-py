@@ -19,7 +19,7 @@ import pytest
 from pydantic import Field
 
 from eventsource.events.base import DomainEvent
-from eventsource.projections.decorators import handles
+from eventsource.handlers import handles
 from eventsource.readmodels import ReadModel, ReadModelProjection
 from eventsource.repositories.checkpoint import InMemoryCheckpointRepository
 from eventsource.repositories.dlq import InMemoryDLQRepository

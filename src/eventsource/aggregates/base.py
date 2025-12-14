@@ -631,51 +631,9 @@ class DeclarativeAggregate(AggregateRoot[TState], ABC):
         # "ignore" mode: do nothing (silent)
 
 
-def handles(event_type: type[DomainEvent]) -> Callable[[Callable[..., None]], Callable[..., None]]:
-    """
-    Decorator to register an event handler method.
-
-    .. deprecated:: 0.1.0
-        Import from `eventsource.handlers` or `eventsource` instead.
-        This location will be removed in version 0.4.0.
-
-    Use this decorator on methods in a DeclarativeAggregate subclass
-    to automatically register them as handlers for specific event types.
-
-    Args:
-        event_type: The DomainEvent subclass this handler processes
-
-    Returns:
-        Decorator function that marks the method as a handler
-
-    Example:
-        >>> from eventsource.handlers import handles  # Preferred import
-        >>> # or: from eventsource import handles
-        >>>
-        >>> class OrderAggregate(DeclarativeAggregate[OrderState]):
-        ...     @handles(OrderCreated)
-        ...     def _on_order_created(self, event: OrderCreated) -> None:
-        ...         self._state = OrderState(...)
-    """
-    import warnings
-
-    from eventsource.handlers.decorators import handles as _canonical_handles
-
-    warnings.warn(
-        "Importing 'handles' from eventsource.aggregates.base is deprecated. "
-        "Use 'from eventsource.handlers import handles' or "
-        "'from eventsource import handles' instead. "
-        "This import will be removed in version 0.4.0.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return _canonical_handles(event_type)
-
-
 __all__ = [
     "AggregateRoot",
     "DeclarativeAggregate",
-    "handles",
     "TState",
     "UnregisteredEventHandling",
 ]

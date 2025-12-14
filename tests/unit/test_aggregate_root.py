@@ -27,7 +27,7 @@ from eventsource.events.base import DomainEvent
 from eventsource.exceptions import EventVersionError, UnhandledEventError
 
 # Use canonical import for @handles (TD-006)
-from eventsource.projections.decorators import handles
+from eventsource.handlers import handles
 
 # =============================================================================
 # Test fixtures: State models and Events

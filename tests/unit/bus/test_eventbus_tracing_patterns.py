@@ -29,7 +29,7 @@ class TestEventBusABCDocumentation:
 
         # Check for key tracing documentation sections
         assert "Tracing Support" in docstring
-        assert "TracingMixin" in docstring
+        assert "Tracer" in docstring
         assert "enable_tracing" in docstring
 
     def test_eventbus_documents_span_naming(self) -> None:

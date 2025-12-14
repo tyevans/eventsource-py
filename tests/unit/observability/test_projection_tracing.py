@@ -214,8 +214,8 @@ class TestDeclarativeProjectionTracing:
 
     def test_enable_tracing_passed_through(self):
         """enable_tracing is passed to parent class."""
+        from eventsource.handlers import handles
         from eventsource.projections.base import DeclarativeProjection
-        from eventsource.projections.decorators import handles
 
         class TestProjection(DeclarativeProjection):
             @handles(OrderCreated)
@@ -230,8 +230,8 @@ class TestDeclarativeProjectionTracing:
     @pytest.mark.asyncio
     async def test_handler_dispatch_creates_span(self):
         """Handler dispatch creates span when tracing enabled."""
+        from eventsource.handlers import handles
         from eventsource.projections.base import DeclarativeProjection
-        from eventsource.projections.decorators import handles
 
         mock_tracer = Mock()
         mock_span_handle = MagicMock()
@@ -298,8 +298,8 @@ class TestDatabaseProjectionTracing:
 
     def test_enable_tracing_passed_through(self, mock_session_factory):
         """enable_tracing is passed to parent class."""
+        from eventsource.handlers import handles
         from eventsource.projections.base import DatabaseProjection
-        from eventsource.projections.decorators import handles
 
         factory, _, _ = mock_session_factory
 
@@ -489,8 +489,8 @@ class TestBackwardCompatibility:
     @pytest.mark.asyncio
     async def test_declarative_projection_without_tracing_arg_works(self):
         """DeclarativeProjection works without enable_tracing arg."""
+        from eventsource.handlers import handles
         from eventsource.projections.base import DeclarativeProjection
-        from eventsource.projections.decorators import handles
 
         handled_events = []
 

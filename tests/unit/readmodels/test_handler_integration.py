@@ -436,11 +436,11 @@ class TestNoCircularImports:
 
     def test_import_handles_from_projections(self) -> None:
         """Test importing handles from projections module."""
-        from eventsource.projections import handles
-        from eventsource.projections.decorators import (
+        from eventsource.handlers import (
             get_handled_event_type,
             is_event_handler,
         )
+        from eventsource.projections import handles
 
         assert handles is not None
         assert get_handled_event_type is not None

@@ -11,11 +11,11 @@ and the projection system.
 """
 
 import warnings
-from abc import ABC, abstractmethod
-
-from eventsource.events.base import DomainEvent
 
 # Import canonical protocols for re-export
+from eventsource.protocols import (
+    AsyncEventHandler as _AsyncEventHandler,
+)
 from eventsource.protocols import (
     EventHandler as _EventHandler,
 )
@@ -32,14 +32,13 @@ def __getattr__(name: str) -> type:
     Handle deprecated imports with warnings.
 
     This enables deprecation warnings when importing protocols
-    (EventHandler, SyncEventHandler, EventSubscriber, AsyncEventHandler)
-    from this module.
+    (EventHandler, SyncEventHandler, EventSubscriber) from this module.
     """
     if name == "EventHandler":
         warnings.warn(
             "Importing 'EventHandler' from eventsource.projections.protocols is deprecated. "
             "Use 'from eventsource.protocols import EventHandler' instead. "
-            "This import will be removed in version 0.3.0.",
+            "This import will be removed in version 0.5.0.",
             DeprecationWarning,
             stacklevel=2,
         )
@@ -48,7 +47,7 @@ def __getattr__(name: str) -> type:
         warnings.warn(
             "Importing 'SyncEventHandler' from eventsource.projections.protocols is deprecated. "
             "Use 'from eventsource.protocols import SyncEventHandler' instead. "
-            "This import will be removed in version 0.3.0.",
+            "This import will be removed in version 0.5.0.",
             DeprecationWarning,
             stacklevel=2,
         )
@@ -57,22 +56,11 @@ def __getattr__(name: str) -> type:
         warnings.warn(
             "Importing 'EventSubscriber' from eventsource.projections.protocols is deprecated. "
             "Use 'from eventsource.protocols import EventSubscriber' instead. "
-            "This import will be removed in version 0.3.0.",
+            "This import will be removed in version 0.5.0.",
             DeprecationWarning,
             stacklevel=2,
         )
         return _EventSubscriber
-    elif name == "AsyncEventHandler":
-        warnings.warn(
-            "Importing 'AsyncEventHandler' from eventsource.projections.protocols is deprecated. "
-            "Use 'from eventsource.protocols import AsyncEventHandler' instead. "
-            "This import will be removed in version 0.4.0.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        from eventsource.protocols import AsyncEventHandler
-
-        return AsyncEventHandler
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -81,68 +69,7 @@ def __getattr__(name: str) -> type:
 EventHandler = _EventHandler
 SyncEventHandler = _SyncEventHandler
 EventSubscriber = _EventSubscriber
-
-
-class AsyncEventHandler(ABC):
-    """
-    Base class for async event handlers.
-
-    .. deprecated::
-        This class is deprecated. Use ``from eventsource.protocols import AsyncEventHandler``
-        instead. This class will be removed in version 0.4.0.
-
-    Handlers process events asynchronously and can be used
-    for projections, notifications, and other side effects.
-
-    Unlike EventSubscriber, this provides a can_handle() method
-    for more flexible event routing.
-
-    Example:
-        >>> class NotificationHandler(AsyncEventHandler):
-        ...     def event_types(self) -> list[type[DomainEvent]]:
-        ...         return [OrderShipped]
-        ...
-        ...     async def handle(self, event: DomainEvent) -> None:
-        ...         await send_notification(event)
-    """
-
-    @abstractmethod
-    async def handle(self, event: DomainEvent) -> None:
-        """
-        Handle an event asynchronously.
-
-        Args:
-            event: The event to handle
-
-        Raises:
-            Exception: If handling fails
-        """
-        pass
-
-    def can_handle(self, event: DomainEvent) -> bool:
-        """
-        Check if this handler can handle the given event.
-
-        By default, checks if event type is in the handler's event types.
-        Override for custom logic.
-
-        Args:
-            event: The event to check
-
-        Returns:
-            True if this handler can handle the event
-        """
-        return type(event) in self.event_types()
-
-    @abstractmethod
-    def event_types(self) -> list[type[DomainEvent]]:
-        """
-        Return list of event types this handler supports.
-
-        Returns:
-            List of event classes this handler can process
-        """
-        pass
+AsyncEventHandler = _AsyncEventHandler
 
 
 __all__ = [

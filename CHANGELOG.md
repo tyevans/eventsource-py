@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Tracer Protocol & Implementations** (`eventsource.observability.tracer`) - Composition-based tracing
+  - `Tracer` protocol defining the contract for tracing implementations
+  - `NullTracer` - No-op implementation for when tracing is disabled
+  - `OpenTelemetryTracer` - Full OpenTelemetry integration when OTEL is available
+  - `MockTracer` - Testing implementation for verifying trace calls
+  - `create_tracer()` factory function for automatic tracer selection based on configuration
+- **Serialization Module** (`eventsource.serialization`) - Centralized JSON utilities
+  - `EventSourceJSONEncoder` for consistent JSON serialization across the library
+  - `json_dumps()` and `json_loads()` helper functions
+  - Proper handling of UUID, datetime, Enum, dataclass, and Pydantic model serialization
+- **Handler Decorators** (`eventsource.handlers.decorators`) - Relocated and enhanced decorator
+  - `@handles` decorator now in canonical location with full backward compatibility
+  - `HandlerSignatureError` exception with detailed validation messages for invalid handler signatures
+- **Repository Method Aliases** - Consistent naming conventions
+  - `list_pending()` alias for `get_pending_events()` in OutboxRepository
+  - `list_failed()` alias for `get_failed_events()` in DLQRepository
+  - `get_by_id()` alias for `get_failed_event_by_id()` in DLQRepository
+- **AsyncEventHandler ABC** - Consolidated to single definition in `eventsource.protocols`
+
+### Changed
+
+- **Tracing Architecture** - Migrated from inheritance to composition pattern
+  - All 47+ traced classes now use `Tracer` composition instead of `TracingMixin` inheritance
+  - Components accept optional `tracer` parameter for dependency injection
+  - Enables easier testing with `MockTracer` and better separation of concerns
+- **Handler Registry** - Improved validation and error messages
+  - Better detection of invalid handler signatures
+  - More descriptive error messages for common mistakes
+
+### Tests
+
+- Added comprehensive Tracer protocol tests (`tests/unit/observability/test_tracer.py`)
+- Added handler decorator tests (`tests/unit/handlers/test_decorators.py`)
+- Added handler registry tests (`tests/unit/handlers/test_registry.py`)
+- Added serialization module tests (`tests/unit/serialization/test_json.py`)
+- Added protocol consolidation tests (`tests/unit/test_protocols.py`)
+- Added import compatibility tests (`tests/integration/test_imports.py`)
+- Updated all existing tracing tests to use new composition pattern
+
 ## [0.3.0] - 2025-12-12
 
 ### Added
