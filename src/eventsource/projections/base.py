@@ -657,14 +657,108 @@ class DatabaseProjection(DeclarativeProjection):
             },
         )
 
-    async def handle(self, event: DomainEvent) -> None:
+    async def _handle_with_retry(self, event: DomainEvent, span: "Span | None") -> None:
         """
-        Handle event within a database transaction.
+        Internal method that implements retry logic with fresh transactions.
 
-        Wraps the parent handle() in a database session context, ensuring
-        all handler operations share the same transaction. On successful
-        completion, the transaction is committed. On error, the transaction
-        is rolled back.
+        Overrides parent to ensure each retry attempt gets a fresh database
+        transaction. This is necessary because PostgreSQL marks transactions
+        as "aborted" after any error, and further SQL commands will fail with
+        "current transaction is aborted, commands ignored until end of
+        transaction block".
+
+        Args:
+            event: The domain event to process
+            span: Optional OpenTelemetry span for adding attributes
+        """
+        max_attempts = self._retry_policy.max_retries + 1  # Include initial attempt
+
+        for attempt in range(max_attempts):
+            try:
+                # Each attempt gets a fresh session/transaction
+                await self._execute_in_transaction(event)
+
+                # Update checkpoint after successful processing via manager
+                await self._checkpoint_manager.update(event)
+
+                # Add success attribute to span if tracing enabled
+                if span is not None:
+                    span.set_attribute("checkpoint.updated", True)
+
+                # Success - log and return
+                logger.debug(
+                    "Projection %s processed event %s (type: %s)",
+                    self._projection_name,
+                    event.event_id,
+                    event.event_type,
+                    extra={
+                        "projection": self._projection_name,
+                        "event_id": str(event.event_id),
+                        "event_type": event.event_type,
+                    },
+                )
+                return
+
+            except Exception as e:
+                logger.error(
+                    "Projection %s failed to process event %s (attempt %d/%d): %s",
+                    self._projection_name,
+                    event.event_id,
+                    attempt + 1,
+                    max_attempts,
+                    e,
+                    exc_info=True,
+                    extra={
+                        "projection": self._projection_name,
+                        "event_id": str(event.event_id),
+                        "event_type": event.event_type,
+                        "attempt": attempt + 1,
+                        "max_attempts": max_attempts,
+                        "error": str(e),
+                    },
+                )
+
+                # Check if we should retry
+                if not self._retry_policy.should_retry(attempt, e):
+                    # Add retry count to span before final failure
+                    if span is not None:
+                        span.set_attribute(ATTR_RETRY_COUNT, attempt + 1)
+
+                    # Send to DLQ via manager
+                    await self._dlq_manager.send_to_dlq(event, e, attempt + 1)
+                    logger.critical(
+                        "Event %s sent to DLQ after %d attempts",
+                        event.event_id,
+                        attempt + 1,
+                        extra={
+                            "projection": self._projection_name,
+                            "event_id": str(event.event_id),
+                            "event_type": event.event_type,
+                            "retry_count": attempt + 1,
+                        },
+                    )
+                    # Re-raise the exception after exhausting all retries
+                    raise
+                else:
+                    # Get backoff from policy
+                    backoff = self._retry_policy.get_backoff(attempt)
+                    logger.info(
+                        "Retrying in %.1f seconds...",
+                        backoff,
+                        extra={
+                            "projection": self._projection_name,
+                            "event_id": str(event.event_id),
+                            "backoff_seconds": backoff,
+                        },
+                    )
+                    await asyncio.sleep(backoff)
+
+    async def _execute_in_transaction(self, event: DomainEvent) -> None:
+        """
+        Execute event processing within a database transaction.
+
+        Creates a fresh session/transaction for the handler. On success,
+        the transaction is committed. On error, the transaction is rolled back.
 
         Args:
             event: The domain event to process
@@ -686,7 +780,7 @@ class DatabaseProjection(DeclarativeProjection):
             self._current_connection = conn
 
             try:
-                await super().handle(event)
+                await self._process_event(event)
 
                 logger.debug(
                     "DatabaseProjection %s committing transaction for event %s",
