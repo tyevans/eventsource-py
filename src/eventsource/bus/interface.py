@@ -6,62 +6,21 @@ for publishing and subscribing to domain events.
 The event bus decouples event producers from consumers, allowing projections
 and other handlers to react to events independently.
 
-Note: Protocol definitions (EventHandler, EventSubscriber) have been moved to
-eventsource.protocols. Imports from this module still work but emit deprecation
-warnings. Use `from eventsource.protocols import EventHandler` instead.
+Protocol definitions are in eventsource.protocols.
+Use `from eventsource.protocols import EventHandler` instead.
 """
 
-import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 
 from eventsource.events.base import DomainEvent
-
-# Import canonical protocols for re-export
 from eventsource.protocols import (
-    FlexibleEventHandler as _FlexibleEventHandler,
-)
-from eventsource.protocols import (
-    FlexibleEventSubscriber as _FlexibleEventSubscriber,
+    FlexibleEventHandler,
+    FlexibleEventSubscriber,
 )
 
 # Type alias for simple function-based handlers
 EventHandlerFunc = Callable[[DomainEvent], Awaitable[None] | None]
-
-
-def __getattr__(name: str) -> type:
-    """
-    Handle deprecated imports with warnings.
-
-    This enables deprecation warnings when importing EventHandler
-    or EventSubscriber from this module.
-    """
-    if name == "EventHandler":
-        warnings.warn(
-            "Importing 'EventHandler' from eventsource.bus.interface is deprecated. "
-            "Use 'from eventsource.protocols import FlexibleEventHandler' instead "
-            "(or EventHandler for async-only handlers). "
-            "This import will be removed in version 0.5.0.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return _FlexibleEventHandler
-    elif name == "EventSubscriber":
-        warnings.warn(
-            "Importing 'EventSubscriber' from eventsource.bus.interface is deprecated. "
-            "Use 'from eventsource.protocols import EventSubscriber' instead. "
-            "This import will be removed in version 0.5.0.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return _FlexibleEventSubscriber
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-# For internal use without deprecation warnings (used by bus implementations)
-# These are the flexible versions that support both sync and async
-EventHandler = _FlexibleEventHandler
-EventSubscriber = _FlexibleEventSubscriber
 
 
 class EventBus(ABC):
@@ -174,7 +133,7 @@ class EventBus(ABC):
     def subscribe(
         self,
         event_type: type[DomainEvent],
-        handler: _FlexibleEventHandler | EventHandlerFunc,
+        handler: FlexibleEventHandler | EventHandlerFunc,
     ) -> None:
         """
         Subscribe a handler to a specific event type.
@@ -196,7 +155,7 @@ class EventBus(ABC):
     def unsubscribe(
         self,
         event_type: type[DomainEvent],
-        handler: _FlexibleEventHandler | EventHandlerFunc,
+        handler: FlexibleEventHandler | EventHandlerFunc,
     ) -> bool:
         """
         Unsubscribe a handler from a specific event type.
@@ -211,7 +170,7 @@ class EventBus(ABC):
         pass
 
     @abstractmethod
-    def subscribe_all(self, subscriber: _FlexibleEventSubscriber) -> None:
+    def subscribe_all(self, subscriber: FlexibleEventSubscriber) -> None:
         """
         Subscribe an EventSubscriber to all its declared event types.
 
@@ -229,7 +188,7 @@ class EventBus(ABC):
     @abstractmethod
     def subscribe_to_all_events(
         self,
-        handler: _FlexibleEventHandler | EventHandlerFunc,
+        handler: FlexibleEventHandler | EventHandlerFunc,
     ) -> None:
         """
         Subscribe a handler to all event types (wildcard subscription).
@@ -249,7 +208,7 @@ class EventBus(ABC):
     @abstractmethod
     def unsubscribe_from_all_events(
         self,
-        handler: _FlexibleEventHandler | EventHandlerFunc,
+        handler: FlexibleEventHandler | EventHandlerFunc,
     ) -> bool:
         """
         Unsubscribe a handler from the wildcard subscription.
@@ -265,7 +224,5 @@ class EventBus(ABC):
 
 __all__ = [
     "EventBus",
-    "EventHandler",
-    "EventSubscriber",
     "EventHandlerFunc",
 ]

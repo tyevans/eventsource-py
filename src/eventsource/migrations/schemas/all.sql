@@ -30,7 +30,8 @@ BEGIN;
 -- deployments instead.
 
 CREATE TABLE IF NOT EXISTS events (
-    event_id UUID PRIMARY KEY,
+    global_position BIGSERIAL PRIMARY KEY,
+    event_id UUID NOT NULL UNIQUE,
     aggregate_id UUID NOT NULL,
     aggregate_type VARCHAR(255) NOT NULL,
     event_type VARCHAR(255) NOT NULL,

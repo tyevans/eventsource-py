@@ -33,7 +33,7 @@ from eventsource.observability import (
     Tracer,
     create_tracer,
 )
-from eventsource.stores._compat import normalize_timestamp
+from eventsource.stores._compat import validate_timestamp
 from eventsource.stores._type_converter import (
     DefaultTypeConverter,
     TypeConverter,
@@ -361,7 +361,7 @@ class PostgreSQLEventStore(EventStore):
                                 :event_id, :event_type, :aggregate_type, :aggregate_id,
                                 :tenant_id, :actor_id, :version, :timestamp, :payload, NOW()
                             )
-                            RETURNING id
+                            RETURNING global_position
                             """
                         ),
                         {
@@ -592,7 +592,7 @@ class PostgreSQLEventStore(EventStore):
         self,
         aggregate_type: str,
         tenant_id: UUID | None = None,
-        from_timestamp: datetime | float | None = None,
+        from_timestamp: datetime | None = None,
     ) -> list[DomainEvent]:
         """
         Get all events for a specific aggregate type.
@@ -600,14 +600,12 @@ class PostgreSQLEventStore(EventStore):
         Args:
             aggregate_type: Type of aggregate (e.g., 'Order')
             tenant_id: Filter by tenant ID (optional)
-            from_timestamp: Only events after this datetime (optional).
-                Float (Unix timestamp) is deprecated and will emit a warning.
+            from_timestamp: Only events after this datetime (optional)
 
         Returns:
             List of events in chronological order
         """
-        # Normalize timestamp (handles deprecation warning for float)
-        normalized_timestamp = normalize_timestamp(from_timestamp, "from_timestamp")
+        validated_timestamp = validate_timestamp(from_timestamp, "from_timestamp")
 
         async with self._session_factory() as session:
             # Build query
@@ -626,9 +624,9 @@ class PostgreSQLEventStore(EventStore):
                 query_parts.append("AND tenant_id = :tenant_id")
                 params["tenant_id"] = str(tenant_id)
 
-            if normalized_timestamp is not None:
+            if validated_timestamp is not None:
                 query_parts.append("AND timestamp > :from_timestamp")
-                params["from_timestamp"] = normalized_timestamp
+                params["from_timestamp"] = validated_timestamp
 
             query_parts.append("ORDER BY timestamp ASC")
             query = "\n".join(query_parts)
@@ -744,7 +742,7 @@ class PostgreSQLEventStore(EventStore):
             query_parts = [
                 """
                 SELECT
-                    id, event_id, event_type, aggregate_type, aggregate_id,
+                    global_position, event_id, event_type, aggregate_type, aggregate_id,
                     tenant_id, actor_id, version, timestamp, payload, created_at
                 FROM events
                 WHERE aggregate_id = :aggregate_id
@@ -800,7 +798,7 @@ class PostgreSQLEventStore(EventStore):
                     event=event,
                     stream_id=stream_id,
                     stream_position=row[7],  # version
-                    global_position=row[0],  # id (serial/bigserial)
+                    global_position=row[0],
                     stored_at=row[10],  # created_at
                 )
 
@@ -842,7 +840,7 @@ class PostgreSQLEventStore(EventStore):
             query_parts = [
                 """
                 SELECT
-                    id, event_id, event_type, aggregate_type, aggregate_id,
+                    global_position, event_id, event_type, aggregate_type, aggregate_id,
                     tenant_id, actor_id, version, timestamp, payload, created_at
                 FROM events
                 WHERE 1=1
@@ -851,7 +849,7 @@ class PostgreSQLEventStore(EventStore):
             params: dict[str, Any] = {}
 
             if options.from_position > 0:
-                query_parts.append("AND id > :from_position")
+                query_parts.append("AND global_position > :from_position")
                 params["from_position"] = options.from_position
 
             if options.from_timestamp:
@@ -868,9 +866,9 @@ class PostgreSQLEventStore(EventStore):
 
             # Add ordering based on direction
             if options.direction == ReadDirection.BACKWARD:
-                query_parts.append("ORDER BY id DESC")
+                query_parts.append("ORDER BY global_position DESC")
             else:
-                query_parts.append("ORDER BY id ASC")
+                query_parts.append("ORDER BY global_position ASC")
 
             if options.limit is not None:
                 query_parts.append("LIMIT :limit")
@@ -899,7 +897,7 @@ class PostgreSQLEventStore(EventStore):
                     event=event,
                     stream_id=stream_id,
                     stream_position=row[7],  # version
-                    global_position=row[0],  # id (serial/bigserial)
+                    global_position=row[0],
                     stored_at=row[10],  # created_at
                 )
 
@@ -973,9 +971,9 @@ class PostgreSQLEventStore(EventStore):
         Get the current maximum global position in the event store.
 
         Returns:
-            The maximum global position (id), or 0 if empty.
+            The maximum global position, or 0 if empty.
         """
-        query = text("SELECT COALESCE(MAX(id), 0) FROM events")
+        query = text("SELECT COALESCE(MAX(global_position), 0) FROM events")
 
         async with self._session_factory() as session:
             result = await session.execute(query)

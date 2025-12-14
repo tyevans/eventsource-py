@@ -28,8 +28,10 @@ from eventsource.projections.base import (
 )
 from eventsource.protocols import (
     AsyncEventHandler,
-    EventHandler,
     FlexibleEventSubscriber,
+)
+from eventsource.protocols import (
+    FlexibleEventHandler as EventHandler,
 )
 from eventsource.repositories.checkpoint import InMemoryCheckpointRepository
 from eventsource.stores.interface import (

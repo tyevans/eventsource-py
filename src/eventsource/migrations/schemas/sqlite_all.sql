@@ -14,7 +14,7 @@
 --   - UUID stored as TEXT (36 characters, hyphenated format)
 --   - Timestamps stored as TEXT in ISO 8601 format
 --   - JSON stored as TEXT (no native JSONB support)
---   - Auto-increment uses INTEGER PRIMARY KEY AUTOINCREMENT
+--   - global_position uses INTEGER PRIMARY KEY AUTOINCREMENT
 --   - No stored functions (handled in application code)
 --
 -- Usage:
@@ -29,7 +29,7 @@
 -- The core event store table for event sourcing.
 
 CREATE TABLE IF NOT EXISTS events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    global_position INTEGER PRIMARY KEY AUTOINCREMENT,
     event_id TEXT NOT NULL UNIQUE,
     aggregate_id TEXT NOT NULL,
     aggregate_type TEXT NOT NULL,

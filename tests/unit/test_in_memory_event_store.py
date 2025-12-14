@@ -13,7 +13,6 @@ Tests cover:
 """
 
 import asyncio
-import warnings
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -544,7 +543,7 @@ class TestEventFiltering:
     async def test_get_events_by_type_with_timestamp_filter(
         self, store: InMemoryEventStore
     ) -> None:
-        """Test get_events_by_type with Unix timestamp filter."""
+        """Test get_events_by_type with timestamp filter."""
         now = datetime.now(UTC)
 
         # Create events with different timestamps
@@ -562,13 +561,9 @@ class TestEventFiltering:
             expected_version=0,
         )
 
-        # Get events from last 90 minutes using Unix timestamp (deprecated)
-        # Use warnings.catch_warnings to suppress the deprecation warning
-        # since we're intentionally testing backward compatibility
-        from_ts = (now - timedelta(minutes=90)).timestamp()
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            events = await store.get_events_by_type("TestAggregate", from_timestamp=from_ts)
+        # Get events from last 90 minutes using datetime
+        from_ts = now - timedelta(minutes=90)
+        events = await store.get_events_by_type("TestAggregate", from_timestamp=from_ts)
 
         assert len(events) == 1
         assert events[0].data == "new"

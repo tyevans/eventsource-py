@@ -180,8 +180,6 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
 
     Configuration:
     - retry_policy: RetryPolicy instance for configurable retry behavior
-    - MAX_RETRIES: Number of retry attempts (default: 3) - DEPRECATED, use retry_policy
-    - RETRY_BACKOFF_BASE: Base for exponential backoff in seconds (default: 2) - DEPRECATED
 
     Tracing:
     - Tracing is disabled by default for projections (high-frequency processing)
@@ -206,10 +204,6 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
         >>> policy = ExponentialBackoffRetryPolicy(RetryConfig(max_retries=5))
         >>> projection = OrderProjection(retry_policy=policy, enable_tracing=True)
     """
-
-    # Retry configuration - DEPRECATED: use retry_policy parameter instead
-    MAX_RETRIES: int = 3
-    RETRY_BACKOFF_BASE: int = 2  # seconds (exponential: 2s, 4s, 8s)
 
     def __init__(
         self,
@@ -252,29 +246,21 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
             enable_tracing=enable_tracing,
         )
 
-        # Use retry policy if provided, otherwise create one from class attributes
-        # for backward compatibility with MAX_RETRIES and RETRY_BACKOFF_BASE
+        # Use provided retry policy or create default
         if retry_policy is not None:
             self._retry_policy = retry_policy
         else:
-            # Use class attributes for backward compatibility
-            # Note: Old MAX_RETRIES meant total attempts, new max_retries is retries only
-            # So MAX_RETRIES=3 means 2 retries (3 total attempts - 1 initial)
             from eventsource.subscriptions.retry import RetryConfig
 
-            max_retries = max(0, self.MAX_RETRIES - 1)  # Convert to retries count
-            # RetryConfig requires initial_delay > 0, use 0.001 for "no backoff" cases
-            initial_delay = float(self.RETRY_BACKOFF_BASE) if self.RETRY_BACKOFF_BASE > 0 else 0.001
             self._retry_policy = ExponentialBackoffRetryPolicy(
                 config=RetryConfig(
-                    max_retries=max_retries,
-                    initial_delay=initial_delay,
+                    max_retries=2,  # 3 total attempts
+                    initial_delay=2.0,  # 2 second base backoff
                     exponential_base=2.0,
-                    jitter=0.0 if self.RETRY_BACKOFF_BASE == 0 else 0.1,
+                    jitter=0.1,
                 )
             )
 
-        # Keep references for backward compatibility
         self._checkpoint_repo = self._checkpoint_manager.checkpoint_repo
         self._dlq_repo = self._dlq_manager.dlq_repo
 
@@ -392,20 +378,6 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
                         },
                     )
                     await asyncio.sleep(backoff)
-
-    async def _send_to_dlq(self, event: DomainEvent, error: Exception, retry_count: int) -> None:
-        """
-        Send failed event to dead letter queue.
-
-        DEPRECATED: This method is kept for backward compatibility.
-        Internally delegates to ProjectionDLQManager.
-
-        Args:
-            event: The event that failed processing
-            error: The exception that occurred
-            retry_count: Number of retry attempts made
-        """
-        await self._dlq_manager.send_to_dlq(event, error, retry_count)
 
     @abstractmethod
     async def _process_event(self, event: DomainEvent) -> None:

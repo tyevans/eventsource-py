@@ -13,8 +13,10 @@ from eventsource.bus.memory import InMemoryEventBus
 from eventsource.events.base import DomainEvent
 from eventsource.protocols import (
     AsyncEventHandler,
-    EventHandler,
     FlexibleEventSubscriber,
+)
+from eventsource.protocols import (
+    FlexibleEventHandler as EventHandler,
 )
 
 # =============================================================================

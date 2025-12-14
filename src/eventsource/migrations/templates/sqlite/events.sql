@@ -8,7 +8,7 @@
 --   - UUID stored as TEXT (36 characters, hyphenated format)
 --   - Timestamps stored as TEXT in ISO 8601 format
 --   - JSON stored as TEXT (no native JSONB support)
---   - Auto-increment uses INTEGER PRIMARY KEY AUTOINCREMENT
+--   - global_position uses INTEGER PRIMARY KEY AUTOINCREMENT
 --
 -- SQLite 3.8+ required for partial index support.
 -- =============================================================================
@@ -19,10 +19,10 @@
 -- Each event represents a fact that occurred in the business domain.
 
 CREATE TABLE IF NOT EXISTS events (
-    -- Auto-incrementing ID for ordering (SQLite optimization)
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- Global position for ordered replay across all streams
+    global_position INTEGER PRIMARY KEY AUTOINCREMENT,
 
-    -- Primary event identifier (UUID v4 as TEXT)
+    -- Unique event identifier (UUID v4 as TEXT)
     event_id TEXT NOT NULL UNIQUE,
 
     -- Aggregate identification

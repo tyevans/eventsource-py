@@ -8,19 +8,9 @@ and protocol implementations.
 Protocols:
 - EventHandler: Async handler for domain events (primary, async-only)
 - SyncEventHandler: Sync handler for domain events
-- FlexibleEventHandler: Handler that may be sync or async (for backward compatibility)
+- FlexibleEventHandler: Handler that may be sync or async
 - EventSubscriber: Handler that declares event subscriptions (ABC-based)
 - FlexibleEventSubscriber: Protocol version of EventSubscriber for flexible typing
-
-Migration Guide:
-    Old imports (deprecated):
-        from eventsource.bus.interface import EventHandler, EventSubscriber
-        from eventsource.projections.protocols import EventHandler, EventSubscriber
-
-    New imports (recommended):
-        from eventsource.protocols import EventHandler, EventSubscriber
-        # Or
-        from eventsource import EventHandler, EventSubscriber
 
 Example:
     >>> from eventsource.protocols import EventHandler, EventSubscriber

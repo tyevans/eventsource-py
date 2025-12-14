@@ -48,6 +48,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added import compatibility tests (`tests/integration/test_imports.py`)
 - Updated all existing tracing tests to use new composition pattern
 
+## [0.3.1] - 2025-12-13
+
+### Changed
+
+- **Schema: `global_position` replaces `id` as primary key** - Events table now uses `global_position` as the primary key for strict sequential ordering, while `event_id` (UUID) remains as a unique constraint for deduplication and idempotency
+  - PostgreSQL: `global_position BIGSERIAL PRIMARY KEY` with `event_id UUID NOT NULL UNIQUE`
+  - SQLite: `global_position INTEGER PRIMARY KEY AUTOINCREMENT` with `event_id TEXT NOT NULL UNIQUE`
+  - Updated all SQL templates, Alembic migration templates, and store implementations
+  - Consistent naming across PostgreSQL and SQLite backends
+
+### Fixed
+
+- **SQLite store consistency** - SQLite event store now uses `global_position` column naming consistent with PostgreSQL, fixing column name mismatch between backends
+
 ## [0.3.0] - 2025-12-12
 
 ### Added

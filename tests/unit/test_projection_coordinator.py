@@ -22,7 +22,7 @@ from eventsource.projections.coordinator import (
     ProjectionRegistry,
     SubscriberRegistry,
 )
-from eventsource.projections.protocols import EventSubscriber
+from eventsource.protocols import EventSubscriber
 
 
 # Sample events for testing

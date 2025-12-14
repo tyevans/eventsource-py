@@ -24,7 +24,7 @@ from eventsource.observability import (
     Tracer,
     create_tracer,
 )
-from eventsource.stores._compat import normalize_timestamp
+from eventsource.stores._compat import validate_timestamp
 from eventsource.stores.interface import (
     AppendResult,
     EventStore,
@@ -311,7 +311,7 @@ class InMemoryEventStore(EventStore):
         self,
         aggregate_type: str,
         tenant_id: UUID | None = None,
-        from_timestamp: datetime | float | None = None,
+        from_timestamp: datetime | None = None,
     ) -> list[DomainEvent]:
         """
         Get all events for a specific aggregate type.
@@ -322,8 +322,7 @@ class InMemoryEventStore(EventStore):
         Args:
             aggregate_type: Type of aggregate (e.g., 'Order')
             tenant_id: Filter by tenant ID (optional, for multi-tenant systems)
-            from_timestamp: Only get events after this datetime (optional).
-                Float (Unix timestamp) is deprecated and will emit a warning.
+            from_timestamp: Only get events after this datetime (optional)
 
         Returns:
             List of events in chronological order
@@ -336,8 +335,7 @@ class InMemoryEventStore(EventStore):
             ...     from_timestamp=datetime.now(UTC) - timedelta(hours=1),
             ... )
         """
-        # Normalize timestamp (handles deprecation warning for float)
-        normalized_timestamp = normalize_timestamp(from_timestamp, "from_timestamp")
+        validated_timestamp = validate_timestamp(from_timestamp, "from_timestamp")
 
         async with self._lock:
             all_events: list[DomainEvent] = []
@@ -353,11 +351,8 @@ class InMemoryEventStore(EventStore):
                     if tenant_id is not None and event.tenant_id != tenant_id:
                         continue
 
-                    # Filter by timestamp if specified (using normalized datetime)
-                    if (
-                        normalized_timestamp is not None
-                        and event.occurred_at <= normalized_timestamp
-                    ):
+                    # Filter by timestamp if specified
+                    if validated_timestamp is not None and event.occurred_at <= validated_timestamp:
                         continue
 
                     all_events.append(event)

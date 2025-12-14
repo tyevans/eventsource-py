@@ -249,55 +249,6 @@ class TestFlexibleEventSubscriberProtocol:
 class TestDeprecationWarnings:
     """Tests for deprecation warnings when importing from old locations."""
 
-    def test_bus_interface_event_handler_warns(self) -> None:
-        """Importing EventHandler from bus.interface emits warning."""
-        # We need to force the import to use __getattr__ by using importlib
-        import sys
-
-        # Remove cached module to force re-import
-        if "eventsource.bus.interface" in sys.modules:
-            # Access through __getattr__ by deleting from globals
-            interface = sys.modules["eventsource.bus.interface"]
-            with pytest.warns(DeprecationWarning, match="eventsource.protocols"):
-                # Trigger __getattr__ by accessing attribute not in module globals
-                _ = interface.__getattr__("EventHandler")
-
-    def test_bus_interface_event_subscriber_warns(self) -> None:
-        """Importing EventSubscriber from bus.interface emits warning."""
-        import sys
-
-        interface = sys.modules.get("eventsource.bus.interface")
-        if interface:
-            with pytest.warns(DeprecationWarning, match="eventsource.protocols"):
-                _ = interface.__getattr__("EventSubscriber")
-
-    def test_projections_protocols_event_handler_warns(self) -> None:
-        """Importing EventHandler from projections.protocols emits warning."""
-        import sys
-
-        protocols = sys.modules.get("eventsource.projections.protocols")
-        if protocols:
-            with pytest.warns(DeprecationWarning, match="eventsource.protocols"):
-                _ = protocols.__getattr__("EventHandler")
-
-    def test_projections_protocols_sync_event_handler_warns(self) -> None:
-        """Importing SyncEventHandler from projections.protocols emits warning."""
-        import sys
-
-        protocols = sys.modules.get("eventsource.projections.protocols")
-        if protocols:
-            with pytest.warns(DeprecationWarning, match="eventsource.protocols"):
-                _ = protocols.__getattr__("SyncEventHandler")
-
-    def test_projections_protocols_event_subscriber_warns(self) -> None:
-        """Importing EventSubscriber from projections.protocols emits warning."""
-        import sys
-
-        protocols = sys.modules.get("eventsource.projections.protocols")
-        if protocols:
-            with pytest.warns(DeprecationWarning, match="eventsource.protocols"):
-                _ = protocols.__getattr__("EventSubscriber")
-
     def test_canonical_import_no_warning(self) -> None:
         """Importing from canonical location does not warn."""
         with warnings.catch_warnings():

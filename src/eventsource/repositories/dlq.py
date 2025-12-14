@@ -10,9 +10,7 @@ all retry attempts. This enables:
 
 import asyncio
 import traceback
-import warnings
-from collections.abc import Iterator
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable
 from uuid import UUID
@@ -52,10 +50,6 @@ class DLQEntry:
         status: Current status (failed, retrying, resolved)
         resolved_at: When the entry was resolved (if applicable)
         resolved_by: Who resolved the entry (if applicable)
-
-    Note:
-        Dict-style access (entry["key"]) is deprecated. Use attribute access
-        (entry.key) instead. Dict access will be removed in version 0.3.0.
     """
 
     id: int | str
@@ -71,63 +65,6 @@ class DLQEntry:
     status: str = "failed"
     resolved_at: datetime | None = None
     resolved_by: str | None = None
-
-    def __getitem__(self, key: str) -> Any:
-        """
-        Dict-style access for backward compatibility.
-
-        .. deprecated:: 0.1.0
-            Use attribute access (entry.event_id) instead of
-            dict access (entry["event_id"]).
-        """
-        warnings.warn(
-            f"Dict-style access to DLQEntry is deprecated. "
-            f"Use 'entry.{key}' instead of 'entry[\"{key}\"]'. "
-            "Dict access will be removed in version 0.3.0.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        try:
-            return getattr(self, key)
-        except AttributeError:
-            raise KeyError(key) from None
-
-    def __contains__(self, key: str) -> bool:
-        """Support 'key in entry' for backward compatibility."""
-        return hasattr(self, key)
-
-    def get(self, key: str, default: Any = None) -> Any:
-        """
-        Dict-style get for backward compatibility.
-
-        .. deprecated:: 0.1.0
-            Use attribute access (entry.event_id) instead of
-            dict access (entry.get("event_id")).
-        """
-        warnings.warn(
-            f"Dict-style access to DLQEntry is deprecated. "
-            f"Use 'entry.{key}' instead of 'entry.get(\"{key}\")'. "
-            "Dict access will be removed in version 0.3.0.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return getattr(self, key, default)
-
-    def keys(self) -> list[str]:
-        """Return field names for backward compatibility."""
-        return [f.name for f in fields(self)]
-
-    def values(self) -> list[Any]:
-        """Return field values for backward compatibility."""
-        return [getattr(self, f.name) for f in fields(self)]
-
-    def items(self) -> list[tuple[str, Any]]:
-        """Return field items for backward compatibility."""
-        return [(f.name, getattr(self, f.name)) for f in fields(self)]
-
-    def __iter__(self) -> Iterator[str]:
-        """Allow iteration over field names for backward compatibility."""
-        return iter(self.keys())
 
 
 @dataclass(frozen=True)

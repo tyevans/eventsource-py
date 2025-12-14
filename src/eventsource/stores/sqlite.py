@@ -40,7 +40,7 @@ from eventsource.observability import (
     Tracer,
     create_tracer,
 )
-from eventsource.stores._compat import normalize_timestamp
+from eventsource.stores._compat import validate_timestamp
 from eventsource.stores._type_converter import (
     DefaultTypeConverter,
     TypeConverter,
@@ -665,7 +665,7 @@ class SQLiteEventStore(EventStore):
         self,
         aggregate_type: str,
         tenant_id: UUID | None = None,
-        from_timestamp: datetime | float | None = None,
+        from_timestamp: datetime | None = None,
     ) -> list[DomainEvent]:
         """
         Get all events for a specific aggregate type.
@@ -673,8 +673,7 @@ class SQLiteEventStore(EventStore):
         Args:
             aggregate_type: Type of aggregate (e.g., 'Order')
             tenant_id: Filter by tenant ID (optional)
-            from_timestamp: Only events after this timestamp (datetime preferred,
-                float/int Unix timestamp deprecated)
+            from_timestamp: Only events after this timestamp (optional)
 
         Returns:
             List of events in chronological order
@@ -687,8 +686,7 @@ class SQLiteEventStore(EventStore):
         """
         conn = self._ensure_connected()
 
-        # Normalize timestamp (handles deprecation warning for float)
-        normalized_timestamp = normalize_timestamp(from_timestamp, "from_timestamp")
+        validated_timestamp = validate_timestamp(from_timestamp, "from_timestamp")
 
         # Build query
         query_parts = [
@@ -706,9 +704,9 @@ class SQLiteEventStore(EventStore):
             query_parts.append("AND tenant_id = ?")
             params.append(str(tenant_id))
 
-        if normalized_timestamp is not None:
+        if validated_timestamp is not None:
             query_parts.append("AND timestamp > ?")
-            params.append(normalized_timestamp.isoformat())
+            params.append(validated_timestamp.isoformat())
 
         query_parts.append("ORDER BY timestamp ASC")
         query = "\n".join(query_parts)
@@ -839,7 +837,7 @@ class SQLiteEventStore(EventStore):
         query_parts = [
             """
             SELECT
-                id, event_id, event_type, aggregate_type, aggregate_id,
+                global_position, event_id, event_type, aggregate_type, aggregate_id,
                 tenant_id, actor_id, version, timestamp, payload, created_at
             FROM events
             WHERE aggregate_id = ?
@@ -898,7 +896,7 @@ class SQLiteEventStore(EventStore):
                 event=event,
                 stream_id=stream_id,
                 stream_position=row[7],  # version
-                global_position=row[0],  # id (auto-increment)
+                global_position=row[0],
                 stored_at=stored_at,
             )
 
@@ -944,7 +942,7 @@ class SQLiteEventStore(EventStore):
         query_parts = [
             """
             SELECT
-                id, event_id, event_type, aggregate_type, aggregate_id,
+                global_position, event_id, event_type, aggregate_type, aggregate_id,
                 tenant_id, actor_id, version, timestamp, payload, created_at
             FROM events
             WHERE 1=1
@@ -953,7 +951,7 @@ class SQLiteEventStore(EventStore):
         params: list[Any] = []
 
         if options.from_position > 0:
-            query_parts.append("AND id > ?")
+            query_parts.append("AND global_position > ?")
             params.append(options.from_position)
 
         if options.from_timestamp:
@@ -970,9 +968,9 @@ class SQLiteEventStore(EventStore):
 
         # Add ordering based on direction
         if options.direction == ReadDirection.BACKWARD:
-            query_parts.append("ORDER BY id DESC")
+            query_parts.append("ORDER BY global_position DESC")
         else:
-            query_parts.append("ORDER BY id ASC")
+            query_parts.append("ORDER BY global_position ASC")
 
         if options.limit is not None:
             query_parts.append("LIMIT ?")
@@ -1004,7 +1002,7 @@ class SQLiteEventStore(EventStore):
                 event=event,
                 stream_id=stream_id,
                 stream_position=row[7],  # version
-                global_position=row[0],  # id (auto-increment)
+                global_position=row[0],
                 stored_at=stored_at,
             )
 
@@ -1088,13 +1086,13 @@ class SQLiteEventStore(EventStore):
         Get the current maximum global position in the event store.
 
         Returns:
-            The maximum global position (id), or 0 if empty.
+            The maximum global position, or 0 if empty.
 
         Raises:
             RuntimeError: If not connected to database
         """
         conn = self._ensure_connected()
 
-        cursor = await conn.execute("SELECT COALESCE(MAX(id), 0) FROM events")
+        cursor = await conn.execute("SELECT COALESCE(MAX(global_position), 0) FROM events")
         row = await cursor.fetchone()
         return row[0] if row else 0
