@@ -3993,14 +3993,15 @@ class TestRabbitMQStartConsuming:
 class TestRabbitMQStopConsuming:
     """Tests for stop_consuming() method."""
 
-    def test_stop_consuming_sets_flag(self) -> None:
+    @pytest.mark.asyncio
+    async def test_stop_consuming_sets_flag(self) -> None:
         """Test that stop_consuming sets consuming flag to False."""
         from eventsource.bus.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus()
         bus._consuming = True
 
-        asyncio.get_event_loop().run_until_complete(bus.stop_consuming())
+        await bus.stop_consuming()
 
         assert bus._consuming is False
 
