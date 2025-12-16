@@ -9,11 +9,15 @@ when commands are executed.
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import Any, Generic, cast, get_args, get_origin
+from typing import Any, ClassVar, Generic, TypeVar, cast, get_args, get_origin
 from uuid import UUID
 
 from eventsource.events.base import DomainEvent
-from eventsource.exceptions import EventVersionError, UnhandledEventError
+from eventsource.exceptions import (
+    AggregateNotCreatedError,
+    EventVersionError,
+    UnhandledEventError,
+)
 from eventsource.types import TState
 
 # Type alias for unregistered event handling mode
@@ -23,6 +27,9 @@ logger = logging.getLogger(__name__)
 
 # Type alias for event handler functions
 EventHandler = Callable[[DomainEvent], None]
+
+# Type variable for event types (used by create_event)
+TEvent = TypeVar("TEvent", bound=DomainEvent)
 
 
 class AggregateRoot(Generic[TState], ABC):
@@ -268,18 +275,22 @@ class AggregateRoot(Generic[TState], ABC):
         pass
 
     @abstractmethod
-    def _get_initial_state(self) -> TState:
+    def _get_initial_state(self) -> TState | None:
         """
         Get the initial state for a new aggregate.
 
-        Called when the first event is applied to set up the initial state.
+        Called by event handlers to set up initial state when needed.
 
         Returns:
-            Initial state instance
+            Initial state instance, or None for deferred state aggregates
 
         Example:
             >>> def _get_initial_state(self) -> OrderState:
             ...     return OrderState(order_id=self.aggregate_id)
+
+        Note:
+            For DeclarativeAggregate subclasses with requires_creation_event=True,
+            this method returns None since state is set by the first event handler.
         """
         pass
 
@@ -365,6 +376,103 @@ class AggregateRoot(Generic[TState], ABC):
             ...     self._raise_event(event)
         """
         self.apply_event(event, is_new=True)
+
+    def create_event(
+        self,
+        event_class: type[TEvent],
+        **kwargs: Any,
+    ) -> TEvent:
+        """
+        Create and apply an event with auto-populated aggregate fields.
+
+        This is a convenience method that eliminates repetitive boilerplate
+        when creating events in command methods. It automatically sets:
+
+        - aggregate_id from self.aggregate_id
+        - aggregate_type from self.aggregate_type
+        - aggregate_version from self.get_next_version()
+        - tenant_id from tenant_context (if available and not explicitly set)
+
+        The event is automatically applied to the aggregate after creation.
+
+        Args:
+            event_class: The event class to instantiate
+            **kwargs: Event-specific fields (can override auto-populated fields)
+
+        Returns:
+            The created and applied event
+
+        Example:
+            Before (manual approach):
+                >>> def ship(self, tracking_number: str) -> None:
+                ...     if self.state.status != "paid":
+                ...         raise ValueError("Cannot ship unpaid order")
+                ...     event = OrderShipped(
+                ...         aggregate_id=self.aggregate_id,
+                ...         aggregate_type=self.aggregate_type,
+                ...         aggregate_version=self.get_next_version(),
+                ...         tracking_number=tracking_number,
+                ...     )
+                ...     self.apply_event(event)
+
+            After (with create_event):
+                >>> def ship(self, tracking_number: str) -> None:
+                ...     if self.state.status != "paid":
+                ...         raise ValueError("Cannot ship unpaid order")
+                ...     self.create_event(OrderShipped, tracking_number=tracking_number)
+
+        Note:
+            Explicit kwargs always override auto-populated values.
+            For example, passing `aggregate_version=5` will use 5 instead
+            of the calculated next version.
+        """
+        # Start with auto-populated aggregate fields
+        event_kwargs: dict[str, Any] = {
+            "aggregate_id": self.aggregate_id,
+            "aggregate_type": self.aggregate_type,
+            "aggregate_version": self.get_next_version(),
+        }
+
+        # Optionally auto-populate tenant_id from context
+        if "tenant_id" not in kwargs:
+            tenant_id = self._get_tenant_from_context()
+            if tenant_id is not None:
+                event_kwargs["tenant_id"] = tenant_id
+
+        # User kwargs override auto-populated values
+        event_kwargs.update(kwargs)
+
+        # Create and apply the event
+        event = event_class(**event_kwargs)
+        self.apply_event(event, is_new=True)
+
+        return event
+
+    def _get_tenant_from_context(self) -> UUID | None:
+        """
+        Get tenant ID from context if multitenancy module is available.
+
+        This method performs a lazy import of the multitenancy module
+        to avoid a hard dependency. If the module is not installed or
+        no tenant context is set, returns None.
+
+        Returns:
+            Tenant ID from context, or None if not available
+        """
+        try:
+            # Dynamic import to avoid hard dependency on multitenancy module
+            import importlib
+
+            multitenancy = importlib.import_module("eventsource.multitenancy")
+            get_current_tenant = getattr(multitenancy, "get_current_tenant", None)
+            if get_current_tenant is not None:
+                result = get_current_tenant()
+                if isinstance(result, UUID):
+                    return result
+            return None
+        except (ImportError, ModuleNotFoundError):
+            # Multitenancy module not installed/used
+            return None
 
     def _serialize_state(self) -> dict[str, Any]:
         """
@@ -506,7 +614,16 @@ class DeclarativeAggregate(AggregateRoot[TState], ABC):
     uses a declarative pattern with the @handles decorator to register
     event handlers, reducing boilerplate in the _apply method.
 
+    Supports deferred state via `requires_creation_event` class attribute.
+    When True, the aggregate doesn't require an initial state implementation
+    and will raise AggregateNotCreatedError if state is accessed before
+    a creation event is applied.
+
     Attributes:
+        requires_creation_event: When True, the aggregate doesn't require
+            _get_initial_state() implementation and state access raises
+            AggregateNotCreatedError until a creation event is applied.
+            Default is False (backward compatible).
         unregistered_event_handling: Controls behavior when an event has no
             registered handler. Options:
             - "ignore": Silently ignore unhandled events (default, for backwards
@@ -514,9 +631,23 @@ class DeclarativeAggregate(AggregateRoot[TState], ABC):
             - "warn": Log a warning for unhandled events
             - "error": Raise UnhandledEventError for unhandled events
 
-    Example:
+    Example with deferred state:
+        >>> class ExtractionProcess(DeclarativeAggregate[ExtractionState]):
+        ...     aggregate_type = "Extraction"
+        ...     requires_creation_event = True  # No initial state needed
+        ...
+        ...     def request(self, page_id: UUID, config: dict) -> None:
+        ...         # First event creates the aggregate
+        ...         self.create_event(ExtractionRequested, page_id=page_id, config=config)
+        ...
+        ...     @handles(ExtractionRequested)
+        ...     def _on_requested(self, event: ExtractionRequested) -> None:
+        ...         self._state = ExtractionState(page_id=event.page_id, status="requested")
+
+    Example with traditional initial state:
         >>> class OrderAggregate(DeclarativeAggregate[OrderState]):
         ...     aggregate_type = "Order"
+        ...     # requires_creation_event defaults to False
         ...
         ...     def _get_initial_state(self) -> OrderState:
         ...         return OrderState(order_id=self.aggregate_id)
@@ -551,9 +682,13 @@ class DeclarativeAggregate(AggregateRoot[TState], ABC):
         ...         ...
     """
 
+    # Class-level attribute for deferred state support
+    # When True, aggregate doesn't require _get_initial_state() implementation
+    requires_creation_event: ClassVar[bool] = False
+
     # Class-level configuration for unregistered event handling
     # Options: "ignore" (default), "warn", "error"
-    unregistered_event_handling: UnregisteredEventHandling = "ignore"
+    unregistered_event_handling: ClassVar[UnregisteredEventHandling] = "ignore"
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         """Initialize handler registry for each subclass."""
@@ -570,6 +705,84 @@ class DeclarativeAggregate(AggregateRoot[TState], ABC):
             except AttributeError:
                 # Some attributes might raise, skip them
                 continue
+
+    @property
+    def state(self) -> TState:
+        """
+        Get the current state of the aggregate.
+
+        Returns:
+            The current aggregate state
+
+        Raises:
+            AggregateNotCreatedError: If requires_creation_event=True and
+                no events have been applied yet
+        """
+        if self.requires_creation_event and self._state is None:
+            raise AggregateNotCreatedError(
+                self.__class__.__name__,
+                suggestion=f"Call a creation method on {self.__class__.__name__} first.",
+            )
+        return cast(TState, self._state)
+
+    @property
+    def state_or_none(self) -> TState | None:
+        """
+        Get the current state without raising on uncreated aggregate.
+
+        This is useful for checking if an aggregate exists or for
+        conditional logic based on creation status.
+
+        Returns:
+            The current state, or None if aggregate hasn't been created
+
+        Example:
+            >>> if order.state_or_none is None:
+            ...     order.create(customer_id)
+            ... else:
+            ...     order.update(...)
+        """
+        return self._state
+
+    @property
+    def is_created(self) -> bool:
+        """
+        Check if the aggregate has been created (has state).
+
+        Returns:
+            True if at least one event has been applied, False otherwise
+
+        Example:
+            >>> order = OrderAggregate(order_id)
+            >>> assert not order.is_created
+            >>> order.create(customer_id)
+            >>> assert order.is_created
+        """
+        return self._state is not None
+
+    def _get_initial_state(self) -> TState | None:
+        """
+        Get initial state for new aggregate.
+
+        Behavior depends on `requires_creation_event`:
+
+        - False (default): Subclasses must implement this method
+        - True: Returns None, state is set by first event handler
+
+        Returns:
+            Initial state, or None for deferred state aggregates
+
+        Raises:
+            NotImplementedError: If requires_creation_event=False and
+                not implemented in subclass
+        """
+        if self.requires_creation_event:
+            return None
+
+        raise NotImplementedError(
+            f"{self.__class__.__name__} must implement _get_initial_state() "
+            f"or set requires_creation_event = True"
+        )
 
     def _apply(self, event: DomainEvent) -> None:
         """

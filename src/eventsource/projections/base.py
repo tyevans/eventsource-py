@@ -5,8 +5,9 @@ Projections build read models from domain events. This module provides:
 - Projection: Abstract base class for all projections
 - EventHandler: Base class for event handlers
 - CheckpointTrackingProjection: Adds checkpoint, retry, and DLQ support
-- DeclarativeProjection: Adds @handles decorator support
+- DeclarativeProjection: Adds @handles decorator support with tenant filtering
 - DatabaseProjection: Adds database connection support for handlers
+- TenantFilter: Type alias for tenant filter parameter
 
 Projections are a core concept in event sourcing, responsible for
 maintaining read models optimized for specific query patterns.
@@ -15,7 +16,9 @@ maintaining read models optimized for specific query patterns.
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, TypeAlias
+from uuid import UUID
 
 if TYPE_CHECKING:
     from opentelemetry.trace import Span
@@ -47,6 +50,12 @@ logger = logging.getLogger(__name__)
 
 # Type alias for unregistered event handling mode
 UnregisteredEventHandling = str  # "ignore" | "warn" | "error"
+
+# Tenant filter can be:
+# - Static UUID: Always filter by this tenant
+# - Callable: Dynamic filter, called per-event (e.g., get_current_tenant)
+# - None: No filtering, process all events
+TenantFilter: TypeAlias = UUID | Callable[[], UUID | None] | None
 
 
 class Projection(ABC):
@@ -452,6 +461,9 @@ class DeclarativeProjection(CheckpointTrackingProjection):
     and routes events to them. The subscribed_to() method is auto-generated from
     the @handles decorators, eliminating duplication.
 
+    Supports automatic tenant filtering via the tenant_filter parameter.
+    When set, only events matching the filter are processed.
+
     Subclasses just need to:
     1. Implement handler methods decorated with @handles(EventType)
     2. Optionally override _truncate_read_models() for reset support
@@ -491,6 +503,18 @@ class DeclarativeProjection(CheckpointTrackingProjection):
         >>> class StrictOrderProjection(DeclarativeProjection):
         ...     unregistered_event_handling = "error"
         ...     # ... handlers ...
+
+    Example with static tenant filter:
+        >>> # Process only events for a specific tenant
+        >>> projection = OrderProjection(tenant_filter=tenant_uuid)
+
+    Example with dynamic filter (context-based):
+        >>> from eventsource.multitenancy import get_current_tenant
+        >>> # Process events for current request's tenant
+        >>> projection = OrderProjection(tenant_filter=get_current_tenant)
+
+    Example without filter (process all):
+        >>> projection = OrderProjection()  # tenant_filter=None
     """
 
     # Class-level configuration for unregistered event handling
@@ -502,6 +526,8 @@ class DeclarativeProjection(CheckpointTrackingProjection):
         checkpoint_repo: CheckpointRepository | None = None,
         dlq_repo: DLQRepository | None = None,
         enable_tracing: bool = False,
+        *,
+        tenant_filter: TenantFilter = None,
     ) -> None:
         """
         Initialize the declarative projection.
@@ -514,6 +540,10 @@ class DeclarativeProjection(CheckpointTrackingProjection):
             dlq_repo: Repository for dead letter queue.
             enable_tracing: If True and OpenTelemetry is available, emit traces.
                           Default is False (tracing off for high-frequency projections).
+            tenant_filter: Optional tenant filter. Can be:
+                - UUID: Static filter, only process events with this tenant_id
+                - Callable[[], UUID | None]: Dynamic filter, called per event
+                - None: No filtering, process all events (default)
         """
         # Initialize registry before calling super().__init__()
         # in case subscribed_to() is called during parent initialization
@@ -524,6 +554,9 @@ class DeclarativeProjection(CheckpointTrackingProjection):
             unregistered_event_handling=self.unregistered_event_handling,  # type: ignore[arg-type]
             validate_on_init=True,
         )
+
+        # Store tenant filter
+        self._tenant_filter = tenant_filter
 
         super().__init__(
             checkpoint_repo=checkpoint_repo,
@@ -543,12 +576,58 @@ class DeclarativeProjection(CheckpointTrackingProjection):
         """
         return self._handler_registry.get_subscribed_events()
 
+    def _get_tenant_filter_value(self) -> UUID | None:
+        """
+        Resolve the current tenant filter value.
+
+        Returns:
+            The tenant UUID to filter by, or None for no filtering
+        """
+        if self._tenant_filter is None:
+            return None
+
+        if isinstance(self._tenant_filter, UUID):
+            return self._tenant_filter
+
+        # It's a callable - invoke it
+        return self._tenant_filter()
+
+    def _should_process_event(self, event: DomainEvent) -> bool:
+        """
+        Check if event should be processed based on tenant filter.
+
+        Args:
+            event: The event to check
+
+        Returns:
+            True if event should be processed, False to skip
+
+        Logic:
+        - If no filter set (None): Process all events
+        - If filter set and event has tenant_id: Must match
+        - If filter set and event has no tenant_id: Process (legacy events)
+        """
+        filter_value = self._get_tenant_filter_value()
+
+        if filter_value is None:
+            return True  # No filtering
+
+        event_tenant: UUID | None = getattr(event, "tenant_id", None)
+
+        if event_tenant is None:
+            # Event has no tenant_id - process it (legacy/system events)
+            return True
+
+        return bool(event_tenant == filter_value)
+
     async def _process_event(self, event: DomainEvent) -> None:
         """
-        Route event to appropriate handler method.
+        Route event to appropriate handler method with tenant filtering.
 
         Called by CheckpointTrackingProjection.handle() within a transaction.
-        Behavior for unhandled events depends on unregistered_event_handling setting.
+        If tenant_filter is set and event doesn't match, the event is
+        silently skipped. Otherwise, behavior for unhandled events depends
+        on unregistered_event_handling setting.
 
         Args:
             event: The domain event to process
@@ -556,6 +635,23 @@ class DeclarativeProjection(CheckpointTrackingProjection):
         Raises:
             UnhandledEventError: If unregistered_event_handling="error" and no handler found
         """
+        # Check tenant filter first
+        if not self._should_process_event(event):
+            logger.debug(
+                "Skipping event %s: tenant %s doesn't match filter %s",
+                event.event_id,
+                getattr(event, "tenant_id", None),
+                self._get_tenant_filter_value(),
+                extra={
+                    "projection": self._projection_name,
+                    "event_id": str(event.event_id),
+                    "event_type": type(event).__name__,
+                    "event_tenant_id": str(getattr(event, "tenant_id", None)),
+                    "filter_tenant_id": str(self._get_tenant_filter_value()),
+                },
+            )
+            return
+
         handler_info = self._handler_registry.get_handler(type(event))
 
         if handler_info is None:
@@ -587,6 +683,8 @@ class DatabaseProjection(DeclarativeProjection):
     handlers with 2-parameter signatures (conn, event). This enables handlers
     to execute SQL operations within the projection's transaction context.
 
+    Inherits tenant_filter support from DeclarativeProjection.
+
     The database session wraps all handler operations, ensuring that:
     - Handler SQL operations are transactional
     - Checkpoint updates share the same transaction (when using compatible repos)
@@ -615,6 +713,13 @@ class DatabaseProjection(DeclarativeProjection):
         >>> projection = OrderProjection(session_factory=async_session_factory)
         >>> await projection.handle(event)
 
+    Example with tenant filter:
+        >>> from eventsource.multitenancy import get_current_tenant
+        >>> projection = OrderProjection(
+        ...     session_factory=async_session_factory,
+        ...     tenant_filter=get_current_tenant,
+        ... )
+
     Attributes:
         _session_factory: SQLAlchemy async session factory for database connections
         _current_connection: Current database connection within handle() context
@@ -626,6 +731,8 @@ class DatabaseProjection(DeclarativeProjection):
         checkpoint_repo: CheckpointRepository | None = None,
         dlq_repo: DLQRepository | None = None,
         enable_tracing: bool = False,
+        *,
+        tenant_filter: TenantFilter = None,
     ) -> None:
         """
         Initialize the database projection.
@@ -639,11 +746,16 @@ class DatabaseProjection(DeclarativeProjection):
                      If None, uses InMemoryDLQRepository.
             enable_tracing: If True and OpenTelemetry is available, emit traces.
                           Default is False (tracing off for high-frequency projections).
+            tenant_filter: Optional tenant filter. Can be:
+                - UUID: Static filter, only process events with this tenant_id
+                - Callable[[], UUID | None]: Dynamic filter, called per event
+                - None: No filtering, process all events (default)
         """
         super().__init__(
             checkpoint_repo=checkpoint_repo,
             dlq_repo=dlq_repo,
             enable_tracing=enable_tracing,
+            tenant_filter=tenant_filter,
         )
         self._session_factory = session_factory
         self._current_connection: AsyncConnection | None = None

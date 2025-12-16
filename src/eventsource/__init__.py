@@ -18,6 +18,7 @@ except PackageNotFoundError:
     # Package not installed (running from source without install)
     __version__ = "0.0.0.dev0"
 
+# Multi-tenancy support (DX-010)
 # Exceptions - available immediately
 # Aggregates (Task 07, Task 08)
 from eventsource.aggregates.base import AggregateRoot, DeclarativeAggregate
@@ -73,6 +74,7 @@ from eventsource.events.registry import (
     register_event,
 )
 from eventsource.exceptions import (
+    AggregateNotCreatedError,
     AggregateNotFoundError,
     EventNotFoundError,
     EventSourceError,
@@ -83,6 +85,18 @@ from eventsource.exceptions import (
 
 # Decorators - canonical location for @handles (TD-006)
 from eventsource.handlers import handles
+from eventsource.multitenancy import (
+    TenantContextNotSetError,
+    TenantDomainEvent,
+    TenantMismatchError,
+    clear_tenant_context,
+    get_current_tenant,
+    get_required_tenant,
+    set_current_tenant,
+    tenant_context,
+    tenant_scope,
+    tenant_scope_sync,
+)
 
 # Projections (Task 09)
 from eventsource.projections.base import (
@@ -154,6 +168,9 @@ from eventsource.stores.interface import (
     StoredEvent,
 )
 from eventsource.stores.postgresql import PostgreSQLEventStore
+
+# Sync adapters (DX-005)
+from eventsource.sync import SyncEventStoreAdapter
 
 # SQLite Event Store and Repositories (optional - requires aiosqlite)
 try:
@@ -245,6 +262,7 @@ __all__ = [
     "KafkaNotAvailableError",
     "KAFKA_AVAILABLE",
     # Exceptions
+    "AggregateNotCreatedError",
     "AggregateNotFoundError",
     "EventNotFoundError",
     "EventSourceError",
@@ -285,6 +303,19 @@ __all__ = [
     "SnapshotDeserializationError",
     "SnapshotSchemaVersionError",
     "SnapshotNotFoundError",
+    # Sync adapters (DX-005)
+    "SyncEventStoreAdapter",
+    # Multi-tenancy (DX-010)
+    "tenant_context",
+    "get_current_tenant",
+    "get_required_tenant",
+    "set_current_tenant",
+    "clear_tenant_context",
+    "tenant_scope",
+    "tenant_scope_sync",
+    "TenantDomainEvent",
+    "TenantContextNotSetError",
+    "TenantMismatchError",
 ]
 
 # Conditionally add SQLite exports when aiosqlite is available

@@ -151,3 +151,31 @@ class UnhandledEventError(EventSourceError):
             f"Add @handles({event_type}) decorator or set "
             f"unregistered_event_handling='ignore' or 'warn'."
         )
+
+
+class AggregateNotCreatedError(EventSourceError):
+    """
+    Raised when accessing state of an aggregate before creation event.
+
+    This error occurs when:
+    1. Aggregate has `requires_creation_event = True`
+    2. No events have been applied yet
+    3. Code attempts to access `aggregate.state`
+
+    Use `aggregate.state_or_none` or `aggregate.is_created` to safely
+    check if the aggregate has been created.
+
+    Attributes:
+        aggregate_class: Name of the aggregate class that wasn't created
+        suggestion: Optional hint for how to resolve the error
+    """
+
+    def __init__(self, aggregate_class: str, suggestion: str | None = None) -> None:
+        self.aggregate_class = aggregate_class
+        self.suggestion = suggestion
+
+        message = f"{aggregate_class} has not been created. Apply a creation event first."
+        if suggestion:
+            message += f" Hint: {suggestion}"
+
+        super().__init__(message)

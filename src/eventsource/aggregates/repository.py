@@ -110,7 +110,7 @@ class AggregateRepository(Generic[TAggregate]):
         self,
         event_store: EventStore,
         aggregate_factory: type[TAggregate],
-        aggregate_type: str,
+        aggregate_type: str | None = None,
         event_publisher: EventPublisher | None = None,
         # Snapshot configuration
         snapshot_store: "SnapshotStore | None" = None,
@@ -123,10 +123,17 @@ class AggregateRepository(Generic[TAggregate]):
         """
         Initialize the repository.
 
+        The aggregate_type can be:
+        1. Explicitly provided via the aggregate_type parameter
+        2. Inferred from aggregate_factory.aggregate_type attribute
+
+        When both are provided, the explicit parameter takes precedence.
+
         Args:
             event_store: Event store for persistence and retrieval
             aggregate_factory: Class to instantiate when loading aggregates
-            aggregate_type: Type name of the aggregate (e.g., 'Order')
+            aggregate_type: Optional type name of the aggregate (e.g., 'Order').
+                          If not provided, inferred from aggregate_factory.aggregate_type.
             event_publisher: Optional publisher for broadcasting events
             snapshot_store: Optional snapshot store for state caching.
                           When provided, enables snapshot-aware loading.
@@ -145,19 +152,31 @@ class AggregateRepository(Generic[TAggregate]):
                           Defaults to True for consistency with other components.
                           Ignored if tracer is explicitly provided.
 
-        Example:
-            >>> # Basic repository (no snapshots)
+        Raises:
+            ValueError: If aggregate_type cannot be inferred and not provided.
+
+        Example with inference:
+            >>> class OrderAggregate(DeclarativeAggregate[OrderState]):
+            ...     aggregate_type = "Order"
+            ...
             >>> repo = AggregateRepository(
-            ...     event_store=PostgreSQLEventStore(session_factory),
+            ...     event_store=store,
             ...     aggregate_factory=OrderAggregate,
-            ...     aggregate_type="Order",
+            ...     # aggregate_type inferred from OrderAggregate.aggregate_type
             ... )
-            >>>
-            >>> # With snapshot support
+
+        Example with explicit type:
+            >>> repo = AggregateRepository(
+            ...     event_store=store,
+            ...     aggregate_factory=OrderAggregate,
+            ...     aggregate_type="CustomOrder",  # Explicit override
+            ... )
+
+        Example with snapshot support:
             >>> repo = AggregateRepository(
             ...     event_store=PostgreSQLEventStore(session_factory),
             ...     aggregate_factory=OrderAggregate,
-            ...     aggregate_type="Order",
+            ...     # aggregate_type inferred
             ...     snapshot_store=PostgreSQLSnapshotStore(session_factory),
             ...     snapshot_threshold=100,
             ...     snapshot_mode="background",
@@ -175,8 +194,13 @@ class AggregateRepository(Generic[TAggregate]):
 
         self._event_store = event_store
         self._aggregate_factory = aggregate_factory
-        self._aggregate_type = aggregate_type
         self._event_publisher = event_publisher
+
+        # Infer aggregate_type if not explicitly provided
+        if aggregate_type is None:
+            aggregate_type = self._infer_aggregate_type(aggregate_factory)
+
+        self._aggregate_type = aggregate_type
 
         # Snapshot configuration (exposed via public properties)
         self._snapshot_store = snapshot_store
@@ -199,6 +223,41 @@ class AggregateRepository(Generic[TAggregate]):
             )
         else:
             self._snapshot_manager = None
+
+    def _infer_aggregate_type(self, factory: type[TAggregate]) -> str:
+        """
+        Infer aggregate_type from factory's aggregate_type attribute.
+
+        Attempts to read the aggregate_type class attribute from the factory.
+        Rejects "Unknown" and empty string as these indicate missing configuration.
+
+        Args:
+            factory: The aggregate factory (class)
+
+        Returns:
+            The inferred aggregate type string
+
+        Raises:
+            ValueError: If inference fails with helpful error message
+        """
+        # Check for aggregate_type attribute
+        if hasattr(factory, "aggregate_type"):
+            inferred = factory.aggregate_type
+            if isinstance(inferred, str) and inferred not in ("", "Unknown"):
+                return inferred
+
+        # Inference failed - provide helpful error
+        factory_name = factory.__name__ if hasattr(factory, "__name__") else str(factory)
+
+        raise ValueError(
+            f"Cannot infer aggregate_type from {factory_name}. "
+            f"Either:\n"
+            f"  1. Add 'aggregate_type' class attribute to your aggregate class:\n"
+            f"     class {factory_name}(DeclarativeAggregate[...]):\n"
+            f'         aggregate_type = "YourTypeName"\n'
+            f"  2. Pass aggregate_type explicitly to AggregateRepository:\n"
+            f'     AggregateRepository(..., aggregate_type="YourTypeName")'
+        )
 
     @property
     def aggregate_type(self) -> str:
