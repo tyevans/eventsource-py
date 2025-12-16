@@ -1246,6 +1246,169 @@ class ShardedEventStore:
 
 ---
 
+## Integration with Synchronous Frameworks
+
+The eventsource library is async-first, but many production environments include synchronous components like Celery workers, Django management commands, or RQ jobs. The `SyncEventStoreAdapter` provides a clean bridge between async and sync worlds.
+
+### SyncEventStoreAdapter
+
+```python
+from eventsource import PostgreSQLEventStore, SyncEventStoreAdapter
+from eventsource.stores import StoredEvent
+
+# Create your async event store
+async_store = PostgreSQLEventStore(session_factory)
+
+# Wrap with sync adapter
+sync_store = SyncEventStoreAdapter(async_store, timeout=30.0)
+```
+
+### Celery Integration
+
+```python
+from celery import Celery
+from uuid import UUID
+from eventsource import PostgreSQLEventStore, SyncEventStoreAdapter, AggregateRepository
+
+app = Celery("tasks", broker="redis://localhost:6379/0")
+
+# Initialize async store (done once at module level)
+async_store = PostgreSQLEventStore(session_factory)
+sync_store = SyncEventStoreAdapter(async_store, timeout=60.0)
+
+@app.task
+def process_order(order_id: str) -> dict:
+    """Process an order in a Celery task."""
+    # Use sync methods in Celery tasks
+    events = sync_store.get_events_sync(UUID(order_id), "Order")
+
+    # Process events...
+    return {"event_count": len(events.events)}
+
+@app.task
+def generate_monthly_report(tenant_id: str, month: str) -> dict:
+    """Generate a report from events."""
+    events = sync_store.get_events_by_type_sync(
+        aggregate_type="Order",
+        tenant_id=UUID(tenant_id) if tenant_id else None,
+    )
+
+    total_revenue = sum(
+        e.total for e in events
+        if hasattr(e, "total") and e.event_type == "OrderCreated"
+    )
+
+    return {"month": month, "total_revenue": total_revenue}
+```
+
+### Django Management Commands
+
+```python
+# myapp/management/commands/rebuild_projection.py
+from django.core.management.base import BaseCommand
+from eventsource import PostgreSQLEventStore, SyncEventStoreAdapter
+
+class Command(BaseCommand):
+    help = "Rebuild a projection from event history"
+
+    def add_arguments(self, parser):
+        parser.add_argument("projection_name", type=str)
+
+    def handle(self, *args, **options):
+        async_store = PostgreSQLEventStore(session_factory)
+        sync_store = SyncEventStoreAdapter(async_store, timeout=300.0)
+
+        projection_name = options["projection_name"]
+        self.stdout.write(f"Rebuilding {projection_name}...")
+
+        # Read all events synchronously
+        event_count = 0
+        for stored_event in sync_store.read_all_sync():
+            # Process event...
+            event_count += 1
+
+            if event_count % 1000 == 0:
+                self.stdout.write(f"  Processed {event_count} events")
+
+        self.stdout.write(
+            self.style.SUCCESS(f"Rebuilt {projection_name} with {event_count} events")
+        )
+```
+
+### RQ (Redis Queue) Workers
+
+```python
+from rq import Queue
+from redis import Redis
+from eventsource import PostgreSQLEventStore, SyncEventStoreAdapter
+
+redis_conn = Redis()
+queue = Queue(connection=redis_conn)
+
+# Shared sync store
+async_store = PostgreSQLEventStore(session_factory)
+sync_store = SyncEventStoreAdapter(async_store, timeout=60.0)
+
+def export_events_to_csv(aggregate_type: str, output_path: str) -> int:
+    """Export events to CSV file (runs in RQ worker)."""
+    import csv
+
+    events = sync_store.get_events_by_type_sync(aggregate_type=aggregate_type)
+
+    with open(output_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["event_id", "event_type", "aggregate_id", "occurred_at"])
+
+        for event in events:
+            writer.writerow([
+                str(event.event_id),
+                event.event_type,
+                str(event.aggregate_id),
+                event.occurred_at.isoformat(),
+            ])
+
+    return len(events)
+
+# Enqueue the job
+job = queue.enqueue(export_events_to_csv, "Order", "/tmp/orders.csv")
+```
+
+### Best Practices for Sync Adapters
+
+1. **Set appropriate timeouts**: Background jobs may need longer timeouts than web requests
+
+2. **Create adapters at module level**: Avoid creating new adapters per request to reuse connection pools
+
+3. **Don't mix async and sync**: Use either the async store OR the sync adapter, not both in the same function
+
+4. **Handle errors appropriately**: Sync adapters may raise `TimeoutError` if operations exceed the configured timeout
+
+```python
+from eventsource import SyncEventStoreAdapter
+from eventsource.exceptions import OptimisticLockError
+
+sync_store = SyncEventStoreAdapter(async_store, timeout=30.0)
+
+def safe_append(aggregate_id, events, expected_version):
+    """Append events with proper error handling."""
+    try:
+        result = sync_store.append_events_sync(
+            aggregate_id=aggregate_id,
+            aggregate_type="Order",
+            events=events,
+            expected_version=expected_version,
+        )
+        return result
+    except OptimisticLockError:
+        # Handle concurrent modification
+        raise
+    except TimeoutError:
+        # Operation took too long
+        raise
+```
+
+---
+
 ## Operational Procedures
 
 ### Rebuilding a Single Projection

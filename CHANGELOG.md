@@ -7,6 +7,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Multi-Tenancy Module** (`eventsource.multitenancy`) - First-class multi-tenant support
+  - `tenant_context` ContextVar for managing tenant context across async boundaries
+  - `tenant_scope` async context manager for scoped tenant operations
+  - `tenant_scope_sync` sync context manager for synchronous code paths
+  - Helper functions: `get_current_tenant()`, `get_required_tenant()`, `set_current_tenant()`, `clear_tenant_context()`
+  - `TenantDomainEvent` base class with required `tenant_id` field and `with_tenant_context()` class method
+  - `TenantAwareRepository` wrapper that enforces tenant isolation on load/save operations
+  - `TenantContextNotSetError` and `TenantMismatchError` exceptions for clear error handling
+  - Tenant-aware projections with automatic filtering via `tenant_filter` parameter
+  - Public exports from `eventsource`: `tenant_context`, `tenant_scope`, `tenant_scope_sync`, `get_current_tenant`, `get_required_tenant`, `set_current_tenant`, `clear_tenant_context`, `TenantDomainEvent`, `TenantContextNotSetError`, `TenantMismatchError`
+
+- **Sync Adapter** (`eventsource.sync`) - Synchronous wrappers for async components
+  - `SyncEventStoreAdapter` for using async event stores in synchronous contexts
+  - Ideal for Celery tasks, Django management commands, RQ workers, and other sync environments
+  - Configurable timeout for operations (default: 30 seconds)
+  - Public export from `eventsource`: `SyncEventStoreAdapter`
+
+- **Testing Module** (`eventsource.testing`) - Comprehensive testing utilities
+  - `EventBuilder` - Fluent builder for creating test events with minimal boilerplate
+    - `with_aggregate_id()`, `with_version()`, `with_tenant_id()`, `with_timestamp()` chainable methods
+    - `build()` for single events, `build_sequence()` for event chains
+  - `InMemoryTestHarness` - Pre-configured in-memory infrastructure for fast tests
+    - Includes event store, event bus, checkpoint repository, and DLQ
+    - `setup()` and `teardown()` lifecycle methods
+    - `clear()` to reset state between tests
+  - `EventAssertions` - Domain-specific test assertions with clear error messages
+    - `assert_event_published()`, `assert_no_events_published()`, `assert_event_count()`
+    - `assert_event_sequence()` for verifying event ordering
+    - `assert_aggregate_version()`, `assert_aggregate_state()`
+  - BDD-style helpers for readable tests:
+    - `given_events()` - Set up initial event history
+    - `when_command()` - Execute a command/action
+    - `then_event_published()` - Assert expected event was published
+    - `then_no_events_published()` - Assert no events were published
+    - `then_event_sequence()` - Assert specific sequence of events
+    - `then_event_count()` - Assert number of events
+  - Public exports from `eventsource.testing`: `EventBuilder`, `InMemoryTestHarness`, `EventAssertions`, `given_events`, `when_command`, `then_event_published`, `then_no_events_published`, `then_event_sequence`, `then_event_count`
+
+- **Aggregate `create_event()` Method** - Reduced boilerplate for event creation
+  - Auto-populates `aggregate_id`, `aggregate_type`, and `aggregate_version`
+  - Auto-populates `tenant_id` from context when available
+  - Explicit kwargs always override auto-populated values
+  - Example: `self.create_event(OrderShipped, tracking_number="TRACK-001")` instead of manually setting all aggregate fields
+
+- **Deferred State Pattern** - Aggregates without upfront initial state
+  - `requires_creation_event` class attribute on `DeclarativeAggregate`
+  - When `True`, `_get_initial_state()` returns `None` and state is set by first event handler
+  - `AggregateNotCreatedError` raised when accessing `state` before creation event applied
+  - Useful for aggregates where initial state depends entirely on creation event data
+
+- **Automatic Type Inference** - Less boilerplate for events and aggregates
+  - `DomainEvent.event_type` now auto-infers from class name if not explicitly set
+  - `DomainEvent.aggregate_type` auto-infers from aggregate's `aggregate_type` when created via `create_event()`
+  - Aggregate state type (`TState`) auto-detected from Generic parameter
+
+### Changed
+
+- **InMemoryEventBus** - Now thread-safe with proper locking for concurrent access
+- **AggregateRoot._get_initial_state()** - Return type changed from `TState` to `TState | None` to support deferred state pattern
+
+### Tests
+
+- Added multi-tenancy module tests (`tests/unit/multitenancy/`)
+  - Context management tests (`test_context.py`)
+  - TenantDomainEvent tests (`test_events.py`)
+  - TenantAwareRepository tests (`test_repository.py`)
+  - Projection tenant filtering tests (`tests/unit/projections/test_tenant_filter.py`)
+- Added sync adapter tests (`tests/unit/sync/`)
+  - Adapter functionality tests (`test_adapter.py`)
+  - Concurrency tests (`test_concurrency.py`)
+- Added testing module tests (`tests/unit/testing/`)
+  - EventBuilder tests (`test_builder.py`)
+  - InMemoryTestHarness tests (`test_harness.py`)
+  - EventAssertions tests (`test_assertions.py`)
+  - BDD helpers tests (`test_bdd.py`)
+  - Module structure tests (`test_module_structure.py`)
+- Added aggregate improvement tests
+  - `create_event()` tests (`tests/unit/aggregates/test_create_event.py`)
+  - Deferred state tests (`tests/unit/aggregates/test_deferred_state.py`)
+  - Type inference tests (`tests/unit/aggregates/test_aggregate_type_inference.py`)
+- Added automatic event type inference tests (`tests/unit/test_event_type_auto.py`)
+- Added InMemoryEventBus threading tests (`tests/unit/bus/test_memory.py`)
+
 ## [0.4.0] - 2025-12-13
 
 ### Added

@@ -5,23 +5,37 @@ Events are immutable records of things that have happened in the system.
 They are the source of truth in event sourcing architecture.
 """
 
+from __future__ import annotations
+
+import logging
 from datetime import UTC, datetime
-from typing import Any, Self
+from typing import Any, ClassVar, Self
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+logger = logging.getLogger(__name__)
 
 
 class DomainEvent(BaseModel):
     """
-    Base class for all domain events.
+    Base class for all domain events with automatic event_type derivation.
 
     Events are immutable and capture everything needed to reconstruct state.
     All fields except event-specific payload are included in this base class.
 
+    The event_type field is automatically set to the class name if not
+    explicitly provided. This reduces boilerplate while maintaining
+    compatibility with existing code.
+
+    Auto-derivation behavior:
+        - If event_type is not defined or is empty, uses class name
+        - If event_type differs from class name, logs a warning
+        - Warning can be suppressed with suppress_event_type_warning = True
+
     Attributes:
         event_id: Unique identifier for this event instance
-        event_type: Type name of the event (e.g., 'OrderCreated')
+        event_type: Type name of the event (auto-derived from class name if not set)
         event_version: Schema version for this event type (for migrations)
         occurred_at: When the event occurred (UTC timestamp)
         aggregate_id: ID of the aggregate this event belongs to
@@ -32,13 +46,12 @@ class DomainEvent(BaseModel):
         correlation_id: ID linking related events across aggregates
         causation_id: ID of the event that caused this event
         metadata: Additional event metadata dictionary
+        suppress_event_type_warning: Class variable to suppress mismatch warning
 
-    Example:
+    Example without explicit event_type (auto-derived):
         >>> from uuid import uuid4
-        >>> from pydantic import Field
         >>>
         >>> class OrderCreated(DomainEvent):
-        ...     event_type: str = "OrderCreated"
         ...     aggregate_type: str = "Order"
         ...     order_number: str
         ...     customer_id: UUID
@@ -48,9 +61,24 @@ class DomainEvent(BaseModel):
         ...     order_number="ORD-001",
         ...     customer_id=uuid4(),
         ... )
+        >>> assert event.event_type == "OrderCreated"
+
+    Example with explicit event_type (backward compatible):
+        >>> class OrderCreated(DomainEvent):
+        ...     event_type: str = "order_created_v2"
+        ...     aggregate_type: str = "Order"
+        ...     suppress_event_type_warning = True  # Silence mismatch warning
+        ...     order_number: str
+        ...     customer_id: UUID
+        ...
+        >>> event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001", customer_id=uuid4())
+        >>> assert event.event_type == "order_created_v2"
     """
 
     model_config = ConfigDict(frozen=True)
+
+    # Class variable to suppress mismatch warning when event_type differs from class name
+    suppress_event_type_warning: ClassVar[bool] = False
 
     # Event metadata
     event_id: UUID = Field(
@@ -58,8 +86,8 @@ class DomainEvent(BaseModel):
         description="Unique event identifier",
     )
     event_type: str = Field(
-        ...,
-        description="Type of event (e.g., 'BadgeIssued')",
+        default="",
+        description="Type of event (auto-derived from class name if not set)",
     )
     event_version: int = Field(
         default=1,
@@ -114,6 +142,92 @@ class DomainEvent(BaseModel):
         description="Additional event metadata",
     )
 
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """
+        Hook called when DomainEvent is subclassed.
+
+        Auto-derives event_type from class name if not explicitly set.
+        Logs warning if explicit event_type differs from class name
+        (can be suppressed with suppress_event_type_warning = True).
+
+        This method runs at class definition time and modifies the Field
+        default for event_type to be the class name, eliminating the need
+        to manually specify event_type = "ClassName" in every event class.
+        """
+        super().__init_subclass__(**kwargs)
+
+        # Check if event_type was explicitly set in this class (not inherited)
+        # We look at __annotations__ and class __dict__ to detect if the field
+        # was declared in this specific class
+        explicit_type: str | None = None
+        has_explicit_type = False
+
+        # Check if event_type is in this class's own __dict__
+        # This catches both: event_type: str = "SomeName" and event_type = "SomeName"
+        if "event_type" in cls.__dict__:
+            value = cls.__dict__["event_type"]
+            if isinstance(value, str):
+                explicit_type = value
+                has_explicit_type = True
+
+        # If explicitly set, check if it matches class name and warn if not
+        if has_explicit_type and explicit_type:
+            if explicit_type != cls.__name__:
+                # Check if warning should be suppressed
+                suppress = getattr(cls, "suppress_event_type_warning", False)
+                if not suppress:
+                    logger.warning(
+                        "Event class %s has event_type='%s' which differs from class name. "
+                        "This may cause confusion. Set suppress_event_type_warning=True "
+                        "to silence this warning.",
+                        cls.__name__,
+                        explicit_type,
+                    )
+        elif not has_explicit_type and "event_type" in cls.model_fields:
+            # No explicit type set - auto-derive from class name
+            # Update the model_fields to set the default
+            # Create a new FieldInfo with updated default
+            field_info = cls.model_fields["event_type"]
+            # We need to update the default value
+            # Pydantic v2 stores field info in model_fields
+            field_info.default = cls.__name__
+
+    @model_validator(mode="before")
+    @classmethod
+    def _ensure_event_type(cls, data: Any) -> Any:
+        """
+        Ensure event_type is set even when constructing from dict.
+
+        This validator runs before Pydantic model construction and
+        ensures the event_type field is populated with the class name
+        if not provided in the input data AND the field default is empty.
+
+        This handles cases like:
+        - OrderCreated.model_validate({"aggregate_id": ..., ...})
+        - OrderCreated.from_dict({...})
+        - OrderCreated(**data) where data is a dict without event_type
+
+        The validator respects explicit field defaults set by subclasses:
+        - If a subclass sets event_type: str = "custom_type", that value is used
+        - If no explicit default is set, the class name is used
+        """
+        if isinstance(data, dict):
+            # Only set event_type if:
+            # 1. It's not provided in the input data (or is empty string)
+            # 2. AND the field default is empty string (meaning auto-derivation should apply)
+            provided_event_type = data.get("event_type")
+            if not provided_event_type:
+                # Check if the field has a non-empty default (explicit type set by subclass)
+                field_info = cls.model_fields.get("event_type")
+                field_default = field_info.default if field_info else ""
+                # Set to class name if:
+                # - field default is empty (auto-derivation applies), OR
+                # - an empty string was explicitly provided (we replace it)
+                if not field_default or provided_event_type == "":
+                    data = dict(data)  # Make a copy to avoid modifying input
+                    data["event_type"] = cls.__name__
+        return data
+
     def __str__(self) -> str:
         """String representation of event."""
         return (
@@ -135,7 +249,7 @@ class DomainEvent(BaseModel):
             f"occurred_at={self.occurred_at!r})"
         )
 
-    def with_causation(self, causing_event: "DomainEvent") -> Self:
+    def with_causation(self, causing_event: DomainEvent) -> Self:
         """
         Create a copy of this event with causation tracking from another event.
 
@@ -245,7 +359,7 @@ class DomainEvent(BaseModel):
         """
         return cls.model_validate(data)
 
-    def is_caused_by(self, event: "DomainEvent") -> bool:
+    def is_caused_by(self, event: DomainEvent) -> bool:
         """
         Check if this event was caused by another event.
 
@@ -261,7 +375,7 @@ class DomainEvent(BaseModel):
         """
         return self.causation_id == event.event_id
 
-    def is_correlated_with(self, event: "DomainEvent") -> bool:
+    def is_correlated_with(self, event: DomainEvent) -> bool:
         """
         Check if this event is correlated with another event.
 

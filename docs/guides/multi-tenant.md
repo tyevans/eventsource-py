@@ -37,6 +37,126 @@ This field is:
 
 ---
 
+## Quick Start with Built-in Multi-tenancy
+
+The `eventsource.multitenancy` module provides first-class support for multi-tenant applications:
+
+```python
+import asyncio
+from uuid import uuid4, UUID
+from eventsource import register_event, DeclarativeAggregate, handles
+from eventsource.multitenancy import (
+    tenant_scope,
+    TenantDomainEvent,
+    TenantAwareRepository,
+    get_current_tenant,
+)
+from pydantic import BaseModel
+
+# 1. Use TenantDomainEvent - tenant_id is required
+@register_event
+class OrderCreated(TenantDomainEvent):
+    aggregate_type: str = "Order"
+    customer_id: UUID
+    total: float
+
+# 2. Create events that auto-capture tenant from context
+async def create_order(tenant_id: UUID, customer_id: UUID, total: float):
+    async with tenant_scope(tenant_id):
+        # Event automatically gets tenant_id from context
+        event = OrderCreated.with_tenant_context(
+            aggregate_id=uuid4(),
+            customer_id=customer_id,
+            total=total,
+            aggregate_version=1,
+        )
+        print(f"Created event for tenant: {event.tenant_id}")
+        return event
+
+asyncio.run(create_order(uuid4(), uuid4(), 99.99))
+```
+
+### Context Managers
+
+```python
+from eventsource.multitenancy import tenant_scope, tenant_scope_sync
+
+# Async context manager
+async def process_tenant_request(tenant_id: UUID):
+    async with tenant_scope(tenant_id):
+        # All operations in this block use tenant_id
+        current = get_current_tenant()
+        assert current == tenant_id
+        # ... perform tenant-scoped operations
+
+# Sync context manager (for Django views, Celery tasks, etc.)
+def sync_operation(tenant_id: UUID):
+    with tenant_scope_sync(tenant_id):
+        current = get_current_tenant()
+        assert current == tenant_id
+```
+
+### Helper Functions
+
+```python
+from eventsource.multitenancy import (
+    get_current_tenant,      # Returns UUID | None
+    get_required_tenant,     # Returns UUID or raises TenantContextNotSetError
+    set_current_tenant,      # Manually set tenant context
+    clear_tenant_context,    # Clear tenant context
+)
+
+# Example: Middleware pattern
+async def tenant_middleware(request, call_next):
+    tenant_id = extract_tenant_from_request(request)
+    set_current_tenant(tenant_id)
+    try:
+        return await call_next(request)
+    finally:
+        clear_tenant_context()
+```
+
+### TenantAwareRepository
+
+Wraps any repository to enforce tenant isolation:
+
+```python
+from eventsource import AggregateRepository, InMemoryEventStore
+from eventsource.multitenancy import TenantAwareRepository, tenant_scope
+
+# Create base repository
+event_store = InMemoryEventStore()
+base_repo = AggregateRepository(
+    event_store=event_store,
+    aggregate_factory=OrderAggregate,
+    aggregate_type="Order",
+)
+
+# Wrap with tenant awareness
+tenant_repo = TenantAwareRepository(base_repo)
+
+# Use within tenant context
+async with tenant_scope(tenant_id):
+    order = await tenant_repo.load(order_id)  # Validates tenant ownership
+    await tenant_repo.save(order)             # Validates tenant on events
+```
+
+### Exceptions
+
+```python
+from eventsource.multitenancy import (
+    TenantContextNotSetError,  # Raised when tenant context required but not set
+    TenantMismatchError,       # Raised when event tenant doesn't match context
+)
+
+try:
+    tenant = get_required_tenant()  # Raises if not in tenant scope
+except TenantContextNotSetError:
+    print("Must be called within tenant_scope()")
+```
+
+---
+
 ## When to Use Multi-Tenancy
 
 Multi-tenancy is ideal when you need to:

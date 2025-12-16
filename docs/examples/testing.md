@@ -9,6 +9,295 @@ Event sourcing makes testing easier because:
 - State is derived from events
 - In-memory implementations enable fast tests
 
+---
+
+## Testing Module (Recommended)
+
+The `eventsource.testing` module provides comprehensive testing utilities that reduce boilerplate and improve test readability.
+
+### Installation
+
+The testing module is included with eventsource - no extra dependencies needed:
+
+```python
+from eventsource.testing import (
+    EventBuilder,
+    InMemoryTestHarness,
+    EventAssertions,
+    given_events,
+    when_command,
+    then_event_published,
+)
+```
+
+### EventBuilder - Fluent Event Construction
+
+Build test events with minimal boilerplate:
+
+```python
+from uuid import uuid4
+from eventsource.testing import EventBuilder
+from your_app.events import OrderCreated, OrderShipped
+
+# Basic usage - auto-generates IDs and version
+event = EventBuilder(OrderCreated).build(
+    customer_id=uuid4(),
+    total=99.99,
+)
+
+# Fluent API for configuration
+order_id = uuid4()
+event = (
+    EventBuilder(OrderCreated)
+    .with_aggregate_id(order_id)
+    .with_version(1)
+    .with_tenant_id(tenant_id)
+    .build(customer_id=uuid4(), total=99.99)
+)
+
+# Build a sequence of events for the same aggregate
+events = (
+    EventBuilder(OrderCreated)
+    .with_aggregate_id(order_id)
+    .build_sequence([
+        {"customer_id": uuid4(), "total": 100.0},  # Version 1
+    ])
+)
+
+shipped_event = (
+    EventBuilder(OrderShipped)
+    .with_aggregate_id(order_id)
+    .with_version(2)
+    .build(tracking_number="TRACK-001")
+)
+```
+
+### InMemoryTestHarness - Pre-configured Infrastructure
+
+Get a complete test environment with one line:
+
+```python
+import pytest
+from eventsource.testing import InMemoryTestHarness
+from your_app.aggregates import OrderAggregate
+
+@pytest.fixture
+async def harness():
+    """Provides pre-configured in-memory infrastructure."""
+    h = InMemoryTestHarness()
+    await h.setup()
+    yield h
+    await h.teardown()
+
+@pytest.mark.asyncio
+async def test_order_creation(harness):
+    # Harness provides: event_store, event_bus, checkpoint_repo, dlq_repo
+    repo = harness.create_repository(OrderAggregate, "Order")
+
+    order = repo.create_new(uuid4())
+    order.create(customer_id=uuid4(), total=100.0)
+    await repo.save(order)
+
+    # Access infrastructure for assertions
+    events = await harness.event_store.get_events(order.aggregate_id, "Order")
+    assert len(events.events) == 1
+
+@pytest.mark.asyncio
+async def test_multiple_scenarios(harness):
+    # Clear between scenarios
+    await harness.clear()
+
+    # ... run next scenario
+```
+
+### BDD-Style Helpers
+
+Write expressive, readable tests:
+
+```python
+import pytest
+from eventsource.testing import (
+    given_events,
+    when_command,
+    then_event_published,
+    then_no_events_published,
+    then_event_sequence,
+    then_event_count,
+    InMemoryTestHarness,
+    EventBuilder,
+)
+
+@pytest.fixture
+async def harness():
+    h = InMemoryTestHarness()
+    await h.setup()
+    yield h
+    await h.teardown()
+
+@pytest.mark.asyncio
+async def test_ship_order_bdd_style(harness):
+    order_id = uuid4()
+
+    # Given: Order exists and is paid
+    await given_events(harness, [
+        EventBuilder(OrderCreated)
+            .with_aggregate_id(order_id)
+            .build(customer_id=uuid4(), total=100.0),
+        EventBuilder(OrderPaid)
+            .with_aggregate_id(order_id)
+            .with_version(2)
+            .build(),
+    ])
+
+    # When: Ship order command
+    async def ship_command():
+        repo = harness.create_repository(OrderAggregate, "Order")
+        order = await repo.load(order_id)
+        order.ship(tracking_number="TRACK-123")
+        await repo.save(order)
+
+    await when_command(harness, ship_command)
+
+    # Then: OrderShipped event was published
+    then_event_published(harness, OrderShipped, aggregate_id=order_id)
+    then_event_count(harness, 3)  # Created + Paid + Shipped
+
+@pytest.mark.asyncio
+async def test_cannot_ship_unpaid_order(harness):
+    order_id = uuid4()
+
+    await given_events(harness, [
+        EventBuilder(OrderCreated)
+            .with_aggregate_id(order_id)
+            .build(customer_id=uuid4(), total=100.0),
+    ])
+
+    async def ship_unpaid():
+        repo = harness.create_repository(OrderAggregate, "Order")
+        order = await repo.load(order_id)
+        order.ship(tracking_number="TRACK-123")  # Should raise
+        await repo.save(order)
+
+    with pytest.raises(ValueError, match="must be paid"):
+        await when_command(harness, ship_unpaid)
+
+    # No shipping event should have been published
+    then_no_events_published(harness, event_type=OrderShipped)
+```
+
+### EventAssertions - Detailed Assertions
+
+For more control over assertions:
+
+```python
+from eventsource.testing import EventAssertions
+
+assertions = EventAssertions(harness.event_store, harness.event_bus)
+
+# Assert specific event was published
+assertions.assert_event_published(
+    OrderShipped,
+    aggregate_id=order_id,
+    tracking_number="TRACK-123",
+)
+
+# Assert event sequence
+assertions.assert_event_sequence([
+    (OrderCreated, {"total": 100.0}),
+    (OrderPaid, {}),
+    (OrderShipped, {"tracking_number": "TRACK-123"}),
+])
+
+# Assert aggregate state
+assertions.assert_aggregate_version(order_id, expected_version=3)
+```
+
+### Complete Example
+
+```python
+import pytest
+from uuid import uuid4
+from eventsource.testing import (
+    InMemoryTestHarness,
+    EventBuilder,
+    given_events,
+    when_command,
+    then_event_published,
+)
+from your_app.events import OrderCreated, OrderPaid, OrderShipped
+from your_app.aggregates import OrderAggregate
+
+@pytest.fixture
+async def harness():
+    h = InMemoryTestHarness()
+    await h.setup()
+    yield h
+    await h.teardown()
+
+class TestOrderShipping:
+    """Tests for order shipping functionality."""
+
+    @pytest.mark.asyncio
+    async def test_ship_paid_order(self, harness):
+        """Paid orders can be shipped."""
+        order_id = uuid4()
+        customer_id = uuid4()
+
+        # Arrange
+        await given_events(harness, [
+            EventBuilder(OrderCreated)
+                .with_aggregate_id(order_id)
+                .build(customer_id=customer_id, total=50.0),
+            EventBuilder(OrderPaid)
+                .with_aggregate_id(order_id)
+                .with_version(2)
+                .build(),
+        ])
+
+        # Act
+        async def ship():
+            repo = harness.create_repository(OrderAggregate, "Order")
+            order = await repo.load(order_id)
+            order.ship("TRACK-001")
+            await repo.save(order)
+
+        await when_command(harness, ship)
+
+        # Assert
+        then_event_published(harness, OrderShipped, tracking_number="TRACK-001")
+
+    @pytest.mark.asyncio
+    async def test_ship_order_updates_state(self, harness):
+        """Shipping updates order status to shipped."""
+        order_id = uuid4()
+
+        await given_events(harness, [
+            EventBuilder(OrderCreated)
+                .with_aggregate_id(order_id)
+                .build(customer_id=uuid4(), total=50.0),
+            EventBuilder(OrderPaid)
+                .with_aggregate_id(order_id)
+                .with_version(2)
+                .build(),
+        ])
+
+        repo = harness.create_repository(OrderAggregate, "Order")
+        order = await repo.load(order_id)
+        order.ship("TRACK-002")
+        await repo.save(order)
+
+        # Reload and verify state
+        reloaded = await repo.load(order_id)
+        assert reloaded.state.status == "shipped"
+        assert reloaded.state.tracking_number == "TRACK-002"
+```
+
+---
+
+## Manual Testing Patterns
+
+For simpler tests or when you prefer manual control, you can use the patterns below.
+
 ## Unit Testing Aggregates
 
 ### Testing Commands

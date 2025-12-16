@@ -9,8 +9,9 @@ Public API:
 - SyncProjection: Synchronous projection base class
 - EventHandlerBase: Base class for event handlers
 - CheckpointTrackingProjection: Projection with checkpoint, retry, and DLQ support
-- DeclarativeProjection: Projection with @handles decorator support
+- DeclarativeProjection: Projection with @handles decorator support and tenant filtering
 - DatabaseProjection: Projection with database connection support for handlers
+- TenantFilter: Type alias for tenant filter parameter
 - handles: Decorator for marking event handler methods
 - get_handled_event_type: Utility to get event type from decorated handler
 - is_event_handler: Check if a function is decorated with @handles
@@ -37,6 +38,16 @@ Example:
     >>>
     >>> projection = OrderProjection(session_factory=async_session_factory)
     >>> await projection.handle(event)
+
+Example with tenant filtering:
+    >>> from eventsource.projections import DeclarativeProjection, TenantFilter
+    >>> from eventsource.multitenancy import get_current_tenant
+    >>>
+    >>> # Static tenant filter
+    >>> projection = OrderProjection(tenant_filter=tenant_uuid)
+    >>>
+    >>> # Dynamic tenant filter (context-based)
+    >>> projection = OrderProjection(tenant_filter=get_current_tenant)
 """
 
 # Re-export handles from canonical location for backward compatibility
@@ -53,6 +64,7 @@ from eventsource.projections.base import (
     EventHandlerBase,
     Projection,
     SyncProjection,
+    TenantFilter,
 )
 from eventsource.projections.coordinator import (
     ProjectionCoordinator,
@@ -76,6 +88,8 @@ __all__ = [
     "CheckpointTrackingProjection",
     "DeclarativeProjection",
     "DatabaseProjection",
+    # Type aliases
+    "TenantFilter",
     # Decorators
     "handles",
     "get_handled_event_type",

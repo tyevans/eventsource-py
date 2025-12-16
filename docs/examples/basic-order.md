@@ -283,3 +283,233 @@ Status: delivered
 Total: $89.97
 Tracking: TRACK-12345
 ```
+
+---
+
+## Modern Aggregate Patterns
+
+The library provides several features to reduce boilerplate and improve developer experience.
+
+### Using `create_event()` for Less Boilerplate
+
+The `create_event()` method automatically populates aggregate fields:
+
+```python
+# Traditional approach (more verbose)
+def ship(self, tracking_number: str, carrier: str) -> None:
+    if not self.state or self.state.status != "submitted":
+        raise ValueError("Order must be submitted to ship")
+    self.apply_event(OrderShipped(
+        aggregate_id=self.aggregate_id,        # Repetitive
+        aggregate_type=self.aggregate_type,    # Repetitive
+        aggregate_version=self.get_next_version(),  # Repetitive
+        tracking_number=tracking_number,
+        carrier=carrier,
+    ))
+
+# Modern approach with create_event()
+def ship(self, tracking_number: str, carrier: str) -> None:
+    if not self.state or self.state.status != "submitted":
+        raise ValueError("Order must be submitted to ship")
+    self.create_event(OrderShipped, tracking_number=tracking_number, carrier=carrier)
+```
+
+The `create_event()` method:
+- Auto-populates `aggregate_id`, `aggregate_type`, and `aggregate_version`
+- Auto-populates `tenant_id` from context if using multi-tenancy
+- Creates and applies the event in one call
+- Returns the created event if you need it
+
+### Automatic Type Inference
+
+Events can infer their `event_type` from the class name:
+
+```python
+# No need to set event_type explicitly
+@register_event
+class OrderShipped(DomainEvent):
+    # event_type will be "OrderShipped" automatically
+    aggregate_type: str = "Order"
+    tracking_number: str
+    carrier: str
+```
+
+### Deferred State Pattern
+
+For aggregates where the initial state depends on the creation event, use `requires_creation_event`:
+
+```python
+from eventsource import DeclarativeAggregate, handles
+
+class ExtractionProcess(DeclarativeAggregate[ExtractionState]):
+    """Aggregate that doesn't need initial state until first event."""
+    aggregate_type = "Extraction"
+    requires_creation_event = True  # Enable deferred state
+
+    # No _get_initial_state() needed!
+
+    def request(self, page_id: UUID, config: dict) -> None:
+        """Start an extraction process."""
+        self.create_event(ExtractionRequested, page_id=page_id, config=config)
+
+    @handles(ExtractionRequested)
+    def _on_requested(self, event: ExtractionRequested) -> None:
+        # First event creates the state
+        self._state = ExtractionState(
+            page_id=event.page_id,
+            config=event.config,
+            status="requested",
+        )
+
+    def complete(self, result: dict) -> None:
+        """Mark extraction as complete."""
+        if self.state.status != "processing":
+            raise ValueError("Can only complete processing extractions")
+        self.create_event(ExtractionCompleted, result=result)
+
+    @handles(ExtractionCompleted)
+    def _on_completed(self, event: ExtractionCompleted) -> None:
+        self._state = self._state.model_copy(update={
+            "status": "completed",
+            "result": event.result,
+        })
+```
+
+Key benefits of deferred state:
+- No need to implement `_get_initial_state()` with placeholder values
+- Cleaner code when state depends entirely on creation event data
+- `AggregateNotCreatedError` is raised if you access `state` before any events applied
+
+### Complete Modern Example
+
+Here's the order example rewritten using modern patterns:
+
+```python
+from uuid import UUID, uuid4
+from pydantic import BaseModel
+from eventsource import (
+    DomainEvent,
+    register_event,
+    DeclarativeAggregate,
+    handles,
+    InMemoryEventStore,
+    AggregateRepository,
+)
+
+# Events - no explicit event_type needed
+@register_event
+class OrderCreated(DomainEvent):
+    aggregate_type: str = "Order"
+    customer_id: UUID
+    customer_email: str
+
+@register_event
+class OrderItemAdded(DomainEvent):
+    aggregate_type: str = "Order"
+    product_id: UUID
+    product_name: str
+    quantity: int
+    unit_price: float
+
+@register_event
+class OrderSubmitted(DomainEvent):
+    aggregate_type: str = "Order"
+    total_amount: float
+
+@register_event
+class OrderShipped(DomainEvent):
+    aggregate_type: str = "Order"
+    tracking_number: str
+    carrier: str
+
+# State
+class OrderItem(BaseModel):
+    product_id: UUID
+    product_name: str
+    quantity: int
+    unit_price: float
+
+    @property
+    def total(self) -> float:
+        return self.quantity * self.unit_price
+
+class OrderState(BaseModel):
+    order_id: UUID
+    customer_id: UUID
+    customer_email: str
+    items: list[OrderItem] = []
+    status: str = "created"
+    total_amount: float = 0.0
+    tracking_number: str | None = None
+
+    @property
+    def calculated_total(self) -> float:
+        return sum(item.total for item in self.items)
+
+# Aggregate using modern patterns
+class Order(DeclarativeAggregate[OrderState]):
+    aggregate_type = "Order"
+    requires_creation_event = True  # No initial state needed
+
+    # Commands use create_event() - much cleaner!
+    def create(self, customer_id: UUID, customer_email: str) -> None:
+        if self.version > 0:
+            raise ValueError("Order already exists")
+        self.create_event(OrderCreated, customer_id=customer_id, customer_email=customer_email)
+
+    def add_item(self, product_id: UUID, name: str, quantity: int, price: float) -> None:
+        if self.state.status != "created":
+            raise ValueError("Can only add items to created orders")
+        self.create_event(OrderItemAdded, product_id=product_id, product_name=name, quantity=quantity, unit_price=price)
+
+    def submit(self) -> None:
+        if self.state.status != "created" or not self.state.items:
+            raise ValueError("Cannot submit: order must be created with items")
+        self.create_event(OrderSubmitted, total_amount=self.state.calculated_total)
+
+    def ship(self, tracking_number: str, carrier: str) -> None:
+        if self.state.status != "submitted":
+            raise ValueError("Order must be submitted to ship")
+        self.create_event(OrderShipped, tracking_number=tracking_number, carrier=carrier)
+
+    # Event handlers using @handles decorator
+    @handles(OrderCreated)
+    def _on_created(self, event: OrderCreated) -> None:
+        self._state = OrderState(
+            order_id=self.aggregate_id,
+            customer_id=event.customer_id,
+            customer_email=event.customer_email,
+        )
+
+    @handles(OrderItemAdded)
+    def _on_item_added(self, event: OrderItemAdded) -> None:
+        new_item = OrderItem(
+            product_id=event.product_id,
+            product_name=event.product_name,
+            quantity=event.quantity,
+            unit_price=event.unit_price,
+        )
+        self._state = self._state.model_copy(update={
+            "items": [*self._state.items, new_item]
+        })
+
+    @handles(OrderSubmitted)
+    def _on_submitted(self, event: OrderSubmitted) -> None:
+        self._state = self._state.model_copy(update={
+            "status": "submitted",
+            "total_amount": event.total_amount,
+        })
+
+    @handles(OrderShipped)
+    def _on_shipped(self, event: OrderShipped) -> None:
+        self._state = self._state.model_copy(update={
+            "status": "shipped",
+            "tracking_number": event.tracking_number,
+        })
+```
+
+This modern version:
+- Uses `DeclarativeAggregate` with `@handles` decorators
+- Uses `requires_creation_event = True` for deferred state
+- Uses `create_event()` in all commands for less boilerplate
+- Relies on automatic `event_type` inference

@@ -93,9 +93,48 @@ class InMemoryEventBus(EventBus):
             "background_tasks_completed": 0,
         }
 
+        # Track published events for testing purposes
+        self._published_events: list[DomainEvent] = []
+
         # Tracing configuration - using composition (replaces TracingMixin)
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
+
+    @property
+    def published_events(self) -> list[DomainEvent]:
+        """
+        Get a copy of all events published through this bus.
+
+        This is primarily useful for testing to verify that expected
+        events were published.
+
+        Returns:
+            List of all published events in order of publication
+
+        Note:
+            Returns a copy to prevent external mutation.
+            For thread-safe access, this uses the internal lock.
+
+        Example:
+            >>> bus = InMemoryEventBus()
+            >>> await bus.publish([event1, event2])
+            >>> assert len(bus.published_events) == 2
+            >>> assert bus.published_events[0] == event1
+        """
+        with self._lock:
+            return list(self._published_events)
+
+    def clear_published_events(self) -> None:
+        """
+        Clear the list of published events.
+
+        Useful for resetting state between tests.
+
+        Thread-safe: Can be called from any thread.
+        """
+        with self._lock:
+            self._published_events.clear()
+        logger.debug("Published events cleared")
 
     async def publish(
         self,
@@ -155,6 +194,10 @@ class InMemoryEventBus(EventBus):
             events: Events to publish
         """
         for event in events:
+            # Track the event before dispatching (for testing purposes)
+            with self._lock:
+                self._published_events.append(event)
+
             await self._dispatch_event(event)
             self._stats["events_published"] += 1
 
