@@ -1,0 +1,50 @@
+team: eventsource-py
+description: "Production-ready event sourcing library for Python (pydantic, sqlalchemy, async-first)"
+
+defaults:
+  model: sonnet
+  budget: 0.50
+  permission-mode: dontAsk
+
+members:
+  - name: architect
+    role: "Core interfaces, protocols, event models, registry, serialization, types"
+    model: opus
+    tools: [Read, Edit, Write, Glob, Grep, Bash]
+    owns:
+      - "src/eventsource/protocols.py"
+      - "src/eventsource/events/**"
+      - "src/eventsource/types.py"
+      - "src/eventsource/exceptions.py"
+      - "src/eventsource/serialization/**"
+      - "src/eventsource/__init__.py"
+
+  - name: backend
+    role: "Store implementations, bus backends, infrastructure, repositories, locks"
+    tools: [Read, Edit, Write, Glob, Grep, Bash]
+    owns:
+      - "src/eventsource/stores/**"
+      - "src/eventsource/bus/**"
+      - "src/eventsource/infrastructure/**"
+      - "src/eventsource/repositories/**"
+      - "src/eventsource/locks/**"
+      - "src/eventsource/snapshots/**"
+
+  - name: domain
+    role: "Aggregates, projections, read models, handlers, subscriptions, multitenancy, GDPR"
+    tools: [Read, Edit, Write, Glob, Grep, Bash]
+    owns:
+      - "src/eventsource/aggregates/**"
+      - "src/eventsource/projections/**"
+      - "src/eventsource/readmodels/**"
+      - "src/eventsource/handlers/**"
+      - "src/eventsource/subscriptions/**"
+      - "src/eventsource/multitenancy/**"
+      - "src/eventsource/gdpr/**"
+
+  - name: tester
+    role: "Test strategy, coverage, fixtures, benchmarks, test helpers"
+    tools: [Read, Edit, Write, Glob, Grep, Bash]
+    owns:
+      - "tests/**"
+      - "src/eventsource/testing/**"

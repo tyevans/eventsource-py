@@ -40,6 +40,10 @@ from eventsource.testing.bdd import (
     when_command,
 )
 from eventsource.testing.builder import EventBuilder
+from eventsource.testing.conformance import (
+    EventBusConformanceSuite,
+    EventStoreConformanceSuite,
+)
 from eventsource.testing.harness import InMemoryTestHarness
 
 __all__ = [
@@ -54,4 +58,7 @@ __all__ = [
     "then_no_events_published",
     "then_event_sequence",
     "then_event_count",
+    # Conformance test suites
+    "EventStoreConformanceSuite",
+    "EventBusConformanceSuite",
 ]
