@@ -94,3 +94,6 @@ Thumbs.db
 
 # MkDocs documentation site
 site/
+
+# Beads task management
+.beads/
