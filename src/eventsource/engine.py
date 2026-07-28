@@ -47,6 +47,22 @@ def _configure_sqlite(engine: AsyncEngine, *, is_memory: bool) -> None:
     ``test_sqlite_engine_holds_read_write_in_one_transaction``.
     """
 
+    def _driver_is_autocommit(conn: Any) -> bool:
+        """Is the underlying sqlite3 connection in autocommit mode?
+
+        SQLAlchemy implements ``isolation_level="AUTOCOMMIT"`` for SQLite by
+        setting the driver connection's ``isolation_level`` attribute to
+        ``None`` (``SQLiteDialect_pysqlite.set_isolation_level``), and ``""``
+        for every other level. That attribute is therefore the ground truth
+        for whether the driver will open transactions on its own, and it is
+        the same regardless of *how* AUTOCOMMIT was requested -- as a
+        ``create_async_engine(isolation_level=...)`` argument, via
+        ``Engine.execution_options()``, or via ``Connection
+        .execution_options()``. Inspecting the execution options instead
+        would miss the engine-argument route, which does not surface there.
+        """
+        return conn.connection.dbapi_connection.isolation_level is None
+
     @event.listens_for(engine.sync_engine, "connect")
     def _set_pragmas(dbapi_connection: Any, _record: Any) -> None:
         cursor = dbapi_connection.cursor()
@@ -61,12 +77,12 @@ def _configure_sqlite(engine: AsyncEngine, *, is_memory: bool) -> None:
 
     @event.listens_for(engine.sync_engine, "begin")
     def _emit_begin(conn: Any) -> None:
-        # A connection using .execution_options(isolation_level="AUTOCOMMIT")
-        # must stay in autocommit: SQLAlchemy's own do_begin is a no-op for
-        # it, but this event still fires. Issuing BEGIN anyway would wrap
-        # the caller's statements in a real transaction that nothing ever
-        # commits, silently discarding writes when the connection closes.
-        if conn.get_execution_options().get("isolation_level") == "AUTOCOMMIT":
+        # A connection asking for AUTOCOMMIT must stay in autocommit: this
+        # event still fires for it even though SQLAlchemy itself emits no
+        # transaction. Issuing BEGIN anyway would wrap the caller's
+        # statements in a real transaction that nothing ever commits,
+        # silently discarding writes when the connection closes.
+        if _driver_is_autocommit(conn):
             return
         conn.exec_driver_sql("BEGIN")
 
