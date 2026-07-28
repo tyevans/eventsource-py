@@ -38,21 +38,17 @@ SQLITE_PRAGMAS: dict[str, str | int] = {
 def _configure_sqlite(engine: AsyncEngine, *, is_memory: bool) -> None:
     """Attach PRAGMA and transaction-control hooks to a SQLite engine.
 
-    This is SQLAlchemy's documented "driver-level autocommit" recipe for the
-    pysqlite/aiosqlite drivers: disable the driver's own implicit-BEGIN
-    behavior by setting ``isolation_level = None`` on connect, then have
-    SQLAlchemy emit ``BEGIN`` explicitly on every transaction start. It works
-    uniformly across supported Python versions -- the alternative,
-    driver-level ``autocommit=True`` passed via ``connect_args``, is
-    unreliable because the pysqlite/aiosqlite dialect resets
-    ``isolation_level`` itself on connect regardless of that setting.
+    Transaction control is entirely the ``begin`` listener below: it issues
+    ``BEGIN`` explicitly at the start of every SQLAlchemy transaction (both
+    explicit ``Connection.begin()`` and SQLAlchemy's autobegin-on-first-
+    statement), before any application statement runs. That is what makes a
+    SELECT (not just a DML statement) the point at which the transaction --
+    and therefore the read snapshot -- opens; see
+    ``test_sqlite_engine_holds_read_write_in_one_transaction``.
     """
 
     @event.listens_for(engine.sync_engine, "connect")
     def _set_pragmas(dbapi_connection: Any, _record: Any) -> None:
-        # Take explicit control of transactions: no implicit BEGIN before
-        # DML/SELECT, and no implicit COMMIT. See _emit_begin below.
-        dbapi_connection.isolation_level = None
         cursor = dbapi_connection.cursor()
         try:
             for pragma, value in SQLITE_PRAGMAS.items():
