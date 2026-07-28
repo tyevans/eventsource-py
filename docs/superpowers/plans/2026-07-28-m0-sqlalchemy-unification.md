@@ -616,7 +616,8 @@ already SQLAlchemy Core with `text()` -- and apply these changes:
 2. At the top of each method, resolve the dialect once:
 
 ```python
-async with self._connect() as conn:
+# Read methods pass write=False; write methods pass write=True.
+async with self._connect(write=False) as conn:
     dialect = dialect_of(conn)
 ```
 
