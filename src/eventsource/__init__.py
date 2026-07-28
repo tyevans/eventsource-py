@@ -58,6 +58,9 @@ from eventsource.bus.redis import (
     RedisNotAvailableError,
 )
 
+# Shared async engine factory
+from eventsource.engine import create_async_engine
+
 # Core event primitives (Task 02)
 from eventsource.events.base import DomainEvent
 
@@ -203,6 +206,8 @@ __all__ = [
     "TenantId",
     "CorrelationId",
     "CausationId",
+    # Engine factory
+    "create_async_engine",
     # Events (Task 02)
     "DomainEvent",
     # Event Registry (Task 03)
