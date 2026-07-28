@@ -38,6 +38,16 @@ and the milestone breakdown alongside it.
 - Modify: `src/eventsource/__init__.py` (add export)
 - Test: `tests/unit/test_engine.py`
 
+> **Amended during execution.** The implementation below shows a Python-version
+> branch: native `connect_args={"autocommit": False}` on 3.12+, with an
+> `isolation_level = None` + explicit `BEGIN` fallback below that. As shipped,
+> the version branch was dropped and the `isolation_level = None` + explicit
+> `BEGIN` recipe is used unconditionally. Both approaches pass the isolation
+> test; the uniform recipe is SQLAlchemy's documented portable form and removes
+> a branch that cannot be exercised on this interpreter. `_HAS_SQLITE_AUTOCOMMIT`
+> does not exist in the shipped module. Treat the uniform recipe as the
+> requirement.
+
 **Interfaces:**
 - Consumes: nothing (first task)
 - Produces: `eventsource.engine.create_async_engine(url: str, **kwargs) -> AsyncEngine`
