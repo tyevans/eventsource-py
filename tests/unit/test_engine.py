@@ -74,3 +74,30 @@ def test_postgres_url_passes_through_without_sqlite_config():
     """Non-SQLite URLs must not get SQLite connect_args."""
     engine = create_async_engine("postgresql+asyncpg://u:p@localhost/db")
     assert engine.dialect.name == "postgresql"
+
+
+async def test_sqlite_autocommit_write_persists_without_explicit_commit(tmp_path):
+    """A connection using isolation_level="AUTOCOMMIT" must not lose writes.
+
+    SQLAlchemy's own do_begin() is a no-op for AUTOCOMMIT connections, but
+    our "begin" listener still fires. If it unconditionally issues BEGIN, the
+    statement below runs inside a real transaction that nothing ever
+    commits, and closing the connection silently rolls it back.
+    """
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/t.db")
+    async with engine.begin() as conn:
+        await conn.execute(text("CREATE TABLE t (id INTEGER PRIMARY KEY)"))
+
+    autocommit_engine = engine.execution_options(isolation_level="AUTOCOMMIT")
+    async with autocommit_engine.connect() as conn:
+        await conn.execute(text("INSERT INTO t (id) VALUES (99)"))
+        # No explicit commit -- AUTOCOMMIT means the write should already be
+        # durable as soon as the statement executes.
+
+    async with engine.connect() as conn:
+        count = (await conn.execute(text("SELECT COUNT(*) FROM t"))).scalar_one()
+    assert count == 1, (
+        "AUTOCOMMIT write was lost: the begin listener wrapped it in a "
+        "transaction that was never committed"
+    )
+    await engine.dispose()

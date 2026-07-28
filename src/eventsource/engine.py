@@ -61,6 +61,13 @@ def _configure_sqlite(engine: AsyncEngine, *, is_memory: bool) -> None:
 
     @event.listens_for(engine.sync_engine, "begin")
     def _emit_begin(conn: Any) -> None:
+        # A connection using .execution_options(isolation_level="AUTOCOMMIT")
+        # must stay in autocommit: SQLAlchemy's own do_begin is a no-op for
+        # it, but this event still fires. Issuing BEGIN anyway would wrap
+        # the caller's statements in a real transaction that nothing ever
+        # commits, silently discarding writes when the connection closes.
+        if conn.get_execution_options().get("isolation_level") == "AUTOCOMMIT":
+            return
         conn.exec_driver_sql("BEGIN")
 
 
