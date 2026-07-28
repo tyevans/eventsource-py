@@ -31,8 +31,20 @@ documentation from lying in the meantime.
   repository write methods, implemented as
   `execute_with_connection(conn or self.conn, ...)`.
 - `DeliveryGuarantee` enum, defined and exported but not yet consulted.
-- **Correct the false docstring at `projections/base.py:688-690`** and replace it
-  with an accurate statement of current at-least-once behavior.
+- **Thread the connection explicitly.** Replace `DatabaseProjection.
+  _current_connection` instance state with a `conn` parameter on
+  `_process_event`. Added after research (see design doc revision 4): the
+  current attribute silently leaks connections across transactions under
+  concurrent `handle()` calls, which would make M2's guarantee false without
+  raising.
+- **Shared SQLAlchemy engine factory with correct SQLite transaction control.**
+  Added after research (design doc revision 5): no `connect_args`,
+  `isolation_level`, or `do_begin` hook exists anywhere in the project today, so
+  SQLite does not emit `BEGIN` for `SELECT` and transaction boundaries are not
+  what the design assumes.
+- **Correct the false docstring at `projections/base.py:688-690`** and the
+  matching false claim in `migrations/templates/checkpoints.sql`, whose header
+  advertises "Exactly-once processing semantics."
 
 **Exit criteria**
 
