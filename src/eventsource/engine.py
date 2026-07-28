@@ -53,15 +53,22 @@ def _configure_sqlite(engine: AsyncEngine, *, is_memory: bool) -> None:
         SQLAlchemy implements ``isolation_level="AUTOCOMMIT"`` for SQLite by
         setting the driver connection's ``isolation_level`` attribute to
         ``None`` (``SQLiteDialect_pysqlite.set_isolation_level``), and ``""``
-        for every other level. That attribute is therefore the ground truth
-        for whether the driver will open transactions on its own, and it is
-        the same regardless of *how* AUTOCOMMIT was requested -- as a
+        for every other level. The driver connection is therefore the ground
+        truth for whether it will open transactions on its own, and it says
+        the same thing regardless of *how* AUTOCOMMIT was requested -- as a
         ``create_async_engine(isolation_level=...)`` argument, via
         ``Engine.execution_options()``, or via ``Connection
         .execution_options()``. Inspecting the execution options instead
         would miss the engine-argument route, which does not surface there.
+
+        We delegate the actual check to ``Dialect
+        .detect_autocommit_setting()`` rather than reading the attribute
+        ourselves, so that if a dialect ever changes how it represents
+        autocommit -- e.g. moving to Python 3.12's native ``sqlite3``
+        ``autocommit`` attribute -- this follows it instead of silently
+        reporting the wrong answer.
         """
-        return conn.connection.dbapi_connection.isolation_level is None
+        return bool(conn.dialect.detect_autocommit_setting(conn.connection.dbapi_connection))
 
     @event.listens_for(engine.sync_engine, "connect")
     def _set_pragmas(dbapi_connection: Any, _record: Any) -> None:
