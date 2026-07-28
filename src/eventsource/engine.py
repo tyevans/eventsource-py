@@ -80,9 +80,9 @@ def create_async_engine(url: str, **kwargs: Any) -> AsyncEngine:
 
     Args:
         url: SQLAlchemy database URL.
-        **kwargs: Passed through to ``create_async_engine``. Caller-supplied
-                  ``connect_args`` are merged with, and take precedence over,
-                  the SQLite defaults.
+        **kwargs: Passed through to ``create_async_engine`` unchanged. For
+                  SQLite URLs, ``poolclass`` defaults to ``StaticPool`` for
+                  ``:memory:`` databases unless the caller overrides it.
 
     Returns:
         A configured AsyncEngine.
@@ -92,12 +92,10 @@ def create_async_engine(url: str, **kwargs: Any) -> AsyncEngine:
         return _sa_create_async_engine(url, **kwargs)
 
     is_memory = ":memory:" in url
-    connect_args: dict[str, Any] = dict(kwargs.pop("connect_args", {}))
-
     if is_memory:
         kwargs.setdefault("poolclass", StaticPool)
 
-    engine = _sa_create_async_engine(url, connect_args=connect_args, **kwargs)
+    engine = _sa_create_async_engine(url, **kwargs)
     _configure_sqlite(engine, is_memory=is_memory)
     logger.debug("Created SQLite engine (memory=%s)", is_memory)
     return engine

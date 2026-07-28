@@ -7,27 +7,44 @@ from eventsource.engine import create_async_engine
 
 
 async def test_sqlite_engine_holds_read_write_in_one_transaction(tmp_path):
-    """A SELECT then INSERT on one connection must roll back together.
+    """A connection's transaction must begin at its first SELECT, not later.
 
-    Under sqlite3's legacy isolation this fails: the SELECT runs outside any
-    transaction, so the driver may commit implicitly before the rollback.
+    Two separate connections on a file-backed (WAL) database. Connection A
+    starts a transaction and reads. Connection B then inserts a row and
+    commits. Connection A reads again -- it must still see the count from
+    before B's commit, because A's snapshot was fixed when its transaction
+    began at the first SELECT.
+
+    Under sqlite3's legacy isolation this fails: no BEGIN is emitted before
+    the SELECT, so connection A has no open transaction yet when it runs its
+    first read, and its second read observes B's commit.
     """
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/t.db")
     async with engine.begin() as conn:
         await conn.execute(text("CREATE TABLE t (id INTEGER PRIMARY KEY)"))
 
-    conn = await engine.connect()
+    conn_a = await engine.connect()
     try:
-        await conn.begin()
-        await conn.execute(text("SELECT COUNT(*) FROM t"))
-        await conn.execute(text("INSERT INTO t (id) VALUES (1)"))
-        await conn.rollback()
-    finally:
-        await conn.close()
+        await conn_a.begin()
+        count_before = (
+            await conn_a.execute(text("SELECT COUNT(*) FROM t"))
+        ).scalar_one()
 
-    async with engine.connect() as conn:
-        count = (await conn.execute(text("SELECT COUNT(*) FROM t"))).scalar_one()
-    assert count == 0, "INSERT survived rollback: transaction control is wrong"
+        async with engine.begin() as conn_b:
+            await conn_b.execute(text("INSERT INTO t (id) VALUES (1)"))
+
+        count_after = (
+            await conn_a.execute(text("SELECT COUNT(*) FROM t"))
+        ).scalar_one()
+        await conn_a.rollback()
+    finally:
+        await conn_a.close()
+
+    assert count_before == 0
+    assert count_after == count_before, (
+        "connection A observed connection B's commit: A's transaction did "
+        "not begin at its first SELECT"
+    )
     await engine.dispose()
 
 
