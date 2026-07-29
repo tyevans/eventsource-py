@@ -14,17 +14,30 @@ The `SubscriptionManager` provides:
 
 ## Prerequisites
 
-Install the eventsource library:
+Python 3.11 or newer. Install the eventsource library:
 
 ```bash
 pip install eventsource-py
 ```
 
-Or install from source:
+Or install from a source checkout (editable):
 
 ```bash
 cd /path/to/eventsource-py
 pip install -e .
+```
+
+All three examples run entirely on the in-memory event store, event bus, and
+checkpoint repository, so no optional extras (`postgresql`, `sqlite`, `redis`,
+`rabbitmq`, `kafka`, `telemetry`) and no external services are required. The
+only third-party import beyond `eventsource` itself is `pydantic`, which is a
+core dependency.
+
+Run the examples from the repository root so that `examples.subscriptions.*`
+resolves as a package:
+
+```bash
+python -m examples.subscriptions.basic_projection
 ```
 
 ## Examples
@@ -168,6 +181,10 @@ await manager.subscribe(inventory, SubscriptionConfig(
 # Start all concurrently
 await manager.start(concurrent=True)
 
+# Pause and resume an individual subscription by name
+await manager.pause_subscription("InventoryDashboard")
+await manager.resume_subscription("InventoryDashboard")
+
 # Monitor health
 health = await manager.health_check()
 print(f"Healthy: {health.healthy_count}/{health.subscription_count}")
@@ -179,34 +196,101 @@ liveness = await manager.liveness_check()
 
 ## Configuration Options
 
+The tables below are an **abridged quick-reference** covering the options most
+relevant to the three examples. They are not a complete API reference. The
+canonical source of truth for every field, its default, and its validation
+rules is the dataclass definitions themselves:
+
+- `SubscriptionConfig`, `CheckpointStrategy`, factory helpers -- [`src/eventsource/subscriptions/config.py`](../../src/eventsource/subscriptions/config.py)
+- `ErrorHandlingConfig`, `ErrorHandlingStrategy`, `ErrorSeverity` -- [`src/eventsource/subscriptions/error_handling.py`](../../src/eventsource/subscriptions/error_handling.py)
+- `HealthCheckConfig` -- [`src/eventsource/subscriptions/health.py`](../../src/eventsource/subscriptions/health.py)
+- `RetryConfig`, `CircuitBreakerConfig` -- [`src/eventsource/subscriptions/retry.py`](../../src/eventsource/subscriptions/retry.py)
+
+If a default here ever disagrees with the source, the source wins.
+
 ### SubscriptionConfig
+
+Frozen dataclass. Values are validated in `__post_init__`, so invalid
+combinations (for example `max_retry_delay < initial_retry_delay`) raise
+`ValueError` at construction time.
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `start_from` | `"checkpoint"` | Where to start: `"beginning"`, `"end"`, `"checkpoint"`, or position number |
-| `batch_size` | `100` | Events per batch during catch-up |
-| `max_in_flight` | `1000` | Maximum concurrent events |
-| `checkpoint_strategy` | `EVERY_BATCH` | When to save checkpoint: `EVERY_EVENT`, `EVERY_BATCH`, `PERIODIC` |
-| `max_retries` | `5` | Retry attempts for failed events |
-| `continue_on_error` | `True` | Continue processing after DLQ |
+| `start_from` | `"checkpoint"` | Where to start: `"beginning"`, `"end"`, `"checkpoint"`, or an integer global position |
+| `batch_size` | `100` | Events per batch during catch-up (must be >= 1) |
+| `max_in_flight` | `1000` | Maximum events being processed concurrently (must be >= 1) |
+| `backpressure_threshold` | `0.8` | Fraction of `max_in_flight` (0.0-1.0) at which backpressure is signalled |
+| `checkpoint_strategy` | `CheckpointStrategy.EVERY_BATCH` | When to persist checkpoints: `EVERY_EVENT`, `EVERY_BATCH`, `PERIODIC` |
+| `checkpoint_interval_seconds` | `5.0` | Checkpoint interval used by the `PERIODIC` strategy |
+| `processing_timeout` | `30.0` | Max seconds to wait for a single event to be processed |
+| `shutdown_timeout` | `30.0` | Max seconds to wait during graceful shutdown |
+| `event_types` | `None` | Tuple of `DomainEvent` subclasses to filter on (`None` = all types) |
+| `aggregate_types` | `None` | Tuple of aggregate type names to filter on (`None` = all types) |
+| `tenant_id` | `None` | `UUID` to scope the subscription to a single tenant (`None` = all tenants) |
+| `continue_on_error` | `True` | Continue processing after an event is DLQ'd |
+| `max_retries` | `5` | Retry attempts for failed events (must be >= 0) |
+| `initial_retry_delay` | `1.0` | Seconds before the first retry |
+| `max_retry_delay` | `60.0` | Upper bound on backoff delay (must be >= `initial_retry_delay`) |
+| `retry_exponential_base` | `2.0` | Backoff multiplier per attempt (must be > 1.0) |
+| `retry_jitter` | `0.1` | Jitter fraction (0.0-1.0) applied to retry delays |
+| `circuit_breaker_enabled` | `True` | Whether the circuit breaker is active |
+| `circuit_breaker_failure_threshold` | `5` | Consecutive failures before the circuit opens (must be >= 1) |
+| `circuit_breaker_recovery_timeout` | `30.0` | Seconds the circuit stays open before probing again |
+
+Two accessors derive the sub-configs used internally:
+`config.get_retry_config()` returns a `RetryConfig`, and
+`config.get_circuit_breaker_config()` returns a `CircuitBreakerConfig`.
+
+### SubscriptionConfig Factory Helpers
+
+`config.py` also exports two factories for the common shapes:
+
+```python
+from eventsource.subscriptions.config import (
+    create_catch_up_config,
+    create_live_only_config,
+)
+
+# Optimized for replaying history: larger batches, batch checkpointing.
+# start_from="checkpoint", batch_size=1000, checkpoint_strategy=EVERY_BATCH
+catch_up = create_catch_up_config(batch_size=1000, checkpoint_every_batch=True)
+
+# Passing checkpoint_every_batch=False switches to CheckpointStrategy.PERIODIC.
+catch_up_periodic = create_catch_up_config(checkpoint_every_batch=False)
+
+# Only new events, no history replay.
+# start_from="end", batch_size=100, checkpoint_strategy=EVERY_EVENT
+live_only = create_live_only_config()
+```
+
+Both return an ordinary `SubscriptionConfig`, so you can pass the result
+straight to `manager.subscribe(projection, config=...)`.
 
 ### ErrorHandlingConfig
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `strategy` | `RETRY_THEN_CONTINUE` | Error handling strategy |
+| `strategy` | `ErrorHandlingStrategy.RETRY_THEN_CONTINUE` | Default strategy: also `STOP`, `CONTINUE`, `RETRY_THEN_DLQ`, `DLQ_ONLY` |
 | `max_recent_errors` | `100` | Maximum recent errors to keep in memory |
-| `max_errors_before_stop` | `None` | Stop subscription after N errors (optional) |
-| `dlq_enabled` | `True` | Send to DLQ after all retries fail |
+| `max_errors_before_stop` | `None` | If set, stop the subscription after this many errors |
+| `error_rate_threshold` | `None` | If set, alert when the per-minute error rate exceeds this |
+| `dlq_enabled` | `True` | Send failed events to the DLQ after all retries fail |
+| `notify_on_severity` | `ErrorSeverity.HIGH` | Minimum severity that triggers registered callbacks |
 
 ### HealthCheckConfig
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `max_lag_events_warning` | `1000` | Events behind before warning |
-| `max_errors_warning` | `10` | Total errors before warning |
-| `max_errors_critical` | `100` | Total errors before critical |
-| `max_error_rate_per_minute` | `10.0` | Error rate threshold |
+| `max_error_rate_per_minute` | `10.0` | Error rate above this is unhealthy |
+| `max_errors_warning` | `10` | Warn if total errors exceed this |
+| `max_errors_critical` | `100` | Critical if total errors exceed this |
+| `max_lag_events_warning` | `1000` | Warn if lag exceeds this many events |
+| `max_lag_events_critical` | `10000` | Critical if lag exceeds this many events |
+| `backpressure_warning_duration_seconds` | `60.0` | Warn if backpressured for this long |
+| `backpressure_critical_duration_seconds` | `300.0` | Critical if backpressured for this long |
+| `circuit_open_is_unhealthy` | `True` | Treat an open circuit breaker as unhealthy |
+| `max_dlq_events_warning` | `10` | Warn if the DLQ holds this many events |
+| `max_dlq_events_critical` | `100` | Critical if the DLQ holds this many events |
 
 ## Projection Protocol
 
