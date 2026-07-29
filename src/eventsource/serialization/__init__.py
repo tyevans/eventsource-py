@@ -14,14 +14,12 @@ Example:
 """
 
 from eventsource.serialization.json import (
-    ORJSON_AVAILABLE,
     EventSourceJSONEncoder,
     json_dumps,
     json_loads,
 )
 
 __all__ = [
-    "ORJSON_AVAILABLE",
     "EventSourceJSONEncoder",
     "json_dumps",
     "json_loads",
