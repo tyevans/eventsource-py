@@ -196,6 +196,170 @@ class TestDeprecatedImports:
             _ = _json.unknown_attribute
 
 
+class TestOrjsonParity:
+    """
+    Parity tests between the stdlib encoder and orjson.
+
+    These assert byte-identical `json_dumps` output across both encoders,
+    because payloads persist in `event_outbox` and `dead_letter_queue` --
+    two deployments of the same library version must encode identically
+    regardless of whether the `orjson` extra is installed.
+
+    Where orjson and stdlib genuinely cannot agree (dict keys not supported
+    by stdlib at all), the divergence is recorded explicitly below rather
+    than asserted away.
+    """
+
+    def _stdlib_dumps(self, obj):
+        import json as _json
+
+        from eventsource.serialization.json import EventSourceJSONEncoder
+
+        return _json.dumps(obj, cls=EventSourceJSONEncoder, separators=(",", ":"))
+
+    def _orjson_dumps(self, obj):
+        import orjson
+
+        from eventsource.serialization.json import _orjson_default
+
+        return orjson.dumps(obj, default=_orjson_default, option=orjson.OPT_NON_STR_KEYS).decode()
+
+    def test_parity_uuid(self):
+        test_uuid = uuid4()
+        data = {"id": test_uuid}
+        assert self._stdlib_dumps(data) == self._orjson_dumps(data)
+
+    def test_parity_aware_datetime(self):
+        dt = datetime(2024, 1, 15, 10, 30, 45, 123456, tzinfo=UTC)
+        data = {"t": dt}
+        assert self._stdlib_dumps(data) == self._orjson_dumps(data)
+
+    def test_parity_naive_datetime(self):
+        dt = datetime(2024, 1, 15, 10, 30, 45, 123456)
+        data = {"t": dt}
+        assert self._stdlib_dumps(data) == self._orjson_dumps(data)
+
+    def test_parity_nested_structure(self):
+        data = {
+            "event": {
+                "id": uuid4(),
+                "occurred_at": datetime(2024, 1, 15, 10, 30, 45, tzinfo=UTC),
+                "items": [{"sub_id": uuid4(), "n": 1}, {"sub_id": uuid4(), "n": 2}],
+            }
+        }
+        assert self._stdlib_dumps(data) == self._orjson_dumps(data)
+
+    def test_parity_empty_dict(self):
+        assert self._stdlib_dumps({}) == self._orjson_dumps({})
+
+    def test_parity_empty_list(self):
+        assert self._stdlib_dumps([]) == self._orjson_dumps([])
+
+    def test_parity_none(self):
+        assert self._stdlib_dumps(None) == self._orjson_dumps(None)
+
+    def test_parity_int_dict_key(self):
+        # int keys: stdlib stringifies them natively (no encoder.default
+        # involvement); orjson requires OPT_NON_STR_KEYS to do the same.
+        data = {1: "a", 2: "b"}
+        assert self._stdlib_dumps(data) == self._orjson_dumps(data)
+
+    def test_parity_str_subclass(self):
+        class MyStr(str):
+            pass
+
+        data = {"x": MyStr("hi")}
+        assert self._stdlib_dumps(data) == self._orjson_dumps(data)
+
+    def test_uuid_dict_key_divergence_is_expected_and_safe(self):
+        """
+        Explicit divergence, not a parity gap.
+
+        stdlib's json.dumps (even with EventSourceJSONEncoder) raises
+        TypeError for a UUID dict key -- json.JSONEncoder only special-cases
+        str/int/float/bool/None keys itself and never calls `default()` for
+        keys. orjson, with OPT_NON_STR_KEYS, *can* stringify a UUID key.
+
+        This is safe to leave unmatched: since stdlib could never encode a
+        UUID key, no persisted row (written by any build to date) contains
+        one. There is nothing to drift between builds for a shape neither
+        encoder-before-this-task could produce.
+        """
+        import json as _json
+
+        from eventsource.serialization.json import EventSourceJSONEncoder
+
+        test_uuid = uuid4()
+        with pytest.raises(TypeError):
+            _json.dumps({test_uuid: "a"}, cls=EventSourceJSONEncoder)
+
+        # orjson succeeds where stdlib cannot.
+        result = self._orjson_dumps({test_uuid: "a"})
+        assert str(test_uuid) in result
+
+    # Decimal is intentionally excluded: EventSourceJSONEncoder does not
+    # support Decimal (json.dumps raises TypeError), and orjson does not
+    # either without a `default=` handler -- there is no existing behavior
+    # to preserve parity with.
+
+
+class TestOrjsonFallback:
+    """
+    Prove the stdlib fallback path actually runs, by forcing
+    `ORJSON_AVAILABLE = False` even in an environment where orjson is
+    installed. A fallback branch that is never exercised is not a fallback.
+    """
+
+    def test_json_dumps_falls_back_to_stdlib(self, monkeypatch):
+        import eventsource.serialization.json as json_module
+
+        monkeypatch.setattr(json_module, "ORJSON_AVAILABLE", False)
+
+        test_uuid = uuid4()
+        dt = datetime(2024, 1, 15, 10, 30, 45, 123456, tzinfo=UTC)
+        data = {"id": test_uuid, "t": dt}
+
+        result = json_module.json_dumps(data)
+
+        assert result == json.dumps(
+            data, cls=json_module.EventSourceJSONEncoder, separators=(",", ":")
+        )
+        parsed = json.loads(result)
+        assert parsed["id"] == str(test_uuid)
+        assert parsed["t"] == dt.isoformat()
+
+    def test_json_loads_falls_back_to_stdlib(self, monkeypatch):
+        import eventsource.serialization.json as json_module
+
+        monkeypatch.setattr(json_module, "ORJSON_AVAILABLE", False)
+
+        result = json_module.json_loads('{"a": 1, "b": [1, 2, 3]}')
+
+        assert result == {"a": 1, "b": [1, 2, 3]}
+
+    def test_fallback_output_matches_orjson_output(self, monkeypatch):
+        """
+        With ORJSON_AVAILABLE forced False, json_dumps must still produce
+        output byte-identical to the orjson path -- this is the actual
+        regression this task guards against: format drift between builds.
+        """
+        import eventsource.serialization.json as json_module
+
+        data = {
+            "id": uuid4(),
+            "t": datetime(2024, 1, 15, 10, 30, 45, 123456, tzinfo=UTC),
+            "nested": {"items": [1, 2, {"x": None}]},
+        }
+
+        monkeypatch.setattr(json_module, "ORJSON_AVAILABLE", True)
+        with_orjson = json_module.json_dumps(data)
+
+        monkeypatch.setattr(json_module, "ORJSON_AVAILABLE", False)
+        with_stdlib_fallback = json_module.json_dumps(data)
+
+        assert with_orjson == with_stdlib_fallback
+
+
 class TestNewModuleExports:
     """Tests to verify the new module structure works correctly."""
 

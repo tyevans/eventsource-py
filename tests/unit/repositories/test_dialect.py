@@ -82,6 +82,29 @@ def test_json_param_none_roundtrips_as_sql_null():
     assert json_result(encoded) is None
 
 
+def test_json_result_routes_through_project_json_loads(monkeypatch):
+    """
+    json_result must decode via `eventsource.serialization.json_loads`, not
+    stdlib `json.loads` directly -- otherwise if `json_loads` is later
+    rerouted to orjson, this call site silently keeps using stdlib and the
+    module ends up with two decoders.
+    """
+    import eventsource.repositories._dialect as dialect_module
+
+    calls = []
+
+    def fake_json_loads(s):
+        calls.append(s)
+        return {"routed": True}
+
+    monkeypatch.setattr(dialect_module, "json_loads", fake_json_loads)
+
+    result = json_result('{"a": 1}')
+
+    assert calls == ['{"a": 1}']
+    assert result == {"routed": True}
+
+
 def test_json_param_encodes_uuid_and_datetime_payload():
     event_id = uuid4()
     occurred_at = datetime(2026, 7, 28, 3, 25, 32, 733094, tzinfo=UTC)

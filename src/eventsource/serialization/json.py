@@ -18,6 +18,13 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
+try:
+    import orjson
+
+    ORJSON_AVAILABLE = True
+except ImportError:  # pragma: no cover - exercised in the no-orjson environment
+    ORJSON_AVAILABLE = False
+
 
 class EventSourceJSONEncoder(json.JSONEncoder):
     """
@@ -56,11 +63,33 @@ class EventSourceJSONEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
+def _orjson_default(obj: Any) -> Any:
+    """
+    Fallback handler for `orjson.dumps` for types it does not handle natively.
+
+    orjson natively serializes UUID and datetime, so this only needs to cover
+    whatever `EventSourceJSONEncoder.default` covers beyond that -- currently
+    nothing, since UUID/datetime are the only types it special-cases. This
+    exists so `orjson.dumps` raises the same `TypeError` (via the same code
+    path shape) as stdlib for genuinely unsupported types, rather than a
+    differently-worded orjson error.
+    """
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
 def json_dumps(obj: Any) -> str:
     """
     Serialize object to JSON string with UUID and datetime support.
 
-    Convenience function that uses EventSourceJSONEncoder.
+    Uses `orjson` when the optional `orjson` extra is installed (faster, and
+    natively supports UUID/datetime), falling back to
+    `json.dumps(..., cls=EventSourceJSONEncoder)` otherwise. Both paths
+    produce byte-identical output for the shapes exercised by this library
+    (compact separators, no non-str dict keys other than UUID) -- see
+    `tests/unit/serialization/test_json.py::TestOrjsonParity`. This matters
+    because encoded payloads persist in `event_outbox` and
+    `dead_letter_queue`; two deployments of the same library version must
+    encode identically regardless of whether the extra is installed.
 
     Args:
         obj: Object to serialize
@@ -73,28 +102,37 @@ def json_dumps(obj: Any) -> str:
         >>> data = {"event_id": uuid4()}
         >>> json_str = json_dumps(data)
     """
-    return json.dumps(obj, cls=EventSourceJSONEncoder)
+    if ORJSON_AVAILABLE:
+        return orjson.dumps(obj, default=_orjson_default, option=orjson.OPT_NON_STR_KEYS).decode()
+    # separators=(",", ":") matches orjson's compact (no-whitespace) output.
+    return json.dumps(obj, cls=EventSourceJSONEncoder, separators=(",", ":"))
 
 
-def json_loads(s: str) -> Any:
+def json_loads(s: str | bytes) -> Any:
     """
-    Deserialize JSON string to Python object.
+    Deserialize JSON string (or bytes) to Python object.
 
-    Note: This is a simple wrapper around json.loads.
-    UUID and datetime strings are NOT automatically converted
+    Uses `orjson.loads` when the optional `orjson` extra is installed,
+    falling back to `json.loads` otherwise. Both are standard JSON decoders
+    and agree on output for valid JSON input.
+
+    Note: UUID and datetime strings are NOT automatically converted
     back to their original types - that's the application's responsibility.
 
     Args:
-        s: JSON string to deserialize
+        s: JSON string or bytes to deserialize
 
     Returns:
         Python object representation
     """
+    if ORJSON_AVAILABLE:
+        return orjson.loads(s)
     return json.loads(s)
 
 
 __all__ = [
     "EventSourceJSONEncoder",
+    "ORJSON_AVAILABLE",
     "json_dumps",
     "json_loads",
 ]

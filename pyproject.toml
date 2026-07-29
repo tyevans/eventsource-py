@@ -50,8 +50,11 @@ kafka-schema-registry = [
     "aiokafka>=0.9.0,<1.0.0",
     "confluent-kafka>=2.0.0,<3.0.0",
 ]
+orjson = [
+    "orjson>=3.9",
+]
 all = [
-    "eventsource-py[postgresql,sqlite,redis,rabbitmq,kafka,telemetry]",
+    "eventsource-py[postgresql,sqlite,redis,rabbitmq,kafka,telemetry,orjson]",
 ]
 all-backends = [
     "eventsource-py[postgresql,sqlite]",

@@ -11,7 +11,6 @@ The backends differ in four ways that reach the SQL and the bound parameters:
 - Current time: NOW() versus CURRENT_TIMESTAMP.
 """
 
-import json
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
@@ -19,7 +18,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from eventsource.serialization import json_dumps
+from eventsource.serialization import json_dumps, json_loads
 
 
 class Dialect(Enum):
@@ -115,11 +114,19 @@ def json_param(value: object, dialect: Dialect) -> str | None:
 
 
 def json_result(value: object) -> Any:
-    """Decode a JSON value from a result row, accepting text or parsed JSON."""
+    """
+    Decode a JSON value from a result row, accepting text or parsed JSON.
+
+    Delegates to `eventsource.serialization.json_loads` (rather than plain
+    `json.loads`) so decoding routes through the same encoder that
+    `json_param` used to encode -- if `json_loads` is later backed by
+    orjson, this call site moves with it instead of silently continuing to
+    decode with stdlib.
+    """
     if value is None:
         return None
     if isinstance(value, str | bytes):
-        return json.loads(value)
+        return json_loads(value)
     return value
 
 
