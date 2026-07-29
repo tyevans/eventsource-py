@@ -791,7 +791,8 @@ class TestErrorHandler:
         with pytest.raises(CircuitBreakerOpenError):
             await handler.execute_with_retry(failing_operation, "test_op")
 
-    def test_with_retry_decorator(self, handler: ErrorHandler) -> None:
+    @pytest.mark.asyncio
+    async def test_with_retry_decorator(self, handler: ErrorHandler) -> None:
         """Test with_retry decorator."""
         call_count = 0
 
@@ -806,12 +807,9 @@ class TestErrorHandler:
                 raise DualWriteError(uuid4(), "Temporary")
             return "decorated_success"
 
-        async def run_test() -> None:
-            result = await decorated_operation()
-            assert result == "decorated_success"
-            assert call_count == 2
-
-        asyncio.get_event_loop().run_until_complete(run_test())
+        result = await decorated_operation()
+        assert result == "decorated_success"
+        assert call_count == 2
 
     @pytest.mark.asyncio
     async def test_non_migration_error_not_retried(self, handler: ErrorHandler) -> None:
