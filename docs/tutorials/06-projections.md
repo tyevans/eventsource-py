@@ -112,7 +112,7 @@ Docker only matters if you choose to run the PostgreSQL half of Step 12. The rep
 ships a compose file for that:
 
 ```bash
-docker-compose -f docker-compose.test.yml up -d
+docker compose -f docker-compose.test.yml up -d
 ```
 
 Note that `InMemoryReadModelRepository`, used for the test-oriented variant in Step 12,

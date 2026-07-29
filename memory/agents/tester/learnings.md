@@ -3,7 +3,7 @@
 ## Codebase Patterns
 - `asyncio_mode = "auto"` in pytest config -- all test functions are async by default (added: 2026-02-13)
 - Test markers: integration, postgres, sqlite, redis, kafka, rabbitmq, slow, e2e, benchmark (added: 2026-02-13)
-- Unit tests run without Docker; integration tests require `docker-compose -f docker-compose.test.yml up -d` (added: 2026-02-13)
+- Unit tests run without Docker; integration tests require `docker compose -f docker-compose.test.yml up -d` (added: 2026-02-13)
 
 ## Gotchas
 - RabbitMQ and OpenTelemetry tests fail when optional deps aren't installed -- need `uv sync --all-extras` for full coverage (added: 2026-02-13)

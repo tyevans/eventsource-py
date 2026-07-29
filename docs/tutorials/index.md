@@ -280,14 +280,14 @@ Both ports are deliberately non-default so the test services do not collide with
 PostgreSQL or Redis you already run locally.
 
 ```bash
-docker-compose -f docker-compose.test.yml up -d
+docker compose -f docker-compose.test.yml up -d
 ```
 
 Both services declare health checks, so give them a few seconds before connecting; when
 you are done:
 
 ```bash
-docker-compose -f docker-compose.test.yml down -v
+docker compose -f docker-compose.test.yml down -v
 ```
 
 The `-v` drops the `postgres_test_data` and `redis_test_data` volumes, which is what you

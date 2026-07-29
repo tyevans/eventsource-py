@@ -56,7 +56,7 @@ Quick reference for which agent to dispatch for each task type.
 uv run pytest tests/unit/ -v
 
 # Integration tests (requires Docker)
-docker-compose -f docker-compose.test.yml up -d
+docker compose -f docker-compose.test.yml up -d
 uv run pytest tests/integration/ -v
 
 # Lint and format

@@ -118,9 +118,9 @@ and `addopts` already includes `--cov=src/eventsource --cov-report=term-missing`
 Bring up the local services first:
 
 ```bash
-docker-compose -f docker-compose.test.yml up -d
+docker compose -f docker-compose.test.yml up -d
 uv run pytest tests/integration/ -v
-docker-compose -f docker-compose.test.yml down -v
+docker compose -f docker-compose.test.yml down -v
 ```
 
 `docker-compose.test.yml` starts PostgreSQL 15 on host port `5433` (override with `POSTGRES_PORT`)
@@ -272,7 +272,7 @@ trusting a bare `mypy` run, and if the two genuinely disagree, update the
 to match your local ports, e.g.
 `DATABASE_URL=postgresql://test:test@localhost:5433/eventsource_test` and
 `REDIS_URL=redis://localhost:6380`. If a run left bad state behind, reset the volumes with
-`docker-compose -f docker-compose.test.yml down -v`.
+`docker compose -f docker-compose.test.yml down -v`.
 
 **`mkdocs build --strict` fails.** Strict mode promotes warnings to errors. The usual causes are a
 relative link to a page that moved or does not exist, and a new page under `docs/` that was never

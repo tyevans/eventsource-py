@@ -360,7 +360,7 @@ docker ps --filter ancestor=postgres:15 --filter ancestor=redis:7
 
 The compose stack is unaffected by this — its containers are named
 `eventsource-test-postgres` and `eventsource-test-redis`, and are cleaned up with
-`docker-compose -f docker-compose.test.yml down -v` instead.
+`docker compose -f docker-compose.test.yml down -v` instead.
 
 ## Test layout
 
@@ -669,7 +669,7 @@ To use the long-lived `docker-compose.test.yml` services instead of per-run cont
 bring them up first:
 
 ```bash
-docker-compose -f docker-compose.test.yml up -d
+docker compose -f docker-compose.test.yml up -d
 ```
 
 That gives you `postgres:15` on host port 5433 (`eventsource_test` / `test` / `test`) and

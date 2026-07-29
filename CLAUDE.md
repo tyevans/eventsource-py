@@ -29,7 +29,7 @@ uv sync --all-extras
 uv run pytest tests/unit/ -v
 
 # Integration tests (requires Docker services)
-docker-compose -f docker-compose.test.yml up -d
+docker compose -f docker-compose.test.yml up -d   # note: `docker compose`, not `docker-compose`
 uv run pytest tests/integration/ -v
 
 # Specific backend tests

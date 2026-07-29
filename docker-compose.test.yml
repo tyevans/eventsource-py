@@ -4,13 +4,13 @@ version: '3.8'
 #
 # Usage:
 #   Start services:
-#     docker-compose -f docker-compose.test.yml up -d
+#     docker compose -f docker-compose.test.yml up -d
 #
 #   Run tests:
 #     pytest tests/integration/ -v
 #
 #   Stop services:
-#     docker-compose -f docker-compose.test.yml down -v
+#     docker compose -f docker-compose.test.yml down -v
 #
 # Environment variables can be set to customize behavior:
 #   POSTGRES_PORT: PostgreSQL external port (default: 5433)

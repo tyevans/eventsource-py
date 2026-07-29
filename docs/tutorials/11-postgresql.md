@@ -141,7 +141,7 @@ PostgreSQL onto your machine.
 From the repository root, start just the PostgreSQL service:
 
 ```bash
-docker-compose -f docker-compose.test.yml up -d postgres
+docker compose -f docker-compose.test.yml up -d postgres
 ```
 
 Naming `postgres` at the end keeps the Redis container out of it — the file
@@ -199,7 +199,7 @@ Compose file defines a healthcheck (`pg_isready -U test -d eventsource_test`,
 polled every 5 seconds), so you can just watch for it to flip to healthy:
 
 ```bash
-docker-compose -f docker-compose.test.yml ps
+docker compose -f docker-compose.test.yml ps
 ```
 
 Wait until the `STATUS` column for `eventsource-test-postgres` reads
@@ -245,10 +245,10 @@ for the packaged schema SQL.
 
 If instead you get `ConnectionRefusedError` or `[Errno 111] Connect call
 failed`, the container is not up yet or the port is wrong: re-check
-`docker-compose ... ps` and confirm the mapping says `0.0.0.0:5433->5432/tcp`.
+`docker compose ... ps` and confirm the mapping says `0.0.0.0:5433->5432/tcp`.
 If you get `InvalidPasswordError`, you likely have an *older*
 `eventsource-test-postgres` volume from a previous project with different
-credentials — `docker-compose -f docker-compose.test.yml down -v` removes the
+credentials — `docker compose -f docker-compose.test.yml down -v` removes the
 volume so the next `up` re-initialises it. Note that `-v` throws the data
 away, which is exactly what you want right now and exactly what you do not
 want after Step 6.

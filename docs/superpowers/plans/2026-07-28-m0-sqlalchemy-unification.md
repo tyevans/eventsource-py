@@ -1317,7 +1317,7 @@ Expected: all pass.
 - [ ] **Step 5: Run PostgreSQL integration tests**
 
 ```bash
-docker-compose -f docker-compose.test.yml up -d
+docker compose -f docker-compose.test.yml up -d
 uv run pytest tests/integration/ -m postgres -v
 ```
 Expected: all pass. This is the first point where the merged repositories are
