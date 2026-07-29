@@ -1,10 +1,14 @@
 """Unit tests for the SQL dialect adapter."""
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from uuid import uuid4
+
+import pytest
 
 from eventsource.repositories._dialect import (
     Dialect,
+    dialect_of,
     json_param,
     json_result,
     now_expr,
@@ -13,6 +17,13 @@ from eventsource.repositories._dialect import (
     uuid_param,
     uuid_result,
 )
+
+
+def _conn_with_dialect_name(name: str) -> SimpleNamespace:
+    """A minimal stand-in for an AsyncConnection: `dialect_of` only reads
+    `conn.dialect.name`, so a real (or even mocked) AsyncConnection is
+    unnecessary machinery for exercising it."""
+    return SimpleNamespace(dialect=SimpleNamespace(name=name))
 
 
 def test_uuid_param_postgres_passes_through():
@@ -103,6 +114,23 @@ def test_json_result_routes_through_project_json_loads(monkeypatch):
 
     assert calls == ['{"a": 1}']
     assert result == {"routed": True}
+
+
+def test_dialect_of_postgresql():
+    assert dialect_of(_conn_with_dialect_name("postgresql")) is Dialect.POSTGRESQL
+
+
+def test_dialect_of_sqlite():
+    assert dialect_of(_conn_with_dialect_name("sqlite")) is Dialect.SQLITE
+
+
+def test_dialect_of_unsupported_raises_with_name_and_supported_list():
+    with pytest.raises(ValueError) as exc_info:
+        dialect_of(_conn_with_dialect_name("mysql"))
+    message = str(exc_info.value)
+    assert "mysql" in message
+    assert "postgresql" in message
+    assert "sqlite" in message
 
 
 def test_json_param_encodes_uuid_and_datetime_payload():
