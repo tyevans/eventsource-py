@@ -132,22 +132,47 @@ class TestAllExports:
         assert __all__ is not None
         assert isinstance(__all__, list)
 
-    def test_all_contains_expected_exports(self) -> None:
-        """Test __all__ contains expected exports."""
+    def test_all_contains_no_duplicates_or_stale_names(self) -> None:
+        """Test __all__ has no duplicate entries and every entry resolves.
+
+        This intentionally does NOT hardcode the expected export set --
+        eventsource.testing.__all__ is expected to grow as new test
+        utilities are added (e.g. the conformance suites added alongside
+        this test), and a hardcoded set fails on every legitimate
+        addition without catching a real bug. Instead this checks the
+        properties that actually indicate breakage: no duplicates, and
+        every listed name is a real, importable attribute.
+        """
+        import eventsource.testing
         from eventsource.testing import __all__
 
-        expected = {
-            "EventBuilder",
-            "InMemoryTestHarness",
-            "EventAssertions",
-            "given_events",
-            "when_command",
-            "then_event_published",
-            "then_no_events_published",
-            "then_event_sequence",
-            "then_event_count",
+        assert len(__all__) == len(set(__all__)), "__all__ contains duplicate entries"
+        for name in __all__:
+            assert hasattr(eventsource.testing, name), (
+                f"__all__ lists '{name}' but it is not an attribute of eventsource.testing"
+            )
+
+    def test_all_contains_every_public_export(self) -> None:
+        """Test every public, non-module attribute of the package is in __all__.
+
+        Catches the case that actually matters: a class or function added
+        to eventsource.testing but silently left out of __all__, so it
+        wouldn't be treated as public API (e.g. missing from generated
+        docs, `from eventsource.testing import *`, etc).
+        """
+        import types
+
+        import eventsource.testing
+        from eventsource.testing import __all__
+
+        public_attrs = {
+            name
+            for name in dir(eventsource.testing)
+            if not name.startswith("_")
+            and not isinstance(getattr(eventsource.testing, name), types.ModuleType)
         }
-        assert set(__all__) == expected
+        missing = public_attrs - set(__all__)
+        assert not missing, f"Public attributes missing from __all__: {missing}"
 
     def test_all_exports_are_importable(self) -> None:
         """Test that every item in __all__ can be imported."""
