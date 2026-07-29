@@ -205,3 +205,33 @@ jobs:
           REDIS_URL: redis://localhost:6379
         run: |
           uv run pytest -m "integration or postgres or redis" --no-cov
+
+  # Broker integration tests (Kafka, RabbitMQ).
+  #
+  # Unlike the `integration` job above, these tests don't talk to a fixed
+  # `services:` container: tests/integration/bus/{test_kafka,test_rabbitmq}.py
+  # use testcontainers-python to start their own ephemeral broker container
+  # per session (via the Docker socket) and read back its dynamically
+  # assigned host/port -- there are no KAFKA_BOOTSTRAP_SERVERS / RABBITMQ_URL
+  # env vars to wire up. GitHub-hosted ubuntu-latest runners have Docker
+  # available out of the box, so no `services:` block is needed here.
+  broker-tests:
+    runs-on: ubuntu-latest
+    needs: [lint, type-check, import-linter, audit, test]
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.11'
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --all-extras --locked
+
+      - name: Run broker integration tests
+        run: uv run pytest -m "kafka or rabbitmq" --no-cov
