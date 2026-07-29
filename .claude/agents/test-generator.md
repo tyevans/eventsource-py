@@ -1,7 +1,7 @@
 ---
 name: test-generator
 description: Use when tests need to be created or updated -- after implementing a feature, fixing a bug, or when coverage gaps are identified. Generates tests matching the project's async-first patterns with proper fixtures and markers.
-tools: Read, Write, Edit, Glob, Grep, Bash(bd:*), Bash(uv run pytest:*)
+tools: Read, Write, Edit, Glob, Grep, Bash(uv run pytest:*)
 model: sonnet
 permissionMode: default
 ---
@@ -146,8 +146,8 @@ async def test_sqlite_feature(sqlite_event_store):
 ## Knowledge Transfer
 
 **Before starting work:**
-1. Ask orchestrator for the bead ID you are working on
-2. Run `bd show <id>` to read notes on the task and parent epic
+1. Ask the orchestrator for the scope and acceptance criteria of your task
+2. Read `BACKLOG.md` and any linked design docs for context
 3. Check if there are known test patterns or gotchas noted in prior tasks
 
 **After completing work:**

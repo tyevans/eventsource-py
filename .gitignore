@@ -96,9 +96,6 @@ Thumbs.db
 # MkDocs documentation site
 site/
 
-# Beads task management
-.beads/
-
 # Mutation testing artifacts
 mutants/
 

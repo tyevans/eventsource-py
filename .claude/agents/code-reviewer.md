@@ -1,7 +1,7 @@
 ---
 name: code-reviewer
 description: Use when reviewing code changes before merging -- PRs, diffs, or staged changes. Checks for architecture rule violations, protocol conformance, public API consistency, and event sourcing anti-patterns.
-tools: Read, Glob, Grep, Bash(bd:*), Bash(git diff:*), Bash(git log:*), Bash(git show:*), Bash(uv run ruff check:*), Bash(uv run mypy:*)
+tools: Read, Glob, Grep, Bash(git diff:*), Bash(git log:*), Bash(git show:*), Bash(uv run ruff check:*), Bash(uv run mypy:*)
 model: sonnet
 permissionMode: plan
 ---
@@ -89,8 +89,8 @@ When `__init__.py` is changed:
 ## Knowledge Transfer
 
 **Before starting work:**
-1. Ask orchestrator for the bead ID you are working on
-2. Run `bd show <id>` to read notes on the task and parent epic
+1. Ask the orchestrator for the scope and acceptance criteria of your task
+2. Read `BACKLOG.md` and any linked design docs for context
 3. Check if prior reviews flagged recurring issues
 
 **After completing work:**

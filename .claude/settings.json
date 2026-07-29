@@ -8,7 +8,6 @@
       "Bash(uv run mypy:*)",
       "Bash(uv run bandit:*)",
       "Bash(pre-commit run:*)",
-      "Bash(bd:*)",
       "Bash(git status:*)",
       "Bash(git diff:*)",
       "Bash(git log:*)",
@@ -18,26 +17,6 @@
     ]
   },
   "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bd prime 2>/dev/null || echo 'Beads context: Run bd ready to see available work'"
-          }
-        ]
-      }
-    ],
-    "PreCompact": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bd sync --flush-only 2>/dev/null || true"
-          }
-        ]
-      }
-    ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write",
