@@ -105,7 +105,12 @@ def json_dumps(obj: Any) -> str:
     if ORJSON_AVAILABLE:
         return orjson.dumps(obj, default=_orjson_default, option=orjson.OPT_NON_STR_KEYS).decode()
     # separators=(",", ":") matches orjson's compact (no-whitespace) output.
-    return json.dumps(obj, cls=EventSourceJSONEncoder, separators=(",", ":"))
+    # ensure_ascii=False matches orjson, which always emits raw UTF-8 and has
+    # no option to \uXXXX-escape non-ASCII -- without this, stdlib and orjson
+    # would encode identical non-ASCII payloads (names, addresses, emoji) to
+    # different bytes depending only on whether the orjson extra is
+    # installed, in the same event_outbox / dead_letter_queue table.
+    return json.dumps(obj, cls=EventSourceJSONEncoder, separators=(",", ":"), ensure_ascii=False)
 
 
 def json_loads(s: str | bytes) -> Any:
@@ -115,6 +120,12 @@ def json_loads(s: str | bytes) -> Any:
     Uses `orjson.loads` when the optional `orjson` extra is installed,
     falling back to `json.loads` otherwise. Both are standard JSON decoders
     and agree on output for valid JSON input.
+
+    Accepts `bytes` (widened from a `str`-only signature) because
+    `_dialect.json_result` passes through whatever the DB driver returns --
+    sometimes `bytes` -- and both `json.loads` and `orjson.loads` decode
+    `bytes` natively, so narrowing to `str` at this call site would just
+    force a redundant decode.
 
     Note: UUID and datetime strings are NOT automatically converted
     back to their original types - that's the application's responsibility.
