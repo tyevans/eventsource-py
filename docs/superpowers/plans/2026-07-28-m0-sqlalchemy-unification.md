@@ -526,6 +526,119 @@ git commit --no-verify -m "feat: add PostgreSQL/SQLite dialect adapter for repos
 
 ---
 
+### Task 2b: orjson as an optional encoder accelerator
+
+**Added during execution** (user decision, 2026-07-29). Sequenced here because Task 2
+made `json_param` delegate to the project encoder, which turns this into a
+single-site change instead of a six-repository change.
+
+**Files:**
+- Modify: `src/eventsource/serialization/json.py` (100 lines; `json_dumps` at :59, `json_loads` at :79)
+- Modify: `src/eventsource/repositories/_dialect.py` (`json_result` call site)
+- Modify: `pyproject.toml` (optional extra)
+- Test: `tests/unit/serialization/test_json.py`, `tests/unit/repositories/test_dialect.py`
+
+**Interfaces:**
+- Consumes: `json_dumps` / `json_loads` from Task 2's usage.
+- Produces: unchanged public signatures — `json_dumps(obj: Any) -> str`,
+  `json_loads(s: str) -> Any` — plus `ORJSON_AVAILABLE: bool`.
+
+**Design constraints, all load-bearing:**
+
+- **Optional, not core.** orjson is a compiled Rust extension. Core deps are
+  deliberately `pydantic` + `sqlalchemy` only, and `docs/core-surface.md` records
+  `serialization/` as cleanly Tier 0 (stdlib-only). Add orjson as an extra, guarded
+  by `try/except ImportError` with an `ORJSON_AVAILABLE` flag, matching the
+  convention already used for redis/asyncpg/aiosqlite/kafka. Tier 0 must still hold
+  when orjson is absent.
+- **`json_dumps` must keep returning `str`.** `orjson.dumps` returns `bytes`; decode
+  at the boundary. Changing the signature would ripple into every repository.
+- **The split-decoder trap.** `json_loads` is currently a plain `json.loads` alias, so
+  `_dialect.json_result` calls stdlib directly. The moment `json_loads` reroutes to
+  orjson, `json_result` must be switched to call the *project* loader, or `_dialect`
+  silently keeps decoding with stdlib while everything else moves — one module, two
+  decoders. This is invisible to output-equality tests, so it needs a test that
+  asserts the routing itself (monkeypatch `eventsource.serialization.json_loads`,
+  prove `json_result` calls it).
+- **Parity, not just speed.** These payloads persist in `event_outbox` and
+  `dead_letter_queue`. Format drift means rows written by different builds disagree.
+  orjson is stricter than stdlib: non-`str` dict keys need `OPT_NON_STR_KEYS`, and
+  `str`/`int` subclasses are handled differently. It serializes UUID and datetime
+  natively, which makes `EventSourceJSONEncoder` largely redundant — "largely" being
+  exactly where drift hides.
+
+- [ ] **Step 1: Write parity tests first, before touching the encoder.**
+
+Parametrize over both encoders and assert byte-identical output for: a UUID; a
+timezone-aware datetime; a naive datetime; a nested dict/list structure; an empty
+dict and empty list; `None`; a non-`str` dict key (int and UUID keys); a `str`
+subclass; a `Decimal` if the existing encoder supports one. Any case where the two
+disagree is a decision to make explicitly and document — not a test to loosen.
+
+- [ ] **Step 2: Run them against the stdlib encoder alone**
+
+Expected: all pass (both parametrizations resolve to stdlib while orjson is unwired).
+This proves the harness works before it has anything to catch.
+
+- [ ] **Step 3: Add the optional dependency**
+
+```toml
+# pyproject.toml, in [project.optional-dependencies]
+orjson = ["orjson>=3.9"]
+```
+Add `orjson` to the `all` extra if one exists.
+
+- [ ] **Step 4: Wire the accelerator**
+
+```python
+try:
+    import orjson
+
+    ORJSON_AVAILABLE = True
+except ImportError:  # pragma: no cover - exercised in the no-orjson environment
+    ORJSON_AVAILABLE = False
+```
+
+`json_dumps` uses `orjson.dumps(obj, default=_fallback).decode()` when available,
+else the existing `json.dumps(obj, cls=EventSourceJSONEncoder)`. `_fallback` handles
+whatever `EventSourceJSONEncoder` handles that orjson does not. `json_loads` uses
+`orjson.loads` when available.
+
+- [ ] **Step 5: Run the parity suite with orjson installed**
+
+Every case must pass. Where a case fails, do not weaken the assertion — either add
+the matching `OPT_*` flag / `default=` handler so the output matches stdlib, or, if
+matching is genuinely undesirable, record the divergence in the test as an explicit
+expected difference with a comment explaining why it is safe for persisted payloads.
+
+- [ ] **Step 6: Fix the split-decoder trap**
+
+Switch `_dialect.json_result` to the project `json_loads`, and add the routing test
+described above.
+
+- [ ] **Step 7: Prove the fallback path**
+
+Run the suite with orjson forced unavailable (monkeypatch `ORJSON_AVAILABLE` to
+`False`, or use an env marker) and confirm everything still passes. A fallback that
+is never exercised is not a fallback.
+
+- [ ] **Step 8: Verify, lint, commit**
+
+```bash
+uv run pytest tests/unit/serialization/ tests/unit/repositories/test_dialect.py -v --no-cov
+uv run ruff check src/ tests/ --fix && uv run ruff format src/ tests/
+uv run mypy src/eventsource/ --config-file=pyproject.toml
+git commit --no-verify -m "perf: use orjson as an optional encoder accelerator"
+```
+
+**Opportunistic cleanup, if it stays trivial:** `src/eventsource/repositories/_json.py`
+is a deprecation shim whose docstring says it "will be removed in version 0.4.0"; the
+project is at 0.5.0 and no production code imports it (only four tests asserting the
+warning fires). Deleting it and those tests is safe — there are no users. If it turns
+out to be entangled, leave it and report rather than expanding this task.
+
+---
+
 ### Task 3: Unify the checkpoint repository
 
 **Files:**
