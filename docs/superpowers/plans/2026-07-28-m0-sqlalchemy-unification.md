@@ -29,6 +29,33 @@ and the milestone breakdown alongside it.
 - Commit after every task. Use `--no-verify` (the repo's beads pre-commit hook
   fails in this worktree; see the M0 notes at the bottom).
 
+## Verification gate (applies to Tasks 3 onward)
+
+**Rationale, recorded because it drives the sequencing.** Tasks 1 and 2 found four
+defects, every one of them caught by the controller hand-probing a subagent's
+claim rather than by the test suite. That does not scale to the remaining tasks
+(~2,500 lines, seven classes, 20+ test files), and it is a single point of failure
+— one of the controller's own probes was itself wrong and reported a clean result
+where three divergences existed. Machine-checkable evidence is what makes
+delegated work verifiable without the controller re-deriving each claim.
+
+Therefore Tasks 2c (Hypothesis) and 2d (mutmut) run **before Task 3**, and from
+Task 3 onward every task's definition of done includes:
+
+1. **A mutation run over the modules the task touched**, with every surviving
+   mutant triaged in the task report as: real gap (write the killing test),
+   equivalent mutant (record why), or out of scope (record why). A green test
+   suite is not sufficient evidence of completion.
+2. **Property tests for any pure function** the task introduces or ports —
+   round-trips, encoder agreement, dialect symmetry.
+3. **Break/restore evidence** for each new hand-written test, as already required.
+
+**Where a full mutation run is impractical** — likely for
+`stores/sqlite.py` at 1,098 lines — the requirement narrows to mutating only the
+functions the task changed, via targeted `paths_to_mutate` or per-function
+selection. Narrower is acceptable; skipping silently is not. If a task cannot
+satisfy this, it says so in its report and explains why, rather than omitting it.
+
 ---
 
 ### Task 1: Shared async engine factory
