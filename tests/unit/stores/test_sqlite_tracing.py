@@ -327,9 +327,9 @@ class TestSQLiteEventStoreStandardAttributes:
             text=True,
         )
         # Should be 0 - no local definition
-        assert (
-            result.stdout.strip() == "0"
-        ), f"Found {result.stdout.strip()} definitions of OTEL_AVAILABLE in sqlite.py"
+        assert result.stdout.strip() == "0", (
+            f"Found {result.stdout.strip()} definitions of OTEL_AVAILABLE in sqlite.py"
+        )
 
     def test_imports_from_observability_module(self):
         """Verify SQLiteEventStore imports tracing from observability module."""

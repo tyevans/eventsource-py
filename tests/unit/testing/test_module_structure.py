@@ -148,9 +148,9 @@ class TestAllExports:
 
         assert len(__all__) == len(set(__all__)), "__all__ contains duplicate entries"
         for name in __all__:
-            assert hasattr(
-                eventsource.testing, name
-            ), f"__all__ lists '{name}' but it is not an attribute of eventsource.testing"
+            assert hasattr(eventsource.testing, name), (
+                f"__all__ lists '{name}' but it is not an attribute of eventsource.testing"
+            )
 
     def test_all_contains_every_public_export(self) -> None:
         """Test every public, non-module attribute of the package is in __all__.

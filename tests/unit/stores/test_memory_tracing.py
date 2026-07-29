@@ -395,9 +395,9 @@ class TestInMemoryEventStoreStandardAttributes:
             cwd=Path(__file__).parents[3],
         )
         # Should be 0 - no local definition
-        assert (
-            result.stdout.strip() == "0"
-        ), f"Found {result.stdout.strip()} definitions of OTEL_AVAILABLE in in_memory.py"
+        assert result.stdout.strip() == "0", (
+            f"Found {result.stdout.strip()} definitions of OTEL_AVAILABLE in in_memory.py"
+        )
 
     def test_imports_from_observability_module(self):
         """Verify InMemoryEventStore imports tracing from observability module."""

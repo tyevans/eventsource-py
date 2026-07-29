@@ -495,9 +495,9 @@ class TestBulkCopyThroughput:
 
         # Assert throughput target (10K events/second)
         # Use a lower threshold for test stability
-        assert (
-            result.operations_per_second > 1_000
-        ), f"Throughput {result.operations_per_second:.0f} events/s below threshold"
+        assert result.operations_per_second > 1_000, (
+            f"Throughput {result.operations_per_second:.0f} events/s below threshold"
+        )
 
         # Verify all events were copied
         assert events_copied == event_count
@@ -628,12 +628,12 @@ class TestDualWriteOverhead:
         # In-memory stores have very low base latency, so percentage overhead
         # can be high even though absolute overhead is minimal
         # The real test is that dual-write still performs adequately
-        assert (
-            dual_result.mean_ms < 5.0
-        ), f"Dual-write mean latency {dual_result.mean_ms:.2f}ms too high"
-        assert (
-            dual_result.p95_ms < 10.0
-        ), f"Dual-write p95 latency {dual_result.p95_ms:.2f}ms too high"
+        assert dual_result.mean_ms < 5.0, (
+            f"Dual-write mean latency {dual_result.mean_ms:.2f}ms too high"
+        )
+        assert dual_result.p95_ms < 10.0, (
+            f"Dual-write p95 latency {dual_result.p95_ms:.2f}ms too high"
+        )
 
     @pytest.mark.asyncio
     async def test_dual_write_with_target_failure(self) -> None:

@@ -338,9 +338,9 @@ class TestSchemaIdempotency:
         ]
 
         for table in tables:
-            assert (
-                f"CREATE TABLE IF NOT EXISTS {table}" in schema
-            ), f"Table {table} should use IF NOT EXISTS"
+            assert f"CREATE TABLE IF NOT EXISTS {table}" in schema, (
+                f"Table {table} should use IF NOT EXISTS"
+            )
 
     def test_indexes_use_if_not_exists(self):
         """Test that all indexes use IF NOT EXISTS."""
@@ -353,12 +353,12 @@ class TestSchemaIdempotency:
         unique_if_not_exists_count = schema.count("CREATE UNIQUE INDEX IF NOT EXISTS")
 
         # All indexes should use IF NOT EXISTS
-        assert (
-            create_index_count == if_not_exists_count
-        ), "All CREATE INDEX should use IF NOT EXISTS"
-        assert (
-            create_unique_index_count == unique_if_not_exists_count
-        ), "All CREATE UNIQUE INDEX should use IF NOT EXISTS"
+        assert create_index_count == if_not_exists_count, (
+            "All CREATE INDEX should use IF NOT EXISTS"
+        )
+        assert create_unique_index_count == unique_if_not_exists_count, (
+            "All CREATE UNIQUE INDEX should use IF NOT EXISTS"
+        )
 
 
 class TestSchemaTriggers:
@@ -422,6 +422,6 @@ class TestSchemaComments:
         ]
 
         for column in key_columns:
-            assert (
-                f"COMMENT ON COLUMN {column}" in schema
-            ), f"Missing COMMENT ON COLUMN for {column}"
+            assert f"COMMENT ON COLUMN {column}" in schema, (
+                f"Missing COMMENT ON COLUMN for {column}"
+            )

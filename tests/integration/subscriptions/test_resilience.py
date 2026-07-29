@@ -394,9 +394,9 @@ class TestBackpressure:
         await subscription_manager.stop()
 
         assert success, f"Expected 50 events, got {projection.event_count}"
-        assert (
-            projection.max_concurrent <= 5
-        ), f"Max concurrent {projection.max_concurrent} exceeded limit 5"
+        assert projection.max_concurrent <= 5, (
+            f"Max concurrent {projection.max_concurrent} exceeded limit 5"
+        )
 
     async def test_burst_events_with_backpressure(
         self,
