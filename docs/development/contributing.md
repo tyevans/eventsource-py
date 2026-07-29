@@ -84,6 +84,41 @@ uv run pre-commit run --all-files
 
 ## Run the checks locally
 
+### The short version: `make`
+
+Every gate below has a `make` target, so you rarely need to remember the raw
+commands. `make help` lists them all.
+
+```bash
+make install   # uv sync --all-extras, once
+make check     # lint + types + arch + security + unit tests, all of it
+make fix       # auto-fix whatever ruff can fix
+```
+
+Individual gates are available separately when you want a fast loop --
+`make lint`, `make types`, `make arch`, `make sec`, `make test`. The slower
+or service-dependent suites are deliberately *not* part of `make check`:
+
+```bash
+make integration      # starts Postgres + Redis via docker compose first
+make mutation         # mutmut over the curated set
+make docs             # mkdocs --strict + runnable-example validation
+```
+
+!!! warning "`make check` is not currently CI parity"
+
+    The Makefile runs everything through `uv run`, against the versions
+    pinned in `uv.lock`. CI does not: `.github/workflows/ci.yml` installs
+    with `pip install -e ".[dev,all]"`, which floats tool versions above the
+    lockfile and skips `[dependency-groups] dev` altogether, because pip
+    does not install PEP 735 groups without `--group`. Several tools live
+    only in that group (`pip-audit`, `import-linter`, `pytest-timeout`,
+    `bandit`), so those CI jobs currently fail with "command not found".
+    Until CI is switched to `uv sync --all-extras`, treat the local run as
+    the more accurate signal.
+
+The raw commands behind each target follow.
+
 ### Lint and format
 
 ```bash

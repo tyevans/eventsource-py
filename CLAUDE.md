@@ -20,6 +20,11 @@ Production-ready event sourcing library for Python (pydantic, sqlalchemy, async-
 
 ## Quick Reference
 
+Every command below also has a `make` target -- run `make help` for the list.
+`make check` runs lint, mypy, import-linter, bandit/pip-audit and the unit
+suite in one go. See the Makefile header for why that is not the same as a
+green CI right now.
+
 ```bash
 # Install
 uv sync --all-extras
