@@ -30,6 +30,7 @@ from eventsource import (
 # They are immutable and named in past tense.
 
 
+# --8<-- [start:events]
 @register_event
 class AccountOpened(DomainEvent):
     """Event emitted when a bank account is opened."""
@@ -61,6 +62,9 @@ class MoneyWithdrawn(DomainEvent):
     amount: float
 
 
+# --8<-- [end:events]
+
+
 # =============================================================================
 # Step 2: Define Aggregate State
 # =============================================================================
@@ -68,6 +72,7 @@ class MoneyWithdrawn(DomainEvent):
 # Use Pydantic BaseModel for validation and serialization.
 
 
+# --8<-- [start:state]
 class BankAccountState(BaseModel):
     """Current state of a BankAccount aggregate."""
 
@@ -75,6 +80,9 @@ class BankAccountState(BaseModel):
     owner_name: str = ""
     balance: float = 0.0
     is_open: bool = False
+
+
+# --8<-- [end:state]
 
 
 # =============================================================================

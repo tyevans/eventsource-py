@@ -22,11 +22,11 @@ from eventsource.multitenancy import (
     clear_tenant_context,
     get_current_tenant,
     get_required_tenant,
+    reset_tenant_context,
     set_current_tenant,
     tenant_scope,
     tenant_scope_sync,
 )
-from eventsource.multitenancy.context import tenant_context
 
 
 class TestBasicContextFunctions:
@@ -56,7 +56,7 @@ class TestBasicContextFunctions:
         token = set_current_tenant(tenant_id)
         assert token is not None
         # Can use token to restore
-        tenant_context.reset(token)
+        reset_tenant_context(token)
         assert get_current_tenant() is None
 
     def test_clear_tenant_context(self) -> None:

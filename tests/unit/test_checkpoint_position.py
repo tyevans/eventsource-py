@@ -3,7 +3,7 @@ Unit tests for CheckpointRepository position methods.
 
 Tests the get_position() and save_position() methods for:
 - InMemoryCheckpointRepository
-- SQLiteCheckpointRepository
+- SQLCheckpointRepository
 
 These tests verify:
 - get_position() returns None for non-existent checkpoint
@@ -265,66 +265,52 @@ class TestInMemoryCheckpointRepositoryPositionConcurrency:
 
 
 # ============================================================================
-# SQLiteCheckpointRepository Position Tests
+# SQLCheckpointRepository Position Tests
 # ============================================================================
 
 # Check if aiosqlite is available
 try:
     import aiosqlite
 
-    from eventsource.repositories.checkpoint import SQLiteCheckpointRepository
+    from eventsource.repositories.checkpoint import SQLCheckpointRepository
 
     AIOSQLITE_AVAILABLE = True
 except ImportError:
     aiosqlite = None  # type: ignore[assignment]
-    SQLiteCheckpointRepository = None  # type: ignore[assignment,misc]
+    SQLCheckpointRepository = None  # type: ignore[assignment,misc]
     AIOSQLITE_AVAILABLE = False
 
 
 @pytest.mark.skipif(not AIOSQLITE_AVAILABLE, reason="aiosqlite not installed")
-class TestSQLiteCheckpointRepositoryPosition:
-    """Tests for SQLiteCheckpointRepository position methods."""
+class TestSQLCheckpointRepositoryPosition:
+    """Tests for SQLCheckpointRepository position methods."""
 
     @pytest.fixture
-    async def db_connection(self) -> "aiosqlite.Connection":
-        """Create an in-memory SQLite database with schema for each test."""
-        conn = await aiosqlite.connect(":memory:")
+    async def sqlite_engine(self, tmp_path):
+        """Create a SQLite engine with schema for each test."""
+        from eventsource.engine import create_async_engine
+        from eventsource.migrations import get_schema
 
-        # Create the projection_checkpoints table with global_position column
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS projection_checkpoints (
-                projection_name TEXT PRIMARY KEY,
-                last_event_id TEXT,
-                last_event_type TEXT,
-                last_processed_at TEXT,
-                global_position INTEGER,
-                events_processed INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-        """)
-
-        await conn.commit()
-
-        yield conn
-
-        await conn.close()
+        engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/position.db")
+        async with engine.begin() as conn:
+            raw = await conn.get_raw_connection()
+            await raw.driver_connection.executescript(get_schema("checkpoints", backend="sqlite"))
+        yield engine
+        await engine.dispose()
 
     @pytest.fixture
-    def repo(self, db_connection: "aiosqlite.Connection") -> SQLiteCheckpointRepository:
-        """Create a SQLiteCheckpointRepository for each test."""
-        return SQLiteCheckpointRepository(db_connection)
+    def repo(self, sqlite_engine) -> SQLCheckpointRepository:
+        """Create a SQLCheckpointRepository for each test."""
+        return SQLCheckpointRepository(sqlite_engine)
 
     @pytest.mark.asyncio
-    async def test_get_position_returns_none_for_nonexistent(
-        self, repo: SQLiteCheckpointRepository
-    ):
+    async def test_get_position_returns_none_for_nonexistent(self, repo: SQLCheckpointRepository):
         """Test that get_position returns None for non-existent checkpoint."""
         result = await repo.get_position("NonExistentSubscription")
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_save_position_creates_new_checkpoint(self, repo: SQLiteCheckpointRepository):
+    async def test_save_position_creates_new_checkpoint(self, repo: SQLCheckpointRepository):
         """Test that save_position creates a new checkpoint with position."""
         subscription_id = "TestSubscription"
         event_id = uuid4()
@@ -337,9 +323,7 @@ class TestSQLiteCheckpointRepositoryPosition:
         assert result == position
 
     @pytest.mark.asyncio
-    async def test_save_position_updates_existing_checkpoint(
-        self, repo: SQLiteCheckpointRepository
-    ):
+    async def test_save_position_updates_existing_checkpoint(self, repo: SQLCheckpointRepository):
         """Test that save_position updates existing checkpoint position."""
         subscription_id = "TestSubscription"
         first_position = 100
@@ -352,9 +336,7 @@ class TestSQLiteCheckpointRepositoryPosition:
         assert result == second_position
 
     @pytest.mark.asyncio
-    async def test_save_position_increments_events_processed(
-        self, repo: SQLiteCheckpointRepository
-    ):
+    async def test_save_position_increments_events_processed(self, repo: SQLCheckpointRepository):
         """Test that events_processed increments on each save_position call."""
         subscription_id = "TestSubscription"
 
@@ -368,7 +350,7 @@ class TestSQLiteCheckpointRepositoryPosition:
         assert checkpoints[0].events_processed == 3
 
     @pytest.mark.asyncio
-    async def test_save_position_updates_event_id_and_type(self, repo: SQLiteCheckpointRepository):
+    async def test_save_position_updates_event_id_and_type(self, repo: SQLCheckpointRepository):
         """Test that save_position updates event_id and event_type."""
         subscription_id = "TestSubscription"
         event_id = uuid4()
@@ -385,7 +367,7 @@ class TestSQLiteCheckpointRepositoryPosition:
 
     @pytest.mark.asyncio
     async def test_get_position_returns_correct_value_after_save(
-        self, repo: SQLiteCheckpointRepository
+        self, repo: SQLCheckpointRepository
     ):
         """Test that get_position returns correct value after save_position."""
         subscription_id = "TestSubscription"
@@ -397,7 +379,7 @@ class TestSQLiteCheckpointRepositoryPosition:
             assert result == pos
 
     @pytest.mark.asyncio
-    async def test_checkpoint_data_includes_global_position(self, repo: SQLiteCheckpointRepository):
+    async def test_checkpoint_data_includes_global_position(self, repo: SQLCheckpointRepository):
         """Test that CheckpointData includes global_position field."""
         subscription_id = "TestSubscription"
         position = 42
@@ -413,7 +395,7 @@ class TestSQLiteCheckpointRepositoryPosition:
 
     @pytest.mark.asyncio
     async def test_multiple_subscriptions_independent_positions(
-        self, repo: SQLiteCheckpointRepository
+        self, repo: SQLCheckpointRepository
     ):
         """Test that different subscriptions have independent positions."""
         sub1 = "Subscription1"
@@ -428,7 +410,7 @@ class TestSQLiteCheckpointRepositoryPosition:
         assert await repo.get_position(sub2) == pos2
 
     @pytest.mark.asyncio
-    async def test_get_position_returns_none_after_reset(self, repo: SQLiteCheckpointRepository):
+    async def test_get_position_returns_none_after_reset(self, repo: SQLCheckpointRepository):
         """Test that get_position returns None after reset_checkpoint."""
         subscription_id = "TestSubscription"
 
@@ -439,7 +421,7 @@ class TestSQLiteCheckpointRepositoryPosition:
         assert await repo.get_position(subscription_id) is None
 
     @pytest.mark.asyncio
-    async def test_update_checkpoint_does_not_set_position(self, repo: SQLiteCheckpointRepository):
+    async def test_update_checkpoint_does_not_set_position(self, repo: SQLCheckpointRepository):
         """Test that update_checkpoint does not set global_position."""
         subscription_id = "TestSubscription"
         event_id = uuid4()
@@ -455,7 +437,7 @@ class TestSQLiteCheckpointRepositoryPosition:
         assert checkpoint == event_id
 
     @pytest.mark.asyncio
-    async def test_save_position_after_update_checkpoint(self, repo: SQLiteCheckpointRepository):
+    async def test_save_position_after_update_checkpoint(self, repo: SQLCheckpointRepository):
         """Test save_position works after update_checkpoint was used."""
         subscription_id = "TestSubscription"
 
@@ -473,7 +455,7 @@ class TestSQLiteCheckpointRepositoryPosition:
         assert checkpoints[0].events_processed == 2
 
     @pytest.mark.asyncio
-    async def test_save_position_sets_last_processed_at(self, repo: SQLiteCheckpointRepository):
+    async def test_save_position_sets_last_processed_at(self, repo: SQLCheckpointRepository):
         """Test that save_position sets last_processed_at timestamp."""
         subscription_id = "TestSubscription"
 

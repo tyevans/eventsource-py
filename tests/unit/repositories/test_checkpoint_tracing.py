@@ -282,141 +282,97 @@ class TestInMemoryCheckpointRepositoryTracingDisabled:
 
 
 # ============================================================================
-# SQLite Checkpoint Repository Tracing Tests
+# SQL Checkpoint Repository Tracing Tests
 # ============================================================================
 
 # Check if aiosqlite is available
 try:
     import aiosqlite
 
-    from eventsource.repositories.checkpoint import SQLiteCheckpointRepository
+    from eventsource.repositories.checkpoint import SQLCheckpointRepository
 
     AIOSQLITE_AVAILABLE = True
 except ImportError:
     aiosqlite = None  # type: ignore[assignment]
-    SQLiteCheckpointRepository = None  # type: ignore[assignment,misc]
+    SQLCheckpointRepository = None  # type: ignore[assignment,misc]
     AIOSQLITE_AVAILABLE = False
 
 
+async def _sqlite_checkpoint_engine(tmp_path, *, with_events: bool = True):
+    """Build a SQLite engine with the checkpoints (and optionally events) schema."""
+    from eventsource.engine import create_async_engine
+    from eventsource.migrations import get_schema
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/tracing.db")
+    async with engine.begin() as conn:
+        raw = await conn.get_raw_connection()
+        await raw.driver_connection.executescript(get_schema("checkpoints", backend="sqlite"))
+        if with_events:
+            await raw.driver_connection.executescript(get_schema("events", backend="sqlite"))
+    return engine
+
+
 @pytest.mark.skipif(not AIOSQLITE_AVAILABLE, reason="aiosqlite not installed")
-class TestSQLiteCheckpointRepositoryTracerIntegration:
-    """Tests for SQLiteCheckpointRepository Tracer protocol integration."""
+class TestSQLCheckpointRepositoryTracerIntegration:
+    """Tests for SQLCheckpointRepository Tracer protocol integration."""
 
     @pytest.fixture
-    async def db_connection(self) -> aiosqlite.Connection:
-        """Create an in-memory SQLite database with schema for each test."""
-        conn = await aiosqlite.connect(":memory:")
+    async def sqlite_engine(self, tmp_path):
+        """Create a SQLite engine with schema for each test."""
+        engine = await _sqlite_checkpoint_engine(tmp_path)
+        yield engine
+        await engine.dispose()
 
-        # Create the projection_checkpoints table
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS projection_checkpoints (
-                projection_name TEXT PRIMARY KEY,
-                last_event_id TEXT,
-                last_event_type TEXT,
-                last_processed_at TEXT,
-                events_processed INTEGER NOT NULL DEFAULT 0,
-                global_position INTEGER,
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-        """)
-
-        # Create the events table for lag metrics tests
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                event_id TEXT NOT NULL UNIQUE,
-                event_type TEXT NOT NULL,
-                aggregate_type TEXT NOT NULL,
-                aggregate_id TEXT NOT NULL,
-                tenant_id TEXT,
-                actor_id TEXT,
-                version INTEGER NOT NULL,
-                timestamp TEXT NOT NULL,
-                payload TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-        """)
-
-        await conn.commit()
-
-        yield conn
-
-        await conn.close()
-
-    def test_accepts_custom_tracer(self, db_connection: aiosqlite.Connection):
-        """SQLiteCheckpointRepository accepts a custom tracer."""
+    def test_accepts_custom_tracer(self, sqlite_engine):
+        """SQLCheckpointRepository accepts a custom tracer."""
         tracer = MockTracer()
-        repo = SQLiteCheckpointRepository(db_connection, tracer=tracer)
+        repo = SQLCheckpointRepository(sqlite_engine, tracer=tracer)
 
         assert repo._tracer is tracer
 
-    def test_tracing_enabled_by_default(self, db_connection: aiosqlite.Connection):
+    def test_tracing_enabled_by_default(self, sqlite_engine):
         """Tracing is enabled by default when OTEL is available."""
-        repo = SQLiteCheckpointRepository(db_connection)
+        repo = SQLCheckpointRepository(sqlite_engine)
 
-        # Check that tracing was initialized
-        assert hasattr(repo, "_enable_tracing")
-        assert hasattr(repo, "_tracer")
+        # `enable_tracing`'s actual default (True) must be honored, not just
+        # be present as an attribute -- a NullTracer would also satisfy
+        # hasattr() but is the opposite of "enabled by default".
+        assert repo._enable_tracing is True
+        assert not isinstance(repo._tracer, NullTracer)
 
-    def test_tracing_disabled_when_requested(self, db_connection: aiosqlite.Connection):
+    def test_tracing_disabled_when_requested(self, sqlite_engine):
         """Tracing can be disabled via constructor parameter."""
-        repo = SQLiteCheckpointRepository(db_connection, enable_tracing=False)
+        repo = SQLCheckpointRepository(sqlite_engine, enable_tracing=False)
 
         assert repo._enable_tracing is False
         assert isinstance(repo._tracer, NullTracer)
 
-    def test_tracer_enabled_property(self, db_connection: aiosqlite.Connection):
+    def test_tracer_enabled_property(self, sqlite_engine):
         """Store exposes tracer.enabled property."""
-        repo = SQLiteCheckpointRepository(db_connection, enable_tracing=False)
+        repo = SQLCheckpointRepository(sqlite_engine, enable_tracing=False)
 
         # tracer.enabled reflects the tracer state
         assert repo._tracer.enabled is False
 
+    def test_conn_backward_compat_attribute_is_the_constructor_arg(self, sqlite_engine):
+        """`repo.conn` is kept for backwards-compatible attribute access and
+        must be the exact object passed to the constructor, not None or a
+        copy."""
+        repo = SQLCheckpointRepository(sqlite_engine)
+
+        assert repo.conn is sqlite_engine
+
 
 @pytest.mark.skipif(not AIOSQLITE_AVAILABLE, reason="aiosqlite not installed")
-class TestSQLiteCheckpointRepositorySpanCreation:
-    """Tests for span creation in SQLiteCheckpointRepository operations."""
+class TestSQLCheckpointRepositorySpanCreation:
+    """Tests for span creation in SQLCheckpointRepository operations."""
 
     @pytest.fixture
-    async def db_connection(self) -> aiosqlite.Connection:
-        """Create an in-memory SQLite database with schema for each test."""
-        conn = await aiosqlite.connect(":memory:")
-
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS projection_checkpoints (
-                projection_name TEXT PRIMARY KEY,
-                last_event_id TEXT,
-                last_event_type TEXT,
-                last_processed_at TEXT,
-                events_processed INTEGER NOT NULL DEFAULT 0,
-                global_position INTEGER,
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-        """)
-
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                event_id TEXT NOT NULL UNIQUE,
-                event_type TEXT NOT NULL,
-                aggregate_type TEXT NOT NULL,
-                aggregate_id TEXT NOT NULL,
-                tenant_id TEXT,
-                actor_id TEXT,
-                version INTEGER NOT NULL,
-                timestamp TEXT NOT NULL,
-                payload TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-        """)
-
-        await conn.commit()
-
-        yield conn
-
-        await conn.close()
+    async def sqlite_engine(self, tmp_path):
+        """Create a SQLite engine with schema for each test."""
+        engine = await _sqlite_checkpoint_engine(tmp_path)
+        yield engine
+        await engine.dispose()
 
     @pytest.fixture
     def mock_tracer(self):
@@ -424,9 +380,9 @@ class TestSQLiteCheckpointRepositorySpanCreation:
         return MockTracer()
 
     @pytest.fixture
-    def traced_repo(self, db_connection: aiosqlite.Connection, mock_tracer):
+    def traced_repo(self, sqlite_engine, mock_tracer):
         """Create a repository with injected mock tracer."""
-        return SQLiteCheckpointRepository(db_connection, tracer=mock_tracer)
+        return SQLCheckpointRepository(sqlite_engine, tracer=mock_tracer)
 
     @pytest.mark.asyncio
     async def test_get_checkpoint_creates_span(self, traced_repo, mock_tracer):
@@ -504,47 +460,28 @@ class TestSQLiteCheckpointRepositorySpanCreation:
 
 
 @pytest.mark.skipif(not AIOSQLITE_AVAILABLE, reason="aiosqlite not installed")
-class TestSQLiteCheckpointRepositoryTracingDisabled:
-    """Tests for SQLiteCheckpointRepository behavior when tracing is disabled."""
+class TestSQLCheckpointRepositoryTracingDisabled:
+    """Tests for SQLCheckpointRepository behavior when tracing is disabled."""
 
     @pytest.fixture
-    async def db_connection(self) -> aiosqlite.Connection:
-        """Create an in-memory SQLite database with schema for each test."""
-        conn = await aiosqlite.connect(":memory:")
-
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS projection_checkpoints (
-                projection_name TEXT PRIMARY KEY,
-                last_event_id TEXT,
-                last_event_type TEXT,
-                last_processed_at TEXT,
-                events_processed INTEGER NOT NULL DEFAULT 0,
-                global_position INTEGER,
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-        """)
-
-        await conn.commit()
-
-        yield conn
-
-        await conn.close()
+    async def sqlite_engine(self, tmp_path):
+        """Create a SQLite engine with schema for each test."""
+        engine = await _sqlite_checkpoint_engine(tmp_path, with_events=False)
+        yield engine
+        await engine.dispose()
 
     @pytest.mark.asyncio
-    async def test_get_checkpoint_works_without_tracing(self, db_connection: aiosqlite.Connection):
+    async def test_get_checkpoint_works_without_tracing(self, sqlite_engine):
         """get_checkpoint works correctly when tracing is disabled."""
-        repo = SQLiteCheckpointRepository(db_connection, enable_tracing=False)
+        repo = SQLCheckpointRepository(sqlite_engine, enable_tracing=False)
 
         result = await repo.get_checkpoint("TestProjection")
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_update_checkpoint_works_without_tracing(
-        self, db_connection: aiosqlite.Connection
-    ):
+    async def test_update_checkpoint_works_without_tracing(self, sqlite_engine):
         """update_checkpoint works correctly when tracing is disabled."""
-        repo = SQLiteCheckpointRepository(db_connection, enable_tracing=False)
+        repo = SQLCheckpointRepository(sqlite_engine, enable_tracing=False)
 
         projection_name = "TestProjection"
         event_id = uuid4()
@@ -556,11 +493,9 @@ class TestSQLiteCheckpointRepositoryTracingDisabled:
         assert result == event_id
 
     @pytest.mark.asyncio
-    async def test_reset_checkpoint_works_without_tracing(
-        self, db_connection: aiosqlite.Connection
-    ):
+    async def test_reset_checkpoint_works_without_tracing(self, sqlite_engine):
         """reset_checkpoint works correctly when tracing is disabled."""
-        repo = SQLiteCheckpointRepository(db_connection, enable_tracing=False)
+        repo = SQLCheckpointRepository(sqlite_engine, enable_tracing=False)
 
         projection_name = "TestProjection"
         event_id = uuid4()

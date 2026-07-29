@@ -24,6 +24,7 @@ classifiers = [
 dependencies = [
     "pydantic>=2.0,<3.0",
     "sqlalchemy>=2.0,<3.0",
+    "orjson>=3.9",
 ]
 
 [project.optional-dependencies]
@@ -64,6 +65,7 @@ dev = [
     "pytest-asyncio>=0.23",
     "pytest-cov>=4.0",
     "pytest-benchmark>=4.0.0",
+    "hypothesis>=6.100",
     "mypy>=1.8",
     "ruff>=0.14.8",
     "testcontainers>=4.0",
@@ -92,7 +94,14 @@ packages = ["src/eventsource"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "-v --cov=src/eventsource --cov-report=term-missing"
+addopts = "-v --timeout=60"
+# Coverage is intentionally NOT enabled by default here. If it were, every
+# scoped pytest invocation (a single file, `-k`, mutation-testing runs, etc.)
+# would trip the [tool.coverage.report] fail_under gate below on a partial
+# measurement -- exiting nonzero even when every selected test passes. Pass
+# coverage flags explicitly for a full-suite run instead, e.g.:
+#   uv run pytest tests/unit --cov=src/eventsource --cov-report=term-missing
+# CI's test job passes these flags explicitly already (.github/workflows/ci.yml).
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 markers = [
@@ -112,6 +121,12 @@ source = ["src/eventsource"]
 
 [tool.coverage.paths]
 source = ["src/eventsource"]
+
+[tool.coverage.report]
+# Current unit-suite coverage measured at 87% (2026-07-28, tests/unit/ only,
+# excluding integration/postgres/redis-marked tests). Set slightly below that
+# as a regression ratchet, not a stretch target.
+fail_under = 86
 
 [tool.mypy]
 python_version = "3.11"
@@ -161,5 +176,107 @@ skips = ["B101"]  # Allow assert statements
 [dependency-groups]
 dev = [
     "bandit>=1.9.2",
+    "mutmut>=3.0",
+    "cosmic-ray>=8.4",
     "mypy>=1.19.0",
+    "import-linter>=2.13",
+    "pytest-randomly>=3.15",
+    "pytest-timeout>=2.3",
+    "pip-audit>=2.7",
 ]
+
+[tool.mutmut]
+source_paths = [
+    "src",
+]
+only_mutate = [
+    "src/eventsource/engine.py",
+    "src/eventsource/repositories/_dialect.py",
+    "src/eventsource/serialization/json.py",
+]
+pytest_add_cli_args_test_selection = [
+    "tests/unit/test_engine.py",
+    "tests/unit/repositories/test_dialect.py",
+    "tests/unit/serialization/",
+]
+pytest_add_cli_args = ["--no-cov", "-x", "-q", "-p", "no:randomly"]
+
+[tool.importlinter]
+root_package = "eventsource"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Infrastructure backends must not import each other"
+type = "independence"
+modules = [
+    "eventsource.stores.postgresql",
+    "eventsource.stores.sqlite",
+    "eventsource.stores.in_memory",
+    "eventsource.bus.redis",
+    "eventsource.bus.kafka",
+    "eventsource.bus.rabbitmq",
+    "eventsource.bus.memory",
+]
+
+[[tool.importlinter.contracts]]
+name = "Tier 0 modules must not import sqlalchemy"
+type = "forbidden"
+source_modules = [
+    "eventsource.events.base",
+    "eventsource.events.registry",
+    "eventsource.aggregates.base",
+    "eventsource.protocols",
+    "eventsource.stores.interface",
+    "eventsource.bus.interface",
+    "eventsource.snapshots.interface",
+    "eventsource.snapshots.strategies",
+    "eventsource.handlers.decorators",
+    "eventsource.handlers.registry",
+    "eventsource.handlers.adapter",
+    "eventsource.exceptions",
+    "eventsource.types",
+    "eventsource.stores.in_memory",
+    "eventsource.bus.memory",
+    "eventsource.snapshots.in_memory",
+    "eventsource.projections.protocols",
+    "eventsource.testing.builder",
+    "eventsource.testing.assertions",
+    "eventsource.testing.conformance",
+    "eventsource.aggregates.snapshot_manager",
+    "eventsource.multitenancy.context",
+    "eventsource.multitenancy.events",
+    "eventsource.multitenancy.exceptions",
+    "eventsource.readmodels.base",
+    "eventsource.readmodels.query",
+    "eventsource.readmodels.schema",
+    "eventsource.readmodels.repository",
+    "eventsource.readmodels.in_memory",
+    "eventsource.readmodels.exceptions",
+]
+forbidden_modules = ["sqlalchemy"]
+
+# KNOWN VIOLATIONS (not enforced -- see task-2e-report.md for detail):
+#
+# 1. docs/core-surface.md and .claude/rules/architecture.md claim events/,
+#    aggregates/, projections/ are "core domain" with no infrastructure imports.
+#    In practice:
+#      - projections/base.py imports eventsource.repositories.checkpoint and
+#        eventsource.repositories.dlq (both sqlalchemy-backed)
+#      - projections/checkpoint_manager.py imports eventsource.repositories.checkpoint
+#      - projections/dlq_manager.py imports eventsource.repositories.dlq
+#    repositories/checkpoint.py and repositories/dlq.py mix Protocol definitions
+#    with sqlalchemy implementations in the same module, so there is no way to
+#    import the protocol without importing sqlalchemy.
+#
+# 2. docs/core-surface.md lists eventsource.aggregates.repository and (via it)
+#    eventsource.multitenancy.repository as Tier 0, on the theory that snapshot
+#    types are imported lazily/under TYPE_CHECKING. That is true of the module
+#    itself, but eventsource/snapshots/__init__.py unconditionally does
+#    `from eventsource.snapshots.postgresql import PostgreSQLSnapshotStore` at
+#    module level (unguarded by try/except, unlike the sqlite import a few lines
+#    below it) -- so `import eventsource.snapshots` always pulls in sqlalchemy,
+#    and both repository modules import `eventsource.snapshots`. They are
+#    excluded from the contract's source_modules above for this reason.
+#
+# Per task instructions: report the drift, do not weaken the contract to hide
+# it, and do not fix the violations here.

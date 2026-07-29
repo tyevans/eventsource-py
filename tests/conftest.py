@@ -22,6 +22,7 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
+from hypothesis import HealthCheck, settings
 
 from eventsource.events.base import DomainEvent
 from eventsource.repositories.checkpoint import InMemoryCheckpointRepository
@@ -88,6 +89,27 @@ except ImportError:
 def pytest_configure(config: pytest.Config) -> None:
     """Register custom markers for tests."""
     config.addinivalue_line("markers", "sqlite: marks tests that require SQLite (aiosqlite)")
+
+
+# ============================================================================
+# Hypothesis Profiles
+# ============================================================================
+#
+# "default" runs locally with a modest example count. "ci" widens the search
+# for CI runs where extra time is acceptable. "db" is for property tests that
+# exercise real database transactions (deferred to M2's delivery-guarantee
+# work) -- fewer examples because each one costs a real transaction, and
+# function-scoped fixture reuse across examples is expected there.
+
+settings.register_profile("default", max_examples=100)
+settings.register_profile("ci", max_examples=500, deadline=None)
+settings.register_profile(
+    "db",
+    max_examples=25,
+    deadline=None,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
+settings.load_profile("default")
 
 
 # ============================================================================
@@ -614,59 +636,32 @@ async def sqlite_event_store() -> AsyncGenerator[Any, None]:
 
 
 @pytest_asyncio.fixture
-async def sqlite_checkpoint_repo(
-    sqlite_connection: aiosqlite.Connection,
-) -> AsyncGenerator[Any, None]:
+async def sqlite_checkpoint_repo(tmp_path: Any) -> AsyncGenerator[Any, None]:
     """
-    Provide a SQLiteCheckpointRepository with schema initialized.
+    Provide a SQLCheckpointRepository backed by a SQLite engine, schema initialized.
 
-    Creates the projection_checkpoints and events tables in the
-    in-memory database for checkpoint testing.
-
-    Args:
-        sqlite_connection: Raw aiosqlite connection fixture
+    Creates the projection_checkpoints and events tables in a temporary
+    on-disk database for checkpoint testing.
 
     Yields:
-        SQLiteCheckpointRepository: Repository ready for testing
+        SQLCheckpointRepository: Repository ready for testing
     """
     if not AIOSQLITE_AVAILABLE:
         pytest.skip("aiosqlite not installed")
 
-    from eventsource.repositories.checkpoint import SQLiteCheckpointRepository
+    from eventsource.engine import create_async_engine
+    from eventsource.migrations import get_schema
+    from eventsource.repositories.checkpoint import SQLCheckpointRepository
 
-    # Create the required tables
-    await sqlite_connection.execute("""
-        CREATE TABLE IF NOT EXISTS projection_checkpoints (
-            projection_name TEXT PRIMARY KEY,
-            last_event_id TEXT,
-            last_event_type TEXT,
-            last_processed_at TEXT,
-            events_processed INTEGER NOT NULL DEFAULT 0,
-            global_position INTEGER,
-            created_at TEXT NOT NULL DEFAULT (datetime('now')),
-            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-        )
-    """)
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/checkpoint_repo.db")
+    async with engine.begin() as conn:
+        raw = await conn.get_raw_connection()
+        await raw.driver_connection.executescript(get_schema("checkpoints", backend="sqlite"))
+        await raw.driver_connection.executescript(get_schema("events", backend="sqlite"))
 
-    await sqlite_connection.execute("""
-        CREATE TABLE IF NOT EXISTS events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id TEXT NOT NULL UNIQUE,
-            event_type TEXT NOT NULL,
-            aggregate_type TEXT NOT NULL,
-            aggregate_id TEXT NOT NULL,
-            tenant_id TEXT,
-            actor_id TEXT,
-            version INTEGER NOT NULL,
-            timestamp TEXT NOT NULL,
-            payload TEXT NOT NULL,
-            created_at TEXT NOT NULL DEFAULT (datetime('now'))
-        )
-    """)
-    await sqlite_connection.commit()
-
-    repo = SQLiteCheckpointRepository(sqlite_connection)
+    repo = SQLCheckpointRepository(engine)
     yield repo
+    await engine.dispose()
 
 
 @pytest_asyncio.fixture
@@ -715,50 +710,31 @@ async def sqlite_outbox_repo(
 
 
 @pytest_asyncio.fixture
-async def sqlite_dlq_repo(
-    sqlite_connection: aiosqlite.Connection,
-) -> AsyncGenerator[Any, None]:
+async def sqlite_dlq_repo(tmp_path: Any) -> AsyncGenerator[Any, None]:
     """
-    Provide a SQLiteDLQRepository with schema initialized.
+    Provide a SQLDLQRepository backed by a SQLite engine, schema initialized.
 
-    Creates the dead_letter_queue table in the in-memory database
+    Creates the dead_letter_queue table in a temporary on-disk database
     for DLQ testing.
 
-    Args:
-        sqlite_connection: Raw aiosqlite connection fixture
-
     Yields:
-        SQLiteDLQRepository: Repository ready for testing
+        SQLDLQRepository: Repository ready for testing
     """
     if not AIOSQLITE_AVAILABLE:
         pytest.skip("aiosqlite not installed")
 
-    from eventsource.repositories.dlq import SQLiteDLQRepository
+    from eventsource.engine import create_async_engine
+    from eventsource.migrations import get_schema
+    from eventsource.repositories.dlq import SQLDLQRepository
 
-    # Create the dead_letter_queue table
-    await sqlite_connection.execute("""
-        CREATE TABLE IF NOT EXISTS dead_letter_queue (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id TEXT NOT NULL,
-            projection_name TEXT NOT NULL,
-            event_type TEXT NOT NULL,
-            event_data TEXT NOT NULL,
-            error_message TEXT NOT NULL,
-            error_stacktrace TEXT,
-            retry_count INTEGER NOT NULL DEFAULT 0,
-            first_failed_at TEXT NOT NULL DEFAULT (datetime('now')),
-            last_failed_at TEXT NOT NULL DEFAULT (datetime('now')),
-            status TEXT NOT NULL DEFAULT 'failed',
-            resolved_at TEXT,
-            resolved_by TEXT,
-            CHECK (status IN ('failed', 'retrying', 'resolved')),
-            UNIQUE (event_id, projection_name)
-        )
-    """)
-    await sqlite_connection.commit()
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/dlq_repo.db")
+    async with engine.begin() as conn:
+        raw = await conn.get_raw_connection()
+        await raw.driver_connection.executescript(get_schema("dlq", backend="sqlite"))
 
-    repo = SQLiteDLQRepository(sqlite_connection)
+    repo = SQLDLQRepository(engine)
     yield repo
+    await engine.dispose()
 
 
 # =============================================================================

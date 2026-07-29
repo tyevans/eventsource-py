@@ -45,6 +45,52 @@ class TenantContextNotSetError(EventSourceError):
         )
 
 
+class TenantContextResetError(EventSourceError):
+    """
+    Raised when a tenant context token is reset out of LIFO order, or reset
+    more than once.
+
+    Tokens returned by set_current_tenant() must be reset in strict LIFO
+    order (most-recently-set token first) -- the same order that
+    tenant_scope() / tenant_scope_sync() already guarantee automatically via
+    `with` / `async with` block nesting. Resetting out of order (or resetting
+    the same token twice) is rejected outright rather than silently
+    restoring a stale tenant, because a silently-resurrected stale tenant is
+    a data-leak shape in a multi-tenant system.
+
+    Solution: Reset tokens in the exact reverse order they were created, or
+    -- preferably -- use tenant_scope() / tenant_scope_sync() instead of
+    manual set_current_tenant()/reset_tenant_context() so LIFO ordering is
+    enforced structurally rather than by convention.
+
+    Example:
+        >>> from eventsource.multitenancy.context import (
+        ...     set_current_tenant,
+        ...     reset_tenant_context,
+        ... )
+        >>> from uuid import uuid4
+        >>> token_a = set_current_tenant(uuid4())
+        >>> token_b = set_current_tenant(uuid4())
+        >>> try:
+        ...     reset_tenant_context(token_a)  # out of order: token_b is on top
+        ... except TenantContextResetError:
+        ...     print("Reset out of LIFO order")
+        Reset out of LIFO order
+        >>> reset_tenant_context(token_b)
+        >>> reset_tenant_context(token_a)
+    """
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(
+            f"Cannot reset tenant context: {detail} Tenant context tokens must be "
+            "reset in strict LIFO order (most-recently-set token first, and each "
+            "token reset at most once). tenant_scope()/tenant_scope_sync() "
+            "guarantee this automatically via `with`/`async with` nesting -- "
+            "prefer those over manual set_current_tenant()/reset_tenant_context() "
+            "calls."
+        )
+
+
 class TenantMismatchError(EventSourceError):
     """
     Raised when event tenant_id doesn't match expected tenant context.
@@ -93,4 +139,4 @@ class TenantMismatchError(EventSourceError):
         )
 
 
-__all__ = ["TenantContextNotSetError", "TenantMismatchError"]
+__all__ = ["TenantContextNotSetError", "TenantContextResetError", "TenantMismatchError"]

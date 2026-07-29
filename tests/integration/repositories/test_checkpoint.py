@@ -15,7 +15,7 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource import PostgreSQLCheckpointRepository
+from eventsource import SQLCheckpointRepository
 
 from ..conftest import (
     TestItemCreated,
@@ -33,12 +33,12 @@ pytestmark = [
 ]
 
 
-class TestPostgreSQLCheckpointRepositoryBasics:
+class TestSQLCheckpointRepositoryBasics:
     """Basic checkpoint repository operations."""
 
     async def test_get_checkpoint_nonexistent(
         self,
-        postgres_checkpoint_repo: PostgreSQLCheckpointRepository,
+        postgres_checkpoint_repo: SQLCheckpointRepository,
     ) -> None:
         """Test getting a checkpoint that doesn't exist returns None."""
         result = await postgres_checkpoint_repo.get_checkpoint("NonExistentProjection")
@@ -46,7 +46,7 @@ class TestPostgreSQLCheckpointRepositoryBasics:
 
     async def test_update_and_get_checkpoint(
         self,
-        postgres_checkpoint_repo: PostgreSQLCheckpointRepository,
+        postgres_checkpoint_repo: SQLCheckpointRepository,
     ) -> None:
         """Test updating and retrieving a checkpoint."""
         projection_name = "TestProjection"
@@ -66,7 +66,7 @@ class TestPostgreSQLCheckpointRepositoryBasics:
 
     async def test_update_checkpoint_increments_count(
         self,
-        postgres_checkpoint_repo: PostgreSQLCheckpointRepository,
+        postgres_checkpoint_repo: SQLCheckpointRepository,
     ) -> None:
         """Test that updating checkpoint increments event count."""
         projection_name = "CountingProjection"
@@ -92,7 +92,7 @@ class TestPostgreSQLCheckpointRepositoryBasics:
 
     async def test_update_checkpoint_upsert_behavior(
         self,
-        postgres_checkpoint_repo: PostgreSQLCheckpointRepository,
+        postgres_checkpoint_repo: SQLCheckpointRepository,
     ) -> None:
         """Test that update uses UPSERT and updates existing checkpoint."""
         projection_name = "UpsertProjection"
@@ -125,12 +125,12 @@ class TestPostgreSQLCheckpointRepositoryBasics:
         assert len(matching) == 1
 
 
-class TestPostgreSQLCheckpointRepositoryReset:
+class TestSQLCheckpointRepositoryReset:
     """Tests for checkpoint reset operations."""
 
     async def test_reset_checkpoint(
         self,
-        postgres_checkpoint_repo: PostgreSQLCheckpointRepository,
+        postgres_checkpoint_repo: SQLCheckpointRepository,
     ) -> None:
         """Test resetting a checkpoint."""
         projection_name = "ResetProjection"
@@ -156,19 +156,19 @@ class TestPostgreSQLCheckpointRepositoryReset:
 
     async def test_reset_nonexistent_checkpoint(
         self,
-        postgres_checkpoint_repo: PostgreSQLCheckpointRepository,
+        postgres_checkpoint_repo: SQLCheckpointRepository,
     ) -> None:
         """Test resetting a checkpoint that doesn't exist (should not error)."""
         # Should not raise
         await postgres_checkpoint_repo.reset_checkpoint("NonExistentProjection")
 
 
-class TestPostgreSQLCheckpointRepositoryAllCheckpoints:
+class TestSQLCheckpointRepositoryAllCheckpoints:
     """Tests for getting all checkpoints."""
 
     async def test_get_all_checkpoints_empty(
         self,
-        postgres_checkpoint_repo: PostgreSQLCheckpointRepository,
+        postgres_checkpoint_repo: SQLCheckpointRepository,
     ) -> None:
         """Test getting all checkpoints when none exist."""
         result = await postgres_checkpoint_repo.get_all_checkpoints()
@@ -176,7 +176,7 @@ class TestPostgreSQLCheckpointRepositoryAllCheckpoints:
 
     async def test_get_all_checkpoints_multiple(
         self,
-        postgres_checkpoint_repo: PostgreSQLCheckpointRepository,
+        postgres_checkpoint_repo: SQLCheckpointRepository,
     ) -> None:
         """Test getting all checkpoints with multiple projections."""
         projections = ["Projection1", "Projection2", "Projection3"]
@@ -197,7 +197,7 @@ class TestPostgreSQLCheckpointRepositoryAllCheckpoints:
 
     async def test_checkpoint_data_fields(
         self,
-        postgres_checkpoint_repo: PostgreSQLCheckpointRepository,
+        postgres_checkpoint_repo: SQLCheckpointRepository,
     ) -> None:
         """Test that checkpoint data has all expected fields."""
         projection_name = "FieldsProjection"
@@ -224,12 +224,12 @@ class TestPostgreSQLCheckpointRepositoryAllCheckpoints:
         assert checkpoint.events_processed == 1
 
 
-class TestPostgreSQLCheckpointRepositoryLagMetrics:
+class TestSQLCheckpointRepositoryLagMetrics:
     """Tests for lag metrics calculation."""
 
     async def test_get_lag_metrics_no_checkpoint(
         self,
-        postgres_checkpoint_repo: PostgreSQLCheckpointRepository,
+        postgres_checkpoint_repo: SQLCheckpointRepository,
     ) -> None:
         """Test getting lag metrics for non-existent projection."""
         result = await postgres_checkpoint_repo.get_lag_metrics("NonExistent")
@@ -237,7 +237,7 @@ class TestPostgreSQLCheckpointRepositoryLagMetrics:
 
     async def test_get_lag_metrics_with_checkpoint(
         self,
-        postgres_checkpoint_repo: PostgreSQLCheckpointRepository,
+        postgres_checkpoint_repo: SQLCheckpointRepository,
     ) -> None:
         """Test getting lag metrics for existing projection."""
         projection_name = "LagProjection"
@@ -259,7 +259,7 @@ class TestPostgreSQLCheckpointRepositoryLagMetrics:
 
     async def test_get_lag_metrics_with_event_types_filter(
         self,
-        postgres_checkpoint_repo: PostgreSQLCheckpointRepository,
+        postgres_checkpoint_repo: SQLCheckpointRepository,
         postgres_event_store,  # Need event store to create actual events
         sample_aggregate_id,
     ) -> None:
@@ -296,3 +296,107 @@ class TestPostgreSQLCheckpointRepositoryLagMetrics:
         assert result is not None
         # When caught up, lag should be 0
         assert result.lag_seconds >= 0
+
+    async def test_get_lag_metrics_without_event_types_uses_latest_event(
+        self,
+        postgres_checkpoint_repo: SQLCheckpointRepository,
+        postgres_event_store,
+        sample_aggregate_id,
+    ) -> None:
+        """With no `event_types` filter, `get_lag_metrics` must find the
+        TRUE latest event -- on both dialects. SQLite already gets this
+        right (an empty/`None` `event_types` falls through to `else:
+        event_filter = ""`, i.e. no filter). PostgreSQL must agree: it must
+        NOT take the `ANY(:event_types)` branch when `event_types` is
+        empty, because `WHERE event_type = ANY('{}')` matches zero rows in
+        PostgreSQL -- silently reporting "no relevant event" (and therefore
+        no/wrong lag) for a projection that is, in reality, caught up or
+        behind by a knowable amount. This is a monitoring path: a wrong
+        answer here doesn't crash, it just lies to whoever is watching."""
+        projection_name = "NoFilterLagProjection"
+
+        event = TestItemCreated(
+            aggregate_id=sample_aggregate_id,
+            aggregate_version=1,
+            name="Test Item",
+            quantity=10,
+        )
+        await postgres_event_store.append_events(
+            aggregate_id=sample_aggregate_id,
+            aggregate_type="TestItem",
+            events=[event],
+            expected_version=0,
+        )
+
+        await postgres_checkpoint_repo.update_checkpoint(
+            projection_name=projection_name,
+            event_id=event.event_id,
+            event_type="TestItemCreated",
+        )
+
+        # No event_types passed -- must still find the event above as the
+        # latest relevant one, exactly as SQLite would with the same data.
+        result = await postgres_checkpoint_repo.get_lag_metrics(projection_name)
+
+        assert result is not None
+        assert result.latest_event_id == str(event.event_id)
+
+    async def test_get_lag_metrics_reports_nonzero_lag_for_stale_checkpoint(
+        self,
+        postgres_checkpoint_repo: SQLCheckpointRepository,
+        postgres_event_store,
+        sample_aggregate_id,
+    ) -> None:
+        """A checkpoint behind a genuinely newer, different relevant event
+        must report a positive lag -- not silently clamp to 0. Exercises the
+        real PostgreSQL ANY() filter with a match, plus the raw-lag/rounding
+        arithmetic end to end against a real server."""
+        import asyncio
+
+        projection_name = "StaleLagProjection"
+
+        stale_event = TestItemCreated(
+            aggregate_id=sample_aggregate_id,
+            aggregate_version=1,
+            name="Stale Item",
+            quantity=1,
+        )
+        await postgres_event_store.append_events(
+            aggregate_id=sample_aggregate_id,
+            aggregate_type="TestItem",
+            events=[stale_event],
+            expected_version=0,
+        )
+        await postgres_checkpoint_repo.update_checkpoint(
+            projection_name=projection_name,
+            event_id=stale_event.event_id,
+            event_type="TestItemCreated",
+        )
+
+        # A real, measurable gap between the checkpoint's last_processed_at
+        # and the newer event's timestamp.
+        await asyncio.sleep(1.1)
+
+        newer_event = TestItemCreated(
+            aggregate_id=sample_aggregate_id,
+            aggregate_version=2,
+            name="Newer Item",
+            quantity=2,
+        )
+        await postgres_event_store.append_events(
+            aggregate_id=sample_aggregate_id,
+            aggregate_type="TestItem",
+            events=[newer_event],
+            expected_version=1,
+        )
+
+        result = await postgres_checkpoint_repo.get_lag_metrics(
+            projection_name,
+            event_types=["TestItemCreated"],
+        )
+
+        assert result is not None
+        assert result.last_event_id != result.latest_event_id
+        assert result.latest_event_id == str(newer_event.event_id)
+        # Real, positive lag -- not clamped to 0 -- with second-level precision.
+        assert result.lag_seconds >= 1.0

@@ -58,6 +58,9 @@ from eventsource.bus.redis import (
     RedisNotAvailableError,
 )
 
+# Shared async engine factory
+from eventsource.engine import create_async_engine
+
 # Core event primitives (Task 02)
 from eventsource.events.base import DomainEvent
 
@@ -87,11 +90,14 @@ from eventsource.exceptions import (
 from eventsource.handlers import handles
 from eventsource.multitenancy import (
     TenantContextNotSetError,
+    TenantContextResetError,
+    TenantContextToken,
     TenantDomainEvent,
     TenantMismatchError,
     clear_tenant_context,
     get_current_tenant,
     get_required_tenant,
+    reset_tenant_context,
     set_current_tenant,
     tenant_context,
     tenant_scope,
@@ -133,10 +139,10 @@ from eventsource.repositories import (
     OutboxEntry,
     OutboxRepository,
     OutboxStats,
-    PostgreSQLCheckpointRepository,
-    PostgreSQLDLQRepository,
     PostgreSQLOutboxRepository,
     ProjectionFailureCount,
+    SQLCheckpointRepository,
+    SQLDLQRepository,
 )
 
 # Serialization utilities
@@ -174,8 +180,6 @@ from eventsource.sync import SyncEventStoreAdapter
 
 # SQLite Event Store and Repositories (optional - requires aiosqlite)
 try:
-    from eventsource.repositories.checkpoint import SQLiteCheckpointRepository  # noqa: F401
-    from eventsource.repositories.dlq import SQLiteDLQRepository  # noqa: F401
     from eventsource.repositories.outbox import SQLiteOutboxRepository  # noqa: F401
     from eventsource.stores.sqlite import SQLiteEventStore  # noqa: F401
 
@@ -203,6 +207,8 @@ __all__ = [
     "TenantId",
     "CorrelationId",
     "CausationId",
+    # Engine factory
+    "create_async_engine",
     # Events (Task 02)
     "DomainEvent",
     # Event Registry (Task 03)
@@ -271,12 +277,12 @@ __all__ = [
     "ProjectionError",
     # Repository infrastructure (Task 12)
     "CheckpointRepository",
-    "PostgreSQLCheckpointRepository",
+    "SQLCheckpointRepository",
     "InMemoryCheckpointRepository",
     "CheckpointData",
     "LagMetrics",
     "DLQRepository",
-    "PostgreSQLDLQRepository",
+    "SQLDLQRepository",
     "InMemoryDLQRepository",
     "DLQEntry",
     "DLQStats",
@@ -307,14 +313,17 @@ __all__ = [
     "SyncEventStoreAdapter",
     # Multi-tenancy (DX-010)
     "tenant_context",
+    "TenantContextToken",
     "get_current_tenant",
     "get_required_tenant",
     "set_current_tenant",
+    "reset_tenant_context",
     "clear_tenant_context",
     "tenant_scope",
     "tenant_scope_sync",
     "TenantDomainEvent",
     "TenantContextNotSetError",
+    "TenantContextResetError",
     "TenantMismatchError",
 ]
 
@@ -324,8 +333,6 @@ if SQLITE_AVAILABLE:
         [
             "SQLITE_AVAILABLE",
             "SQLiteEventStore",
-            "SQLiteCheckpointRepository",
             "SQLiteOutboxRepository",
-            "SQLiteDLQRepository",
         ]
     )

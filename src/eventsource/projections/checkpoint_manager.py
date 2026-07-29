@@ -57,7 +57,7 @@ class ProjectionCheckpointManager:
     Example:
         >>> manager = ProjectionCheckpointManager(
         ...     projection_name="OrderProjection",
-        ...     checkpoint_repo=PostgreSQLCheckpointRepository(conn),
+        ...     checkpoint_repo=SQLCheckpointRepository(conn),
         ... )
         >>>
         >>> # After processing an event
