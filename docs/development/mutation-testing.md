@@ -61,31 +61,35 @@ to `git checkout` it back afterward).
 
 ### Every mutation test command must pass `--no-cov` and disable test-order randomization
 
-`pyproject.toml`'s `addopts` runs every ordinary pytest invocation with
-`--cov=src/eventsource --cov-report=term-missing` and a `[tool.coverage.report]
-fail_under = 86` gate. That gate applies to *any* scoped subset of the suite, not
-just a full run — a single-module test file will almost never reach 86% coverage
-of the whole package on its own, so **a scoped pytest run exits nonzero from the
-coverage gate alone, even when every test in it passes.** Confirmed directly:
-`pytest tests/unit/test_engine.py -x -q` (no `--no-cov`) reports `11 passed` and
-still exits `1`, with `FAIL Required test coverage of 86.0% not reached. Total
-coverage: 24.65%` in the output.
+`pyproject.toml`'s `[tool.coverage.report]` carries a `fail_under = 86` gate.
+Coverage measurement itself is **opt-in**, invoked explicitly with
+`--cov=src/eventsource --cov-report=...` on the command line — it is not part of
+pytest's default `addopts` (see `pyproject.toml`; fixed in task 2i after this gate
+used to apply indiscriminately to every scoped pytest run, including a single test
+file, and exit nonzero purely from an unmet floor even when every selected test
+passed). Mutation test commands still pass `--no-cov` explicitly regardless, for
+reasons that hold independent of whatever `addopts` currently does:
 
 Both mutmut and cosmic-ray classify a mutant as "killed" purely by the test
 command's exit code — neither one parses pytest's output for pass/fail counts. If
-the coverage gate fires, the tool cannot tell "coverage floor not met" from
-"mutant killed," and reports every mutant as killed regardless of whether any test
-actually detected it. **This is the single most dangerous failure mode a
-misconfigured mutation run can produce**: it looks like a perfect, reassuring
-100% score, and there is no way to distinguish it from a genuinely well-tested
-module by looking at the score alone — you have to know the config carries
-`--no-cov` explicitly.
+`--cov` were ever passed to a mutation test command (by a future `addopts` change,
+a copy-pasted invocation, or a locally customized config), the coverage gate could
+fire on a scoped test subset that will almost never reach 86% coverage of the whole
+package on its own — and the tool cannot tell "coverage floor not met" from "mutant
+killed," reporting every mutant as killed regardless of whether any test actually
+detected it. **This is the single most dangerous failure mode a misconfigured
+mutation run can produce**: it looks like a perfect, reassuring 100% score, and
+there is no way to distinguish it from a genuinely well-tested module by looking at
+the score alone — you have to know the config carries `--no-cov` explicitly. `-x
+-q` need no such defensive justification; they're just useful defaults (stop on
+first failure, quiet output) for a subprocess run per mutant.
 
 mutmut's `pyproject.toml` config already carries `pytest_add_cli_args = ["--no-cov",
 "-x", "-q"]`. Every `cosmic-ray/<module>.toml`'s `test-command` must include
 `--no-cov` explicitly for the same reason — it is not inherited from anywhere, each
 config's `test-command` is a plain shell string mutmut/cosmic-ray hands to a
-subprocess.
+subprocess, and neither tool's config is coupled to pytest's `addopts` in any way
+that would let a future `addopts` change silently propagate here.
 
 Test-order randomization (`pytest-randomly`, installed project-wide, active by
 default with no opt-in) is disabled in every mutation-testing command too
@@ -103,16 +107,13 @@ order-dependent tests elsewhere in the suite.
 mutants out of `52` — a nonzero count, at a location (the known equivalent-mutant
 set documented in the `engine.py` cosmic-ray triage above) where a survivor is
 expected — rather than a suspiciously clean `52/52/0` that a broken config would
-also produce. Separately confirmed the failure mode is real, not hypothetical: the
-same test file run without `--no-cov` exits `1` even with all 11 tests passing.
-
-**A separate, known wart, deliberately not fixed here**: running a single ad-hoc
-test file directly (`pytest tests/unit/test_engine.py`, without `--no-cov`)
-*always* reports a coverage failure regardless of whether the tests pass, which is
-mildly surprising the first time you hit it outside a mutation-testing context.
-That is a property of the project-wide `addopts` + `fail_under` gate applying
-indiscriminately to scoped runs, not something specific to mutation testing, and
-fixing it is out of scope here.
+also produce. Separately re-verified the failure mode this guards against is real,
+not hypothetical, by passing `--cov` explicitly against a scoped subset: `pytest
+tests/unit/test_engine.py --cov=src/eventsource --cov-report=term-missing -q`
+exits `1` with `FAIL Required test coverage of 86.0% not reached` even though all
+11 tests pass. `--no-cov` in every mutation test-command is what keeps this class
+of false-positive out of reach regardless of whether `addopts` ever adds `--cov`
+back.
 
 ### Why there's a wrapper script at all: mutmut 3.x's config is process-wide
 
