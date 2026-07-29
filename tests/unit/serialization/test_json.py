@@ -442,6 +442,137 @@ class TestOrjsonParity:
         }
         assert self._stdlib_dumps(data, monkeypatch) == self._orjson_dumps(data, monkeypatch)
 
+    # -- Container/float subclasses (added in fix round 3) ------------------
+    #
+    # Round 2's scan used `type(x) is dict` / `is list` / `is tuple`, which
+    # is False for a *subclass* of those types -- so the scan walked past a
+    # dict/list/tuple subclass without examining its contents, while orjson
+    # traverses that same subclass natively and would still serialize a
+    # non-finite float inside it as `null`. That's the exact silent
+    # corruption the guard exists to prevent, reached through a narrower
+    # door. Separately, orjson does not serialize `float` subclasses (e.g.
+    # `numpy.float64`) natively -- unlike str/int/dict/list subclasses,
+    # which it does -- so they fell to `_orjson_default`, which
+    # unconditionally raised `TypeError` even for an ordinary finite value,
+    # while stdlib serialized it fine. Both fixed: the scan now falls
+    # through to `isinstance()` for anything not matching the fast exact-type
+    # checks, and `_orjson_default` now special-cases `float` (reject
+    # non-finite with the same ValueError, convert finite to a plain float).
+
+    def test_non_finite_float_inside_dict_subclass_raises(self, monkeypatch):
+        import eventsource.serialization.json as json_module
+
+        class MyDict(dict):
+            pass
+
+        for orjson_available in (True, False):
+            monkeypatch.setattr(json_module, "ORJSON_AVAILABLE", orjson_available)
+            data = {"a": MyDict({"x": float("inf")})}
+            with pytest.raises(ValueError, match="not JSON compliant"):
+                json_module.json_dumps(data)
+
+    def test_non_finite_float_inside_list_subclass_raises(self, monkeypatch):
+        import eventsource.serialization.json as json_module
+
+        class MyList(list):
+            pass
+
+        for orjson_available in (True, False):
+            monkeypatch.setattr(json_module, "ORJSON_AVAILABLE", orjson_available)
+            data = {"a": MyList([float("nan")])}
+            with pytest.raises(ValueError, match="not JSON compliant"):
+                json_module.json_dumps(data)
+
+    def test_non_finite_float_inside_tuple_subclass_raises(self, monkeypatch):
+        import eventsource.serialization.json as json_module
+
+        class MyTuple(tuple):
+            pass
+
+        for orjson_available in (True, False):
+            monkeypatch.setattr(json_module, "ORJSON_AVAILABLE", orjson_available)
+            data = {"a": MyTuple([float("-inf")])}
+            with pytest.raises(ValueError, match="not JSON compliant"):
+                json_module.json_dumps(data)
+
+    def test_float_subclass_finite_parity(self, monkeypatch):
+        class MyFloat(float):
+            pass
+
+        data = {"v": MyFloat(3.14)}
+        assert self._stdlib_dumps(data, monkeypatch) == self._orjson_dumps(data, monkeypatch)
+
+    def test_float_subclass_non_finite_raises(self, monkeypatch):
+        import eventsource.serialization.json as json_module
+
+        class MyFloat(float):
+            pass
+
+        for value in (MyFloat(float("inf")), MyFloat(float("-inf")), MyFloat(float("nan"))):
+            for orjson_available in (True, False):
+                monkeypatch.setattr(json_module, "ORJSON_AVAILABLE", orjson_available)
+                with pytest.raises(ValueError, match="not JSON compliant"):
+                    json_module.json_dumps({"v": value})
+
+    def test_float_subclass_raises_same_exception_type_and_message_both_branches(self, monkeypatch):
+        import eventsource.serialization.json as json_module
+
+        class MyFloat(float):
+            pass
+
+        data = {"v": MyFloat(float("inf"))}
+
+        monkeypatch.setattr(json_module, "ORJSON_AVAILABLE", False)
+        with pytest.raises(ValueError) as stdlib_exc:
+            json_module.json_dumps(data)
+
+        monkeypatch.setattr(json_module, "ORJSON_AVAILABLE", True)
+        with pytest.raises(ValueError) as orjson_exc:
+            json_module.json_dumps(data)
+
+        assert type(stdlib_exc.value) is type(orjson_exc.value) is ValueError
+        assert str(stdlib_exc.value) == str(orjson_exc.value)
+
+    def test_nested_float_subclass_in_dict_subclass_in_list_raises(self, monkeypatch):
+        # The combination case: a float subclass holding infinity, inside a
+        # dict subclass, inside a plain list -- exercises both fixes at
+        # once and at two levels of nesting.
+        import eventsource.serialization.json as json_module
+
+        class MyDict(dict):
+            pass
+
+        class MyFloat(float):
+            pass
+
+        for orjson_available in (True, False):
+            monkeypatch.setattr(json_module, "ORJSON_AVAILABLE", orjson_available)
+            data = {"outer": [MyDict({"inner": MyFloat(float("inf"))})]}
+            with pytest.raises(ValueError, match="not JSON compliant"):
+                json_module.json_dumps(data)
+
+    def test_int_subclass_parity(self, monkeypatch):
+        # Verifying rather than restating the claim that int subclasses are
+        # handled natively and identically by both branches -- that
+        # assumption's sibling claim about float subclasses turned out to
+        # be wrong, so this is checked directly rather than assumed.
+        class MyInt(int):
+            pass
+
+        data = {"v": MyInt(42)}
+        assert self._stdlib_dumps(data, monkeypatch) == self._orjson_dumps(data, monkeypatch)
+
+    def test_str_subclass_parity_via_real_switch(self, monkeypatch):
+        # test_parity_str_subclass above already covers this, but that one
+        # predates routing through the real ORJSON_AVAILABLE switch in some
+        # historical revisions of this file; keeping an explicit one here
+        # colocated with the round-3 subclass audit for visibility.
+        class MyStr(str):
+            pass
+
+        data = {"v": MyStr("hi")}
+        assert self._stdlib_dumps(data, monkeypatch) == self._orjson_dumps(data, monkeypatch)
+
 
 class TestOrjsonFallback:
     """

@@ -80,27 +80,46 @@ class EventSourceJSONEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
+_isfinite = math.isfinite
+
+
 def _orjson_default(obj: Any) -> Any:
     """
     Fallback handler for `orjson.dumps` for types it does not handle natively.
 
-    orjson natively serializes UUID and datetime, so this only needs to cover
-    whatever `EventSourceJSONEncoder.default` covers beyond that -- currently
-    nothing, since UUID/datetime are the only types it special-cases. This
-    exists so `orjson.dumps` raises the same `TypeError` (via the same code
-    path shape) as stdlib for genuinely unsupported types, rather than a
-    differently-worded orjson error.
+    orjson natively serializes UUID and datetime, so this mainly needs to
+    cover whatever `EventSourceJSONEncoder.default` covers beyond that --
+    plus one thing stdlib's `default()` never has to handle: `float`
+    subclasses (e.g. `numpy.float64`). orjson serializes `str`/`int`/`dict`/
+    `list` subclasses natively via their base-type behavior, but NOT `float`
+    subclasses -- those fall through to here. stdlib's `json.dumps` treats a
+    float subclass as a plain float without ever calling `default()` for it,
+    so to match: reject a non-finite float subclass with the identical
+    `ValueError` used everywhere else, and convert a finite one to a plain
+    `float` so it serializes the same way stdlib would.
+
+    Everything else genuinely unsupported still raises `TypeError`, so
+    `orjson.dumps` fails the same way (same exception type, same code path
+    shape) as stdlib for types neither encoder handles.
     """
+    if isinstance(obj, float):
+        if not _isfinite(obj):
+            raise ValueError(f"Out of range float values are not JSON compliant: {obj}")
+        return float(obj)
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 
-_isfinite = math.isfinite
+# Leaf types that can never contain a float, checked by exact type() first
+# (fast path) before falling through to the isinstance() slow path below.
+_LEAF_TYPES = (str, int, bool, type(None))
 
 
 def _reject_non_finite_floats(obj: Any) -> None:
     """
     Raise `ValueError` if `obj` contains a non-finite float (inf/-inf/nan),
-    anywhere in a nested dict/list/tuple structure.
+    anywhere in a nested dict/list/tuple structure -- including inside
+    subclasses of dict/list/tuple, and including `float` subclasses
+    themselves (e.g. `numpy.float64`).
 
     Needed only on the orjson path: `orjson.dumps` has no `allow_nan`
     equivalent and silently converts non-finite floats to JSON `null`
@@ -117,12 +136,19 @@ def _reject_non_finite_floats(obj: Any) -> None:
     loses the value (uninformative and never surfaces at all). Raising here,
     at the point the bad value enters serialization, beats both.
 
-    Written as an iterative stack walk with `type() is` checks (not
-    `isinstance`) rather than a straightforward recursive/isinstance
-    version: benchmarked, the recursive/isinstance version made the orjson
-    path slower than the stdlib fallback it exists to outperform (see
-    `task-2b-report.md` for numbers). This version keeps orjson + the scan
-    faster than stdlib.
+    Correctness over the naive `type(x) is dict` version: a `dict`/`list`/
+    `tuple` *subclass* is False under `type(x) is dict`, so an earlier
+    version of this scan walked past it without examining its contents --
+    while orjson traverses that same subclass natively and serializes its
+    contents (including any non-finite float inside), so the scan skipping
+    it silently reintroduced exactly the corruption it exists to prevent.
+    Fixed by falling through to `isinstance()` whenever the exact-type fast
+    path doesn't match, rather than giving up. Leaf types that can never
+    contain a float (str, int, bool, None) are excluded up front by exact
+    type so ordinary payloads mostly stay on the cheap path; anything else
+    -- including a container subclass, a float subclass, or a genuinely
+    unrelated type like UUID/datetime -- pays for an `isinstance()` check,
+    which is what correctness requires here.
     """
     stack = [obj]
     push = stack.append
@@ -140,6 +166,23 @@ def _reject_non_finite_floats(obj: Any) -> None:
         elif t is list or t is tuple:
             for item in current:
                 push(item)
+        elif t in _LEAF_TYPES:
+            continue
+        elif isinstance(current, float):
+            # float subclass (e.g. numpy.float64), not caught by `t is float`.
+            if not _isfinite(current):
+                raise ValueError(f"Out of range float values are not JSON compliant: {current}")
+        elif isinstance(current, dict):
+            # dict subclass, not caught by `t is dict`.
+            for k, v in current.items():
+                push(k)
+                push(v)
+        elif isinstance(current, (list, tuple)):
+            # list/tuple subclass, not caught by `t is list or t is tuple`.
+            for item in current:
+                push(item)
+        # Anything else (UUID, datetime, str/int/bool subclasses, arbitrary
+        # objects) cannot contain a float and is left alone.
 
 
 def json_dumps(obj: Any) -> str:
