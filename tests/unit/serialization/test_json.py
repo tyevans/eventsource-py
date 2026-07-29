@@ -431,6 +431,21 @@ class TestJsonEncoderContract:
         with pytest.raises(ValueError, match="Integer out of range"):
             json_dumps({"n": value})
 
+    def test_out_of_range_int_error_message_matches_documented_text(self):
+        """
+        docs/reference/serialization-limits.md quotes this message verbatim
+        for users. A `match=` substring check (used by the other boundary
+        tests above) would still pass if a typo were introduced anywhere
+        except the substring itself, so this test asserts full equality
+        against the documented string.
+        """
+        with pytest.raises(ValueError) as exc_info:
+            json_dumps({"n": 2**64})
+        assert (
+            str(exc_info.value)
+            == "Integer out of range for JSON serialization (must be within [-2**63, 2**64-1])"
+        )
+
     def test_int_max_boundary_ok(self):
         value = 2**64 - 1
         assert json_loads(json_dumps({"n": value})) == {"n": value}
