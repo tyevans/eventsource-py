@@ -26,9 +26,24 @@ What's covered instead, against the single (orjson-backed) encoder:
   as valid JSON via stdlib `json.loads` -- an independent decoder from the
   library's own `json_loads`, so this can't pass by both sides sharing the
   same bug.
-- Non-finite floats (`inf`, `-inf`, `nan`), generated deliberately rather
-  than excluded, must always raise `ValueError` -- see
-  `_reject_non_finite_floats` in `src/eventsource/serialization/json.py`.
+- Non-finite floats (`inf`, `-inf`, `nan`) in a plain (non-`DomainEvent`)
+  payload, generated deliberately rather than excluded, serialize to JSON
+  `null` -- this is orjson's own behavior, deliberately left unmodified
+  (see `docs/reference/serialization-limits.md`). An earlier version of
+  this encoder pre-scanned every payload to reject these with `ValueError`
+  instead, but that scan made `json_dumps` 14.5x slower than raw
+  `orjson.dumps` -- slower than the stdlib encoder orjson was adopted to
+  replace -- while protecting against an input class the outbox's actual
+  path (`DomainEvent.model_dump_json()`) never sees, since pydantic's own
+  serializer already nulls non-finite floats before `json_dumps` runs. The
+  scan was deleted; see the property for `DomainEvent` construction below
+  for where the real protection now lives.
+- A `DomainEvent` subclass with a float field must reject `inf`, `-inf`,
+  and `nan` at *construction* time with `pydantic.ValidationError` --
+  `DomainEvent.model_config` sets `allow_inf_nan=False`. This is the
+  property that actually protects the invariant (every event in the
+  system, at the earliest possible point), unlike the deleted
+  `json_dumps`-level scan it replaces.
 - Integer range limit: orjson (now the sole encoder) only supports
   `[-2**63, 2**64 - 1]`; this is a documented hard limit of the chosen
   encoder, not a divergence to unify. `json_values` below is bounded to
@@ -56,11 +71,14 @@ not a divergence being dodged).
 from __future__ import annotations
 
 import json as stdlib_json
+from uuid import uuid4
 
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
+from pydantic import ValidationError
 
+from eventsource.events.base import DomainEvent
 from eventsource.serialization import json_dumps, json_loads
 
 json_values = st.recursive(
@@ -80,6 +98,19 @@ json_values = st.recursive(
 )
 
 non_finite_floats = st.sampled_from([float("inf"), float("-inf"), float("nan")])
+# `sampled_from` here is the complete enumeration, not a shortcut standing in
+# for a wider Hypothesis strategy: `math.isfinite` has exactly three false
+# cases in IEEE-754 double precision as Python's `float` exposes it --
+# +inf, -inf, and nan -- there is no fourth non-finite value or NaN payload
+# variant reachable through the `float` type to generate toward.
+
+
+class _EventWithFloat(DomainEvent):
+    """Minimal DomainEvent subclass for exercising `allow_inf_nan=False`."""
+
+    aggregate_type: str = "Test"
+    value: float
+
 
 out_of_range_ints = st.integers(max_value=-(2**63) - 1) | st.integers(min_value=2**64)
 
@@ -118,10 +149,30 @@ def test_json_dumps_output_is_valid_json(payload: object) -> None:
 
 
 @given(value=non_finite_floats)
-def test_non_finite_floats_raise(value: float) -> None:
-    """inf, -inf, and nan must always raise ValueError, never serialize."""
-    with pytest.raises(ValueError):
-        json_dumps(value)
+def test_non_finite_float_in_plain_payload_serializes_to_null(value: float) -> None:
+    """
+    A non-finite float in a plain (non-`DomainEvent`) payload serializes to
+    JSON `null` -- this is documented, deliberately-accepted orjson
+    behavior (see `docs/reference/serialization-limits.md`), not a
+    regression. `json_dumps` no longer pre-scans for and rejects these; the
+    real protection is at `DomainEvent` construction time instead, see
+    `test_domain_event_rejects_non_finite_float_at_construction` below.
+    """
+    assert json_dumps({"v": value}) == '{"v":null}'
+
+
+@given(value=non_finite_floats)
+def test_domain_event_rejects_non_finite_float_at_construction(value: float) -> None:
+    """
+    A `DomainEvent` subclass with a float field must reject `inf`, `-inf`,
+    and `nan` with `pydantic.ValidationError` at construction -- before
+    serialization is ever reached. This is where non-finite-float
+    protection actually lives now (`DomainEvent.model_config` sets
+    `allow_inf_nan=False`); see
+    `docs/reference/serialization-limits.md`.
+    """
+    with pytest.raises(ValidationError):
+        _EventWithFloat(aggregate_id=uuid4(), value=value)
 
 
 @given(value=out_of_range_ints)
