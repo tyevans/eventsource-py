@@ -90,11 +90,14 @@ from eventsource.exceptions import (
 from eventsource.handlers import handles
 from eventsource.multitenancy import (
     TenantContextNotSetError,
+    TenantContextResetError,
+    TenantContextToken,
     TenantDomainEvent,
     TenantMismatchError,
     clear_tenant_context,
     get_current_tenant,
     get_required_tenant,
+    reset_tenant_context,
     set_current_tenant,
     tenant_context,
     tenant_scope,
@@ -311,14 +314,17 @@ __all__ = [
     "SyncEventStoreAdapter",
     # Multi-tenancy (DX-010)
     "tenant_context",
+    "TenantContextToken",
     "get_current_tenant",
     "get_required_tenant",
     "set_current_tenant",
+    "reset_tenant_context",
     "clear_tenant_context",
     "tenant_scope",
     "tenant_scope_sync",
     "TenantDomainEvent",
     "TenantContextNotSetError",
+    "TenantContextResetError",
     "TenantMismatchError",
 ]
 

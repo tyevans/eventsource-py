@@ -16,6 +16,8 @@ Covers:
 - clear_tenant_context() inside an active scope does not corrupt restore-on-exit.
 - get_required_tenant() raises when unset.
 - Generator/early-exit scenarios and token-reset edge cases.
+- reset_tenant_context() enforces strict LIFO reset order (or double-reset
+  rejection) via TenantContextResetError, for arbitrary set/reset sequences.
 """
 
 from __future__ import annotations
@@ -30,9 +32,11 @@ from hypothesis import strategies as st
 
 from eventsource.multitenancy import (
     TenantContextNotSetError,
+    TenantContextResetError,
     clear_tenant_context,
     get_current_tenant,
     get_required_tenant,
+    reset_tenant_context,
     set_current_tenant,
     tenant_scope,
     tenant_scope_sync,
@@ -342,27 +346,29 @@ def test_unclosed_sync_generator_leaves_context_set() -> None:
     assert get_current_tenant() is None
 
 
-def test_token_reset_out_of_lifo_order_silently_corrupts_state() -> None:
-    """contextvars.Token.reset() does NOT enforce LIFO discipline and does
-    NOT raise when tokens are reset out of order -- contrary to what the
-    test plan hypothesized. Each token simply remembers the value that was
-    current *at the moment it was created* and restores exactly that value,
-    unconditionally. This means resetting an *older* token first, then a
-    *newer* one, silently resurrects a stale value instead of ending up at
-    the true "nothing set" state.
+def test_raw_contextvars_token_reset_out_of_lifo_order_silently_corrupts_state() -> None:
+    """Pins down the underlying primitive's actual behavior, which is WHY
+    reset_tenant_context() exists: raw contextvars.Token.reset() does NOT
+    enforce LIFO discipline and does NOT raise when tokens are reset out of
+    order. Each token simply remembers the value that was current *at the
+    moment it was created* and restores exactly that value, unconditionally.
+    Resetting an *older* token first, then a *newer* one, silently
+    resurrects a stale value instead of ending up at the true "nothing set"
+    state.
 
-    This is a real footgun: tenant_scope/tenant_scope_sync are safe only
-    because they always reset in strict LIFO order (guaranteed by Python's
-    `with`/`async with` block nesting). Anyone bypassing the context
-    managers and calling set_current_tenant()/tenant_context.reset()
-    manually, out of order, can silently leave a *stale, wrong tenant*
-    active with no exception raised to signal the mistake.
+    This test operates on tenant_context/tenant_context.reset() directly
+    (bypassing set_current_tenant()/reset_tenant_context() entirely) to
+    confirm the raw primitive's danger still exists at the contextvars
+    layer -- it always will, since we can't change contextvars itself. The
+    module's hardened public API (set_current_tenant() +
+    reset_tenant_context()) is what actually prevents this now; see
+    test_reset_tenant_context_rejects_out_of_lifo_order below.
     """
     clear_tenant_context()
     tenant_a = uuid4()
     tenant_b = uuid4()
-    token_a = set_current_tenant(tenant_a)  # old value: None
-    token_b = set_current_tenant(tenant_b)  # old value: tenant_a
+    token_a = tenant_context.set(tenant_a)  # old value: None
+    token_b = tenant_context.set(tenant_b)  # old value: tenant_a
 
     # Reset out of order: token_a first (no exception).
     tenant_context.reset(token_a)
@@ -376,6 +382,86 @@ def test_token_reset_out_of_lifo_order_silently_corrupts_state() -> None:
 
     clear_tenant_context()
     assert get_current_tenant() is None
+
+
+def test_reset_tenant_context_rejects_out_of_lifo_order() -> None:
+    """The hardened public API must refuse what the raw primitive silently
+    allows: resetting an older token while a newer one is still active
+    raises TenantContextResetError instead of resurrecting a stale tenant.
+    """
+    clear_tenant_context()
+    tenant_a = uuid4()
+    tenant_b = uuid4()
+    token_a = set_current_tenant(tenant_a)
+    token_b = set_current_tenant(tenant_b)
+
+    with pytest.raises(TenantContextResetError):
+        reset_tenant_context(token_a)
+
+    # State must be unaffected by the rejected reset attempt.
+    assert get_current_tenant() == tenant_b
+
+    # Resetting in the correct LIFO order works and ends at None.
+    reset_tenant_context(token_b)
+    assert get_current_tenant() == tenant_a
+    reset_tenant_context(token_a)
+    assert get_current_tenant() is None
+
+
+def test_reset_tenant_context_rejects_double_reset() -> None:
+    """Resetting the same token twice must raise, not silently no-op or
+    resurrect a stale value."""
+    clear_tenant_context()
+    tenant_id = uuid4()
+    token = set_current_tenant(tenant_id)
+    reset_tenant_context(token)
+    assert get_current_tenant() is None
+
+    with pytest.raises(TenantContextResetError):
+        reset_tenant_context(token)
+
+    assert get_current_tenant() is None
+
+
+@given(data=st.data())
+@settings(max_examples=200, suppress_health_check=[HealthCheck.function_scoped_fixture])
+def test_reset_sequence_is_lifo_or_raises(data: st.DataObject) -> None:
+    """Core invariant of the hardened API: for an arbitrary sequence of
+    set_current_tenant() calls followed by reset_tenant_context() calls in
+    an arbitrary order, EITHER the reset order is exactly the reverse
+    (LIFO) of the set order and every reset succeeds, ending back at the
+    starting state -- OR some reset call in the sequence raises
+    TenantContextResetError. There is no third outcome (a non-LIFO
+    sequence completing "successfully" with a wrong final state)."""
+    clear_tenant_context()
+    n = data.draw(st.integers(min_value=1, max_value=6))
+    reset_order = data.draw(st.permutations(list(range(n))))
+
+    tenant_ids = [uuid4() for _ in range(n)]
+    tokens = [set_current_tenant(t) for t in tenant_ids]
+    is_lifo = list(reset_order) == list(reversed(range(n)))
+
+    raised = False
+    for idx in reset_order:
+        try:
+            reset_tenant_context(tokens[idx])
+        except TenantContextResetError:
+            raised = True
+            break
+
+    if is_lifo:
+        assert not raised, "strict LIFO reset order must never raise"
+        assert get_current_tenant() is None
+    else:
+        assert raised, (
+            f"non-LIFO reset order {list(reset_order)} for {n} tokens "
+            "completed without raising -- the hardened API must reject this"
+        )
+
+    # Best-effort cleanup so a broken run doesn't poison later tests; any
+    # tokens not already reset are simply abandoned (same as documented
+    # clear_tenant_context() behavior for manual usage).
+    clear_tenant_context()
 
 
 async def test_abandoned_async_scope_mid_await_still_restores_on_cancellation() -> None:
