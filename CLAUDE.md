@@ -22,8 +22,8 @@ Production-ready event sourcing library for Python (pydantic, sqlalchemy, async-
 
 Every command below also has a `make` target -- run `make help` for the list.
 `make check` runs lint, mypy, import-linter, bandit/pip-audit and the unit
-suite in one go. See the Makefile header for why that is not the same as a
-green CI right now.
+suite in one go, and is CI parity: CI installs the same locked environment
+and runs the same commands, so green locally means green in CI.
 
 ```bash
 # Install

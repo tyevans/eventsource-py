@@ -362,7 +362,13 @@ class SQLCheckpointRepository:
                 else:
                     event_filter = ""
 
-                query = text(f"""
+                # event_filter is not caller data: it is either the empty
+                # string, a fixed literal, or ":etN" bind-parameter
+                # placeholders generated from range(len(event_types)). Every
+                # value, including the event types themselves, is passed
+                # separately in `params` and bound by the driver.
+                query = text(
+                    f"""
                     WITH latest_relevant_event AS (
                         SELECT event_id as max_id, timestamp as max_time
                         FROM events
@@ -380,7 +386,8 @@ class SQLCheckpointRepository:
                     FROM projection_checkpoints pc
                     LEFT JOIN latest_relevant_event le ON 1 = 1
                     WHERE pc.projection_name = :projection_name
-                """)
+                """  # nosec B608 -- only generated placeholders are interpolated
+                )
 
                 result = await conn.execute(query, params)
                 row = result.fetchone()

@@ -310,4 +310,3 @@ of the contract is the `append_events()` docstring in
 in `src/eventsource/exceptions.py`. Whoever writes ADR-0003 should treat this
 section as the boundary already drawn from the other side, and stay consistent
 with it.
-
