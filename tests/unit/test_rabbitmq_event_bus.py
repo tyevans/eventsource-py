@@ -4674,9 +4674,17 @@ class TestRabbitMQGetHandlerNameEdgeCases:
         from eventsource.handlers.adapter import HandlerAdapter
 
         # Test with a MagicMock to verify it handles objects properly
+        # Use a dedicated MagicMock subclass rather than mutating MagicMock
+        # itself -- MagicMock is a process-wide shared class object, so
+        # setting `MagicMock.__name__` here would leak into every other
+        # test that creates a MagicMock and inspects its class name/repr.
+        class NamedMock(MagicMock):
+            pass
+
+        NamedMock.__name__ = "TestMock"
+
         handler = MagicMock(spec=[])  # Empty spec removes __class__ from mock
-        handler.__class__ = MagicMock
-        handler.__class__.__name__ = "TestMock"
+        handler.__class__ = NamedMock
 
         adapter = HandlerAdapter(handler)
         # Should still work since mock has __class__
