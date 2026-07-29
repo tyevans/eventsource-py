@@ -446,6 +446,91 @@ class TestSQLCheckpointRepository:
         result = await repo.get_lag_metrics("NonExistent")
         assert result is None
 
+    async def test_get_lag_metrics_zero_when_checkpoint_matches_latest_event(self, sqlite_engine):
+        """When last_event_id == latest_event_id, lag is reported as 0 even if
+        the raw timestamp arithmetic would otherwise suggest a nonzero gap."""
+        from datetime import UTC
+        from datetime import datetime as dt
+
+        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+
+        repo = SQLCheckpointRepository(sqlite_engine)
+        projection_name = "TestProjection"
+        event_id = uuid4()
+
+        # The event's timestamp is well in the future of "now" so the raw
+        # lag arithmetic would be strongly negative -- but that's not what
+        # this test is discriminating; test_lag_negative below covers that.
+        # Here the checkpoint IS caught up (last_event_id == latest_event_id),
+        # which must force lag to 0 regardless of the timestamp delta.
+        now = dt.now(UTC).isoformat()
+        async with sqlite_engine.begin() as conn:
+            await conn.execute(
+                text("""
+                    INSERT INTO events (event_id, event_type, aggregate_type, aggregate_id,
+                                       version, timestamp, payload)
+                    VALUES (:event_id, :event_type, :aggregate_type, :aggregate_id,
+                            :version, :timestamp, :payload)
+                    """),
+                {
+                    "event_id": str(event_id),
+                    "event_type": "TestEvent",
+                    "aggregate_type": "TestAggregate",
+                    "aggregate_id": str(uuid4()),
+                    "version": 1,
+                    "timestamp": now,
+                    "payload": "{}",
+                },
+            )
+
+        await repo.update_checkpoint(projection_name, event_id, "TestEvent")
+
+        result = await repo.get_lag_metrics(projection_name, event_types=["TestEvent"])
+        assert result is not None
+        assert result.last_event_id == result.latest_event_id
+        assert result.lag_seconds == 0.0
+
+    async def test_get_lag_metrics_zero_when_raw_lag_negative(self, sqlite_engine):
+        """A checkpoint processed AFTER the latest relevant event (raw lag < 0,
+        e.g. clock skew) must be clamped to 0, not reported as negative."""
+        from datetime import UTC, timedelta
+        from datetime import datetime as dt
+
+        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+
+        repo = SQLCheckpointRepository(sqlite_engine)
+        projection_name = "TestProjection"
+        event_id = uuid4()
+        other_event_id = uuid4()
+
+        earlier = (dt.now(UTC) - timedelta(minutes=5)).isoformat()
+        async with sqlite_engine.begin() as conn:
+            await conn.execute(
+                text("""
+                    INSERT INTO events (event_id, event_type, aggregate_type, aggregate_id,
+                                       version, timestamp, payload)
+                    VALUES (:event_id, :event_type, :aggregate_type, :aggregate_id,
+                            :version, :timestamp, :payload)
+                    """),
+                {
+                    "event_id": str(other_event_id),
+                    "event_type": "TestEvent",
+                    "aggregate_type": "TestAggregate",
+                    "aggregate_id": str(uuid4()),
+                    "version": 1,
+                    "timestamp": earlier,
+                    "payload": "{}",
+                },
+            )
+
+        # Checkpoint is for a different event, processed "now" -- after the
+        # only relevant event's timestamp -- so raw lag is negative.
+        await repo.update_checkpoint(projection_name, event_id, "TestEvent")
+
+        result = await repo.get_lag_metrics(projection_name, event_types=["TestEvent"])
+        assert result is not None
+        assert result.lag_seconds == 0.0
+
     async def test_get_lag_metrics_returns_data_for_existing_checkpoint(self, sqlite_engine):
         from eventsource.repositories.checkpoint import SQLCheckpointRepository
 
@@ -624,6 +709,53 @@ class TestSQLCheckpointRepository:
         result = await repo.get_lag_metrics(projection_name, event_types=["TypeA"])
         assert result is not None
         assert result.latest_event_id == str(event_id_1)
+
+    async def test_lag_metrics_with_multiple_event_type_filter(self, sqlite_engine):
+        """event_types with more than one entry exercises the multi-placeholder
+        IN-clause join (":et0", ":et1", ...), not just the single-item case."""
+        from datetime import UTC
+        from datetime import datetime as dt
+
+        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+
+        repo = SQLCheckpointRepository(sqlite_engine)
+        projection_name = "TestProjection"
+        event_id_1, event_id_2, event_id_3 = uuid4(), uuid4(), uuid4()
+
+        now = dt.now(UTC).isoformat()
+        async with sqlite_engine.begin() as conn:
+            for event_id, event_type in (
+                (event_id_1, "TypeA"),
+                (event_id_2, "TypeB"),
+                (event_id_3, "TypeC"),
+            ):
+                await conn.execute(
+                    text("""
+                        INSERT INTO events (event_id, event_type, aggregate_type, aggregate_id,
+                                           version, timestamp, payload)
+                        VALUES (:event_id, :event_type, :aggregate_type, :aggregate_id,
+                                :version, :timestamp, :payload)
+                        """),
+                    {
+                        "event_id": str(event_id),
+                        "event_type": event_type,
+                        "aggregate_type": "TestAggregate",
+                        "aggregate_id": str(uuid4()),
+                        "version": 1,
+                        "timestamp": now,
+                        "payload": "{}",
+                    },
+                )
+
+        await repo.update_checkpoint(projection_name, event_id_1, "TypeA")
+
+        # TypeC is excluded from the filter -- if the IN-clause degraded to
+        # matching only the first placeholder, this would return TypeA
+        # instead of TypeB.
+        result = await repo.get_lag_metrics(projection_name, event_types=["TypeB", "TypeC"])
+        assert result is not None
+        assert result.latest_event_id in (str(event_id_2), str(event_id_3))
+        assert result.latest_event_id != str(event_id_1)
 
 
 class TestSQLCheckpointRepositoryProtocol:

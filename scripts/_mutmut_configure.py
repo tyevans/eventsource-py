@@ -19,14 +19,22 @@ import re
 import sys
 from pathlib import Path
 
-# module name -> (file to mutate, test subset to run against every mutant)
-MODULES: dict[str, tuple[str, str]] = {
+# module name -> (file to mutate, test subset(s) to run against every mutant)
+MODULES: dict[str, tuple[str, str | list[str]]] = {
     "engine": ("src/eventsource/engine.py", "tests/unit/test_engine.py"),
     "dialect": (
         "src/eventsource/repositories/_dialect.py",
         "tests/unit/repositories/test_dialect.py",
     ),
     "json": ("src/eventsource/serialization/json.py", "tests/unit/serialization/"),
+    "checkpoint": (
+        "src/eventsource/repositories/checkpoint.py",
+        [
+            "tests/unit/test_checkpoint_repository.py",
+            "tests/unit/test_checkpoint_position.py",
+            "tests/unit/repositories/test_checkpoint_tracing.py",
+        ],
+    ),
 }
 
 BLOCK_RE = re.compile(r"\[tool\.mutmut\].*?(?=\n\[|\Z)", re.DOTALL)
@@ -52,14 +60,17 @@ def main() -> None:
         print(f"usage: {sys.argv[0]} <{names}>", file=sys.stderr)
         raise SystemExit(2)
 
+    def as_list(t: str | list[str]) -> list[str]:
+        return t if isinstance(t, list) else [t]
+
     target = sys.argv[1]
     if target == "all":
         only_mutate = [f for f, _ in MODULES.values()]
-        test_selection = [t for _, t in MODULES.values()]
+        test_selection = [item for _, t in MODULES.values() for item in as_list(t)]
     else:
         f, t = MODULES[target]
         only_mutate = [f]
-        test_selection = [t]
+        test_selection = as_list(t)
 
     path = Path("pyproject.toml")
     text = path.read_text()

@@ -21,7 +21,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 MODULE="${1:-all}"
-VALID=(engine dialect json all)
+VALID=(engine dialect json checkpoint all)
 if [[ ! " ${VALID[*]} " =~ " ${MODULE} " ]]; then
     echo "usage: $0 [engine|dialect|json|all]" >&2
     exit 2
