@@ -19,6 +19,8 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from eventsource.serialization import json_dumps
+
 
 class Dialect(Enum):
     """Supported SQL dialects."""
@@ -63,11 +65,18 @@ def uuid_result(value: object) -> UUID | None:
         return None
     if isinstance(value, UUID):
         return value
+    if isinstance(value, bytes | bytearray | memoryview):
+        return UUID(bytes=bytes(value))
     return UUID(str(value))
 
 
 def ts_param(value: datetime, dialect: Dialect) -> str | datetime:
-    """Encode a datetime for binding as a query parameter."""
+    """
+    Encode a datetime for binding as a query parameter.
+
+    Note: a naive datetime passed in comes back UTC-attached from
+    `ts_result` (see its docstring).
+    """
     return value.isoformat() if dialect is Dialect.SQLITE else value
 
 
@@ -84,15 +93,26 @@ def ts_result(value: object) -> datetime | None:
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
-def json_param(value: object, dialect: Dialect) -> str:
+def json_param(value: object, dialect: Dialect) -> str | None:
     """
     Encode a JSON-serializable value for binding as a query parameter.
+
+    Returns `None` for `None` input rather than the string `"null"`, so that
+    Python `None` always becomes SQL NULL and a literal JSON null is never
+    written. This keeps SQL NULL and stored JSON null distinguishable on
+    read -- `json_result` cannot tell them apart once both are ambiguous.
+
+    Delegates to `eventsource.serialization.json_dumps` (rather than plain
+    `json.dumps`) so payloads containing UUID and datetime values encode
+    without raising `TypeError`.
 
     Ignores `dialect` deliberately: asyncpg's JSONB binding also accepts a
     JSON string, so one encoding serves both backends. The parameter is kept
     for call-site symmetry with the other adapters.
     """
-    return json.dumps(value)
+    if value is None:
+        return None
+    return json_dumps(value)
 
 
 def json_result(value: object) -> Any:
