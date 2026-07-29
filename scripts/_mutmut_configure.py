@@ -35,6 +35,13 @@ MODULES: dict[str, tuple[str, str | list[str]]] = {
             "tests/unit/repositories/test_checkpoint_tracing.py",
         ],
     ),
+    "dlq": (
+        "src/eventsource/repositories/dlq.py",
+        [
+            "tests/unit/test_dlq_repository.py",
+            "tests/repositories/test_sqlite_repos.py",
+        ],
+    ),
 }
 
 BLOCK_RE = re.compile(r"\[tool\.mutmut\].*?(?=\n\[|\Z)", re.DOTALL)
