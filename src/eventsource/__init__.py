@@ -136,10 +136,10 @@ from eventsource.repositories import (
     OutboxEntry,
     OutboxRepository,
     OutboxStats,
-    PostgreSQLCheckpointRepository,
     PostgreSQLDLQRepository,
     PostgreSQLOutboxRepository,
     ProjectionFailureCount,
+    SQLCheckpointRepository,
 )
 
 # Serialization utilities
@@ -177,7 +177,6 @@ from eventsource.sync import SyncEventStoreAdapter
 
 # SQLite Event Store and Repositories (optional - requires aiosqlite)
 try:
-    from eventsource.repositories.checkpoint import SQLiteCheckpointRepository  # noqa: F401
     from eventsource.repositories.dlq import SQLiteDLQRepository  # noqa: F401
     from eventsource.repositories.outbox import SQLiteOutboxRepository  # noqa: F401
     from eventsource.stores.sqlite import SQLiteEventStore  # noqa: F401
@@ -276,7 +275,7 @@ __all__ = [
     "ProjectionError",
     # Repository infrastructure (Task 12)
     "CheckpointRepository",
-    "PostgreSQLCheckpointRepository",
+    "SQLCheckpointRepository",
     "InMemoryCheckpointRepository",
     "CheckpointData",
     "LagMetrics",
@@ -329,7 +328,6 @@ if SQLITE_AVAILABLE:
         [
             "SQLITE_AVAILABLE",
             "SQLiteEventStore",
-            "SQLiteCheckpointRepository",
             "SQLiteOutboxRepository",
             "SQLiteDLQRepository",
         ]

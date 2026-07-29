@@ -36,8 +36,7 @@ from eventsource.repositories.checkpoint import (
     CheckpointRepositoryProtocol,
     InMemoryCheckpointRepository,
     LagMetrics,
-    PostgreSQLCheckpointRepository,
-    SQLiteCheckpointRepository,
+    SQLCheckpointRepository,
 )
 
 # DLQ repository
@@ -72,8 +71,7 @@ __all__ = [
     # Checkpoint
     "CheckpointRepository",
     "CheckpointRepositoryProtocol",
-    "PostgreSQLCheckpointRepository",
-    "SQLiteCheckpointRepository",
+    "SQLCheckpointRepository",
     "InMemoryCheckpointRepository",
     "CheckpointData",
     "LagMetrics",
