@@ -104,3 +104,6 @@ mutants/
 
 # Claude Code plugin state
 .claude/tackline/
+
+# Doc-sync state (per-checkout, never shared)
+.claude/last-docs-run
