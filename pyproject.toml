@@ -115,6 +115,12 @@ source = ["src/eventsource"]
 [tool.coverage.paths]
 source = ["src/eventsource"]
 
+[tool.coverage.report]
+# Current unit-suite coverage measured at 87% (2026-07-28, tests/unit/ only,
+# excluding integration/postgres/redis-marked tests). Set slightly below that
+# as a regression ratchet, not a stretch target.
+fail_under = 86
+
 [tool.mypy]
 python_version = "3.11"
 strict = true
