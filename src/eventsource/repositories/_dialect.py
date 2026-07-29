@@ -1,0 +1,122 @@
+"""
+Dialect differences between PostgreSQL and SQLite.
+
+Repositories in this package serve both backends from a single implementation.
+The backends differ in four ways that reach the SQL and the bound parameters:
+
+- UUID: PostgreSQL has a native type; SQLite stores 36-character TEXT.
+- Timestamps: PostgreSQL has TIMESTAMPTZ; SQLite stores ISO-8601 TEXT and
+  returns it without timezone information.
+- JSON: PostgreSQL has JSONB; SQLite stores TEXT.
+- Current time: NOW() versus CURRENT_TIMESTAMP.
+"""
+
+import json
+from datetime import UTC, datetime
+from enum import Enum
+from typing import Any
+from uuid import UUID
+
+from sqlalchemy.ext.asyncio import AsyncConnection
+
+
+class Dialect(Enum):
+    """Supported SQL dialects."""
+
+    POSTGRESQL = "postgresql"
+    SQLITE = "sqlite"
+
+
+def dialect_of(conn: AsyncConnection) -> Dialect:
+    """
+    Determine the dialect of a live connection.
+
+    Args:
+        conn: An active SQLAlchemy async connection.
+
+    Returns:
+        The matching Dialect.
+
+    Raises:
+        ValueError: If the dialect is not supported by this library.
+    """
+    name = conn.dialect.name
+    try:
+        return Dialect(name)
+    except ValueError:
+        raise ValueError(
+            f"Unsupported SQL dialect {name!r}. "
+            f"Supported dialects: {[d.value for d in Dialect]}"
+        ) from None
+
+
+def uuid_param(value: UUID | None, dialect: Dialect) -> str | UUID | None:
+    """Encode a UUID for binding as a query parameter."""
+    if value is None:
+        return None
+    return str(value) if dialect is Dialect.SQLITE else value
+
+
+def uuid_result(value: object) -> UUID | None:
+    """Decode a UUID from a result row, accepting either representation."""
+    if value is None:
+        return None
+    if isinstance(value, UUID):
+        return value
+    return UUID(str(value))
+
+
+def ts_param(value: datetime, dialect: Dialect) -> str | datetime:
+    """Encode a datetime for binding as a query parameter."""
+    return value.isoformat() if dialect is Dialect.SQLITE else value
+
+
+def ts_result(value: object) -> datetime | None:
+    """
+    Decode a timestamp from a result row.
+
+    SQLite returns naive ISO-8601 strings. We attach UTC rather than returning
+    a naive datetime, so that callers can always compare results safely.
+    """
+    if value is None:
+        return None
+    parsed = value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+def json_param(value: object, dialect: Dialect) -> str:
+    """
+    Encode a JSON-serializable value for binding as a query parameter.
+
+    Ignores `dialect` deliberately: asyncpg's JSONB binding also accepts a
+    JSON string, so one encoding serves both backends. The parameter is kept
+    for call-site symmetry with the other adapters.
+    """
+    return json.dumps(value)
+
+
+def json_result(value: object) -> Any:
+    """Decode a JSON value from a result row, accepting text or parsed JSON."""
+    if value is None:
+        return None
+    if isinstance(value, str | bytes):
+        return json.loads(value)
+    return value
+
+
+def now_expr(dialect: Dialect) -> str:
+    """SQL expression for the current timestamp in this dialect."""
+    return "NOW()" if dialect is Dialect.POSTGRESQL else "CURRENT_TIMESTAMP"
+
+
+__all__ = [
+    "Dialect",
+    "dialect_of",
+    "json_param",
+    "json_result",
+    "now_expr",
+    "ts_param",
+    "ts_result",
+    "uuid_param",
+    "uuid_result",
+]
