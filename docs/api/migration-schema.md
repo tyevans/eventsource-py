@@ -1,0 +1,458 @@
+# Migration Schema Reference
+
+The `migration` schema template defines the four PostgreSQL tables that back the
+live tenant migration system in `eventsource.migration`: `tenant_migrations`,
+`tenant_routing`, `migration_position_mappings`, and `migration_audit_log`.
+
+The canonical definition is `src/eventsource/migrations/templates/migration.sql`,
+loaded through `eventsource.migrations.get_schema("migration")`. Everything below
+describes that file exactly as it ships; where a value is enforced by a `CHECK`
+constraint or a unique index, the constraint is named so you can match it against
+database errors.
+
+## Scope and audience
+
+This page is for operators and integrators who provision the database for a
+multi-tenant deployment that will move tenants between event stores while the
+system stays online. It documents the physical schema only — table structure,
+constraints, indexes, triggers, and which repository class touches which table.
+
+It does not describe the migration workflow (bulk copy, dual write, cutover) or
+the orchestration API; those live with the `eventsource.migration` package and
+its `README.md`. Use this page when you need to answer "what does the database
+look like, and what will the database reject?"
+
+## Prerequisites (PostgreSQL 12+; no SQLite variant)
+
+The template header states PostgreSQL 12+, required for advisory lock support
+and for the partial and `DESC`-ordered indexes it declares. It also uses `UUID`,
+`JSONB`, `BIGSERIAL`, `TIMESTAMP WITH TIME ZONE`, and `plpgsql` trigger
+functions.
+
+There is no SQLite variant. `src/eventsource/migrations/templates/sqlite/`
+contains only `checkpoints.sql`, `dlq.sql`, `events.sql`, `outbox.sql`, and
+`snapshots.sql`. Calling `get_schema("migration", backend="sqlite")` raises
+`ValueError` with the list of schemas available for that backend, and
+`list_schemas(backend="sqlite")` does not include `"migration"`. The live
+migration system is PostgreSQL-only at the storage layer.
+
+## Loading the schema with `get_schema("migration")`
+
+```python
+from sqlalchemy import text
+from eventsource.migrations import get_schema
+
+async with engine.begin() as conn:
+    await conn.execute(text(get_schema("migration")))
+```
+
+`get_schema` returns the raw SQL text; it does not execute anything. The default
+backend is `"postgresql"`, so the `backend` argument can be omitted. The
+convenience constant `MIGRATION_SCHEMA` (exported from `eventsource.migrations`)
+equals `"migration"`, and `get_template_path("migration")` returns the on-disk
+`Path` to `templates/migration.sql` if you would rather feed the file to `psql`
+or copy it into an Alembic revision.
+
+Every `CREATE TABLE` uses `IF NOT EXISTS`, every `CREATE INDEX` and
+`CREATE UNIQUE INDEX` uses `IF NOT EXISTS`, the trigger functions use
+`CREATE OR REPLACE FUNCTION`, and each trigger is preceded by
+`DROP TRIGGER IF EXISTS`. Re-running the whole template against an existing
+database is therefore safe.
+
+### Why `get_all_schemas()` does not include it
+
+`get_all_schemas()` reads the pre-combined file
+`src/eventsource/migrations/schemas/all.sql`, which creates only `events`,
+`event_outbox`, `projection_checkpoints`, `dead_letter_queue`, and `snapshots`.
+The migration tables are not in it.
+
+That is deliberate: the migration tables are only meaningful for deployments
+running multi-tenant store migrations, and they carry PostgreSQL-specific
+triggers and functions that most installations never need. Apply the migration
+schema as an explicit, separate step:
+
+```python
+from eventsource.migrations import get_all_schemas, get_schema
+
+async with engine.begin() as conn:
+    await conn.execute(text(get_all_schemas()))
+    await conn.execute(text(get_schema("migration")))
+```
+
+### Apply order relative to events/outbox/checkpoints/dlq schemas
+
+The migration schema declares no foreign keys to `events`, `event_outbox`,
+`projection_checkpoints`, `dead_letter_queue`, or `snapshots` — all three of its
+foreign keys (`tenant_routing.active_migration_id`,
+`migration_position_mappings.migration_id`, `migration_audit_log.migration_id`)
+point at `tenant_migrations`, inside the same file. Ordering relative to the
+core schemas is therefore not enforced by the database.
+
+Apply the core schemas first anyway. The migration system reads and writes the
+event store it is migrating, and `migration_position_mappings` records positions
+that only exist once the `events` table does. Within the migration template
+itself the order is fixed and must not be rearranged: `tenant_migrations` is
+created before `tenant_routing`, `migration_position_mappings`, and
+`migration_audit_log`, each of which references it.
+
+## Table: `tenant_migrations`
+
+Tracks active and historical migrations with the full phase state machine. One
+row per migration attempt; history is retained after completion.
+
+### Columns
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `UUID` | Primary key. Supplied by the application, not generated by the database. |
+| `tenant_id` | `UUID NOT NULL` | The tenant being migrated. |
+| `source_store_id` | `VARCHAR(255) NOT NULL` | Identifier of the source event store. |
+| `target_store_id` | `VARCHAR(255) NOT NULL` | Identifier of the target event store. |
+| `phase` | `VARCHAR(50) NOT NULL DEFAULT 'pending'` | State machine position; see the `CHECK` values below. |
+| `events_total` | `BIGINT DEFAULT 0` | Total events to migrate. |
+| `events_copied` | `BIGINT DEFAULT 0` | Events copied so far. |
+| `last_source_position` | `BIGINT DEFAULT 0` | Last processed position in the source store. |
+| `last_target_position` | `BIGINT DEFAULT 0` | Last written position in the target store. |
+| `started_at` | `TIMESTAMPTZ` | Nullable until the migration starts. |
+| `bulk_copy_started_at` | `TIMESTAMPTZ` | Phase timestamp. |
+| `bulk_copy_completed_at` | `TIMESTAMPTZ` | Phase timestamp. |
+| `dual_write_started_at` | `TIMESTAMPTZ` | Phase timestamp. |
+| `cutover_started_at` | `TIMESTAMPTZ` | Phase timestamp. |
+| `completed_at` | `TIMESTAMPTZ` | Phase timestamp. |
+| `config` | `JSONB NOT NULL DEFAULT '{}'` | Free-form migration configuration (batch size, timeouts, retry settings). |
+| `error_count` | `INTEGER DEFAULT 0` | Cumulative recoverable errors. |
+| `last_error` | `TEXT` | Most recent error message. |
+| `last_error_at` | `TIMESTAMPTZ` | When `last_error` was recorded. |
+| `is_paused` | `BOOLEAN DEFAULT FALSE` | Operator pause flag. |
+| `paused_at` | `TIMESTAMPTZ` | When the pause was applied. |
+| `pause_reason` | `TEXT` | Free text supplied by the operator. |
+| `created_at` | `TIMESTAMPTZ NOT NULL DEFAULT NOW()` | Row creation time. |
+| `updated_at` | `TIMESTAMPTZ NOT NULL DEFAULT NOW()` | Maintained by trigger; see below. |
+| `created_by` | `VARCHAR(255)` | Operator or system identifier. |
+
+### `phase` CHECK constraint values
+
+`phase` is restricted to exactly seven values:
+
+| Value | Meaning |
+| --- | --- |
+| `pending` | Migration created, not started. |
+| `bulk_copy` | Copying historical events. |
+| `dual_write` | Real-time sync; writing to both stores. |
+| `cutover` | Brief pause while routing switches. |
+| `completed` | Successfully completed. |
+| `aborted` | Operator-initiated cancellation. |
+| `failed` | Unrecoverable error. |
+
+The last three are the terminal phases, and the partial indexes below treat
+`('completed', 'aborted', 'failed')` as "not active". Legal transitions between
+phases are enforced in Python by `VALID_TRANSITIONS` in
+`eventsource.migration.repositories`, not by the database — the `CHECK`
+constraint only validates the value itself.
+
+### Progress and position columns
+
+`events_total` is set once the source event count is known
+(`set_events_total`); `events_copied`, `last_source_position`, and
+`last_target_position` advance as the copier and dual-write interceptor run
+(`update_progress`). All four default to `0`, so a freshly created migration
+reports zero progress rather than `NULL`. They exist for monitoring and for
+resuming an interrupted bulk copy from the last recorded source position.
+
+### Phase timestamp columns
+
+Each phase transition stamps its own column: `started_at`,
+`bulk_copy_started_at`, `bulk_copy_completed_at`, `dual_write_started_at`,
+`cutover_started_at`, `completed_at`. All are nullable and all remain `NULL`
+until the corresponding transition occurs, which makes them a reliable record of
+which phases a migration actually entered. The repository chooses which
+timestamps to set during `update_phase`.
+
+### Pause and error columns
+
+`is_paused`, `paused_at`, and `pause_reason` implement operator pause/resume and
+are written by `set_paused`. Pausing does not change `phase` — a paused
+migration remains in whatever phase it was in, so queries for active migrations
+must check `is_paused` separately if they care.
+
+`error_count`, `last_error`, and `last_error_at` are written by `record_error`
+and accumulate recoverable errors without moving the migration to `failed`.
+
+### Indexes, including the one-active-migration-per-tenant unique partial index
+
+| Index | Definition |
+| --- | --- |
+| `idx_tenant_migrations_tenant_id` | `(tenant_id)` — all migrations for a tenant. |
+| `idx_tenant_migrations_phase` | `(phase) WHERE phase NOT IN ('completed', 'aborted', 'failed')` — partial index for listing active migrations. |
+| `idx_tenant_migrations_active_unique` | `UNIQUE (tenant_id) WHERE phase NOT IN ('completed', 'aborted', 'failed')` |
+| `idx_tenant_migrations_completed_at` | `(completed_at) WHERE completed_at IS NOT NULL` — historical queries. |
+
+`idx_tenant_migrations_active_unique` is the important one. Because it is a
+unique *partial* index, a tenant may have any number of terminal migration rows
+but at most one non-terminal row. Attempting to insert a second in-flight
+migration for the same tenant fails at the database level with a unique
+violation, regardless of what the application layer checks. Once a migration
+reaches `completed`, `aborted`, or `failed`, it drops out of the index and a new
+migration for that tenant becomes possible.
+
+## Table: `tenant_routing`
+
+Holds the tenant-to-store routing configuration consulted by the tenant store
+router. Exactly one row per tenant.
+
+### Columns
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `tenant_id` | `UUID PRIMARY KEY` | One row per tenant. |
+| `store_id` | `VARCHAR(255) NOT NULL` | Store this tenant currently routes to. |
+| `migration_state` | `VARCHAR(50) NOT NULL DEFAULT 'normal'` | Routing behavior; see values below. |
+| `active_migration_id` | `UUID` | FK to `tenant_migrations(id)`, nullable. |
+| `created_at` | `TIMESTAMPTZ NOT NULL DEFAULT NOW()` | Row creation time. |
+| `updated_at` | `TIMESTAMPTZ NOT NULL DEFAULT NOW()` | Maintained by trigger. |
+
+### `migration_state` CHECK constraint values
+
+| Value | Routing behavior |
+| --- | --- |
+| `normal` | Route to the configured store; no migration in progress. |
+| `bulk_copy` | Reads and writes both go to the source store. |
+| `dual_write` | Writes go through the interceptor and land in both stores. |
+| `cutover_paused` | Writes are blocked while cutover completes. |
+| `migrated` | Route to the new store; migration complete. |
+
+Note that this is a distinct vocabulary from `tenant_migrations.phase`: it has
+five values, not seven, and describes what the router should do rather than
+where the migration process is. `cutover_paused` has no `phase` counterpart of
+the same name, and there are no `pending`/`completed`/`aborted`/`failed` routing
+states — a tenant with no active migration is simply `normal` or `migrated`.
+
+### Foreign key to `tenant_migrations` (`ON DELETE SET NULL`)
+
+```sql
+active_migration_id UUID REFERENCES tenant_migrations(id) ON DELETE SET NULL
+```
+
+Deleting a migration row therefore does **not** delete the tenant's routing row;
+it clears the pointer and leaves `store_id` and `migration_state` intact. This
+is what you want operationally — purging old migration history must never
+un-route a live tenant. It also means `migration_state` can be left at a
+non-`normal` value with `active_migration_id` set to `NULL` if history is purged
+mid-migration, so purge only terminal migrations.
+
+### Indexes
+
+| Index | Definition |
+| --- | --- |
+| `idx_tenant_routing_store_id` | `(store_id)` — find all tenants on a given store. |
+| `idx_tenant_routing_migration_state` | `(migration_state) WHERE migration_state != 'normal'` — partial index; scanning for tenants currently affected by a migration stays cheap even when the vast majority of tenants are `normal`. |
+
+## Table: `migration_position_mappings`
+
+Records the correspondence between a source-store global position and the
+target-store position the same event landed at, so that projection checkpoints
+can be translated across the cutover.
+
+### Columns
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `BIGSERIAL PRIMARY KEY` | Surrogate key. |
+| `migration_id` | `UUID NOT NULL` | FK to `tenant_migrations(id)` `ON DELETE CASCADE`. |
+| `source_position` | `BIGINT NOT NULL` | Position in the source store. |
+| `target_position` | `BIGINT NOT NULL` | Corresponding position in the target store. |
+| `event_id` | `UUID NOT NULL` | Event identifier, for correlation and verification. |
+| `mapped_at` | `TIMESTAMPTZ NOT NULL DEFAULT NOW()` | When the mapping was recorded. |
+
+Unlike `tenant_migrations` and `tenant_routing`, this table has no `updated_at`
+column and no trigger — mappings are append-only facts.
+
+### `unique_migration_source_position` constraint
+
+```sql
+CONSTRAINT unique_migration_source_position UNIQUE (migration_id, source_position)
+```
+
+Each source position maps to exactly one target position within a migration. The
+constraint makes mapping writes idempotent-checkable: a retried batch that
+re-inserts an already-mapped source position fails loudly rather than creating a
+second, possibly divergent, mapping. The same `source_position` may of course
+appear under a different `migration_id`.
+
+### Indexes for nearest-position checkpoint translation
+
+| Index | Definition |
+| --- | --- |
+| `idx_position_mappings_lookup` | `(migration_id, source_position)` — exact lookups. |
+| `idx_position_mappings_nearest` | `(migration_id, source_position DESC)` — supports "greatest mapped source position ≤ X". |
+| `idx_position_mappings_event_id` | `(event_id)` — debugging and verification. |
+
+Checkpoint translation rarely finds an exact match: a projection's checkpoint
+sits at an arbitrary source position, not necessarily one that was mapped. The
+`DESC`-ordered index lets the nearest-position query walk backwards from the
+requested position and stop at the first row, instead of sorting a range. This
+is what `find_nearest_source_position` on the position mapping repository
+relies on.
+
+## Table: `migration_audit_log`
+
+Append-only audit trail of migration operations, present for compliance as much
+as for debugging.
+
+### Columns
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `BIGSERIAL PRIMARY KEY` | Surrogate key. |
+| `migration_id` | `UUID NOT NULL` | FK to `tenant_migrations(id)` `ON DELETE CASCADE`. |
+| `event_type` | `VARCHAR(100) NOT NULL` | Classification; see values below. |
+| `old_phase` | `VARCHAR(50)` | Previous phase, for `phase_changed` entries. |
+| `new_phase` | `VARCHAR(50)` | New phase, for `phase_changed` entries. |
+| `details` | `JSONB` | Additional structured context, shape varies by `event_type`. |
+| `operator` | `VARCHAR(255)` | Who initiated the action (system or operator ID). |
+| `occurred_at` | `TIMESTAMPTZ NOT NULL DEFAULT NOW()` | When it happened. |
+
+`old_phase` and `new_phase` are plain `VARCHAR(50)` with no `CHECK` constraint —
+they are not validated against the `phase` vocabulary.
+
+### `event_type` CHECK constraint values
+
+Fifteen values are permitted:
+
+`migration_started`, `phase_changed`, `migration_paused`, `migration_resumed`,
+`migration_aborted`, `migration_completed`, `migration_failed`,
+`error_occurred`, `cutover_initiated`, `cutover_completed`,
+`cutover_rolled_back`, `verification_started`, `verification_completed`,
+`verification_failed`, `progress_checkpoint`.
+
+These correspond one-to-one with the `AuditEventType` enum in
+`eventsource.migration.models`. Adding a new audit event type requires changing
+both the enum and this `CHECK` constraint.
+
+### Indexes for compliance and time-range queries
+
+| Index | Definition |
+| --- | --- |
+| `idx_migration_audit_migration_id` | `(migration_id)` — full trail for one migration. |
+| `idx_migration_audit_occurred_at` | `(occurred_at)` — time-based compliance reporting across all migrations. |
+| `idx_migration_audit_event_type` | `(event_type)` — filter by kind of event. |
+| `idx_migration_audit_migration_time` | `(migration_id, occurred_at)` — composite, for a time-bounded slice of a single migration's trail. |
+
+## Triggers and functions (`updated_at` maintenance)
+
+The template defines two `plpgsql` functions, each setting `NEW.updated_at =
+NOW()` and returning `NEW`:
+
+- `update_tenant_migrations_timestamp()`
+- `update_tenant_routing_timestamp()`
+
+and two `BEFORE UPDATE ... FOR EACH ROW` triggers that call them:
+
+- `tenant_migrations_updated` on `tenant_migrations`
+- `tenant_routing_updated` on `tenant_routing`
+
+Both triggers are dropped with `DROP TRIGGER IF EXISTS` before being created, so
+re-applying the template replaces them cleanly. Application code should not set
+`updated_at` on these two tables; the trigger overwrites it on every update.
+
+`migration_position_mappings` and `migration_audit_log` have no triggers, since
+neither has an `updated_at` column.
+
+## Table and column `COMMENT` metadata
+
+The template attaches `COMMENT ON TABLE` to all four tables and
+`COMMENT ON COLUMN` to the columns whose meaning is not obvious from the name —
+including every column of `migration_audit_log` except `id` and `occurred_at`,
+the identity/progress/config columns of `tenant_migrations`, all four
+non-timestamp columns of `tenant_routing`, and the mapping columns of
+`migration_position_mappings`.
+
+These comments are queryable at runtime (`\d+` in `psql`, or
+`obj_description`/`col_description`), which makes the database self-describing
+for operators inspecting a live system without the source tree at hand. They are
+part of the schema contract: the test suite asserts the presence of the table
+comments and of the documented column comments.
+
+## Which repository classes read and write each table
+
+All live in `eventsource.migration.repositories`. Each has a `Protocol`
+defining the interface and a PostgreSQL implementation constructed from a
+SQLAlchemy `AsyncConnection` or `AsyncEngine`, with optional OpenTelemetry
+tracing.
+
+| Table | Repository | Representative operations |
+| --- | --- | --- |
+| `tenant_migrations` | `PostgreSQLMigrationRepository` (protocol `MigrationRepository`) | `create`, `get`, `get_by_tenant`, `update_phase`, `update_progress`, `set_events_total`, `record_error`, `set_paused`, `list_active` |
+| `tenant_routing` | `PostgreSQLTenantRoutingRepository` (protocol `TenantRoutingRepository`) | `get_or_default`, `set_migration_state`; supports an optional process-local TTL cache (`enable_cache`, `cache_ttl_seconds`, default 5s) |
+| `migration_position_mappings` | `PostgreSQLPositionMappingRepository` (protocol `PositionMappingRepository`) | `create`, `create_batch`, `find_by_source_position`, `find_by_target_position`, `find_nearest_source_position`, `find_by_event_id`, `list_by_migration`, `list_in_source_range`, `count_by_migration`, `get_position_bounds`, `delete_by_migration` |
+| `migration_audit_log` | `PostgreSQLMigrationAuditLogRepository` (protocol `MigrationAuditLogRepository`) | `record`, `get_by_migration`, `get_by_id`, `get_latest`, `count_by_migration` |
+
+No repository writes to a table it does not own; cross-table consistency comes
+from the foreign keys and from the coordinator in
+`eventsource.migration.coordinator`.
+
+The routing repository's cache is process-local with a short TTL by design.
+Multi-instance deployments see a bounded inconsistency window equal to that TTL
+after a routing change, which is why the default is only five seconds.
+
+## Retention, growth, and cleanup considerations
+
+Growth is dominated by `migration_position_mappings`: in the worst case it holds
+one row per migrated event, so a tenant with tens of millions of events produces
+tens of millions of mappings. `migration_audit_log` grows with lifecycle events
+and `progress_checkpoint` entries, so its size scales with migration duration
+and checkpoint frequency, not with event count. `tenant_migrations` grows by one
+row per migration attempt and `tenant_routing` is bounded by tenant count —
+neither needs a retention policy.
+
+Position mappings are only needed while checkpoints still have to be translated
+from source to target positions. Once every projection and subscription for the
+tenant has been repointed past the cutover, the mappings for that migration are
+dead weight; `delete_by_migration` on the position mapping repository removes
+them for a single migration without touching the migration row itself.
+
+Audit log entries are retained for compliance, so prefer archiving to deleting.
+`idx_migration_audit_occurred_at` makes time-ranged export cheap. If you do
+prune, prune by `occurred_at` under your retention policy rather than by
+migration.
+
+There is no automatic cleanup anywhere in the schema — no partitioning, no TTL,
+no scheduled job. Retention is entirely an operator responsibility.
+
+## Teardown and rollback notes
+
+The template contains no `DROP` statements other than the two
+`DROP TRIGGER IF EXISTS` guards, so there is no supplied teardown script. Drop
+in reverse dependency order, children before `tenant_migrations`:
+
+```sql
+DROP TABLE IF EXISTS migration_audit_log;
+DROP TABLE IF EXISTS migration_position_mappings;
+DROP TABLE IF EXISTS tenant_routing;
+DROP TABLE IF EXISTS tenant_migrations;
+DROP FUNCTION IF EXISTS update_tenant_routing_timestamp();
+DROP FUNCTION IF EXISTS update_tenant_migrations_timestamp();
+```
+
+Watch the two different delete behaviors. Deleting a `tenant_migrations` row
+cascades to its `migration_position_mappings` and `migration_audit_log` rows —
+including its audit trail, which is usually not what a compliance policy wants —
+while the `tenant_routing` reference is only set to `NULL`. Dropping the
+migration tables therefore destroys routing configuration too, since
+`tenant_routing` is itself one of them; if tenants have already been migrated,
+their `store_id` assignments must be preserved elsewhere before teardown.
+
+Never drop these tables while any tenant sits in a non-`normal`
+`migration_state`. Finish or abort the migration first, so that routing settles
+on `normal` or `migrated`, then tear down. Because every statement in the
+template is idempotent, re-applying it after a partial teardown is safe and
+recreates whatever is missing.
+
+## Related documentation
+
+- `src/eventsource/migrations/templates/migration.sql` — the authoritative schema.
+- `src/eventsource/migrations/SCHEMA_DESIGN.md` — design notes for the schema templates.
+- `src/eventsource/migration/README.md` — the migration system and its workflow.
+- [Repositories reference](repositories.md) — checkpoint, outbox, and DLQ repositories.
+- [Multitenancy reference](multitenancy.md) — tenant context and scoping.
+- `tests/unit/migrations/test_migration_schema.py` — the assertions that pin every constraint, index, trigger, and comment described here.
