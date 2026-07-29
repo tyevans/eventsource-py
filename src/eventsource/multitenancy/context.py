@@ -145,7 +145,9 @@ def set_current_tenant(tenant_id: UUID) -> Token[UUID | None]:
         >>> tenant_id = uuid4()
         >>> token = set_current_tenant(tenant_id)
         >>> assert get_current_tenant() == tenant_id
-        >>> # Manual restoration (prefer tenant_scope for automatic cleanup)
+        >>> # Manual restoration -- UNSAFE unless you reset tokens in strict
+        >>> # LIFO order (see Warning below). Prefer tenant_scope() for
+        >>> # automatic, structurally-LIFO cleanup instead of doing this.
         >>> from eventsource.multitenancy.context import tenant_context
         >>> tenant_context.reset(token)
 
