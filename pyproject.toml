@@ -67,7 +67,7 @@ dev = [
     "pytest-benchmark>=4.0.0",
     "hypothesis>=6.100",
     "mypy>=1.8",
-    "ruff>=0.14.8",
+    "ruff>=0.14.8,<0.15",
     "testcontainers>=4.0",
     "pre-commit>=4.0",
 ]
@@ -161,6 +161,12 @@ ignore_missing_imports = true
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# ruff >= 0.14 formats Python code blocks inside Markdown. The snippets in our
+# agent and docs Markdown are illustrative and deliberately abbreviated
+# (`...` bodies, partial classes); reformatting them serves no one and made
+# `ruff format --check .` fail repo-wide. The upper pin above stops a future
+# release from silently widening what `--check` covers again.
+extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B", "C4", "SIM"]

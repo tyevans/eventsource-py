@@ -39,14 +39,20 @@ execute_mod = importlib.import_module("cosmic_ray.commands.execute")
 def main(argv):
     config_file, *operator_names = argv
     if not operator_names:
-        print("usage: _cosmic_ray_scoped.py <config.toml> <operator> [operator...]", file=sys.stderr)
+        print(
+            "usage: _cosmic_ray_scoped.py <config.toml> <operator> [operator...]", file=sys.stderr
+        )
         return 2
 
     orig_operator_names = plugins.operator_names
     plugins.operator_names = lambda: tuple(operator_names)
 
     cfg = load_config(config_file)
-    module_paths = [Path(cfg["module-path"])] if isinstance(cfg["module-path"], str) else list(map(Path, cfg["module-path"]))
+    module_paths = (
+        [Path(cfg["module-path"])]
+        if isinstance(cfg["module-path"], str)
+        else list(map(Path, cfg["module-path"]))
+    )
     modules = cosmic_ray.modules.find_modules(module_paths)
     modules = cosmic_ray.modules.filter_paths(modules, cfg.get("excluded-modules", ()))
 
@@ -65,14 +71,20 @@ def main(argv):
                 elif outcome is not None and outcome.value == "survived":
                     survived += 1
                     for m in item.mutations:
-                        print(f"SURVIVED: {m.operator_name} occurrence={m.occurrence} "
-                              f"{m.module_path}:{m.start_pos}-{m.end_pos} def={m.definition_name}")
+                        print(
+                            f"SURVIVED: {m.operator_name} occurrence={m.occurrence} "
+                            f"{m.module_path}:{m.start_pos}-{m.end_pos} def={m.definition_name}"
+                        )
                 else:
                     other += 1
-                    print(f"OTHER({result.worker_outcome}): job={item.job_id} "
-                          f"mutations={[(m.operator_name, m.occurrence) for m in item.mutations]} "
-                          f"output={(result.output or '')[:300]!r}")
-            print(f"\nTotal: {killed + survived + other}  killed={killed} survived={survived} other={other}")
+                    print(
+                        f"OTHER({result.worker_outcome}): job={item.job_id} "
+                        f"mutations={[(m.operator_name, m.occurrence) for m in item.mutations]} "
+                        f"output={(result.output or '')[:300]!r}"
+                    )
+            print(
+                f"\nTotal: {killed + survived + other}  killed={killed} survived={survived} other={other}"
+            )
     finally:
         plugins.operator_names = orig_operator_names
         Path(session_file).unlink(missing_ok=True)
