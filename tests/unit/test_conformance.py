@@ -5,10 +5,12 @@ This module demonstrates how to use the EventStoreConformanceSuite and
 EventBusConformanceSuite by running them against the in-memory implementations.
 """
 
+from typing import Any
 from uuid import UUID
 
 import pytest
 
+from eventsource.bus.interface import EventBus
 from eventsource.bus.memory import InMemoryEventBus
 from eventsource.events.base import DomainEvent
 from eventsource.stores.in_memory import InMemoryEventStore
@@ -57,6 +59,23 @@ class InMemoryEventBusConformance(EventBusConformanceSuite):
             test_data="test",
         )
 
+    def create_subscriber(self, received: list[DomainEvent]) -> Any:
+        """Create a subscriber for ConformanceTestEvent."""
+
+        class Subscriber:
+            def subscribed_to(self) -> list[type[DomainEvent]]:
+                return [ConformanceTestEvent]
+
+            async def handle(self, event: DomainEvent) -> None:
+                received.append(event)
+
+        return Subscriber()
+
+    async def await_delivery(self, bus: EventBus) -> None:
+        """Drain background tasks before checking delivery."""
+        assert isinstance(bus, InMemoryEventBus)
+        await bus.shutdown(timeout=5.0)
+
 
 # EventStore conformance tests - all inherited from base suite
 class TestInMemoryEventStoreConformance(InMemoryEventStoreConformance):
@@ -76,11 +95,11 @@ class TestInMemoryEventBusConformance(InMemoryEventBusConformance):
 
 
 @pytest.mark.asyncio
-async def test_conformance_suite_can_be_extended():
+async def test_conformance_suite_can_be_extended() -> None:
     """Verify that conformance suites can be extended with custom tests."""
 
     class ExtendedStoreConformance(InMemoryEventStoreConformance):
-        async def test_custom_behavior(self):
+        async def test_custom_behavior(self) -> None:
             """Custom test added by subclass."""
             store = self.create_store()
             # Add custom test logic here
@@ -91,14 +110,14 @@ async def test_conformance_suite_can_be_extended():
 
 
 @pytest.mark.asyncio
-async def test_event_bus_conformance_suite_works():
+async def test_event_bus_conformance_suite_works() -> None:
     """Smoke test that EventBus conformance suite runs successfully."""
     suite = InMemoryEventBusConformance()
     await suite.test_publish_and_subscribe_roundtrip()
 
 
 @pytest.mark.asyncio
-async def test_event_store_conformance_suite_works():
+async def test_event_store_conformance_suite_works() -> None:
     """Smoke test that EventStore conformance suite runs successfully."""
     suite = InMemoryEventStoreConformance()
     await suite.test_append_and_get_roundtrip()
