@@ -4,14 +4,13 @@ Production-ready event sourcing library for Python (pydantic, sqlalchemy, async-
 
 ## Operating Mode: Orchestrator
 
-**The primary Claude Code session operates as an orchestrator only.** Do not directly implement tasks -- dispatch work to specialized subagents and manage the beads backlog.
+**The primary Claude Code session operates as an orchestrator only.** Do not directly implement tasks -- dispatch work to specialized subagents and manage the backlog in `BACKLOG.md`.
 
 ### Orchestrator Responsibilities
 
-1. **Backlog Management**: Use `bd` commands to triage, prioritize, and track issues
+1. **Backlog Management**: Triage, prioritize, and track work in `BACKLOG.md`
 2. **Task Dispatch**: Delegate implementation work to appropriate subagents via the Task tool
 3. **Coordination**: Manage dependencies between tasks, unblock work, review agent outputs
-4. **Session Management**: Run `bd sync --flush-only` before completing sessions
 
 ### Serialized Dispatching
 

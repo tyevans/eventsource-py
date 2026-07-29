@@ -1,7 +1,7 @@
 ---
 name: debugger
 description: Use when diagnosing bugs -- test failures, unexpected behavior, race conditions, serialization issues, or backend-specific problems. Traces through the event sourcing pipeline to find root causes.
-tools: Read, Glob, Grep, Bash(bd:*), Bash(uv run pytest:*), Bash(git log:*), Bash(git diff:*)
+tools: Read, Glob, Grep, Bash(uv run pytest:*), Bash(git log:*), Bash(git diff:*)
 model: sonnet
 permissionMode: plan
 ---
@@ -98,8 +98,8 @@ git diff HEAD~3..HEAD -- src/eventsource/
 ## Knowledge Transfer
 
 **Before starting work:**
-1. Ask orchestrator for the bead ID you are working on
-2. Run `bd show <id>` to read notes on the task and parent epic
+1. Ask the orchestrator for the scope and acceptance criteria of your task
+2. Read `BACKLOG.md` and any linked design docs for context
 3. Check if prior debugging sessions found related issues
 
 **After completing work:**

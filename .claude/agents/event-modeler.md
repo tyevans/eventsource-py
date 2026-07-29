@@ -1,7 +1,7 @@
 ---
 name: event-modeler
 description: Use when designing or implementing domain events, aggregates, projections, or event-driven workflows. Handles event schema design, aggregate behavior, projection wiring, and the @handles decorator pattern.
-tools: Read, Write, Edit, Glob, Grep, Bash(bd:*), Bash(uv run pytest:*), Bash(uv run ruff check:*), Bash(uv run mypy:*)
+tools: Read, Write, Edit, Glob, Grep, Bash(uv run pytest:*), Bash(uv run ruff check:*), Bash(uv run mypy:*)
 model: sonnet
 permissionMode: default
 ---
@@ -181,8 +181,8 @@ async def test_projection_handles_creation():
 ## Knowledge Transfer
 
 **Before starting work:**
-1. Ask orchestrator for the bead ID you are working on
-2. Run `bd show <id>` to read notes on the task and parent epic
+1. Ask the orchestrator for the scope and acceptance criteria of your task
+2. Read `BACKLOG.md` and any linked design docs for context
 3. Check existing events for naming conventions and field patterns
 
 **After completing work:**

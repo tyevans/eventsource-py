@@ -1,7 +1,7 @@
 ---
 name: refactorer
 description: Use when restructuring code without changing behavior -- extracting modules, consolidating duplications, improving interfaces, or cleaning up technical debt. Ensures existing tests continue to pass and public API remains stable.
-tools: Read, Write, Edit, Glob, Grep, Bash(bd:*), Bash(uv run pytest:*), Bash(uv run ruff check:*), Bash(uv run mypy:*)
+tools: Read, Write, Edit, Glob, Grep, Bash(uv run pytest:*), Bash(uv run ruff check:*), Bash(uv run mypy:*)
 model: sonnet
 permissionMode: default
 ---
@@ -96,8 +96,8 @@ python -c "import eventsource; print(eventsource.__version__)"
 ## Knowledge Transfer
 
 **Before starting work:**
-1. Ask orchestrator for the bead ID you are working on
-2. Run `bd show <id>` to read notes on the task and parent epic
+1. Ask the orchestrator for the scope and acceptance criteria of your task
+2. Read `BACKLOG.md` and any linked design docs for context
 3. Check if there are related refactoring tasks that should be coordinated
 
 **After completing work:**

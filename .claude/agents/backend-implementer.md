@@ -1,7 +1,7 @@
 ---
 name: backend-implementer
 description: Use when adding a new backend implementation for EventStore, EventBus, or repository interfaces. Handles protocol conformance, optional dependency guards, and integration test setup.
-tools: Read, Write, Edit, Glob, Grep, Bash(bd:*), Bash(uv run pytest:*), Bash(uv run ruff check:*), Bash(uv run mypy:*)
+tools: Read, Write, Edit, Glob, Grep, Bash(uv run pytest:*), Bash(uv run ruff check:*), Bash(uv run mypy:*)
 model: sonnet
 permissionMode: default
 ---
@@ -145,8 +145,8 @@ From `/home/ty/workspace/eventsource-py/.claude/rules/definition-of-done.md`:
 ## Knowledge Transfer
 
 **Before starting work:**
-1. Ask orchestrator for the bead ID you are working on
-2. Run `bd show <id>` to read notes on the task and parent epic
+1. Ask the orchestrator for the scope and acceptance criteria of your task
+2. Read `BACKLOG.md` and any linked design docs for context
 3. Check if there are existing partial implementations or design notes
 
 **After completing work:**
