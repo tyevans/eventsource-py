@@ -29,6 +29,22 @@ What's covered instead, against the single (orjson-backed) encoder:
 - Non-finite floats (`inf`, `-inf`, `nan`), generated deliberately rather
   than excluded, must always raise `ValueError` -- see
   `_reject_non_finite_floats` in `src/eventsource/serialization/json.py`.
+- Integer range limit: orjson (now the sole encoder) only supports
+  `[-2**63, 2**64 - 1]`; this is a documented hard limit of the chosen
+  encoder, not a divergence to unify. `json_values` below is bounded to
+  that range for the general properties. `test_out_of_range_int_raises`
+  asserts the limit is *enforced* (raises `ValueError`, not orjson's bare
+  `TypeError`) for values outside it. This property was written while the
+  range guard was still in flight on a concurrent task and initially
+  failed against pre-guard code (as intended -- see task-2c-report.md for
+  the counterexample); the guard has since landed in `json_dumps` /
+  `_validate_json_safe_values` and the property now passes.
+- Deep nesting: the encoder must not diverge in behavior or blow a
+  recursion limit at depth. `_reject_non_finite_floats`'s pre-scan is an
+  iterative stack walk (no recursion-depth limit of its own) while
+  `orjson.dumps` recurses internally (C stack, its own limit) -- their
+  depth limits are not guaranteed to agree, so this is tested directly
+  rather than assumed.
 
 Excluded from the JSON-native payload strategy: non-finite floats (covered
 by their own dedicated property instead) and non-`str` dict keys (the
@@ -50,13 +66,12 @@ from eventsource.serialization import json_dumps, json_loads
 json_values = st.recursive(
     st.none()
     | st.booleans()
-    # Bounded to orjson's supported integer range [-2**63, 2**64 - 1].
-    # Outside that range orjson.dumps raises `TypeError: Integer exceeds
-    # 64-bit range` while stdlib handles arbitrary precision -- a real,
-    # previously undocumented divergence found by this property (see
-    # task-2c-report.md). Reported upstream and awaiting a decision on
-    # whether to fix the encoder or document the limit; bounding here for
-    # now so the rest of this property can make progress in the meantime.
+    # Bounded to orjson's supported integer range [-2**63, 2**64 - 1] --
+    # the encoder's documented supported range (see `json_dumps` /
+    # `_validate_json_safe_values` in serialization/json.py), which raises
+    # ValueError outside it. Values outside the range are exercised
+    # separately by `test_out_of_range_int_raises` below, not mixed into
+    # this general-purpose strategy.
     | st.integers(min_value=-(2**63), max_value=2**64 - 1)
     | st.floats(allow_nan=False, allow_infinity=False)
     | st.text(),
@@ -65,6 +80,21 @@ json_values = st.recursive(
 )
 
 non_finite_floats = st.sampled_from([float("inf"), float("-inf"), float("nan")])
+
+out_of_range_ints = st.integers(max_value=-(2**63) - 1) | st.integers(min_value=2**64)
+
+# Deep, narrow (mostly single-child) structures to probe recursion depth
+# specifically, rather than breadth -- `max_leaves` alone tends to produce
+# wide-ish trees, not deep chains.
+deeply_nested_values = st.recursive(
+    st.none()
+    | st.booleans()
+    | st.integers(min_value=-(2**63), max_value=2**64 - 1)
+    | st.text(max_size=5),
+    lambda children: st.lists(children, min_size=1, max_size=1)
+    | st.dictionaries(st.text(max_size=3), children, min_size=1, max_size=1),
+    max_leaves=200,
+)
 
 
 @given(payload=json_values)
@@ -92,3 +122,29 @@ def test_non_finite_floats_raise(value: float) -> None:
     """inf, -inf, and nan must always raise ValueError, never serialize."""
     with pytest.raises(ValueError):
         json_dumps(value)
+
+
+@given(value=out_of_range_ints)
+def test_out_of_range_int_raises(value: int) -> None:
+    """
+    Integers outside orjson's supported range ([-2**63, 2**64 - 1]) must
+    raise ValueError with the offending value identified -- the same
+    documented-rejection pattern as non-finite floats -- rather than
+    orjson's undocumented bare `TypeError: Integer exceeds 64-bit range`.
+    See task-2c-report.md for the counterexample this property found
+    against pre-guard code.
+    """
+    with pytest.raises(ValueError):
+        json_dumps(value)
+
+
+@given(payload=deeply_nested_values)
+def test_deeply_nested_payload_does_not_diverge(payload: object) -> None:
+    """
+    Deep nesting must not blow a recursion limit, and if it does, both the
+    non-finite pre-scan (iterative) and orjson's own C-stack recursion must
+    fail or succeed together rather than one silently accepting a structure
+    the other can't handle. Round-trips like the shallow case; a
+    `RecursionError` here (from either side) is itself the finding.
+    """
+    assert json_loads(json_dumps(payload)) == payload
