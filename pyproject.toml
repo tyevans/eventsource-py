@@ -170,6 +170,7 @@ skips = ["B101"]  # Allow assert statements
 dev = [
     "bandit>=1.9.2",
     "mutmut>=3.0",
+    "cosmic-ray>=8.4",
     "mypy>=1.19.0",
     "import-linter>=2.13",
     "pytest-randomly>=3.15",

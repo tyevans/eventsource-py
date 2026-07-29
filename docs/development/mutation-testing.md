@@ -32,18 +32,32 @@ and only if a run stays in the tens of seconds. Never widen `paths_to_mutate` /
 `only_mutate` to a whole directory; that reintroduces the whole-repo runtime problem
 this design exists to avoid.
 
+**Two tools, not one.** mutmut 3.x cannot generate a mutant inside — or removing —
+a decorated function, which blinds it to every `@event.listens_for` listener and,
+going forward, every `@handles`-decorated aggregate/projection handler. cosmic-ray
+covers exactly that gap via its `RemoveDecorator` operator. Which tool to reach for,
+and why two rather than a version pin or a full switch, is its own section below:
+["Two tools, two jobs"](#two-tools-two-jobs-mutmut-and-cosmic-ray).
+
 ## How to run it
 
 ```bash
-scripts/mutation.sh              # all three modules, sequentially
-scripts/mutation.sh engine       # just src/eventsource/engine.py
-scripts/mutation.sh dialect      # just repositories/_dialect.py
-scripts/mutation.sh json         # just serialization/json.py
+scripts/mutation.sh              # mutmut: all three modules, sequentially
+scripts/mutation.sh engine       # mutmut: just src/eventsource/engine.py
+scripts/mutation.sh dialect      # mutmut: just repositories/_dialect.py
+scripts/mutation.sh json         # mutmut: just serialization/json.py
+
+scripts/mutation-cosmic-ray.sh engine   # cosmic-ray: decorated-function slice
 ```
 
-Each invocation prints a per-mutant summary (killed/survived/etc., mutmut's emoji
-legend) and, at the end, the list of surviving mutant names. `mutmut show <name>`
-displays the diff for any specific mutant if you need to inspect one directly.
+Each `mutation.sh` invocation prints a per-mutant summary (killed/survived/etc.,
+mutmut's emoji legend) and, at the end, the list of surviving mutant names. `mutmut
+show <name>` displays the diff for any specific mutant if you need to inspect one
+directly. `mutation-cosmic-ray.sh` prints one line per mutant (`killed`/`survived`)
+followed by a summary; `uv run cosmic-ray dump <session>.sqlite` gives the raw JSON
+if you need a specific mutant's location, and `uv run cosmic-ray apply <module>
+<operator> <occurrence>` applies one mutant to disk for manual inspection (remember
+to `git checkout` it back afterward).
 
 ### Why there's a wrapper script at all: mutmut 3.x's config is process-wide
 
@@ -112,7 +126,7 @@ Python import/startup overhead per subprocess, not the mutation count).
 | `_apply_pragmas` — skip condition `continue` → `break` | **Real gap → fixed** | Killed a whole class of pragmas after `journal_mode` in iteration order (`busy_timeout`) for `:memory:` connections. Closed by `test_memory_sqlite_applies_busy_timeout_after_journal_mode_skip`, which monkeypatches `busy_timeout` to a value (4321) that could never coincide with SQLite's own compiled default, specifically so the assertion discriminates "applied" from "never touched." (The naive version of this test — asserting the pragma equals `SQLITE_PRAGMAS["busy_timeout"]`, i.e. 5000 — turned out **not** to discriminate, because SQLite's own default busy_timeout in this environment is *also* 5000. Recorded here because that's an easy mistake to repeat.) |
 | `_apply_pragmas` — `pragma == "journal_mode"` → `is_memory and pragma != "journal_mode"` | **Real gap → fixed** | Inverted the skip condition: for `:memory:`, this skips every *other* pragma (`foreign_keys`, `busy_timeout`) and only attempts `journal_mode`. Closed by `test_memory_sqlite_applies_pragmas_except_journal_mode`. |
 | `_begin_unless_autocommit` — `"BEGIN"` → `"begin"` | Equivalent | SQL keywords are case-insensitive in SQLite; `conn.exec_driver_sql("begin")` behaves identically. |
-| `_begin_unless_autocommit` — `"BEGIN"` → `"XXBEGINXX"` / arg → `None` | **Killed** (not a survivor) | Both are invalid as SQL, so `exec_driver_sql` raises immediately regardless of which test suite is active — a crash is an unconditional kill. Worth noting explicitly: this is *not* evidence the test suite is doing its job on transaction semantics, just that mutmut's mutation operators can't express "silently drop the statement" (see below) — a raised exception from garbage SQL is a much weaker signal than a semantic transaction-isolation failure. |
+| `_begin_unless_autocommit` — `"BEGIN"` → `"XXBEGINXX"` / arg → `None` | **Killed** (not a survivor) | Both are invalid as SQL, so `exec_driver_sql` raises immediately regardless of which test suite is active — a crash is an unconditional kill. This is *not* evidence the test suite is doing its job on transaction semantics, just that mutmut's mutation operators can't express "silently drop the statement" — a raised exception from garbage SQL is a much weaker signal than a semantic transaction-isolation failure. cosmic-ray's `RemoveDecorator` mutant on the `begin` listener answers the real question directly; see the [self-check](#self-check-does-the-configuration-actually-catch-a-known-vacuous-test) below. |
 | `create_async_engine` — `is_memory = ":memory:" in url` → `is_memory = None` / `is_memory = ":MEMORY:" in url` / `is_memory = "XX:memory:XX" in url` | Equivalent | `is_memory` also gates `kwargs.setdefault("poolclass", StaticPool)`, but SQLAlchemy's own `aiosqlite` dialect already defaults to `StaticPool` for a bare `:memory:` URL regardless — verified directly (`type(engine.pool).__name__ == "StaticPool"` with no `create_async_engine` wrapper involved at all). The `is_memory=None` variant also reaches `_apply_pragmas`, which is the same "WAL-on-`:memory:`-is-silently-ignored" equivalence as the row above. |
 | `create_async_engine` — `kwargs.setdefault("poolclass", StaticPool)` → `poolclass=None` / arg dropped | Equivalent | Same reasoning: SQLAlchemy's own default already applies. |
 | `create_async_engine` — non-SQLite branch drops `**kwargs` | **Real gap → fixed** | `return _sa_create_async_engine(url, **kwargs)` mutated to drop the forwarded kwargs entirely for the Postgres/other-dialect passthrough. Closed by `test_postgres_url_forwards_kwargs`, which passes `echo=True` and asserts `engine.echo is True`. |
@@ -123,6 +137,29 @@ both directions, `create_async_engine`'s kwargs passthrough), one weak assertion
 replaced with a discriminating one (`busy_timeout`), and every remaining survivor is
 either equivalent or out of scope. `tests/unit/test_engine.py` grew from 8 to 11
 tests as a direct result.
+
+### `engine.py` under cosmic-ray
+
+Run with `scripts/mutation-cosmic-ray.sh engine` (config: `cosmic-ray/engine.toml`).
+**Baseline:** 52 mutants, 45 killed, 7 survived, ~35-60s wall time (subprocess per
+mutant, no in-process caching — see ["Two tools, two jobs"](#two-tools-two-jobs-mutmut-and-cosmic-ray)
+for why that cost is accepted here and not routinely elsewhere).
+
+Both `core/RemoveDecorator` mutants (on the `connect` and `begin` listeners in
+`_configure_sqlite`) are killed in every run against the real test suite — mutmut
+cannot generate these at all; see the self-check below for what that proves. The 7
+initial survivors were all elsewhere:
+
+| Mutant | Classification | Reason |
+| --- | --- | --- |
+| `core/NumberReplacer` on `SQLITE_PRAGMAS["busy_timeout"]`'s literal `5000` → `5001`/`4999` | **Real gap → fixed** | Neither `test_sqlite_engine_applies_pragmas` nor `test_memory_sqlite_applies_pragmas_except_journal_mode` would have caught this: both asserted `busy_timeout == SQLITE_PRAGMAS["busy_timeout"]`, which reads the same (possibly-mutated) module constant the code under test also reads — tautological, cannot fail regardless of the literal's value. mutmut's own operator set never generated an equivalent mutation here (it doesn't mutate bare integer literals inside a dict literal the way cosmic-ray's `NumberReplacer` does), which is exactly why running only one tool would have missed this. Fixed by hardcoding the expected literal (`assert busy_timeout == 5000`) in both tests. |
+| `core/ReplaceBinaryOperator_Mul_Div` on the `*` (keyword-only marker) in `_apply_pragmas(dbapi_connection: Any, *, is_memory: bool)` and `_configure_sqlite(engine: AsyncEngine, *, is_memory: bool)`, → `/` (positional-only marker) | Equivalent | Cosmic-ray's binary-operator operator matches the bare `*`/`/` parameter-list separators as if they were arithmetic operators — a quirk of its AST matching, not a real arithmetic mutation. The resulting signature (`/` makes the parameters before it positional-only rather than `*` making the parameters after it keyword-only) is syntactically valid and, for every actual call site in this codebase (`_apply_pragmas(dbapi_connection, is_memory=is_memory)`, same pattern for `_configure_sqlite`), behaviorally identical: the positional argument stays positional, the keyword argument stays passable by keyword either way. Verified by applying the mutant and confirming `tests/unit/test_engine.py` stays green. |
+| `core/ReplaceComparisonOperator_Eq_Gt` / `_Eq_GtE` / `_Eq_Is` on `pragma == "journal_mode"` → `>` / `>=` / `is` | Equivalent, but only for the current fixed key set | `SQLITE_PRAGMAS` has exactly three keys (`foreign_keys`, `journal_mode`, `busy_timeout`), and lexicographically `"journal_mode"` is the alphabetically-largest of the three — so `pragma > "journal_mode"` is always `False` (same as `==` would be for the two non-matching keys) and `pragma >= "journal_mode"` matches only `"journal_mode"` itself, identically to `==`. `is` is guaranteed identical in CPython specifically because `pragma` and the literal `"journal_mode"` are both interned string constants defined in the same module. Confirmed the *other* four comparison-operator mutants at this site (`!=`, `<`, `<=`, `is not`) all get killed, which is the expected asymmetric pattern for an equivalence that depends on the specific key set rather than holding for arbitrary strings — worth re-checking if `SQLITE_PRAGMAS` ever gains a key that sorts differently relative to `"journal_mode"`. |
+
+After the `busy_timeout` fix: 52 mutants, 47 killed, 5 survived — the two
+`NumberReplacer` mutants (the real gap) moved from "survived" to "killed"; the 5
+remaining survivors are the `Mul_Div` and comparison-operator equivalents above.
+None real gaps, none out of scope.
 
 ## Baseline and triage: `repositories/_dialect.py`
 
@@ -146,15 +183,21 @@ guard into the existing validation walk) while this task was running, and mutati
 module mid-rewrite produces a baseline that's stale before it's committed. Run
 `scripts/mutation.sh json` once that work has landed and stabilized.
 
-## The decorator blind spot: mutmut cannot mutate `@handles` or event-listener bodies
+## Two tools, two jobs: mutmut and cosmic-ray
 
-This is the most consequential finding of this task, and it is not specific to
-`engine.py` — it applies everywhere in this codebase that uses a decorator to
-register a function as a callback.
+**Historical note, since the code below is quoted for a reason that no longer
+applies to this project:** an earlier version of this document treated mutmut's
+inability to mutate decorated functions as a permanent limitation with no
+workaround short of restructuring every decorated function by hand. That framing
+is now false. A follow-up spike (`mutation-framework-spike.md`) evaluated
+alternative mutation-testing tools specifically to answer this, found cosmic-ray
+reaches decorated functions directly via a dedicated operator, and this project now
+runs both tools rather than working around the gap in one of them.
 
-mutmut 3.x's mutation engine (`mutmut/mutation/file_mutation.py`) walks the AST
-looking for nodes to mutate, and unconditionally excludes decorated function bodies
-from that walk:
+**Why mutmut is blind to decorated functions, and why that's not fixable by
+configuration.** mutmut 3.x's mutation engine (`mutmut/mutation/file_mutation.py`)
+walks the AST looking for nodes to mutate, and unconditionally excludes decorated
+function bodies from that walk:
 
 ```python
 # ignore decorated functions, because
@@ -171,51 +214,70 @@ if isinstance(node, cst.FunctionDef) and len(node.decorators):
 ```
 
 There is no configuration flag anywhere in mutmut that gates this — it is not behind
-`Config.get()`, it is a hardcoded, unconditional rule. `staticmethod` and
-`classmethod` are the only exceptions.
+`Config.get()`, it is a hardcoded, unconditional rule tied to how mutmut's trampoline
+mechanism works, not something a future release is likely to lift casually.
+`staticmethod` and `classmethod` are the only exceptions. Concretely, for this
+codebase, that means mutmut is structurally blind to the body of every
+`@event.listens_for(...)`-decorated function *and every `@handles(EventType)`-
+decorated handler method* — the declarative event-routing layer that
+`DeclarativeAggregate` and `DeclarativeProjection` are built on, and precisely the
+layer the delivery-guarantee milestone will build exactly-once semantics on top of.
 
-**Concretely, for this codebase**, that means mutmut is structurally blind to the
-body of every `@event.listens_for(...)`-decorated function (which is what discovered
-this — see the `engine.py` triage above) *and every `@handles(EventType)`-decorated
-handler method* — the declarative event-routing layer that `DeclarativeAggregate` and
-`DeclarativeProjection` are built on, which is this library's central abstraction and
-precisely the layer the delivery-guarantee milestone will build exactly-once
-semantics on top of. A clean mutation score for a module whose real logic lives
-mostly inside `@handles`-decorated methods proves almost nothing — mutmut never had
-the chance to touch that logic in the first place.
+**cosmic-ray does not have this restriction**, and ships a `RemoveDecorator`
+operator specifically for it: it strips the decorator entirely, leaving the
+function defined but never registered as a callback. Verified empirically against
+`engine.py` (see the self-check below): the `begin`-listener's `RemoveDecorator`
+mutant is killed by the real two-connection test and survives against Task 1's
+known-vacuous single-connection test — exactly the distinguishing result mutmut
+cannot produce for this code, for any configuration.
 
-**The mitigation applied here, and the pattern to reuse:** keep the decorated
-function as a thin registration wrapper that does nothing but call a plain,
-undecorated, module-level function containing the actual logic. `_configure_sqlite`
-in `engine.py` now looks like:
+**Which tool to reach for:**
 
-```python
-@event.listens_for(engine.sync_engine, "connect")
-def _set_pragmas(dbapi_connection, _record):
-    _apply_pragmas(dbapi_connection, is_memory=is_memory)
+| Situation | Tool |
+| --- | --- |
+| Plain functions/methods — no decorator, or `@staticmethod`/`@classmethod` | mutmut (`scripts/mutation.sh`) — faster, richer literal/argument mutation coverage, already the default for the whole curated set |
+| A module whose logic lives partly or wholly inside `@event.listens_for`, `@handles`, or any other callback-registration decorator | cosmic-ray (`scripts/mutation-cosmic-ray.sh`) — the only one of the two that can reach that code at all |
 
-@event.listens_for(engine.sync_engine, "begin")
-def _emit_begin(conn):
-    _begin_unless_autocommit(conn)
-```
+This is not "cosmic-ray is the better tool, use it for everything": its default
+operator set is *narrower* than mutmut's in other respects (no string-literal
+mutation at all, so it cannot express the `"journal_mode"` → `"XXjournal_modeXX"`
+class of mutant mutmut generates routinely), and its subprocess-per-mutant execution
+model is markedly slower — see `mutation-framework-spike.md` for the `_dialect.py`
+comparison (151 cosmic-ray mutants took ~110s there against mutmut's 27 in ~2s).
+Running both tools against `engine.py` surfaced a real gap that *neither alone,
+run in isolation, would have been trusted to have found completely* — see the
+`SQLITE_PRAGMAS["busy_timeout"]` row in the `engine.py` cosmic-ray triage above:
+mutmut's own operator set never generated an equivalent mutation for that literal,
+so a mutmut-only mutation-testing practice would have missed it entirely, tautological
+assertion and all. Two tools with different, overlapping-but-not-identical operator
+sets is the practical answer, not a compromise pending a better single tool.
 
-`_apply_pragmas` and `_begin_unless_autocommit` are ordinary functions mutmut can see
-and mutate freely; the two-line listener bodies have nothing left in them worth
-mutating. Applying the same pattern to `@handles`-decorated handlers — extract the
-handler body into a plain function the decorated method calls — is the only way to
-get real mutation coverage on that layer, and is worth doing deliberately as those
-handlers accumulate real logic, rather than discovering the gap by surprise later.
+**Adding `@handles`-decorated modules to the curated set going forward:** create a
+`cosmic-ray/<module>.toml` (see `cosmic-ray/engine.toml` for the template — the only
+things that change per module are `module-path` and `test-command`), scoped to one
+file with its own narrow test subset, same discipline as `scripts/mutation.sh`'s
+mutmut configs. Do not restructure the handler into a thin-wrapper-plus-plain-
+function pair just to make it mutmut-reachable — that pattern is still legitimate
+where it falls out naturally, but it is no longer the *only* way to get real
+mutation coverage on decorated code, so it should not be treated as a mandatory
+prerequisite going forward.
 
-**A second, narrower mutmut limitation worth knowing**, found while triaging
-`_begin_unless_autocommit`: mutmut has no "delete this statement" mutation operator.
-It mutates literals, operators, call arguments, and comparisons, but it cannot
-express "remove the `conn.exec_driver_sql("BEGIN")` call entirely" — the exact defect
-class Task 1's known bug belonged to. The closest available proxies (replacing the
-argument with `None`, or corrupting the string) both produce invalid SQL and get
-killed by *any* test that reaches the code at all, real or vacuous, because a raised
-exception is an unconditional kill — which means those particular mutants can't
-distinguish a rigorous test from a weak one. See the [self-check](#self-check-does-the-configuration-actually-catch-a-known-vacuous-test)
-below for how this was worked around to still validate the harness.
+**A separate, narrower limitation that is true of BOTH tools**, found while
+triaging `_begin_unless_autocommit` under mutmut and confirmed by checking
+cosmic-ray's own operator list (`cosmic-ray operators`, 213 entries): neither tool
+has a general "delete this statement" mutation operator. Both mutate literals,
+operators, call arguments, and comparisons; cosmic-ray additionally has
+`RemoveDecorator` for the specific case of a decorator, but nothing in either tool
+expresses "remove the `conn.exec_driver_sql("BEGIN")` call itself while leaving the
+surrounding function otherwise intact" — the exact defect class Task 1's known bug
+belonged to. The closest available proxies (replacing the argument with `None`, or
+corrupting the string) both produce invalid SQL and get killed by *any* test that
+reaches the code at all, real or vacuous, because a raised exception is an
+unconditional kill — those particular mutants can't distinguish a rigorous test from
+a weak one, in either tool. `RemoveDecorator` sidesteps this for the specific case of
+"is the callback registered at all," which is what makes it decisive for the
+self-check below, but it is not a general statement-deletion operator and should not
+be read as one.
 
 ## Self-check: does the configuration actually catch a known-vacuous test?
 
@@ -225,52 +287,54 @@ isolation test for `engine.py` that passed against an engine with **no** transac
 control applied — see the pre-fix version at `git show 6de02cf^:tests/unit/test_engine.py`
 and the fix in `6de02cf`.
 
-The direct version of this check — restore that test, mutate `engine.py`, confirm a
-surviving mutant for the deleted `BEGIN` — could not be run as literally stated, for
-the two combined reasons above: mutmut cannot mutate the body of a
-`@event.listens_for`-decorated function in the first place (fixed by the restructuring
-in this task), and even after restructuring, mutmut has no operator that expresses
-"delete this statement" (not fixable — a tool limitation, not a configuration one).
+**With cosmic-ray, this check now passes as literally specified.** Applied the
+`begin`-listener's `RemoveDecorator` mutant by hand
+(`uv run cosmic-ray apply src/eventsource/engine.py core/RemoveDecorator 1`), which
+strips `@event.listens_for(engine.sync_engine, "begin")` off `_emit_begin` entirely —
+the listener is defined but never registered, so `BEGIN` is never emitted by any
+connection, which is a strictly stronger and more direct proxy for "the BEGIN
+emission is gone" than mutating the string inside it would be:
 
-What was run instead, and confirmed by hand:
+- Real test suite (`tests/unit/test_engine.py`, current):
+  `test_sqlite_engine_holds_read_write_in_one_transaction` **fails**
+  (`AssertionError: connection A observed connection B's commit`).
+- Task 1's vacuous test (`git show 6de02cf^:tests/unit/test_engine.py`), same
+  mutant: all 4 tests **pass**.
 
-1. Restored the vacuous test, ran `scripts/mutation.sh engine` against it. `46`
-   mutants, `25` killed, `21` survived — 2 more survivors than the real test suite's
-   `19`.
-2. The 2 additional survivors under the vacuous test, that the real test suite kills:
-   - `_driver_is_autocommit` mutated to always return `False` (i.e. "never detect
-     AUTOCOMMIT, always issue BEGIN"). Killed by the real suite's three AUTOCOMMIT
-     persistence tests (`test_sqlite_autocommit_write_persists_without_explicit_commit`,
-     one per route SQLAlchemy offers for requesting AUTOCOMMIT); survives under the
-     vacuous suite, which has no AUTOCOMMIT test at all.
-   - A `create_async_engine` mutant affecting an unrelated argument-forwarding path.
-3. As a second, more literal check (since 1-2 don't touch the exact `BEGIN` statement
-   directly, for the reasons above), the three sanity mutations the team lead
-   specified were run by hand against the *restored, real* test suite:
-   - Removing the `BEGIN` emission entirely → `test_sqlite_engine_holds_read_write_in_one_transaction`
-     fails.
-   - Forcing `_driver_is_autocommit` to always return `True` → same test fails.
-   - Forcing it to always return `False` → all three AUTOCOMMIT persistence tests
-     fail.
+The mutant, and `tests/unit/test_engine.py`'s temporary swap to the vacuous version,
+were both applied and reverted directly in this checkout (diff-verified clean against
+a pre-edit backup of each file before moving on). `scripts/mutation-cosmic-ray.sh
+engine`'s full run confirms both `RemoveDecorator` mutants (the `connect` listener
+too) are killed by the real suite in the checked-in configuration, not just in this
+one hand-run check.
 
-   All three reproduced exactly as expected, then were reverted (`diff` confirmed
-   clean against a pre-edit backup, full suite re-run green) before proceeding.
+**Historical context, since it's still useful evidence and was the best available
+answer before cosmic-ray was added:** under mutmut alone, this check could not be run
+as literally specified, for the two combined reasons in ["Two tools, two
+jobs"](#two-tools-two-jobs-mutmut-and-cosmic-ray) — mutmut cannot mutate the body of a
+`@event.listens_for`-decorated function at all (now moot: cosmic-ray covers exactly
+this), and neither tool has an operator that expresses "delete this statement"
+(still true of both — see that section). The mutmut-based indirect check from that
+investigation still stands as corroborating evidence: restoring the vacuous test and
+running `scripts/mutation.sh engine` against it produced `46` mutants, `25` killed,
+`21` survived — 2 more survivors than the real test suite's `19` — with the extra 2
+being `_driver_is_autocommit` mutated to always return `False` (killed by the real
+suite's 3 AUTOCOMMIT persistence tests, survives under the vacuous suite which has
+none) and an unrelated `create_async_engine` argument-forwarding mutant. The three
+hand-run sanity mutations the team lead specified independently (remove `BEGIN`,
+force the autocommit predicate `True`, force it `False`) all failed against the real
+suite exactly as expected and passed the vacuous suite, confirmed by hand before
+cosmic-ray was evaluated.
 
-The vacuous test was restored, the real test suite (`git show 6de02cf`'s version) put
-back afterward, and `tests/unit/test_engine.py` reverified passing (8/8, later 11/11
-after the real-gap tests were added) before any of this was committed.
-
-**Conclusion**: the harness does distinguish the real test suite from the known-weak
-one, and the hand-run sanity checks confirm the restructured code still fails exactly
-where it should — but only because those checks bypass mutmut's mutation-operator
-limitation rather than exercising it. The honest reading is that mutation testing on
-`engine.py`, as currently configured, is a real and useful signal for the parts of the
-module it *can* mutate (which, after the restructuring, is now everything except two
-two-line listener bodies), but it would not by itself have caught Task 1's original
-defect — only the restructuring plus a hand-run check did that. Property tests find
-coverage gaps; mutation tests find oracle errors *that involve a mutable expression*;
-neither replaces manual break/restore discipline for defects that live in a statement
-mutmut structurally can't touch.
+**Conclusion**: the harness — now specifically cosmic-ray for this class of defect —
+does distinguish the real test suite from the known-weak one, using a mutation that
+directly matches the shape of Task 1's actual bug (a callback silently not doing
+what it's registered to do), not a proxy for it. mutmut remains the faster, richer
+tool for everything the decorator doesn't gate; cosmic-ray is reserved for exactly
+the cases mutmut cannot reach. Neither tool replaces manual break/restore discipline
+for defects that live inside a single statement neither tool's operator set can
+delete — that gap (see ["Two tools, two jobs"](#two-tools-two-jobs-mutmut-and-cosmic-ray))
+is real and still requires a hand-run check when it matters.
 
 ## Non-goal: no CI score gate
 

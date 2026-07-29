@@ -7,7 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.ext.asyncio import create_async_engine as sa_create_async_engine
 
-from eventsource.engine import SQLITE_PRAGMAS, create_async_engine
+from eventsource.engine import create_async_engine
 
 
 def _factory_engine(path: str, **kwargs: Any) -> AsyncEngine:
@@ -60,7 +60,17 @@ async def test_sqlite_engine_holds_read_write_in_one_transaction(tmp_path):
 
 async def test_sqlite_engine_applies_pragmas(tmp_path):
     """WAL mode, foreign keys, and busy_timeout must be on for every pooled
-    connection to a file-backed database."""
+    connection to a file-backed database.
+
+    ``busy_timeout`` is asserted against the literal ``5000``, not against
+    ``SQLITE_PRAGMAS["busy_timeout"]`` -- the latter is tautological (it
+    reads the same module constant the code under test also reads, so it
+    can't tell "applied correctly" from "applied some other, wrong value"
+    apart; a mutation testing run against this file found exactly that: the
+    literal ``5000`` mutated to ``5001`` with all tests still green). This
+    also pins the documented default from the module docstring, so a
+    silent change to it would be caught here rather than only in behavior.
+    """
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/t.db")
     async with engine.connect() as conn:
         journal = (await conn.execute(text("PRAGMA journal_mode"))).scalar_one()
@@ -68,14 +78,19 @@ async def test_sqlite_engine_applies_pragmas(tmp_path):
         busy_timeout = (await conn.execute(text("PRAGMA busy_timeout"))).scalar_one()
     assert journal.lower() == "wal"
     assert fk == 1
-    assert busy_timeout == SQLITE_PRAGMAS["busy_timeout"]
+    assert busy_timeout == 5000
     await engine.dispose()
 
 
 async def test_memory_sqlite_applies_pragmas_except_journal_mode():
     """:memory: databases must get every pragma except journal_mode -- WAL
     is skipped there deliberately (see ``_apply_pragmas``), but that must
-    not skip the *rest* of the loop too."""
+    not skip the *rest* of the loop too.
+
+    ``busy_timeout`` is asserted against the literal ``5000`` for the same
+    tautology reason as ``test_sqlite_engine_applies_pragmas`` above --
+    comparing against ``SQLITE_PRAGMAS["busy_timeout"]`` can never fail.
+    """
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.connect() as conn:
         journal = (await conn.execute(text("PRAGMA journal_mode"))).scalar_one()
@@ -83,7 +98,7 @@ async def test_memory_sqlite_applies_pragmas_except_journal_mode():
         busy_timeout = (await conn.execute(text("PRAGMA busy_timeout"))).scalar_one()
     assert journal.lower() != "wal", ":memory: databases cannot use WAL"
     assert fk == 1
-    assert busy_timeout == SQLITE_PRAGMAS["busy_timeout"]
+    assert busy_timeout == 5000
     await engine.dispose()
 
 

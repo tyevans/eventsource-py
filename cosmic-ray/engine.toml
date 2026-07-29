@@ -1,0 +1,26 @@
+# cosmic-ray config for the decorated-function slice of the curated mutation
+# set. See docs/development/mutation-testing.md ("Two tools, two jobs") for
+# why this exists alongside mutmut rather than instead of it: mutmut 3.x
+# cannot generate a mutant inside (or removing) a decorated function, which
+# is exactly the shape of `engine.py`'s `@event.listens_for` listeners and,
+# going forward, every `@handles`-decorated aggregate/projection handler.
+#
+# Run with `scripts/mutation-cosmic-ray.sh engine` -- do not invoke
+# `cosmic-ray` directly against this file without reading that script first;
+# it manages a scratch session database this config does not specify.
+#
+# Deliberately scoped to one file. Do NOT widen `module-path` to a package or
+# directory: cosmic-ray spawns a fresh pytest subprocess per mutant with no
+# in-process caching, so the runtime scales far worse than mutmut's -- ~110s
+# for 151 mutants against repositories/_dialect.py in the spike that
+# justified adding this tool (see mutation-framework-spike.md). A whole-file
+# run stays in the tens of seconds; a whole-package run would not.
+
+[cosmic-ray]
+module-path = "src/eventsource/engine.py"
+timeout = 10.0
+excluded-modules = []
+test-command = "python -m pytest tests/unit/test_engine.py -x -q --no-cov"
+
+[cosmic-ray.distributor]
+name = "local"
