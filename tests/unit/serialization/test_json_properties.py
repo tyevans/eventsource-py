@@ -125,7 +125,7 @@ def test_non_finite_floats_raise(value: float) -> None:
 
 
 @given(value=out_of_range_ints)
-def test_out_of_range_int_raises(value: int) -> None:
+def test_out_of_range_int_raises_at_top_level(value: int) -> None:
     """
     Integers outside orjson's supported range ([-2**63, 2**64 - 1]) must
     raise ValueError with the offending value identified -- the same
@@ -136,6 +136,20 @@ def test_out_of_range_int_raises(value: int) -> None:
     """
     with pytest.raises(ValueError):
         json_dumps(value)
+
+
+@given(value=out_of_range_ints)
+def test_out_of_range_int_raises_nested_in_dict(value: int) -> None:
+    """Same limit, enforced when the out-of-range int is nested in a dict."""
+    with pytest.raises(ValueError):
+        json_dumps({"n": value})
+
+
+@given(value=out_of_range_ints)
+def test_out_of_range_int_raises_nested_in_list(value: int) -> None:
+    """Same limit, enforced when the out-of-range int is nested in a list."""
+    with pytest.raises(ValueError):
+        json_dumps([value])
 
 
 @given(payload=deeply_nested_values)
