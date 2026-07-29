@@ -349,46 +349,72 @@ class TestJsonEncoderContract:
         result = json_dumps({"flags": [True, False]})
         assert result == '{"flags":[true,false]}'
 
-    # -- Non-finite floats: rejected -----------------------------------
+    # -- Non-finite floats: NOT rejected by json_dumps (round 5) -----------
+    #
+    # Earlier rounds of this task had json_dumps itself scan for and reject
+    # non-finite floats. That scan made the wrapper 14.5x slower than raw
+    # orjson.dumps and, on a realistic payload, slower than the stdlib
+    # encoder orjson replaced -- defeating the point of the dependency.
+    # Round 5 deleted the scan and moved rejection upstream instead: to
+    # DomainEvent.model_config (allow_inf_nan=False), which rejects at
+    # construction time for every event, before serialization is ever
+    # reached. See TestDomainEventRejectsNonFiniteFloats below.
+    #
+    # The tradeoff, accepted deliberately and documented in
+    # docs/reference/serialization-limits.md and the module docstring: a
+    # non-finite float in a payload that does NOT go through DomainEvent
+    # validation (a hand-built dict, DLQ metadata) is no longer rejected by
+    # json_dumps. These tests pin the new, explicit behavior -- silent
+    # null -- rather than silently forgetting it was ever a rejection.
 
     @pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan")])
-    def test_non_finite_float_raises(self, value):
-        with pytest.raises(ValueError, match="not JSON compliant"):
-            json_dumps({"v": value})
+    def test_non_finite_float_in_plain_dict_serializes_as_null(self, value):
+        # Documents the residual risk directly: json_dumps no longer
+        # raises for this case. This is NOT a bug -- it's the accepted
+        # tradeoff. If this test starts failing because json_dumps raises
+        # again, that's an intentional design reversion, not a regression
+        # to "fix" by re-adding the scan.
+        result = json_dumps({"v": value})
+        assert result == '{"v":null}'
 
-    def test_non_finite_float_nested_in_list_raises(self):
+    def test_non_finite_float_nested_in_list_serializes_as_null(self):
         data = {"items": [1.0, 2.0, {"nested": [float("nan")]}]}
-        with pytest.raises(ValueError, match="not JSON compliant"):
-            json_dumps(data)
+        result = json_dumps(data)
+        assert json_loads(result) == {"items": [1.0, 2.0, {"nested": [None]}]}
 
-    def test_non_finite_float_nested_in_dict_raises(self):
+    def test_non_finite_float_nested_in_dict_serializes_as_null(self):
         data = {"outer": {"inner": {"deep": float("inf")}}}
-        with pytest.raises(ValueError, match="not JSON compliant"):
-            json_dumps(data)
+        result = json_dumps(data)
+        assert json_loads(result) == {"outer": {"inner": {"deep": None}}}
 
-    def test_non_finite_float_inside_dict_subclass_raises(self):
+    def test_non_finite_float_inside_dict_subclass_serializes_as_null(self):
         class MyDict(dict):
             pass
 
         data = {"a": MyDict({"x": float("inf")})}
-        with pytest.raises(ValueError, match="not JSON compliant"):
-            json_dumps(data)
+        assert json_loads(json_dumps(data)) == {"a": {"x": None}}
 
-    def test_non_finite_float_inside_list_subclass_raises(self):
+    def test_non_finite_float_inside_list_subclass_serializes_as_null(self):
         class MyList(list):
             pass
 
         data = {"a": MyList([float("nan")])}
-        with pytest.raises(ValueError, match="not JSON compliant"):
-            json_dumps(data)
+        assert json_loads(json_dumps(data)) == {"a": [None]}
 
-    def test_non_finite_float_inside_tuple_subclass_raises(self):
+    def test_tuple_subclass_is_unsupported_regardless_of_content(self):
+        # Not actually about non-finite floats: found while updating this
+        # test for round 5. orjson does not serialize `tuple` *subclasses*
+        # natively at all (unlike `list`/`dict` subclasses, which it does)
+        # -- confirmed by direct execution with plain finite content, no
+        # non-finite float involved. This was invisible in earlier rounds
+        # because the (now-deleted) pre-scan raised ValueError for the
+        # non-finite float inside before orjson.dumps ever got a chance to
+        # reject the tuple subclass itself for an unrelated reason.
         class MyTuple(tuple):
             pass
 
-        data = {"a": MyTuple([float("-inf")])}
-        with pytest.raises(ValueError, match="not JSON compliant"):
-            json_dumps(data)
+        with pytest.raises(TypeError, match="not JSON serializable"):
+            json_dumps({"a": MyTuple([1, "finite", 2.5])})
 
     # -- Integer range: rejected -----------------------------------------
     #
@@ -462,7 +488,11 @@ class TestJsonEncoderContract:
         with pytest.raises(ValueError, match="Integer out of range"):
             json_dumps({"n": MyInt(2**64)})
 
-    # -- float subclasses --------------------------------------------------
+    # -- float subclasses (round 5: same null-on-non-finite behavior as
+    # plain floats, not a raise -- see _orjson_default's docstring for why
+    # a raise-based design was tried and found not to work: orjson
+    # swallows any exception raised inside default=, so there was never a
+    # way to signal "non-finite" specifically through that hook) ---------
 
     def test_float_subclass_finite_serializes(self):
         class MyFloat(float):
@@ -475,14 +505,14 @@ class TestJsonEncoderContract:
         "value",
         [float("inf"), float("-inf"), float("nan")],
     )
-    def test_float_subclass_non_finite_raises(self, value):
+    def test_float_subclass_non_finite_serializes_as_null(self, value):
         class MyFloat(float):
             pass
 
-        with pytest.raises(ValueError, match="not JSON compliant"):
-            json_dumps({"v": MyFloat(value)})
+        result = json_dumps({"v": MyFloat(value)})
+        assert result == '{"v":null}'
 
-    def test_nested_float_subclass_in_dict_subclass_in_list_raises(self):
+    def test_nested_float_subclass_in_dict_subclass_in_list_serializes_as_null(self):
         # Combination case: a float subclass holding infinity, inside a
         # dict subclass, inside a plain list.
         class MyDict(dict):
@@ -492,8 +522,7 @@ class TestJsonEncoderContract:
             pass
 
         data = {"outer": [MyDict({"inner": MyFloat(float("inf"))})]}
-        with pytest.raises(ValueError, match="not JSON compliant"):
-            json_dumps(data)
+        assert json_loads(json_dumps(data)) == {"outer": [{"inner": None}]}
 
     # -- int / str subclasses: verified, not assumed -----------------------
 
@@ -508,6 +537,106 @@ class TestJsonEncoderContract:
             pass
 
         assert json_loads(json_dumps({"v": MyStr("hi")})) == {"v": "hi"}
+
+
+class TestDomainEventRejectsNonFiniteFloats:
+    """
+    Round 5: non-finite float rejection moved from json_dumps (a
+    pre-serialization scan, deleted for the throughput hit it caused) to
+    DomainEvent.model_config (allow_inf_nan=False in
+    src/eventsource/events/base.py). This is the real fix for the main
+    event path: the outbox writes via
+    json.loads(event.model_dump_json()) (outbox.py:264, 557, 837), and
+    pydantic's own model_dump_json() already nulls a non-finite float
+    silently -- so the old json_dumps-level scan never actually protected
+    that path at all; it only ever covered hand-built dicts. Rejecting at
+    construction, before pydantic's own serialization ever runs, is
+    earlier and covers every event, not just ones passed through
+    json_dumps directly.
+    """
+
+    def test_domain_event_rejects_inf_at_construction(self):
+        from pydantic import ValidationError
+
+        from eventsource.events.base import DomainEvent
+
+        class MyEvent(DomainEvent):
+            value: float
+
+        with pytest.raises(ValidationError, match="finite_number|finite"):
+            MyEvent(
+                aggregate_id=uuid4(),
+                aggregate_type="Test",
+                value=float("inf"),
+            )
+
+    def test_domain_event_rejects_neg_inf_at_construction(self):
+        from pydantic import ValidationError
+
+        from eventsource.events.base import DomainEvent
+
+        class MyEvent(DomainEvent):
+            value: float
+
+        with pytest.raises(ValidationError, match="finite_number|finite"):
+            MyEvent(
+                aggregate_id=uuid4(),
+                aggregate_type="Test",
+                value=float("-inf"),
+            )
+
+    def test_domain_event_rejects_nan_at_construction(self):
+        from pydantic import ValidationError
+
+        from eventsource.events.base import DomainEvent
+
+        class MyEvent(DomainEvent):
+            value: float
+
+        with pytest.raises(ValidationError, match="finite_number|finite"):
+            MyEvent(
+                aggregate_id=uuid4(),
+                aggregate_type="Test",
+                value=float("nan"),
+            )
+
+    def test_domain_event_accepts_finite_floats(self):
+        from eventsource.events.base import DomainEvent
+
+        class MyEvent(DomainEvent):
+            value: float
+
+        event = MyEvent(aggregate_id=uuid4(), aggregate_type="Test", value=3.14)
+        assert event.value == 3.14
+
+    def test_domain_event_rejects_non_finite_float_nested_in_payload_field(self):
+        # Pydantic's allow_inf_nan applies recursively through model
+        # fields, not just top-level scalar fields.
+        from pydantic import ValidationError
+
+        from eventsource.events.base import DomainEvent
+
+        class MyEvent(DomainEvent):
+            amounts: list[float]
+
+        with pytest.raises(ValidationError, match="finite_number|finite"):
+            MyEvent(
+                aggregate_id=uuid4(),
+                aggregate_type="Test",
+                amounts=[1.0, 2.0, float("nan")],
+            )
+
+    def test_domain_event_still_frozen(self):
+        # allow_inf_nan=False must not have displaced frozen=True in
+        # model_config -- both are set together.
+        from eventsource.events.base import DomainEvent
+
+        class MyEvent(DomainEvent):
+            value: float
+
+        event = MyEvent(aggregate_id=uuid4(), aggregate_type="Test", value=1.0)
+        with pytest.raises(Exception):  # noqa: B017 - pydantic's ValidationError for frozen models
+            event.value = 2.0
 
 
 class TestNewModuleExports:

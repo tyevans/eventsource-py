@@ -17,60 +17,122 @@ Integers must be within `[-2**63, 2**64-1]` (`-9223372036854775808` to
 range, `json_dumps` raises:
 
 ```
-ValueError: Integer out of range for JSON serialization (must be within [-2**63, 2**64-1]): <value>
+ValueError: Integer out of range for JSON serialization (must be within [-2**63, 2**64-1])
 ```
 
 Rationale: orjson itself raises a bare `TypeError: Integer exceeds 64-bit
 range` for the same input, with no indication of which value or field caused
-it. `json_dumps` checks first and raises a message that names the offending
-value, so the failure is traceable back to its source instead of surfacing as
-an opaque error deep inside serialization.
+it, and no way to distinguish "an int was too big" from any other cause.
+`json_dumps` catches that specific `TypeError` and re-raises `ValueError` with
+the supported range stated, so the failure mode is at least documented rather
+than an opaque orjson internal. This is done as **error translation after the
+fact**, not a pre-emptive scan of the payload -- see "How this is enforced"
+below for why that distinction is load-bearing. (The message does not name
+the offending value: orjson's own exception doesn't carry it, so there is
+nothing to recover and pass through.)
 
-This check applies everywhere in the structure — top level, nested inside
-`dict`/`list`/`tuple` (including subclasses of those), and to `int` subclasses
-holding an out-of-range value (e.g. an `IntEnum` member defined with too large
-a value). `bool` is never checked against this range: it's technically an
-`int` subclass in Python, but it always serializes as `true`/`false`, never as
-a number.
+This check applies everywhere orjson itself traverses the structure -- top
+level, nested inside `dict`/`list` (including subclasses of those, since
+orjson serializes those subclasses natively too), and to `int` subclasses
+holding an out-of-range value (e.g. an `IntEnum` member defined with too
+large a value). `bool` is never treated as an out-of-range candidate: it's
+technically an `int` subclass in Python, but it always serializes as
+`true`/`false`, never as a number, so the question doesn't apply to it.
 
-## Non-finite floats
+## Non-finite floats: `json_dumps` does NOT reject these
 
-`inf`, `-inf`, and `nan` raise:
+**This is the one constraint on this page that changed direction, and it is
+easy to get wrong if you only skim.** `json_dumps` itself does not check for
+`inf`, `-inf`, or `nan` at all. Passed directly, they silently become JSON
+`null`:
 
+```python
+>>> json_dumps({"v": float("inf")})
+'{"v":null}'
 ```
-ValueError: Out of range float values are not JSON compliant: <value>
+
+This is orjson's own behavior, unmodified. An earlier version of this
+encoder pre-scanned every payload to catch and reject this before calling
+orjson, but that scan made `json_dumps` **14.5x slower than raw
+`orjson.dumps`** on a realistic event payload -- slower, in fact, than the
+stdlib `json` encoder this library replaced by taking on orjson as a core
+dependency in the first place. The scan was deleted.
+
+**Protection moved upstream instead, to `DomainEvent`.**
+`DomainEvent.model_config` sets `allow_inf_nan=False`, so pydantic itself
+rejects a non-finite float with `ValidationError` at **event construction
+time** -- before serialization is ever reached:
+
+```python
+>>> class OrderPlaced(DomainEvent):
+...     amount: float
+...
+>>> OrderPlaced(aggregate_id=..., aggregate_type="Order", amount=float("inf"))
+ValidationError: ... Input should be a finite number [type=finite_number, ...]
 ```
 
-Rationale: orjson has no option to reject or specially encode non-finite
-floats — it silently converts every one of them to JSON `null`. For a
-persisted event payload, that's data corruption: the field still parses as
-valid JSON, but the value is now indistinguishable from an intentional
-`null`, and the original number is gone with no error raised anywhere.
-`json_dumps` checks first so this fails loudly instead of silently.
+This covers every event in the system -- strictly better than the old scan,
+since it fires at the earliest possible point instead of the latest, and
+applies uniformly regardless of which repository or serialization call site
+eventually handles the event.
 
-This check applies everywhere in the structure, including inside `dict`/
-`list`/`tuple` subclasses, and to `float` subclasses (e.g. `numpy.float64`)
-holding a non-finite value.
+**Explicit residual risk, not a hidden one: a non-finite float in anything
+that is NOT a `DomainEvent` is unprotected.** A hand-built `dict` passed
+straight to `json_dumps`, DLQ error metadata, or any other payload
+constructed outside pydantic validation will silently serialize a
+non-finite float as `null`, with no error anywhere. If you build payloads
+by hand and they might contain a non-finite float, validate that yourself
+before calling `json_dumps` -- the library will not catch it for you.
 
-## `float` subclasses
+## `float` subclasses (e.g. `numpy.float64`)
 
-A `float` subclass with a finite value (e.g. `numpy.float64(3.14)`)
-serializes correctly, converted to a plain `float` first. This needs calling
-out because it is *not* orjson's default behavior: orjson serializes
+A `float` subclass -- finite or non-finite -- behaves exactly like a plain
+`float`: converted to a plain `float` and serialized (finite), or silently
+turned into `null` (non-finite). This needs calling out because it is *not*
+orjson's default behavior for the type itself: orjson serializes
 `str`/`int`/`dict`/`list` subclasses natively via their base-type behavior,
-but not `float` subclasses — those would otherwise raise
-`TypeError: Type is not JSON serializable: <ClassName>` for an ordinary
-finite value. `json_dumps` handles this case explicitly so a `float`
-subclass behaves exactly like a plain `float`, whether finite (converts and
-serializes) or non-finite (raises, per the rule above).
+but not `float` subclasses -- those would otherwise raise `TypeError: Type
+is not JSON serializable: <ClassName>` even for an ordinary finite value.
+`json_dumps` handles the type-conversion case explicitly, but deliberately
+does **not** try to special-case non-finite subclass values to raise:
+verified by direct execution that `orjson.dumps` discards any exception
+raised inside its `default=` callback and replaces it with a generic
+message, so there was never a way to signal "this specific value is
+non-finite" back through that hook. See the `_orjson_default` docstring in
+`eventsource/serialization/json.py` for the full account of why that design
+was tried and abandoned.
 
-## `dict` / `list` / `tuple` subclasses
+## `dict` / `list` subclasses: supported. `tuple` subclasses: NOT supported
 
-Fully supported: traversed and validated the same as the base types, not
-skipped. This matters because orjson serializes such a subclass natively via
-its base-type behavior — so a non-finite float or out-of-range integer
-inside one is just as reachable, and just as much a correctness risk, as one
-inside a plain `dict`/`list`/`tuple`.
+A `dict` or `list` **subclass** serializes natively via orjson, same as the
+base type -- fully traversed, nothing skipped.
+
+A `tuple` **subclass**, however, is not serializable at all, regardless of
+its contents:
+
+```python
+>>> class MyTuple(tuple): pass
+>>> json_dumps({"a": MyTuple([1, 2, 3])})
+TypeError: Object of type MyTuple is not JSON serializable
+```
+
+This is unrelated to any of the constraints above -- it's a general orjson
+limitation on the `tuple` type specifically (`list` and `dict` subclasses
+are fine; `tuple` subclasses are not). A plain `tuple` (not a subclass)
+still serializes fine, as a JSON array.
+
+## How this is enforced (for anyone auditing this list against the code)
+
+- **Integer range** is enforced by catching and translating orjson's own
+  `TypeError` in `json_dumps`. This costs nothing on the success path --
+  it's a `try/except`, not a pre-scan.
+- **Non-finite floats** are enforced upstream, at `DomainEvent` construction
+  (pydantic's `allow_inf_nan=False`), not inside `json_dumps` at all.
+- There is **no pre-serialization walk of the payload** for either
+  constraint anymore. If you're reading older code, docs, or commit history
+  that describes a scan-based implementation (`_validate_json_safe_values`
+  / `_reject_non_finite_floats`), that was deleted for the performance
+  reason described above.
 
 ## Non-`str` dict keys
 
