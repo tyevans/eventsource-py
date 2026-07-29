@@ -1594,7 +1594,7 @@ Create `tests/unit/bus/test_conformance.py`:
 """InMemoryEventBus conformance to the EventBus contract."""
 
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from eventsource.bus.interface import EventBus
 from eventsource.bus.memory import InMemoryEventBus
@@ -1639,12 +1639,12 @@ def test_suite_is_actually_collected() -> None:
         if name.startswith("test_")
     }
 
-    assert contract_tests, "conformance suite defines no tests"
+    assert len(contract_tests) == 9, (
+        f"expected 9 contract tests, found {len(contract_tests)}: "
+        f"{sorted(contract_tests)}"
+    )
     for name in contract_tests:
         assert hasattr(TestInMemoryEventBusConformance, name)
-
-    # Sanity: uuid4 is imported for use by the suite's own helpers.
-    assert uuid4() != uuid4()
 ```
 
 - [ ] **Step 2: Run to verify the new contract tests are missing**
@@ -2718,8 +2718,11 @@ Create `tests/unit/bus/test_error_isolation_properties.py`:
 ```python
 """Handler error isolation, as a property over arbitrary failure subsets."""
 
-from hypothesis import given
-from hypothesis import settings
+import asyncio
+from collections.abc import Awaitable, Callable
+from uuid import uuid4
+
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from eventsource.bus.memory import InMemoryEventBus
@@ -2731,45 +2734,59 @@ class IsolationEvent(DomainEvent):
     aggregate_type: str = "Isolation"
 
 
-@given(failing=st.lists(st.booleans(), min_size=1, max_size=12))
-@settings(deadline=None)
-async def test_failing_handlers_never_starve_the_others(failing: list[bool]) -> None:
-    """For any subset of handlers that raise, the rest still receive the event
-    and the bus records exactly one error per failing handler."""
+async def _run_case(failing: list[bool]) -> tuple[list[int], dict[str, int]]:
+    """Subscribe one handler per flag, publish once, report what happened."""
     bus = InMemoryEventBus()
     succeeded: list[int] = []
 
+    def make(idx: int, fails: bool) -> Callable[[DomainEvent], Awaitable[None]]:
+        async def handler(event: DomainEvent) -> None:
+            if fails:
+                raise ValueError(f"handler {idx} failed")
+            succeeded.append(idx)
+
+        return handler
+
     for index, should_fail in enumerate(failing):
-
-        def make(idx: int, fails: bool):
-            async def handler(event: DomainEvent) -> None:
-                if fails:
-                    raise ValueError(f"handler {idx} failed")
-                succeeded.append(idx)
-
-            return handler
-
         bus.subscribe(IsolationEvent, make(index, should_fail))
 
     # Must not raise, regardless of how many handlers fail.
     await bus.publish([IsolationEvent(aggregate_id=uuid4())])
 
+    return succeeded, bus.get_stats()
+
+
+# NOTE: this test is deliberately SYNC and drives the async body with
+# asyncio.run. Hypothesis has no native async support -- applying @given to an
+# `async def` makes Hypothesis call it, receive a coroutine it never awaits,
+# and pass without executing a single assertion. Do not "simplify" this by
+# making the test async.
+@given(failing=st.lists(st.booleans(), min_size=1, max_size=12))
+@settings(deadline=None)
+def test_failing_handlers_never_starve_the_others(failing: list[bool]) -> None:
+    """For any subset of handlers that raise, the rest still receive the event
+    and the bus records exactly one error per failing handler."""
+    succeeded, stats = asyncio.run(_run_case(failing))
+
     expected_ok = [i for i, fails in enumerate(failing) if not fails]
     assert sorted(succeeded) == expected_ok
-
-    stats = bus.get_stats()
     assert stats["handler_errors"] == sum(failing)
     assert stats["handlers_invoked"] == len(expected_ok)
 ```
-
-Add `from uuid import uuid4` to the imports.
 
 - [ ] **Step 4: Run the error-isolation properties**
 
 Run: `uv run pytest tests/unit/bus/test_error_isolation_properties.py -v --no-cov`
 Expected: PASS.
 
-Hypothesis and async tests can interact badly with function-scoped fixtures. If you hit `hypothesis.errors.InvalidArgument` about function-scoped fixtures, note that this test creates its bus inline rather than via a fixture specifically to avoid that.
+Confirm the property genuinely executes rather than passing vacuously — a Hypothesis test that never runs its body still reports PASS:
+
+```bash
+uv run pytest tests/unit/bus/test_error_isolation_properties.py \
+  --hypothesis-show-statistics --no-cov 2>&1 | grep -A3 "test_failing_handlers"
+```
+
+Expected: a non-zero count of passing examples. If it reports 0 examples or no statistics block, the body is not running — check that the test is sync and calls `asyncio.run`.
 
 - [ ] **Step 5: Lint and commit**
 
