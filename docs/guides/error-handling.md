@@ -25,11 +25,12 @@ from eventsource.exceptions import (
 )
 ```
 
-Three things are worth knowing before you write your first handler:
+Four things are worth knowing before you write your first handler:
 
 - **Not every exception inherits from `EventSourceError`.** The subscription, snapshot, and read-model subsystems each define their own root that derives directly from `Exception`. A bare `except EventSourceError` will not catch them — see [Catching broadly at the application boundary](#catching-broadly-at-the-application-boundary).
 - **There are two `OptimisticLockError` classes.** `eventsource.exceptions.OptimisticLockError` is the aggregate/event-store version conflict; `eventsource.readmodels.exceptions.OptimisticLockError` is the read-model one. They are unrelated classes and neither catches the other.
 - **Retryability is a property of the exception type, not of the operation.** `OptimisticLockError` is almost always worth retrying; `UnhandledEventError` never is. The sections below group the exceptions by that distinction so you can map each one to an action.
+- **Projections and subscriptions handle failure differently, and the difference decides where your `except` block goes.** A projection owns its own failures: `CheckpointTrackingProjection` retries under its `retry_policy` (by default `ExponentialBackoffRetryPolicy` with `max_retries=2`, so three attempts), writes the event to the DLQ, then re-raises. A subscription escalates instead: `SubscriptionManager` routes every handler failure through a per-subscription `SubscriptionErrorHandler`, which classifies the error and decides — via `ErrorHandlingStrategy` — whether to retry, continue, or route to the DLQ. Configure the projection's policy for projection failures; configure the subscription's handler for everything dispatched by the manager.
 
 If you only want the mapping, jump to the [quick reference table](#quick-reference-table-exception---cause---action) at the end.
 
@@ -171,7 +172,7 @@ Sorting the concrete exceptions into those buckets:
 Two exceptions sit deliberately outside the table:
 
 - **`SnapshotError`** is neither: the snapshot path degrades to a full replay on its own, so the correct reaction is to log and continue, not to fail the request.
-- **`ProjectionError`** is a *wrapper*, so it inherits the bucket of whatever caused it. That is exactly why projections take a `RetryPolicy` rather than a fixed retry count — see [Choosing a `RetryPolicy`](#choosing-a-retrypolicy-exponentialbackoffretrypolicy-noretrypolicy-filteredretrypolicy). Retry the transient causes, send the rest to the DLQ.
+- **`ProjectionError`** is *not* raised by the library on your behalf, and it does not wrap anything. `CheckpointTrackingProjection` re-raises whatever your `_process_event()` raised, unchanged, after its `RetryPolicy` is exhausted and the event has gone to the DLQ. So the bucket you land in is the bucket of your own exception. Construct `ProjectionError(projection_name, event_id, message)` yourself when you want a failure to carry the projection name and event ID. This is also why projections take a `RetryPolicy` rather than a fixed retry count: retry the transient causes, send the rest to the DLQ.
 
 The mechanical form of this decision, in a command handler:
 
