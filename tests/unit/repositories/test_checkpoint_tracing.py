@@ -334,9 +334,11 @@ class TestSQLCheckpointRepositoryTracerIntegration:
         """Tracing is enabled by default when OTEL is available."""
         repo = SQLCheckpointRepository(sqlite_engine)
 
-        # Check that tracing was initialized
-        assert hasattr(repo, "_enable_tracing")
-        assert hasattr(repo, "_tracer")
+        # `enable_tracing`'s actual default (True) must be honored, not just
+        # be present as an attribute -- a NullTracer would also satisfy
+        # hasattr() but is the opposite of "enabled by default".
+        assert repo._enable_tracing is True
+        assert not isinstance(repo._tracer, NullTracer)
 
     def test_tracing_disabled_when_requested(self, sqlite_engine):
         """Tracing can be disabled via constructor parameter."""
@@ -351,6 +353,14 @@ class TestSQLCheckpointRepositoryTracerIntegration:
 
         # tracer.enabled reflects the tracer state
         assert repo._tracer.enabled is False
+
+    def test_conn_backward_compat_attribute_is_the_constructor_arg(self, sqlite_engine):
+        """`repo.conn` is kept for backwards-compatible attribute access and
+        must be the exact object passed to the constructor, not None or a
+        copy."""
+        repo = SQLCheckpointRepository(sqlite_engine)
+
+        assert repo.conn is sqlite_engine
 
 
 @pytest.mark.skipif(not AIOSQLITE_AVAILABLE, reason="aiosqlite not installed")

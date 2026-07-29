@@ -757,6 +757,119 @@ class TestSQLCheckpointRepository:
         assert result.latest_event_id in (str(event_id_2), str(event_id_3))
         assert result.latest_event_id != str(event_id_1)
 
+    async def test_get_lag_metrics_reports_positive_lag_for_stale_checkpoint(self, sqlite_engine):
+        """A checkpoint stuck on an OLDER event than the latest relevant one
+        must report a real, positive `lag_seconds` -- not silently clamp to
+        0. Discriminates the raw-lag arithmetic (`latest_event_time -
+        last_processed_at`), the up-to-date short-circuit (which must NOT
+        fire here, since last_event_id != latest_event_id), and the
+        `round(raw_lag, 1)` call from a version that drops or corrupts any
+        of those steps.
+        """
+        from datetime import UTC, timedelta
+        from datetime import datetime as dt
+
+        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+
+        repo = SQLCheckpointRepository(sqlite_engine)
+        projection_name = "TestProjection"
+        stale_event_id = uuid4()
+        newer_event_id = uuid4()
+
+        # Checkpoint processed the stale event "now".
+        await repo.update_checkpoint(projection_name, stale_event_id, "TestEvent")
+
+        # A distinct, newer relevant event exists 12.3 seconds later --
+        # a value that survives round(x, 1) unchanged, so the test also
+        # discriminates the rounding precision itself.
+        newer_timestamp = (dt.now(UTC) + timedelta(seconds=12.3)).isoformat()
+        async with sqlite_engine.begin() as conn:
+            await conn.execute(
+                text("""
+                    INSERT INTO events (event_id, event_type, aggregate_type, aggregate_id,
+                                       version, timestamp, payload)
+                    VALUES (:event_id, :event_type, :aggregate_type, :aggregate_id,
+                            :version, :timestamp, :payload)
+                    """),
+                {
+                    "event_id": str(newer_event_id),
+                    "event_type": "TestEvent",
+                    "aggregate_type": "TestAggregate",
+                    "aggregate_id": str(uuid4()),
+                    "version": 1,
+                    "timestamp": newer_timestamp,
+                    "payload": "{}",
+                },
+            )
+
+        result = await repo.get_lag_metrics(projection_name, event_types=["TestEvent"])
+        assert result is not None
+        assert result.last_event_id == str(stale_event_id)
+        assert result.latest_event_id == str(newer_event_id)
+        assert result.last_event_id != result.latest_event_id
+        # Must be a real, positive, precisely-rounded value -- not 0.0,
+        # not None, not an int-truncated round(x).
+        assert 12.0 <= result.lag_seconds <= 12.6
+        assert result.lag_seconds == round(result.lag_seconds, 1)
+
+    async def test_get_lag_metrics_sub_second_lag_is_not_clamped_to_zero(self, sqlite_engine):
+        """A small positive raw lag (< 1 second) must be reported as-is, not
+        clamped to 0 by an off-by-one boundary on the up-to-date check."""
+        from datetime import UTC, timedelta
+        from datetime import datetime as dt
+
+        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+
+        repo = SQLCheckpointRepository(sqlite_engine)
+        projection_name = "TestProjection"
+        stale_event_id = uuid4()
+        newer_event_id = uuid4()
+
+        await repo.update_checkpoint(projection_name, stale_event_id, "TestEvent")
+
+        newer_timestamp = (dt.now(UTC) + timedelta(seconds=0.5)).isoformat()
+        async with sqlite_engine.begin() as conn:
+            await conn.execute(
+                text("""
+                    INSERT INTO events (event_id, event_type, aggregate_type, aggregate_id,
+                                       version, timestamp, payload)
+                    VALUES (:event_id, :event_type, :aggregate_type, :aggregate_id,
+                            :version, :timestamp, :payload)
+                    """),
+                {
+                    "event_id": str(newer_event_id),
+                    "event_type": "TestEvent",
+                    "aggregate_type": "TestAggregate",
+                    "aggregate_id": str(uuid4()),
+                    "version": 1,
+                    "timestamp": newer_timestamp,
+                    "payload": "{}",
+                },
+            )
+
+        result = await repo.get_lag_metrics(projection_name, event_types=["TestEvent"])
+        assert result is not None
+        # 0 < lag < 1 -- must not be clamped to 0.0 by a `< 1` (instead of
+        # `< 0`) boundary on the up-to-date short-circuit.
+        assert 0.0 < result.lag_seconds < 1.0
+
+    async def test_get_lag_metrics_zero_when_no_relevant_event(self, sqlite_engine):
+        """A checkpoint exists but no event matches the `event_types`
+        filter, so `latest_event_time` is None and `raw_lag` never gets
+        computed from a timestamp diff -- it must fall back to its default
+        of 0.0, not some other sentinel."""
+        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+
+        repo = SQLCheckpointRepository(sqlite_engine)
+        projection_name = "TestProjection"
+        await repo.update_checkpoint(projection_name, uuid4(), "TestEvent")
+
+        # No event of type "NoSuchType" exists anywhere in the events table.
+        result = await repo.get_lag_metrics(projection_name, event_types=["NoSuchType"])
+        assert result is not None
+        assert result.latest_event_id is None
+        assert result.lag_seconds == 0.0
+
 
 class TestSQLCheckpointRepositoryProtocol:
     """Tests to verify SQLCheckpointRepository implements the protocol."""

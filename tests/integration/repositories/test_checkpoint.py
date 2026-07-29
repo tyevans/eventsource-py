@@ -296,3 +296,104 @@ class TestSQLCheckpointRepositoryLagMetrics:
         assert result is not None
         # When caught up, lag should be 0
         assert result.lag_seconds >= 0
+
+    async def test_get_lag_metrics_no_filter_matches_any_event(
+        self,
+        postgres_checkpoint_repo: SQLCheckpointRepository,
+        postgres_event_store,
+        sample_aggregate_id,
+    ) -> None:
+        """With no event_types filter, PostgreSQL's dialect branch builds
+        ``WHERE event_type = ANY(:event_types)`` with an *empty* array --
+        which matches nothing in PostgreSQL, unlike a simply-omitted WHERE
+        clause (which would match everything). This only executes on the
+        real `Dialect.POSTGRESQL` branch of `get_lag_metrics`; on SQLite (or
+        if dialect detection silently fell through to the no-filter `else`
+        branch) this event would incorrectly count as "latest"."""
+        projection_name = "NoFilterLagProjection"
+
+        event = TestItemCreated(
+            aggregate_id=sample_aggregate_id,
+            aggregate_version=1,
+            name="Test Item",
+            quantity=10,
+        )
+        await postgres_event_store.append_events(
+            aggregate_id=sample_aggregate_id,
+            aggregate_type="TestItem",
+            events=[event],
+            expected_version=0,
+        )
+
+        await postgres_checkpoint_repo.update_checkpoint(
+            projection_name=projection_name,
+            event_id=event.event_id,
+            event_type="TestItemCreated",
+        )
+
+        # No event_types passed -- exercises PostgreSQL's `ANY(:event_types)`
+        # with an empty array, which must match no events, not all of them.
+        result = await postgres_checkpoint_repo.get_lag_metrics(projection_name)
+
+        assert result is not None
+        assert result.latest_event_id is None
+
+    async def test_get_lag_metrics_reports_nonzero_lag_for_stale_checkpoint(
+        self,
+        postgres_checkpoint_repo: SQLCheckpointRepository,
+        postgres_event_store,
+        sample_aggregate_id,
+    ) -> None:
+        """A checkpoint behind a genuinely newer, different relevant event
+        must report a positive lag -- not silently clamp to 0. Exercises the
+        real PostgreSQL ANY() filter with a match, plus the raw-lag/rounding
+        arithmetic end to end against a real server."""
+        import asyncio
+
+        projection_name = "StaleLagProjection"
+
+        stale_event = TestItemCreated(
+            aggregate_id=sample_aggregate_id,
+            aggregate_version=1,
+            name="Stale Item",
+            quantity=1,
+        )
+        await postgres_event_store.append_events(
+            aggregate_id=sample_aggregate_id,
+            aggregate_type="TestItem",
+            events=[stale_event],
+            expected_version=0,
+        )
+        await postgres_checkpoint_repo.update_checkpoint(
+            projection_name=projection_name,
+            event_id=stale_event.event_id,
+            event_type="TestItemCreated",
+        )
+
+        # A real, measurable gap between the checkpoint's last_processed_at
+        # and the newer event's timestamp.
+        await asyncio.sleep(1.1)
+
+        newer_event = TestItemCreated(
+            aggregate_id=sample_aggregate_id,
+            aggregate_version=2,
+            name="Newer Item",
+            quantity=2,
+        )
+        await postgres_event_store.append_events(
+            aggregate_id=sample_aggregate_id,
+            aggregate_type="TestItem",
+            events=[newer_event],
+            expected_version=1,
+        )
+
+        result = await postgres_checkpoint_repo.get_lag_metrics(
+            projection_name,
+            event_types=["TestItemCreated"],
+        )
+
+        assert result is not None
+        assert result.last_event_id != result.latest_event_id
+        assert result.latest_event_id == str(newer_event.event_id)
+        # Real, positive lag -- not clamped to 0 -- with second-level precision.
+        assert result.lag_seconds >= 1.0
