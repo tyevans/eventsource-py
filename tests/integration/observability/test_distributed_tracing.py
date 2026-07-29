@@ -201,9 +201,9 @@ class TestRabbitMQDistributedTracing:
                 publish_trace_id = publish_spans[0].context.trace_id
                 consume_trace_id = consume_spans[0].context.trace_id
 
-                assert publish_trace_id == consume_trace_id, (
-                    "Publish and consume spans should share the same trace ID"
-                )
+                assert (
+                    publish_trace_id == consume_trace_id
+                ), "Publish and consume spans should share the same trace ID"
 
         finally:
             await bus.disconnect()
@@ -402,9 +402,9 @@ class TestKafkaDistributedTracing:
                 publish_trace_id = publish_spans[0].context.trace_id
                 consume_trace_id = consume_spans[0].context.trace_id
 
-                assert publish_trace_id == consume_trace_id, (
-                    "Publish and consume spans should share the same trace ID"
-                )
+                assert (
+                    publish_trace_id == consume_trace_id
+                ), "Publish and consume spans should share the same trace ID"
 
         finally:
             await bus.shutdown()
@@ -540,9 +540,9 @@ class TestCrossProcessTraceContext:
             child_trace_id = child_span.get_span_context().trace_id
 
             # Both spans should share the same trace ID
-            assert parent_trace_id == child_trace_id, (
-                "Child span should inherit trace ID from parent via propagation"
-            )
+            assert (
+                parent_trace_id == child_trace_id
+            ), "Child span should inherit trace ID from parent via propagation"
 
 
 # ============================================================================

@@ -451,9 +451,9 @@ class TestSpanHierarchy:
         # Verify parent-child relationship
         # The store span's parent should reference the repo span's context
         if store_span.parent is not None:
-            assert store_span.parent.span_id == repo_span.context.span_id, (
-                "Event store span should be a child of repository span"
-            )
+            assert (
+                store_span.parent.span_id == repo_span.context.span_id
+            ), "Event store span should be a child of repository span"
 
     @pytest.mark.asyncio
     async def test_repository_load_contains_store_child_span(
@@ -493,9 +493,9 @@ class TestSpanHierarchy:
 
         # Verify parent-child relationship
         if store_span.parent is not None:
-            assert store_span.parent.span_id == repo_span.context.span_id, (
-                "Event store span should be a child of repository span"
-            )
+            assert (
+                store_span.parent.span_id == repo_span.context.span_id
+            ), "Event store span should be a child of repository span"
 
     @pytest.mark.asyncio
     async def test_event_bus_handler_spans_are_children_of_dispatch(
@@ -682,9 +682,9 @@ class TestTraceIdConsistency:
 
         # All spans should share the same trace ID
         trace_ids = {span.context.trace_id for span in spans}
-        assert len(trace_ids) == 1, (
-            f"All spans should share the same trace ID, but found {len(trace_ids)} different IDs"
-        )
+        assert (
+            len(trace_ids) == 1
+        ), f"All spans should share the same trace ID, but found {len(trace_ids)} different IDs"
 
 
 # ============================================================================

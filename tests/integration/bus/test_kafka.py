@@ -1725,9 +1725,9 @@ class TestKafkaMetricsIntegration:
         assert delta >= 10, f"Expected at least 10 new published events, got delta={delta}"
 
         # Verify publish duration histogram has data
-        assert _has_histogram_data(metrics_data, "kafka.eventbus.publish.duration"), (
-            "Publish duration histogram should have data"
-        )
+        assert _has_histogram_data(
+            metrics_data, "kafka.eventbus.publish.duration"
+        ), "Publish duration histogram should have data"
 
     async def test_consume_metrics_recorded(
         self,
@@ -1794,26 +1794,26 @@ class TestKafkaMetricsIntegration:
 
         consumed_count = _get_metric_value(metrics_data, "kafka.eventbus.messages.consumed")
         consumed_delta = consumed_count - baseline_consumed
-        assert consumed_delta >= 5, (
-            f"Expected at least 5 new consumed events, got delta={consumed_delta}"
-        )
+        assert (
+            consumed_delta >= 5
+        ), f"Expected at least 5 new consumed events, got delta={consumed_delta}"
 
         # Verify handler metrics
         handler_invocations = _get_metric_value(metrics_data, "kafka.eventbus.handler.invocations")
         handler_delta = handler_invocations - baseline_handler_invocations
-        assert handler_delta >= 5, (
-            f"Expected at least 5 new handler invocations, got delta={handler_delta}"
-        )
+        assert (
+            handler_delta >= 5
+        ), f"Expected at least 5 new handler invocations, got delta={handler_delta}"
 
         # Verify consume duration histogram
-        assert _has_histogram_data(metrics_data, "kafka.eventbus.consume.duration"), (
-            "Consume duration histogram should have data"
-        )
+        assert _has_histogram_data(
+            metrics_data, "kafka.eventbus.consume.duration"
+        ), "Consume duration histogram should have data"
 
         # Verify handler duration histogram
-        assert _has_histogram_data(metrics_data, "kafka.eventbus.handler.duration"), (
-            "Handler duration histogram should have data"
-        )
+        assert _has_histogram_data(
+            metrics_data, "kafka.eventbus.handler.duration"
+        ), "Handler duration histogram should have data"
 
     async def test_handler_error_metrics(
         self,
@@ -1935,9 +1935,9 @@ class TestKafkaHistogramIntegration:
         metrics_data = metrics_setup.get_metrics_data()
 
         # Verify publish duration histogram has data
-        assert _has_histogram_data(metrics_data, "kafka.eventbus.publish.duration"), (
-            "Publish duration histogram should have data"
-        )
+        assert _has_histogram_data(
+            metrics_data, "kafka.eventbus.publish.duration"
+        ), "Publish duration histogram should have data"
 
         # Verify cumulative sum is positive (actual time was recorded)
         duration_sum = _get_histogram_sum(metrics_data, "kafka.eventbus.publish.duration")
@@ -1999,9 +1999,9 @@ class TestKafkaHistogramIntegration:
         metrics_data = metrics_setup.get_metrics_data()
 
         # Verify handler duration histogram has data
-        assert _has_histogram_data(metrics_data, "kafka.eventbus.handler.duration"), (
-            "Handler duration histogram should have data"
-        )
+        assert _has_histogram_data(
+            metrics_data, "kafka.eventbus.handler.duration"
+        ), "Handler duration histogram should have data"
 
         # Verify cumulative sum is positive (at least some time was recorded)
         duration_sum = _get_histogram_sum(metrics_data, "kafka.eventbus.handler.duration")
@@ -2050,9 +2050,9 @@ class TestKafkaGaugeIntegration:
         assert bus.is_connected
 
         # Verify gauge registration flag is set
-        assert bus._connection_gauge_registered, (
-            "Connection gauge should be registered after connect"
-        )
+        assert (
+            bus._connection_gauge_registered
+        ), "Connection gauge should be registered after connect"
 
         # Force metric collection - gauge should have data
         metrics_data = metrics_setup.get_metrics_data()
@@ -2316,9 +2316,9 @@ class TestKafkaMetricsCardinality:
         # Verify total published count (check delta from baseline)
         published_count = _get_metric_value(metrics_data, "kafka.eventbus.messages.published")
         delta = published_count - baseline_published
-        assert delta >= 40, (
-            f"Expected at least 40 new published (20 orders + 20 items), got delta={delta}"
-        )
+        assert (
+            delta >= 40
+        ), f"Expected at least 40 new published (20 orders + 20 items), got delta={delta}"
 
         # The cardinality should be bounded by unique attribute combinations
         # (event.type, messaging.destination), not by individual event count

@@ -32,9 +32,9 @@ def test_handlers_init_no_lazy_import():
 
     source = inspect.getsource(handlers)
     # Should not have __getattr__ for lazy imports anymore
-    assert "__getattr__" not in source, (
-        "handlers/__init__.py should not have __getattr__ lazy import workaround"
-    )
+    assert (
+        "__getattr__" not in source
+    ), "handlers/__init__.py should not have __getattr__ lazy import workaround"
 
 
 def test_direct_imports_work():

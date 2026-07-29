@@ -137,9 +137,9 @@ async def test_concurrent_tasks_never_observe_others_tenant(tenant_ids: list[UUI
     await asyncio.gather(*(worker(i, t) for i, t in enumerate(tenant_ids)))
 
     for idx, tenant_id in enumerate(tenant_ids):
-        assert all(sample == tenant_id for sample in observed[idx]), (
-            f"task {idx} (tenant {tenant_id}) observed foreign tenant(s): {observed[idx]}"
-        )
+        assert all(
+            sample == tenant_id for sample in observed[idx]
+        ), f"task {idx} (tenant {tenant_id}) observed foreign tenant(s): {observed[idx]}"
 
     assert get_current_tenant() is None
 

@@ -388,9 +388,9 @@ class TestPostgreSQLEventStoreStandardAttributes:
             text=True,
         )
         # Should be 0 - no local definition
-        assert result.stdout.strip() == "0", (
-            f"Found {result.stdout.strip()} definitions of OTEL_AVAILABLE in postgresql.py"
-        )
+        assert (
+            result.stdout.strip() == "0"
+        ), f"Found {result.stdout.strip()} definitions of OTEL_AVAILABLE in postgresql.py"
 
     def test_imports_from_observability_module(self):
         """Verify PostgreSQLEventStore imports tracing from observability module."""

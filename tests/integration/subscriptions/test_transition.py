@@ -228,9 +228,9 @@ class TestNoGapDuringTransition:
         order_numbers = sorted([e.order_number for e in projection.events])
         for i, order_num in enumerate(order_numbers):
             expected = f"ORD-{i:05d}"
-            assert order_num == expected, (
-                f"Gap at position {i}: expected {expected}, got {order_num}"
-            )
+            assert (
+                order_num == expected
+            ), f"Gap at position {i}: expected {expected}, got {order_num}"
 
     async def test_continuous_event_stream_during_transition(
         self,

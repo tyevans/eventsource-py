@@ -612,9 +612,9 @@ class TestRedisEventBusStandardAttributes:
             cwd=Path(__file__).parents[2],
         )
         # Should be 0 - no local definition
-        assert result.stdout.strip() == "0", (
-            f"Found {result.stdout.strip()} definitions of OTEL_AVAILABLE in redis.py"
-        )
+        assert (
+            result.stdout.strip() == "0"
+        ), f"Found {result.stdout.strip()} definitions of OTEL_AVAILABLE in redis.py"
 
     def test_imports_from_observability_module(self):
         """Verify RedisEventBus imports tracing from observability module."""
