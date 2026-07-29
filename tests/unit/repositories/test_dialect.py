@@ -1,9 +1,7 @@
 """Unit tests for the SQL dialect adapter."""
 
 from datetime import UTC, datetime
-from uuid import UUID, uuid4
-
-import pytest
+from uuid import uuid4
 
 from eventsource.repositories._dialect import (
     Dialect,

@@ -47,8 +47,7 @@ def dialect_of(conn: AsyncConnection) -> Dialect:
         return Dialect(name)
     except ValueError:
         raise ValueError(
-            f"Unsupported SQL dialect {name!r}. "
-            f"Supported dialects: {[d.value for d in Dialect]}"
+            f"Unsupported SQL dialect {name!r}. Supported dialects: {[d.value for d in Dialect]}"
         ) from None
 
 
