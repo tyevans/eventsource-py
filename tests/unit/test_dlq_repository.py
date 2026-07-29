@@ -11,12 +11,13 @@ Tests the InMemoryDLQRepository for:
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import text
 
 from eventsource.repositories.dlq import (
     DLQEntry,
     DLQRepository,
     InMemoryDLQRepository,
-    SQLiteDLQRepository,
+    SQLDLQRepository,
 )
 
 
@@ -687,7 +688,7 @@ class TestDLQEntryTypedReturns:
 
 
 # ============================================================================
-# SQLiteDLQRepository Tests
+# SQLDLQRepository Tests
 # ============================================================================
 
 # Check if aiosqlite is available
@@ -701,48 +702,53 @@ except ImportError:
 
 
 @pytest.mark.skipif(not AIOSQLITE_AVAILABLE, reason="aiosqlite not installed")
-class TestSQLiteDLQRepository:
-    """Tests for SQLiteDLQRepository using in-memory SQLite database."""
+class TestSQLDLQRepository:
+    """Tests for SQLDLQRepository using an in-memory-equivalent SQLite engine."""
 
     @pytest.fixture
-    async def db_connection(self) -> "aiosqlite.Connection":
-        """Create an in-memory SQLite database with DLQ schema for each test."""
-        conn = await aiosqlite.connect(":memory:")
+    async def sqlite_engine(self, tmp_path):
+        from eventsource.engine import create_async_engine
+        from eventsource.migrations import get_schema
 
-        # Create the dead_letter_queue table matching the schema
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS dead_letter_queue (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                event_id TEXT NOT NULL,
-                projection_name TEXT NOT NULL,
-                event_type TEXT NOT NULL,
-                event_data TEXT NOT NULL,
-                error_message TEXT NOT NULL,
-                error_stacktrace TEXT,
-                retry_count INTEGER NOT NULL DEFAULT 0,
-                first_failed_at TEXT NOT NULL DEFAULT (datetime('now')),
-                last_failed_at TEXT NOT NULL DEFAULT (datetime('now')),
-                status TEXT NOT NULL DEFAULT 'failed',
-                resolved_at TEXT,
-                resolved_by TEXT,
-                CHECK (status IN ('failed', 'retrying', 'resolved')),
-                UNIQUE (event_id, projection_name)
-            )
-        """)
-
-        await conn.commit()
-
-        yield conn
-
-        await conn.close()
+        engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/dlq.db")
+        async with engine.begin() as conn:
+            raw = await conn.get_raw_connection()
+            await raw.driver_connection.executescript(get_schema("dlq", backend="sqlite"))
+        yield engine
+        await engine.dispose()
 
     @pytest.fixture
-    def repo(self, db_connection: "aiosqlite.Connection") -> SQLiteDLQRepository:
-        """Create a SQLiteDLQRepository for each test."""
-        return SQLiteDLQRepository(db_connection)
+    def repo(self, sqlite_engine) -> SQLDLQRepository:
+        """Create a SQLDLQRepository for each test."""
+        return SQLDLQRepository(sqlite_engine)
 
     @pytest.mark.asyncio
-    async def test_add_failed_event(self, repo: SQLiteDLQRepository):
+    async def test_repository_does_not_commit(self, sqlite_engine):
+        """A repository write must roll back with the caller's transaction.
+
+        This is the regression test for the old SQLiteDLQRepository, which
+        called connection.commit() inside add_failed_event.
+        """
+        conn = await sqlite_engine.connect()
+        try:
+            await conn.begin()
+            repo = SQLDLQRepository(conn)
+            await repo.add_failed_event(
+                event_id=uuid4(),
+                projection_name="TestProjection",
+                event_type="TestEvent",
+                event_data={},
+                error=Exception("Error"),
+            )
+            await conn.rollback()
+        finally:
+            await conn.close()
+
+        repo = SQLDLQRepository(sqlite_engine)
+        assert await repo.get_failed_events() == []
+
+    @pytest.mark.asyncio
+    async def test_add_failed_event(self, repo: SQLDLQRepository):
         """Test adding a failed event to DLQ."""
         event_id = uuid4()
         projection_name = "TestProjection"
@@ -769,7 +775,7 @@ class TestSQLiteDLQRepository:
         assert "Test error" in failed_events[0].error_message
 
     @pytest.mark.asyncio
-    async def test_add_failed_event_upsert(self, repo: SQLiteDLQRepository):
+    async def test_add_failed_event_upsert(self, repo: SQLDLQRepository):
         """Test that adding same event twice updates retry count."""
         event_id = uuid4()
         projection_name = "TestProjection"
@@ -801,7 +807,7 @@ class TestSQLiteDLQRepository:
         assert "Error 2" in failed_events[0].error_message
 
     @pytest.mark.asyncio
-    async def test_add_failed_event_different_projections(self, repo: SQLiteDLQRepository):
+    async def test_add_failed_event_different_projections(self, repo: SQLDLQRepository):
         """Test that same event can fail for different projections."""
         event_id = uuid4()
 
@@ -826,7 +832,7 @@ class TestSQLiteDLQRepository:
         assert len(failed_events) == 2
 
     @pytest.mark.asyncio
-    async def test_get_failed_events_with_projection_filter(self, repo: SQLiteDLQRepository):
+    async def test_get_failed_events_with_projection_filter(self, repo: SQLDLQRepository):
         """Test filtering failed events by projection name."""
         # Add events for different projections
         await repo.add_failed_event(
@@ -859,7 +865,7 @@ class TestSQLiteDLQRepository:
         assert proj2_events[0].projection_name == "Projection2"
 
     @pytest.mark.asyncio
-    async def test_get_failed_events_with_status_filter(self, repo: SQLiteDLQRepository):
+    async def test_get_failed_events_with_status_filter(self, repo: SQLDLQRepository):
         """Test filtering failed events by status."""
         event_id = uuid4()
         await repo.add_failed_event(
@@ -886,7 +892,7 @@ class TestSQLiteDLQRepository:
         assert len(retrying_events) == 1
 
     @pytest.mark.asyncio
-    async def test_get_failed_events_limit(self, repo: SQLiteDLQRepository):
+    async def test_get_failed_events_limit(self, repo: SQLDLQRepository):
         """Test limiting number of returned events."""
         # Add 5 events
         for i in range(5):
@@ -903,7 +909,7 @@ class TestSQLiteDLQRepository:
         assert len(limited) == 3
 
     @pytest.mark.asyncio
-    async def test_get_failed_event_by_id(self, repo: SQLiteDLQRepository):
+    async def test_get_failed_event_by_id(self, repo: SQLDLQRepository):
         """Test getting a specific failed event by ID."""
         event_id = uuid4()
         await repo.add_failed_event(
@@ -927,13 +933,13 @@ class TestSQLiteDLQRepository:
         assert event.retry_count == 2
 
     @pytest.mark.asyncio
-    async def test_get_failed_event_by_id_not_found(self, repo: SQLiteDLQRepository):
+    async def test_get_failed_event_by_id_not_found(self, repo: SQLDLQRepository):
         """Test getting non-existent event by ID returns None."""
         result = await repo.get_failed_event_by_id(999999)
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_mark_resolved(self, repo: SQLiteDLQRepository):
+    async def test_mark_resolved(self, repo: SQLDLQRepository):
         """Test marking a DLQ entry as resolved."""
         event_id = uuid4()
         await repo.add_failed_event(
@@ -955,7 +961,7 @@ class TestSQLiteDLQRepository:
         assert event.resolved_by == "admin@test.com"
 
     @pytest.mark.asyncio
-    async def test_mark_resolved_with_uuid(self, repo: SQLiteDLQRepository):
+    async def test_mark_resolved_with_uuid(self, repo: SQLDLQRepository):
         """Test marking resolved with UUID as resolved_by."""
         event_id = uuid4()
         user_id = uuid4()
@@ -976,7 +982,7 @@ class TestSQLiteDLQRepository:
         assert event.resolved_by == str(user_id)
 
     @pytest.mark.asyncio
-    async def test_mark_retrying(self, repo: SQLiteDLQRepository):
+    async def test_mark_retrying(self, repo: SQLDLQRepository):
         """Test marking a DLQ entry as retrying."""
         event_id = uuid4()
         await repo.add_failed_event(
@@ -997,7 +1003,7 @@ class TestSQLiteDLQRepository:
         assert retrying[0].status == "retrying"
 
     @pytest.mark.asyncio
-    async def test_get_failure_stats(self, repo: SQLiteDLQRepository):
+    async def test_get_failure_stats(self, repo: SQLDLQRepository):
         """Test getting DLQ statistics."""
         # Add some failed events for different projections
         for i in range(3):
@@ -1016,7 +1022,7 @@ class TestSQLiteDLQRepository:
         assert stats.oldest_failure is not None
 
     @pytest.mark.asyncio
-    async def test_get_failure_stats_with_retrying(self, repo: SQLiteDLQRepository):
+    async def test_get_failure_stats_with_retrying(self, repo: SQLDLQRepository):
         """Test failure stats includes retrying count."""
         # Add two events
         for i in range(2):
@@ -1038,7 +1044,7 @@ class TestSQLiteDLQRepository:
         assert stats.affected_projections == 1
 
     @pytest.mark.asyncio
-    async def test_get_failure_stats_empty(self, repo: SQLiteDLQRepository):
+    async def test_get_failure_stats_empty(self, repo: SQLDLQRepository):
         """Test failure stats with no failures."""
         stats = await repo.get_failure_stats()
         assert stats.total_failed == 0
@@ -1047,7 +1053,7 @@ class TestSQLiteDLQRepository:
         assert stats.oldest_failure is None
 
     @pytest.mark.asyncio
-    async def test_get_projection_failure_counts(self, repo: SQLiteDLQRepository):
+    async def test_get_projection_failure_counts(self, repo: SQLDLQRepository):
         """Test getting failure counts grouped by projection."""
         # Add events for different projections
         for i in range(5):
@@ -1070,9 +1076,7 @@ class TestSQLiteDLQRepository:
         assert counts[1].failure_count == 2
 
     @pytest.mark.asyncio
-    async def test_delete_resolved_events(
-        self, repo: "SQLiteDLQRepository", db_connection: "aiosqlite.Connection"
-    ):
+    async def test_delete_resolved_events(self, repo: "SQLDLQRepository", sqlite_engine):
         """Test deleting resolved events older than specified days."""
         event_id = uuid4()
 
@@ -1090,15 +1094,15 @@ class TestSQLiteDLQRepository:
         await repo.mark_resolved(dlq_id, resolved_by="admin")
 
         # Manually update resolved_at to be old (35 days ago)
-        await db_connection.execute(
-            """
-            UPDATE dead_letter_queue
-            SET resolved_at = datetime('now', '-35 days')
-            WHERE id = ?
-            """,
-            (dlq_id,),
-        )
-        await db_connection.commit()
+        async with sqlite_engine.begin() as conn:
+            await conn.execute(
+                text("""
+                    UPDATE dead_letter_queue
+                    SET resolved_at = datetime('now', '-35 days')
+                    WHERE id = :dlq_id
+                    """),
+                {"dlq_id": dlq_id},
+            )
 
         # Delete resolved events older than 30 days
         deleted = await repo.delete_resolved_events(older_than_days=30)
@@ -1110,7 +1114,7 @@ class TestSQLiteDLQRepository:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_delete_resolved_events_keeps_recent(self, repo: SQLiteDLQRepository):
+    async def test_delete_resolved_events_keeps_recent(self, repo: SQLDLQRepository):
         """Test that recent resolved events are not deleted."""
         event_id = uuid4()
 
@@ -1137,7 +1141,7 @@ class TestSQLiteDLQRepository:
         assert result is not None
 
     @pytest.mark.asyncio
-    async def test_event_data_serialization(self, repo: SQLiteDLQRepository):
+    async def test_event_data_serialization(self, repo: SQLDLQRepository):
         """Test that event data is properly serialized."""
         event_id = uuid4()
         tenant_id = uuid4()
@@ -1156,12 +1160,12 @@ class TestSQLiteDLQRepository:
         )
 
         events = await repo.get_failed_events()
-        # event_data should be a JSON string
-        assert isinstance(events[0].event_data, str)
-        assert str(tenant_id) in events[0].event_data
+        # event_data is decoded via json_result on read, so it comes back
+        # as the original dict rather than a JSON string.
+        assert events[0].event_data == event_data
 
     @pytest.mark.asyncio
-    async def test_error_stacktrace_captured(self, repo: SQLiteDLQRepository):
+    async def test_error_stacktrace_captured(self, repo: SQLDLQRepository):
         """Test that stacktrace is captured when adding failed event."""
         event_id = uuid4()
 
@@ -1183,43 +1187,65 @@ class TestSQLiteDLQRepository:
         assert "RuntimeError" in failed_events[0].error_stacktrace
         assert "Intentional error for test" in failed_events[0].error_stacktrace
 
+    @pytest.mark.asyncio
+    async def test_list_failed_events_is_alias_for_get_failed_events(self, repo: SQLDLQRepository):
+        """list_failed_events must return the same entries get_failed_events does."""
+        await repo.add_failed_event(
+            event_id=uuid4(),
+            projection_name="AliasProjection",
+            event_type="TestEvent",
+            event_data={},
+            error=Exception("Error"),
+        )
+
+        listed = await repo.list_failed_events(projection_name="AliasProjection")
+        fetched = await repo.get_failed_events(projection_name="AliasProjection")
+
+        assert len(listed) == 1
+        assert listed[0].event_id == fetched[0].event_id
+
+    @pytest.mark.asyncio
+    async def test_get_failed_event_is_alias_for_get_failed_event_by_id(
+        self, repo: SQLDLQRepository
+    ):
+        """get_failed_event must return the same entry get_failed_event_by_id does."""
+        event_id = uuid4()
+        await repo.add_failed_event(
+            event_id=event_id,
+            projection_name="AliasProjection2",
+            event_type="TestEvent",
+            event_data={},
+            error=Exception("Error"),
+        )
+
+        events = await repo.get_failed_events(projection_name="AliasProjection2")
+        dlq_id = events[0].id
+
+        via_alias = await repo.get_failed_event(dlq_id)
+        via_canonical = await repo.get_failed_event_by_id(dlq_id)
+
+        assert via_alias is not None
+        assert via_alias.event_id == via_canonical.event_id == event_id
+
 
 @pytest.mark.skipif(not AIOSQLITE_AVAILABLE, reason="aiosqlite not installed")
-class TestSQLiteDLQRepositoryProtocol:
-    """Tests to verify SQLiteDLQRepository implements the DLQRepository protocol."""
+class TestSQLDLQRepositoryProtocol:
+    """Tests to verify SQLDLQRepository implements the DLQRepository protocol."""
 
     @pytest.fixture
-    async def db_connection(self) -> "aiosqlite.Connection":
-        """Create an in-memory SQLite database with DLQ schema."""
-        conn = await aiosqlite.connect(":memory:")
+    async def sqlite_engine(self, tmp_path):
+        from eventsource.engine import create_async_engine
+        from eventsource.migrations import get_schema
 
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS dead_letter_queue (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                event_id TEXT NOT NULL,
-                projection_name TEXT NOT NULL,
-                event_type TEXT NOT NULL,
-                event_data TEXT NOT NULL,
-                error_message TEXT NOT NULL,
-                error_stacktrace TEXT,
-                retry_count INTEGER NOT NULL DEFAULT 0,
-                first_failed_at TEXT NOT NULL DEFAULT (datetime('now')),
-                last_failed_at TEXT NOT NULL DEFAULT (datetime('now')),
-                status TEXT NOT NULL DEFAULT 'failed',
-                resolved_at TEXT,
-                resolved_by TEXT,
-                CHECK (status IN ('failed', 'retrying', 'resolved')),
-                UNIQUE (event_id, projection_name)
-            )
-        """)
-        await conn.commit()
+        engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/dlq_protocol.db")
+        async with engine.begin() as conn:
+            raw = await conn.get_raw_connection()
+            await raw.driver_connection.executescript(get_schema("dlq", backend="sqlite"))
+        yield engine
+        await engine.dispose()
 
-        yield conn
-
-        await conn.close()
-
-    def test_implements_protocol(self, db_connection: "aiosqlite.Connection"):
-        """Test that SQLiteDLQRepository implements DLQRepository protocol."""
-        repo = SQLiteDLQRepository(db_connection)
+    def test_implements_protocol(self, sqlite_engine):
+        """Test that SQLDLQRepository implements DLQRepository protocol."""
+        repo = SQLDLQRepository(sqlite_engine)
         # The protocol is runtime checkable
         assert isinstance(repo, DLQRepository)

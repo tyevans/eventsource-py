@@ -708,9 +708,9 @@ async def postgres_dlq_repo(
     clean_postgres_tables: None,
 ) -> AsyncGenerator[Any, None]:
     """Provide PostgreSQL DLQ repository for integration tests."""
-    from eventsource import PostgreSQLDLQRepository
+    from eventsource import SQLDLQRepository
 
-    repo = PostgreSQLDLQRepository(postgres_engine)
+    repo = SQLDLQRepository(postgres_engine)
     yield repo
 
 

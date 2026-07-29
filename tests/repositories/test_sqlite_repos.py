@@ -4,7 +4,7 @@ SQLite Repository Integration Tests.
 Comprehensive integration tests for all SQLite repository implementations:
 - SQLCheckpointRepository
 - SQLiteOutboxRepository
-- SQLiteDLQRepository
+- SQLDLQRepository
 
 These tests verify that all repository methods work correctly with
 the SQLite backend and the repository fixtures from conftest.py.
@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import text
 
 from eventsource.events.base import DomainEvent
 from tests.conftest import AIOSQLITE_AVAILABLE, skip_if_no_aiosqlite
@@ -29,7 +30,7 @@ if AIOSQLITE_AVAILABLE:
     )
     from eventsource.repositories.dlq import (
         DLQRepository,
-        SQLiteDLQRepository,
+        SQLDLQRepository,
     )
     from eventsource.repositories.outbox import (
         OutboxRepository,
@@ -525,22 +526,22 @@ class TestSQLiteOutboxRepositoryMultipleEvents:
 
 
 # ============================================================================
-# SQLiteDLQRepository Tests
+# SQLDLQRepository Tests
 # ============================================================================
 
 
-class TestSQLiteDLQRepositoryProtocol:
-    """Verify SQLiteDLQRepository implements the protocol."""
+class TestSQLDLQRepositoryProtocol:
+    """Verify SQLDLQRepository implements the protocol."""
 
-    def test_implements_protocol(self, sqlite_dlq_repo: SQLiteDLQRepository) -> None:
-        """Test that SQLiteDLQRepository implements DLQRepository."""
+    def test_implements_protocol(self, sqlite_dlq_repo: SQLDLQRepository) -> None:
+        """Test that SQLDLQRepository implements DLQRepository."""
         assert isinstance(sqlite_dlq_repo, DLQRepository)
 
 
-class TestSQLiteDLQRepositoryAddFailedEvent:
+class TestSQLDLQRepositoryAddFailedEvent:
     """Tests for add_failed_event method."""
 
-    async def test_add_failed_event(self, sqlite_dlq_repo: SQLiteDLQRepository) -> None:
+    async def test_add_failed_event(self, sqlite_dlq_repo: SQLDLQRepository) -> None:
         """Test adding a failed event to DLQ."""
         event_id = uuid4()
 
@@ -560,7 +561,7 @@ class TestSQLiteDLQRepositoryAddFailedEvent:
         assert failed[0].retry_count == 1
         assert "Test error" in failed[0].error_message
 
-    async def test_add_failed_event_upsert(self, sqlite_dlq_repo: SQLiteDLQRepository) -> None:
+    async def test_add_failed_event_upsert(self, sqlite_dlq_repo: SQLDLQRepository) -> None:
         """Test that adding same event updates retry count (upsert)."""
         event_id = uuid4()
 
@@ -588,7 +589,7 @@ class TestSQLiteDLQRepositoryAddFailedEvent:
         assert "Error 2" in failed[0].error_message
 
     async def test_add_failed_event_different_projections(
-        self, sqlite_dlq_repo: SQLiteDLQRepository
+        self, sqlite_dlq_repo: SQLDLQRepository
     ) -> None:
         """Test same event can fail for different projections."""
         event_id = uuid4()
@@ -613,16 +614,16 @@ class TestSQLiteDLQRepositoryAddFailedEvent:
         assert len(failed) == 2
 
 
-class TestSQLiteDLQRepositoryGetFailedEvents:
+class TestSQLDLQRepositoryGetFailedEvents:
     """Tests for get_failed_events method."""
 
-    async def test_get_failed_events_empty(self, sqlite_dlq_repo: SQLiteDLQRepository) -> None:
+    async def test_get_failed_events_empty(self, sqlite_dlq_repo: SQLDLQRepository) -> None:
         """Test getting failed events when none exist."""
         failed = await sqlite_dlq_repo.get_failed_events()
         assert failed == []
 
     async def test_get_failed_events_with_projection_filter(
-        self, sqlite_dlq_repo: SQLiteDLQRepository
+        self, sqlite_dlq_repo: SQLDLQRepository
     ) -> None:
         """Test filtering by projection name."""
         await sqlite_dlq_repo.add_failed_event(
@@ -645,7 +646,7 @@ class TestSQLiteDLQRepositoryGetFailedEvents:
         assert filtered[0].projection_name == "Projection1"
 
     async def test_get_failed_events_with_status_filter(
-        self, sqlite_dlq_repo: SQLiteDLQRepository
+        self, sqlite_dlq_repo: SQLDLQRepository
     ) -> None:
         """Test filtering by status."""
         await sqlite_dlq_repo.add_failed_event(
@@ -666,7 +667,7 @@ class TestSQLiteDLQRepositoryGetFailedEvents:
         retrying = await sqlite_dlq_repo.get_failed_events(status="retrying")
         assert len(retrying) == 1
 
-    async def test_get_failed_events_limit(self, sqlite_dlq_repo: SQLiteDLQRepository) -> None:
+    async def test_get_failed_events_limit(self, sqlite_dlq_repo: SQLDLQRepository) -> None:
         """Test limiting number of returned events."""
         for i in range(5):
             await sqlite_dlq_repo.add_failed_event(
@@ -681,10 +682,10 @@ class TestSQLiteDLQRepositoryGetFailedEvents:
         assert len(limited) == 3
 
 
-class TestSQLiteDLQRepositoryGetFailedEventById:
+class TestSQLDLQRepositoryGetFailedEventById:
     """Tests for get_failed_event_by_id method."""
 
-    async def test_get_failed_event_by_id(self, sqlite_dlq_repo: SQLiteDLQRepository) -> None:
+    async def test_get_failed_event_by_id(self, sqlite_dlq_repo: SQLDLQRepository) -> None:
         """Test getting a specific failed event by ID."""
         event_id = uuid4()
         await sqlite_dlq_repo.add_failed_event(
@@ -706,17 +707,17 @@ class TestSQLiteDLQRepositoryGetFailedEventById:
         assert event.retry_count == 2
 
     async def test_get_failed_event_by_id_not_found(
-        self, sqlite_dlq_repo: SQLiteDLQRepository
+        self, sqlite_dlq_repo: SQLDLQRepository
     ) -> None:
         """Test getting non-existent event returns None."""
         result = await sqlite_dlq_repo.get_failed_event_by_id(999999)
         assert result is None
 
 
-class TestSQLiteDLQRepositoryMarkResolved:
+class TestSQLDLQRepositoryMarkResolved:
     """Tests for mark_resolved method."""
 
-    async def test_mark_resolved(self, sqlite_dlq_repo: SQLiteDLQRepository) -> None:
+    async def test_mark_resolved(self, sqlite_dlq_repo: SQLDLQRepository) -> None:
         """Test marking a DLQ entry as resolved."""
         await sqlite_dlq_repo.add_failed_event(
             event_id=uuid4(),
@@ -736,7 +737,7 @@ class TestSQLiteDLQRepositoryMarkResolved:
         assert event.resolved_at is not None
         assert event.resolved_by == "admin@test.com"
 
-    async def test_mark_resolved_with_uuid(self, sqlite_dlq_repo: SQLiteDLQRepository) -> None:
+    async def test_mark_resolved_with_uuid(self, sqlite_dlq_repo: SQLDLQRepository) -> None:
         """Test marking resolved with UUID as resolved_by."""
         user_id = uuid4()
         await sqlite_dlq_repo.add_failed_event(
@@ -756,10 +757,10 @@ class TestSQLiteDLQRepositoryMarkResolved:
         assert event.resolved_by == str(user_id)
 
 
-class TestSQLiteDLQRepositoryMarkRetrying:
+class TestSQLDLQRepositoryMarkRetrying:
     """Tests for mark_retrying method."""
 
-    async def test_mark_retrying(self, sqlite_dlq_repo: SQLiteDLQRepository) -> None:
+    async def test_mark_retrying(self, sqlite_dlq_repo: SQLDLQRepository) -> None:
         """Test marking a DLQ entry as retrying."""
         await sqlite_dlq_repo.add_failed_event(
             event_id=uuid4(),
@@ -779,10 +780,10 @@ class TestSQLiteDLQRepositoryMarkRetrying:
         assert retrying[0].status == "retrying"
 
 
-class TestSQLiteDLQRepositoryGetFailureStats:
+class TestSQLDLQRepositoryGetFailureStats:
     """Tests for get_failure_stats method."""
 
-    async def test_get_failure_stats_empty(self, sqlite_dlq_repo: SQLiteDLQRepository) -> None:
+    async def test_get_failure_stats_empty(self, sqlite_dlq_repo: SQLDLQRepository) -> None:
         """Test failure stats with no failures."""
         stats = await sqlite_dlq_repo.get_failure_stats()
         assert stats.total_failed == 0
@@ -790,7 +791,7 @@ class TestSQLiteDLQRepositoryGetFailureStats:
         assert stats.affected_projections == 0
         assert stats.oldest_failure is None
 
-    async def test_get_failure_stats_with_data(self, sqlite_dlq_repo: SQLiteDLQRepository) -> None:
+    async def test_get_failure_stats_with_data(self, sqlite_dlq_repo: SQLDLQRepository) -> None:
         """Test failure stats with failures."""
         for i in range(3):
             await sqlite_dlq_repo.add_failed_event(
@@ -806,9 +807,7 @@ class TestSQLiteDLQRepositoryGetFailureStats:
         assert stats.affected_projections == 2
         assert stats.oldest_failure is not None
 
-    async def test_get_failure_stats_with_retrying(
-        self, sqlite_dlq_repo: SQLiteDLQRepository
-    ) -> None:
+    async def test_get_failure_stats_with_retrying(self, sqlite_dlq_repo: SQLDLQRepository) -> None:
         """Test failure stats includes retrying count."""
         for i in range(2):
             await sqlite_dlq_repo.add_failed_event(
@@ -827,12 +826,10 @@ class TestSQLiteDLQRepositoryGetFailureStats:
         assert stats.total_retrying == 1
 
 
-class TestSQLiteDLQRepositoryGetProjectionFailureCounts:
+class TestSQLDLQRepositoryGetProjectionFailureCounts:
     """Tests for get_projection_failure_counts method."""
 
-    async def test_get_projection_failure_counts(
-        self, sqlite_dlq_repo: SQLiteDLQRepository
-    ) -> None:
+    async def test_get_projection_failure_counts(self, sqlite_dlq_repo: SQLDLQRepository) -> None:
         """Test getting failure counts by projection."""
         for i in range(5):
             projection = "HighFailure" if i < 3 else "LowFailure"
@@ -854,13 +851,12 @@ class TestSQLiteDLQRepositoryGetProjectionFailureCounts:
         assert counts[1].failure_count == 2
 
 
-class TestSQLiteDLQRepositoryDeleteResolvedEvents:
+class TestSQLDLQRepositoryDeleteResolvedEvents:
     """Tests for delete_resolved_events method."""
 
     async def test_delete_resolved_events(
         self,
-        sqlite_dlq_repo: SQLiteDLQRepository,
-        sqlite_connection: aiosqlite.Connection,
+        sqlite_dlq_repo: SQLDLQRepository,
     ) -> None:
         """Test deleting old resolved events."""
         await sqlite_dlq_repo.add_failed_event(
@@ -875,16 +871,16 @@ class TestSQLiteDLQRepositoryDeleteResolvedEvents:
         dlq_id = events[0].id
         await sqlite_dlq_repo.mark_resolved(dlq_id, resolved_by="admin")
 
-        # Backdate the resolved_at
-        await sqlite_connection.execute(
-            """
-            UPDATE dead_letter_queue
-            SET resolved_at = datetime('now', '-35 days')
-            WHERE id = ?
-            """,
-            (dlq_id,),
-        )
-        await sqlite_connection.commit()
+        # Backdate the resolved_at, using the repo's own engine
+        async with sqlite_dlq_repo.conn.begin() as conn:
+            await conn.execute(
+                text("""
+                    UPDATE dead_letter_queue
+                    SET resolved_at = datetime('now', '-35 days')
+                    WHERE id = :dlq_id
+                    """),
+                {"dlq_id": dlq_id},
+            )
 
         deleted = await sqlite_dlq_repo.delete_resolved_events(older_than_days=30)
         assert deleted == 1
@@ -893,7 +889,7 @@ class TestSQLiteDLQRepositoryDeleteResolvedEvents:
         assert result is None
 
     async def test_delete_resolved_events_keeps_recent(
-        self, sqlite_dlq_repo: SQLiteDLQRepository
+        self, sqlite_dlq_repo: SQLDLQRepository
     ) -> None:
         """Test that recent resolved events are not deleted."""
         await sqlite_dlq_repo.add_failed_event(
@@ -912,10 +908,10 @@ class TestSQLiteDLQRepositoryDeleteResolvedEvents:
         assert deleted == 0
 
 
-class TestSQLiteDLQRepositoryEventDataSerialization:
+class TestSQLDLQRepositoryEventDataSerialization:
     """Tests for event data serialization."""
 
-    async def test_event_data_serialization(self, sqlite_dlq_repo: SQLiteDLQRepository) -> None:
+    async def test_event_data_serialization(self, sqlite_dlq_repo: SQLDLQRepository) -> None:
         """Test that event data is properly serialized."""
         tenant_id = uuid4()
         event_data = {
@@ -933,10 +929,11 @@ class TestSQLiteDLQRepositoryEventDataSerialization:
         )
 
         events = await sqlite_dlq_repo.get_failed_events()
-        assert isinstance(events[0].event_data, str)
-        assert str(tenant_id) in events[0].event_data
+        # event_data is decoded via json_result on read, so it comes back
+        # as the original dict rather than a JSON string.
+        assert events[0].event_data == event_data
 
-    async def test_error_stacktrace_captured(self, sqlite_dlq_repo: SQLiteDLQRepository) -> None:
+    async def test_error_stacktrace_captured(self, sqlite_dlq_repo: SQLDLQRepository) -> None:
         """Test that stacktrace is captured."""
         try:
             raise RuntimeError("Intentional error")

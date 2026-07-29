@@ -17,7 +17,7 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource import PostgreSQLDLQRepository
+from eventsource import SQLDLQRepository
 
 from ..conftest import skip_if_no_postgres_infra
 
@@ -32,12 +32,12 @@ pytestmark = [
 ]
 
 
-class TestPostgreSQLDLQRepositoryBasics:
+class TestSQLDLQRepositoryBasics:
     """Basic DLQ repository operations."""
 
     async def test_add_failed_event(
         self,
-        postgres_dlq_repo: PostgreSQLDLQRepository,
+        postgres_dlq_repo: SQLDLQRepository,
     ) -> None:
         """Test adding a failed event to the DLQ."""
         event_id = uuid4()
@@ -67,7 +67,7 @@ class TestPostgreSQLDLQRepositoryBasics:
 
     async def test_add_failed_event_with_stacktrace(
         self,
-        postgres_dlq_repo: PostgreSQLDLQRepository,
+        postgres_dlq_repo: SQLDLQRepository,
     ) -> None:
         """Test that stacktrace is captured when adding failed event."""
         event_id = uuid4()
@@ -95,7 +95,7 @@ class TestPostgreSQLDLQRepositoryBasics:
 
     async def test_add_failed_event_upsert_on_retry(
         self,
-        postgres_dlq_repo: PostgreSQLDLQRepository,
+        postgres_dlq_repo: SQLDLQRepository,
     ) -> None:
         """Test that adding same event/projection updates retry count."""
         event_id = uuid4()
@@ -129,12 +129,12 @@ class TestPostgreSQLDLQRepositoryBasics:
         assert failed_events[0].error_message == "Second failure"
 
 
-class TestPostgreSQLDLQRepositoryRetrieval:
+class TestSQLDLQRepositoryRetrieval:
     """Tests for DLQ retrieval operations."""
 
     async def test_get_failed_events_by_projection(
         self,
-        postgres_dlq_repo: PostgreSQLDLQRepository,
+        postgres_dlq_repo: SQLDLQRepository,
     ) -> None:
         """Test filtering failed events by projection name."""
         # Add events for different projections
@@ -157,7 +157,7 @@ class TestPostgreSQLDLQRepositoryRetrieval:
 
     async def test_get_failed_events_by_status(
         self,
-        postgres_dlq_repo: PostgreSQLDLQRepository,
+        postgres_dlq_repo: SQLDLQRepository,
     ) -> None:
         """Test filtering failed events by status."""
         event_id = uuid4()
@@ -186,7 +186,7 @@ class TestPostgreSQLDLQRepositoryRetrieval:
 
     async def test_get_failed_events_with_limit(
         self,
-        postgres_dlq_repo: PostgreSQLDLQRepository,
+        postgres_dlq_repo: SQLDLQRepository,
     ) -> None:
         """Test limiting number of returned events."""
         # Add 10 events
@@ -209,7 +209,7 @@ class TestPostgreSQLDLQRepositoryRetrieval:
 
     async def test_get_failed_event_by_id(
         self,
-        postgres_dlq_repo: PostgreSQLDLQRepository,
+        postgres_dlq_repo: SQLDLQRepository,
     ) -> None:
         """Test retrieving a specific failed event by DLQ ID."""
         event_id = uuid4()
@@ -235,19 +235,19 @@ class TestPostgreSQLDLQRepositoryRetrieval:
 
     async def test_get_failed_event_by_id_nonexistent(
         self,
-        postgres_dlq_repo: PostgreSQLDLQRepository,
+        postgres_dlq_repo: SQLDLQRepository,
     ) -> None:
         """Test getting non-existent event returns None."""
         result = await postgres_dlq_repo.get_failed_event_by_id(999999)
         assert result is None
 
 
-class TestPostgreSQLDLQRepositoryStatusTransitions:
+class TestSQLDLQRepositoryStatusTransitions:
     """Tests for DLQ status transition operations."""
 
     async def test_mark_resolved(
         self,
-        postgres_dlq_repo: PostgreSQLDLQRepository,
+        postgres_dlq_repo: SQLDLQRepository,
     ) -> None:
         """Test marking a DLQ entry as resolved."""
         event_id = uuid4()
@@ -277,7 +277,7 @@ class TestPostgreSQLDLQRepositoryStatusTransitions:
 
     async def test_mark_retrying(
         self,
-        postgres_dlq_repo: PostgreSQLDLQRepository,
+        postgres_dlq_repo: SQLDLQRepository,
     ) -> None:
         """Test marking a DLQ entry as retrying."""
         event_id = uuid4()
@@ -303,12 +303,12 @@ class TestPostgreSQLDLQRepositoryStatusTransitions:
         assert result.status == "retrying"
 
 
-class TestPostgreSQLDLQRepositoryStatistics:
+class TestSQLDLQRepositoryStatistics:
     """Tests for DLQ statistics operations."""
 
     async def test_get_failure_stats_empty(
         self,
-        postgres_dlq_repo: PostgreSQLDLQRepository,
+        postgres_dlq_repo: SQLDLQRepository,
     ) -> None:
         """Test getting failure stats when DLQ is empty."""
         stats = await postgres_dlq_repo.get_failure_stats()
@@ -320,7 +320,7 @@ class TestPostgreSQLDLQRepositoryStatistics:
 
     async def test_get_failure_stats_with_entries(
         self,
-        postgres_dlq_repo: PostgreSQLDLQRepository,
+        postgres_dlq_repo: SQLDLQRepository,
     ) -> None:
         """Test getting failure stats with entries."""
         # Add entries for multiple projections
@@ -346,7 +346,7 @@ class TestPostgreSQLDLQRepositoryStatistics:
 
     async def test_get_projection_failure_counts(
         self,
-        postgres_dlq_repo: PostgreSQLDLQRepository,
+        postgres_dlq_repo: SQLDLQRepository,
     ) -> None:
         """Test getting failure counts grouped by projection."""
         # Add entries
@@ -384,12 +384,12 @@ class TestPostgreSQLDLQRepositoryStatistics:
         assert high_idx < low_idx
 
 
-class TestPostgreSQLDLQRepositoryCleanup:
+class TestSQLDLQRepositoryCleanup:
     """Tests for DLQ cleanup operations."""
 
     async def test_delete_resolved_events(
         self,
-        postgres_dlq_repo: PostgreSQLDLQRepository,
+        postgres_dlq_repo: SQLDLQRepository,
         postgres_engine: AsyncEngine,
     ) -> None:
         """Test deleting old resolved events."""
@@ -434,7 +434,7 @@ class TestPostgreSQLDLQRepositoryCleanup:
 
     async def test_delete_resolved_events_keeps_recent(
         self,
-        postgres_dlq_repo: PostgreSQLDLQRepository,
+        postgres_dlq_repo: SQLDLQRepository,
     ) -> None:
         """Test that recent resolved events are not deleted."""
         event_id = uuid4()
@@ -461,3 +461,87 @@ class TestPostgreSQLDLQRepositoryCleanup:
         # Verify it still exists
         result = await postgres_dlq_repo.get_failed_event_by_id(dlq_id)
         assert result is not None
+
+
+class TestSQLDLQRepositoryCrossDialectAgreement:
+    """The unified repository must give identical answers on both dialects.
+
+    Runs the same sequence of calls against a PostgreSQL-backed repository
+    and a SQLite-backed repository and asserts the results agree, rather
+    than testing each dialect in isolation -- this is what would have
+    caught the unconditional-dialect-branch defect found in Task 3's
+    get_lag_metrics (a dialect branch taken unconditionally where the
+    other dialect's path was guarded on a non-empty collection).
+    """
+
+    async def test_get_failure_stats_agrees_across_dialects(
+        self,
+        postgres_dlq_repo: SQLDLQRepository,
+        tmp_path,
+    ) -> None:
+        from eventsource.engine import create_async_engine
+        from eventsource.migrations import get_schema
+
+        sqlite_engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/dlq_cross.db")
+        async with sqlite_engine.begin() as conn:
+            raw = await conn.get_raw_connection()
+            await raw.driver_connection.executescript(get_schema("dlq", backend="sqlite"))
+        sqlite_repo = SQLDLQRepository(sqlite_engine)
+
+        try:
+            for repo in (postgres_dlq_repo, sqlite_repo):
+                for i in range(3):
+                    await repo.add_failed_event(
+                        event_id=uuid4(),
+                        projection_name=f"Projection{i % 2}",
+                        event_type="TestEvent",
+                        event_data={},
+                        error=ValueError(f"Error {i}"),
+                    )
+                events = await repo.get_failed_events(limit=1000)
+                # Mark one entry retrying on each backend, identically.
+                await repo.mark_retrying(events[0].id)
+
+            pg_stats = await postgres_dlq_repo.get_failure_stats()
+            sqlite_stats = await sqlite_repo.get_failure_stats()
+
+            assert pg_stats.total_failed == sqlite_stats.total_failed
+            assert pg_stats.total_retrying == sqlite_stats.total_retrying
+            assert pg_stats.affected_projections == sqlite_stats.affected_projections
+            assert (pg_stats.oldest_failure is None) == (sqlite_stats.oldest_failure is None)
+        finally:
+            await sqlite_engine.dispose()
+
+    async def test_get_failed_events_empty_filters_agree_across_dialects(
+        self,
+        postgres_dlq_repo: SQLDLQRepository,
+        tmp_path,
+    ) -> None:
+        """Calling get_failed_events with no projection filter must behave
+        identically on both dialects -- empty/None filters are exactly
+        where an unconditional dialect branch would silently diverge."""
+        from eventsource.engine import create_async_engine
+        from eventsource.migrations import get_schema
+
+        sqlite_engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/dlq_cross2.db")
+        async with sqlite_engine.begin() as conn:
+            raw = await conn.get_raw_connection()
+            await raw.driver_connection.executescript(get_schema("dlq", backend="sqlite"))
+        sqlite_repo = SQLDLQRepository(sqlite_engine)
+
+        try:
+            for repo in (postgres_dlq_repo, sqlite_repo):
+                await repo.add_failed_event(
+                    event_id=uuid4(),
+                    projection_name="OnlyProjection",
+                    event_type="TestEvent",
+                    event_data={},
+                    error=ValueError("Error"),
+                )
+
+            pg_events = await postgres_dlq_repo.get_failed_events(projection_name=None)
+            sqlite_events = await sqlite_repo.get_failed_events(projection_name=None)
+
+            assert len(pg_events) == len(sqlite_events) == 1
+        finally:
+            await sqlite_engine.dispose()

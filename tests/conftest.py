@@ -710,50 +710,31 @@ async def sqlite_outbox_repo(
 
 
 @pytest_asyncio.fixture
-async def sqlite_dlq_repo(
-    sqlite_connection: aiosqlite.Connection,
-) -> AsyncGenerator[Any, None]:
+async def sqlite_dlq_repo(tmp_path: Any) -> AsyncGenerator[Any, None]:
     """
-    Provide a SQLiteDLQRepository with schema initialized.
+    Provide a SQLDLQRepository backed by a SQLite engine, schema initialized.
 
-    Creates the dead_letter_queue table in the in-memory database
+    Creates the dead_letter_queue table in a temporary on-disk database
     for DLQ testing.
 
-    Args:
-        sqlite_connection: Raw aiosqlite connection fixture
-
     Yields:
-        SQLiteDLQRepository: Repository ready for testing
+        SQLDLQRepository: Repository ready for testing
     """
     if not AIOSQLITE_AVAILABLE:
         pytest.skip("aiosqlite not installed")
 
-    from eventsource.repositories.dlq import SQLiteDLQRepository
+    from eventsource.engine import create_async_engine
+    from eventsource.migrations import get_schema
+    from eventsource.repositories.dlq import SQLDLQRepository
 
-    # Create the dead_letter_queue table
-    await sqlite_connection.execute("""
-        CREATE TABLE IF NOT EXISTS dead_letter_queue (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id TEXT NOT NULL,
-            projection_name TEXT NOT NULL,
-            event_type TEXT NOT NULL,
-            event_data TEXT NOT NULL,
-            error_message TEXT NOT NULL,
-            error_stacktrace TEXT,
-            retry_count INTEGER NOT NULL DEFAULT 0,
-            first_failed_at TEXT NOT NULL DEFAULT (datetime('now')),
-            last_failed_at TEXT NOT NULL DEFAULT (datetime('now')),
-            status TEXT NOT NULL DEFAULT 'failed',
-            resolved_at TEXT,
-            resolved_by TEXT,
-            CHECK (status IN ('failed', 'retrying', 'resolved')),
-            UNIQUE (event_id, projection_name)
-        )
-    """)
-    await sqlite_connection.commit()
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/dlq_repo.db")
+    async with engine.begin() as conn:
+        raw = await conn.get_raw_connection()
+        await raw.driver_connection.executescript(get_schema("dlq", backend="sqlite"))
 
-    repo = SQLiteDLQRepository(sqlite_connection)
+    repo = SQLDLQRepository(engine)
     yield repo
+    await engine.dispose()
 
 
 # =============================================================================
