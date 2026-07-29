@@ -365,40 +365,82 @@ class TestOrjsonParity:
         data = {"empty": "", "spaces": "   ", "tabs_newlines": "\t\n"}
         assert self._stdlib_dumps(data, monkeypatch) == self._orjson_dumps(data, monkeypatch)
 
-    def test_non_finite_float_divergence_is_expected_and_unresolved(self, monkeypatch):
-        """
-        Explicit, NOT-safe divergence -- flagged for follow-up, not silently
-        accepted.
+    # -- Non-finite floats (added in fix round 2) ---------------------------
+    #
+    # Round 1 found a genuine, NOT-safe divergence here and reported it
+    # rather than resolving it: stdlib's json.dumps (allow_nan=True, the
+    # default) emitted the non-standard bare tokens Infinity/-Infinity/NaN,
+    # which most JSON parsers -- and PostgreSQL jsonb -- reject outright;
+    # orjson has no option to preserve those tokens and always silently
+    # substituted JSON `null` instead. Decision (round 2): reject non-finite
+    # floats at serialization time in BOTH branches, with the same
+    # exception type and message, rather than let either branch produce a
+    # value (Infinity/NaN or null) that a two-build deployment could
+    # disagree about. The divergence is gone; these tests assert the
+    # rejection, not the old divergence.
 
-        stdlib's json.dumps (allow_nan=True, the default) serializes
-        float('inf')/float('-inf')/float('nan') to the non-standard bare
-        tokens `Infinity`/`-Infinity`/`NaN`. This is pre-existing behavior,
-        unchanged by this task. orjson has no option to preserve those
-        tokens -- it always silently converts non-finite floats to JSON
-        `null`, with no way to opt out (confirmed: no OPT_* flag covers
-        this, and it doesn't route through `default=`, so `_orjson_default`
-        can't intercept it either since floats are handled natively).
+    @pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan")])
+    def test_non_finite_float_raises_from_stdlib_fallback(self, value, monkeypatch):
+        import eventsource.serialization.json as json_module
 
-        Unlike the UUID-dict-key divergence above, this one is NOT
-        judged safe: `Infinity`/`NaN` and `null` are different values, not
-        just different bytes for the same value. A non-finite float
-        persisted via the stdlib path and read back via the orjson path (or
-        vice versa across two builds) changes meaning, not just formatting.
-        This is reported to the team as an open concern rather than
-        resolved here, since orjson provides no mechanism to close it
-        symmetrically.
-        """
-        stdlib_inf = self._stdlib_dumps({"v": float("inf")}, monkeypatch)
-        stdlib_nan = self._stdlib_dumps({"v": float("nan")}, monkeypatch)
-        orjson_inf = self._orjson_dumps({"v": float("inf")}, monkeypatch)
-        orjson_nan = self._orjson_dumps({"v": float("nan")}, monkeypatch)
+        monkeypatch.setattr(json_module, "ORJSON_AVAILABLE", False)
+        with pytest.raises(ValueError, match="not JSON compliant"):
+            json_module.json_dumps({"v": value})
 
-        assert stdlib_inf == '{"v":Infinity}'
-        assert stdlib_nan == '{"v":NaN}'
-        assert orjson_inf == '{"v":null}'
-        assert orjson_nan == '{"v":null}'
-        assert stdlib_inf != orjson_inf
-        assert stdlib_nan != orjson_nan
+    @pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan")])
+    def test_non_finite_float_raises_from_orjson_path(self, value, monkeypatch):
+        import eventsource.serialization.json as json_module
+
+        monkeypatch.setattr(json_module, "ORJSON_AVAILABLE", True)
+        with pytest.raises(ValueError, match="not JSON compliant"):
+            json_module.json_dumps({"v": value})
+
+    @pytest.mark.parametrize("orjson_available", [True, False])
+    def test_non_finite_float_nested_in_list_raises(self, orjson_available, monkeypatch):
+        import eventsource.serialization.json as json_module
+
+        monkeypatch.setattr(json_module, "ORJSON_AVAILABLE", orjson_available)
+        data = {"items": [1.0, 2.0, {"nested": [float("nan")]}]}
+        with pytest.raises(ValueError, match="not JSON compliant"):
+            json_module.json_dumps(data)
+
+    @pytest.mark.parametrize("orjson_available", [True, False])
+    def test_non_finite_float_nested_in_dict_raises(self, orjson_available, monkeypatch):
+        import eventsource.serialization.json as json_module
+
+        monkeypatch.setattr(json_module, "ORJSON_AVAILABLE", orjson_available)
+        data = {"outer": {"inner": {"deep": float("inf")}}}
+        with pytest.raises(ValueError, match="not JSON compliant"):
+            json_module.json_dumps(data)
+
+    def test_both_branches_raise_the_same_exception_type_and_message(self, monkeypatch):
+        import eventsource.serialization.json as json_module
+
+        data = {"v": float("inf")}
+
+        monkeypatch.setattr(json_module, "ORJSON_AVAILABLE", False)
+        with pytest.raises(ValueError) as stdlib_exc:
+            json_module.json_dumps(data)
+
+        monkeypatch.setattr(json_module, "ORJSON_AVAILABLE", True)
+        with pytest.raises(ValueError) as orjson_exc:
+            json_module.json_dumps(data)
+
+        assert type(stdlib_exc.value) is type(orjson_exc.value) is ValueError
+        assert str(stdlib_exc.value) == str(orjson_exc.value)
+
+    def test_finite_floats_still_parity_after_non_finite_rejection(self, monkeypatch):
+        # Guards against a rejection implementation that's overly broad
+        # (e.g. rejecting all floats, or misclassifying -0.0 as special).
+        data = {
+            "zero": 0.0,
+            "neg_zero": -0.0,
+            "tiny": 5e-300,
+            "huge": 1.7e300,
+            "precise": 1.123456789012345,
+            "negative": -42.5,
+        }
+        assert self._stdlib_dumps(data, monkeypatch) == self._orjson_dumps(data, monkeypatch)
 
 
 class TestOrjsonFallback:
