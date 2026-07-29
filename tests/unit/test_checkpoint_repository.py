@@ -12,6 +12,7 @@ from datetime import datetime
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import text
 
 from eventsource.repositories.checkpoint import (
     CheckpointData,
@@ -340,109 +341,82 @@ class TestInMemoryCheckpointRepositoryConcurrency:
 
 
 # ============================================================================
-# SQLiteCheckpointRepository Tests
+# SQLCheckpointRepository Tests
 # ============================================================================
 
-# Check if aiosqlite is available
-try:
-    import aiosqlite
 
-    from eventsource.repositories.checkpoint import SQLiteCheckpointRepository
-
-    AIOSQLITE_AVAILABLE = True
-except ImportError:
-    aiosqlite = None  # type: ignore[assignment]
-    SQLiteCheckpointRepository = None  # type: ignore[assignment,misc]
-    AIOSQLITE_AVAILABLE = False
-
-
-@pytest.mark.skipif(not AIOSQLITE_AVAILABLE, reason="aiosqlite not installed")
-class TestSQLiteCheckpointRepository:
-    """Tests for SQLiteCheckpointRepository using in-memory SQLite database."""
+class TestSQLCheckpointRepository:
+    """The unified repository must behave identically on both dialects."""
 
     @pytest.fixture
-    async def db_connection(self) -> "aiosqlite.Connection":
-        """Create an in-memory SQLite database with schema for each test."""
-        conn = await aiosqlite.connect(":memory:")
+    async def sqlite_engine(self, tmp_path):
+        from eventsource.engine import create_async_engine
+        from eventsource.migrations import get_schema
 
-        # Create the projection_checkpoints table
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS projection_checkpoints (
-                projection_name TEXT PRIMARY KEY,
-                last_event_id TEXT,
-                last_event_type TEXT,
-                last_processed_at TEXT,
-                global_position INTEGER,
-                events_processed INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-        """)
+        engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/cp.db")
+        async with engine.begin() as conn:
+            # `get_schema` includes a `CREATE TRIGGER ... BEGIN ... END;` block
+            # whose body contains its own semicolons, so a naive `.split(";")`
+            # truncates it mid-statement. executescript() on the underlying
+            # aiosqlite driver connection parses the whole script correctly.
+            raw = await conn.get_raw_connection()
+            await raw.driver_connection.executescript(get_schema("checkpoints", backend="sqlite"))
+            await raw.driver_connection.executescript(get_schema("events", backend="sqlite"))
+        yield engine
+        await engine.dispose()
 
-        # Create the events table for lag metrics tests
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                event_id TEXT NOT NULL UNIQUE,
-                event_type TEXT NOT NULL,
-                aggregate_type TEXT NOT NULL,
-                aggregate_id TEXT NOT NULL,
-                tenant_id TEXT,
-                actor_id TEXT,
-                version INTEGER NOT NULL,
-                timestamp TEXT NOT NULL,
-                payload TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-        """)
+    async def test_update_and_get_checkpoint(self, sqlite_engine):
+        from eventsource.repositories.checkpoint import SQLCheckpointRepository
 
-        await conn.commit()
-
-        yield conn
-
-        await conn.close()
-
-    @pytest.fixture
-    def repo(self, db_connection: "aiosqlite.Connection") -> SQLiteCheckpointRepository:
-        """Create a SQLiteCheckpointRepository for each test."""
-        return SQLiteCheckpointRepository(db_connection)
-
-    @pytest.mark.asyncio
-    async def test_get_checkpoint_returns_none_when_empty(self, repo: SQLiteCheckpointRepository):
-        """Test that get_checkpoint returns None for non-existent projection."""
-        result = await repo.get_checkpoint("NonExistentProjection")
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_update_and_get_checkpoint(self, repo: SQLiteCheckpointRepository):
-        """Test updating and retrieving a checkpoint."""
-        projection_name = "TestProjection"
+        repo = SQLCheckpointRepository(sqlite_engine)
         event_id = uuid4()
-        event_type = "TestEvent"
+        await repo.update_checkpoint("Proj", event_id, "Created")
+        assert await repo.get_checkpoint("Proj") == event_id
 
-        await repo.update_checkpoint(projection_name, event_id, event_type)
+    async def test_repository_does_not_commit(self, sqlite_engine):
+        """A repository write must roll back with the caller's transaction.
 
-        result = await repo.get_checkpoint(projection_name)
-        assert result == event_id
+        This is the regression test for the old SQLiteCheckpointRepository,
+        which called connection.commit() inside update_checkpoint.
+        """
+        from eventsource.repositories.checkpoint import SQLCheckpointRepository
 
-    @pytest.mark.asyncio
-    async def test_update_checkpoint_increments_count(self, repo: SQLiteCheckpointRepository):
-        """Test that updating checkpoint increments the events_processed count."""
+        conn = await sqlite_engine.connect()
+        try:
+            await conn.begin()
+            repo = SQLCheckpointRepository(conn)
+            await repo.update_checkpoint("Proj", uuid4(), "Created")
+            await conn.rollback()
+        finally:
+            await conn.close()
+
+        repo = SQLCheckpointRepository(sqlite_engine)
+        assert await repo.get_checkpoint("Proj") is None
+
+    async def test_save_and_get_position(self, sqlite_engine):
+        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+
+        repo = SQLCheckpointRepository(sqlite_engine)
+        await repo.save_position("sub-1", 42, uuid4(), "Created")
+        assert await repo.get_position("sub-1") == 42
+
+    async def test_update_checkpoint_increments_count(self, sqlite_engine):
+        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+
+        repo = SQLCheckpointRepository(sqlite_engine)
         projection_name = "TestProjection"
 
-        # Update three times
         for i in range(3):
-            event_id = uuid4()
-            await repo.update_checkpoint(projection_name, event_id, f"Event{i}")
+            await repo.update_checkpoint(projection_name, uuid4(), f"Event{i}")
 
-        # Check count
         checkpoints = await repo.get_all_checkpoints()
         assert len(checkpoints) == 1
         assert checkpoints[0].events_processed == 3
 
-    @pytest.mark.asyncio
-    async def test_update_checkpoint_overwrites_previous(self, repo: SQLiteCheckpointRepository):
-        """Test that updating checkpoint replaces the previous event_id."""
+    async def test_update_checkpoint_overwrites_previous(self, sqlite_engine):
+        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+
+        repo = SQLCheckpointRepository(sqlite_engine)
         projection_name = "TestProjection"
         first_event_id = uuid4()
         second_event_id = uuid4()
@@ -450,16 +424,14 @@ class TestSQLiteCheckpointRepository:
         await repo.update_checkpoint(projection_name, first_event_id, "Event1")
         await repo.update_checkpoint(projection_name, second_event_id, "Event2")
 
-        result = await repo.get_checkpoint(projection_name)
-        assert result == second_event_id
+        assert await repo.get_checkpoint(projection_name) == second_event_id
 
-    @pytest.mark.asyncio
-    async def test_multiple_projections_independent(self, repo: SQLiteCheckpointRepository):
-        """Test that different projections have independent checkpoints."""
-        proj1 = "Projection1"
-        proj2 = "Projection2"
-        event_id_1 = uuid4()
-        event_id_2 = uuid4()
+    async def test_multiple_projections_independent(self, sqlite_engine):
+        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+
+        repo = SQLCheckpointRepository(sqlite_engine)
+        proj1, proj2 = "Projection1", "Projection2"
+        event_id_1, event_id_2 = uuid4(), uuid4()
 
         await repo.update_checkpoint(proj1, event_id_1, "Event1")
         await repo.update_checkpoint(proj2, event_id_2, "Event2")
@@ -467,19 +439,17 @@ class TestSQLiteCheckpointRepository:
         assert await repo.get_checkpoint(proj1) == event_id_1
         assert await repo.get_checkpoint(proj2) == event_id_2
 
-    @pytest.mark.asyncio
-    async def test_get_lag_metrics_returns_none_when_no_checkpoint(
-        self, repo: SQLiteCheckpointRepository
-    ):
-        """Test that lag metrics returns None for non-existent projection."""
+    async def test_get_lag_metrics_returns_none_when_no_checkpoint(self, sqlite_engine):
+        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+
+        repo = SQLCheckpointRepository(sqlite_engine)
         result = await repo.get_lag_metrics("NonExistent")
         assert result is None
 
-    @pytest.mark.asyncio
-    async def test_get_lag_metrics_returns_data_for_existing_checkpoint(
-        self, repo: SQLiteCheckpointRepository
-    ):
-        """Test that lag metrics returns data for existing checkpoint."""
+    async def test_get_lag_metrics_returns_data_for_existing_checkpoint(self, sqlite_engine):
+        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+
+        repo = SQLCheckpointRepository(sqlite_engine)
         projection_name = "TestProjection"
         event_id = uuid4()
 
@@ -492,9 +462,10 @@ class TestSQLiteCheckpointRepository:
         assert result.last_event_id == str(event_id)
         assert result.events_processed == 1
 
-    @pytest.mark.asyncio
-    async def test_reset_checkpoint_removes_checkpoint(self, repo: SQLiteCheckpointRepository):
-        """Test that reset_checkpoint removes the checkpoint."""
+    async def test_reset_checkpoint_removes_checkpoint(self, sqlite_engine):
+        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+
+        repo = SQLCheckpointRepository(sqlite_engine)
         projection_name = "TestProjection"
         event_id = uuid4()
 
@@ -504,13 +475,12 @@ class TestSQLiteCheckpointRepository:
         await repo.reset_checkpoint(projection_name)
         assert await repo.get_checkpoint(projection_name) is None
 
-    @pytest.mark.asyncio
-    async def test_reset_checkpoint_does_not_affect_others(self, repo: SQLiteCheckpointRepository):
-        """Test that reset only affects the specified projection."""
-        proj1 = "Projection1"
-        proj2 = "Projection2"
-        event_id_1 = uuid4()
-        event_id_2 = uuid4()
+    async def test_reset_checkpoint_does_not_affect_others(self, sqlite_engine):
+        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+
+        repo = SQLCheckpointRepository(sqlite_engine)
+        proj1, proj2 = "Projection1", "Projection2"
+        event_id_1, event_id_2 = uuid4(), uuid4()
 
         await repo.update_checkpoint(proj1, event_id_1, "Event1")
         await repo.update_checkpoint(proj2, event_id_2, "Event2")
@@ -520,32 +490,35 @@ class TestSQLiteCheckpointRepository:
         assert await repo.get_checkpoint(proj1) is None
         assert await repo.get_checkpoint(proj2) == event_id_2
 
-    @pytest.mark.asyncio
-    async def test_reset_nonexistent_checkpoint_no_error(self, repo: SQLiteCheckpointRepository):
-        """Test that resetting non-existent checkpoint doesn't raise error."""
+    async def test_reset_nonexistent_checkpoint_no_error(self, sqlite_engine):
+        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+
+        repo = SQLCheckpointRepository(sqlite_engine)
         await repo.reset_checkpoint("NonExistent")  # Should not raise
 
-    @pytest.mark.asyncio
-    async def test_get_all_checkpoints_empty(self, repo: SQLiteCheckpointRepository):
-        """Test get_all_checkpoints returns empty list when no checkpoints."""
+    async def test_get_all_checkpoints_empty(self, sqlite_engine):
+        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+
+        repo = SQLCheckpointRepository(sqlite_engine)
         result = await repo.get_all_checkpoints()
         assert result == []
 
-    @pytest.mark.asyncio
-    async def test_get_all_checkpoints_returns_all(self, repo: SQLiteCheckpointRepository):
-        """Test get_all_checkpoints returns all checkpoints sorted by name."""
+    async def test_get_all_checkpoints_returns_all(self, sqlite_engine):
+        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+
+        repo = SQLCheckpointRepository(sqlite_engine)
         projections = ["Zebra", "Apple", "Middle"]
         for proj in projections:
             await repo.update_checkpoint(proj, uuid4(), "TestEvent")
 
         result = await repo.get_all_checkpoints()
         assert len(result) == 3
-        # Should be sorted alphabetically
         assert [c.projection_name for c in result] == ["Apple", "Middle", "Zebra"]
 
-    @pytest.mark.asyncio
-    async def test_checkpoint_data_structure(self, repo: SQLiteCheckpointRepository):
-        """Test that checkpoint data has correct structure."""
+    async def test_checkpoint_data_structure(self, sqlite_engine):
+        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+
+        repo = SQLCheckpointRepository(sqlite_engine)
         projection_name = "TestProjection"
         event_id = uuid4()
         event_type = "TestEventType"
@@ -563,9 +536,10 @@ class TestSQLiteCheckpointRepository:
         assert checkpoint.events_processed == 1
         assert checkpoint.last_processed_at is not None
 
-    @pytest.mark.asyncio
-    async def test_lag_metrics_has_timestamp_info(self, repo: SQLiteCheckpointRepository):
-        """Test that lag metrics includes timestamp information."""
+    async def test_lag_metrics_has_timestamp_info(self, sqlite_engine):
+        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+
+        repo = SQLCheckpointRepository(sqlite_engine)
         projection_name = "TestProjection"
         event_id = uuid4()
 
@@ -577,108 +551,94 @@ class TestSQLiteCheckpointRepository:
         # Should be a valid ISO timestamp string
         datetime.fromisoformat(result.last_processed_at)
 
-    @pytest.mark.asyncio
-    async def test_lag_metrics_with_events(
-        self, repo: "SQLiteCheckpointRepository", db_connection: "aiosqlite.Connection"
-    ):
-        """Test that lag metrics can calculate lag against events table."""
+    async def test_lag_metrics_with_events(self, sqlite_engine):
         from datetime import UTC
         from datetime import datetime as dt
 
+        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+
+        repo = SQLCheckpointRepository(sqlite_engine)
         projection_name = "TestProjection"
         event_id = uuid4()
 
-        # Add an event to the events table
         now = dt.now(UTC).isoformat()
-        await db_connection.execute(
-            """
-            INSERT INTO events (event_id, event_type, aggregate_type, aggregate_id,
-                               version, timestamp, payload)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (str(event_id), "TestEvent", "TestAggregate", str(uuid4()), 1, now, "{}"),
-        )
-        await db_connection.commit()
+        async with sqlite_engine.begin() as conn:
+            await conn.execute(
+                text("""
+                    INSERT INTO events (event_id, event_type, aggregate_type, aggregate_id,
+                                       version, timestamp, payload)
+                    VALUES (:event_id, :event_type, :aggregate_type, :aggregate_id,
+                            :version, :timestamp, :payload)
+                    """),
+                {
+                    "event_id": str(event_id),
+                    "event_type": "TestEvent",
+                    "aggregate_type": "TestAggregate",
+                    "aggregate_id": str(uuid4()),
+                    "version": 1,
+                    "timestamp": now,
+                    "payload": "{}",
+                },
+            )
 
-        # Update checkpoint
         await repo.update_checkpoint(projection_name, event_id, "TestEvent")
 
-        # Get lag metrics
         result = await repo.get_lag_metrics(projection_name, event_types=["TestEvent"])
         assert result is not None
         assert result.projection_name == projection_name
         assert result.latest_event_id == str(event_id)
 
-    @pytest.mark.asyncio
-    async def test_lag_metrics_with_event_type_filter(
-        self, repo: "SQLiteCheckpointRepository", db_connection: "aiosqlite.Connection"
-    ):
-        """Test that lag metrics correctly filters by event types."""
+    async def test_lag_metrics_with_event_type_filter(self, sqlite_engine):
         from datetime import UTC
         from datetime import datetime as dt
 
+        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+
+        repo = SQLCheckpointRepository(sqlite_engine)
         projection_name = "TestProjection"
-        event_id_1 = uuid4()
-        event_id_2 = uuid4()
+        event_id_1, event_id_2 = uuid4(), uuid4()
 
-        # Add events of different types
         now = dt.now(UTC).isoformat()
-        await db_connection.execute(
-            """
-            INSERT INTO events (event_id, event_type, aggregate_type, aggregate_id,
-                               version, timestamp, payload)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (str(event_id_1), "TypeA", "TestAggregate", str(uuid4()), 1, now, "{}"),
-        )
-        await db_connection.execute(
-            """
-            INSERT INTO events (event_id, event_type, aggregate_type, aggregate_id,
-                               version, timestamp, payload)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (str(event_id_2), "TypeB", "TestAggregate", str(uuid4()), 1, now, "{}"),
-        )
-        await db_connection.commit()
+        async with sqlite_engine.begin() as conn:
+            for event_id, event_type in ((event_id_1, "TypeA"), (event_id_2, "TypeB")):
+                await conn.execute(
+                    text("""
+                        INSERT INTO events (event_id, event_type, aggregate_type, aggregate_id,
+                                           version, timestamp, payload)
+                        VALUES (:event_id, :event_type, :aggregate_type, :aggregate_id,
+                                :version, :timestamp, :payload)
+                        """),
+                    {
+                        "event_id": str(event_id),
+                        "event_type": event_type,
+                        "aggregate_type": "TestAggregate",
+                        "aggregate_id": str(uuid4()),
+                        "version": 1,
+                        "timestamp": now,
+                        "payload": "{}",
+                    },
+                )
 
-        # Update checkpoint
         await repo.update_checkpoint(projection_name, event_id_1, "TypeA")
 
-        # Get lag metrics filtered to TypeA only
         result = await repo.get_lag_metrics(projection_name, event_types=["TypeA"])
         assert result is not None
         assert result.latest_event_id == str(event_id_1)
 
 
-@pytest.mark.skipif(not AIOSQLITE_AVAILABLE, reason="aiosqlite not installed")
-class TestSQLiteCheckpointRepositoryProtocol:
-    """Tests to verify SQLiteCheckpointRepository implements the protocol."""
+class TestSQLCheckpointRepositoryProtocol:
+    """Tests to verify SQLCheckpointRepository implements the protocol."""
 
-    @pytest.fixture
-    async def db_connection(self) -> "aiosqlite.Connection":
-        """Create an in-memory SQLite database with schema."""
-        conn = await aiosqlite.connect(":memory:")
+    async def test_implements_protocol(self, tmp_path):
+        from eventsource.engine import create_async_engine
+        from eventsource.migrations import get_schema
+        from eventsource.repositories.checkpoint import SQLCheckpointRepository
 
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS projection_checkpoints (
-                projection_name TEXT PRIMARY KEY,
-                last_event_id TEXT,
-                last_event_type TEXT,
-                last_processed_at TEXT,
-                global_position INTEGER,
-                events_processed INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-        """)
-        await conn.commit()
+        engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/cp2.db")
+        async with engine.begin() as conn:
+            raw = await conn.get_raw_connection()
+            await raw.driver_connection.executescript(get_schema("checkpoints", backend="sqlite"))
 
-        yield conn
-
-        await conn.close()
-
-    def test_implements_protocol(self, db_connection: "aiosqlite.Connection"):
-        """Test that SQLiteCheckpointRepository implements CheckpointRepository protocol."""
-        repo = SQLiteCheckpointRepository(db_connection)
-        # The protocol is runtime checkable
+        repo = SQLCheckpointRepository(engine)
         assert isinstance(repo, CheckpointRepository)
+        await engine.dispose()

@@ -636,59 +636,32 @@ async def sqlite_event_store() -> AsyncGenerator[Any, None]:
 
 
 @pytest_asyncio.fixture
-async def sqlite_checkpoint_repo(
-    sqlite_connection: aiosqlite.Connection,
-) -> AsyncGenerator[Any, None]:
+async def sqlite_checkpoint_repo(tmp_path: Any) -> AsyncGenerator[Any, None]:
     """
-    Provide a SQLiteCheckpointRepository with schema initialized.
+    Provide a SQLCheckpointRepository backed by a SQLite engine, schema initialized.
 
-    Creates the projection_checkpoints and events tables in the
-    in-memory database for checkpoint testing.
-
-    Args:
-        sqlite_connection: Raw aiosqlite connection fixture
+    Creates the projection_checkpoints and events tables in a temporary
+    on-disk database for checkpoint testing.
 
     Yields:
-        SQLiteCheckpointRepository: Repository ready for testing
+        SQLCheckpointRepository: Repository ready for testing
     """
     if not AIOSQLITE_AVAILABLE:
         pytest.skip("aiosqlite not installed")
 
-    from eventsource.repositories.checkpoint import SQLiteCheckpointRepository
+    from eventsource.engine import create_async_engine
+    from eventsource.migrations import get_schema
+    from eventsource.repositories.checkpoint import SQLCheckpointRepository
 
-    # Create the required tables
-    await sqlite_connection.execute("""
-        CREATE TABLE IF NOT EXISTS projection_checkpoints (
-            projection_name TEXT PRIMARY KEY,
-            last_event_id TEXT,
-            last_event_type TEXT,
-            last_processed_at TEXT,
-            events_processed INTEGER NOT NULL DEFAULT 0,
-            global_position INTEGER,
-            created_at TEXT NOT NULL DEFAULT (datetime('now')),
-            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-        )
-    """)
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/checkpoint_repo.db")
+    async with engine.begin() as conn:
+        raw = await conn.get_raw_connection()
+        await raw.driver_connection.executescript(get_schema("checkpoints", backend="sqlite"))
+        await raw.driver_connection.executescript(get_schema("events", backend="sqlite"))
 
-    await sqlite_connection.execute("""
-        CREATE TABLE IF NOT EXISTS events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id TEXT NOT NULL UNIQUE,
-            event_type TEXT NOT NULL,
-            aggregate_type TEXT NOT NULL,
-            aggregate_id TEXT NOT NULL,
-            tenant_id TEXT,
-            actor_id TEXT,
-            version INTEGER NOT NULL,
-            timestamp TEXT NOT NULL,
-            payload TEXT NOT NULL,
-            created_at TEXT NOT NULL DEFAULT (datetime('now'))
-        )
-    """)
-    await sqlite_connection.commit()
-
-    repo = SQLiteCheckpointRepository(sqlite_connection)
+    repo = SQLCheckpointRepository(engine)
     yield repo
+    await engine.dispose()
 
 
 @pytest_asyncio.fixture

@@ -2,7 +2,7 @@
 SQLite Repository Integration Tests.
 
 Comprehensive integration tests for all SQLite repository implementations:
-- SQLiteCheckpointRepository
+- SQLCheckpointRepository
 - SQLiteOutboxRepository
 - SQLiteDLQRepository
 
@@ -25,7 +25,7 @@ if AIOSQLITE_AVAILABLE:
 
     from eventsource.repositories.checkpoint import (
         CheckpointRepository,
-        SQLiteCheckpointRepository,
+        SQLCheckpointRepository,
     )
     from eventsource.repositories.dlq import (
         DLQRepository,
@@ -61,30 +61,30 @@ class TestSampleEvent(DomainEvent):
 
 
 # ============================================================================
-# SQLiteCheckpointRepository Tests
+# SQLCheckpointRepository Tests
 # ============================================================================
 
 
-class TestSQLiteCheckpointRepositoryProtocol:
-    """Verify SQLiteCheckpointRepository implements the protocol."""
+class TestSQLCheckpointRepositoryProtocol:
+    """Verify SQLCheckpointRepository implements the protocol."""
 
-    def test_implements_protocol(self, sqlite_checkpoint_repo: SQLiteCheckpointRepository) -> None:
-        """Test that SQLiteCheckpointRepository implements CheckpointRepository."""
+    def test_implements_protocol(self, sqlite_checkpoint_repo: SQLCheckpointRepository) -> None:
+        """Test that SQLCheckpointRepository implements CheckpointRepository."""
         assert isinstance(sqlite_checkpoint_repo, CheckpointRepository)
 
 
-class TestSQLiteCheckpointRepositoryGetCheckpoint:
+class TestSQLCheckpointRepositoryGetCheckpoint:
     """Tests for get_checkpoint method."""
 
     async def test_get_checkpoint_returns_none_for_new_projection(
-        self, sqlite_checkpoint_repo: SQLiteCheckpointRepository
+        self, sqlite_checkpoint_repo: SQLCheckpointRepository
     ) -> None:
         """Test that get_checkpoint returns None for a new projection."""
         checkpoint = await sqlite_checkpoint_repo.get_checkpoint("NewProjection")
         assert checkpoint is None
 
     async def test_get_checkpoint_returns_saved_checkpoint(
-        self, sqlite_checkpoint_repo: SQLiteCheckpointRepository
+        self, sqlite_checkpoint_repo: SQLCheckpointRepository
     ) -> None:
         """Test that get_checkpoint returns a previously saved checkpoint."""
         event_id = uuid4()
@@ -102,11 +102,11 @@ class TestSQLiteCheckpointRepositoryGetCheckpoint:
         assert checkpoint == event_id
 
 
-class TestSQLiteCheckpointRepositoryUpdateCheckpoint:
+class TestSQLCheckpointRepositoryUpdateCheckpoint:
     """Tests for update_checkpoint method."""
 
     async def test_update_checkpoint_creates_new(
-        self, sqlite_checkpoint_repo: SQLiteCheckpointRepository
+        self, sqlite_checkpoint_repo: SQLCheckpointRepository
     ) -> None:
         """Test creating a new checkpoint."""
         event_id = uuid4()
@@ -123,7 +123,7 @@ class TestSQLiteCheckpointRepositoryUpdateCheckpoint:
         assert checkpoint == event_id
 
     async def test_update_checkpoint_updates_existing(
-        self, sqlite_checkpoint_repo: SQLiteCheckpointRepository
+        self, sqlite_checkpoint_repo: SQLCheckpointRepository
     ) -> None:
         """Test updating an existing checkpoint."""
         projection_name = "UpdatedProjection"
@@ -149,7 +149,7 @@ class TestSQLiteCheckpointRepositoryUpdateCheckpoint:
         assert checkpoint == event_id_2
 
     async def test_update_checkpoint_preserves_processed_count(
-        self, sqlite_checkpoint_repo: SQLiteCheckpointRepository
+        self, sqlite_checkpoint_repo: SQLCheckpointRepository
     ) -> None:
         """Test that events_processed count increases correctly."""
         projection_name = "CountingProjection"
@@ -168,18 +168,18 @@ class TestSQLiteCheckpointRepositoryUpdateCheckpoint:
         assert checkpoint.events_processed == 5
 
 
-class TestSQLiteCheckpointRepositoryGetAllCheckpoints:
+class TestSQLCheckpointRepositoryGetAllCheckpoints:
     """Tests for get_all_checkpoints method."""
 
     async def test_get_all_checkpoints_empty(
-        self, sqlite_checkpoint_repo: SQLiteCheckpointRepository
+        self, sqlite_checkpoint_repo: SQLCheckpointRepository
     ) -> None:
         """Test getting checkpoints when none exist."""
         checkpoints = await sqlite_checkpoint_repo.get_all_checkpoints()
         assert checkpoints == []
 
     async def test_get_all_checkpoints_returns_all(
-        self, sqlite_checkpoint_repo: SQLiteCheckpointRepository
+        self, sqlite_checkpoint_repo: SQLCheckpointRepository
     ) -> None:
         """Test getting all checkpoints."""
         projections = ["Projection1", "Projection2", "Projection3"]
@@ -198,11 +198,11 @@ class TestSQLiteCheckpointRepositoryGetAllCheckpoints:
         assert returned_names == set(projections)
 
 
-class TestSQLiteCheckpointRepositoryResetCheckpoint:
+class TestSQLCheckpointRepositoryResetCheckpoint:
     """Tests for reset_checkpoint method."""
 
     async def test_reset_checkpoint_deletes_checkpoint(
-        self, sqlite_checkpoint_repo: SQLiteCheckpointRepository
+        self, sqlite_checkpoint_repo: SQLCheckpointRepository
     ) -> None:
         """Test that reset_checkpoint deletes the checkpoint."""
         projection_name = "ToBeReset"
@@ -225,25 +225,25 @@ class TestSQLiteCheckpointRepositoryResetCheckpoint:
         assert checkpoint is None
 
     async def test_reset_nonexistent_checkpoint(
-        self, sqlite_checkpoint_repo: SQLiteCheckpointRepository
+        self, sqlite_checkpoint_repo: SQLCheckpointRepository
     ) -> None:
         """Test resetting a non-existent checkpoint (no error)."""
         await sqlite_checkpoint_repo.reset_checkpoint("NonExistent")
         # Should not raise
 
 
-class TestSQLiteCheckpointRepositoryGetLagMetrics:
+class TestSQLCheckpointRepositoryGetLagMetrics:
     """Tests for get_lag_metrics method."""
 
     async def test_get_lag_metrics_returns_none_for_new_projection(
-        self, sqlite_checkpoint_repo: SQLiteCheckpointRepository
+        self, sqlite_checkpoint_repo: SQLCheckpointRepository
     ) -> None:
         """Test that get_lag_metrics returns None for unknown projection."""
         metrics = await sqlite_checkpoint_repo.get_lag_metrics("NonExistent")
         assert metrics is None
 
     async def test_get_lag_metrics_returns_metrics_for_existing(
-        self, sqlite_checkpoint_repo: SQLiteCheckpointRepository
+        self, sqlite_checkpoint_repo: SQLCheckpointRepository
     ) -> None:
         """Test that get_lag_metrics returns metrics for existing checkpoint."""
         projection_name = "MetricsProjection"

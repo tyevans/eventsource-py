@@ -696,9 +696,9 @@ async def postgres_checkpoint_repo(
     clean_postgres_tables: None,
 ) -> AsyncGenerator[Any, None]:
     """Provide PostgreSQL checkpoint repository for integration tests."""
-    from eventsource import PostgreSQLCheckpointRepository
+    from eventsource import SQLCheckpointRepository
 
-    repo = PostgreSQLCheckpointRepository(postgres_engine)
+    repo = SQLCheckpointRepository(postgres_engine)
     yield repo
 
 
