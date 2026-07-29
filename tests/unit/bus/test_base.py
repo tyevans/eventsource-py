@@ -4,10 +4,9 @@ import asyncio
 
 from eventsource.bus.base import BaseEventBus
 from eventsource.events.base import DomainEvent
-from eventsource.events.registry import EventRegistry, register_event
+from eventsource.events.registry import EventRegistry, default_registry
 
 
-@register_event
 class BaseBusEvent(DomainEvent):
     event_type: str = "BaseBusEvent"
     aggregate_type: str = "BaseBus"
@@ -77,8 +76,11 @@ def test_resolve_event_class_uses_injected_registry_first() -> None:
 
 def test_resolve_event_class_falls_back_to_default_registry() -> None:
     bus = StubBus()
-
-    assert bus._resolve_event_class("BaseBusEvent") is BaseBusEvent
+    default_registry.register(BaseBusEvent)
+    try:
+        assert bus._resolve_event_class("BaseBusEvent") is BaseBusEvent
+    finally:
+        default_registry.unregister("BaseBusEvent")
 
 
 def test_resolve_event_class_returns_none_for_unknown_type() -> None:
