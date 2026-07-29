@@ -36,12 +36,12 @@ logger = logging.getLogger(__name__)
 
 # Optional OpenTelemetry import - graceful degradation when not available
 try:
-    from opentelemetry import metrics as otel_metrics
+    from opentelemetry import metrics
 
     OTEL_METRICS_AVAILABLE = True
 except ImportError:
     OTEL_METRICS_AVAILABLE = False
-    otel_metrics = None  # type: ignore[assignment]
+    metrics = None  # type: ignore[assignment]
 
 
 # Module-level meter and instruments - lazy initialization
@@ -65,8 +65,8 @@ def _get_meter() -> Any:
         OpenTelemetry Meter or None
     """
     global _meter
-    if _meter is None and OTEL_METRICS_AVAILABLE and otel_metrics is not None:
-        _meter = otel_metrics.get_meter("eventsource.subscriptions.shutdown", version="1.0.0")
+    if _meter is None and OTEL_METRICS_AVAILABLE and metrics is not None:
+        _meter = metrics.get_meter("eventsource.subscriptions.shutdown", version="1.0.0")
     return _meter
 
 
