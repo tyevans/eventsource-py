@@ -35,15 +35,11 @@ import contextlib
 import logging
 import socket
 import uuid
-from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from eventsource.bus.interface import (
-    EventBus,
-    EventHandlerFunc,
-)
+from eventsource.bus.base import BaseEventBus
 from eventsource.events.base import DomainEvent
 from eventsource.handlers.adapter import HandlerAdapter
 from eventsource.observability import Tracer, create_tracer
@@ -57,10 +53,6 @@ from eventsource.observability.attributes import (
     ATTR_HANDLER_SUCCESS,
     ATTR_MESSAGING_DESTINATION,
     ATTR_MESSAGING_SYSTEM,
-)
-from eventsource.protocols import (
-    FlexibleEventHandler,
-    FlexibleEventSubscriber,
 )
 
 if TYPE_CHECKING:
@@ -181,7 +173,7 @@ class RedisEventBusStats:
     reconnections: int = 0
 
 
-class RedisEventBus(EventBus):
+class RedisEventBus(BaseEventBus):
     """
     Event bus using Redis Streams for durable event distribution.
 
@@ -234,15 +226,12 @@ class RedisEventBus(EventBus):
         if not REDIS_AVAILABLE:
             raise RedisNotAvailableError()
 
+        super().__init__(event_registry=event_registry)
+
         self._config = config or RedisEventBusConfig()
-        self._event_registry = event_registry
         self._redis: Redis | None = None
         self._connected = False
         self._consuming = False
-
-        # Subscriber management
-        self._subscribers: dict[type[DomainEvent], list[HandlerAdapter]] = defaultdict(list)
-        self._all_event_handlers: list[HandlerAdapter] = []
         self._lock = asyncio.Lock()
 
         # Statistics
@@ -380,7 +369,9 @@ class RedisEventBus(EventBus):
 
         Args:
             events: Events to publish
-            background: Ignored for Redis (Redis is inherently async)
+            background: If True, return without waiting for the Redis
+                       round-trip to complete. The write is tracked and
+                       drained by shutdown().
 
         Raises:
             RedisConnectionError: If Redis connection fails
@@ -403,11 +394,11 @@ class RedisEventBus(EventBus):
             },
         ) as span:
             try:
-                if len(events) > 1:
-                    # Use pipeline for batch operations
+                if background:
+                    self._track_background(self._publish_all(events))
+                elif len(events) > 1:
                     await self._publish_batch(events)
                 else:
-                    # Single event - no need for pipeline overhead
                     await self._publish_single(events[0])
 
                 if span:
@@ -474,6 +465,13 @@ class RedisEventBus(EventBus):
 
         return [str(mid) for mid in message_ids]
 
+    async def _publish_all(self, events: list[DomainEvent]) -> None:
+        """Publish events, choosing single-write or pipeline by count."""
+        if len(events) > 1:
+            await self._publish_batch(events)
+        else:
+            await self._publish_single(events[0])
+
     def _serialize_event(self, event: DomainEvent) -> dict[str, str]:
         """Serialize an event to Redis-compatible format."""
         return {
@@ -485,137 +483,6 @@ class RedisEventBus(EventBus):
             "occurred_at": event.occurred_at.isoformat(),
             "payload": event.model_dump_json(),
         }
-
-    def subscribe(
-        self,
-        event_type: type[DomainEvent],
-        handler: FlexibleEventHandler | EventHandlerFunc,
-    ) -> None:
-        """
-        Subscribe a handler to a specific event type.
-
-        Note: For Redis, subscriptions are registered locally.
-        The actual consumption happens via start_consuming().
-
-        Args:
-            event_type: The event class to subscribe to
-            handler: Object with handle() method or callable
-        """
-        adapter = HandlerAdapter(handler)
-
-        # Use asyncio.Lock in non-async context requires different approach
-        # Since subscribe is sync, we use a simple list append (thread-safe for GIL)
-        self._subscribers[event_type].append(adapter)
-
-        logger.info(
-            f"Registered handler {adapter.name} for {event_type.__name__}",
-            extra={
-                "handler": adapter.name,
-                "event_type": event_type.__name__,
-            },
-        )
-
-    def unsubscribe(
-        self,
-        event_type: type[DomainEvent],
-        handler: FlexibleEventHandler | EventHandlerFunc,
-    ) -> bool:
-        """
-        Unsubscribe a handler from a specific event type.
-
-        Args:
-            event_type: The event class to unsubscribe from
-            handler: The handler to remove
-
-        Returns:
-            True if the handler was found and removed, False otherwise
-        """
-        target_adapter = HandlerAdapter(handler)
-
-        adapters = self._subscribers.get(event_type, [])
-        for i, adapter in enumerate(adapters):
-            if adapter == target_adapter:
-                adapters.pop(i)
-                logger.info(
-                    f"Unsubscribed handler {adapter.name} from {event_type.__name__}",
-                    extra={
-                        "handler": adapter.name,
-                        "event_type": event_type.__name__,
-                    },
-                )
-                return True
-
-        logger.debug(
-            f"Handler {target_adapter.name} not found for {event_type.__name__}",
-            extra={
-                "handler": target_adapter.name,
-                "event_type": event_type.__name__,
-            },
-        )
-        return False
-
-    def subscribe_all(self, subscriber: FlexibleEventSubscriber) -> None:
-        """
-        Subscribe a FlexibleEventSubscriber to all its declared event types.
-
-        Args:
-            subscriber: The subscriber to register
-        """
-        event_types = subscriber.subscribed_to()
-        for event_type in event_types:
-            self.subscribe(event_type, subscriber)
-
-    def subscribe_to_all_events(
-        self,
-        handler: FlexibleEventHandler | EventHandlerFunc,
-    ) -> None:
-        """
-        Subscribe a handler to all event types (wildcard subscription).
-
-        The handler will receive every event published to the bus,
-        regardless of event type.
-
-        Args:
-            handler: Handler that will receive all events
-        """
-        adapter = HandlerAdapter(handler)
-
-        self._all_event_handlers.append(adapter)
-
-        logger.info(
-            f"Registered wildcard handler {adapter.name}",
-            extra={"handler": adapter.name},
-        )
-
-    def unsubscribe_from_all_events(
-        self,
-        handler: FlexibleEventHandler | EventHandlerFunc,
-    ) -> bool:
-        """
-        Unsubscribe a handler from the wildcard subscription.
-
-        Args:
-            handler: The handler to remove from wildcard subscriptions
-
-        Returns:
-            True if the handler was found and removed, False otherwise
-        """
-        target_adapter = HandlerAdapter(handler)
-
-        for i, adapter in enumerate(self._all_event_handlers):
-            if adapter == target_adapter:
-                self._all_event_handlers.pop(i)
-                logger.info(
-                    f"Unsubscribed wildcard handler {adapter.name}",
-                    extra={"handler": adapter.name},
-                )
-                return True
-
-        logger.debug(
-            f"Wildcard handler {target_adapter.name} not found",
-            extra={"handler": target_adapter.name},
-        )
-        return False
 
     async def start_consuming(
         self,
@@ -847,31 +714,13 @@ class RedisEventBus(EventBus):
             Deserialized event, or None if event type is unknown
         """
         # Get event class from registry
-        event_class = self._get_event_class(event_type_name)
+        event_class = self._resolve_event_class(event_type_name)
         if event_class is None:
             return None
 
         # Deserialize from payload
         payload = message_data.get("payload", "{}")
         return event_class.model_validate_json(payload)
-
-    def _get_event_class(self, event_type_name: str) -> type[DomainEvent] | None:
-        """
-        Get event class by name from registry.
-
-        Args:
-            event_type_name: Name of the event class
-
-        Returns:
-            Event class, or None if not found
-        """
-        if self._event_registry:
-            return self._event_registry.get_or_none(event_type_name)
-
-        # Fallback to default registry
-        from eventsource.events.registry import default_registry
-
-        return default_registry.get_or_none(event_type_name)
 
     async def _dispatch_event(self, event: DomainEvent, message_id: str) -> None:
         """
@@ -882,11 +731,7 @@ class RedisEventBus(EventBus):
             message_id: Redis message ID for logging
         """
         event_type = type(event)
-
-        # Get handlers
-        specific_handlers = list(self._subscribers.get(event_type, []))
-        wildcard_handlers = list(self._all_event_handlers)
-        handlers = specific_handlers + wildcard_handlers
+        handlers = self._handlers_for(event_type)
 
         if not handlers:
             logger.warning(
@@ -1388,39 +1233,6 @@ class RedisEventBus(EventBus):
             logger.error(f"Failed to replay DLQ message {message_id}: {e}", exc_info=True)
             return False
 
-    def clear_subscribers(self) -> None:
-        """
-        Clear all subscribers.
-
-        Useful for testing or reinitializing the bus.
-        """
-        self._subscribers.clear()
-        self._all_event_handlers.clear()
-        logger.info("All event subscribers cleared")
-
-    def get_subscriber_count(self, event_type: type[DomainEvent] | None = None) -> int:
-        """
-        Get the number of registered subscribers.
-
-        Args:
-            event_type: If provided, count subscribers for this event type only.
-
-        Returns:
-            Number of registered subscribers
-        """
-        if event_type is None:
-            return sum(len(handlers) for handlers in self._subscribers.values())
-        return len(self._subscribers.get(event_type, []))
-
-    def get_wildcard_subscriber_count(self) -> int:
-        """
-        Get the number of wildcard subscribers.
-
-        Returns:
-            Number of wildcard subscribers
-        """
-        return len(self._all_event_handlers)
-
     def get_stats_dict(self) -> dict[str, int]:
         """
         Get statistics as a dictionary.
@@ -1449,6 +1261,8 @@ class RedisEventBus(EventBus):
             timeout: Maximum time to wait in seconds
         """
         logger.info("Shutting down RedisEventBus")
+
+        await self._drain_background(timeout)
 
         # Stop consuming
         await self.stop_consuming()

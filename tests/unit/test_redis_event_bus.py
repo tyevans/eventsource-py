@@ -5,6 +5,7 @@ a real Redis server.
 """
 
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
@@ -514,6 +515,38 @@ class TestRedisEventBusPublish:
         assert fields["aggregate_id"] == str(aggregate_id)
         assert fields["event_type"] == "SampleOrderCreated"
         assert "payload" in fields
+
+    async def test_background_publish_returns_before_pipeline_completes(
+        self, bus: RedisEventBus, mock_redis: AsyncMock
+    ) -> None:
+        """background=True must not await the Redis round-trip.
+
+        Regression: RedisEventBus previously documented background as
+        "Ignored for Redis" and always awaited.
+        """
+        import asyncio
+
+        release = asyncio.Event()
+
+        async def slow_xadd(*args: Any, **kwargs: Any) -> str:
+            await release.wait()
+            return "1-0"
+
+        mock_redis.xadd = slow_xadd
+
+        event = SampleOrderCreated(
+            aggregate_id=uuid4(),
+            order_number="ORD-001",
+            customer_id=uuid4(),
+        )
+
+        # Must return promptly even though xadd is blocked.
+        await asyncio.wait_for(bus.publish([event], background=True), timeout=1.0)
+        assert bus.get_background_task_count() == 1
+
+        release.set()
+        await bus._drain_background(timeout=5.0)
+        assert bus.get_background_task_count() == 0
 
 
 # --- Event Dispatch Tests ---
