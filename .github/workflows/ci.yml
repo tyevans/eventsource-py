@@ -204,5 +204,4 @@ jobs:
           DATABASE_URL: postgresql://test:test@localhost:5432/eventsource_test
           REDIS_URL: redis://localhost:6379
         run: |
-          uv run pytest -m "integration or postgres or redis" \
-            --cov=src/eventsource --cov-report=term-missing
+          uv run pytest -m "integration or postgres or redis" --no-cov
