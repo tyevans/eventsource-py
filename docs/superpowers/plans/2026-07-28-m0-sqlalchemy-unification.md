@@ -760,6 +760,123 @@ costs real transactions.
 
 ---
 
+### Task 2d: Mutation testing on the core purity set
+
+**Added during execution** (user decision, 2026-07-29). Runs after Task 2c.
+
+**Rationale.** Property tests find case-coverage gaps; mutation tests find oracle
+errors. This milestone has produced one of each, and only the coverage gaps were
+caught by adding cases. Task 1's isolation test passed against an engine with none
+of its transaction control applied — a mutation run deleting
+`conn.exec_driver_sql("BEGIN")` would have reported a surviving mutant immediately.
+Every manual break/restore in this milestone's ledger is a hand-run mutation test;
+this automates them.
+
+**Scope is the whole design.** Mutation testing is O(mutants x suite runtime). This
+repo is ~18k source lines with ~6,000 tests; a whole-repo run is hours and would go
+unused. Target a curated set of small, pure, high-consequence modules, each pinned
+to its own fast test subset:
+
+| Module | Lines | Test subset |
+| --- | --- | --- |
+| `src/eventsource/engine.py` | ~110 | `tests/unit/test_engine.py` |
+| `src/eventsource/repositories/_dialect.py` | ~130 | `tests/unit/repositories/test_dialect.py` |
+| `src/eventsource/serialization/json.py` | ~100 | `tests/unit/serialization/` |
+
+**Files:**
+- Modify: `pyproject.toml` (dev dependency + `[tool.mutmut]` config)
+- Create: `scripts/mutation.sh` (or a documented `just`/`make` target if the repo
+  has one — check before adding a new script convention)
+- Create: `docs/development/mutation-testing.md`
+
+**Interfaces:**
+- Consumes: the test suites from Tasks 1, 2, 2b, 2c.
+- Produces: no library API. A repeatable command and a triage record.
+
+- [ ] **Step 1: Add the dependency**
+
+Add `mutmut>=3.0` to the dev/test dependency group. Not a runtime dep, not in any
+published extra.
+
+- [ ] **Step 2: Configure per-module targeting**
+
+```toml
+[tool.mutmut]
+paths_to_mutate = [
+    "src/eventsource/engine.py",
+    "src/eventsource/repositories/_dialect.py",
+    "src/eventsource/serialization/json.py",
+]
+tests_dir = "tests/unit/"
+```
+
+Verify the installed mutmut version's config schema before writing this — mutmut 3
+changed its configuration surface from 2.x, and a config the tool silently ignores
+is worse than none. Confirm by running it and checking that it mutates only the
+three files.
+
+The runner must invoke pytest with `--no-cov -x -q` and the narrowest test subset
+per module. Coverage instrumentation on every mutant is pure waste.
+
+- [ ] **Step 3: Establish and record a baseline**
+
+Run mutation on all three modules. Record in
+`docs/development/mutation-testing.md`: total mutants, killed, survived, timeout,
+and the wall-clock runtime per module. If any module takes more than a few minutes,
+narrow its test subset rather than accepting a run nobody will wait for.
+
+- [ ] **Step 4: Triage every surviving mutant individually**
+
+This is the deliverable, not the score. For each survivor, classify it:
+
+- **Real gap** — the mutant changes behavior and no test notices. Write the test
+  that kills it. These are the finds that justify the tool.
+- **Equivalent mutant** — semantically identical to the original (e.g. a changed
+  constant that no observable behavior depends on). Record it as equivalent with a
+  one-line reason. Do NOT contort a test to kill it.
+- **Out of scope** — mutating a docstring, a log message, or a defensive branch that
+  cannot be reached. Record and move on.
+
+Write the classification into the doc, mutant by mutant. A bare score with no
+triage is not a result.
+
+- [ ] **Step 5: Do NOT gate CI on a mutation score**
+
+Explicitly out of scope, and record why in the doc: equivalent mutants make 100%
+unreachable, so any threshold is arbitrary, and a slow non-deterministic gate turns
+a diagnostic into a flaky blocker that gets disabled within a month. This runs on
+demand and when the curated modules change. Revisit only if the survivor count
+stays at zero across several milestones.
+
+- [ ] **Step 6: Verify the harness catches a known-vacuous test**
+
+The honest test of this tool is whether it would have caught what we already know
+was wrong. Temporarily restore Task 1's original single-connection isolation test
+(the vacuous one — see `git show` on the commit that replaced it, and the ledger
+entry describing it), run mutation on `engine.py`, and confirm a surviving mutant
+appears for the deleted `BEGIN`. Then restore the real test. Record the output.
+
+If it does NOT surface that mutant, the configuration is wrong and everything above
+is theatre — fix the config before proceeding.
+
+- [ ] **Step 7: Document and commit**
+
+`docs/development/mutation-testing.md` states: what is in the curated set and why,
+how to run it, how to read a survivor, the triage classifications from Step 4, and
+the explicit non-goal of a CI score gate.
+
+```bash
+uv run ruff check src/ tests/ scripts/ --fix && uv run ruff format src/ tests/
+git commit --no-verify -m "test: add scoped mutation testing for the core purity set"
+```
+
+**As Tasks 3-8 land**, the merged repositories become candidates for the curated
+set — but only with per-module test targeting, and only if a run stays in the tens
+of seconds. Add them one at a time, never by widening `paths_to_mutate` to a
+directory.
+
+---
+
 ### Task 3: Unify the checkpoint repository
 
 **Files:**
