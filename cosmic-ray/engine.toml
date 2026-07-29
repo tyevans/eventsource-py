@@ -20,7 +20,7 @@
 module-path = "src/eventsource/engine.py"
 timeout = 10.0
 excluded-modules = []
-test-command = "python -m pytest tests/unit/test_engine.py -x -q --no-cov"
+test-command = "python -m pytest tests/unit/test_engine.py -x -q --no-cov -p no:randomly"
 
 [cosmic-ray.distributor]
 name = "local"

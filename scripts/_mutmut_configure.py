@@ -42,7 +42,7 @@ def build_block(only_mutate: list[str], test_selection: list[str]) -> str:
         f"source_paths = {fmt(['src'])}\n"
         f"only_mutate = {fmt(only_mutate)}\n"
         f"pytest_add_cli_args_test_selection = {fmt(test_selection)}\n"
-        f'pytest_add_cli_args = ["--no-cov", "-x", "-q"]\n'
+        f'pytest_add_cli_args = ["--no-cov", "-x", "-q", "-p", "no:randomly"]\n'
     )
 
 

@@ -192,7 +192,7 @@ pytest_add_cli_args_test_selection = [
     "tests/unit/repositories/test_dialect.py",
     "tests/unit/serialization/",
 ]
-pytest_add_cli_args = ["--no-cov", "-x", "-q"]
+pytest_add_cli_args = ["--no-cov", "-x", "-q", "-p", "no:randomly"]
 
 [tool.importlinter]
 root_package = "eventsource"
