@@ -11,7 +11,17 @@ This module provides tools for managing tenant context in async and sync code:
 - tenant_scope_sync(): Sync context manager for scoped tenant context
 
 The ContextVar mechanism ensures proper context isolation between concurrent
-async tasks and threads, making it safe for use in multi-tenant applications.
+async tasks and threads, making it safe for use in multi-tenant applications
+-- PROVIDED that context is entered and exited via tenant_scope() /
+tenant_scope_sync(). Those context managers restore state in the strict
+LIFO order that `with`/`async with` block nesting guarantees.
+
+Manually calling set_current_tenant() and later resetting its Token
+yourself is NOT equally safe: contextvars.Token.reset() has no LIFO
+enforcement and will not raise if tokens are reset out of order. See the
+warning on set_current_tenant() for details -- prefer tenant_scope() /
+tenant_scope_sync() unless you can guarantee strict LIFO reset order
+yourself.
 
 Example:
     >>> import asyncio
@@ -142,6 +152,31 @@ def set_current_tenant(tenant_id: UUID) -> Token[UUID | None]:
     Note:
         For scoped tenant context with automatic cleanup, prefer using
         tenant_scope() or tenant_scope_sync() context managers instead.
+
+    Warning:
+        Manual set/reset is the UNSAFE path. The Token returned here MUST
+        be reset in strict LIFO order relative to any other Token for this
+        ContextVar in the same context (i.e. reset the most-recently-created
+        token first) -- exactly the order tenant_scope()/tenant_scope_sync()
+        already guarantee via `with`/`async with` block nesting.
+
+        contextvars.Token.reset() does NOT enforce this ordering and does
+        NOT raise if you get it wrong. Each token independently remembers
+        the value that was current when its set() call was made and
+        unconditionally restores exactly that value. Resetting tokens out
+        of order will silently resurrect a stale tenant instead of ending
+        up at the value you expect -- e.g.:
+
+            token_a = set_current_tenant(tenant_a)   # old value: None
+            token_b = set_current_tenant(tenant_b)   # old value: tenant_a
+            tenant_context.reset(token_a)             # -> None
+            tenant_context.reset(token_b)             # -> tenant_a (!)
+            # tenant_a is now active again, with no active scope for it
+            # and no exception raised to signal the mistake.
+
+        In a multi-tenant system, a silently-resurrected stale tenant is a
+        data-leak shape, not just a wart. Prefer tenant_scope() /
+        tenant_scope_sync() so LIFO ordering is enforced structurally.
     """
     logger.debug("Tenant context set: %s", tenant_id)
     return tenant_context.set(tenant_id)
