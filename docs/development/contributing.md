@@ -57,22 +57,39 @@ CI still runs the same checks, so fix them before you push for review.
 
 ### What the hooks enforce
 
-`.pre-commit-config.yaml` wires up four repos:
+`.pre-commit-config.yaml` has two kinds of hook.
 
-- **Hygiene hooks** (`pre-commit-hooks` v5.0.0): `trailing-whitespace`, `end-of-file-fixer`,
-  `check-yaml`, `check-added-large-files`, `check-merge-conflict`, and `debug-statements`
-  (which fails the commit if you left a `breakpoint()` or `pdb` import behind).
-- **ruff** (v0.14.8): `ruff` with `--fix` followed by `ruff-format`. Both read `[tool.ruff]` from
+**Hygiene hooks** (`pre-commit-hooks` v5.0.0) run in pre-commit's own environment:
+`trailing-whitespace`, `end-of-file-fixer`, `check-yaml`, `check-added-large-files`,
+`check-merge-conflict`, and `debug-statements` (which fails the commit if you left a
+`breakpoint()` or `pdb` import behind). These have no project dependencies, so there is
+nothing for them to drift from.
+
+**Python linting hooks** are `language: system` and shell out through `uv run`, so they
+use the versions in `uv.lock` — the same ones the Makefile and CI use:
+
+- **ruff**: `ruff check --fix` followed by `ruff format`. Both read `[tool.ruff]` from
   `pyproject.toml` — line length 100, target `py311`, rule sets `E`, `F`, `I`, `N`, `W`, `UP`,
   `B`, `C4`, `SIM`, with `E501` ignored (the formatter owns line wrapping) and `eventsource`
   treated as first-party for import sorting.
-- **mypy** (mirrors-mypy v1.19.0) with `--config-file=pyproject.toml`, restricted to `files: ^src/`.
-  The config sets `strict = true`, `python_version = "3.11"`, `warn_return_any`, and
-  `warn_unused_ignores`. The hook installs its own pinned stubs in an isolated environment:
-  `pydantic>=2.0`, `sqlalchemy>=2.0`, `redis==5.3.1`, `opentelemetry-api>=1.0`, `aio-pika>=9.0.0`,
-  and `aiosqlite>=0.20.0`. Tests and examples are never type-checked by the hook.
-- **bandit** (1.8.3) with `-c pyproject.toml`, which applies `exclude_dirs = ["tests", "examples"]`
-  and `skips = ["B101"]` so plain `assert` statements are allowed.
+- **mypy** with `--config-file=pyproject.toml`, restricted to `files: ^src/`. The config sets
+  `strict = true`, `python_version = "3.11"`, `warn_return_any`, and `warn_unused_ignores`.
+  Tests and examples are never type-checked by the hook.
+- **bandit** with `-c pyproject.toml`, which applies `exclude_dirs = ["tests", "examples"]`
+  and `skips = ["B101"]` so plain `assert` statements are allowed. Scoped to `^src/` to match
+  the `audit` job in CI.
+- **import-linter**, which checks the `[tool.importlinter]` contracts.
+
+!!! note "Why these are `language: system`"
+
+    Letting pre-commit manage isolated environments means a third set of tool versions
+    alongside `uv.lock` and CI, plus a hand-maintained copy of the project's runtime
+    dependencies for mypy to type against. That copy had already drifted — it was missing
+    `orjson`, a core dependency — so mypy failed in the hook while passing in CI and
+    locally. Routing through `uv run` removes the whole class of problem.
+
+    The trade-off is that `pre-commit autoupdate` no longer bumps these; upgrade them with
+    `uv lock --upgrade-package ruff` (or mypy, bandit, import-linter) instead.
 
 ### Running the hooks manually
 
@@ -105,17 +122,23 @@ make mutation         # mutmut over the curated set
 make docs             # mkdocs --strict + runnable-example validation
 ```
 
-!!! warning "`make check` is not currently CI parity"
+`make check` is CI parity by construction: `.github/workflows/ci.yml` installs
+with `uv sync --all-extras --locked` and invokes each tool through `uv run`,
+exactly as the Makefile does. Both therefore execute the versions pinned in
+`uv.lock`. If you add a gate to one, add it to the other.
 
-    The Makefile runs everything through `uv run`, against the versions
-    pinned in `uv.lock`. CI does not: `.github/workflows/ci.yml` installs
-    with `pip install -e ".[dev,all]"`, which floats tool versions above the
-    lockfile and skips `[dependency-groups] dev` altogether, because pip
-    does not install PEP 735 groups without `--group`. Several tools live
-    only in that group (`pip-audit`, `import-linter`, `pytest-timeout`,
-    `bandit`), so those CI jobs currently fail with "command not found".
-    Until CI is switched to `uv sync --all-extras`, treat the local run as
-    the more accurate signal.
+!!! note "Why CI installs with uv rather than pip"
+
+    CI previously used `pip install -e ".[dev,all]"`. That ignores `uv.lock`
+    — it floats tool versions above their pins, and it skips
+    `[dependency-groups] dev` entirely, because pip does not install PEP 735
+    groups without `--group`. `pip-audit`, `import-linter`, `pytest-timeout`
+    and `bandit` live only in that group, so those jobs failed with "command
+    not found" while passing locally. Please do not switch it back.
+
+    `--locked` additionally makes a stale `uv.lock` a hard CI failure instead
+    of silent resolution drift. If it trips, run `uv lock` and commit the
+    result.
 
 The raw commands behind each target follow.
 

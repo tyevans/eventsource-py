@@ -6,17 +6,10 @@
 # Every recipe goes through `uv run`, so gates execute against the locked
 # environment in uv.lock. Run `make install` once first.
 #
-# NOTE: this does NOT currently give you CI parity, because CI does not use
-# uv.lock -- .github/workflows/ci.yml installs with
-# `pip install -e ".[dev,all]"`, which (a) floats tool versions above the
-# lockfile pins and (b) silently skips [dependency-groups] dev entirely,
-# since pip does not install PEP 735 groups without --group. As of
-# 2026-07-29 that is why CI on main is red in four jobs: pip-audit and
-# lint-imports are "command not found", pytest rejects the --timeout=60 in
-# addopts because pytest-timeout is missing, and ruff check/format disagree
-# with the pinned ruff because CI resolves a newer one. Pointing CI at
-# `uv sync --all-extras` + `uv run` would make these agree; until then,
-# expect this Makefile and CI to differ, and trust this one.
+# .github/workflows/ci.yml installs the same way (`uv sync --all-extras
+# --locked`) and runs the same commands via `uv run`, so a green
+# `make check` and a green CI mean the same thing. If you add a gate here,
+# add the matching job there.
 
 # Marker expression for the unit suite -- kept byte-identical to the `test`
 # job in .github/workflows/ci.yml. If you change it here, change it there.
@@ -40,13 +33,12 @@ help:  ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*?## "} {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 	@echo
-	@echo "  check = every gate at once. See the Makefile header for why"
-	@echo "  this currently does not match CI."
+	@echo "  check = CI parity. Green here means green in CI."
 
 install:  ## Sync the dev environment (all extras)
 	uv sync --all-extras
 
-check: lint types arch sec test  ## Every gate CI has a job for (see header re: parity)
+check: lint types arch sec test  ## Everything CI runs on a PR
 	@echo
 	@echo "All checks passed."
 

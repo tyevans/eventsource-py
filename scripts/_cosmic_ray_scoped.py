@@ -18,6 +18,7 @@ Usage:
 """
 
 import importlib
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -56,7 +57,11 @@ def main(argv):
     modules = cosmic_ray.modules.find_modules(module_paths)
     modules = cosmic_ray.modules.filter_paths(modules, cfg.get("excluded-modules", ()))
 
-    session_file = tempfile.mktemp(suffix=".sqlite")
+    # A private directory rather than tempfile.mktemp(): cosmic-ray wants a
+    # path that does not exist yet (WorkDB.Mode.create makes it), and mktemp
+    # leaves a window where another process can claim the name.
+    session_dir = tempfile.mkdtemp(prefix="cosmic-ray-")
+    session_file = str(Path(session_dir) / "session.sqlite")
     try:
         with use_db(session_file, WorkDB.Mode.create) as db:
             init_mod.init(modules, db, cfg.operators_config)
@@ -87,7 +92,7 @@ def main(argv):
             )
     finally:
         plugins.operator_names = orig_operator_names
-        Path(session_file).unlink(missing_ok=True)
+        shutil.rmtree(session_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

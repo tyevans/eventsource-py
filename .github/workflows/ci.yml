@@ -7,6 +7,20 @@
 # - import-linter: architecture layering contracts (pyproject.toml [tool.importlinter])
 # - audit: pip-audit dependency vulnerability scan
 # - test: pytest with coverage (matrix: Python 3.11, 3.12)
+#
+# Every job installs with `uv sync --all-extras --locked` and runs tools via
+# `uv run`, so CI executes the exact versions pinned in uv.lock -- the same
+# ones the Makefile uses locally. `make check` and this workflow therefore
+# agree by construction.
+#
+# Do not switch these back to `pip install -e ".[dev,all]"`. That ignores
+# uv.lock (floating tool versions above their pins) and silently skips
+# [dependency-groups] dev, because pip does not install PEP 735 groups
+# without --group. pip-audit, import-linter, bandit and pytest-timeout live
+# only in that group, so those jobs fail with "command not found".
+#
+# `--locked` makes a stale uv.lock a CI failure rather than a silent
+# resolution drift. If it trips, run `uv lock` and commit the result.
 
 name: CI
 
@@ -32,23 +46,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
-          cache-dependency-path: pyproject.toml
+          enable-cache: true
 
       - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install -e ".[dev]" --group dev
+        run: uv sync --all-extras --locked
 
       - name: Run ruff check
-        run: ruff check .
+        run: uv run ruff check .
 
       - name: Run ruff format check
-        run: ruff format --check .
+        run: uv run ruff format --check .
 
   # Type checking with mypy
   type-check:
@@ -57,20 +68,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
-          cache-dependency-path: pyproject.toml
+          enable-cache: true
 
       - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install -e ".[dev,all]" --group dev
+        run: uv sync --all-extras --locked
 
       - name: Run mypy
-        run: mypy src/
+        run: uv run mypy src/ --config-file=pyproject.toml
 
   # Architecture layering contracts
   import-linter:
@@ -79,42 +87,39 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
-          cache-dependency-path: pyproject.toml
+          enable-cache: true
 
       - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install -e ".[dev,all]" --group dev
+        run: uv sync --all-extras --locked
 
       - name: Run import-linter
-        run: lint-imports
+        run: uv run lint-imports
 
-  # Dependency vulnerability scanning
+  # Security linting and dependency vulnerability scanning
   audit:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
-          cache-dependency-path: pyproject.toml
+          enable-cache: true
 
       - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install -e ".[dev,all]" --group dev
+        run: uv sync --all-extras --locked
+
+      - name: Run bandit
+        run: uv run bandit -c pyproject.toml -r src/
 
       - name: Run pip-audit
-        run: pip-audit
+        run: uv run pip-audit
 
   # Testing with pytest
   test:
@@ -128,21 +133,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ matrix.python-version }}
-          cache: 'pip'
-          cache-dependency-path: pyproject.toml
+          enable-cache: true
 
       - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install -e ".[dev,all]" --group dev
+        run: uv sync --all-extras --locked
 
       - name: Run tests
         run: |
-          pytest --cov=src/eventsource --cov-report=xml --cov-report=term-missing \
+          uv run pytest --cov=src/eventsource --cov-report=xml --cov-report=term-missing \
             -m "not integration and not postgres and not redis and not e2e"
 
       - name: Upload coverage report
@@ -188,21 +190,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
-          cache-dependency-path: pyproject.toml
+          enable-cache: true
 
       - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install -e ".[dev,all]" --group dev
+        run: uv sync --all-extras --locked
 
       - name: Run integration tests
         env:
           DATABASE_URL: postgresql://test:test@localhost:5432/eventsource_test
           REDIS_URL: redis://localhost:6379
         run: |
-          pytest -m "integration or postgres or redis" --cov=src/eventsource --cov-report=term-missing
+          uv run pytest -m "integration or postgres or redis" \
+            --cov=src/eventsource --cov-report=term-missing

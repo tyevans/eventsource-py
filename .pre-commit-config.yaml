@@ -1,3 +1,16 @@
+# Hooks that lint Python are `language: system` and shell out through
+# `uv run`, so they use the versions pinned in uv.lock -- the same ones the
+# Makefile and .github/workflows/ci.yml use. Run `uv sync --all-extras`
+# once and they resolve.
+#
+# The alternative (pre-commit managing its own isolated envs via `rev:` and
+# `additional_dependencies:`) means a third set of tool versions and a
+# hand-maintained copy of the project's runtime dependencies for mypy to
+# type against. That list had already drifted -- it was missing orjson, a
+# core dependency -- so mypy failed here while passing in CI and locally.
+#
+# Non-Python hygiene hooks below keep using pre-commit's own environments;
+# they have no project dependencies to drift from.
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
@@ -9,39 +22,43 @@ repos:
       - id: check-merge-conflict
       - id: debug-statements
 
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.8
-    hooks:
-      - id: ruff
-        args: [--fix]
-      - id: ruff-format
-
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.19.0
-    hooks:
-      - id: mypy
-        additional_dependencies:
-          - pydantic>=2.0
-          - sqlalchemy>=2.0
-          - redis==5.3.1
-          - opentelemetry-api>=1.0
-          - aio-pika>=9.0.0
-          - aiosqlite>=0.20.0
-        args: [--config-file=pyproject.toml]
-        files: ^src/
-
-  - repo: https://github.com/PyCQA/bandit
-    rev: 1.8.3
-    hooks:
-      - id: bandit
-        args: [-c, pyproject.toml]
-        additional_dependencies: ["bandit[toml]"]
-
   - repo: local
     hooks:
+      - id: ruff
+        name: ruff
+        entry: uv run ruff check --fix --force-exclude
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+
+      - id: ruff-format
+        name: ruff-format
+        entry: uv run ruff format --force-exclude
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+
+      - id: mypy
+        name: mypy
+        entry: uv run mypy --config-file=pyproject.toml
+        language: system
+        types: [python]
+        files: ^src/
+        require_serial: true
+
+      # Scoped to src/ to match the `audit` job in CI, which runs
+      # `bandit -r src/`. Dev tooling under scripts/ is not shipped.
+      - id: bandit
+        name: bandit
+        entry: uv run bandit -c pyproject.toml
+        language: system
+        types: [python]
+        files: ^src/
+        require_serial: true
+
       - id: import-linter
         name: import-linter
-        entry: lint-imports
+        entry: uv run lint-imports
         language: system
         pass_filenames: false
         files: ^(src/eventsource/|pyproject\.toml)
