@@ -46,9 +46,8 @@ from eventsource.repositories.dlq import (
     DLQRepositoryProtocol,
     DLQStats,
     InMemoryDLQRepository,
-    PostgreSQLDLQRepository,
     ProjectionFailureCount,
-    SQLiteDLQRepository,
+    SQLDLQRepository,
 )
 
 # Outbox repository
@@ -78,8 +77,7 @@ __all__ = [
     # DLQ
     "DLQRepository",
     "DLQRepositoryProtocol",
-    "PostgreSQLDLQRepository",
-    "SQLiteDLQRepository",
+    "SQLDLQRepository",
     "InMemoryDLQRepository",
     "DLQEntry",
     "DLQStats",

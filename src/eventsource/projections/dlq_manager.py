@@ -54,7 +54,7 @@ class ProjectionDLQManager:
     Example:
         >>> manager = ProjectionDLQManager(
         ...     projection_name="OrderProjection",
-        ...     dlq_repo=PostgreSQLDLQRepository(conn),
+        ...     dlq_repo=SQLDLQRepository(conn),
         ... )
         >>>
         >>> # After all retries exhausted

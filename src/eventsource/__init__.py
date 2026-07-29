@@ -139,10 +139,10 @@ from eventsource.repositories import (
     OutboxEntry,
     OutboxRepository,
     OutboxStats,
-    PostgreSQLDLQRepository,
     PostgreSQLOutboxRepository,
     ProjectionFailureCount,
     SQLCheckpointRepository,
+    SQLDLQRepository,
 )
 
 # Serialization utilities
@@ -180,7 +180,6 @@ from eventsource.sync import SyncEventStoreAdapter
 
 # SQLite Event Store and Repositories (optional - requires aiosqlite)
 try:
-    from eventsource.repositories.dlq import SQLiteDLQRepository  # noqa: F401
     from eventsource.repositories.outbox import SQLiteOutboxRepository  # noqa: F401
     from eventsource.stores.sqlite import SQLiteEventStore  # noqa: F401
 
@@ -283,7 +282,7 @@ __all__ = [
     "CheckpointData",
     "LagMetrics",
     "DLQRepository",
-    "PostgreSQLDLQRepository",
+    "SQLDLQRepository",
     "InMemoryDLQRepository",
     "DLQEntry",
     "DLQStats",
@@ -335,6 +334,5 @@ if SQLITE_AVAILABLE:
             "SQLITE_AVAILABLE",
             "SQLiteEventStore",
             "SQLiteOutboxRepository",
-            "SQLiteDLQRepository",
         ]
     )
