@@ -94,7 +94,14 @@ packages = ["src/eventsource"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "-v --cov=src/eventsource --cov-report=term-missing --timeout=60"
+addopts = "-v --timeout=60"
+# Coverage is intentionally NOT enabled by default here. If it were, every
+# scoped pytest invocation (a single file, `-k`, mutation-testing runs, etc.)
+# would trip the [tool.coverage.report] fail_under gate below on a partial
+# measurement -- exiting nonzero even when every selected test passes. Pass
+# coverage flags explicitly for a full-suite run instead, e.g.:
+#   uv run pytest tests/unit --cov=src/eventsource --cov-report=term-missing
+# CI's test job passes these flags explicitly already (.github/workflows/ci.yml).
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 markers = [
