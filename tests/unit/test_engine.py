@@ -7,7 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.ext.asyncio import create_async_engine as sa_create_async_engine
 
-from eventsource.engine import create_async_engine
+from eventsource.engine import SQLITE_PRAGMAS, create_async_engine
 
 
 def _factory_engine(path: str, **kwargs: Any) -> AsyncEngine:
@@ -59,13 +59,52 @@ async def test_sqlite_engine_holds_read_write_in_one_transaction(tmp_path):
 
 
 async def test_sqlite_engine_applies_pragmas(tmp_path):
-    """WAL mode and foreign keys must be on for every pooled connection."""
+    """WAL mode, foreign keys, and busy_timeout must be on for every pooled
+    connection to a file-backed database."""
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/t.db")
     async with engine.connect() as conn:
         journal = (await conn.execute(text("PRAGMA journal_mode"))).scalar_one()
         fk = (await conn.execute(text("PRAGMA foreign_keys"))).scalar_one()
+        busy_timeout = (await conn.execute(text("PRAGMA busy_timeout"))).scalar_one()
     assert journal.lower() == "wal"
     assert fk == 1
+    assert busy_timeout == SQLITE_PRAGMAS["busy_timeout"]
+    await engine.dispose()
+
+
+async def test_memory_sqlite_applies_pragmas_except_journal_mode():
+    """:memory: databases must get every pragma except journal_mode -- WAL
+    is skipped there deliberately (see ``_apply_pragmas``), but that must
+    not skip the *rest* of the loop too."""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.connect() as conn:
+        journal = (await conn.execute(text("PRAGMA journal_mode"))).scalar_one()
+        fk = (await conn.execute(text("PRAGMA foreign_keys"))).scalar_one()
+        busy_timeout = (await conn.execute(text("PRAGMA busy_timeout"))).scalar_one()
+    assert journal.lower() != "wal", ":memory: databases cannot use WAL"
+    assert fk == 1
+    assert busy_timeout == SQLITE_PRAGMAS["busy_timeout"]
+    await engine.dispose()
+
+
+async def test_memory_sqlite_applies_busy_timeout_after_journal_mode_skip(monkeypatch):
+    """``busy_timeout`` must still be applied after the ``journal_mode``
+    pragma is skipped for :memory: -- i.e. the skip is a ``continue``, not a
+    ``break`` that also drops every pragma after it in iteration order.
+
+    ``busy_timeout`` defaults to 5000 (SQLite's own compiled default) as it
+    happens, so asserting the pragma equals ``SQLITE_PRAGMAS["busy_timeout"]``
+    (also 5000) can't tell "applied" from "never touched" apart. Monkeypatch
+    a value that could never be a coincidental default to make the
+    assertion actually discriminate.
+    """
+    import eventsource.engine as engine_module
+
+    monkeypatch.setitem(engine_module.SQLITE_PRAGMAS, "busy_timeout", 4321)
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.connect() as conn:
+        busy_timeout = (await conn.execute(text("PRAGMA busy_timeout"))).scalar_one()
+    assert busy_timeout == 4321
     await engine.dispose()
 
 
@@ -84,6 +123,13 @@ def test_postgres_url_passes_through_without_sqlite_config():
     """Non-SQLite URLs must not get SQLite connect_args."""
     engine = create_async_engine("postgresql+asyncpg://u:p@localhost/db")
     assert engine.dialect.name == "postgresql"
+
+
+def test_postgres_url_forwards_kwargs():
+    """Non-SQLite URLs must still forward **kwargs to SQLAlchemy, not just
+    the bare url -- the passthrough branch must not drop them."""
+    engine = create_async_engine("postgresql+asyncpg://u:p@localhost/db", echo=True)
+    assert engine.echo is True
 
 
 async def test_sqlite_engine_rolls_back_a_transaction(tmp_path):

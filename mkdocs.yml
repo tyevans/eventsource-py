@@ -126,3 +126,4 @@ nav:
   - Development:
       - Code Structure: development/code-structure.md
       - Testing: development/testing.md
+      - Mutation Testing: development/mutation-testing.md

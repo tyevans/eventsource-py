@@ -35,63 +35,90 @@ SQLITE_PRAGMAS: dict[str, str | int] = {
 }
 
 
+def _driver_is_autocommit(conn: Any) -> bool:
+    """Is the underlying sqlite3 connection in autocommit mode?
+
+    SQLAlchemy implements ``isolation_level="AUTOCOMMIT"`` for SQLite by
+    setting the driver connection's ``isolation_level`` attribute to
+    ``None`` (``SQLiteDialect_pysqlite.set_isolation_level``), and ``""``
+    for every other level. The driver connection is therefore the ground
+    truth for whether it will open transactions on its own, and it says
+    the same thing regardless of *how* AUTOCOMMIT was requested -- as a
+    ``create_async_engine(isolation_level=...)`` argument, via
+    ``Engine.execution_options()``, or via ``Connection
+    .execution_options()``. Inspecting the execution options instead
+    would miss the engine-argument route, which does not surface there.
+
+    We delegate the actual check to ``Dialect
+    .detect_autocommit_setting()`` rather than reading the attribute
+    ourselves, so that if a dialect ever changes how it represents
+    autocommit -- e.g. moving to Python 3.12's native ``sqlite3``
+    ``autocommit`` attribute -- this follows it instead of silently
+    reporting the wrong answer.
+    """
+    return bool(conn.dialect.detect_autocommit_setting(conn.connection.dbapi_connection))
+
+
+def _apply_pragmas(dbapi_connection: Any, *, is_memory: bool) -> None:
+    """Apply ``SQLITE_PRAGMAS`` to a raw DBAPI connection.
+
+    A plain module-level function rather than logic inlined in the
+    ``connect`` listener below, so it is independently callable -- both by
+    tests and by mutation testing, which (see
+    ``docs/development/mutation-testing.md``) categorically cannot mutate
+    the body of an ``@event.listens_for``-decorated function.
+    """
+    cursor = dbapi_connection.cursor()
+    try:
+        for pragma, value in SQLITE_PRAGMAS.items():
+            # :memory: databases cannot use WAL; skip it rather than error.
+            if is_memory and pragma == "journal_mode":
+                continue
+            cursor.execute(f"PRAGMA {pragma} = {value}")
+    finally:
+        cursor.close()
+
+
+def _begin_unless_autocommit(conn: Any) -> None:
+    """Issue ``BEGIN`` on ``conn`` unless it is in AUTOCOMMIT mode.
+
+    A plain module-level function rather than logic inlined in the
+    ``begin`` listener below, for the same reason as ``_apply_pragmas``:
+    independently callable and independently mutation-testable.
+
+    This is what makes a SELECT (not just a DML statement) the point at
+    which the transaction -- and therefore the read snapshot -- opens; see
+    ``test_sqlite_engine_holds_read_write_in_one_transaction``.
+    """
+    # A connection asking for AUTOCOMMIT must stay in autocommit: this is
+    # called for it even though SQLAlchemy itself emits no transaction.
+    # Issuing BEGIN anyway would wrap the caller's statements in a real
+    # transaction that nothing ever commits, silently discarding writes
+    # when the connection closes.
+    if _driver_is_autocommit(conn):
+        return
+    conn.exec_driver_sql("BEGIN")
+
+
 def _configure_sqlite(engine: AsyncEngine, *, is_memory: bool) -> None:
     """Attach PRAGMA and transaction-control hooks to a SQLite engine.
 
     Transaction control is entirely the ``begin`` listener below: it issues
     ``BEGIN`` explicitly at the start of every SQLAlchemy transaction (both
     explicit ``Connection.begin()`` and SQLAlchemy's autobegin-on-first-
-    statement), before any application statement runs. That is what makes a
-    SELECT (not just a DML statement) the point at which the transaction --
-    and therefore the read snapshot -- opens; see
-    ``test_sqlite_engine_holds_read_write_in_one_transaction``.
+    statement), before any application statement runs. The listeners here
+    are kept as thin registration wrappers that just delegate to
+    ``_apply_pragmas`` / ``_begin_unless_autocommit`` -- see those
+    functions' docstrings for why.
     """
-
-    def _driver_is_autocommit(conn: Any) -> bool:
-        """Is the underlying sqlite3 connection in autocommit mode?
-
-        SQLAlchemy implements ``isolation_level="AUTOCOMMIT"`` for SQLite by
-        setting the driver connection's ``isolation_level`` attribute to
-        ``None`` (``SQLiteDialect_pysqlite.set_isolation_level``), and ``""``
-        for every other level. The driver connection is therefore the ground
-        truth for whether it will open transactions on its own, and it says
-        the same thing regardless of *how* AUTOCOMMIT was requested -- as a
-        ``create_async_engine(isolation_level=...)`` argument, via
-        ``Engine.execution_options()``, or via ``Connection
-        .execution_options()``. Inspecting the execution options instead
-        would miss the engine-argument route, which does not surface there.
-
-        We delegate the actual check to ``Dialect
-        .detect_autocommit_setting()`` rather than reading the attribute
-        ourselves, so that if a dialect ever changes how it represents
-        autocommit -- e.g. moving to Python 3.12's native ``sqlite3``
-        ``autocommit`` attribute -- this follows it instead of silently
-        reporting the wrong answer.
-        """
-        return bool(conn.dialect.detect_autocommit_setting(conn.connection.dbapi_connection))
 
     @event.listens_for(engine.sync_engine, "connect")
     def _set_pragmas(dbapi_connection: Any, _record: Any) -> None:
-        cursor = dbapi_connection.cursor()
-        try:
-            for pragma, value in SQLITE_PRAGMAS.items():
-                # :memory: databases cannot use WAL; skip it rather than error.
-                if is_memory and pragma == "journal_mode":
-                    continue
-                cursor.execute(f"PRAGMA {pragma} = {value}")
-        finally:
-            cursor.close()
+        _apply_pragmas(dbapi_connection, is_memory=is_memory)
 
     @event.listens_for(engine.sync_engine, "begin")
     def _emit_begin(conn: Any) -> None:
-        # A connection asking for AUTOCOMMIT must stay in autocommit: this
-        # event still fires for it even though SQLAlchemy itself emits no
-        # transaction. Issuing BEGIN anyway would wrap the caller's
-        # statements in a real transaction that nothing ever commits,
-        # silently discarding writes when the connection closes.
-        if _driver_is_autocommit(conn):
-            return
-        conn.exec_driver_sql("BEGIN")
+        _begin_unless_autocommit(conn)
 
 
 def create_async_engine(url: str, **kwargs: Any) -> AsyncEngine:
