@@ -22,6 +22,7 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
+from hypothesis import HealthCheck, settings
 
 from eventsource.events.base import DomainEvent
 from eventsource.repositories.checkpoint import InMemoryCheckpointRepository
@@ -88,6 +89,27 @@ except ImportError:
 def pytest_configure(config: pytest.Config) -> None:
     """Register custom markers for tests."""
     config.addinivalue_line("markers", "sqlite: marks tests that require SQLite (aiosqlite)")
+
+
+# ============================================================================
+# Hypothesis Profiles
+# ============================================================================
+#
+# "default" runs locally with a modest example count. "ci" widens the search
+# for CI runs where extra time is acceptable. "db" is for property tests that
+# exercise real database transactions (deferred to M2's delivery-guarantee
+# work) -- fewer examples because each one costs a real transaction, and
+# function-scoped fixture reuse across examples is expected there.
+
+settings.register_profile("default", max_examples=100)
+settings.register_profile("ci", max_examples=500, deadline=None)
+settings.register_profile(
+    "db",
+    max_examples=25,
+    deadline=None,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
+settings.load_profile("default")
 
 
 # ============================================================================

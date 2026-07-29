@@ -46,7 +46,8 @@ nosetests.xml
 coverage.xml
 *.cover
 *.py,cover
-.hypothesis/
+.hypothesis/*
+!.hypothesis/examples/
 .pytest_cache/
 
 # Translations
