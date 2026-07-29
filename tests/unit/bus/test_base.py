@@ -4,9 +4,10 @@ import asyncio
 
 from eventsource.bus.base import BaseEventBus
 from eventsource.events.base import DomainEvent
-from eventsource.events.registry import EventRegistry
+from eventsource.events.registry import EventRegistry, register_event
 
 
+@register_event
 class BaseBusEvent(DomainEvent):
     event_type: str = "BaseBusEvent"
     aggregate_type: str = "BaseBus"
