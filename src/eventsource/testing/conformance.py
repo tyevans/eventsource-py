@@ -22,6 +22,7 @@ Note:
 """
 
 from abc import ABC, abstractmethod
+from typing import Any
 from uuid import UUID, uuid4
 
 from eventsource.bus.interface import EventBus
@@ -403,6 +404,35 @@ class EventBusConformanceSuite(ABC):
         """
         pass
 
+    @abstractmethod
+    def create_subscriber(self, received: list[DomainEvent]) -> Any:
+        """
+        Create an EventSubscriber that appends handled events to ``received``.
+
+        The subscriber's ``subscribed_to()`` must return the type produced by
+        ``create_test_event``.
+
+        Args:
+            received: List the subscriber appends each handled event to.
+
+        Returns:
+            An object with ``subscribed_to()`` and ``handle()``.
+        """
+        pass
+
+    async def await_delivery(self, bus: EventBus) -> None:
+        """
+        Wait for in-flight deliveries to land.
+
+        Defaults to a no-op, which is correct for in-process buses that
+        dispatch synchronously within ``publish``. Distributed backends
+        override this with a bounded poll or a consumer drain.
+
+        Args:
+            bus: The bus under test.
+        """
+        return None
+
     async def test_publish_and_subscribe_roundtrip(self) -> None:
         """
         Verify that events can be published and received by subscribers.
@@ -587,6 +617,78 @@ class EventBusConformanceSuite(ABC):
 
         # Verify good handler still ran
         assert len(received_by_good_handler) == 1
+
+    async def test_background_publish_delivers(self) -> None:
+        """
+        Verify that background publishing still delivers the event.
+
+        ``background=True`` means "do not wait for durability" -- publish
+        returns without waiting for the delivery to be confirmed or handled --
+        but the event must still arrive.
+        """
+        bus = self.create_bus()
+        aggregate_id = uuid4()
+        event = self.create_test_event(aggregate_id)
+
+        received_events: list[DomainEvent] = []
+
+        async def handler(e: DomainEvent) -> None:
+            received_events.append(e)
+
+        bus.subscribe(type(event), handler)
+
+        # Must not raise, and must not block on durability.
+        await bus.publish([event], background=True)
+
+        await self.await_delivery(bus)
+
+        assert len(received_events) == 1
+        assert received_events[0].event_id == event.event_id
+
+    async def test_per_aggregate_ordering(self) -> None:
+        """
+        Verify that events for one aggregate arrive in publish order.
+
+        Deliberately per-aggregate rather than global: Kafka partitions by
+        aggregate_id, so global ordering is not a contract any distributed
+        backend can honor.
+        """
+        bus = self.create_bus()
+        aggregate_id = uuid4()
+        events = [self.create_test_event(aggregate_id) for _ in range(5)]
+
+        received_events: list[DomainEvent] = []
+
+        async def handler(e: DomainEvent) -> None:
+            received_events.append(e)
+
+        bus.subscribe(type(events[0]), handler)
+        await bus.publish(events)
+        await self.await_delivery(bus)
+
+        assert len(received_events) == len(events)
+        assert [e.event_id for e in received_events] == [e.event_id for e in events]
+
+    async def test_subscribe_all_registers_declared_types(self) -> None:
+        """
+        Verify that subscribe_all registers for every declared event type.
+
+        Tests that a subscriber registered via subscribe_all receives events
+        of the types returned by its subscribed_to() method.
+        """
+        bus = self.create_bus()
+        received_events: list[DomainEvent] = []
+        subscriber = self.create_subscriber(received_events)
+
+        bus.subscribe_all(subscriber)
+
+        aggregate_id = uuid4()
+        event = self.create_test_event(aggregate_id)
+        await bus.publish([event])
+        await self.await_delivery(bus)
+
+        assert len(received_events) == 1
+        assert received_events[0].event_id == event.event_id
 
 
 __all__ = [
