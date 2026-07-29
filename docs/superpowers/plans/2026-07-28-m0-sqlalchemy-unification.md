@@ -639,6 +639,127 @@ out to be entangled, leave it and report rather than expanding this task.
 
 ---
 
+### Task 2c: Property-based tests for the encoder and dialect adapter
+
+**Added during execution** (user decision, 2026-07-29). Runs after Task 2b closes.
+
+**Rationale.** Three of the four defects found so far in this milestone were
+case-coverage gaps, not logic errors: the parity suite covered UUID and datetime
+but not non-ASCII; `uuid_result` covered `str` and `UUID` but not `bytes`. Both
+classes are what property-based testing generates for free. Hypothesis emits
+unicode, surrogates, and astral-plane codepoints by default — the `ensure_ascii`
+drift would have surfaced on the first run.
+
+**Honest limit, recorded so nobody over-trusts this:** Hypothesis would NOT have
+caught Task 1's vacuous isolation test, which had a wrong oracle rather than
+missing cases. Property tests find coverage gaps; mutation testing finds oracle
+errors. The break/restore discipline stays in force alongside this.
+
+**Files:**
+- Modify: `pyproject.toml` (test-only dependency + Hypothesis profiles)
+- Create: `tests/unit/serialization/test_json_properties.py`
+- Create: `tests/unit/repositories/test_dialect_properties.py`
+- Create/modify: `tests/conftest.py` (profile registration)
+
+**Interfaces:**
+- Consumes: `json_dumps`/`json_loads` and `ORJSON_AVAILABLE` (Task 2b);
+  `uuid_param`/`uuid_result`/`ts_param`/`ts_result`/`json_param`/`json_result`
+  (Tasks 2, 2b).
+- Produces: no library API. Test infrastructure only.
+
+- [ ] **Step 1: Add the dependency and profiles**
+
+Add `hypothesis>=6.100` to the dev/test dependency group (NOT to runtime deps, and
+NOT to the `orjson` extra). Register profiles in `tests/conftest.py`:
+
+```python
+from hypothesis import HealthCheck, settings
+
+settings.register_profile("default", max_examples=100)
+settings.register_profile("ci", max_examples=500, deadline=None)
+settings.register_profile(
+    "db", max_examples=25, deadline=None,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
+settings.load_profile("default")
+```
+
+Commit `.hypothesis/examples/` rather than gitignoring it, so a discovered
+counterexample is replayed deterministically on every later run instead of being
+rediscovered by luck.
+
+- [ ] **Step 2: Encoder parity property**
+
+```python
+json_values = st.recursive(
+    st.none() | st.booleans() | st.integers() | st.floats(allow_nan=False, allow_infinity=False) | st.text(),
+    lambda children: st.lists(children) | st.dictionaries(st.text(), children),
+    max_leaves=20,
+)
+
+@given(payload=json_values)
+def test_orjson_and_fallback_agree(payload, force_fallback):
+    """Both encoder branches must produce byte-identical output."""
+    with_orjson = json_dumps(payload)
+    with force_fallback():
+        without_orjson = json_dumps(payload)
+    assert with_orjson == without_orjson
+```
+
+`force_fallback` must toggle the real `ORJSON_AVAILABLE` switch. Do NOT
+reconstruct what stdlib "would" produce by hand-calling `json.dumps` with the
+right flags — that tests a reimplementation rather than the branch, reports zero
+divergences, and is exactly the mistake that hid the non-ASCII drift.
+
+Add a second property: `json_loads(json_dumps(x)) == x` for JSON-native values.
+
+- [ ] **Step 3: Dialect adapter round-trip properties**
+
+```python
+@given(value=st.uuids())
+@pytest.mark.parametrize("dialect", [Dialect.POSTGRESQL, Dialect.SQLITE])
+def test_uuid_roundtrip(value, dialect):
+    assert uuid_result(uuid_param(value, dialect)) == value
+
+@given(value=st.datetimes(timezones=st.timezones()))
+def test_ts_roundtrip_sqlite_preserves_instant(value):
+    assert ts_result(ts_param(value, Dialect.SQLITE)) == value
+```
+
+Also property-test `uuid_result` across `str`, `UUID`, `bytes`, `bytearray`, and
+`memoryview` representations of the same UUID, asserting all five agree.
+
+Naive datetimes are documented as coming back UTC-attached, so either exclude them
+from the equality property or assert the documented behavior explicitly — do not
+loosen the property to make both pass.
+
+- [ ] **Step 4: Verify the properties can fail**
+
+For each property, break the implementation it covers, confirm Hypothesis reports a
+counterexample, restore, confirm it passes. Record the counterexample Hypothesis
+found in each case — a property that cannot produce one is as useless as a test
+that cannot fail.
+
+- [ ] **Step 5: Verify, lint, commit**
+
+```bash
+uv run pytest tests/unit/serialization/ tests/unit/repositories/ -q --no-cov
+uv run ruff check src/ tests/ --fix && uv run ruff format src/ tests/
+git add .hypothesis/examples
+git commit --no-verify -m "test: add property-based tests for encoder parity and dialect round-trips"
+```
+
+**Deferred to M2, recorded here so it is not lost:** the delivery-guarantee work's
+central claim is itself a property — *applying event sequence E with arbitrary
+redeliveries and crash points yields the same read model as applying E once.* That
+is a Hypothesis `RuleBasedStateMachine` generating deliver/crash/redeliver
+interleavings, and it is a far better test of exactly-once semantics than any
+hand-enumerated scenario list, because the dangerous interleavings are precisely
+the ones nobody thinks to write down. Use the `db` profile there; each example
+costs real transactions.
+
+---
+
 ### Task 3: Unify the checkpoint repository
 
 **Files:**
