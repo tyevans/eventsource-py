@@ -352,7 +352,7 @@ class SQLCheckpointRepository:
                 dialect = dialect_of(conn)
                 params: dict[str, object] = {"projection_name": projection_name}
 
-                if dialect is Dialect.POSTGRESQL:
+                if dialect is Dialect.POSTGRESQL and event_types:
                     event_filter = "WHERE event_type = ANY(:event_types)"
                     params["event_types"] = event_types
                 elif event_types:

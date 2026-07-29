@@ -297,19 +297,22 @@ class TestSQLCheckpointRepositoryLagMetrics:
         # When caught up, lag should be 0
         assert result.lag_seconds >= 0
 
-    async def test_get_lag_metrics_no_filter_matches_any_event(
+    async def test_get_lag_metrics_without_event_types_uses_latest_event(
         self,
         postgres_checkpoint_repo: SQLCheckpointRepository,
         postgres_event_store,
         sample_aggregate_id,
     ) -> None:
-        """With no event_types filter, PostgreSQL's dialect branch builds
-        ``WHERE event_type = ANY(:event_types)`` with an *empty* array --
-        which matches nothing in PostgreSQL, unlike a simply-omitted WHERE
-        clause (which would match everything). This only executes on the
-        real `Dialect.POSTGRESQL` branch of `get_lag_metrics`; on SQLite (or
-        if dialect detection silently fell through to the no-filter `else`
-        branch) this event would incorrectly count as "latest"."""
+        """With no `event_types` filter, `get_lag_metrics` must find the
+        TRUE latest event -- on both dialects. SQLite already gets this
+        right (an empty/`None` `event_types` falls through to `else:
+        event_filter = ""`, i.e. no filter). PostgreSQL must agree: it must
+        NOT take the `ANY(:event_types)` branch when `event_types` is
+        empty, because `WHERE event_type = ANY('{}')` matches zero rows in
+        PostgreSQL -- silently reporting "no relevant event" (and therefore
+        no/wrong lag) for a projection that is, in reality, caught up or
+        behind by a knowable amount. This is a monitoring path: a wrong
+        answer here doesn't crash, it just lies to whoever is watching."""
         projection_name = "NoFilterLagProjection"
 
         event = TestItemCreated(
@@ -331,12 +334,12 @@ class TestSQLCheckpointRepositoryLagMetrics:
             event_type="TestItemCreated",
         )
 
-        # No event_types passed -- exercises PostgreSQL's `ANY(:event_types)`
-        # with an empty array, which must match no events, not all of them.
+        # No event_types passed -- must still find the event above as the
+        # latest relevant one, exactly as SQLite would with the same data.
         result = await postgres_checkpoint_repo.get_lag_metrics(projection_name)
 
         assert result is not None
-        assert result.latest_event_id is None
+        assert result.latest_event_id == str(event.event_id)
 
     async def test_get_lag_metrics_reports_nonzero_lag_for_stale_checkpoint(
         self,

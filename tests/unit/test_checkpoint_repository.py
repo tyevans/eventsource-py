@@ -673,6 +673,55 @@ class TestSQLCheckpointRepository:
         assert result.projection_name == projection_name
         assert result.latest_event_id == str(event_id)
 
+    async def test_lag_metrics_without_event_types_uses_latest_event(self, sqlite_engine):
+        """Cross-dialect invariant: with NO `event_types` filter,
+        `get_lag_metrics` must find the true latest relevant event. SQLite
+        does this via `event_types` falling through to `else: event_filter
+        = ""` (no filter). This is the SQLite half of the invariant proven
+        against real PostgreSQL in
+        tests/integration/repositories/test_checkpoint.py::
+        test_get_lag_metrics_without_event_types_uses_latest_event -- same
+        call shape, same data shape, both dialects must agree. PostgreSQL
+        used to diverge here (`WHERE event_type = ANY('{}')` matches zero
+        rows), which this pair of tests exists to guard against regressing.
+        """
+        from datetime import UTC
+        from datetime import datetime as dt
+
+        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+
+        repo = SQLCheckpointRepository(sqlite_engine)
+        projection_name = "TestProjection"
+        event_id = uuid4()
+
+        now = dt.now(UTC).isoformat()
+        async with sqlite_engine.begin() as conn:
+            await conn.execute(
+                text("""
+                    INSERT INTO events (event_id, event_type, aggregate_type, aggregate_id,
+                                       version, timestamp, payload)
+                    VALUES (:event_id, :event_type, :aggregate_type, :aggregate_id,
+                            :version, :timestamp, :payload)
+                    """),
+                {
+                    "event_id": str(event_id),
+                    "event_type": "TestEvent",
+                    "aggregate_type": "TestAggregate",
+                    "aggregate_id": str(uuid4()),
+                    "version": 1,
+                    "timestamp": now,
+                    "payload": "{}",
+                },
+            )
+
+        await repo.update_checkpoint(projection_name, event_id, "TestEvent")
+
+        # No event_types passed -- must still find the event above as the
+        # latest relevant one.
+        result = await repo.get_lag_metrics(projection_name)
+        assert result is not None
+        assert result.latest_event_id == str(event_id)
+
     async def test_lag_metrics_with_event_type_filter(self, sqlite_engine):
         from datetime import UTC
         from datetime import datetime as dt
