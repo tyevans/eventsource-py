@@ -106,5 +106,5 @@ mutants/
 .claude/last-docs-run
 
 # Benchmark harness output
-bench/results/
+bench/results/*
 !bench/results/.gitkeep

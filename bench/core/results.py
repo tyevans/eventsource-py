@@ -70,6 +70,7 @@ class CellResult:
 
     @property
     def median_round(self) -> Round | None:
+        """Return the round with the median (upper-median on even count) ops_per_sec."""
         if not self.rounds:
             return None
         ordered = sorted(self.rounds, key=lambda r: r.ops_per_sec)
