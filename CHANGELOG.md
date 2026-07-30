@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-29
+
+### Added
+
+- **`eventsource.bus.base.BaseEventBus`** - Shared concrete base class for all four `EventBus` backends. Centralizes subscription management, event-class resolution, and fire-and-forget background-task tracking/draining so `interface.py` can stay a pure ABC.
+- **`eventsource.bus.registry.SubscriptionRegistry`** - Thread-safe registry of event handlers keyed by event class, with a cached specific-then-wildcard handler tuple per event type so dispatch allocates nothing per event. Used internally by all four bus backends, replacing four independent (and inconsistent) implementations.
+- **`eventsource.bus.retry.RetryPolicy`** - Shared retry/backoff policy with symmetric jitter, used by the broker-backed buses for consume-side redelivery and publish retries.
+- **`eventsource.testing.RecordingEventBus`** - Purpose-built in-memory bus for tests that need to assert on published events, replacing the ad hoc `InMemoryEventBus.published_events` / `clear_published_events` attributes.
+- **`eventsource.HandlerDispatchError`** - New public exception. Broker consume paths (Kafka, RabbitMQ, Redis) now run every registered handler for a delivered event, aggregate any failures into a `HandlerDispatchError`, and withhold the ack so the broker redelivers -- instead of aborting on the first handler failure and silently dropping the rest.
+- CI now runs the Kafka and RabbitMQ integration suites, run against real brokers via testcontainers in a blocking CI job.
+- ADR 0010 and ADR 0011, documenting the event bus contract decisions behind this release (shared base/registry/retry, uniform handler-error isolation, broker CI).
+
+### Changed
+
+- **`EventBusConformanceSuite` gained a new abstract method `create_subscriber`** (and an overridable `await_delivery` hook). Existing third-party subclasses of the conformance suite must implement `create_subscriber` to keep passing on upgrade.
+
+- **`RedisEventBus.publish` now honors `background=True`.** Previously the parameter was accepted but silently ignored for Redis (documented as "Ignored for Redis"); background publishes are now genuinely fire-and-forget, matching the other backends.
+- **Uniform handler-error isolation across all backends.** Every registered handler now runs for each delivered event, regardless of whether an earlier handler raised. Previously Redis and RabbitMQ aborted dispatch on the first handler failure, silently skipping any handlers registered after it.
+- **Kafka retry jitter is now symmetric.** Previously jitter was one-sided positive, which meant effective backoff could exceed `retry_max_delay`. Jitter is now applied symmetrically, so backoff never exceeds the configured maximum.
+- **Kafka publishes are now batched** rather than awaiting one broker round-trip per event, improving publish throughput for multi-event batches.
+- **Kafka handler dispatch is now keyed by event class** rather than by class name. Previously, an event class whose `event_type` field differed from its class name would silently fail to reach its handlers; dispatch now resolves handlers the same way as the other backends.
+- **Kafka background publishes no longer crash.** A misuse of aiokafka's `Future` API in the background-publish path is fixed.
+- Subscription management (subscribe/unsubscribe/wildcard/clear/count) is now genuinely thread-safe in all four backends, via the shared `SubscriptionRegistry`.
+
+### Deprecated
+
+- `KafkaEventBus.get_handlers_for_event` is deprecated. It remains available as a shim for existing callers but new code should not depend on it.
+- `InMemoryEventBus.published_events` and `InMemoryEventBus.clear_published_events` are deprecated in favor of `eventsource.testing.RecordingEventBus`.
+
 ## [0.5.0] - 2025-12-15
 
 ### Added

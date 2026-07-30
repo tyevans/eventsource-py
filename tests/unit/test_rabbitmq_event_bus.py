@@ -1685,42 +1685,6 @@ class TestRabbitMQSubscriptionIntegration:
         """Create a bus instance for testing."""
         return RabbitMQEventBus()
 
-    def test_subscribe_creates_valid_adapter(self, bus: RabbitMQEventBus) -> None:
-        """Test that subscribe creates a valid HandlerAdapter."""
-        import asyncio
-
-        from eventsource.handlers.adapter import HandlerAdapter
-
-        handler = MagicMock()
-        bus.subscribe(DomainEvent, handler)
-
-        # Access the internal subscribers dict to verify adapter structure
-        adapters = bus._subscribers[DomainEvent]
-        assert len(adapters) == 1
-
-        adapter = adapters[0]
-        assert isinstance(adapter, HandlerAdapter)
-        assert adapter._original is handler
-        assert asyncio.iscoroutinefunction(adapter.handle)
-
-    def test_wildcard_subscribe_creates_valid_adapter(self, bus: RabbitMQEventBus) -> None:
-        """Test that subscribe_to_all_events creates a valid HandlerAdapter."""
-        import asyncio
-
-        from eventsource.handlers.adapter import HandlerAdapter
-
-        handler = MagicMock()
-        bus.subscribe_to_all_events(handler)
-
-        # Access the internal all_event_handlers list
-        adapters = bus._all_event_handlers
-        assert len(adapters) == 1
-
-        adapter = adapters[0]
-        assert isinstance(adapter, HandlerAdapter)
-        assert adapter._original is handler
-        assert asyncio.iscoroutinefunction(adapter.handle)
-
     def test_unsubscribe_uses_identity_comparison(self, bus: RabbitMQEventBus) -> None:
         """Test that unsubscribe uses identity comparison via HandlerAdapter equality."""
         # Two different mock objects that might be equal
@@ -3094,65 +3058,6 @@ class TestRabbitMQEventDeserialization:
         assert event.customer_id == "customer-123"
 
 
-class TestRabbitMQGetEventClass:
-    """Tests for event class lookup in RabbitMQEventBus."""
-
-    @pytest.fixture
-    def config(self) -> RabbitMQEventBusConfig:
-        """Create test configuration."""
-        return RabbitMQEventBusConfig()
-
-    def test_get_event_class_from_explicit_registry(self, config: RabbitMQEventBusConfig) -> None:
-        """Test that event class is found in explicit registry."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
-
-        registry = EventRegistry()
-        registry.register(SerializationTestEvent)
-        bus = RabbitMQEventBus(config=config, event_registry=registry)
-
-        event_class = bus._get_event_class("SerializationTestEvent")
-
-        assert event_class is SerializationTestEvent
-
-    def test_get_event_class_not_in_registry_returns_none(
-        self, config: RabbitMQEventBusConfig
-    ) -> None:
-        """Test that unknown event type returns None."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
-
-        registry = EventRegistry()
-        bus = RabbitMQEventBus(config=config, event_registry=registry)
-
-        event_class = bus._get_event_class("UnknownEvent")
-
-        assert event_class is None
-
-    def test_get_event_class_falls_back_to_default_registry(
-        self, config: RabbitMQEventBusConfig
-    ) -> None:
-        """Test that None registry falls back to default registry."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
-        from eventsource.events.registry import default_registry
-
-        # Register in default registry
-        class DefaultRegistryEvent(DomainEvent):
-            event_type: str = "DefaultRegistryEvent"
-            aggregate_type: str = "Test"
-
-        default_registry.register(DefaultRegistryEvent)
-
-        try:
-            # Bus with no explicit registry
-            bus = RabbitMQEventBus(config=config)
-
-            event_class = bus._get_event_class("DefaultRegistryEvent")
-
-            assert event_class is DefaultRegistryEvent
-        finally:
-            # Clean up default registry
-            default_registry.unregister("DefaultRegistryEvent")
-
-
 class TestRabbitMQSerializationRoundTrip:
     """Tests for serialization and deserialization round-trip."""
 
@@ -4345,7 +4250,8 @@ class TestRabbitMQDispatchEvent:
 
     @pytest.mark.asyncio
     async def test_dispatch_raises_on_handler_error(self, bus: RabbitMQEventBus) -> None:
-        """Test that _dispatch_event re-raises handler exceptions."""
+        """Test that _dispatch_event raises an aggregate HandlerDispatchError."""
+        from eventsource.exceptions import HandlerDispatchError
 
         async def failing_handler(event: DomainEvent) -> None:
             raise ValueError("Handler error")
@@ -4356,14 +4262,25 @@ class TestRabbitMQDispatchEvent:
         mock_message = MagicMock()
         mock_message.message_id = "test-id"
 
-        with pytest.raises(ValueError, match="Handler error"):
+        with pytest.raises(HandlerDispatchError) as exc_info:
             await bus._dispatch_event(event, mock_message)
 
+        assert len(exc_info.value.failures) == 1
+        failed_name, failed_exc = exc_info.value.failures[0]
+        assert isinstance(failed_exc, ValueError)
         assert bus.stats.handler_errors == 1
 
     @pytest.mark.asyncio
-    async def test_dispatch_stops_on_first_handler_error(self, bus: RabbitMQEventBus) -> None:
-        """Test that _dispatch_event stops processing on first handler error."""
+    async def test_dispatch_isolates_handler_errors(self, bus: RabbitMQEventBus) -> None:
+        """A failing handler must not prevent other handlers from running.
+
+        Both handlers should be invoked even though the first one raises;
+        the failure is reported once dispatch has run every handler, via an
+        aggregate HandlerDispatchError (not the underlying exception
+        directly), so the message is still left unacked for redelivery.
+        """
+        from eventsource.exceptions import HandlerDispatchError
+
         call_order = []
 
         async def first_handler(event: DomainEvent) -> None:
@@ -4380,10 +4297,10 @@ class TestRabbitMQDispatchEvent:
         mock_message = MagicMock()
         mock_message.message_id = "test-id"
 
-        with pytest.raises(ValueError):
+        with pytest.raises(HandlerDispatchError):
             await bus._dispatch_event(event, mock_message)
 
-        assert call_order == ["first"]
+        assert call_order == ["first", "second"]
 
     @pytest.mark.asyncio
     async def test_dispatch_calls_handlers_sequentially(self, bus: RabbitMQEventBus) -> None:
@@ -4540,7 +4457,9 @@ class TestRabbitMQConsumerStatistics:
 
         initial_errors = bus.stats.handler_errors
 
-        with pytest.raises(ValueError):
+        from eventsource.exceptions import HandlerDispatchError
+
+        with pytest.raises(HandlerDispatchError):
             await bus._dispatch_event(event, mock_message)
 
         assert bus.stats.handler_errors == initial_errors + 1
@@ -5536,9 +5455,8 @@ class TestRabbitMQProcessMessageWithDLQTracking:
             raise ValueError("Intentional failure")
 
         # Subscribe as wildcard handler (receives all events)
-        from eventsource.handlers.adapter import HandlerAdapter
 
-        bus._all_event_handlers.append(HandlerAdapter(failing_handler))
+        bus.subscribe_to_all_events(failing_handler)
 
         # Mock deserialize to return an event
         mock_event = MagicMock(spec=DomainEvent)
@@ -5570,9 +5488,8 @@ class TestRabbitMQProcessMessageWithDLQTracking:
             raise ValueError("Intentional failure")
 
         # Subscribe as wildcard handler (receives all events)
-        from eventsource.handlers.adapter import HandlerAdapter
 
-        bus._all_event_handlers.append(HandlerAdapter(failing_handler))
+        bus.subscribe_to_all_events(failing_handler)
 
         mock_event = MagicMock(spec=DomainEvent)
         mock_event.event_id = uuid4()
@@ -6109,9 +6026,7 @@ class TestProcessMessageWithRetry:
         async def failing_handler(event: DomainEvent) -> None:
             raise ValueError("Intentional failure")
 
-        from eventsource.handlers.adapter import HandlerAdapter
-
-        bus._all_event_handlers.append(HandlerAdapter(failing_handler))
+        bus.subscribe_to_all_events(failing_handler)
 
         await bus._process_message(mock_message)
 
@@ -6133,9 +6048,7 @@ class TestProcessMessageWithRetry:
         async def failing_handler(event: DomainEvent) -> None:
             raise ValueError("Intentional failure")
 
-        from eventsource.handlers.adapter import HandlerAdapter
-
-        bus._all_event_handlers.append(HandlerAdapter(failing_handler))
+        bus.subscribe_to_all_events(failing_handler)
 
         await bus._process_message(mock_message)
 
@@ -6149,7 +6062,6 @@ class TestProcessMessageWithRetry:
         self, bus: RabbitMQEventBus, mock_message: AsyncMock
     ) -> None:
         """Test that successful processing does not trigger retry logic."""
-        from eventsource.handlers.adapter import HandlerAdapter
 
         mock_exchange = AsyncMock()
         bus._exchange = mock_exchange
@@ -6158,7 +6070,7 @@ class TestProcessMessageWithRetry:
         async def success_handler(event: DomainEvent) -> None:
             pass
 
-        bus._all_event_handlers.append(HandlerAdapter(success_handler))
+        bus.subscribe_to_all_events(success_handler)
 
         await bus._process_message(mock_message)
 
@@ -6178,9 +6090,7 @@ class TestProcessMessageWithRetry:
         async def failing_handler(event: DomainEvent) -> None:
             raise ValueError("Intentional failure")
 
-        from eventsource.handlers.adapter import HandlerAdapter
-
-        bus._all_event_handlers.append(HandlerAdapter(failing_handler))
+        bus.subscribe_to_all_events(failing_handler)
 
         await bus._process_message(mock_message)
 
@@ -9731,7 +9641,9 @@ class TestOpenTelemetryConsumerTracing:
         mock_tracer.start_span.return_value = mock_handler_span
         bus._tracer = mock_tracer
 
-        with pytest.raises(ValueError, match="Handler failed"):
+        from eventsource.exceptions import HandlerDispatchError
+
+        with pytest.raises(HandlerDispatchError):
             await bus._dispatch_event(event, mock_message, mock_parent_span)
 
         # Verify exception was recorded on handler span
@@ -11661,3 +11573,24 @@ class TestBatchPublishingStatsDict:
         assert stats_dict["batch_publishes"] == 1
         assert stats_dict["batch_events_published"] == 5
         assert stats_dict["batch_partial_failures"] == 0
+
+
+def test_retry_delay_comes_from_the_shared_policy() -> None:
+    """The bus must delegate backoff to RetryPolicy, not compute it inline."""
+    from eventsource.bus.retry import RetryPolicy
+
+    config = RabbitMQEventBusConfig(
+        rabbitmq_url="amqp://guest:guest@localhost/",
+        retry_base_delay=2.0,
+        retry_max_delay=30.0,
+        retry_jitter=0.0,
+        max_retries=5,
+    )
+    bus = RabbitMQEventBus(config=config)
+
+    assert isinstance(bus._retry_policy, RetryPolicy)
+    assert bus._retry_policy.base_delay == 2.0
+    assert bus._retry_policy.max_delay == 30.0
+    assert bus._retry_policy.jitter == 0.0
+    assert bus._retry_policy.max_retries == 5
+    assert bus._calculate_retry_delay(2) == 8.0

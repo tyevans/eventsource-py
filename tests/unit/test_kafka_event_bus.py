@@ -25,6 +25,7 @@ from eventsource.bus.kafka import (
 )
 from eventsource.events.base import DomainEvent
 from eventsource.events.registry import EventRegistry
+from eventsource.exceptions import HandlerDispatchError
 
 # --- Test Events ---
 # Prefixed with Sample to avoid pytest collection warnings
@@ -53,6 +54,13 @@ class SamplePaymentReceived(DomainEvent):
     event_type: str = "SamplePaymentReceived"
     aggregate_type: str = "Payment"
     amount: float
+
+
+class SampleKafkaEvent(DomainEvent):
+    """Minimal test event used for publish-ordering tests."""
+
+    event_type: str = "SampleKafkaEvent"
+    aggregate_type: str = "SampleAggregate"
 
 
 # --- Test Handlers ---
@@ -113,6 +121,80 @@ def sample_event() -> SampleOrderCreated:
         order_number="ORD-001",
         customer_id=uuid4(),
     )
+
+
+@pytest.fixture
+def mock_producer() -> AsyncMock:
+    """Create a mock aiokafka producer."""
+    producer = AsyncMock()
+
+    async def default_send(*args: Any, **kwargs: Any) -> Any:
+        future: AsyncMock = AsyncMock()
+        return future
+
+    producer.send = default_send
+    return producer
+
+
+def test_handlers_resolve_when_event_type_field_differs_from_class_name() -> None:
+    """Regression: Kafka keyed subscriptions by class __name__ but looked them
+    up by the event_type field from the message header. When those differ, the
+    handler silently never fired."""
+
+    class RenamedEvent(DomainEvent):
+        event_type: str = "renamed.v1"
+        aggregate_type: str = "Renamed"
+
+    bus = KafkaEventBus(config=KafkaEventBusConfig(bootstrap_servers="localhost:9092"))
+
+    async def handler(event: DomainEvent) -> None: ...
+
+    bus.subscribe(RenamedEvent, handler)
+
+    assert len(bus._handlers_for(RenamedEvent)) == 1
+
+
+def test_retry_delay_comes_from_the_shared_policy() -> None:
+    from eventsource.bus.retry import RetryPolicy
+
+    config = KafkaEventBusConfig(
+        bootstrap_servers="localhost:9092",
+        retry_base_delay=2.0,
+        retry_max_delay=30.0,
+        retry_jitter=0.0,
+        max_retries=5,
+    )
+    bus = KafkaEventBus(config=config)
+
+    assert isinstance(bus._retry_policy, RetryPolicy)
+    assert bus._calculate_retry_delay(2) == 8.0
+
+
+async def test_publish_sends_all_events_before_awaiting_any(
+    mock_producer: Any,
+) -> None:
+    """Regression: publish awaited a full broker round-trip per event."""
+    bus = KafkaEventBus(config=KafkaEventBusConfig(bootstrap_servers="localhost:9092"))
+    bus._producer = mock_producer
+    bus._connected = True
+
+    send_order: list[str] = []
+
+    async def record_send(*args: Any, **kwargs: Any) -> Any:
+        send_order.append("send")
+
+        async def result() -> None:
+            send_order.append("await")
+
+        return result()
+
+    mock_producer.send = record_send
+
+    events = [SampleKafkaEvent(aggregate_id=uuid4()) for _ in range(3)]
+    await bus.publish(events)
+
+    # All three sends happen before any await completes.
+    assert send_order[:3] == ["send", "send", "send"]
 
 
 # =============================================================================
@@ -740,7 +822,7 @@ class TestKafkaEventBus:
         assert bus.get_wildcard_subscriber_count() == 0
 
     def test_get_handlers_for_event(self, event_registry: EventRegistry) -> None:
-        """Test getting handlers for an event type."""
+        """Test getting handlers for an event type (deprecated shim)."""
         bus = KafkaEventBus(event_registry=event_registry)
         handler1 = OrderHandler()
         handler2 = OrderHandler()
@@ -748,7 +830,20 @@ class TestKafkaEventBus:
         bus.subscribe(SampleOrderCreated, handler1)
         bus.subscribe_to_all_events(handler2)
 
-        handlers = bus.get_handlers_for_event("SampleOrderCreated")
+        with pytest.deprecated_call():
+            handlers = bus.get_handlers_for_event("SampleOrderCreated")
+        assert len(handlers) == 2
+
+    def test_handlers_for_class_lookup(self, event_registry: EventRegistry) -> None:
+        """Test the non-deprecated class-keyed handler lookup."""
+        bus = KafkaEventBus(event_registry=event_registry)
+        handler1 = OrderHandler()
+        handler2 = OrderHandler()
+
+        bus.subscribe(SampleOrderCreated, handler1)
+        bus.subscribe_to_all_events(handler2)
+
+        handlers = bus._handlers_for(SampleOrderCreated)
         assert len(handlers) == 2
 
     @pytest.mark.asyncio
@@ -1157,7 +1252,7 @@ class TestKafkaEventBusCounterMetrics:
         )
 
         # Simulate handler dispatch
-        handlers = bus.get_handlers_for_event("SampleOrderCreated")
+        handlers = bus._handlers_for(SampleOrderCreated)
         await bus._dispatch_to_handlers(event, handlers)
 
         metrics_data = self.reader.get_metrics_data()
@@ -1182,9 +1277,9 @@ class TestKafkaEventBusCounterMetrics:
             customer_id=uuid4(),
         )
 
-        handlers = bus.get_handlers_for_event("SampleOrderCreated")
+        handlers = bus._handlers_for(SampleOrderCreated)
 
-        with pytest.raises(ValueError):
+        with pytest.raises(HandlerDispatchError):
             await bus._dispatch_to_handlers(event, handlers)
 
         metrics_data = self.reader.get_metrics_data()
@@ -1302,7 +1397,7 @@ class TestKafkaEventBusHistogramMetrics:
             customer_id=uuid4(),
         )
 
-        handlers = bus.get_handlers_for_event("SampleOrderCreated")
+        handlers = bus._handlers_for(SampleOrderCreated)
         await bus._dispatch_to_handlers(event, handlers)
 
         metrics_data = self.reader.get_metrics_data()
@@ -1510,7 +1605,7 @@ class TestKafkaEventBusMetricsEdgeCases:
             customer_id=uuid4(),
         )
 
-        handlers = bus.get_handlers_for_event("SampleOrderCreated")
+        handlers = bus._handlers_for(SampleOrderCreated)
         await bus._dispatch_to_handlers(event, handlers)
 
     @pytest.mark.asyncio
@@ -1569,9 +1664,9 @@ class TestKafkaEventBusMetricsEdgeCases:
                 customer_id=uuid4(),
             )
 
-            handlers = bus.get_handlers_for_event("SampleOrderCreated")
+            handlers = bus._handlers_for(SampleOrderCreated)
 
-            with pytest.raises(ValueError):
+            with pytest.raises(HandlerDispatchError):
                 await bus._dispatch_to_handlers(event, handlers)
 
             metrics_data = reader.get_metrics_data()
@@ -1621,7 +1716,7 @@ class TestKafkaEventBusMetricsEdgeCases:
                 customer_id=uuid4(),
             )
 
-            handlers = bus.get_handlers_for_event("SampleOrderCreated")
+            handlers = bus._handlers_for(SampleOrderCreated)
             await bus._dispatch_to_handlers(event, handlers)
 
             metrics_data = reader.get_metrics_data()

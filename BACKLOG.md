@@ -25,3 +25,13 @@ already cover this before doing more work here.
 
 Prerequisite (done): document core surface boundary for future Tier 0 extraction
 (`docs/core-surface.md`).
+
+## Deterministic or scheduled coverage for bus performance assertions (P3)
+
+The kafka/rabbitmq metrics-overhead and duration tests assert wall-clock thresholds
+and were excluded from the blocking broker-tests CI job (marked `@pytest.mark.benchmark`)
+because shared runners make elapsed-time assertions nondeterministic (observed 55.79%
+vs a 20% threshold on a green code path). Nothing in CI watches metrics overhead now.
+Either rewrite the assertions as deterministic proxies (count instrumentation calls
+rather than elapsed time) or add a scheduled, non-blocking benchmark workflow that
+runs `-m benchmark` and reports results.

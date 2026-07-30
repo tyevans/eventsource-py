@@ -30,8 +30,10 @@ class EventBus(ABC):
     The event bus decouples event producers from consumers, allowing
     projections and other handlers to react to events independently.
 
-    Implementations must be thread-safe and support both synchronous
-    and asynchronous handlers.
+    Subscription management (subscribe, unsubscribe, and their wildcard
+    counterparts) is thread-safe in all bundled implementations, which inherit
+    it from ``BaseEventBus``. Publishing must be called from an async context.
+    Implementations support both sync and async handlers.
 
     Tracing Support:
         Implementations SHOULD use the composition-based ``Tracer`` from
@@ -100,6 +102,11 @@ class EventBus(ABC):
         - ``eventsource.observability.create_tracer`` - Tracer factory function
         - ``eventsource.observability.attributes`` - Standard attribute constants
         - ``InMemoryEventBus`` - Reference implementation with tracing
+        - ``BaseEventBus`` - Concrete base providing subscription management,
+          background task tracking, and event class resolution. Prefer
+          subclassing it over implementing this ABC directly.
+        - ``EventBusConformanceSuite`` - Contract tests every implementation
+          should subclass.
     """
 
     @abstractmethod
@@ -116,9 +123,26 @@ class EventBus(ABC):
 
         Args:
             events: List of events to publish
-            background: If True, publish asynchronously without blocking
-                       (fire-and-forget). This improves response times but
-                       introduces eventual consistency.
+            background: If True, return as soon as the events are handed off,
+                       without waiting for delivery to be confirmed or handled.
+                       Improves response times at the cost of eventual
+                       consistency -- a read immediately after publishing may
+                       not observe the event.
+
+                       Backends realize this differently: InMemory dispatches
+                       in a background task, Redis defers the stream write,
+                       Kafka skips the broker acknowledgment, and RabbitMQ
+                       skips the publisher confirm. In every case the event is
+                       still delivered.
+
+                       Handler errors during delivery are always isolated per
+                       handler -- a failing handler never starves its peers.
+                       On broker consume paths (Redis, RabbitMQ, Kafka),
+                       errors are additionally aggregated into
+                       ``HandlerDispatchError`` and the message's ack is
+                       withheld so the broker redelivers it. InMemory has no
+                       broker to redeliver from, so its handler errors are
+                       logged rather than raised.
 
         Raises:
             Exception: If publishing fails critically (only in synchronous mode)

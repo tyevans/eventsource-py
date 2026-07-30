@@ -25,6 +25,7 @@ from eventsource.aggregates.base import AggregateRoot, DeclarativeAggregate
 from eventsource.aggregates.repository import AggregateRepository
 
 # Event bus (Task 10)
+from eventsource.bus.base import BaseEventBus
 from eventsource.bus.interface import (
     EventBus,
     EventHandlerFunc,
@@ -57,6 +58,8 @@ from eventsource.bus.redis import (
     RedisEventBusStats,
     RedisNotAvailableError,
 )
+from eventsource.bus.registry import SubscriptionRegistry
+from eventsource.bus.retry import RetryPolicy
 
 # Shared async engine factory
 from eventsource.engine import create_async_engine
@@ -82,6 +85,7 @@ from eventsource.exceptions import (
     EventNotFoundError,
     EventSourceError,
     EventVersionError,
+    HandlerDispatchError,
     OptimisticLockError,
     ProjectionError,
 )
@@ -188,6 +192,7 @@ except ImportError:
     SQLITE_AVAILABLE = False
 
 # Types - available immediately
+from eventsource.testing.recording import RecordingEventBus
 from eventsource.types import (
     AggregateId,
     CausationId,
@@ -240,9 +245,13 @@ __all__ = [
     "handles",
     # Event Bus (Task 10)
     "EventBus",
+    "BaseEventBus",
     "EventHandlerFunc",
     "AsyncEventHandler",
     "InMemoryEventBus",
+    "SubscriptionRegistry",
+    "RetryPolicy",
+    "RecordingEventBus",
     # Protocols (TD-007)
     "EventHandler",
     "SyncEventHandler",
@@ -273,6 +282,7 @@ __all__ = [
     "EventNotFoundError",
     "EventSourceError",
     "EventVersionError",
+    "HandlerDispatchError",
     "OptimisticLockError",
     "ProjectionError",
     # Repository infrastructure (Task 12)

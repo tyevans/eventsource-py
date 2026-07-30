@@ -10,13 +10,12 @@ For distributed deployments, use RedisEventBus instead.
 import asyncio
 import logging
 import threading
-from collections import defaultdict
+import warnings
+from collections import deque
 
-from eventsource.bus.interface import (
-    EventBus,
-    EventHandlerFunc,
-)
+from eventsource.bus.base import BaseEventBus
 from eventsource.events.base import DomainEvent
+from eventsource.events.registry import EventRegistry
 from eventsource.handlers.adapter import HandlerAdapter
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
@@ -27,15 +26,11 @@ from eventsource.observability.attributes import (
     ATTR_HANDLER_NAME,
     ATTR_HANDLER_SUCCESS,
 )
-from eventsource.protocols import (
-    FlexibleEventHandler,
-    FlexibleEventSubscriber,
-)
 
 logger = logging.getLogger(__name__)
 
 
-class InMemoryEventBus(EventBus):
+class InMemoryEventBus(BaseEventBus):
     """
     In-memory event bus for event distribution.
 
@@ -65,6 +60,7 @@ class InMemoryEventBus(EventBus):
         *,
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
+        event_registry: EventRegistry | None = None,
     ) -> None:
         """
         Initialize the event bus with empty subscriber registry.
@@ -73,18 +69,11 @@ class InMemoryEventBus(EventBus):
             tracer: Optional custom Tracer instance. If not provided, one is
                    created based on enable_tracing setting.
             enable_tracing: If True and OpenTelemetry is available, emit traces.
-                          Defaults to True for consistency with other components.
                           Ignored if tracer is explicitly provided.
+            event_registry: Optional registry for resolving event classes.
         """
-        # Map of event type -> list of HandlerAdapter instances
-        self._subscribers: dict[type[DomainEvent], list[HandlerAdapter]] = defaultdict(list)
-        # List of wildcard handlers
-        self._all_event_handlers: list[HandlerAdapter] = []
-        # Lock for thread-safe subscription management
-        self._lock = threading.RLock()
-        # Track background tasks to prevent orphaned coroutines
-        self._background_tasks: set[asyncio.Task[None]] = set()
-        # Statistics
+        super().__init__(event_registry=event_registry)
+
         self._stats = {
             "events_published": 0,
             "handlers_invoked": 0,
@@ -93,10 +82,11 @@ class InMemoryEventBus(EventBus):
             "background_tasks_completed": 0,
         }
 
-        # Track published events for testing purposes
-        self._published_events: list[DomainEvent] = []
+        # Track published events for testing purposes.
+        # Deprecated -- see RecordingEventBus. Removed in a later task.
+        self._published_events: deque[DomainEvent] = deque(maxlen=10_000)
+        self._published_lock = threading.RLock()
 
-        # Tracing configuration - using composition (replaces TracingMixin)
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
 
@@ -115,13 +105,25 @@ class InMemoryEventBus(EventBus):
             Returns a copy to prevent external mutation.
             For thread-safe access, this uses the internal lock.
 
+        Deprecated:
+            Use ``RecordingEventBus`` from ``eventsource.testing`` instead.
+            This list is now bounded to the newest 10,000 events (oldest are
+            dropped past that). ``RecordingEventBus`` remains the intended
+            replacement and will be removed in a future release.
+
         Example:
             >>> bus = InMemoryEventBus()
             >>> await bus.publish([event1, event2])
             >>> assert len(bus.published_events) == 2
             >>> assert bus.published_events[0] == event1
         """
-        with self._lock:
+        warnings.warn(
+            "InMemoryEventBus.published_events is deprecated and will be "
+            "removed; wrap the bus in eventsource.testing.RecordingEventBus.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        with self._published_lock:
             return list(self._published_events)
 
     def clear_published_events(self) -> None:
@@ -131,8 +133,17 @@ class InMemoryEventBus(EventBus):
         Useful for resetting state between tests.
 
         Thread-safe: Can be called from any thread.
+
+        Deprecated:
+            Use ``RecordingEventBus`` from ``eventsource.testing`` instead.
         """
-        with self._lock:
+        warnings.warn(
+            "InMemoryEventBus.clear_published_events is deprecated; wrap the "
+            "bus in eventsource.testing.RecordingEventBus.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        with self._published_lock:
             self._published_events.clear()
         logger.debug("Published events cleared")
 
@@ -159,10 +170,7 @@ class InMemoryEventBus(EventBus):
             return
 
         if background:
-            # Fire and forget - create a background task
-            task = asyncio.create_task(self._publish_all(events))
-            task.add_done_callback(self._on_background_task_done)
-            self._background_tasks.add(task)
+            self._track_background(self._publish_all(events))
             self._stats["background_tasks_created"] += 1
             logger.debug(
                 f"Scheduled background publishing of {len(events)} event(s)",
@@ -174,17 +182,8 @@ class InMemoryEventBus(EventBus):
 
     def _on_background_task_done(self, task: asyncio.Task[None]) -> None:
         """Callback when a background task completes."""
-        self._background_tasks.discard(task)
+        super()._on_background_task_done(task)
         self._stats["background_tasks_completed"] += 1
-
-        # Log any unexpected exceptions
-        if not task.cancelled():
-            exc = task.exception()
-            if exc:
-                logger.error(
-                    f"Background publishing task failed: {exc}",
-                    exc_info=exc,
-                )
 
     async def _publish_all(self, events: list[DomainEvent]) -> None:
         """
@@ -195,7 +194,7 @@ class InMemoryEventBus(EventBus):
         """
         for event in events:
             # Track the event before dispatching (for testing purposes)
-            with self._lock:
+            with self._published_lock:
                 self._published_events.append(event)
 
             await self._dispatch_event(event)
@@ -209,13 +208,7 @@ class InMemoryEventBus(EventBus):
             event: The event to dispatch
         """
         event_type = type(event)
-
-        # Gather handlers while holding the lock
-        with self._lock:
-            specific_handlers = list(self._subscribers.get(event_type, []))
-            wildcard_handlers = list(self._all_event_handlers)
-
-        handlers = specific_handlers + wildcard_handlers
+        handlers = self._handlers_for(event_type)
 
         if not handlers:
             logger.debug(
@@ -246,12 +239,14 @@ class InMemoryEventBus(EventBus):
         ):
             await self._invoke_handlers(handlers, event)
 
-    async def _invoke_handlers(self, handlers: list[HandlerAdapter], event: DomainEvent) -> None:
+    async def _invoke_handlers(
+        self, handlers: tuple[HandlerAdapter, ...], event: DomainEvent
+    ) -> None:
         """
         Invoke all handlers for an event concurrently.
 
         Args:
-            handlers: List of HandlerAdapter instances
+            handlers: Tuple of HandlerAdapter instances
             event: The event to handle
         """
         # Process handlers concurrently but wait for all to complete
@@ -305,187 +300,6 @@ class InMemoryEventBus(EventBus):
                     },
                 )
 
-    def subscribe(
-        self,
-        event_type: type[DomainEvent],
-        handler: FlexibleEventHandler | EventHandlerFunc,
-    ) -> None:
-        """
-        Subscribe a handler to a specific event type.
-
-        Thread-safe: Can be called from any thread.
-
-        Args:
-            event_type: The event class to subscribe to
-            handler: Object with handle() method or callable
-        """
-        adapter = HandlerAdapter(handler)
-
-        with self._lock:
-            self._subscribers[event_type].append(adapter)
-
-        logger.info(
-            f"Registered handler {adapter.name} for {event_type.__name__}",
-            extra={
-                "handler": adapter.name,
-                "event_type": event_type.__name__,
-            },
-        )
-
-    def unsubscribe(
-        self,
-        event_type: type[DomainEvent],
-        handler: FlexibleEventHandler | EventHandlerFunc,
-    ) -> bool:
-        """
-        Unsubscribe a handler from a specific event type.
-
-        Thread-safe: Can be called from any thread.
-
-        Args:
-            event_type: The event class to unsubscribe from
-            handler: The handler to remove
-
-        Returns:
-            True if the handler was found and removed, False otherwise
-        """
-        # Create adapter for comparison (uses identity comparison on original)
-        target_adapter = HandlerAdapter(handler)
-
-        with self._lock:
-            adapters = self._subscribers.get(event_type, [])
-            for i, adapter in enumerate(adapters):
-                if adapter == target_adapter:
-                    adapters.pop(i)
-                    logger.info(
-                        f"Unsubscribed handler {adapter.name} from {event_type.__name__}",
-                        extra={
-                            "handler": adapter.name,
-                            "event_type": event_type.__name__,
-                        },
-                    )
-                    return True
-
-        logger.debug(
-            f"Handler {target_adapter.name} not found for {event_type.__name__}",
-            extra={
-                "handler": target_adapter.name,
-                "event_type": event_type.__name__,
-            },
-        )
-        return False
-
-    def subscribe_all(self, subscriber: FlexibleEventSubscriber) -> None:
-        """
-        Subscribe a FlexibleEventSubscriber to all its declared event types.
-
-        Args:
-            subscriber: The subscriber to register
-        """
-        event_types = subscriber.subscribed_to()
-        for event_type in event_types:
-            # FlexibleEventSubscriber has a handle method compatible with FlexibleEventHandler
-            self.subscribe(event_type, subscriber)
-
-    def subscribe_to_all_events(
-        self,
-        handler: FlexibleEventHandler | EventHandlerFunc,
-    ) -> None:
-        """
-        Subscribe a handler to all event types (wildcard subscription).
-
-        Thread-safe: Can be called from any thread.
-
-        Args:
-            handler: Handler that will receive all events
-        """
-        adapter = HandlerAdapter(handler)
-
-        with self._lock:
-            self._all_event_handlers.append(adapter)
-
-        logger.info(
-            f"Registered wildcard handler {adapter.name}",
-            extra={"handler": adapter.name},
-        )
-
-    def unsubscribe_from_all_events(
-        self,
-        handler: FlexibleEventHandler | EventHandlerFunc,
-    ) -> bool:
-        """
-        Unsubscribe a handler from the wildcard subscription.
-
-        Thread-safe: Can be called from any thread.
-
-        Args:
-            handler: The handler to remove from wildcard subscriptions
-
-        Returns:
-            True if the handler was found and removed, False otherwise
-        """
-        # Create adapter for comparison (uses identity comparison on original)
-        target_adapter = HandlerAdapter(handler)
-
-        with self._lock:
-            for i, adapter in enumerate(self._all_event_handlers):
-                if adapter == target_adapter:
-                    self._all_event_handlers.pop(i)
-                    logger.info(
-                        f"Unsubscribed wildcard handler {adapter.name}",
-                        extra={"handler": adapter.name},
-                    )
-                    return True
-
-        logger.debug(
-            f"Wildcard handler {target_adapter.name} not found",
-            extra={"handler": target_adapter.name},
-        )
-        return False
-
-    def clear_subscribers(self) -> None:
-        """
-        Clear all subscribers.
-
-        Thread-safe: Can be called from any thread.
-        Useful for testing or reinitializing the bus.
-        """
-        with self._lock:
-            self._subscribers.clear()
-            self._all_event_handlers.clear()
-
-        logger.info("All event subscribers cleared")
-
-    def get_subscriber_count(self, event_type: type[DomainEvent] | None = None) -> int:
-        """
-        Get the number of registered subscribers.
-
-        Thread-safe: Can be called from any thread.
-
-        Args:
-            event_type: If provided, count subscribers for this event type only.
-                       Does not include wildcard subscribers.
-
-        Returns:
-            Number of registered subscribers
-        """
-        with self._lock:
-            if event_type is None:
-                return sum(len(handlers) for handlers in self._subscribers.values())
-            return len(self._subscribers.get(event_type, []))
-
-    def get_wildcard_subscriber_count(self) -> int:
-        """
-        Get the number of wildcard subscribers.
-
-        Thread-safe: Can be called from any thread.
-
-        Returns:
-            Number of wildcard subscribers
-        """
-        with self._lock:
-            return len(self._all_event_handlers)
-
     def get_stats(self) -> dict[str, int]:
         """
         Get statistics about event bus operation.
@@ -500,15 +314,6 @@ class InMemoryEventBus(EventBus):
         """
         return dict(self._stats)
 
-    def get_background_task_count(self) -> int:
-        """
-        Get the number of currently active background tasks.
-
-        Returns:
-            Number of active background tasks
-        """
-        return len(self._background_tasks)
-
     async def shutdown(self, timeout: float = 30.0) -> None:
         """
         Shutdown the event bus and wait for background tasks to complete.
@@ -521,33 +326,7 @@ class InMemoryEventBus(EventBus):
             create tasks, but those won't be waited for. Call this method
             during application shutdown to ensure all events are processed.
         """
-        logger.info(
-            f"Shutting down event bus, waiting for {len(self._background_tasks)} background task(s)"
-        )
-
-        if not self._background_tasks:
-            return
-
-        # Wait for all background tasks to complete
-        pending = list(self._background_tasks)
-        if pending:
-            try:
-                done, remaining = await asyncio.wait(
-                    pending,
-                    timeout=timeout,
-                    return_when=asyncio.ALL_COMPLETED,
-                )
-                if remaining:
-                    logger.warning(
-                        f"Event bus shutdown: {len(remaining)} task(s) did not complete within timeout",
-                        extra={"remaining_tasks": len(remaining)},
-                    )
-                    # Cancel remaining tasks
-                    for task in remaining:
-                        task.cancel()
-            except Exception as e:
-                logger.error(f"Error during event bus shutdown: {e}", exc_info=True)
-
+        await self._drain_background(timeout)
         logger.info("Event bus shutdown complete")
 
 

@@ -32,22 +32,18 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import random
 import re
 import socket
 import ssl
 import uuid
-from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from eventsource.bus.interface import (
-    EventBus,
-    EventHandlerFunc,
-)
+from eventsource.bus.base import BaseEventBus
+from eventsource.bus.retry import RetryPolicy
 from eventsource.events.base import DomainEvent
-from eventsource.handlers.adapter import HandlerAdapter
+from eventsource.exceptions import HandlerDispatchError
 from eventsource.observability import OTEL_AVAILABLE, SpanKindEnum, Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_AGGREGATE_ID,
@@ -59,10 +55,6 @@ from eventsource.observability.attributes import (
     ATTR_HANDLER_SUCCESS,
     ATTR_MESSAGING_DESTINATION,
     ATTR_MESSAGING_SYSTEM,
-)
-from eventsource.protocols import (
-    FlexibleEventHandler,
-    FlexibleEventSubscriber,
 )
 
 if TYPE_CHECKING:
@@ -584,7 +576,7 @@ class HealthCheckResult:
     details: dict[str, Any] | None = None
 
 
-class RabbitMQEventBus(EventBus):
+class RabbitMQEventBus(BaseEventBus):
     """Event bus implementation using RabbitMQ.
 
     This implementation provides distributed event delivery with:
@@ -635,8 +627,9 @@ class RabbitMQEventBus(EventBus):
         if not RABBITMQ_AVAILABLE:
             raise RabbitMQNotAvailableError()
 
+        super().__init__(event_registry=event_registry)
+
         self._config = config or RabbitMQEventBusConfig()
-        self._event_registry = event_registry
 
         # Connection state
         self._connection: AbstractRobustConnection | None = None
@@ -650,13 +643,17 @@ class RabbitMQEventBus(EventBus):
         self._consumer_queue: AbstractQueue | None = None
         self._dlq_queue: AbstractQueue | None = None
 
-        # Subscriber management (implemented in P1-009)
-        self._subscribers: dict[type[DomainEvent], list[HandlerAdapter]] = defaultdict(list)
-        self._all_event_handlers: list[HandlerAdapter] = []
         self._lock = asyncio.Lock()
 
         # Statistics
         self._stats = RabbitMQEventBusStats()
+
+        self._retry_policy = RetryPolicy(
+            base_delay=self._config.retry_base_delay,
+            max_delay=self._config.retry_max_delay,
+            jitter=self._config.retry_jitter,
+            max_retries=self._config.max_retries,
+        )
 
         # Background tasks
         self._consumer_task: asyncio.Task[None] | None = None
@@ -1789,39 +1786,18 @@ class RabbitMQEventBus(EventBus):
     # =========================================================================
 
     def _calculate_retry_delay(self, retry_count: int) -> float:
-        """Calculate the delay before the next retry using exponential backoff.
+        """Calculate the delay before the next retry.
 
-        The delay is calculated as: base_delay * (2 ** retry_count), with optional
-        jitter added to prevent thundering herd issues when multiple messages
-        fail simultaneously.
+        Delegates to the shared RetryPolicy so Kafka and RabbitMQ cannot drift
+        apart again.
 
         Args:
-            retry_count: The current retry attempt number (0-indexed)
+            retry_count: Zero-based retry attempt number.
 
         Returns:
-            The delay in seconds before the next retry attempt
-
-        Example:
-            With base_delay=1.0 and max_delay=60.0:
-            - retry_count=0: 1.0s (+ jitter)
-            - retry_count=1: 2.0s (+ jitter)
-            - retry_count=2: 4.0s (+ jitter)
-            - retry_count=3: 8.0s (+ jitter)
-            - retry_count=6: 60.0s (capped at max_delay)
+            Delay in seconds, with symmetric jitter applied.
         """
-        # Calculate base exponential delay
-        delay: float = self._config.retry_base_delay * (2**retry_count)
-
-        # Cap at max delay
-        delay = min(delay, self._config.retry_max_delay)
-
-        # Add jitter to prevent thundering herd
-        if self._config.retry_jitter > 0:
-            jitter_range = delay * self._config.retry_jitter
-            jitter = random.uniform(-jitter_range, jitter_range)  # nosec B311
-            delay = max(0.0, delay + jitter)
-
-        return delay
+        return self._retry_policy.delay_for(retry_count)
 
     async def _handle_failed_message(
         self,
@@ -2231,7 +2207,7 @@ class RabbitMQEventBus(EventBus):
 
         # Look up event class
         event_type_str = str(event_type_name)
-        event_class = self._get_event_class(event_type_str)
+        event_class = self._resolve_event_class(event_type_str)
         if event_class is None:
             self._logger.warning(
                 f"Unknown event type: {event_type_str}",
@@ -2258,193 +2234,6 @@ class RabbitMQEventBus(EventBus):
                 },
             )
             return None
-
-    def _get_event_class(self, event_type_name: str) -> type[DomainEvent] | None:
-        """Get event class by name from registry.
-
-        Looks up an event class in the configured event registry,
-        falling back to the default registry if none was provided.
-
-        Args:
-            event_type_name: Name of the event class to look up
-
-        Returns:
-            The event class if found, None otherwise
-        """
-        if self._event_registry:
-            return self._event_registry.get_or_none(event_type_name)
-
-        # Fallback to default registry
-        from eventsource.events.registry import default_registry
-
-        return default_registry.get_or_none(event_type_name)
-
-    # =========================================================================
-    # Subscription Management (P1-009)
-    # =========================================================================
-
-    def subscribe(
-        self,
-        event_type: type[DomainEvent],
-        handler: FlexibleEventHandler | EventHandlerFunc,
-    ) -> None:
-        """Subscribe a handler to a specific event type.
-
-        The handler will be invoked whenever an event of the specified
-        type is consumed from the queue.
-
-        Note: For RabbitMQ, subscriptions are registered locally.
-        The actual consumption happens via start_consuming().
-
-        Args:
-            event_type: The event class to subscribe to
-            handler: Object with handle() method or callable
-        """
-        adapter = HandlerAdapter(handler)
-
-        # Thread-safe append (GIL protects list operations)
-        self._subscribers[event_type].append(adapter)
-
-        self._logger.info(
-            f"Registered handler {adapter.name} for {event_type.__name__}",
-            extra={
-                "handler": adapter.name,
-                "event_type": event_type.__name__,
-            },
-        )
-
-    def unsubscribe(
-        self,
-        event_type: type[DomainEvent],
-        handler: FlexibleEventHandler | EventHandlerFunc,
-    ) -> bool:
-        """Unsubscribe a handler from a specific event type.
-
-        Args:
-            event_type: The event class to unsubscribe from
-            handler: The handler to remove
-
-        Returns:
-            True if the handler was found and removed, False otherwise
-        """
-        target_adapter = HandlerAdapter(handler)
-
-        adapters = self._subscribers.get(event_type, [])
-        for i, adapter in enumerate(adapters):
-            if adapter == target_adapter:
-                adapters.pop(i)
-                self._logger.info(
-                    f"Unsubscribed handler {adapter.name} from {event_type.__name__}",
-                    extra={
-                        "handler": adapter.name,
-                        "event_type": event_type.__name__,
-                    },
-                )
-                return True
-
-        self._logger.debug(
-            f"Handler {target_adapter.name} not found for {event_type.__name__}",
-            extra={
-                "handler": target_adapter.name,
-                "event_type": event_type.__name__,
-            },
-        )
-        return False
-
-    def subscribe_all(self, subscriber: FlexibleEventSubscriber) -> None:
-        """Subscribe an EventSubscriber to all its declared event types.
-
-        Convenience method that calls subscribe() for each event type
-        returned by subscriber.subscribed_to().
-
-        Args:
-            subscriber: The subscriber to register
-        """
-        event_types = subscriber.subscribed_to()
-        for event_type in event_types:
-            self.subscribe(event_type, subscriber)
-
-    def subscribe_to_all_events(
-        self,
-        handler: FlexibleEventHandler | EventHandlerFunc,
-    ) -> None:
-        """Subscribe a handler to all event types (wildcard subscription).
-
-        The handler will receive every event consumed from the queue,
-        regardless of event type. Useful for audit logging, metrics,
-        debugging, or other cross-cutting concerns.
-
-        Args:
-            handler: Handler that will receive all events
-        """
-        adapter = HandlerAdapter(handler)
-
-        self._all_event_handlers.append(adapter)
-
-        self._logger.info(
-            f"Registered wildcard handler {adapter.name}",
-            extra={"handler": adapter.name},
-        )
-
-    def unsubscribe_from_all_events(
-        self,
-        handler: FlexibleEventHandler | EventHandlerFunc,
-    ) -> bool:
-        """Unsubscribe a handler from the wildcard subscription.
-
-        Args:
-            handler: The handler to remove from wildcard subscriptions
-
-        Returns:
-            True if the handler was found and removed, False otherwise
-        """
-        target_adapter = HandlerAdapter(handler)
-
-        for i, adapter in enumerate(self._all_event_handlers):
-            if adapter == target_adapter:
-                self._all_event_handlers.pop(i)
-                self._logger.info(
-                    f"Unsubscribed wildcard handler {adapter.name}",
-                    extra={"handler": adapter.name},
-                )
-                return True
-
-        self._logger.debug(
-            f"Wildcard handler {target_adapter.name} not found",
-            extra={"handler": target_adapter.name},
-        )
-        return False
-
-    def clear_subscribers(self) -> None:
-        """Clear all subscribers.
-
-        Useful for testing or reinitializing the bus.
-        """
-        self._subscribers.clear()
-        self._all_event_handlers.clear()
-        self._logger.info("All event subscribers cleared")
-
-    def get_subscriber_count(self, event_type: type[DomainEvent] | None = None) -> int:
-        """Get the number of registered subscribers.
-
-        Args:
-            event_type: If provided, count subscribers for this event type only.
-                       If None, count all subscribers across all event types.
-
-        Returns:
-            Number of registered subscribers
-        """
-        if event_type is None:
-            return sum(len(handlers) for handlers in self._subscribers.values())
-        return len(self._subscribers.get(event_type, []))
-
-    def get_wildcard_subscriber_count(self) -> int:
-        """Get the number of wildcard subscribers.
-
-        Returns:
-            Number of wildcard subscribers
-        """
-        return len(self._all_event_handlers)
 
     # =========================================================================
     # Publish Methods (P1-008, P3-005)
@@ -3297,8 +3086,16 @@ class RabbitMQEventBus(EventBus):
                 extra=error_extra,
             )
 
-            # Handle retry or DLQ routing
-            await self._handle_failed_message(message, e, retry_count)
+            # Handle retry or DLQ routing. Unwrap a single-failure
+            # HandlerDispatchError so retry/DLQ metadata (x-dlq-error-type,
+            # etc.) still reflects the handler's own exception type rather
+            # than the aggregate wrapper -- error isolation changes how
+            # dispatch runs handlers, not what gets reported for a single
+            # failing handler.
+            dlq_error: Exception = e
+            if isinstance(e, HandlerDispatchError) and len(e.failures) == 1:
+                dlq_error = e.failures[0][1]
+            await self._handle_failed_message(message, dlq_error, retry_count)
 
         finally:
             if span:
@@ -3324,14 +3121,16 @@ class RabbitMQEventBus(EventBus):
                         handler execution.
 
         Raises:
-            Exception: Re-raises handler exceptions to trigger message rejection
+            HandlerDispatchError: If one or more handlers raise. Every handler
+                still runs for this delivery (error isolation); failures are
+                collected and raised together afterward so the message is
+                still rejected for retry/DLQ exactly as a single raise would
+                have done.
         """
         event_type = type(event)
 
         # Get all handlers
-        specific_handlers = list(self._subscribers.get(event_type, []))
-        wildcard_handlers = list(self._all_event_handlers)
-        handlers = specific_handlers + wildcard_handlers
+        handlers = self._handlers_for(event_type)
 
         if not handlers:
             self._logger.warning(
@@ -3353,7 +3152,11 @@ class RabbitMQEventBus(EventBus):
             },
         )
 
-        # Process handlers sequentially for ordering guarantees
+        # Process handlers sequentially for ordering guarantees. Every handler
+        # runs for this delivery even if an earlier one failed (error
+        # isolation) -- failures are collected and raised together as one
+        # HandlerDispatchError afterward.
+        failures: list[tuple[str, Exception]] = []
         for adapter in handlers:
             handler_name = adapter.name
             handler_start = datetime.now(UTC)
@@ -3414,12 +3217,14 @@ class RabbitMQEventBus(EventBus):
                         "error_type": type(e).__name__,
                     },
                 )
-                # Re-raise to trigger message rejection
-                raise
+                failures.append((handler_name, e))
 
             finally:
                 if handler_span:
                     handler_span.end()
+
+        if failures:
+            raise HandlerDispatchError(failures)
 
     # =========================================================================
     # DLQ Operations Methods (P2-003)
@@ -3918,6 +3723,10 @@ class RabbitMQEventBus(EventBus):
 
             # Step 2: Wait for in-flight processing to complete
             await self._drain_in_flight(timeout)
+
+            # Step 2b: Wait for publisher background tasks (a different
+            # concern from consumer message processing above)
+            await self._drain_background(timeout)
 
             # Step 3: Disconnect from RabbitMQ
             await self.disconnect()

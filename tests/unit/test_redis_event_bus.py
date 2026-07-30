@@ -5,6 +5,7 @@ a real Redis server.
 """
 
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
@@ -18,6 +19,7 @@ from eventsource.bus.redis import (
 )
 from eventsource.events.base import DomainEvent
 from eventsource.events.registry import EventRegistry
+from eventsource.exceptions import HandlerDispatchError
 
 # Note: Tests use mocks and don't require actual Redis, so we don't skip.
 # REDIS_AVAILABLE needs to be True for the RedisEventBus class to be importable.
@@ -515,6 +517,38 @@ class TestRedisEventBusPublish:
         assert fields["event_type"] == "SampleOrderCreated"
         assert "payload" in fields
 
+    async def test_background_publish_returns_before_pipeline_completes(
+        self, bus: RedisEventBus, mock_redis: AsyncMock
+    ) -> None:
+        """background=True must not await the Redis round-trip.
+
+        Regression: RedisEventBus previously documented background as
+        "Ignored for Redis" and always awaited.
+        """
+        import asyncio
+
+        release = asyncio.Event()
+
+        async def slow_xadd(*args: Any, **kwargs: Any) -> str:
+            await release.wait()
+            return "1-0"
+
+        mock_redis.xadd = slow_xadd
+
+        event = SampleOrderCreated(
+            aggregate_id=uuid4(),
+            order_number="ORD-001",
+            customer_id=uuid4(),
+        )
+
+        # Must return promptly even though xadd is blocked.
+        await asyncio.wait_for(bus.publish([event], background=True), timeout=1.0)
+        assert bus.get_background_task_count() == 1
+
+        release.set()
+        await bus._drain_background(timeout=5.0)
+        assert bus.get_background_task_count() == 0
+
 
 # --- Event Dispatch Tests ---
 
@@ -608,8 +642,13 @@ class TestRedisEventBusDispatch:
             customer_id=uuid4(),
         )
 
-        with pytest.raises(ValueError, match="Handler failed intentionally"):
+        with pytest.raises(HandlerDispatchError) as exc_info:
             await bus._dispatch_event(event, "msg-123")
+
+        assert len(exc_info.value.failures) == 1
+        failed_name, failed_exc = exc_info.value.failures[0]
+        assert isinstance(failed_exc, ValueError)
+        assert "Handler failed intentionally" in str(failed_exc)
 
     async def test_dispatch_handler_failure_updates_stats(
         self, bus: RedisEventBus, event_registry: EventRegistry
@@ -626,9 +665,43 @@ class TestRedisEventBusDispatch:
 
         initial_errors = bus.stats.handler_errors
 
-        with pytest.raises(ValueError):
+        with pytest.raises(HandlerDispatchError):
             await bus._dispatch_event(event, "msg-123")
 
+        assert bus.stats.handler_errors == initial_errors + 1
+
+    async def test_dispatch_isolates_handler_errors(
+        self, bus: RedisEventBus, event_registry: EventRegistry
+    ):
+        """A failing handler must not prevent other handlers from running.
+
+        All three handlers should be invoked even though the middle one
+        raises; the failure is reported once dispatch has run every handler,
+        via an aggregate HandlerDispatchError (not the underlying exception
+        directly), so the message is still left unacked for redelivery.
+        """
+        handler1 = OrderHandler()
+        failing_handler = FailingHandler()
+        handler3 = OrderHandler()
+
+        bus.subscribe(SampleOrderCreated, handler1)
+        bus.subscribe(SampleOrderCreated, failing_handler)
+        bus.subscribe(SampleOrderCreated, handler3)
+
+        event = SampleOrderCreated(
+            aggregate_id=uuid4(),
+            order_number="ORD-001",
+            customer_id=uuid4(),
+        )
+
+        initial_errors = bus.stats.handler_errors
+
+        with pytest.raises(HandlerDispatchError) as exc_info:
+            await bus._dispatch_event(event, "msg-123")
+
+        assert len(handler1.handled_events) == 1
+        assert len(handler3.handled_events) == 1
+        assert len(exc_info.value.failures) == 1
         assert bus.stats.handler_errors == initial_errors + 1
 
 

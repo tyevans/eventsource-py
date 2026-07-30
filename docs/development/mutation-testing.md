@@ -25,12 +25,15 @@ expensive and hard to notice by other means:
 | `src/eventsource/engine.py` | `tests/unit/test_engine.py` |
 | `src/eventsource/repositories/_dialect.py` | `tests/unit/repositories/test_dialect.py` |
 | `src/eventsource/serialization/json.py` | `tests/unit/serialization/` |
+| `src/eventsource/bus/registry.py` | `tests/unit/bus/test_registry.py` |
+| `src/eventsource/bus/retry.py` | `tests/unit/bus/test_retry.py` |
+| `src/eventsource/bus/base.py` | `tests/unit/bus/test_base.py` |
 
-As Tasks 3-8 land and the merged repositories stabilize, they become candidates for
-this set — but only added one module at a time, each with its own pinned test subset,
-and only if a run stays in the tens of seconds. Never widen `paths_to_mutate` /
-`only_mutate` to a whole directory; that reintroduces the whole-repo runtime problem
-this design exists to avoid.
+As further modules stabilize, they become candidates for this set — but only added
+one module at a time, each with its own pinned test subset, and only if a run stays
+in the tens of seconds. Never widen `paths_to_mutate` / `only_mutate` to a whole
+directory; that reintroduces the whole-repo runtime problem this design exists to
+avoid.
 
 **Two tools, not one.** mutmut 3.x cannot generate a mutant inside — or removing —
 a decorated function, which blinds it to every `@event.listens_for` listener and,
@@ -230,6 +233,49 @@ path at all).
 | `dialect_of` — `conn.dialect.name` → `None`; `Dialect(name)` → `Dialect(None)`; error message → blanked | **Real gap → fixed** | `dialect_of()` had zero test coverage anywhere in the suite before this task — not even in integration tests. Closed by three tests in `test_dialect.py` (`test_dialect_of_postgresql`, `test_dialect_of_sqlite`, `test_dialect_of_unsupported_raises_with_name_and_supported_list`), using a `SimpleNamespace` stand-in for the connection since `dialect_of` only reads `conn.dialect.name`. |
 
 After the fix: 27/27 killed, 0 survivors, ~2.3s wall time.
+
+## Baseline and triage: `bus/registry.py`, `bus/retry.py`, `bus/base.py`
+
+Added together as the event-bus contract work landed: `SubscriptionRegistry`,
+`RetryPolicy`, and `BaseEventBus` are the shared foundation all four bus backends
+(InMemory, Redis, RabbitMQ, Kafka) now build on. They qualify for the curated set on
+the same grounds as `_dialect.py` — small, pure (no I/O; `BaseEventBus`'s only
+side-effecting piece is `asyncio.create_task`, exercised via injected tasks in
+tests, not real transports), and each already had a dedicated fast unit test module
+before mutation testing was pointed at it.
+
+**Baseline:** 248 mutants across the three files, 168 killed, 78 survived (plus a
+handful of timeouts from a loaded CI-adjacent runner, which cleared on rerun).
+
+**Triage — `registry.py` (3 survivors, all real gaps, all fixed):** all three were
+in `handlers_for`'s combined-tuple cache (wrong cache key on read; combined tuple
+overwritten with `None` on write). The existing stability test
+(`test_handlers_for_is_stable_across_calls_without_mutation`) didn't catch either
+because it only registered a specific handler with an empty wildcard tuple —
+CPython's `tuple.__add__` returns the left operand unchanged when concatenating
+with an empty tuple, so the "cached" and "recomputed" values were the same object
+by accident, not because the cache worked. Fixed by
+`test_handlers_for_cache_is_keyed_by_event_type_and_reused`, which registers both a
+specific and a wildcard handler (forcing a real concatenation) and checks a second,
+distinct event type gets its own cache entry.
+
+**Triage — `base.py` (real gaps, fixed):**
+
+| Mutant | Classification | Reason |
+| --- | --- | --- |
+| `get_subscriber_count` passes `None` instead of `event_type` to the registry | **Real gap → fixed** | No test asserted that per-type and overall counts actually diverge. Closed by `test_get_subscriber_count_is_scoped_to_the_requested_event_type`. |
+| `_on_background_task_done` drops `task.exception()` / passes the wrong `exc_info` | **Real gap → fixed** | Existing tests only checked that failures didn't propagate, not that the real exception reached the log record. Closed by `test_on_background_task_done_logs_the_actual_task_exception`, which asserts on `caplog` records scoped to `eventsource.bus.base` (a naive `caplog` assertion was itself fooled by asyncio's own "Task exception was never retrieved" warning logger). |
+| `_drain_background`'s default `timeout` mutated from `30.0` | **Real gap → fixed** | `inspect.signature` on the class attribute doesn't see through mutmut's trampoline wrapper, so the fix calls `_drain_background()` with no explicit timeout and spies on the `timeout=` kwarg `asyncio.wait` actually receives. |
+| `_drain_background` only waits for the *first* task to finish, not all pending tasks | **Real gap → fixed** | Closed by `test_drain_background_waits_for_every_pending_task_not_just_the_first`, using a fast and a slow background task together. |
+| `_drain_background`'s except-block logs `exc_info=False` / omits it | **Real gap → fixed** | `record.exc_info` is `False`, not `None`, when `exc_info=False` is passed — an `is not None` assertion doesn't catch it. Closed by asserting truthiness instead, in `test_drain_background_logs_and_suppresses_wait_errors` (which monkeypatches `asyncio.wait` to raise, since the except block otherwise has no reachable trigger in normal operation). |
+| `_drain_background` omits `return_when=asyncio.ALL_COMPLETED` from the `asyncio.wait` call | **Equivalent** | `asyncio.wait`'s own default for `return_when` is already `ALL_COMPLETED`; removing the explicit keyword cannot change behavior. |
+| ~30 remaining survivors across `subscribe`, `unsubscribe`, `subscribe_to_all_events`, `unsubscribe_from_all_events`, `clear_subscribers` | **Accepted, not equivalent** | All mutate `logger.info`/`logger.warning` message text or the `extra={}` dict passed alongside it — never a return value, a registry mutation, or control flow. No caller inspects these values; asserting on every log string would pin implementation detail without protecting behavior. Left as documented survivors rather than chased individually. |
+
+**Triage — `retry.py`:** 0 survivors. The symmetric-jitter regression test added
+alongside `RetryPolicy` already exercises the module's full behavior.
+
+After triage: 192/248 killed (78 → 56 net survivors, all in the accepted
+log-message and one equivalent-mutant category above), 0 timeouts on a clean rerun.
 
 ## Deferred: `serialization/json.py`
 
