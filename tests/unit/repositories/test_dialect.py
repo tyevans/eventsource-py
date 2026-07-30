@@ -100,7 +100,7 @@ def test_json_result_routes_through_project_json_loads(monkeypatch):
     rerouted to orjson, this call site silently keeps using stdlib and the
     module ends up with two decoders.
     """
-    import eventsource.repositories._dialect as dialect_module
+    import eventsource.adapters._sql.dialect as dialect_module
 
     calls = []
 

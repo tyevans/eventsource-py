@@ -92,7 +92,7 @@ src/eventsource/
 
 ## Key Patterns
 
-- Events auto-register via `DomainEvent.__init_subclass__` into the global `EventRegistry`
+- `DomainEvent.__init_subclass__` auto-derives `event_type` from the class name; registry registration is explicit via `@register_event`
 - `@handles(EventType)` decorator maps events to handler methods on `DeclarativeAggregate` / `DeclarativeProjection`
 - Optional deps guarded by `try/except ImportError` with `*_AVAILABLE` boolean flags (e.g., `KAFKA_AVAILABLE`, `SQLITE_AVAILABLE`)
 - Public API re-exported from top-level `__init__.py` -- all user-facing imports come from `eventsource`
