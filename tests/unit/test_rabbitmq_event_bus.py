@@ -9419,7 +9419,7 @@ class TestOpenTelemetryTracing:
         bus = RabbitMQEventBus(config=config)
 
         # Without span, inject should not be called
-        with patch("eventsource.bus.rabbitmq.bus.inject") as mock_inject:
+        with patch("eventsource.bus.rabbitmq.serialization.inject") as mock_inject:
             message = bus._create_message_with_tracing(event, None)
 
             # Verify inject was not called
