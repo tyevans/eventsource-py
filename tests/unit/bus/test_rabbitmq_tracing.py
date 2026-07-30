@@ -126,12 +126,18 @@ class TestRabbitMQEventBusAttributeConstants:
     """Tests for standard attribute constant usage."""
 
     def test_uses_standard_attributes(self) -> None:
-        """Verify that the code uses standard ATTR_* constants."""
+        """Verify that the code uses standard ATTR_* constants.
+
+        The publish-path attributes (ATTR_MESSAGING_*, ATTR_AGGREGATE_ID)
+        moved to ``RabbitMQPublisher`` in the bus god-class decomposition
+        (Task 6); consume/handle attributes remain on the facade.
+        """
         import inspect
 
         from eventsource.bus.rabbitmq import bus as rabbitmq_module
+        from eventsource.bus.rabbitmq import publisher as publisher_module
 
-        source_code = inspect.getsource(rabbitmq_module)
+        source_code = inspect.getsource(rabbitmq_module) + inspect.getsource(publisher_module)
 
         # Check that standard attribute constants are imported and used
         assert "ATTR_MESSAGING_SYSTEM" in source_code
@@ -201,12 +207,18 @@ class TestRabbitMQSpanNaming:
     """Tests for consistent span naming convention."""
 
     def test_span_names_follow_convention(self) -> None:
-        """Span names should follow 'eventsource.event_bus.*' convention."""
+        """Span names should follow 'eventsource.event_bus.*' convention.
+
+        The publish span moved to ``RabbitMQPublisher`` in the bus
+        god-class decomposition (Task 6); consume/handle spans remain
+        on the facade.
+        """
         import inspect
 
         from eventsource.bus.rabbitmq import bus as rabbitmq_module
+        from eventsource.bus.rabbitmq import publisher as publisher_module
 
-        source_code = inspect.getsource(rabbitmq_module)
+        source_code = inspect.getsource(rabbitmq_module) + inspect.getsource(publisher_module)
 
         # Check for standardized span names in the publish method
         assert "eventsource.event_bus.publish" in source_code

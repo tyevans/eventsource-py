@@ -261,10 +261,16 @@ class TestRabbitMQEventBusTracingCompliance:
         assert config.enable_tracing is True
 
     def test_uses_standard_span_names(self, check_rabbitmq_available: None) -> None:
-        """RabbitMQEventBus should use standard span names."""
-        from eventsource.bus.rabbitmq import bus as rabbitmq_module
+        """RabbitMQEventBus should use standard span names.
 
-        source = inspect.getsource(rabbitmq_module)
+        The publish span moved to ``RabbitMQPublisher`` in the bus
+        god-class decomposition (Task 6); consume/handle spans remain
+        on the facade.
+        """
+        from eventsource.bus.rabbitmq import bus as rabbitmq_module
+        from eventsource.bus.rabbitmq import publisher as publisher_module
+
+        source = inspect.getsource(rabbitmq_module) + inspect.getsource(publisher_module)
 
         # Check for standardized span names
         assert "eventsource.event_bus.publish" in source
@@ -272,10 +278,15 @@ class TestRabbitMQEventBusTracingCompliance:
         assert "eventsource.event_bus.handle" in source
 
     def test_uses_standard_attributes(self, check_rabbitmq_available: None) -> None:
-        """RabbitMQEventBus should use standard attribute constants."""
-        from eventsource.bus.rabbitmq import bus as rabbitmq_module
+        """RabbitMQEventBus should use standard attribute constants.
 
-        source = inspect.getsource(rabbitmq_module)
+        The publish-path attributes (ATTR_MESSAGING_*) moved to
+        ``RabbitMQPublisher`` in the bus god-class decomposition (Task 6).
+        """
+        from eventsource.bus.rabbitmq import bus as rabbitmq_module
+        from eventsource.bus.rabbitmq import publisher as publisher_module
+
+        source = inspect.getsource(rabbitmq_module) + inspect.getsource(publisher_module)
 
         # Check for imports of standard attributes
         assert "ATTR_MESSAGING_SYSTEM" in source
