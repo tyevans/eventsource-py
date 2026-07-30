@@ -60,3 +60,8 @@ class TestPositionSerialization:
         # never by Position.from_str itself (no store_id to attach).
         with pytest.raises(PositionDecodeError):
             Position.from_str("12345")
+
+    def test_bool_key_elements_rejected(self) -> None:
+        # bool is an int subclass; a key of [true] must not decode as (True,)
+        with pytest.raises(PositionDecodeError):
+            Position.from_str('{"s":"x","k":[true]}')
