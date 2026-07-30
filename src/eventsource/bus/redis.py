@@ -37,7 +37,7 @@ import socket
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from eventsource.bus.base import BaseEventBus
 from eventsource.events.base import DomainEvent
@@ -75,6 +75,17 @@ except ImportError:
     ResponseError = Exception  # type: ignore[assignment, misc]
 
 logger = logging.getLogger(__name__)
+
+# This client connects with decode_responses=True, so every value Redis hands
+# back is already `str`. redis-py's own annotations have to stay conservative
+# (`bytes | str | int`), because that flag's effect is invisible to the type
+# system. These aliases name the decoded shapes so the casts at each command
+# boundary below stay narrow and self-documenting rather than becoming a
+# scattering of per-line ignores.
+DecodedFields = dict[str, str]
+DecodedEntry = tuple[str, DecodedFields]
+DecodedStreams = list[tuple[str, list[DecodedEntry]]]
+DecodedPending = list[dict[str, Any]]
 
 
 class RedisNotAvailableError(ImportError):
@@ -279,7 +290,7 @@ class RedisEventBus(BaseEventBus):
             return
 
         try:
-            self._redis = await aioredis.from_url(  # type: ignore[no-untyped-call]
+            self._redis = await aioredis.from_url(
                 self._config.redis_url,
                 encoding="utf-8",
                 decode_responses=True,
@@ -528,12 +539,15 @@ class RedisEventBus(BaseEventBus):
             try:
                 # Read from stream as part of consumer group
                 # '>' means read only new messages not delivered to other consumers
-                messages = await self._redis.xreadgroup(
-                    groupname=self._config.consumer_group,
-                    consumername=actual_consumer_name,
-                    streams={self._config.stream_name: ">"},
-                    count=self._config.batch_size,
-                    block=self._config.block_ms,
+                messages = cast(
+                    DecodedStreams,
+                    await self._redis.xreadgroup(
+                        groupname=self._config.consumer_group,
+                        consumername=actual_consumer_name,
+                        streams={self._config.stream_name: ">"},
+                        count=self._config.batch_size,
+                        block=self._config.block_ms,
+                    ),
                 )
 
                 if not messages:
@@ -905,12 +919,15 @@ class RedisEventBus(BaseEventBus):
             )
 
             # Get detailed pending messages
-            pending_messages = await self._redis.xpending_range(
-                name=self._config.stream_name,
-                groupname=self._config.consumer_group,
-                min="-",
-                max="+",
-                count=batch_size,
+            pending_messages = cast(
+                DecodedPending,
+                await self._redis.xpending_range(
+                    name=self._config.stream_name,
+                    groupname=self._config.consumer_group,
+                    min="-",
+                    max="+",
+                    count=batch_size,
+                ),
             )
 
             for pending_msg in pending_messages:
@@ -938,12 +955,15 @@ class RedisEventBus(BaseEventBus):
 
                 try:
                     # Claim the message
-                    claimed = await self._redis.xclaim(
-                        name=self._config.stream_name,
-                        groupname=self._config.consumer_group,
-                        consumername="recovery-worker",
-                        min_idle_time=min_idle_time_ms,
-                        message_ids=[message_id],
+                    claimed = cast(
+                        list[DecodedEntry],
+                        await self._redis.xclaim(
+                            name=self._config.stream_name,
+                            groupname=self._config.consumer_group,
+                            consumername="recovery-worker",
+                            min_idle_time=min_idle_time_ms,
+                            message_ids=[message_id],
+                        ),
                     )
 
                     if not claimed:
@@ -1174,11 +1194,14 @@ class RedisEventBus(BaseEventBus):
             return []
 
         try:
-            messages = await self._redis.xrange(
-                name=self._config.dlq_stream_name,
-                min=start,
-                max=end,
-                count=count,
+            messages = cast(
+                list[DecodedEntry],
+                await self._redis.xrange(
+                    name=self._config.dlq_stream_name,
+                    min=start,
+                    max=end,
+                    count=count,
+                ),
             )
 
             return [
@@ -1208,11 +1231,14 @@ class RedisEventBus(BaseEventBus):
 
         try:
             # Get the message from DLQ
-            messages = await self._redis.xrange(
-                name=self._config.dlq_stream_name,
-                min=message_id,
-                max=message_id,
-                count=1,
+            messages = cast(
+                list[DecodedEntry],
+                await self._redis.xrange(
+                    name=self._config.dlq_stream_name,
+                    min=message_id,
+                    max=message_id,
+                    count=1,
+                ),
             )
 
             if not messages:
@@ -1229,9 +1255,15 @@ class RedisEventBus(BaseEventBus):
             }
 
             # Add back to main stream
-            new_message_id = await self._redis.xadd(
-                name=self._config.stream_name,
-                fields=replay_data,
+            # `fields` is annotated as a dict, which is invariant in its key and
+            # value types, so a dict[str, str] is not assignable to redis-py's
+            # wider encodable mapping even though str is a valid field and value.
+            new_message_id = cast(
+                str,
+                await self._redis.xadd(
+                    name=self._config.stream_name,
+                    fields=cast("dict[Any, Any]", replay_data),
+                ),
             )
 
             # Delete from DLQ

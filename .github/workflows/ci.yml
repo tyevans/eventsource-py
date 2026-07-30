@@ -44,7 +44,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -66,7 +66,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -85,7 +85,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -104,7 +104,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -131,7 +131,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -149,11 +149,46 @@ jobs:
 
       - name: Upload coverage report
         if: matrix.python-version == '3.11'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-report
           path: coverage.xml
           retention-days: 7
+
+  # Redis bus tests. Runs on every PR, unlike the broader `integration` job
+  # below, so the shipped `redis` extra's supported range stays verified
+  # against a real server instead of only on pushes to main.
+  redis:
+    runs-on: ubuntu-latest
+
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.11'
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --all-extras --locked
+
+      - name: Run redis tests
+        env:
+          REDIS_URL: redis://localhost:6379
+        run: uv run pytest -m redis
 
   # Integration tests (optional, requires services)
   integration:
@@ -188,7 +223,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -199,12 +234,18 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras --locked
 
+      # --cov-fail-under=0 overrides [tool.coverage.report] fail_under, which is
+      # a ratchet calibrated against the unit suite. This job measures only the
+      # integration selection, so enforcing that gate here compares a partial
+      # measurement (~52%) to a whole-suite threshold (86) and always fails. The
+      # report is still printed; it just does not gate.
       - name: Run integration tests
         env:
           DATABASE_URL: postgresql://test:test@localhost:5432/eventsource_test
           REDIS_URL: redis://localhost:6379
         run: |
-          uv run pytest -m "integration or postgres or redis" --no-cov
+          uv run pytest -m "integration or postgres or redis" \
+            --cov=src/eventsource --cov-report=term-missing --cov-fail-under=0
 
   # Broker integration tests (Kafka, RabbitMQ).
   #
@@ -222,7 +263,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
