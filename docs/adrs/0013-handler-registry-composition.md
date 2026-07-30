@@ -1,4 +1,4 @@
-# 0007. Handler Registry and Adapter as Collaborators
+# 0013. Handler Registry and Adapter as Collaborators
 
 Two pieces of machinery sit between an event and the code that reacts to it.
 `HandlerRegistry` (`src/eventsource/handlers/registry.py`) finds the

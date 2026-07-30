@@ -1,4 +1,4 @@
-# ADR-0007: Event Type Auto-Derivation from Class Name
+# ADR-0012: Event Type Auto-Derivation from Class Name
 
 Every persisted event carries an `event_type` string. That string is what the
 event store writes to disk and what `EventRegistry` uses to turn a stored row

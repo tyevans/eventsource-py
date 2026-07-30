@@ -205,7 +205,7 @@ Kubernetes lease — means a new service to deploy, secure, monitor, upgrade, an
 reason about the partition behaviour of. For one operation that a given tenant
 goes through exactly once. That trade is bad on its own terms, and it also cuts
 against the library's optional-dependency policy
-([ADR-0007: Optional Dependency Extras](0007-optional-dependency-extras.md)),
+([ADR-0015: Optional Dependency Extras](0015-optional-dependency-extras.md)),
 which exists so users are not made to install and run what they do not use.
 Making a coordinator *mandatory* for a rare admin operation would be the
 sharpest possible violation of that principle. Note that this force is about

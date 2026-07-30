@@ -105,10 +105,10 @@ disagree, the reference and the source are correct.
 
 **Guides versus explanation.** Guides state trade-offs but do not argue them. The
 [snapshotting guide](snapshotting.md) tells you how to configure a snapshot policy;
-[ADR 0007](../adrs/0007-snapshot-strategy-pattern.md) explains why the strategy
+[ADR 0017](../adrs/0017-snapshot-strategy-pattern.md) explains why the strategy
 pattern was chosen. The [multi-tenancy guide](multi-tenant.md) shows how to scope
 events to a tenant;
-[the tenant isolation ADR](../adrs/0007-tenant-isolation-model.md) explains the
+[the tenant isolation ADR](../adrs/0018-tenant-isolation-model.md) explains the
 isolation model behind it. Likewise,
 [aggregate styles](../explanation/aggregate-styles.md),
 [schema design](../explanation/schema-design.md), and
@@ -173,7 +173,7 @@ Still choosing? See
 | [Snapshotting](snapshotting.md) | Stop replaying full streams on load: pick a snapshot store, choose a policy, and keep snapshots valid as your aggregate changes |
 
 The strategy-pattern design is argued in
-[ADR 0007: snapshot strategy pattern](../adrs/0007-snapshot-strategy-pattern.md).
+[ADR 0017: snapshot strategy pattern](../adrs/0017-snapshot-strategy-pattern.md).
 
 ### Event bus and messaging backends
 
@@ -212,7 +212,7 @@ and [ADR 0009: PostgreSQL advisory locks](../adrs/0009-postgresql-advisory-locks
 | [Multi-tenancy](multi-tenant.md) | Bind a tenant to the current context, scope events and queries to it, and keep tenant data isolated |
 
 The isolation model is explained in
-[ADR 0007: tenant isolation model](../adrs/0007-tenant-isolation-model.md).
+[ADR 0018: tenant isolation model](../adrs/0018-tenant-isolation-model.md).
 
 ### Observability
 
@@ -221,7 +221,7 @@ The isolation model is explained in
 | [Wiring OpenTelemetry tracing](observability.md) | Add spans to stores, buses, snapshot stores, and subscriptions -- and understand what is emitted when the optional dependency is absent |
 
 Tracing is a no-op unless you opt in; see
-[ADR 0007: optional tracing, no-op by default](../adrs/0007-optional-tracing-no-op-by-default.md).
+[ADR 0016: optional tracing, no-op by default](../adrs/0016-optional-tracing-no-op-by-default.md).
 
 ### Error handling, retries, and the DLQ
 
@@ -346,7 +346,7 @@ really a sign that the aggregate boundary is too wide -- resizing the aggregate 
 the fix there, and a snapshot only hides it.
 
 The strategy-pattern design behind the three modes is argued in
-[ADR 0007: snapshot strategy pattern](../adrs/0007-snapshot-strategy-pattern.md);
+[ADR 0017: snapshot strategy pattern](../adrs/0017-snapshot-strategy-pattern.md);
 [tutorial 14](../tutorials/14-snapshotting.md) teaches the same feature on a toy
 domain if you would rather learn it than apply it.
 
