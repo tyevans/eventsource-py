@@ -174,7 +174,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -234,10 +234,15 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras --locked
 
+      # --cov-fail-under=0 overrides [tool.coverage.report] fail_under, which is
+      # a ratchet calibrated against the unit suite. This job measures only the
+      # integration selection, so enforcing that gate here compares a partial
+      # measurement (~52%) to a whole-suite threshold (86) and always fails. The
+      # report is still printed; it just does not gate.
       - name: Run integration tests
         env:
           DATABASE_URL: postgresql://test:test@localhost:5432/eventsource_test
           REDIS_URL: redis://localhost:6379
         run: |
           uv run pytest -m "integration or postgres or redis" \
-            --cov=src/eventsource --cov-report=term-missing
+            --cov=src/eventsource --cov-report=term-missing --cov-fail-under=0
