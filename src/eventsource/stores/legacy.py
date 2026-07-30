@@ -57,16 +57,44 @@ class LegacyStoreAdapter(EventStore):
         adapter: Any object structurally satisfying `ports.FullEventStore`
             (e.g. `MemoryEventStore`, `SQLiteEventStore`, `PostgreSQLEventStore`).
         store_id: The `store_id` the wrapped adapter stamps onto its
-            `Position` values. There is no public attribute on the adapters
-            for this today, so it must be supplied explicitly here; it must
-            match the wrapped adapter's own `store_id` or positions it
-            emits will fail to round-trip through the codec
-            (`PositionForeignError`).
+            `Position` values. Defaults to the wrapped adapter's public
+            `store_id` attribute when present (all three known adapters
+            expose one); pass this explicitly to override it, or when
+            wrapping an adapter that doesn't expose `store_id`. Raises
+            `TypeError` if neither is available. It must match the wrapped
+            adapter's own `store_id` or positions it emits will fail to
+            round-trip through the codec (`PositionForeignError`).
+
+    Known incompatibilities with the old `EventStore` ABC:
+        - `get_events(aggregate_id, aggregate_type=None, ...)`: the old ABC
+          allows omitting `aggregate_type` to fetch all events for an
+          `aggregate_id` across every type. The new `StreamId` port requires
+          a category, so this wrapper has no way to express "any type" and
+          raises `ValueError` when `aggregate_type` is `None`. Old call
+          sites that rely on the cross-type lookup (e.g.
+          `migration.dual_write.DualWriteInterceptor`, which forwards
+          `aggregate_type=None` unmodified) cannot be routed through this
+          wrapper without also passing a concrete `aggregate_type`.
+        - `read_all(ReadOptions(direction=BACKWARD))` is implemented by
+          materializing the full forward feed in memory and reversing it
+          (O(n) in the number of matching events), unlike a backend that
+          might support a native reverse scan. Fine for compatibility-shim
+          use; not recommended for very large stores.
+        - `get_events`/`read_all` timestamp filters (`from_timestamp`,
+          `to_timestamp`) are applied client-side after collecting from the
+          port iterator, since `StreamReadOptions`/`FeedReadOptions` have no
+          timestamp fields -- no pushdown to the adapter.
     """
 
-    def __init__(self, adapter: FullEventStore, store_id: str) -> None:
+    def __init__(self, adapter: FullEventStore, store_id: str | None = None) -> None:
         self._adapter = adapter
-        self._codec = IntPositionCodec(store_id)
+        resolved_store_id = store_id if store_id is not None else getattr(adapter, "store_id", None)
+        if resolved_store_id is None:
+            raise TypeError(
+                "LegacyStoreAdapter requires a store_id: the wrapped adapter has no "
+                "public 'store_id' attribute, so one must be passed explicitly"
+            )
+        self._codec = IntPositionCodec(resolved_store_id)
 
     async def append_events(
         self,
@@ -115,6 +143,10 @@ class LegacyStoreAdapter(EventStore):
                 continue
             events.append(envelope.event)
 
+        # Intentional correctness fix over the old InMemoryEventStore quirk,
+        # where `version` was the length of the (from_version-)filtered
+        # events list rather than the true stream version; here it is
+        # always the true stream version regardless of filtering.
         version = await self._adapter.get_stream_version(stream)
         return EventStream(
             aggregate_id=aggregate_id,
@@ -151,22 +183,42 @@ class LegacyStoreAdapter(EventStore):
         options: ReadOptions | None = None,
     ) -> AsyncIterator[StoredEvent]:
         opts = options or ReadOptions()
-        if opts.direction == ReadDirection.BACKWARD:
-            raise NotImplementedError(
-                "LegacyStoreAdapter.read_all does not support backward global reads"
-            )
+        backward = opts.direction == ReadDirection.BACKWARD
 
         from_position: Position | None = None
         if opts.from_position not in (0, -1):
             from_position = self._codec.encode(opts.from_position)
 
-        feed_options = FeedReadOptions(tenant_id=opts.tenant_id, limit=opts.limit)
+        # Mirrors stores/in_memory.py's `_do_read_all`: filters (position,
+        # timestamp, tenant) are applied in forward order first, direction
+        # is applied next, and limit is applied LAST -- so for BACKWARD
+        # reads, limit keeps the *last* N events of the forward-filtered
+        # feed (i.e. the most recent N), not the first N. Limit can only be
+        # pushed down to the adapter when it is safe to apply first: forward
+        # direction with no client-side timestamp filtering left to shrink
+        # the result further. In every other case (BACKWARD, or timestamp
+        # filters present) the full matching forward feed is materialized in
+        # memory (O(n) in the number of matching events), filtered, then
+        # reversed and/or limited client-side to match the old ordering.
+        push_down_limit = not backward and opts.from_timestamp is None and opts.to_timestamp is None
+        feed_options = FeedReadOptions(
+            tenant_id=opts.tenant_id, limit=opts.limit if push_down_limit else None
+        )
 
+        envelopes = []
         async for envelope in self._adapter.read_all(from_position, feed_options):
             if opts.from_timestamp is not None and envelope.event.occurred_at < opts.from_timestamp:
                 continue
             if opts.to_timestamp is not None and envelope.event.occurred_at > opts.to_timestamp:
                 continue
+            envelopes.append(envelope)
+
+        if backward:
+            envelopes = list(reversed(envelopes))
+        if not push_down_limit and opts.limit is not None:
+            envelopes = envelopes[: opts.limit]
+
+        for envelope in envelopes:
             global_position = (
                 self._codec.value_of(envelope.position) if envelope.position is not None else 0
             )

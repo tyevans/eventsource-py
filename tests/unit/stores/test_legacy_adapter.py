@@ -36,7 +36,7 @@ class TestExpectedVersionMapping:
         assert result.kind == "exact"
         assert result.version == 5
 
-    def test_zero_is_exact_not_no_stream(self) -> None:
+    def test_zero_maps_to_no_stream_not_exact(self) -> None:
         # NOTE: ExpectedVersion.NO_STREAM == 0 too, so 0 maps to no_stream
         # via the sentinel branch (checked before the generic >= 0 branch).
         assert _expected_from_int(0).kind == "no_stream"
@@ -165,10 +165,52 @@ class TestReadAll:
         assert stored.stream_position == 1
         assert stored.stream_id == f"{aggregate_id}:Thing"
 
-    async def test_backward_direction_not_supported(self, legacy: LegacyStoreAdapter) -> None:
-        with pytest.raises(NotImplementedError):
-            async for _ in legacy.read_all(ReadOptions(direction=ReadDirection.BACKWARD)):
-                pass
+    async def test_backward_direction_reverses_order(self, legacy: LegacyStoreAdapter) -> None:
+        aggregate_id = uuid4()
+        e1 = ThingHappened(aggregate_id=aggregate_id)
+        e2 = ThingHappened(aggregate_id=aggregate_id)
+        e3 = ThingHappened(aggregate_id=aggregate_id)
+        await legacy.append_events(aggregate_id, "Thing", [e1], ExpectedVersion.NO_STREAM)
+        await legacy.append_events(aggregate_id, "Thing", [e2], ExpectedVersion.ANY)
+        await legacy.append_events(aggregate_id, "Thing", [e3], ExpectedVersion.ANY)
+
+        results = [
+            se async for se in legacy.read_all(ReadOptions(direction=ReadDirection.BACKWARD))
+        ]
+        assert [se.event for se in results] == [e3, e2, e1]
+
+    async def test_backward_with_limit_keeps_most_recent_n(
+        self, legacy: LegacyStoreAdapter
+    ) -> None:
+        # Mirrors stores/in_memory.py's _do_read_all: filters are applied in
+        # forward order first, then direction is reversed, THEN limit is
+        # applied -- so limit=2 backward keeps the two most recent events,
+        # still in descending (newest-first) order, not the two oldest.
+        aggregate_id = uuid4()
+        e1 = ThingHappened(aggregate_id=aggregate_id)
+        e2 = ThingHappened(aggregate_id=aggregate_id)
+        e3 = ThingHappened(aggregate_id=aggregate_id)
+        await legacy.append_events(aggregate_id, "Thing", [e1], ExpectedVersion.NO_STREAM)
+        await legacy.append_events(aggregate_id, "Thing", [e2], ExpectedVersion.ANY)
+        await legacy.append_events(aggregate_id, "Thing", [e3], ExpectedVersion.ANY)
+
+        results = [
+            se
+            async for se in legacy.read_all(ReadOptions(direction=ReadDirection.BACKWARD, limit=2))
+        ]
+        assert [se.event for se in results] == [e3, e2]
+
+    async def test_forward_with_limit_keeps_earliest_n(self, legacy: LegacyStoreAdapter) -> None:
+        aggregate_id = uuid4()
+        e1 = ThingHappened(aggregate_id=aggregate_id)
+        e2 = ThingHappened(aggregate_id=aggregate_id)
+        e3 = ThingHappened(aggregate_id=aggregate_id)
+        await legacy.append_events(aggregate_id, "Thing", [e1], ExpectedVersion.NO_STREAM)
+        await legacy.append_events(aggregate_id, "Thing", [e2], ExpectedVersion.ANY)
+        await legacy.append_events(aggregate_id, "Thing", [e3], ExpectedVersion.ANY)
+
+        results = [se async for se in legacy.read_all(ReadOptions(limit=2))]
+        assert [se.event for se in results] == [e1, e2]
 
 
 class TestGetGlobalPosition:
@@ -191,3 +233,31 @@ class TestCodecIsolation:
         adapter = MemoryEventStore(store_id="isolated")
         legacy = LegacyStoreAdapter(adapter, store_id="isolated")
         assert legacy._codec == IntPositionCodec("isolated")
+
+
+class TestStoreIdDefaulting:
+    async def test_omitted_store_id_defaults_to_adapter_public_attribute(self) -> None:
+        adapter = MemoryEventStore(store_id="auto-detected")
+        legacy = LegacyStoreAdapter(adapter)
+        assert legacy._codec == IntPositionCodec("auto-detected")
+
+        aggregate_id = uuid4()
+        await legacy.append_events(
+            aggregate_id,
+            "Thing",
+            [ThingHappened(aggregate_id=aggregate_id)],
+            ExpectedVersion.NO_STREAM,
+        )
+        assert await legacy.get_global_position() == 1
+
+    def test_missing_store_id_and_no_public_attribute_raises(self) -> None:
+        class NoStoreIdAdapter:
+            max_append_batch = None
+
+        with pytest.raises(TypeError):
+            LegacyStoreAdapter(NoStoreIdAdapter())  # type: ignore[arg-type]
+
+    def test_explicit_store_id_overrides_adapter_attribute(self) -> None:
+        adapter = MemoryEventStore(store_id="adapter-default")
+        legacy = LegacyStoreAdapter(adapter, store_id="explicit-override")
+        assert legacy._codec == IntPositionCodec("explicit-override")

@@ -56,6 +56,10 @@ class MemoryEventStore:
         self._event_ids: set[UUID] = set()
         self._lock = asyncio.Lock()
 
+    @property
+    def store_id(self) -> str:
+        return self._store_id
+
     def _position_of(self, index: int) -> Position:
         """1-based global position for the given 0-based `_events` index."""
         return Position(store_id=self._store_id, key=(index + 1,))

@@ -107,6 +107,10 @@ class SQLiteEventStore:
         self._codec = IntPositionCodec(self._store_id)
         self._lock = asyncio.Lock()
 
+    @property
+    def store_id(self) -> str:
+        return self._store_id
+
     async def _conn(self) -> aiosqlite.Connection:
         """Return the live connection, opening and initializing it on first use."""
         if self._connection is not None:
