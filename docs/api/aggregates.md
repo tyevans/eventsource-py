@@ -31,11 +31,13 @@ behaves in the current source. Sections marked with a leading underscore
 the repository rely on them; they are not part of the stable public surface for
 application code unless explicitly noted as a subclass hook.
 
-Two further modules — `eventsource.aggregates.snapshot_manager` and
-`eventsource.aggregates.task_manager` — back the repository's snapshot and
-background-task behaviour. They are not re-exported from
-`eventsource.aggregates` and are documented here only through the repository
-methods and properties that expose their effects.
+A further module — `eventsource.aggregates.snapshot_manager` — backs the
+repository's snapshot behaviour. It is not re-exported from
+`eventsource.aggregates` and is documented here only through the repository
+methods and properties that expose its effects. Background-task tracking
+(used by the snapshot strategies and the event bus, not the repository
+directly) lives in the internal `eventsource._internal.background_tasks`
+module and is out of scope for this page.
 
 For task-oriented material — modelling a new aggregate, wiring snapshots, or
 choosing between the declarative and imperative styles — see the guides under
@@ -92,13 +94,12 @@ is **not** in the top-level `__all__` — to annotate against it, import it from
 
 ### Names not exported
 
-`eventsource.aggregates.snapshot_manager` and
-`eventsource.aggregates.task_manager` are implementation modules. Neither
-`AggregateSnapshotManager` nor `BackgroundTaskManager` appears in the
-subpackage's `__all__` or in the top-level package, and neither is covered by
-the project's backward-compatibility guarantees. Their behaviour reaches
-application code only through `AggregateRepository`'s snapshot properties and
-methods, documented under [Snapshot Surface](#snapshot-surface).
+`eventsource.aggregates.snapshot_manager` is an implementation module.
+`AggregateSnapshotManager` does not appear in the subpackage's `__all__` or
+in the top-level package, and is not covered by the project's
+backward-compatibility guarantees. Its behaviour reaches application code
+only through `AggregateRepository`'s snapshot properties and methods,
+documented under [Snapshot Surface](#snapshot-surface).
 
 Symbols that support these classes but live elsewhere — the `@handles`
 decorator (`eventsource.handlers`), `DomainEvent` (`eventsource.events`), the
