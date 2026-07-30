@@ -235,7 +235,7 @@ short-circuited by a snapshot, consumed by a projection, and distributed over a 
 | Page | Package(s) documented | Top-level exports covered |
 | --- | --- | --- |
 | [Events](events.md) | `eventsource.events` | 10 |
-| [Event Stores](stores.md) | `eventsource.stores` | 9 (10 with the SQLite extra) |
+| Event Stores | `eventsource.stores` | 9 (10 with the SQLite extra) |
 | [Aggregates](aggregates.md) | `eventsource.aggregates`, `eventsource.handlers` | 4 |
 | [Snapshots](snapshots.md) | `eventsource.snapshots` | 7 of 11 |
 | [Projections](projections.md) | `eventsource.projections`, `eventsource.readmodels` | 5 of 21 |
@@ -283,7 +283,10 @@ already-registered name (re-registering the same class is a no-op).
 `TenantDomainEvent` — the tenant-scoped subclass — lives in `eventsource.multitenancy`
 and is described there.
 
-### Event Stores — `api/stores.md` (`eventsource.stores.interface`, `in_memory`, `postgresql`, `sqlite`)
+### Event Stores — `eventsource.stores.interface`, `in_memory`, `postgresql`, `sqlite`
+
+_No dedicated `api/stores.md` reference page exists yet; see the module docstrings and
+`src/eventsource/stores/` for the authoritative contract until one is written._
 
 Covers the `EventStore` abstract base class and the value types its methods exchange:
 `StoredEvent`, `EventStream`, `AppendResult`, `ReadOptions`, `ReadDirection`, and

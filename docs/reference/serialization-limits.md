@@ -174,7 +174,7 @@ reconstruction: a UUID or datetime that was serialized comes back as a plain
 
 ## See also
 
-- [`serialization/` README](../../src/eventsource/serialization/README.md) —
+- `serialization/` README (`src/eventsource/serialization/README.md`) —
   package overview and usage.
 - `eventsource.serialization.json` module docstring — the same constraints,
   documented at the source.
