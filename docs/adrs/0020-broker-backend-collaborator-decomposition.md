@@ -33,8 +33,10 @@ composed by a facade that keeps the public API:
 - Collaborators are internal: nothing new is exported from
   `eventsource.bus` or `eventsource`. Facades keep every public signature;
   the only 0.7.0 API changes are removing the already-deprecated
-  `KafkaEventBus.get_handlers_for_event` and deprecating
-  `record_reconnection`/`record_rebalance`. `background=True` publishes on
+  `KafkaEventBus.get_handlers_for_event`, deprecating
+  `record_reconnection`/`record_rebalance`, and moving
+  `KafkaRebalanceListener` to `bus/kafka/connection.py` (still re-exported
+  from `eventsource.bus.kafka`). `background=True` publishes on
   Kafka are now registered with the shared background-task tracker per
   ADR 0010 — this cycle fixed a latent nonconformance (previously aiokafka
   future callbacks, drain was a no-op), with cross-call ordering/

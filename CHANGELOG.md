@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **RabbitMQ and Kafka backends decomposed into internal collaborator packages.** `eventsource.bus.rabbitmq` and `eventsource.bus.kafka` are now packages of internal, state-owning collaborators (connection, topology/config, publisher, consumer, DLQ admin, serialization) composed by a facade; imports are unchanged. See ADR 0020.
+- **Kafka `background=True` publishes are now scheduled as tracked background tasks** per ADR 0010 -- send/serialization errors are logged and recorded in stats rather than raised to the caller, stats settle asynchronously, and `shutdown()` drains outstanding background publishes.
 
 ### Removed
 

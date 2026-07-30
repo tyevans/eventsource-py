@@ -35,3 +35,10 @@ vs a 20% threshold on a green code path). Nothing in CI watches metrics overhead
 Either rewrite the assertions as deterministic proxies (count instrumentation calls
 rather than elapsed time) or add a scheduled, non-blocking benchmark workflow that
 runs `-m benchmark` and reports results.
+
+## Remove bus facade compat shims (P2)
+
+0.8.0: remove bus facade compat shims -- migrate ~90 white-box test call sites to
+collaborator access (`bus._connection_manager.*` etc.), delete the facade property
+shims and thin delegations on both backends, alongside the scheduled
+`record_reconnection`/`record_rebalance` removal.
