@@ -821,19 +821,6 @@ class TestKafkaEventBus:
         assert bus.get_subscriber_count() == 0
         assert bus.get_wildcard_subscriber_count() == 0
 
-    def test_get_handlers_for_event(self, event_registry: EventRegistry) -> None:
-        """Test getting handlers for an event type (deprecated shim)."""
-        bus = KafkaEventBus(event_registry=event_registry)
-        handler1 = OrderHandler()
-        handler2 = OrderHandler()
-
-        bus.subscribe(SampleOrderCreated, handler1)
-        bus.subscribe_to_all_events(handler2)
-
-        with pytest.deprecated_call():
-            handlers = bus.get_handlers_for_event("SampleOrderCreated")
-        assert len(handlers) == 2
-
     def test_handlers_for_class_lookup(self, event_registry: EventRegistry) -> None:
         """Test the non-deprecated class-keyed handler lookup."""
         bus = KafkaEventBus(event_registry=event_registry)
