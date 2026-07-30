@@ -2,12 +2,13 @@
 
 import asyncio
 import time
-from typing import Any
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 from bench.adapters.base import BenchAdapter
 from bench.core.domain import make_events
 from bench.core.runner import Measurement, Scenario
+from eventsource.events.base import DomainEvent
 from eventsource.exceptions import OptimisticLockError
 from eventsource.stores.interface import EventStore
 
@@ -23,7 +24,9 @@ async def populate_stream(
     while version < count:
         n = min(chunk, count - version)
         events = make_events(aggregate_id, n, start_version=version + 1, payload=payload)
-        await store.append_events(aggregate_id, "Bench", events, expected_version=version)
+        await store.append_events(
+            aggregate_id, "Bench", cast(list[DomainEvent], events), expected_version=version
+        )
         version += n
 
 
@@ -38,7 +41,9 @@ async def _append_batch(
         aggregate_id = uuid4()
         events = make_events(aggregate_id, batch_size, payload=payload)
         t0 = time.perf_counter()
-        await store.append_events(aggregate_id, "Bench", events, expected_version=0)
+        await store.append_events(
+            aggregate_id, "Bench", cast(list[DomainEvent], events), expected_version=0
+        )
         durations.append(time.perf_counter() - t0)
     return Measurement(
         elapsed_s=time.perf_counter() - start,
@@ -85,7 +90,9 @@ async def _concurrent_append(
         aggregate_id = uuid4()
         for version in range(ops_per_writer):
             events = make_events(aggregate_id, 1, start_version=version + 1)
-            await store.append_events(aggregate_id, "Bench", events, expected_version=version)
+            await store.append_events(
+                aggregate_id, "Bench", cast(list[DomainEvent], events), expected_version=version
+            )
 
     start = time.perf_counter()
     async with asyncio.TaskGroup() as group:
@@ -114,7 +121,7 @@ async def _contended_append(
             events = make_events(aggregate_id, 1, start_version=version + 1)
             try:
                 result = await store.append_events(
-                    aggregate_id, "Bench", events, expected_version=version
+                    aggregate_id, "Bench", cast(list[DomainEvent], events), expected_version=version
                 )
                 conflicted = result.conflict
             except OptimisticLockError:

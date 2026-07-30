@@ -6,7 +6,7 @@ backend they run on.
 """
 
 from abc import ABC, abstractmethod
-from typing import ClassVar, Generic, TypeVar
+from typing import Generic, TypeVar
 
 from eventsource.bus.interface import EventBus
 
@@ -20,7 +20,7 @@ class BenchAdapter(ABC, Generic[T]):
     ready-to-use resource. destroy() releases it.
     """
 
-    name: ClassVar[str] = ""
+    name: str = ""
 
     async def available(self) -> str | None:
         """Return None if this backend can run, else a skip reason."""

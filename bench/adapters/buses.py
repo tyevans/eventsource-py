@@ -17,6 +17,7 @@ class MemoryBusAdapter(BusAdapter):
         return InMemoryEventBus(enable_tracing=False)
 
     async def destroy(self, resource: EventBus) -> None:
+        assert isinstance(resource, InMemoryEventBus)
         await resource.shutdown()
 
 
@@ -89,7 +90,10 @@ class RedisBusAdapter(BusAdapter):
             task.cancel()
 
     async def destroy(self, resource: EventBus) -> None:
+        from eventsource.bus.redis import RedisEventBus
+
         await self.stop_delivery(resource)
+        assert isinstance(resource, RedisEventBus)
         await resource.shutdown()
 
 

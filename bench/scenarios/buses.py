@@ -14,6 +14,7 @@ from bench.adapters.base import BenchAdapter, BusAdapter
 from bench.core.domain import BenchEvent, make_events
 from bench.core.runner import Measurement, Scenario
 from eventsource.bus.interface import EventBus
+from eventsource.events.base import DomainEvent
 
 
 @dataclass
@@ -83,11 +84,12 @@ async def _prepare_fanout(
 ) -> _BusHarness:
     assert isinstance(adapter, BusAdapter)
     harness = _BusHarness(adapter=adapter)
+
+    async def handler(event: DomainEvent) -> None:
+        assert isinstance(event, BenchEvent)
+        harness.on_delivery(event)
+
     for _ in range(params["subscribers"]):
-
-        async def handler(event: BenchEvent, _h: _BusHarness = harness) -> None:
-            _h.on_delivery(event)
-
         bus.subscribe(BenchEvent, handler)
     await adapter.start_delivery(bus)
     return harness
