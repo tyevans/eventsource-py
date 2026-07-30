@@ -19,6 +19,22 @@ covering behaviour. The broker extras this ADR depends on are declared in
 This ADR describes the semantics as they exist today, including one known gap:
 `RedisEventBus` does not yet propagate distributed trace context.
 
+**Amended by [0011 - Uniform Handler-Error Isolation with `HandlerDispatchError`
+and No-Ack-on-Failure](0011-handler-error-isolation-with-no-ack.md)**: D3
+("Handler errors are caught, logged, and swallowed") and the "Do not expect
+`await bus.publish(...)` to raise" consequence no longer hold as stated.
+Isolation across handlers is unchanged; failures are now aggregated into a
+raised `HandlerDispatchError`, and on the broker consume paths (Redis,
+RabbitMQ, Kafka) an aggregate failure withholds the ack/commit so the
+backend's existing redelivery mechanism runs, closing a silent
+at-most-once gap on Redis.
+
+**Amended by [0010 - Uniform Event Bus Contract: `background` Semantics and
+`BaseEventBus`](0010-uniform-event-bus-contract.md)**: D4's description of
+`InMemoryEventBus` owning its own `threading.RLock` no longer reflects the
+implementation -- subscription state and its lock now live in the shared
+`SubscriptionRegistry` inside `BaseEventBus`, used by all four backends.
+
 ## Context
 
 `EventBus` is the fan-out seam of the library: aggregates and stores produce events, and projections, read models, and integration handlers consume them. Because the same abstract base class is implemented over an in-process dictionary *and* over three network brokers with very different semantics, the interface has to state plainly what it does and does not promise. Anything left implicit gets assumed away by users, and the assumption that bites hardest is "my handler runs exactly once, in order, and if it throws, publishing fails."
