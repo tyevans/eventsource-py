@@ -90,6 +90,11 @@ from typing import TYPE_CHECKING, Any
 
 from eventsource.bus.base import BaseEventBus
 from eventsource.bus.kafka.config import KafkaEventBusConfig
+from eventsource.bus.kafka.metrics import (
+    KafkaEventBusMetrics,
+    register_connection_gauge,
+    register_consumer_lag_gauge,
+)
 from eventsource.bus.kafka.models import (
     DeserializationError,
     KafkaEventBusStats,
@@ -174,132 +179,6 @@ def _get_meter() -> Any:
     if _meter is None:
         _meter = otel_metrics.get_meter("eventsource.bus.kafka")
     return _meter
-
-
-class KafkaEventBusMetrics:
-    """Container for Kafka event bus OpenTelemetry metric instruments.
-
-    This class creates and holds all metric instruments used by the
-    KafkaEventBus for observability. Instruments are created once at
-    initialization and reused throughout the bus lifecycle.
-
-    The metrics follow OpenTelemetry semantic conventions for messaging systems
-    and use consistent attribute names across all instruments.
-
-    Attributes:
-        messages_published: Counter for messages published to Kafka.
-            Attributes: messaging.system, messaging.destination, event.type
-        messages_consumed: Counter for messages consumed from Kafka.
-            Attributes: messaging.system, messaging.destination,
-            messaging.kafka.partition, event.type
-        handler_invocations: Counter for handler invocations.
-            Attributes: handler.name, event.type
-        handler_errors: Counter for handler errors.
-            Attributes: handler.name, event.type, error.type
-        dlq_messages: Counter for messages sent to dead letter queue.
-            Attributes: dlq.reason, error.type
-        connection_errors: Counter for connection errors.
-            Attributes: error.type
-        reconnections: Counter for reconnection attempts. No attributes.
-        rebalances: Counter for consumer rebalances.
-            Attributes: messaging.kafka.consumer_group
-        publish_errors: Counter for publish errors.
-            Attributes: messaging.system, messaging.destination,
-            event.type, error.type
-        publish_duration: Histogram for publish latency in milliseconds.
-            Attributes: messaging.destination
-        consume_duration: Histogram for consume/process latency in ms.
-            Attributes: messaging.destination
-        handler_duration: Histogram for handler execution time in ms.
-            Attributes: handler.name, event.type
-        batch_size: Histogram for publish batch sizes. No attributes.
-
-    Note:
-        Observable gauges (connections.active, consumer.lag) are registered
-        separately on the KafkaEventBus instance via callback functions,
-        not stored in this class.
-
-    Example:
-        >>> meter = _get_meter()
-        >>> if meter:
-        ...     metrics = KafkaEventBusMetrics(meter)
-        ...     metrics.messages_published.add(1, {"event.type": "OrderCreated"})
-    """
-
-    def __init__(self, meter: Any) -> None:
-        """Initialize metric instruments.
-
-        Args:
-            meter: OpenTelemetry meter instance for creating instruments.
-        """
-        # Counters
-        self.messages_published = meter.create_counter(
-            name="kafka.eventbus.messages.published",
-            description="Total messages published to Kafka",
-            unit="messages",
-        )
-        self.messages_consumed = meter.create_counter(
-            name="kafka.eventbus.messages.consumed",
-            description="Total messages consumed from Kafka",
-            unit="messages",
-        )
-        self.handler_invocations = meter.create_counter(
-            name="kafka.eventbus.handler.invocations",
-            description="Total handler invocations",
-            unit="invocations",
-        )
-        self.handler_errors = meter.create_counter(
-            name="kafka.eventbus.handler.errors",
-            description="Total handler errors",
-            unit="errors",
-        )
-        self.dlq_messages = meter.create_counter(
-            name="kafka.eventbus.messages.dlq",
-            description="Total messages sent to dead letter queue",
-            unit="messages",
-        )
-        self.connection_errors = meter.create_counter(
-            name="kafka.eventbus.connection.errors",
-            description="Total connection errors",
-            unit="errors",
-        )
-        self.reconnections = meter.create_counter(
-            name="kafka.eventbus.reconnections",
-            description="Total reconnection attempts",
-            unit="reconnections",
-        )
-        self.rebalances = meter.create_counter(
-            name="kafka.eventbus.rebalances",
-            description="Total consumer rebalances",
-            unit="rebalances",
-        )
-        self.publish_errors = meter.create_counter(
-            name="kafka.eventbus.publish.errors",
-            description="Total publish errors",
-            unit="errors",
-        )
-
-        # Histograms
-        self.publish_duration = meter.create_histogram(
-            name="kafka.eventbus.publish.duration",
-            description="Time to publish messages to Kafka",
-            unit="ms",
-        )
-        self.consume_duration = meter.create_histogram(
-            name="kafka.eventbus.consume.duration",
-            description="Time to process consumed messages",
-            unit="ms",
-        )
-        self.handler_duration = meter.create_histogram(
-            name="kafka.eventbus.handler.duration",
-            description="Handler execution time",
-            unit="ms",
-        )
-        self.batch_size = meter.create_histogram(
-            name="kafka.eventbus.batch.size",
-            description="Publish batch size",
-            unit="messages",
-        )
 
 
 class KafkaRebalanceListener(_ConsumerRebalanceListener):  # type: ignore[misc]
@@ -582,8 +461,9 @@ class KafkaEventBus(BaseEventBus):
             self._connected = True
             self._stats.connected_at = datetime.now(UTC)
 
-            # Register connection status gauge (only once)
-            self._register_connection_gauge()
+            # Wire up observable gauges now that the connection is fully
+            # established -- never as a side effect of a failed connect.
+            self._wire_metrics()
 
             logger.info(
                 "Connected to Kafka",
@@ -812,6 +692,16 @@ class KafkaEventBus(BaseEventBus):
     # Observable Gauge Methods
     # =========================================================================
 
+    def _wire_metrics(self) -> None:
+        """Register observable gauges after a successful connect.
+
+        Called once from ``connect()`` after the connection is fully
+        established. Kept separate from ``connect()`` itself so gauge
+        registration is never a side effect of a failed connection attempt.
+        """
+        self._register_connection_gauge()
+        self._register_consumer_lag_gauge()
+
     def _register_connection_gauge(self) -> None:
         """Register connection status as an observable gauge.
 
@@ -821,40 +711,15 @@ class KafkaEventBus(BaseEventBus):
         The gauge is registered once and the callback is invoked by the
         OpenTelemetry SDK at its configured collection interval.
         """
-        if not self._meter or not self._config.enable_metrics:
+        if not self._meter or not self._config.enable_metrics or self._metrics is None:
             return
 
-        if self._connection_gauge_registered:
-            return  # Gauges can only be registered once
-
-        # Capture self reference for closure
-        bus = self
-
-        def connection_callback(options: CallbackOptions) -> Iterable[Observation]:
-            """Callback to report connection status.
-
-            Args:
-                options: Callback options from OpenTelemetry SDK.
-
-            Yields:
-                Observation with connection status (0 or 1).
-            """
-            yield Observation(
-                1 if bus._connected else 0,
-                attributes={
-                    "messaging.kafka.consumer_group": bus._config.consumer_group,
-                },
-            )
-
-        self._meter.create_observable_gauge(
-            name="kafka.eventbus.connections.active",
-            callbacks=[connection_callback],
-            description="Connection status (1=connected, 0=disconnected)",
-            unit="connections",
+        self._connection_gauge_registered = register_connection_gauge(
+            self._meter,
+            self._metrics,
+            lambda: self._connected,
+            self._config.consumer_group,
         )
-
-        self._connection_gauge_registered = True
-        logger.debug("Connection status gauge registered")
 
     def _register_consumer_lag_gauge(self) -> None:
         """Register consumer lag as an observable gauge.
@@ -864,73 +729,63 @@ class KafkaEventBus(BaseEventBus):
         This callback is invoked by the OpenTelemetry SDK at its configured
         collection interval (default: 60 seconds).
 
-        Should be called after consumer starts and has partition assignments.
+        Safe to call before the consumer has partition assignments -- the
+        supplied callback reports nothing until consuming has started.
         """
-        if not self._meter or not self._config.enable_metrics:
+        if not self._meter or not self._config.enable_metrics or self._metrics is None:
             return
 
-        if self._lag_gauge_registered:
-            return  # Gauges can only be registered once
-
-        # Capture self reference for closure
-        bus = self
-
-        def lag_callback(options: CallbackOptions) -> Iterable[Observation]:
-            """Callback to report consumer lag per partition.
-
-            Args:
-                options: Callback options from OpenTelemetry SDK.
-
-            Yields:
-                Observation objects with lag values and partition attributes.
-            """
-            # Only report when consuming and have a valid consumer
-            if not bus._consuming or not bus._consumer or not bus._connected:
-                return
-
-            try:
-                assignment = bus._consumer.assignment()
-                if not assignment:
-                    return
-
-                for tp in assignment:
-                    try:
-                        # Get high watermark (latest offset in partition)
-                        highwater = bus._consumer.highwater(tp)
-                        # Get current position (next offset to be consumed)
-                        position = bus._consumer.position(tp)
-
-                        if highwater is not None and position is not None:
-                            # Lag is the difference, clamped to >= 0
-                            lag = max(0, highwater - position)
-                            yield Observation(
-                                lag,
-                                attributes={
-                                    "messaging.kafka.partition": tp.partition,
-                                    "messaging.kafka.consumer_group": bus._config.consumer_group,
-                                    "messaging.destination": tp.topic,
-                                },
-                            )
-                    except Exception as e:
-                        # Skip partitions with errors (e.g., during rebalance)
-                        logger.debug(
-                            "Skipping partition %s lag metric due to error: %s",
-                            tp,
-                            e,
-                        )
-            except Exception as e:
-                # Skip if consumer is in invalid state
-                logger.debug("Unable to collect consumer lag metrics: %s", e)
-
-        self._meter.create_observable_gauge(
-            name="kafka.eventbus.consumer.lag",
-            callbacks=[lag_callback],
-            description="Consumer lag per partition (messages behind)",
-            unit="messages",
+        self._lag_gauge_registered = register_consumer_lag_gauge(
+            self._meter,
+            self._metrics,
+            self._lag_observations,
         )
 
-        self._lag_gauge_registered = True
-        logger.debug("Consumer lag gauge registered")
+    def _lag_observations(self) -> Iterable[Observation]:
+        """Compute per-partition consumer lag observations.
+
+        Yields:
+            Observation objects with lag values and partition attributes.
+            Yields nothing when not consuming, mid-rebalance, or in an
+            invalid consumer state.
+        """
+        # Only report when consuming and have a valid consumer
+        if not self._consuming or not self._consumer or not self._connected:
+            return
+
+        try:
+            assignment = self._consumer.assignment()
+            if not assignment:
+                return
+
+            for tp in assignment:
+                try:
+                    # Get high watermark (latest offset in partition)
+                    highwater = self._consumer.highwater(tp)
+                    # Get current position (next offset to be consumed)
+                    position = self._consumer.position(tp)
+
+                    if highwater is not None and position is not None:
+                        # Lag is the difference, clamped to >= 0
+                        lag = max(0, highwater - position)
+                        yield Observation(
+                            lag,
+                            attributes={
+                                "messaging.kafka.partition": tp.partition,
+                                "messaging.kafka.consumer_group": self._config.consumer_group,
+                                "messaging.destination": tp.topic,
+                            },
+                        )
+                except Exception as e:
+                    # Skip partitions with errors (e.g., during rebalance)
+                    logger.debug(
+                        "Skipping partition %s lag metric due to error: %s",
+                        tp,
+                        e,
+                    )
+        except Exception as e:
+            # Skip if consumer is in invalid state
+            logger.debug("Unable to collect consumer lag metrics: %s", e)
 
     # =========================================================================
     # Publish Methods
