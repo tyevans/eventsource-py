@@ -158,6 +158,10 @@ ignore_missing_imports = true
 module = "aiokafka.*"
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = "asyncpg"
+ignore_missing_imports = true
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
@@ -173,7 +177,7 @@ select = ["E", "F", "I", "N", "W", "UP", "B", "C4", "SIM"]
 ignore = ["E501"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["eventsource"]
+known-first-party = ["eventsource", "bench"]
 
 [tool.bandit]
 exclude_dirs = ["tests", "examples"]
