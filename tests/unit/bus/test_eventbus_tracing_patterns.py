@@ -362,13 +362,22 @@ class TestKafkaEventBusTracingCompliance:
         assert "tracer" in params
 
     def test_has_context_propagation(self, check_kafka_available: None) -> None:
-        """KafkaEventBus should have context propagation support."""
-        from eventsource.bus.kafka import bus as kafka_module
+        """KafkaEventBus should have context propagation support.
 
-        source = inspect.getsource(kafka_module)
+        Propagation lives with the collaborators that use it: ``inject`` on
+        the publish side, ``extract`` on the consume side. The facade itself
+        no longer imports either.
+        """
+        from eventsource.bus.kafka import consumer as kafka_consumer_module
+        from eventsource.bus.kafka import publisher as kafka_publisher_module
 
         # Check for trace context propagation imports
-        assert "from opentelemetry.propagate import extract, inject" in source
+        assert "from opentelemetry.propagate import inject" in inspect.getsource(
+            kafka_publisher_module
+        )
+        assert "from opentelemetry.propagate import extract" in inspect.getsource(
+            kafka_consumer_module
+        )
 
 
 class TestTracerCompositionIntegration:

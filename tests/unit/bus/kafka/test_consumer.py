@@ -147,21 +147,75 @@ class TestDispatchErrorIsolation:
         assert len(exc_info.value.failures) == 2
 
     @pytest.mark.asyncio
-    async def test_no_commit_on_handler_failure(self) -> None:
+    async def test_handler_failure_commits_only_after_dlq_send(self) -> None:
+        """The success-path commit is skipped; only the DLQ path commits.
+
+        With max_retries=0 a first failure routes straight to the DLQ, and
+        that path commits deliberately to avoid infinite reprocessing. The
+        offset-safety invariant is that the commit happens exactly once and
+        strictly *after* the message is safely in the DLQ -- never on the
+        success path ahead of it.
+        """
+
         async def boom(event: DomainEvent) -> None:
             raise ValueError("nope")
 
         handlers = (HandlerAdapter(boom),)
-        loop, _producer, consumer = _make_loop(handlers=handlers, max_retries=0)
-        event = _make_event()
+        loop, producer, consumer = _make_loop(handlers=handlers, max_retries=0)
 
-        await loop._process_message(_make_message(event))
+        order: list[str] = []
+        producer.send.side_effect = lambda **kwargs: order.append(f"send:{kwargs['topic']}")
+        consumer.commit.side_effect = lambda *a, **kw: order.append("commit")
 
-        # max_retries=0 with retry_count 0 routes straight to DLQ, and the
-        # DLQ path commits deliberately to avoid an infinite loop. The
-        # success-path commit must not have happened before that.
+        await loop._process_message(_make_message(_make_event()))
+
+        assert consumer.commit.await_count == 1
+        assert order == [f"send:{loop._config.dlq_topic_name}", "commit"]
         assert loop._stats.events_processed_success == 0
         assert loop._stats.events_processed_failed == 1
+
+    @pytest.mark.asyncio
+    async def test_no_commit_when_dlq_send_fails(self) -> None:
+        """A message that could not be parked in the DLQ is never committed.
+
+        ``_send_to_dlq`` re-raises on producer failure, so the error escapes
+        ``_process_message`` entirely and no commit is issued -- Kafka
+        redelivers the message (at-least-once).
+        """
+
+        async def boom(event: DomainEvent) -> None:
+            raise ValueError("nope")
+
+        handlers = (HandlerAdapter(boom),)
+        loop, producer, consumer = _make_loop(handlers=handlers, max_retries=0)
+        producer.send.side_effect = RuntimeError("broker down")
+
+        with pytest.raises(RuntimeError, match="broker down"):
+            await loop._process_message(_make_message(_make_event()))
+
+        consumer.commit.assert_not_awaited()
+        assert loop._stats.events_processed_success == 0
+
+    @pytest.mark.asyncio
+    async def test_dlq_disabled_drops_message_and_commits(self) -> None:
+        """Pins current behavior: with the DLQ disabled the message is dropped.
+
+        ``_send_to_dlq`` returns early (logging a warning) and
+        ``_handle_processing_error`` still commits, so the failed message is
+        discarded rather than redelivered forever.
+        """
+
+        async def boom(event: DomainEvent) -> None:
+            raise ValueError("nope")
+
+        handlers = (HandlerAdapter(boom),)
+        loop, producer, consumer = _make_loop(handlers=handlers, max_retries=0, enable_dlq=False)
+
+        await loop._process_message(_make_message(_make_event()))
+
+        producer.send.assert_not_awaited()
+        assert consumer.commit.await_count == 1
+        assert loop._stats.messages_sent_to_dlq == 0
 
     @pytest.mark.asyncio
     async def test_success_commits_offset(self) -> None:

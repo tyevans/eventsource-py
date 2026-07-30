@@ -128,25 +128,16 @@ except ImportError:
     TopicPartition = None
     KafkaError = Exception
 
-# OpenTelemetry metrics and propagation imports - kept separate from TracingMixin
-# These are NOT in TracingMixin and must be imported directly for metrics and inject/extract
+# OpenTelemetry metrics imports - kept separate from TracingMixin. These are
+# NOT in TracingMixin and must be imported directly for the meter and the
+# observable-gauge callbacks. Context propagation (inject/extract) now lives
+# with the publisher and consumer collaborators that use it.
 try:
     from opentelemetry import metrics as otel_metrics
-    from opentelemetry.metrics import CallbackOptions, Observation
-    from opentelemetry.propagate import extract, inject
-    from opentelemetry.trace import SpanKind, Status, StatusCode
-
-    PROPAGATION_AVAILABLE = OTEL_AVAILABLE
+    from opentelemetry.metrics import Observation
 except ImportError:
     otel_metrics = None  # type: ignore[assignment]
-    CallbackOptions = None  # type: ignore[assignment, misc]
     Observation = None  # type: ignore[assignment, misc]
-    extract = None  # type: ignore[assignment]
-    inject = None  # type: ignore[assignment]
-    SpanKind = None  # type: ignore[assignment, misc]
-    Status = None  # type: ignore[assignment, misc]
-    StatusCode = None  # type: ignore[assignment, misc]
-    PROPAGATION_AVAILABLE = False
 
 # Pinned explicitly: __name__ is "eventsource.bus.kafka.bus" after the
 # package move, but the public logger name must stay "eventsource.bus.kafka".
