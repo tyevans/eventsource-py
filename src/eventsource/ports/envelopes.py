@@ -106,7 +106,8 @@ class CategoryReadOptions:
 
     Attributes:
         tenant_id: Tenant to filter by; None for all tenants
-        from_timestamp: Minimum event occurrence time (inclusive); None for no minimum
+        from_timestamp: Minimum storage time (inclusive), i.e. `EventEnvelope.stored_at`
+            -- when the row was written, NOT the event's own `occurred_at`; None for no minimum
         limit: Maximum number of events to return; None for no limit
     """
 

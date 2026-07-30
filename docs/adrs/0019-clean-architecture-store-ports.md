@@ -1,8 +1,10 @@
 # ADR 0019: Clean-Architecture Store Ports and Opaque Positions
 
-**Status:** Accepted — design approved 2026-07-29, not yet implemented. The code
-does not reflect this record until the redesign sub-projects land; until then
-the shipped contract is the `EventStore` ABC this record replaces.
+**Status:** Accepted and implemented — ports, memory/sqlite/postgresql adapters,
+conformance suites, and the `LegacyStoreAdapter` compatibility wrapper have
+landed on this branch. The legacy `EventStore` ABC remains the default shipped
+surface, behind that compatibility wrapper, until the application layer is
+retyped onto the new ports (sub-project 2).
 
 **Date:** 2026-07-29
 

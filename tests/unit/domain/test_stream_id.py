@@ -27,6 +27,11 @@ class TestStreamId:
         with pytest.raises(ValueError):
             StreamId(aggregate_id=uuid4(), category="")
 
+    def test_category_with_trailing_newline_rejected(self) -> None:
+        """`$` matches just before a trailing newline; the pattern must use `\\Z`."""
+        with pytest.raises(ValueError):
+            StreamId(aggregate_id=uuid4(), category="Order\n")
+
     def test_frozen(self) -> None:
         sid = StreamId(aggregate_id=uuid4(), category="Order")
         with pytest.raises(FrozenInstanceError):

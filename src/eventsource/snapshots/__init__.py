@@ -82,22 +82,20 @@ from eventsource.snapshots.exceptions import (
     SnapshotNotFoundError,
     SnapshotSchemaVersionError,
 )
-from eventsource.snapshots.in_memory import InMemorySnapshotStore
 from eventsource.snapshots.interface import Snapshot, SnapshotStore
-from eventsource.snapshots.postgresql import PostgreSQLSnapshotStore
 
-# SQLite is optional (requires aiosqlite)
-try:
-    from eventsource.snapshots.sqlite import (
-        SQLITE_AVAILABLE,
-        SQLiteNotAvailableError,
-        SQLiteSnapshotStore,
-    )
-except ImportError:
-    SQLITE_AVAILABLE = False
-    SQLiteSnapshotStore = None  # type: ignore
-    SQLiteNotAvailableError = None  # type: ignore
-
+# NOTE: the backend implementations below live in eventsource.adapters.* as
+# of the core-rings re-home (Task 14). They are re-exported here lazily
+# (PEP 562 module __getattr__) rather than with eager top-of-module
+# imports: eventsource.ports (an inner ring) re-exports Snapshot/
+# SnapshotStore from this package for the `SnapshotStore` port, and
+# eventsource.adapters._sql (used by the PostgreSQL/SQLite adapters' own
+# position codec) in turn depends on eventsource.ports -- an eager import
+# of eventsource.adapters.postgresql/sqlite here would close that loop into
+# a circular import the first time anything touches eventsource.ports.
+# Lazy attribute access defers the adapter import until this module's
+# public API is actually used, by which point eventsource.ports has always
+# finished initializing.
 __all__ = [
     # Core types
     "Snapshot",
@@ -114,3 +112,35 @@ __all__ = [
     "SnapshotNotFoundError",
     "SQLiteNotAvailableError",
 ]
+
+
+def __getattr__(name: str) -> object:
+    if name == "InMemorySnapshotStore":
+        from eventsource.adapters.memory.snapshots import InMemorySnapshotStore
+
+        return InMemorySnapshotStore
+    if name == "PostgreSQLSnapshotStore":
+        from eventsource.adapters.postgresql.snapshots import PostgreSQLSnapshotStore
+
+        return PostgreSQLSnapshotStore
+    if name in ("SQLiteSnapshotStore", "SQLiteNotAvailableError", "SQLITE_AVAILABLE"):
+        try:
+            from eventsource.adapters.sqlite.snapshots import (
+                SQLITE_AVAILABLE,
+                SQLiteNotAvailableError,
+                SQLiteSnapshotStore,
+            )
+        except ImportError:
+            if name == "SQLITE_AVAILABLE":
+                return False
+            return None
+        return {
+            "SQLiteSnapshotStore": SQLiteSnapshotStore,
+            "SQLiteNotAvailableError": SQLiteNotAvailableError,
+            "SQLITE_AVAILABLE": SQLITE_AVAILABLE,
+        }[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))

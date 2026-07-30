@@ -21,6 +21,23 @@ except PackageNotFoundError:
 # Multi-tenancy support (DX-010)
 # Exceptions - available immediately
 # Aggregates (Task 07, Task 08)
+# Core-rings surface (Task 14): domain value objects, boundary ports, the
+# memory adapter, and the legacy-surface compatibility wrapper.
+#
+# Several new names collide with existing top-level exports of the same
+# name but a DIFFERENT class -- these are intentionally NOT rebound at top
+# level (doing so would silently change what the existing export name
+# means, which the "never remove or change an existing export" rule
+# forbids). They remain available path-only from `eventsource.ports`:
+#   - `ExpectedVersion` (new VO) vs. `stores.interface.ExpectedVersion`
+#   - `ReadDirection` (new enum) vs. `stores.interface.ReadDirection`
+#   - `AppendResult` (new VO) vs. `stores.interface.AppendResult`
+# `SQLiteEventStore`/`PostgreSQLEventStore` (adapter classes) collide with
+# the legacy store classes the same way; use
+# `eventsource.adapters.sqlite.SQLiteEventStore` /
+# `eventsource.adapters.postgresql.PostgreSQLEventStore` path-only.
+from eventsource.adapters._sql.positions import IntPositionCodec
+from eventsource.adapters.memory import MemoryEventStore
 from eventsource.aggregates.base import AggregateRoot, DeclarativeAggregate
 from eventsource.aggregates.repository import AggregateRepository
 
@@ -60,6 +77,7 @@ from eventsource.bus.redis import (
 )
 from eventsource.bus.registry import SubscriptionRegistry
 from eventsource.bus.retry import RetryPolicy
+from eventsource.domain import StreamId
 
 # Shared async engine factory
 from eventsource.engine import create_async_engine
@@ -82,11 +100,14 @@ from eventsource.events.registry import (
 from eventsource.exceptions import (
     AggregateNotCreatedError,
     AggregateNotFoundError,
+    DuplicateEventError,
     EventNotFoundError,
     EventSourceError,
     EventVersionError,
     HandlerDispatchError,
     OptimisticLockError,
+    PositionDecodeError,
+    PositionForeignError,
     ProjectionError,
 )
 
@@ -106,6 +127,20 @@ from eventsource.multitenancy import (
     tenant_context,
     tenant_scope,
     tenant_scope_sync,
+)
+from eventsource.ports import (
+    CategoryQuery,
+    CategoryReadOptions,
+    EventAppender,
+    EventEnvelope,
+    EventLookup,
+    FeedReadOptions,
+    FullEventStore,
+    GlobalEventFeed,
+    Position,
+    StreamReader,
+    StreamReadOptions,
+    collect,
 )
 
 # Projections (Task 09)
@@ -177,6 +212,7 @@ from eventsource.stores.interface import (
     ReadOptions,
     StoredEvent,
 )
+from eventsource.stores.legacy import LegacyStoreAdapter
 from eventsource.stores.postgresql import PostgreSQLEventStore
 
 # Sync adapters (DX-005)
@@ -335,6 +371,30 @@ __all__ = [
     "TenantContextNotSetError",
     "TenantContextResetError",
     "TenantMismatchError",
+    # Core-rings surface (Task 14): domain value objects
+    "StreamId",
+    # Core-rings surface: boundary ports
+    "Position",
+    "EventEnvelope",
+    "StreamReadOptions",
+    "FeedReadOptions",
+    "CategoryReadOptions",
+    "EventAppender",
+    "StreamReader",
+    "EventLookup",
+    "GlobalEventFeed",
+    "CategoryQuery",
+    "FullEventStore",
+    "collect",
+    # Core-rings surface: adapters
+    "MemoryEventStore",
+    "IntPositionCodec",
+    # Core-rings surface: legacy-surface compatibility wrapper
+    "LegacyStoreAdapter",
+    # Core-rings surface: exceptions
+    "DuplicateEventError",
+    "PositionDecodeError",
+    "PositionForeignError",
 ]
 
 # Conditionally add SQLite exports when aiosqlite is available

@@ -36,8 +36,9 @@ from eventsource.ports import (
 class SyncStoreFacade:
     """Blocking, port-shaped wrapper around an async event store.
 
-    Owns a dedicated event loop for the lifetime of the facade; call
-    `close()` when done to release it.
+    Owns both the wrapped store's lifecycle and a dedicated event loop
+    for the lifetime of the facade; call `close()` when done to release
+    them both.
     """
 
     def __init__(
@@ -80,8 +81,11 @@ class SyncStoreFacade:
         return self._loop.run_until_complete(self._store.event_exists(event_id))
 
     def close(self) -> None:
-        """Release the private event loop. Idempotent."""
+        """Close the underlying store (if it has a close()), then release the private loop. Idempotent."""
         if not self._loop.is_closed():
+            close = getattr(self._store, "close", None)
+            if close is not None:
+                self._loop.run_until_complete(close())
             self._loop.close()
 
 
