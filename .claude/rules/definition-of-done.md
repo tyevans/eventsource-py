@@ -2,9 +2,28 @@
 paths:
   - "src/**/*.py"
   - "tests/**/*.py"
+  - "docs/**/*.md"
 ---
 
 # Definition of Done
+
+## Architectural Decisions (applies to ALL work)
+
+No work is complete if the decisions it made or changed are not properly
+documented and amended:
+
+1. **No brainstorming or design spec is complete** until it has been run
+   against the existing ADRs in `docs/adrs/`. Every spec must include an
+   **ADR Impact** section listing each related ADR and whether it
+   **stands**, is **amended**, or is **superseded** by the proposed work.
+2. If work amends or supersedes an ADR, that is part of the work, not a
+   follow-up: write the new ADR (or amend the old one's Consequences), and
+   update the old ADR's **Status** section with an "Amended by" /
+   "Superseded by" pointer. ADR bodies are immutable records -- never
+   rewrite a Decision retroactively; supersede it.
+3. New architecturally significant decisions (delivery guarantees, layer
+   boundaries, public contracts, rejected alternatives) get their own ADR
+   in `docs/adrs/`, numbered after the current highest.
 
 ## New Feature
 
