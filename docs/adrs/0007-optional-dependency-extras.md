@@ -10,7 +10,9 @@ The price is paid inside the source tree rather than by the installer. Because t
 
 Accepted, and in force as of 0.5.0. `[project.dependencies]` in `pyproject.toml` lists `pydantic>=2.0,<3.0` and `sqlalchemy>=2.0,<3.0` and nothing else; `[project.optional-dependencies]` carries `postgresql`, `sqlite`, `redis`, `telemetry`, `rabbitmq`, `kafka`, `kafka-schema-registry`, the two aggregates `all` and `all-backends`, and the non-runtime `benchmark`, `dev`, and `docs`.
 
-The most recent change under this decision was demoting `redis` from a core dependency to an extra, which landed in the 0.5.0 cycle. That is a breaking change for anyone who installed plain `eventsource-py` and imported `RedisEventBus` -- those deployments now need `eventsource-py[redis]`. It is the reason `RedisEventBus` fails loudly at construction rather than quietly at import.
+Amended after 0.5.0: the `redis` extra moved from `redis>=5.0,<6.0` to `redis>=8.0,<9.0`. The decision itself stands -- Redis remains an extra, pinned with an upper bound -- but the supported range no longer includes redis-py 5.x, 6.x, or 7.x, so this is a breaking change for anyone installing `eventsource-py[redis]` against a pin below 8.0. Two consequences are worth recording. First, the old `<6.0` ceiling was doing more than bounding risk: redis-py 5.x shipped effectively untyped, so the `module = "redis.*"` / `ignore_missing_imports` override in `pyproject.toml` hid the fact that `bus/redis.py` reads `xreadgroup`, `xpending_range`, `xclaim`, and `xrange` results as `str` while the library annotates them `bytes | str | int`. That assumption is sound at runtime because the client connects with `decode_responses=True`, but it is invisible to the type checker; raising the floor surfaced 24 mypy errors, now resolved by casting at each command boundary rather than by suppressing them. Second, the range had never been verified past 5.x, because the redis-marked tests only ran in the `integration` job, which is gated to pushes on `main`. A PR-scoped `redis` job was added alongside this change so the extra's declared range stays checked against a real server.
+
+The preceding change under this decision was demoting `redis` from a core dependency to an extra, which landed in the 0.5.0 cycle. That is a breaking change for anyone who installed plain `eventsource-py` and imported `RedisEventBus` -- those deployments now need `eventsource-py[redis]`. It is the reason `RedisEventBus` fails loudly at construction rather than quietly at import.
 
 One part of the decision is knowingly unimplemented: asyncpg has no `*_AVAILABLE` guard, so the PostgreSQL paths import their driver unconditionally and surface a missing `postgresql` extra later, at driver-URL resolution, instead of at the guard. That inconsistency is documented under Consequences rather than treated as a bug to be silently fixed, because closing it changes the failure mode users currently see.
 
@@ -60,7 +62,7 @@ Each piece of infrastructure gets its own named extra in `[project.optional-depe
 | --- | --- | --- |
 | `postgresql` | `asyncpg>=0.27.0,<1.0` | PostgreSQL store, snapshots, repositories, advisory locks |
 | `sqlite` | `aiosqlite>=0.19.0,<1.0` | SQLite store, snapshots, repositories |
-| `redis` | `redis>=5.0,<6.0` | `RedisEventBus` (Redis Streams) |
+| `redis` | `redis>=8.0,<9.0` | `RedisEventBus` (Redis Streams) |
 | `rabbitmq` | `aio-pika>=9.0.0` | `RabbitMQEventBus` |
 | `kafka` | `aiokafka>=0.9.0,<1.0.0` | `KafkaEventBus` |
 | `kafka-schema-registry` | `aiokafka` + `confluent-kafka>=2.0.0,<3.0.0` | Kafka bus with Schema Registry serialization |
