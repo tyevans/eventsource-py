@@ -127,7 +127,13 @@ class TestPostgreSQLSnapshotStore(SnapshotConformance):
         engine = create_async_engine(ports_postgres_connection_url)
         async with engine.begin() as conn:
             await conn.execute(text("DROP TABLE IF EXISTS snapshots CASCADE"))
-            await conn.execute(text(get_schema("snapshots", "postgresql")))
+            # get_schema returns a multi-statement script; asyncpg's prepared-statement
+            # path rejects those, so run it via the raw driver connection (simple query
+            # protocol), same as PostgreSQLEventStore._ensure_schema.
+            raw = await conn.get_raw_connection()
+            driver_connection = raw.driver_connection
+            assert driver_connection is not None
+            await driver_connection.execute(get_schema("snapshots", "postgresql"))
         session_factory = async_sessionmaker(engine, expire_on_commit=False)
         yield PostgreSQLSnapshotStore(session_factory)
         await engine.dispose()
