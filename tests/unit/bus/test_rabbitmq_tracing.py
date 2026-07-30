@@ -126,12 +126,24 @@ class TestRabbitMQEventBusAttributeConstants:
     """Tests for standard attribute constant usage."""
 
     def test_uses_standard_attributes(self) -> None:
-        """Verify that the code uses standard ATTR_* constants."""
+        """Verify that the code uses standard ATTR_* constants.
+
+        The publish-path attributes (ATTR_MESSAGING_*, ATTR_AGGREGATE_ID)
+        moved to ``RabbitMQPublisher`` in the bus god-class decomposition
+        (Task 6) and the consume/handle attributes to ``RabbitMQConsumer``
+        (Task 7).
+        """
         import inspect
 
-        from eventsource.bus import rabbitmq as rabbitmq_module
+        from eventsource.bus.rabbitmq import bus as rabbitmq_module
+        from eventsource.bus.rabbitmq import consumer as consumer_module
+        from eventsource.bus.rabbitmq import publisher as publisher_module
 
-        source_code = inspect.getsource(rabbitmq_module)
+        source_code = (
+            inspect.getsource(rabbitmq_module)
+            + inspect.getsource(publisher_module)
+            + inspect.getsource(consumer_module)
+        )
 
         # Check that standard attribute constants are imported and used
         assert "ATTR_MESSAGING_SYSTEM" in source_code
@@ -146,7 +158,7 @@ class TestRabbitMQEventBusAttributeConstants:
         """Verify that OTEL_AVAILABLE is not duplicated in rabbitmq.py."""
         import inspect
 
-        from eventsource.bus import rabbitmq as rabbitmq_module
+        from eventsource.bus.rabbitmq import bus as rabbitmq_module
 
         source_code = inspect.getsource(rabbitmq_module)
 
@@ -170,43 +182,61 @@ class TestRabbitMQContextPropagation:
 
     def test_propagation_available_defined(self) -> None:
         """PROPAGATION_AVAILABLE should be defined for context propagation."""
-        from eventsource.bus import rabbitmq as rabbitmq_module
+        from eventsource.bus.rabbitmq import publisher as publisher_module
 
-        assert hasattr(rabbitmq_module, "PROPAGATION_AVAILABLE")
+        assert hasattr(publisher_module, "PROPAGATION_AVAILABLE")
 
     def test_inject_imported_for_propagation(self) -> None:
-        """inject function should be available for trace context injection."""
+        """inject function should be available for trace context injection.
+
+        ``inject`` is used by ``serialization.create_message_with_tracing``
+        on the publish side.
+        """
         import inspect
 
-        from eventsource.bus import rabbitmq as rabbitmq_module
+        from eventsource.bus.rabbitmq import serialization as serialization_module
 
-        source_code = inspect.getsource(rabbitmq_module)
+        source_code = inspect.getsource(serialization_module)
 
         # Should import inject from opentelemetry.propagate
-        assert "from opentelemetry.propagate import extract, inject" in source_code
+        assert "from opentelemetry.propagate import inject" in source_code
 
     def test_extract_imported_for_propagation(self) -> None:
-        """extract function should be available for trace context extraction."""
+        """extract function should be available for trace context extraction.
+
+        ``extract`` is used by ``RabbitMQConsumer`` on the consume side.
+        """
         import inspect
 
-        from eventsource.bus import rabbitmq as rabbitmq_module
+        from eventsource.bus.rabbitmq import consumer as consumer_module
 
-        source_code = inspect.getsource(rabbitmq_module)
+        source_code = inspect.getsource(consumer_module)
 
         # Should import extract from opentelemetry.propagate
-        assert "from opentelemetry.propagate import extract, inject" in source_code
+        assert "from opentelemetry.propagate import extract" in source_code
 
 
 class TestRabbitMQSpanNaming:
     """Tests for consistent span naming convention."""
 
     def test_span_names_follow_convention(self) -> None:
-        """Span names should follow 'eventsource.event_bus.*' convention."""
+        """Span names should follow 'eventsource.event_bus.*' convention.
+
+        The publish span moved to ``RabbitMQPublisher`` in the bus
+        god-class decomposition (Task 6) and the consume/handle spans to
+        ``RabbitMQConsumer`` (Task 7).
+        """
         import inspect
 
-        from eventsource.bus import rabbitmq as rabbitmq_module
+        from eventsource.bus.rabbitmq import bus as rabbitmq_module
+        from eventsource.bus.rabbitmq import consumer as consumer_module
+        from eventsource.bus.rabbitmq import publisher as publisher_module
 
-        source_code = inspect.getsource(rabbitmq_module)
+        source_code = (
+            inspect.getsource(rabbitmq_module)
+            + inspect.getsource(publisher_module)
+            + inspect.getsource(consumer_module)
+        )
 
         # Check for standardized span names in the publish method
         assert "eventsource.event_bus.publish" in source_code

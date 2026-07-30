@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-30
+
+### Changed
+
+- **RabbitMQ and Kafka backends decomposed into internal collaborator packages.** `eventsource.bus.rabbitmq` and `eventsource.bus.kafka` are now packages of internal, state-owning collaborators (connection, topology/config, publisher, consumer, DLQ admin, serialization) composed by a facade; imports are unchanged. See ADR 0020.
+- **Kafka `background=True` publishes are now scheduled as tracked background tasks** per ADR 0010 -- send/serialization errors are logged and recorded in stats rather than raised to the caller, stats settle asynchronously, and `shutdown()` drains outstanding background publishes.
+
+### Removed
+
+- `KafkaEventBus.get_handlers_for_event` (deprecated in 0.6.0).
+
+### Deprecated
+
+- `KafkaEventBus.record_reconnection` / `record_rebalance` are deprecated; they warn and delegate to their replacements. Removal planned for 0.8.0.
+
 ## [0.6.0] - 2026-07-29
 
 ### Added

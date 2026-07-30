@@ -261,10 +261,21 @@ class TestRabbitMQEventBusTracingCompliance:
         assert config.enable_tracing is True
 
     def test_uses_standard_span_names(self, check_rabbitmq_available: None) -> None:
-        """RabbitMQEventBus should use standard span names."""
-        from eventsource.bus import rabbitmq as rabbitmq_module
+        """RabbitMQEventBus should use standard span names.
 
-        source = inspect.getsource(rabbitmq_module)
+        The publish span moved to ``RabbitMQPublisher`` in the bus
+        god-class decomposition (Task 6) and the consume/handle spans to
+        ``RabbitMQConsumer`` (Task 7).
+        """
+        from eventsource.bus.rabbitmq import bus as rabbitmq_module
+        from eventsource.bus.rabbitmq import consumer as consumer_module
+        from eventsource.bus.rabbitmq import publisher as publisher_module
+
+        source = (
+            inspect.getsource(rabbitmq_module)
+            + inspect.getsource(publisher_module)
+            + inspect.getsource(consumer_module)
+        )
 
         # Check for standardized span names
         assert "eventsource.event_bus.publish" in source
@@ -272,10 +283,20 @@ class TestRabbitMQEventBusTracingCompliance:
         assert "eventsource.event_bus.handle" in source
 
     def test_uses_standard_attributes(self, check_rabbitmq_available: None) -> None:
-        """RabbitMQEventBus should use standard attribute constants."""
-        from eventsource.bus import rabbitmq as rabbitmq_module
+        """RabbitMQEventBus should use standard attribute constants.
 
-        source = inspect.getsource(rabbitmq_module)
+        The publish-path attributes (ATTR_MESSAGING_*) moved to
+        ``RabbitMQPublisher`` in the bus god-class decomposition (Task 6).
+        """
+        from eventsource.bus.rabbitmq import bus as rabbitmq_module
+        from eventsource.bus.rabbitmq import consumer as consumer_module
+        from eventsource.bus.rabbitmq import publisher as publisher_module
+
+        source = (
+            inspect.getsource(rabbitmq_module)
+            + inspect.getsource(publisher_module)
+            + inspect.getsource(consumer_module)
+        )
 
         # Check for imports of standard attributes
         assert "ATTR_MESSAGING_SYSTEM" in source
@@ -286,20 +307,28 @@ class TestRabbitMQEventBusTracingCompliance:
 
     def test_imports_otel_from_observability(self, check_rabbitmq_available: None) -> None:
         """RabbitMQEventBus should import OTEL_AVAILABLE from observability."""
-        from eventsource.bus import rabbitmq as rabbitmq_module
+        from eventsource.bus.rabbitmq import bus as rabbitmq_module
 
         source = inspect.getsource(rabbitmq_module)
         assert "from eventsource.observability import OTEL_AVAILABLE" in source
 
     def test_has_context_propagation(self, check_rabbitmq_available: None) -> None:
-        """RabbitMQEventBus should have context propagation support."""
-        from eventsource.bus import rabbitmq as rabbitmq_module
+        """RabbitMQEventBus should have context propagation support.
 
-        source = inspect.getsource(rabbitmq_module)
+        Propagation lives with the collaborators that use it: ``inject`` in
+        ``serialization.create_message_with_tracing`` on the publish side,
+        ``extract`` in ``RabbitMQConsumer`` on the consume side. The facade
+        itself no longer imports either.
+        """
+        from eventsource.bus.rabbitmq import consumer as consumer_module
+        from eventsource.bus.rabbitmq import publisher as publisher_module
+        from eventsource.bus.rabbitmq import serialization as serialization_module
 
-        # Check for trace context propagation
-        assert "from opentelemetry.propagate import extract, inject" in source
-        assert hasattr(rabbitmq_module, "PROPAGATION_AVAILABLE")
+        assert "from opentelemetry.propagate import inject" in inspect.getsource(
+            serialization_module
+        )
+        assert "from opentelemetry.propagate import extract" in inspect.getsource(consumer_module)
+        assert hasattr(publisher_module, "PROPAGATION_AVAILABLE")
 
 
 class TestKafkaEventBusTracingCompliance:
@@ -341,13 +370,22 @@ class TestKafkaEventBusTracingCompliance:
         assert "tracer" in params
 
     def test_has_context_propagation(self, check_kafka_available: None) -> None:
-        """KafkaEventBus should have context propagation support."""
-        from eventsource.bus import kafka as kafka_module
+        """KafkaEventBus should have context propagation support.
 
-        source = inspect.getsource(kafka_module)
+        Propagation lives with the collaborators that use it: ``inject`` on
+        the publish side, ``extract`` on the consume side. The facade itself
+        no longer imports either.
+        """
+        from eventsource.bus.kafka import consumer as kafka_consumer_module
+        from eventsource.bus.kafka import publisher as kafka_publisher_module
 
         # Check for trace context propagation imports
-        assert "from opentelemetry.propagate import extract, inject" in source
+        assert "from opentelemetry.propagate import inject" in inspect.getsource(
+            kafka_publisher_module
+        )
+        assert "from opentelemetry.propagate import extract" in inspect.getsource(
+            kafka_consumer_module
+        )
 
 
 class TestTracerCompositionIntegration:

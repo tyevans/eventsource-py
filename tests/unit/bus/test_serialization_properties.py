@@ -123,17 +123,20 @@ def test_kafka_serialization_roundtrip_is_identity(event: RoundtripEvent) -> Non
 @pytest.mark.skipif(not RABBITMQ_AVAILABLE, reason="RabbitMQ not installed")
 @given(event=_events)
 def test_rabbitmq_serialization_roundtrip_is_identity(event: RoundtripEvent) -> None:
-    from eventsource.bus.rabbitmq import RabbitMQEventBus, RabbitMQEventBusConfig
+    import logging
 
-    bus = RabbitMQEventBus(
-        config=RabbitMQEventBusConfig(rabbitmq_url="amqp://localhost:5672"),
-        event_registry=_registry(),
-    )
+    from eventsource.bus.rabbitmq import serialization
 
-    body, headers = bus._serialize_event(event)
+    registry = _registry()
+
+    body, headers = serialization.serialize_event(event)
     message = SimpleNamespace(headers=headers, body=body, message_id=str(event.event_id))
 
-    restored = bus._deserialize_event(message)
+    restored = serialization.deserialize_event(
+        message,
+        resolve_event_class=registry.get_or_none,
+        logger=logging.getLogger("test"),
+    )
 
     assert restored is not None
     assert restored.event_id == event.event_id
