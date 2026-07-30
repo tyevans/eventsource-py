@@ -2,9 +2,10 @@
 
 Reference documentation for `eventsource.sync`, which contains a single public
 name: `SyncEventStoreAdapter`. The adapter wraps any async
-[`EventStore`](stores.md) and exposes blocking `*_sync` counterparts of its
-methods, so event-sourced code can be called from synchronous runtimes such as
-Celery tasks, Django management commands, and RQ workers.
+`EventStore` (`eventsource.stores.interface`) and exposes blocking `*_sync`
+counterparts of its methods, so event-sourced code can be called from
+synchronous runtimes such as Celery tasks, Django management commands, and RQ
+workers.
 
 Public names covered here:
 
@@ -88,7 +89,7 @@ library modules (`asyncio`, `logging`, `threading`, `concurrent.futures`,
 `collections.abc`, `datetime`, `typing`, `uuid`) plus
 [`DomainEvent`](events.md) and the `AppendResult`, `EventStore`, `EventStream`,
 `ReadOptions`, and `StoredEvent` types from
-[`eventsource.stores.interface`](stores.md). Importing `eventsource.sync` is
+`eventsource.stores.interface`. Importing `eventsource.sync` is
 therefore always safe; whatever extras the *wrapped* store needs (for example
 `asyncpg` for `PostgreSQLEventStore`) still apply at construction time.
 
