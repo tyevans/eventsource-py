@@ -203,3 +203,15 @@ class HandlerDispatchError(EventSourceError):
         self.failures = failures
         handler_names = ", ".join(name for name, _ in failures)
         super().__init__(f"{len(failures)} handler(s) failed during dispatch: {handler_names}")
+
+
+class DuplicateEventError(EventSourceError):
+    """An event with this event_id already exists in the store."""
+
+
+class PositionDecodeError(EventSourceError):
+    """A persisted position string could not be decoded."""
+
+
+class PositionForeignError(EventSourceError):
+    """Positions from different stores were compared for order."""
