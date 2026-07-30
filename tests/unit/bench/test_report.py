@@ -74,4 +74,4 @@ def test_report_latency_metric_uses_percentiles() -> None:
     run = _run()
     run.cells[0].metric = "latency"
     text = render_markdown(run)
-    assert "2.00ms" in text and "p95 4.00ms" in text
+    assert "2.00ms" in text and "p95 4.00ms" in text and "p99 5.00ms" in text

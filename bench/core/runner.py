@@ -44,6 +44,7 @@ class Scenario:
     grid: dict[str, list[Any]]
     func: ScenarioFunc
     prepare: PrepareFunc | None = None
+    iteration_cap: Callable[[dict[str, Any]], int] | None = None
 
 
 @dataclass(frozen=True)
@@ -127,6 +128,8 @@ async def run_cell(
                     config.max_iterations,
                 ),
             )
+            if scenario.iteration_cap is not None:
+                iterations = max(1, min(iterations, scenario.iteration_cap(params)))
 
             for _ in range(config.rounds):
                 gc.collect()

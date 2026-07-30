@@ -33,7 +33,10 @@ def _format_cell(cell: CellResult) -> str:
     if median is None:
         return "no data"
     if cell.metric == "latency" and median.latency is not None:
-        text = f"{median.latency.p50_ms:.2f}ms (p95 {median.latency.p95_ms:.2f}ms)"
+        text = (
+            f"{median.latency.p50_ms:.2f}ms "
+            f"(p95 {median.latency.p95_ms:.2f}ms, p99 {median.latency.p99_ms:.2f}ms)"
+        )
     else:
         text = f"{median.ops_per_sec:,.0f}/s"
     conflicts = median.counters.get("conflicts", 0)

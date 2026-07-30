@@ -133,6 +133,20 @@ class BadAdapter(FakeAdapter):
     name = "bad"
 
 
+async def test_run_cell_applies_iteration_cap() -> None:
+    capped = Scenario(
+        name="fake.capped",
+        interface="store",
+        metric="latency",
+        grid={"size": [1]},
+        func=_fast_scenario_func,
+        iteration_cap=lambda params: 2,
+    )
+    cell = await run_cell(FakeAdapter(), capped, {"size": 1}, TINY_CONFIG)
+    assert cell.status == "ok"
+    assert all(round_.operations <= 2 for round_ in cell.rounds)
+
+
 async def test_run_matrix_skips_unavailable_and_sets_metadata() -> None:
     good = FakeAdapter()
     bad = BadAdapter(reason="service down")

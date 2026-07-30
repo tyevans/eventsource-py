@@ -84,5 +84,15 @@ E2E_SCENARIOS: list[Scenario] = [
         grid={"stream_length": [100, 1000, 10000], "snapshots": ["none", "threshold"]},
         func=_load_mutate_save,
         prepare=_prepare_e2e,
+        # Cap iterations per timed round to bound stream growth. Each
+        # load/mutate/save appends one event, so an uncapped cell can grow
+        # from stream_length to stream_length + thousands of events across
+        # warmup(3) + calibration(5) + rounds on fast backends -- inflating
+        # load cost over the run and biasing snapshots=none (which has no
+        # bound on stream length) against snapshots=threshold (which resets
+        # load cost via snapshotting). Capping growth per round to
+        # stream_length // 10 keeps worst-case total growth to roughly 30%
+        # of stream_length (warmup + calibration + 3 rounds x cap).
+        iteration_cap=lambda params: max(1, params["stream_length"] // 10),
     ),
 ]
