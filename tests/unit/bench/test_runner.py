@@ -107,6 +107,28 @@ async def test_run_cell_timeout_is_captured() -> None:
     assert cell.reason is not None and "timeout" in cell.reason.lower()
 
 
+async def test_run_cell_bounds_hanging_destroy() -> None:
+    class HangingDestroyAdapter(FakeAdapter):
+        name = "hanging-destroy"
+
+        async def destroy(self, resource: dict[str, Any]) -> None:
+            await asyncio.sleep(60)
+
+    config = RunnerConfig(
+        rounds=1,
+        warmup_iterations=1,
+        calibration_iterations=1,
+        target_round_seconds=0.01,
+        max_iterations=10,
+        cell_timeout_seconds=5.0,
+        destroy_timeout_seconds=0.05,
+    )
+    cell = await asyncio.wait_for(
+        run_cell(HangingDestroyAdapter(), FAST, {"size": 1}, config), timeout=2.0
+    )
+    assert cell.status == "ok"
+
+
 class BadAdapter(FakeAdapter):
     name = "bad"
 

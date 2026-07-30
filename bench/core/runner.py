@@ -54,6 +54,11 @@ class RunnerConfig:
     target_round_seconds: float = 2.0
     max_iterations: int = 10_000
     cell_timeout_seconds: float = 60.0
+    # Bounded separately from cell_timeout_seconds: destroy() runs in the
+    # `finally` block after the cell timeout has already elapsed, so a wedged
+    # teardown (e.g. a hung broker connection close) needs its own bound to
+    # avoid hanging the whole matrix run.
+    destroy_timeout_seconds: float = 10.0
     quick: bool = False
 
     def effective(self) -> "RunnerConfig":
@@ -136,7 +141,8 @@ async def run_cell(
     finally:
         if resource is not None:
             with contextlib.suppress(Exception):
-                await adapter.destroy(resource)
+                async with asyncio.timeout(config.destroy_timeout_seconds):
+                    await adapter.destroy(resource)
     return cell
 
 
