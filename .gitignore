@@ -104,3 +104,7 @@ mutants/
 
 # Doc-sync state (per-checkout, never shared)
 .claude/last-docs-run
+
+# Benchmark harness output
+bench/results/
+!bench/results/.gitkeep
