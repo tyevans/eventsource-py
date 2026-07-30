@@ -20,9 +20,10 @@ Tests are automatically skipped if these requirements are not met.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections.abc import AsyncGenerator, Generator
 from typing import TYPE_CHECKING, Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
@@ -32,6 +33,8 @@ from eventsource import (
     DomainEvent,
     EventRegistry,
 )
+from eventsource.bus.interface import EventBus
+from eventsource.testing.conformance import EventBusConformanceSuite
 
 from ..conftest import (
     DOCKER_AVAILABLE,
@@ -2324,3 +2327,108 @@ class TestKafkaMetricsCardinality:
         # (event.type, messaging.destination), not by individual event count
         # This is a basic sanity check - cardinality explosion would cause
         # memory issues and is not easily testable in a unit test
+
+
+class TestKafkaEventBusConformance(EventBusConformanceSuite):
+    """Runs the shared EventBus contract against a real Kafka.
+
+    KafkaEventBus only delivers to handlers via a running
+    ``start_consuming()`` loop, so each test gets one connected bus with
+    consumption already running in the background (started here, not inside
+    ``create_bus``, since the abstract factory method is sync and starting
+    consumption requires ``await``).
+    """
+
+    @pytest.fixture(autouse=True)
+    async def _kafka_conformance_setup(
+        self,
+        kafka_bootstrap_servers: str,
+        request: pytest.FixtureRequest,
+    ) -> AsyncGenerator[None, None]:
+        registry = EventRegistry()
+        registry.register(TestItemCreated)
+        unique_suffix = uuid4().hex[:8]
+        config = KafkaEventBusConfig(
+            bootstrap_servers=kafka_bootstrap_servers,
+            topic_prefix=f"conformance_{unique_suffix}",
+            consumer_group=f"conformance_group_{unique_suffix}",
+            enable_tracing=False,
+            # The conformance suite's error-isolation test asserts a failing
+            # handler is invoked exactly once alongside its sibling. Kafka
+            # retries failed deliveries (redispatching to every handler each
+            # time), so max_retries=0 keeps that assertion meaningful --
+            # retry/DLQ behavior itself is covered by the Kafka-specific
+            # reliability tests elsewhere in this file.
+            max_retries=0,
+        )
+        self._buses: list[KafkaEventBus] = []
+        self._bus = KafkaEventBus(config=config, event_registry=registry)
+        await self._bus.connect()
+        self._consume_task = asyncio.create_task(self._bus.start_consuming())
+
+        yield
+
+        await self._bus.stop_consuming()
+        self._consume_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await self._consume_task
+        if self._bus.is_connected:
+            await self._bus.shutdown()
+
+    def create_bus(self) -> EventBus:
+        # Several base-suite tests assert on delivery immediately after
+        # `await bus.publish(...)` with no call to `await_delivery` (that
+        # hook is only used by tests written with pull-based backends in
+        # mind). Kafka only delivers via the background start_consuming()
+        # loop, so we wrap publish() to wait for the consumer to catch up
+        # before returning -- making delivery effectively synchronous from
+        # the test's point of view, matching what the base suite assumes.
+        bus = self._bus
+        original_publish = bus.publish
+
+        async def publish_and_await_delivery(
+            events: list[DomainEvent], background: bool = False
+        ) -> None:
+            await original_publish(events, background=background)
+            await self.await_delivery(bus)
+
+        bus.publish = publish_and_await_delivery  # type: ignore[method-assign]
+        return bus
+
+    def create_test_event(self, aggregate_id: UUID) -> DomainEvent:
+        return TestItemCreated(
+            aggregate_id=aggregate_id,
+            aggregate_version=1,
+            name="conformance item",
+            quantity=1,
+        )
+
+    def create_subscriber(self, received: list[DomainEvent]) -> Any:
+        class Subscriber:
+            def subscribed_to(self) -> list[type[DomainEvent]]:
+                return [TestItemCreated]
+
+            async def handle(self, event: DomainEvent) -> None:
+                received.append(event)
+
+        return Subscriber()
+
+    async def await_delivery(self, bus: EventBus) -> None:
+        """Poll until the consumer loop has caught up, bounded to 10s."""
+        assert isinstance(bus, KafkaEventBus)
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + 10.0
+
+        # A background=True publish schedules a task that may not have run
+        # (and thus not yet incremented events_published) the instant we get
+        # here -- drain background tasks first so the stats comparison below
+        # reflects the eventual state, not a stale snapshot.
+        while bus.get_background_task_count() > 0:
+            if loop.time() >= deadline:
+                return
+            await asyncio.sleep(0.05)
+
+        while bus.stats.events_consumed < bus.stats.events_published:
+            if loop.time() >= deadline:
+                return
+            await asyncio.sleep(0.05)

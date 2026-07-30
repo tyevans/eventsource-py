@@ -81,23 +81,21 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import random
 import socket
 import ssl
 import time
 import uuid
-from collections import defaultdict
+import warnings
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import TracebackType
 from typing import TYPE_CHECKING, Any
 
-from eventsource.bus.interface import (
-    EventBus,
-    EventHandlerFunc,
-)
+from eventsource.bus.base import BaseEventBus
+from eventsource.bus.retry import RetryPolicy
 from eventsource.events.base import DomainEvent
+from eventsource.exceptions import HandlerDispatchError
 from eventsource.handlers.adapter import HandlerAdapter
 from eventsource.observability import OTEL_AVAILABLE, SpanKindEnum, Tracer, create_tracer
 from eventsource.observability.attributes import (
@@ -109,10 +107,6 @@ from eventsource.observability.attributes import (
     ATTR_MESSAGING_DESTINATION,
     ATTR_MESSAGING_OPERATION,
     ATTR_MESSAGING_SYSTEM,
-)
-from eventsource.protocols import (
-    FlexibleEventHandler,
-    FlexibleEventSubscriber,
 )
 
 if TYPE_CHECKING:
@@ -949,7 +943,7 @@ class KafkaRebalanceListener(_ConsumerRebalanceListener):  # type: ignore[misc]
         )
 
 
-class KafkaEventBus(EventBus):
+class KafkaEventBus(BaseEventBus):
     """Kafka implementation of the EventBus interface.
 
     Provides a distributed event bus using Apache Kafka for high-throughput
@@ -1001,8 +995,9 @@ class KafkaEventBus(EventBus):
         if not KAFKA_AVAILABLE:
             raise KafkaNotAvailableError()
 
+        super().__init__(event_registry=event_registry)
+
         self._config = config or KafkaEventBusConfig()
-        self._event_registry = event_registry
         self._serializer = serializer or EventSerializer()
 
         # Initialize tracing via composition (replaces TracingMixin)
@@ -1017,9 +1012,13 @@ class KafkaEventBus(EventBus):
         self._consuming = False
         self._consume_task: asyncio.Task[None] | None = None
 
-        # Handler storage (follows Redis/RabbitMQ pattern)
-        self._handlers: dict[str, list[HandlerAdapter]] = defaultdict(list)
-        self._wildcard_handlers: list[HandlerAdapter] = []
+        # Shared retry policy (keeps Kafka and RabbitMQ backoff/jitter in sync)
+        self._retry_policy = RetryPolicy(
+            base_delay=self._config.retry_base_delay,
+            max_delay=self._config.retry_max_delay,
+            jitter=self._config.retry_jitter,
+            max_retries=self._config.max_retries,
+        )
 
         # Statistics
         self._stats = KafkaEventBusStats()
@@ -1251,6 +1250,12 @@ class KafkaEventBus(EventBus):
                 self._consume_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await self._consume_task
+
+        # Drain any tracked background tasks (base class bookkeeping; kept
+        # for consistency with the other backends even though Kafka's
+        # background publishes are tracked via aiokafka producer futures,
+        # not asyncio tasks).
+        await self._drain_background(timeout or self._config.shutdown_timeout)
 
         # Disconnect
         await self.disconnect()
@@ -1518,8 +1523,25 @@ class KafkaEventBus(EventBus):
             },
         )
 
+        # Hand every event to the producer before awaiting any acknowledgment.
+        # Publishing serially cost one full broker round-trip per event. Sends
+        # are issued in a plain sequential loop (not gathered) because
+        # concurrent sends could reorder same-partition-key messages across
+        # an await boundary; only the ack-await is batched together.
+        pending = []
         for event in events:
-            await self._publish_single_event(event, background)
+            pending.append(await self._begin_publish_single_event(event, background))
+
+        if background:
+            for future, published_event, span in pending:
+                # For background publishes, add a callback to track delivery
+                # asynchronously. The span closes immediately after handoff,
+                # matching non-batched background semantics.
+                self._track_background_publish(future, published_event, span)
+                if span:
+                    span.end()
+        else:
+            await asyncio.gather(*(self._await_publish_ack(handle) for handle in pending))
 
         # Update statistics
         self._stats.events_published += len(events)
@@ -1541,20 +1563,29 @@ class KafkaEventBus(EventBus):
             extra={"event_count": len(events)},
         )
 
-    async def _publish_single_event(
+    async def _begin_publish_single_event(
         self,
         event: DomainEvent,
         background: bool,
-    ) -> None:
-        """Publish a single event with optional tracing span.
+    ) -> tuple[Any, DomainEvent, Any]:
+        """Serialize and hand a single event to the producer.
 
         Creates an OpenTelemetry span for the publish operation if tracing
-        is enabled. The span includes messaging semantic attributes and
-        event metadata for distributed tracing correlation.
+        is enabled. The span is kept open (started via ``start_span``, not
+        the context-manager form) so it can be closed later once the
+        acknowledgment has been awaited -- this lets ``publish`` batch the
+        ack-await across events while still tracing the full operation.
 
         Args:
             event: The event to publish.
-            background: Whether to wait for acknowledgment.
+            background: Whether the caller intends to skip waiting for
+                acknowledgment (used to decide how the returned future is
+                handled by the caller).
+
+        Returns:
+            A ``(future, event, span)`` tuple. ``span`` is the tracing span
+            (or None) that must be ended by the caller after awaiting the
+            future (or immediately, for background publishes once tracked).
         """
         if not self._producer:
             raise RuntimeError("Producer not connected")
@@ -1564,9 +1595,9 @@ class KafkaEventBus(EventBus):
         value = self._serialize_event(event)
         headers = self._create_headers(event)
 
-        # Create span for publish using composition-based tracer
+        span: Any = None
         if self._enable_tracing:
-            with self._tracer.span_with_kind(
+            span = self._tracer.start_span(
                 name=f"eventsource.event_bus.publish {event.event_type}",
                 kind=SpanKindEnum.PRODUCER,
                 attributes={
@@ -1579,39 +1610,14 @@ class KafkaEventBus(EventBus):
                     ATTR_AGGREGATE_ID: str(event.aggregate_id),
                     ATTR_AGGREGATE_TYPE: event.aggregate_type,
                 },
-            ) as span:
-                # Inject trace context into headers for distributed tracing
-                if PROPAGATION_AVAILABLE and inject is not None:
-                    carrier: dict[str, str] = {}
-                    inject(carrier)
-                    for trace_key, trace_value in carrier.items():
-                        headers.append((trace_key, trace_value.encode("utf-8")))
+            )
 
-                await self._send_to_kafka(key, value, headers, background, span, event)
-        else:
-            await self._send_to_kafka(key, value, headers, background, None, event)
-
-    async def _send_to_kafka(
-        self,
-        key: bytes,
-        value: bytes,
-        headers: list[tuple[str, bytes]],
-        background: bool,
-        span: Any,
-        event: DomainEvent,
-    ) -> None:
-        """Send message to Kafka.
-
-        Args:
-            key: Message key.
-            value: Message value.
-            headers: Message headers.
-            background: Whether to wait for acknowledgment.
-            span: The current tracing span, or None.
-            event: The domain event being published (for metrics).
-        """
-        if not self._producer:
-            raise RuntimeError("Producer not connected")
+            # Inject trace context into headers for distributed tracing
+            if PROPAGATION_AVAILABLE and inject is not None:
+                carrier: dict[str, str] = {}
+                inject(carrier)
+                for trace_key, trace_value in carrier.items():
+                    headers.append((trace_key, trace_value.encode("utf-8")))
 
         try:
             future = await self._producer.send(
@@ -1620,18 +1626,53 @@ class KafkaEventBus(EventBus):
                 value=value,
                 headers=headers,
             )
+        except Exception as e:
+            if span:
+                span.set_status(Status(StatusCode.ERROR, str(e)))
+                span.record_exception(e)
+                span.end()
 
-            if background:
-                # For background publishes, add a callback to track delivery
-                # This ensures errors are logged and metrics are updated correctly
-                self._track_background_publish(future, event, span)
-            else:
-                record_metadata = await future
+            # Increment publish_errors counter
+            if self._metrics:
+                self._metrics.publish_errors.add(
+                    1,
+                    attributes={
+                        "messaging.system": "kafka",
+                        "messaging.destination": self._config.topic_name,
+                        "event.type": event.event_type,
+                        "error.type": type(e).__name__,
+                    },
+                )
 
-                if span:
+            logger.error(
+                "Failed to publish event",
+                extra={"error": str(e)},
+                exc_info=True,
+            )
+            self._stats.last_error_at = datetime.now(UTC)
+            raise
+
+        return future, event, span
+
+    async def _await_publish_ack(self, handle: tuple[Any, DomainEvent, Any]) -> None:
+        """Await broker acknowledgment for a single previously-sent event.
+
+        Args:
+            handle: The ``(future, event, span)`` tuple returned by
+                ``_begin_publish_single_event``.
+        """
+        future, event, span = handle
+
+        try:
+            record_metadata = await future
+
+            if span:
+                if record_metadata is not None:
                     span.set_attribute("messaging.kafka.partition", record_metadata.partition)
                     span.set_attribute("messaging.kafka.offset", record_metadata.offset)
+                span.set_status(Status(StatusCode.OK))
 
+            if record_metadata is not None:
                 logger.debug(
                     "Event published",
                     extra={
@@ -1641,16 +1682,16 @@ class KafkaEventBus(EventBus):
                     },
                 )
 
-                # Increment messages_published counter on confirmed success
-                if self._metrics:
-                    self._metrics.messages_published.add(
-                        1,
-                        attributes={
-                            "messaging.system": "kafka",
-                            "messaging.destination": self._config.topic_name,
-                            "event.type": event.event_type,
-                        },
-                    )
+            # Increment messages_published counter on confirmed success
+            if self._metrics:
+                self._metrics.messages_published.add(
+                    1,
+                    attributes={
+                        "messaging.system": "kafka",
+                        "messaging.destination": self._config.topic_name,
+                        "event.type": event.event_type,
+                    },
+                )
 
         except Exception as e:
             if span:
@@ -1676,6 +1717,9 @@ class KafkaEventBus(EventBus):
             )
             self._stats.last_error_at = datetime.now(UTC)
             raise
+        finally:
+            if span:
+                span.end()
 
     def _track_background_publish(
         self,
@@ -1752,9 +1796,19 @@ class KafkaEventBus(EventBus):
                 span.set_status(Status(StatusCode.ERROR, str(exc)))
                 span.record_exception(exc)
 
-        # Add callbacks to track the result
-        future.add_callback(on_send_success)
-        future.add_errback(on_send_error)
+        # Track the result. producer.send() returns a plain asyncio.Future,
+        # which only supports add_done_callback (no separate success/error
+        # callback registration), so dispatch to the right handler ourselves.
+        def on_done(fut: asyncio.Future[Any]) -> None:
+            if fut.cancelled():
+                return
+            exc = fut.exception()
+            if isinstance(exc, Exception):
+                on_send_error(exc)
+            else:
+                on_send_success(fut.result())
+
+        future.add_done_callback(on_done)
 
     def _get_partition_key(self, event: DomainEvent) -> bytes:
         """Get the partition key for an event.
@@ -1814,287 +1868,33 @@ class KafkaEventBus(EventBus):
         return headers
 
     # =========================================================================
-    # Subscribe Methods
-    # =========================================================================
-
-    def subscribe(
-        self,
-        event_type: type[DomainEvent],
-        handler: FlexibleEventHandler | EventHandlerFunc,
-    ) -> None:
-        """Subscribe a handler to a specific event type.
-
-        The handler will be called when events of the specified type are
-        consumed. Handlers are stored in memory and not persisted to Kafka.
-
-        Both sync and async handlers are supported. Sync handlers are
-        automatically wrapped to be async internally.
-
-        Args:
-            event_type: The event class to subscribe to.
-            handler: The handler to invoke. Can be:
-                - An EventHandler instance with handle() method
-                - A sync callable taking a DomainEvent
-                - An async callable taking a DomainEvent
-
-        Example:
-            >>> bus.subscribe(OrderCreated, my_handler)
-            >>> bus.subscribe(OrderCreated, lambda e: print(e))
-            >>> bus.subscribe(OrderCreated, MyEventHandler())
-        """
-        event_type_name = event_type.__name__
-        adapter = HandlerAdapter(handler)
-        self._handlers[event_type_name].append(adapter)
-
-        logger.debug(
-            "Handler subscribed",
-            extra={
-                "event_type": event_type_name,
-                "handler": adapter.name,
-                "total_handlers": len(self._handlers[event_type_name]),
-            },
-        )
-
-    def unsubscribe(
-        self,
-        event_type: type[DomainEvent],
-        handler: FlexibleEventHandler | EventHandlerFunc,
-    ) -> bool:
-        """Unsubscribe a handler from a specific event type.
-
-        Handlers are compared by identity (using 'is'), not equality.
-        This means you must pass the exact same handler object that
-        was used in subscribe().
-
-        Args:
-            event_type: The event class to unsubscribe from.
-            handler: The handler to remove.
-
-        Returns:
-            True if the handler was found and removed, False otherwise.
-
-        Example:
-            >>> handler = lambda e: print(e)
-            >>> bus.subscribe(OrderCreated, handler)
-            >>> bus.unsubscribe(OrderCreated, handler)  # Returns True
-            >>> bus.unsubscribe(OrderCreated, handler)  # Returns False
-        """
-        event_type_name = event_type.__name__
-        target_adapter = HandlerAdapter(handler)
-
-        if event_type_name not in self._handlers:
-            logger.debug(
-                "No handlers registered for event type",
-                extra={"event_type": event_type_name},
-            )
-            return False
-
-        # Find and remove the handler by identity (via HandlerAdapter equality)
-        adapters = self._handlers[event_type_name]
-        for i, adapter in enumerate(adapters):
-            if adapter == target_adapter:
-                adapters.pop(i)
-                logger.debug(
-                    "Handler unsubscribed",
-                    extra={
-                        "event_type": event_type_name,
-                        "handler": adapter.name,
-                        "remaining_handlers": len(adapters),
-                    },
-                )
-                return True
-
-        logger.debug(
-            "Handler not found for event type",
-            extra={
-                "event_type": event_type_name,
-                "handler": target_adapter.name,
-            },
-        )
-        return False
-
-    def subscribe_all(self, subscriber: FlexibleEventSubscriber) -> None:
-        """Subscribe an EventSubscriber to all its declared event types.
-
-        Calls subscriber.subscribed_to() to get the list of event types,
-        then registers subscriber.handle() for each type. This is a
-        convenience method for subscribers that handle multiple event types.
-
-        Args:
-            subscriber: An EventSubscriber instance with subscribed_to()
-                and handle() methods.
-
-        Example:
-            >>> class OrderProjection:
-            ...     def subscribed_to(self) -> list[type[DomainEvent]]:
-            ...         return [OrderCreated, OrderShipped]
-            ...     async def handle(self, event: DomainEvent) -> None:
-            ...         await update_projection(event)
-            >>> bus.subscribe_all(OrderProjection())
-        """
-        event_types = subscriber.subscribed_to()
-
-        for event_type in event_types:
-            self.subscribe(event_type, subscriber)
-
-        adapter = HandlerAdapter(subscriber)
-        logger.info(
-            "Subscriber registered for all event types",
-            extra={
-                "subscriber": adapter.name,
-                "event_types": [et.__name__ for et in event_types],
-                "event_count": len(event_types),
-            },
-        )
-
-    def subscribe_to_all_events(
-        self,
-        handler: FlexibleEventHandler | EventHandlerFunc,
-    ) -> None:
-        """Subscribe a handler to all event types (wildcard subscription).
-
-        The handler will receive every event regardless of type. This is
-        useful for cross-cutting concerns such as:
-        - Audit logging
-        - Metrics collection
-        - Debugging and tracing
-        - Event replay recording
-
-        Wildcard handlers are invoked after type-specific handlers.
-
-        Args:
-            handler: The handler to invoke for all events.
-
-        Example:
-            >>> async def audit_log(event: DomainEvent) -> None:
-            ...     await log_event(event)
-            >>> bus.subscribe_to_all_events(audit_log)
-        """
-        adapter = HandlerAdapter(handler)
-        self._wildcard_handlers.append(adapter)
-
-        logger.debug(
-            "Wildcard handler subscribed",
-            extra={
-                "handler": adapter.name,
-                "total_wildcard_handlers": len(self._wildcard_handlers),
-            },
-        )
-
-    def unsubscribe_from_all_events(
-        self,
-        handler: FlexibleEventHandler | EventHandlerFunc,
-    ) -> bool:
-        """Unsubscribe a handler from the wildcard subscription.
-
-        Handlers are compared by identity (using 'is'), not equality.
-
-        Args:
-            handler: The handler to remove.
-
-        Returns:
-            True if the handler was found and removed, False otherwise.
-
-        Example:
-            >>> bus.subscribe_to_all_events(audit_handler)
-            >>> bus.unsubscribe_from_all_events(audit_handler)  # Returns True
-        """
-        target_adapter = HandlerAdapter(handler)
-
-        for i, adapter in enumerate(self._wildcard_handlers):
-            if adapter == target_adapter:
-                self._wildcard_handlers.pop(i)
-                logger.debug(
-                    "Wildcard handler unsubscribed",
-                    extra={
-                        "handler": adapter.name,
-                        "remaining_wildcard_handlers": len(self._wildcard_handlers),
-                    },
-                )
-                return True
-
-        logger.debug(
-            "Wildcard handler not found",
-            extra={"handler": target_adapter.name},
-        )
-        return False
-
-    # =========================================================================
     # Handler Management Helpers
     # =========================================================================
 
-    def clear_subscribers(self) -> None:
-        """Clear all registered handlers.
-
-        Removes all type-specific and wildcard handlers. This is useful
-        for testing or reconfiguration scenarios.
-
-        Example:
-            >>> bus.subscribe(OrderCreated, handler1)
-            >>> bus.subscribe_to_all_events(handler2)
-            >>> bus.clear_subscribers()
-            >>> assert bus.get_subscriber_count() == 0
-        """
-        self._handlers.clear()
-        self._wildcard_handlers.clear()
-        logger.debug("All subscribers cleared")
-
-    def get_subscriber_count(self, event_type: type[DomainEvent] | None = None) -> int:
-        """Get the number of type-specific handlers.
-
-        Args:
-            event_type: If provided, count handlers for this specific event
-                type only. If None, count all type-specific handlers.
-
-        Returns:
-            Total count of handlers. Does not include wildcard handlers.
-
-        Example:
-            >>> bus.subscribe(OrderCreated, handler1)
-            >>> bus.subscribe(OrderCreated, handler2)
-            >>> bus.subscribe(OrderShipped, handler3)
-            >>> bus.get_subscriber_count()  # Returns 3
-            >>> bus.get_subscriber_count(OrderCreated)  # Returns 2
-        """
-        if event_type is not None:
-            event_type_name = event_type.__name__
-            return len(self._handlers.get(event_type_name, []))
-        return sum(len(handlers) for handlers in self._handlers.values())
-
-    def get_wildcard_subscriber_count(self) -> int:
-        """Get the number of wildcard handlers.
-
-        Returns:
-            Number of handlers subscribed to all events.
-
-        Example:
-            >>> bus.subscribe_to_all_events(handler1)
-            >>> bus.subscribe_to_all_events(handler2)
-            >>> bus.get_wildcard_subscriber_count()  # Returns 2
-        """
-        return len(self._wildcard_handlers)
-
     def get_handlers_for_event(self, event_type_name: str) -> list[HandlerAdapter]:
-        """Get all handlers that should process an event type.
+        """Get all handlers for an event type name.
 
-        Includes both type-specific handlers and wildcard handlers.
-        This is used internally during event dispatch.
+        Deprecated:
+            Handlers are now keyed by event class, not by name. This resolves
+            the name through the event registry and returns the handlers for
+            the resulting class. Prefer ``_handlers_for(event_type)``.
 
         Args:
-            event_type_name: The event type name (e.g., "OrderCreated").
+            event_type_name: The registered event type name.
 
         Returns:
-            List of HandlerAdapter instances to invoke. Type-specific handlers
-            come first, followed by wildcard handlers.
-
-        Example:
-            >>> handlers = bus.get_handlers_for_event("OrderCreated")
-            >>> for adapter in handlers:
-            ...     await adapter.handle(event)
+            List of HandlerAdapter instances, type-specific first.
         """
-        adapters = list(self._handlers.get(event_type_name, []))
-        adapters.extend(self._wildcard_handlers)
-        return adapters
+        warnings.warn(
+            "get_handlers_for_event is deprecated; handlers are keyed by event "
+            "class. Use the event class directly.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        event_class = self._resolve_event_class(event_type_name)
+        if event_class is None:
+            return []
+        return list(self._handlers_for(event_class))
 
     # =========================================================================
     # Consumer Methods
@@ -2422,8 +2222,9 @@ class KafkaEventBus(EventBus):
                 span.set_attribute(ATTR_AGGREGATE_ID, str(event.aggregate_id))
                 span.set_attribute(ATTR_AGGREGATE_TYPE, event.aggregate_type)
 
-            # Get handlers for this event type
-            handlers = self.get_handlers_for_event(event_type_name)
+            # Get handlers for this event type, keyed by class (not by the
+            # event_type header value, which may differ from the class name)
+            handlers = self._handlers_for(type(event))
 
             if not handlers:
                 logger.debug(
@@ -2466,7 +2267,17 @@ class KafkaEventBus(EventBus):
             if span:
                 span.set_status(Status(StatusCode.ERROR, str(e)))
                 span.record_exception(e)
-            await self._handle_processing_error(message, e, retry_count)
+
+            # Handle retry or DLQ routing. Unwrap a single-failure
+            # HandlerDispatchError so retry/DLQ metadata (dlq_error_type,
+            # etc.) still reflects the handler's own exception type rather
+            # than the aggregate wrapper -- error isolation changes how
+            # dispatch runs handlers, not what gets reported for a single
+            # failing handler.
+            dlq_error: Exception = e
+            if isinstance(e, HandlerDispatchError) and len(e.failures) == 1:
+                dlq_error = e.failures[0][1]
+            await self._handle_processing_error(message, dlq_error, retry_count)
 
     def _deserialize_message(self, message: Any) -> DomainEvent:
         """Deserialize a Kafka message to a DomainEvent using the configured serializer.
@@ -2486,30 +2297,13 @@ class KafkaEventBus(EventBus):
             raise DeserializationError("Message missing event_type header")
 
         # Get event class from registry
-        event_class = self._get_event_class(event_type_name)
+        event_class = self._resolve_event_class(event_type_name)
 
         if not event_class:
             raise DeserializationError(f"Unknown event type: {event_type_name}")
 
         # Deserialize using the configured serializer
         return self._serializer.deserialize(message.value, event_type_name, event_class)
-
-    def _get_event_class(self, event_type_name: str) -> type[DomainEvent] | None:
-        """Get event class by name from registry.
-
-        Args:
-            event_type_name: Name of the event class to look up.
-
-        Returns:
-            The event class if found, None otherwise.
-        """
-        if self._event_registry:
-            return self._event_registry.get_or_none(event_type_name)
-
-        # Fallback to default registry
-        from eventsource.events.registry import default_registry
-
-        return default_registry.get_or_none(event_type_name)
 
     def _get_header_value(
         self,
@@ -2554,20 +2348,27 @@ class KafkaEventBus(EventBus):
     async def _dispatch_to_handlers(
         self,
         event: DomainEvent,
-        handlers: list[HandlerAdapter],
+        handlers: tuple[HandlerAdapter, ...],
     ) -> None:
         """Dispatch an event to all registered handlers with optional tracing.
+
+        Every handler runs for this delivery even if an earlier one failed
+        (error isolation) -- failures are collected and raised together as a
+        single HandlerDispatchError afterward, so the caller's retry/DLQ path
+        still sees the delivery as failed exactly as a single raise would.
 
         When tracing is enabled, creates child spans for each handler
         invocation to provide detailed visibility into handler execution.
 
         Args:
             event: The event to dispatch.
-            handlers: List of HandlerAdapter instances to invoke.
+            handlers: Tuple of HandlerAdapter instances to invoke.
 
         Raises:
-            Exception: Re-raises any handler exception.
+            HandlerDispatchError: If one or more handlers raise.
         """
+        failures: list[tuple[str, Exception]] = []
+
         for adapter in handlers:
             handler_name = adapter.name
 
@@ -2658,7 +2459,7 @@ class KafkaEventBus(EventBus):
                             },
                             exc_info=True,
                         )
-                        raise
+                        failures.append((handler_name, e))
             else:
                 try:
                     logger.debug(
@@ -2730,7 +2531,10 @@ class KafkaEventBus(EventBus):
                         },
                         exc_info=True,
                     )
-                    raise
+                    failures.append((handler_name, e))
+
+        if failures:
+            raise HandlerDispatchError(failures)
 
     async def _handle_processing_error(
         self,
@@ -2860,23 +2664,17 @@ class KafkaEventBus(EventBus):
     def _calculate_retry_delay(self, retry_count: int) -> float:
         """Calculate delay for retry with exponential backoff and jitter.
 
+        Delegates to the shared RetryPolicy. Note this changes Kafka's jitter
+        from one-sided positive to symmetric, so effective backoff is slightly
+        shorter and no longer exceeds retry_max_delay.
+
         Args:
             retry_count: The current retry attempt (0-based).
 
         Returns:
             Delay in seconds before next retry.
         """
-        # Exponential backoff: base_delay * 2^retry_count
-        delay: float = self._config.retry_base_delay * (2**retry_count)
-
-        # Cap at max delay
-        delay = min(delay, self._config.retry_max_delay)
-
-        # Add jitter (using random for non-cryptographic retry timing)
-        jitter: float = delay * self._config.retry_jitter * random.random()  # nosec B311
-        delay += jitter
-
-        return delay
+        return self._retry_policy.delay_for(retry_count)
 
     async def _send_to_dlq(
         self,
