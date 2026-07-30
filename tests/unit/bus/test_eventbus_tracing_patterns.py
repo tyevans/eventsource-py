@@ -264,13 +264,18 @@ class TestRabbitMQEventBusTracingCompliance:
         """RabbitMQEventBus should use standard span names.
 
         The publish span moved to ``RabbitMQPublisher`` in the bus
-        god-class decomposition (Task 6); consume/handle spans remain
-        on the facade.
+        god-class decomposition (Task 6) and the consume/handle spans to
+        ``RabbitMQConsumer`` (Task 7).
         """
         from eventsource.bus.rabbitmq import bus as rabbitmq_module
+        from eventsource.bus.rabbitmq import consumer as consumer_module
         from eventsource.bus.rabbitmq import publisher as publisher_module
 
-        source = inspect.getsource(rabbitmq_module) + inspect.getsource(publisher_module)
+        source = (
+            inspect.getsource(rabbitmq_module)
+            + inspect.getsource(publisher_module)
+            + inspect.getsource(consumer_module)
+        )
 
         # Check for standardized span names
         assert "eventsource.event_bus.publish" in source
@@ -284,9 +289,14 @@ class TestRabbitMQEventBusTracingCompliance:
         ``RabbitMQPublisher`` in the bus god-class decomposition (Task 6).
         """
         from eventsource.bus.rabbitmq import bus as rabbitmq_module
+        from eventsource.bus.rabbitmq import consumer as consumer_module
         from eventsource.bus.rabbitmq import publisher as publisher_module
 
-        source = inspect.getsource(rabbitmq_module) + inspect.getsource(publisher_module)
+        source = (
+            inspect.getsource(rabbitmq_module)
+            + inspect.getsource(publisher_module)
+            + inspect.getsource(consumer_module)
+        )
 
         # Check for imports of standard attributes
         assert "ATTR_MESSAGING_SYSTEM" in source

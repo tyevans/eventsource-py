@@ -5469,7 +5469,7 @@ class TestRabbitMQProcessMessageWithDLQTracking:
 
         initial_dlq_count = bus.stats.messages_sent_to_dlq
 
-        with patch.object(bus, "_deserialize_event", return_value=mock_event):
+        with patch.object(bus._consumer, "_deserialize_event", return_value=mock_event):
             await bus._process_message(mock_normal_message)
 
         assert bus.stats.messages_sent_to_dlq == initial_dlq_count + 1
@@ -5497,7 +5497,7 @@ class TestRabbitMQProcessMessageWithDLQTracking:
 
         initial_dlq_count = bus.stats.messages_sent_to_dlq
 
-        with patch.object(bus, "_deserialize_event", return_value=mock_event):
+        with patch.object(bus._consumer, "_deserialize_event", return_value=mock_event):
             await bus._process_message(mock_normal_message)
 
         # DLQ stats should not be incremented when DLQ is disabled
@@ -9496,7 +9496,7 @@ class TestOpenTelemetryConsumerTracing:
         bus._tracer = mock_tracer
 
         # Also mock extract for context propagation
-        with patch("eventsource.bus.rabbitmq.bus.extract") as mock_extract:
+        with patch("eventsource.bus.rabbitmq.consumer.extract") as mock_extract:
             mock_extract.return_value = None
 
             await bus._process_message(mock_message)

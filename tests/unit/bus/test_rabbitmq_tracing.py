@@ -130,14 +130,20 @@ class TestRabbitMQEventBusAttributeConstants:
 
         The publish-path attributes (ATTR_MESSAGING_*, ATTR_AGGREGATE_ID)
         moved to ``RabbitMQPublisher`` in the bus god-class decomposition
-        (Task 6); consume/handle attributes remain on the facade.
+        (Task 6) and the consume/handle attributes to ``RabbitMQConsumer``
+        (Task 7).
         """
         import inspect
 
         from eventsource.bus.rabbitmq import bus as rabbitmq_module
+        from eventsource.bus.rabbitmq import consumer as consumer_module
         from eventsource.bus.rabbitmq import publisher as publisher_module
 
-        source_code = inspect.getsource(rabbitmq_module) + inspect.getsource(publisher_module)
+        source_code = (
+            inspect.getsource(rabbitmq_module)
+            + inspect.getsource(publisher_module)
+            + inspect.getsource(consumer_module)
+        )
 
         # Check that standard attribute constants are imported and used
         assert "ATTR_MESSAGING_SYSTEM" in source_code
@@ -210,15 +216,20 @@ class TestRabbitMQSpanNaming:
         """Span names should follow 'eventsource.event_bus.*' convention.
 
         The publish span moved to ``RabbitMQPublisher`` in the bus
-        god-class decomposition (Task 6); consume/handle spans remain
-        on the facade.
+        god-class decomposition (Task 6) and the consume/handle spans to
+        ``RabbitMQConsumer`` (Task 7).
         """
         import inspect
 
         from eventsource.bus.rabbitmq import bus as rabbitmq_module
+        from eventsource.bus.rabbitmq import consumer as consumer_module
         from eventsource.bus.rabbitmq import publisher as publisher_module
 
-        source_code = inspect.getsource(rabbitmq_module) + inspect.getsource(publisher_module)
+        source_code = (
+            inspect.getsource(rabbitmq_module)
+            + inspect.getsource(publisher_module)
+            + inspect.getsource(consumer_module)
+        )
 
         # Check for standardized span names in the publish method
         assert "eventsource.event_bus.publish" in source_code
