@@ -1418,7 +1418,15 @@ class RabbitMQEventBus(BaseEventBus):
         queue_status = "not_initialized"
         if self._consumer_queue and self._channel and not self._channel.is_closed:
             queue_info = await self._topology.queue_health(self._config.queue_name)
-            if queue_info is not None and queue_info.state == "error":
+            if queue_info is None:
+                # Channel closed between our gate above and the topology call --
+                # the old inline code would have hit declare_queue's own
+                # exception path in this race, so treat it the same way.
+                queue_error = "Channel not initialized"
+                queue_status = f"error: {queue_error}"
+                healthy = False
+                error_messages.append(f"Queue check failed: {queue_error}")
+            elif queue_info.state == "error":
                 queue_status = f"error: {queue_info.error}"
                 healthy = False
                 error_messages.append(f"Queue check failed: {queue_info.error}")
@@ -1436,7 +1444,16 @@ class RabbitMQEventBus(BaseEventBus):
         if self._config.enable_dlq:
             if self._channel and not self._channel.is_closed:
                 dlq_info = await self._topology.queue_health(self._config.dlq_queue_name)
-                if dlq_info is not None and dlq_info.state == "error":
+                if dlq_info is None:
+                    # Channel closed between our gate above and the topology
+                    # call -- same race as the consumer-queue branch above.
+                    dlq_error = "Channel not initialized"
+                    dlq_status = f"error: {dlq_error}"
+                    self._logger.warning(
+                        f"DLQ health check failed: {dlq_error}",
+                        extra={"dlq_queue": self._config.dlq_queue_name},
+                    )
+                elif dlq_info.state == "error":
                     dlq_status = f"error: {dlq_info.error}"
                     # DLQ errors don't make the overall bus unhealthy
                     # but we log them

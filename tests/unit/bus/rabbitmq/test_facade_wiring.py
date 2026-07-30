@@ -181,6 +181,41 @@ async def test_health_check_reflects_unhealthy_connection_slice(
     assert result.error == "Not connected to RabbitMQ"
 
 
+@pytest.mark.asyncio
+async def test_health_check_queue_race_reports_error_not_accessible(
+    bus_with_mocks: RabbitMQEventBus,
+) -> None:
+    """If the channel closes between the facade's gate and the topology call,
+    RabbitMQTopology.queue_health() returns None. The old inline health_check
+    would have hit declare_queue's own exception in this race and reported
+    "error: ...", not "accessible" -- pin that the composed facade matches.
+    """
+    bus_with_mocks._topology.queue_health = AsyncMock(return_value=None)
+
+    result = await bus_with_mocks.health_check()
+
+    assert result.queue_status.startswith("error:")
+    assert result.healthy is False
+    assert result.error is not None
+    assert "Queue check failed" in result.error
+
+
+@pytest.mark.asyncio
+async def test_health_check_dlq_race_reports_error_not_accessible(
+    bus_with_mocks: RabbitMQEventBus,
+) -> None:
+    """Same race as above, but for the DLQ branch: a None queue_health()
+    result must not be reported as "accessible".
+    """
+    bus_with_mocks._topology.queue_health = AsyncMock(return_value=None)
+
+    result = await bus_with_mocks.health_check()
+
+    assert result.dlq_status is not None
+    assert result.dlq_status.startswith("error:")
+    # DLQ errors don't flip overall healthy -- only the queue branch does.
+
+
 def test_stats_accumulate_across_collaborators(bus_with_mocks: RabbitMQEventBus) -> None:
     """The stats object handed to publisher/consumer is the same object the
     facade's get_stats() returns (identity check + counter increment visible).
