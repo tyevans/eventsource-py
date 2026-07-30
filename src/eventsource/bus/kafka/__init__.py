@@ -8,9 +8,9 @@ modules and are not part of the public API.
 from eventsource.bus.kafka.bus import (
     KAFKA_AVAILABLE,
     KafkaEventBus,
-    KafkaRebalanceListener,
 )
 from eventsource.bus.kafka.config import KafkaEventBusConfig
+from eventsource.bus.kafka.connection import KafkaRebalanceListener
 from eventsource.bus.kafka.metrics import KafkaEventBusMetrics
 from eventsource.bus.kafka.models import (
     DeserializationError,

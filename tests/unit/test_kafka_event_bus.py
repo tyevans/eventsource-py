@@ -862,8 +862,8 @@ class TestKafkaEventBus:
         bus = KafkaEventBus(event_registry=event_registry)
 
         with (
-            patch("eventsource.bus.kafka.bus.AIOKafkaProducer") as mock_producer_class,
-            patch("eventsource.bus.kafka.bus.AIOKafkaConsumer") as mock_consumer_class,
+            patch("eventsource.bus.kafka.connection.AIOKafkaProducer") as mock_producer_class,
+            patch("eventsource.bus.kafka.connection.AIOKafkaConsumer") as mock_consumer_class,
         ):
             mock_producer = AsyncMock()
             mock_consumer = AsyncMock()
@@ -885,8 +885,8 @@ class TestKafkaEventBus:
     async def test_context_manager(self, event_registry: EventRegistry) -> None:
         """Test async context manager usage."""
         with (
-            patch("eventsource.bus.kafka.bus.AIOKafkaProducer") as mock_producer_class,
-            patch("eventsource.bus.kafka.bus.AIOKafkaConsumer") as mock_consumer_class,
+            patch("eventsource.bus.kafka.connection.AIOKafkaProducer") as mock_producer_class,
+            patch("eventsource.bus.kafka.connection.AIOKafkaConsumer") as mock_consumer_class,
         ):
             mock_producer = AsyncMock()
             mock_consumer = AsyncMock()
@@ -1292,12 +1292,20 @@ class TestKafkaEventBusCounterMetrics:
 
     @pytest.mark.asyncio
     async def test_reconnection_counter(self) -> None:
-        """Test reconnection counter via record_reconnection method."""
+        """Test reconnection counter via deprecated record_reconnection shim.
+
+        Real logic (stats + metrics increments) is covered directly against
+        KafkaConnectionManager in tests/unit/bus/kafka/test_connection.py.
+        This test verifies the deprecated facade shim still delegates and
+        the OTel wiring produces the expected reading end-to-end.
+        """
         bus = self._create_bus_with_test_metrics()
 
         # Record a reconnection
-        bus.record_reconnection()
-        bus.record_reconnection()
+        with pytest.deprecated_call():
+            bus.record_reconnection()
+        with pytest.deprecated_call():
+            bus.record_reconnection()
 
         metrics_data = self.reader.get_metrics_data()
         reconnection_count = _get_metric_value(metrics_data, "kafka.eventbus.reconnections")
@@ -1305,11 +1313,18 @@ class TestKafkaEventBusCounterMetrics:
 
     @pytest.mark.asyncio
     async def test_rebalance_counter(self) -> None:
-        """Test rebalance counter via record_rebalance method."""
+        """Test rebalance counter via deprecated record_rebalance shim.
+
+        Real logic (stats + metrics increments) is covered directly against
+        KafkaConnectionManager in tests/unit/bus/kafka/test_connection.py.
+        This test verifies the deprecated facade shim still delegates and
+        the OTel wiring produces the expected reading end-to-end.
+        """
         bus = self._create_bus_with_test_metrics()
 
         # Record a rebalance
-        bus.record_rebalance()
+        with pytest.deprecated_call():
+            bus.record_rebalance()
 
         metrics_data = self.reader.get_metrics_data()
         rebalance_count = _get_metric_value(metrics_data, "kafka.eventbus.rebalances")
@@ -1324,8 +1339,8 @@ class TestKafkaEventBusCounterMetrics:
         bus = self._create_bus_with_test_metrics()
 
         with (
-            patch("eventsource.bus.kafka.bus.AIOKafkaProducer", return_value=mock_producer),
-            patch("eventsource.bus.kafka.bus.AIOKafkaConsumer", return_value=AsyncMock()),
+            patch("eventsource.bus.kafka.connection.AIOKafkaProducer", return_value=mock_producer),
+            patch("eventsource.bus.kafka.connection.AIOKafkaConsumer", return_value=AsyncMock()),
         ):
             with pytest.raises(Exception, match="Connection failed"):
                 await bus.connect()
@@ -1461,8 +1476,8 @@ class TestKafkaEventBusGaugeMetrics:
         bus = self._create_bus_with_test_metrics()
 
         with (
-            patch("eventsource.bus.kafka.bus.AIOKafkaProducer", return_value=mock_producer),
-            patch("eventsource.bus.kafka.bus.AIOKafkaConsumer", return_value=mock_consumer),
+            patch("eventsource.bus.kafka.connection.AIOKafkaProducer", return_value=mock_producer),
+            patch("eventsource.bus.kafka.connection.AIOKafkaConsumer", return_value=mock_consumer),
         ):
             await bus.connect()
 
@@ -1480,8 +1495,8 @@ class TestKafkaEventBusGaugeMetrics:
         bus = self._create_bus_with_test_metrics()
 
         with (
-            patch("eventsource.bus.kafka.bus.AIOKafkaProducer", return_value=mock_producer),
-            patch("eventsource.bus.kafka.bus.AIOKafkaConsumer", return_value=mock_consumer),
+            patch("eventsource.bus.kafka.connection.AIOKafkaProducer", return_value=mock_producer),
+            patch("eventsource.bus.kafka.connection.AIOKafkaConsumer", return_value=mock_consumer),
         ):
             await bus.connect()
 
@@ -1502,8 +1517,8 @@ class TestKafkaEventBusGaugeMetrics:
         bus = self._create_bus_with_test_metrics()
 
         with (
-            patch("eventsource.bus.kafka.bus.AIOKafkaProducer", return_value=mock_producer),
-            patch("eventsource.bus.kafka.bus.AIOKafkaConsumer", return_value=mock_consumer),
+            patch("eventsource.bus.kafka.connection.AIOKafkaProducer", return_value=mock_producer),
+            patch("eventsource.bus.kafka.connection.AIOKafkaConsumer", return_value=mock_consumer),
         ):
             await bus.connect()
             await bus.disconnect()
@@ -1524,8 +1539,8 @@ class TestKafkaEventBusGaugeMetrics:
         bus = self._create_bus_with_test_metrics()
 
         with (
-            patch("eventsource.bus.kafka.bus.AIOKafkaProducer", return_value=mock_producer),
-            patch("eventsource.bus.kafka.bus.AIOKafkaConsumer", return_value=mock_consumer),
+            patch("eventsource.bus.kafka.connection.AIOKafkaProducer", return_value=mock_producer),
+            patch("eventsource.bus.kafka.connection.AIOKafkaConsumer", return_value=mock_consumer),
         ):
             await bus.connect()
 
@@ -1547,8 +1562,8 @@ class TestKafkaEventBusGaugeMetrics:
         bus = self._create_bus_with_test_metrics()
 
         with (
-            patch("eventsource.bus.kafka.bus.AIOKafkaProducer", return_value=mock_producer),
-            patch("eventsource.bus.kafka.bus.AIOKafkaConsumer", return_value=mock_consumer),
+            patch("eventsource.bus.kafka.connection.AIOKafkaProducer", return_value=mock_producer),
+            patch("eventsource.bus.kafka.connection.AIOKafkaConsumer", return_value=mock_consumer),
         ):
             await bus.connect()
 
@@ -1590,9 +1605,11 @@ class TestKafkaEventBusMetricsEdgeCases:
         # All operations should work without errors
         # (No need to connect/publish since we're testing that metrics being None doesn't crash)
 
-        # Record methods should not raise
-        bus.record_reconnection()
-        bus.record_rebalance()
+        # Record methods should not raise (deprecated shims still delegate)
+        with pytest.deprecated_call():
+            bus.record_reconnection()
+        with pytest.deprecated_call():
+            bus.record_rebalance()
 
         # Dispatch should work without error even with no metrics
         handler = OrderHandler()
@@ -1624,9 +1641,11 @@ class TestKafkaEventBusMetricsEdgeCases:
         # Bus should be created successfully, just without metrics
         assert bus._metrics is None
 
-        # Operations should not raise
-        bus.record_reconnection()
-        bus.record_rebalance()
+        # Operations should not raise (deprecated shims still delegate)
+        with pytest.deprecated_call():
+            bus.record_reconnection()
+        with pytest.deprecated_call():
+            bus.record_rebalance()
 
     @skip_if_no_otel_metrics
     @pytest.mark.asyncio
@@ -1753,8 +1772,12 @@ class TestKafkaEventBusMetricsEdgeCases:
             bus._meter = meter
 
             with (
-                patch("eventsource.bus.kafka.bus.AIOKafkaProducer", return_value=mock_producer),
-                patch("eventsource.bus.kafka.bus.AIOKafkaConsumer", return_value=AsyncMock()),
+                patch(
+                    "eventsource.bus.kafka.connection.AIOKafkaProducer", return_value=mock_producer
+                ),
+                patch(
+                    "eventsource.bus.kafka.connection.AIOKafkaConsumer", return_value=AsyncMock()
+                ),
             ):
                 await bus.connect()
 
