@@ -7,7 +7,9 @@ import pytest
 from eventsource.adapters.memory import MemoryEventStore
 from eventsource.testing.conformance_ports import (
     AppenderConformance,
+    CategoryQueryConformance,
     EventLookupConformance,
+    GlobalFeedConformance,
     StreamReaderConformance,
 )
 
@@ -25,6 +27,18 @@ class TestMemoryStreamReader(StreamReaderConformance):
 
 
 class TestMemoryEventLookup(EventLookupConformance):
+    @pytest.fixture
+    async def store(self) -> AsyncIterator[MemoryEventStore]:
+        yield MemoryEventStore()
+
+
+class TestMemoryGlobalFeed(GlobalFeedConformance):
+    @pytest.fixture
+    async def store(self) -> AsyncIterator[MemoryEventStore]:
+        yield MemoryEventStore()
+
+
+class TestMemoryCategoryQuery(CategoryQueryConformance):
     @pytest.fixture
     async def store(self) -> AsyncIterator[MemoryEventStore]:
         yield MemoryEventStore()

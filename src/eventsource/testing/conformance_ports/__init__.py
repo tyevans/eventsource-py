@@ -12,11 +12,15 @@ module and will replace it once all adapters migrate to the port suites.
 """
 
 from eventsource.testing.conformance_ports.appender import AppenderConformance
+from eventsource.testing.conformance_ports.category import CategoryQueryConformance
 from eventsource.testing.conformance_ports.event_lookup import EventLookupConformance
+from eventsource.testing.conformance_ports.feed import GlobalFeedConformance
 from eventsource.testing.conformance_ports.stream_reader import StreamReaderConformance
 
 __all__ = [
     "AppenderConformance",
     "StreamReaderConformance",
     "EventLookupConformance",
+    "GlobalFeedConformance",
+    "CategoryQueryConformance",
 ]

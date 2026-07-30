@@ -23,7 +23,16 @@ class _AppenderUnderTest(EventAppender, StreamReader, Protocol):
 
 
 class AppenderConformance(ABC):
-    """Conformance suite for `EventAppender` implementations."""
+    """Conformance suite for `EventAppender` implementations.
+
+    Attributes:
+        positions_expected: Whether `AppendResult.position` is expected to be
+            non-None and strictly increasing across appends. Set to False in
+            subclasses covering feed-less (partitioned) adapters, where
+            `position` is always None by design.
+    """
+
+    positions_expected: bool = True
 
     @abstractmethod
     @pytest.fixture
@@ -132,6 +141,11 @@ class AppenderConformance(ABC):
         result_b = await store.append(
             stream_b, [make_event(stream_b.aggregate_id)], ExpectedVersion.any_()
         )
+
+        if not self.positions_expected:
+            assert result_a.position is None
+            assert result_b.position is None
+            return
 
         assert result_a.position is not None
         assert result_b.position is not None
