@@ -33,15 +33,22 @@ import asyncio
 import contextlib
 import logging
 import re
-import socket
 import ssl
-import uuid
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from eventsource.bus.base import BaseEventBus
-from eventsource.bus.rabbitmq import death_headers
+from eventsource.bus.rabbitmq import death_headers, serialization
+from eventsource.bus.rabbitmq.config import RabbitMQEventBusConfig
+from eventsource.bus.rabbitmq.models import (
+    BatchPublishError,
+    DLQMessage,
+    HealthCheckResult,
+    QueueInfo,
+    RabbitMQEventBusStats,
+    RabbitMQNotAvailableError,
+    ShutdownError,
+)
 from eventsource.bus.retry import RetryPolicy
 from eventsource.events.base import DomainEvent
 from eventsource.exceptions import HandlerDispatchError
@@ -110,475 +117,6 @@ except ImportError:
 # rabbitmq.py -> rabbitmq/bus.py package move -- callers that configure
 # logging by name ("eventsource.bus.rabbitmq") keep working unchanged.
 logger = logging.getLogger("eventsource.bus.rabbitmq")
-
-
-class RabbitMQNotAvailableError(ImportError):
-    """Raised when aio-pika package is not installed.
-
-    This exception is raised when attempting to use RabbitMQ functionality
-    without having the aio-pika package installed. The error message includes
-    the installation command to help users resolve the issue.
-
-    Example:
-        >>> from eventsource.bus.rabbitmq import RabbitMQEventBus
-        >>> bus = RabbitMQEventBus()  # Raises if aio-pika not installed
-        RabbitMQNotAvailableError: aio-pika package is not installed. ...
-    """
-
-    def __init__(self) -> None:
-        """Initialize the error with a helpful installation message."""
-        super().__init__(
-            "aio-pika package is not installed. Install it with: pip install eventsource[rabbitmq]"
-        )
-
-
-@dataclass
-class RabbitMQEventBusConfig:
-    """Configuration for RabbitMQ event bus.
-
-    This configuration class provides all settings needed for connecting to
-    RabbitMQ and managing message exchange and queue behavior. It follows
-    the same patterns as RedisEventBusConfig for consistency across the
-    eventsource library.
-
-    Attributes:
-        rabbitmq_url: RabbitMQ connection URL (amqp:// or amqps://).
-            Format: amqp://user:password@host:port/vhost
-        exchange_name: Name of the event exchange. Events are published to this
-            exchange and routed to bound queues based on exchange type.
-        exchange_type: Type of exchange. Supported types:
-            - 'topic': Route messages based on routing key patterns (default)
-            - 'direct': Route messages to queues with matching routing key
-            - 'fanout': Broadcast messages to all bound queues
-            - 'headers': Route based on message header attributes
-        consumer_group: Name of the consumer group. Used in queue naming to
-            allow multiple consumer groups to receive the same events.
-        consumer_name: Unique name for this consumer instance. Auto-generated
-            from hostname and UUID if not provided. Used for consumer tagging
-            and debugging.
-        prefetch_count: Maximum number of unacknowledged messages per consumer.
-            Controls flow and prevents overwhelming slow consumers.
-        max_retries: Maximum number of retry attempts before sending to DLQ.
-            After this many failures, the message is moved to the dead letter queue.
-        enable_dlq: Whether to enable dead letter queue. When True, messages that
-            fail after max_retries are sent to a DLQ for manual inspection.
-        dlq_exchange_suffix: Suffix appended to exchange_name for DLQ exchange name.
-        dlq_message_ttl: Time-to-live in milliseconds for messages in the DLQ.
-            If set, messages will be automatically removed from the DLQ after this time.
-            If None (default), messages persist until manually removed.
-        dlq_max_length: Maximum number of messages the DLQ can hold.
-            If set, oldest messages are dropped when the limit is exceeded.
-            If None (default), no limit is applied.
-        durable: Whether exchanges and queues survive broker restarts.
-            Should be True for production to ensure message durability.
-        auto_delete: Whether to delete queues when all consumers disconnect.
-            Should be False for production to prevent message loss.
-        reconnect_delay: Initial delay in seconds between reconnection attempts.
-            Uses exponential backoff up to max_reconnect_delay.
-        max_reconnect_delay: Maximum delay in seconds between reconnection attempts.
-        heartbeat: Heartbeat interval in seconds. Used by RabbitMQ to detect
-            dead connections and prevent firewall timeouts.
-        enable_tracing: Enable OpenTelemetry tracing if available. When True,
-            publishes and consumes are traced for observability.
-        ssl_options: Additional SSL/TLS options passed to aio-pika connect.
-            Used for advanced SSL configurations beyond the convenience fields.
-        ssl_context: Pre-configured SSLContext to use for TLS connections.
-            If provided, takes precedence over ssl_options and convenience fields.
-            Allows full control over SSL/TLS configuration.
-        verify_ssl: Whether to verify the server's SSL certificate. Default True.
-            Setting to False disables certificate verification (NOT recommended
-            for production). A warning is logged when verification is disabled.
-        ca_file: Path to CA certificate file for verifying server certificates.
-            Used when connecting to RabbitMQ with custom CA certificates.
-        cert_file: Path to client certificate file for mutual TLS (mTLS).
-            Must be used together with key_file for client certificate auth.
-        key_file: Path to client private key file for mutual TLS (mTLS).
-            Must be used together with cert_file for client certificate auth.
-        retry_base_delay: Base delay in seconds for exponential backoff between
-            retries. Actual delay is: retry_base_delay * (2 ** retry_count).
-            Default is 1.0 second.
-        retry_max_delay: Maximum delay in seconds between retries. Caps the
-            exponential backoff to prevent excessively long waits.
-            Default is 60.0 seconds.
-        retry_jitter: Add random jitter to retry delays to prevent thundering
-            herd. Value is 0.0 to 1.0 representing the fraction of delay to
-            randomize. Default is 0.1 (10% jitter).
-        shutdown_timeout: Default timeout in seconds for graceful shutdown.
-            Used by the context manager and shutdown() method when no explicit
-            timeout is provided. Default is 30.0 seconds.
-        routing_key_pattern: Pattern for binding queues to exchanges. Behavior
-            varies by exchange type:
-            - topic: Supports wildcards (* for single word, # for zero or more words).
-              Default is "#" (receive all messages).
-            - direct: Requires exact match. Default is the queue_name.
-            - fanout: Ignored (all bound queues receive all messages).
-            - headers: Ignored (routing uses header matching).
-            When None (default), the binding pattern is automatically chosen
-            based on exchange type. Set explicitly to override.
-        batch_size: Maximum number of events to publish concurrently in a single
-            batch operation. Large batches are automatically chunked to prevent
-            overwhelming the broker. Default is 100.
-        max_concurrent_publishes: Maximum number of concurrent publish operations
-            within a batch chunk. Controls the level of parallelism when publishing
-            batches. Default is 10.
-
-    Example:
-        >>> config = RabbitMQEventBusConfig(
-        ...     rabbitmq_url="amqp://user:pass@rabbitmq.example.com:5672/",
-        ...     exchange_name="myapp.events",
-        ...     consumer_group="order-projection",
-        ...     prefetch_count=20,
-        ...     enable_dlq=True,
-        ... )
-        >>> print(config.queue_name)
-        'myapp.events.order-projection'
-        >>> print(config.dlq_exchange_name)
-        'myapp.events_dlq'
-    """
-
-    rabbitmq_url: str = "amqp://guest:guest@localhost:5672/"
-    exchange_name: str = "events"
-    exchange_type: str = "topic"  # topic, direct, fanout, headers
-    consumer_group: str = "default"
-    consumer_name: str | None = None
-    prefetch_count: int = 10
-    max_retries: int = 3
-    enable_dlq: bool = True
-    dlq_exchange_suffix: str = "_dlq"
-    dlq_message_ttl: int | None = None
-    dlq_max_length: int | None = None
-    durable: bool = True
-    auto_delete: bool = False
-    reconnect_delay: float = 1.0
-    max_reconnect_delay: float = 60.0
-    heartbeat: int = 60
-    enable_tracing: bool = True
-    ssl_options: dict[str, Any] | None = None
-    ssl_context: ssl.SSLContext | None = None
-    verify_ssl: bool = True
-    ca_file: str | None = None
-    cert_file: str | None = None
-    key_file: str | None = None
-    retry_base_delay: float = 1.0
-    retry_max_delay: float = 60.0
-    retry_jitter: float = 0.1
-    shutdown_timeout: float = 30.0
-    routing_key_pattern: str | None = None
-    batch_size: int = 100
-    max_concurrent_publishes: int = 10
-
-    def __post_init__(self) -> None:
-        """Generate consumer name if not provided.
-
-        Creates a unique consumer name by combining the hostname with
-        a truncated UUID to ensure uniqueness across distributed deployments.
-        Format: {hostname}-{uuid[:8]}
-        """
-        if self.consumer_name is None:
-            hostname = socket.gethostname()
-            unique_id = str(uuid.uuid4())[:8]
-            self.consumer_name = f"{hostname}-{unique_id}"
-
-    @property
-    def queue_name(self) -> str:
-        """Get the consumer queue name.
-
-        The queue name is derived from the exchange name and consumer group,
-        following the pattern: {exchange_name}.{consumer_group}
-
-        Returns:
-            The queue name for this consumer group.
-
-        Example:
-            >>> config = RabbitMQEventBusConfig(
-            ...     exchange_name="orders",
-            ...     consumer_group="analytics"
-            ... )
-            >>> config.queue_name
-            'orders.analytics'
-        """
-        return f"{self.exchange_name}.{self.consumer_group}"
-
-    @property
-    def dlq_exchange_name(self) -> str:
-        """Get the dead letter exchange name.
-
-        The DLQ exchange name is derived from the main exchange name
-        with a configurable suffix appended.
-
-        Returns:
-            The dead letter exchange name.
-
-        Example:
-            >>> config = RabbitMQEventBusConfig(exchange_name="orders")
-            >>> config.dlq_exchange_name
-            'orders_dlq'
-        """
-        return f"{self.exchange_name}{self.dlq_exchange_suffix}"
-
-    @property
-    def dlq_queue_name(self) -> str:
-        """Get the dead letter queue name.
-
-        The DLQ queue name is derived from the main queue name
-        with '.dlq' appended.
-
-        Returns:
-            The dead letter queue name.
-
-        Example:
-            >>> config = RabbitMQEventBusConfig(
-            ...     exchange_name="orders",
-            ...     consumer_group="analytics"
-            ... )
-            >>> config.dlq_queue_name
-            'orders.analytics.dlq'
-        """
-        return f"{self.queue_name}.dlq"
-
-    def get_effective_routing_key(self) -> str:
-        """Get the effective routing key pattern for queue binding.
-
-        If routing_key_pattern is explicitly set, use that. Otherwise,
-        automatically determine the appropriate routing key based on
-        exchange type:
-        - topic: "#" (matches all routing keys)
-        - direct: queue_name (exact match for work queue pattern)
-        - fanout: "" (routing key is ignored for fanout)
-        - headers: "" (routing uses header matching, not routing key)
-
-        Returns:
-            The routing key pattern to use for queue binding.
-
-        Example:
-            >>> config = RabbitMQEventBusConfig(
-            ...     exchange_name="orders",
-            ...     exchange_type="direct",
-            ...     consumer_group="workers"
-            ... )
-            >>> config.get_effective_routing_key()
-            'orders.workers'
-        """
-        # If explicitly set, use that value
-        if self.routing_key_pattern is not None:
-            return self.routing_key_pattern
-
-        # Auto-determine based on exchange type
-        exchange_type_lower = self.exchange_type.lower()
-
-        if exchange_type_lower == "topic":
-            # Topic exchange: use "#" to receive all messages
-            return "#"
-        elif exchange_type_lower == "direct":
-            # Direct exchange: use queue_name for work queue pattern
-            # This allows multiple consumers on the same queue to compete
-            return self.queue_name
-        elif exchange_type_lower in ("fanout", "headers"):
-            # Fanout and headers: routing key is ignored
-            return ""
-        else:
-            # Unknown type: default to topic behavior
-            return "#"
-
-
-@dataclass
-class DLQMessage:
-    """Dataclass representing a message from the dead letter queue.
-
-    This class holds information about messages that have been moved to the
-    dead letter queue after failing processing. It includes both the original
-    message content and metadata about why and when it was dead-lettered.
-
-    Attributes:
-        message_id: Unique identifier for the message (from RabbitMQ).
-        routing_key: The routing key used when the message was originally published.
-        body: The message body as a string (typically JSON).
-        headers: All message headers as a dictionary.
-        event_type: The type of the event (extracted from headers).
-        dlq_reason: The reason the message was sent to DLQ (from x-dlq-reason header).
-        dlq_error_type: The type of error that caused the failure (from x-dlq-error-type).
-        dlq_retry_count: Number of retries before being sent to DLQ (from x-dlq-retry-count).
-        dlq_timestamp: When the message was sent to DLQ (from x-dlq-timestamp).
-        original_routing_key: The original routing key before dead-lettering
-            (from x-original-routing-key).
-
-    Example:
-        >>> dlq_messages = await bus.get_dlq_messages(limit=10)
-        >>> for msg in dlq_messages:
-        ...     print(f"Message {msg.message_id}: {msg.event_type}")
-        ...     print(f"  Failed due to: {msg.dlq_reason}")
-        ...     print(f"  Retries: {msg.dlq_retry_count}")
-    """
-
-    message_id: str | None
-    routing_key: str | None
-    body: str
-    headers: dict[str, Any]
-    event_type: str | None = None
-    dlq_reason: str | None = None
-    dlq_error_type: str | None = None
-    dlq_retry_count: int | None = None
-    dlq_timestamp: str | None = None
-    original_routing_key: str | None = None
-
-
-@dataclass
-class RabbitMQEventBusStats:
-    """Statistics for RabbitMQ event bus operations.
-
-    This dataclass tracks operational metrics for monitoring and observability
-    of the RabbitMQ event bus. It follows the same patterns as RedisEventBusStats
-    for consistency across the eventsource library.
-
-    Attributes:
-        events_published: Total number of events successfully published to the exchange.
-            Incremented after each successful publish operation.
-        events_consumed: Total number of events consumed from the queue.
-            Incremented when a message is received from RabbitMQ.
-        events_processed_success: Total number of events that were processed
-            successfully by their handlers without errors.
-        events_processed_failed: Total number of events that failed during
-            handler processing (handler raised an exception).
-        messages_sent_to_dlq: Total number of messages moved to the dead letter
-            queue after exceeding max retries.
-        handler_errors: Total number of handler execution errors. This may differ
-            from events_processed_failed if a single event is retried multiple times.
-        reconnections: Number of reconnection attempts made after connection loss.
-        publish_confirms: Number of publisher confirms received from RabbitMQ.
-            Only applicable when publisher confirms are enabled.
-        publish_returns: Number of unroutable messages returned by RabbitMQ.
-            Occurs when a message cannot be routed to any queue.
-        batch_publishes: Number of batch publish operations performed.
-            Each call to publish_batch() or publish() with multiple events counts as one.
-        batch_events_published: Total events published through batch operations.
-            This is a subset of events_published that tracks batch-specific throughput.
-        batch_partial_failures: Number of batch operations that had some failures
-            but were not complete failures. Useful for tracking partial success scenarios.
-        last_publish_at: Timestamp of the last successful publish operation.
-            None if no events have been published yet.
-        last_consume_at: Timestamp of the last successful consume operation.
-            None if no events have been consumed yet.
-        last_error_at: Timestamp of the last error (handler error or failed processing).
-            None if no errors have occurred.
-        connected_at: Timestamp when the connection was established.
-            None if not connected. Used for uptime calculation.
-
-    Example:
-        >>> stats = RabbitMQEventBusStats()
-        >>> stats.events_published = 100
-        >>> stats.events_consumed = 95
-        >>> print(f"Published: {stats.events_published}, Consumed: {stats.events_consumed}")
-        Published: 100, Consumed: 95
-
-    Note:
-        Thread-safety of stats updates is handled by the event bus implementation,
-        not this dataclass. This is a simple data container.
-    """
-
-    # Counters
-    events_published: int = 0
-    events_consumed: int = 0
-    events_processed_success: int = 0
-    events_processed_failed: int = 0
-    messages_sent_to_dlq: int = 0
-    handler_errors: int = 0
-    reconnections: int = 0
-    publish_confirms: int = 0
-    publish_returns: int = 0
-
-    # Batch publishing counters
-    batch_publishes: int = 0
-    batch_events_published: int = 0
-    batch_partial_failures: int = 0
-
-    # Timing
-    last_publish_at: datetime | None = None
-    last_consume_at: datetime | None = None
-    last_error_at: datetime | None = None
-    connected_at: datetime | None = None
-
-
-@dataclass
-class QueueInfo:
-    """Information about a RabbitMQ queue.
-
-    This dataclass provides operational information about a queue including
-    message count, consumer count, and queue state. Used for monitoring
-    and health checking.
-
-    Attributes:
-        name: Name of the queue.
-        message_count: Number of messages currently in the queue.
-        consumer_count: Number of consumers currently attached to the queue.
-        state: Current state of the queue. Possible values:
-            - "running": Queue is operational
-            - "idle": Queue exists but has no consumers
-            - "unknown": Queue state cannot be determined
-            - "error": An error occurred while querying queue state
-        error: Error message if state is "error", None otherwise.
-
-    Example:
-        >>> info = await bus.get_queue_info()
-        >>> print(f"Queue {info.name}: {info.message_count} messages")
-        >>> if info.consumer_count == 0:
-        ...     print("Warning: No consumers attached")
-    """
-
-    name: str
-    message_count: int
-    consumer_count: int
-    state: str = "running"
-    error: str | None = None
-
-
-@dataclass
-class HealthCheckResult:
-    """Result of a health check on the RabbitMQ event bus.
-
-    This dataclass provides comprehensive health status information
-    for monitoring and alerting purposes.
-
-    Attributes:
-        healthy: Overall health status. True if all components are operational,
-            False if any component is unhealthy.
-        connection_status: Status of the RabbitMQ connection.
-            - "connected": Connection is established and open
-            - "disconnected": Not connected to RabbitMQ
-            - "closed": Connection was closed
-        channel_status: Status of the AMQP channel.
-            - "open": Channel is open and operational
-            - "closed": Channel is closed
-            - "not_initialized": Channel was never created
-        queue_status: Status of the consumer queue.
-            - "accessible": Queue can be accessed and declared
-            - "inaccessible": Queue cannot be accessed
-            - "not_initialized": Queue was never declared
-            - "error: <message>": An error occurred checking the queue
-        dlq_status: Status of the dead letter queue (if DLQ is enabled).
-            - "accessible": DLQ can be accessed
-            - "inaccessible": DLQ cannot be accessed
-            - "disabled": DLQ is not enabled
-            - "error: <message>": An error occurred checking the DLQ
-            - None if DLQ check was not performed
-        error: Error message if health check failed, None otherwise.
-        details: Additional details about the health check including
-            configuration information and consuming state.
-
-    Example:
-        >>> result = await bus.health_check()
-        >>> if not result.healthy:
-        ...     print(f"Unhealthy: {result.error}")
-        ...     print(f"Connection: {result.connection_status}")
-        ...     print(f"Channel: {result.channel_status}")
-    """
-
-    healthy: bool
-    connection_status: str
-    channel_status: str
-    queue_status: str
-    dlq_status: str | None = None
-    error: str | None = None
-    details: dict[str, Any] | None = None
 
 
 class RabbitMQEventBus(BaseEventBus):
@@ -1791,136 +1329,30 @@ class RabbitMQEventBus(BaseEventBus):
     ) -> str:
         """Get the default value for a field from a DomainEvent subclass.
 
-        This method handles both regular class attributes and Pydantic model
-        field defaults. Pydantic stores field defaults in model_fields rather
-        than as class attributes.
-
-        Args:
-            event_type: The DomainEvent subclass to inspect.
-            field_name: The name of the field to get the default for.
-            default: The fallback value if the field has no default.
-
-        Returns:
-            The default value for the field, or the provided default.
+        Thin wrapper -- see `serialization.get_event_field_default`.
         """
-        # First, check if it's a Pydantic model with model_fields
-        if hasattr(event_type, "model_fields"):
-            field_info = event_type.model_fields.get(field_name)
-            if field_info is not None and field_info.default is not None:
-                return str(field_info.default)
-
-        # Fall back to getattr for non-Pydantic classes or missing fields
-        return str(getattr(event_type, field_name, default))
+        return serialization.get_event_field_default(event_type, field_name, default)
 
     def _get_routing_key(self, event: DomainEvent) -> str:
         """Generate routing key for an event.
 
-        Creates a routing key in the format {aggregate_type}.{event_type}
-        for use with RabbitMQ topic exchanges. This allows consumers to
-        subscribe to specific event types or aggregate types using wildcards.
-
-        Examples:
-            - Order.OrderCreated -> matches "Order.*" or "*.OrderCreated"
-            - User.UserRegistered -> matches "User.*" or "#.Registered"
-
-        Args:
-            event: The domain event to generate a routing key for
-
-        Returns:
-            Routing key string in format "{aggregate_type}.{event_type}"
+        Thin wrapper -- see `serialization.get_routing_key`.
         """
-        return f"{event.aggregate_type}.{event.event_type}"
+        return serialization.get_routing_key(event)
 
     def _serialize_event(self, event: DomainEvent) -> tuple[bytes, dict[str, Any]]:
         """Serialize a domain event to JSON bytes and message headers.
 
-        Converts a DomainEvent to a JSON-encoded byte string and extracts
-        message metadata as headers for AMQP message properties.
-
-        The JSON body contains the full event data serialized via Pydantic's
-        model_dump_json() method, which handles UUID and datetime serialization.
-
-        Headers include event metadata for:
-        - Message routing and filtering (event_type, aggregate_type)
-        - Event identification (aggregate_id, aggregate_version)
-        - Retry tracking (x-retry-count)
-        - Correlation/causation tracking (optional)
-        - Multi-tenancy support (tenant_id, optional)
-
-        Args:
-            event: The domain event to serialize
-
-        Returns:
-            Tuple of (body_bytes, headers_dict):
-            - body_bytes: UTF-8 encoded JSON representation of the event
-            - headers_dict: Message headers for AMQP properties
-
-        Example:
-            >>> body, headers = bus._serialize_event(order_created_event)
-            >>> headers["event_type"]
-            'OrderCreated'
-            >>> headers["aggregate_type"]
-            'Order'
+        Thin wrapper -- see `serialization.serialize_event`.
         """
-        # Serialize event to JSON bytes
-        body = event.model_dump_json().encode("utf-8")
-
-        # Build headers with event metadata
-        headers: dict[str, Any] = {
-            "event_type": event.event_type,
-            "aggregate_type": event.aggregate_type,
-            "aggregate_id": str(event.aggregate_id),
-            "aggregate_version": event.aggregate_version,
-            "x-retry-count": 0,
-        }
-
-        # Optional headers - only include if present
-        if event.tenant_id:
-            headers["tenant_id"] = str(event.tenant_id)
-        if event.correlation_id:
-            headers["correlation_id"] = str(event.correlation_id)
-        if event.causation_id:
-            headers["causation_id"] = str(event.causation_id)
-
-        return body, headers
+        return serialization.serialize_event(event)
 
     def _create_message(self, event: DomainEvent) -> Message:
         """Create an AMQP message from a domain event.
 
-        Creates a fully configured aio-pika Message with:
-        - JSON body from serialized event
-        - Appropriate content type and encoding
-        - Persistent delivery mode for durability
-        - Event metadata in headers
-        - Message ID and timestamp from event
-
-        This is a convenience method that combines _serialize_event with
-        Message construction for use in publish operations.
-
-        Args:
-            event: The domain event to convert to a message
-
-        Returns:
-            aio_pika.Message ready for publishing
-
-        Example:
-            >>> message = bus._create_message(order_created_event)
-            >>> message.content_type
-            'application/json'
-            >>> message.delivery_mode
-            DeliveryMode.PERSISTENT
+        Thin wrapper -- see `serialization.create_message`.
         """
-        body, headers = self._serialize_event(event)
-
-        return Message(
-            body=body,
-            content_type="application/json",
-            content_encoding="utf-8",
-            delivery_mode=DeliveryMode.PERSISTENT,
-            message_id=str(event.event_id),
-            timestamp=event.occurred_at,
-            headers=headers,
-        )
+        return serialization.create_message(event)
 
     def _create_message_with_tracing(
         self,
@@ -1929,42 +1361,9 @@ class RabbitMQEventBus(BaseEventBus):
     ) -> Message:
         """Create an AMQP message with optional trace context injection.
 
-        Similar to _create_message but additionally injects OpenTelemetry
-        trace context into message headers when a span is provided and
-        tracing is available. This enables distributed tracing correlation
-        across publish/consume operations.
-
-        The trace context is injected using W3C Trace Context format
-        (traceparent, tracestate headers) via OpenTelemetry's propagate.inject().
-
-        Args:
-            event: The domain event to convert to a message
-            span: Optional OpenTelemetry span to extract trace context from.
-                 If None or tracing is not available, creates message without
-                 trace context (equivalent to _create_message).
-
-        Returns:
-            aio_pika.Message ready for publishing with trace context in headers
-
-        Example:
-            >>> span = self._tracer.start_span("publish") if self._tracer else None
-            >>> message = bus._create_message_with_tracing(event, span)
+        Thin wrapper -- see `serialization.create_message_with_tracing`.
         """
-        body, headers = self._serialize_event(event)
-
-        # Inject trace context into headers if span is active and propagation is available
-        if span and PROPAGATION_AVAILABLE and inject is not None:
-            inject(headers)
-
-        return Message(
-            body=body,
-            content_type="application/json",
-            content_encoding="utf-8",
-            delivery_mode=DeliveryMode.PERSISTENT,
-            message_id=str(event.event_id),
-            timestamp=event.occurred_at,
-            headers=headers,
-        )
+        return serialization.create_message_with_tracing(event, span)
 
     def _deserialize_event(
         self,
@@ -1972,67 +1371,9 @@ class RabbitMQEventBus(BaseEventBus):
     ) -> DomainEvent | None:
         """Deserialize an AMQP message to a domain event.
 
-        Extracts the event type from message headers, looks up the
-        corresponding event class from the registry, and deserializes
-        the JSON body to reconstruct the domain event.
-
-        Uses the event registry (explicit or default) to resolve event
-        type names to their corresponding Python classes.
-
-        Args:
-            message: Incoming AMQP message with headers and body
-
-        Returns:
-            Deserialized DomainEvent instance, or None if:
-            - Message is missing event_type header
-            - Event type is not found in registry
-            - Deserialization fails (malformed JSON, validation error)
-
-        Logs:
-            - WARNING: Missing event_type header
-            - WARNING: Unknown event type
-            - ERROR: Deserialization failure with exception details
+        Thin wrapper -- see `serialization.deserialize_event`.
         """
-        # Get event type from headers
-        headers = message.headers or {}
-        event_type_name = headers.get("event_type")
-
-        if not event_type_name:
-            self._logger.warning(
-                "Message missing event_type header",
-                extra={"message_id": message.message_id},
-            )
-            return None
-
-        # Look up event class
-        event_type_str = str(event_type_name)
-        event_class = self._resolve_event_class(event_type_str)
-        if event_class is None:
-            self._logger.warning(
-                f"Unknown event type: {event_type_str}",
-                extra={
-                    "event_type": event_type_str,
-                    "message_id": message.message_id,
-                },
-            )
-            return None
-
-        # Deserialize from JSON body
-        try:
-            body = message.body.decode("utf-8")
-            return event_class.model_validate_json(body)
-        except Exception as e:
-            self._logger.error(
-                f"Failed to deserialize event: {e}",
-                exc_info=True,
-                extra={
-                    "event_type": event_type_name,
-                    "message_id": message.message_id,
-                    "error": str(e),
-                    "error_type": type(e).__name__,
-                },
-            )
-            return None
+        return serialization.deserialize_event(message, self._resolve_event_class, self._logger)
 
     # =========================================================================
     # Publish Methods (P1-008, P3-005)
@@ -3947,69 +3288,6 @@ class RabbitMQEventBus(BaseEventBus):
             cannot be reused.
         """
         return self._shutdown_initiated
-
-
-class ShutdownError(Exception):
-    """Raised when an operation is attempted after shutdown.
-
-    This exception is raised when attempting to publish events or start
-    consuming after the event bus has been shut down. The event bus cannot
-    be reused after shutdown - a new instance must be created.
-
-    Example:
-        >>> await bus.shutdown()
-        >>> await bus.publish([event])  # Raises ShutdownError
-    """
-
-    def __init__(self, message: str = "Event bus has been shut down") -> None:
-        """Initialize the error with a message.
-
-        Args:
-            message: The error message describing the situation.
-        """
-        super().__init__(message)
-
-
-class BatchPublishError(Exception):
-    """Raised when a batch publish operation has failures.
-
-    This exception is raised when one or more events in a batch fail to publish.
-    It contains information about both successful and failed publishes, allowing
-    the caller to handle partial failures appropriately.
-
-    Attributes:
-        results: Dictionary containing batch statistics:
-            - total: Total number of events in the batch
-            - published: Number of events successfully published
-            - failed: Number of events that failed to publish
-            - chunks: Number of chunks the batch was split into
-        errors: List of exceptions from failed publish operations
-
-    Example:
-        >>> try:
-        ...     result = await bus.publish_batch(events)
-        ... except BatchPublishError as e:
-        ...     print(f"Partial failure: {e.results['published']}/{e.results['total']} published")
-        ...     for err in e.errors:
-        ...         print(f"  Error: {err}")
-    """
-
-    def __init__(
-        self,
-        message: str,
-        results: dict[str, int] | None = None,
-        errors: list[Exception] | None = None,
-    ) -> None:
-        """Initialize the error with message and details.
-
-        Args:
-            message: The error message describing the failure
-            results: Dictionary with batch statistics
-            errors: List of exceptions from failed operations
-        """
-        super().__init__(message)
-        self.results = results or {"total": 0, "published": 0, "failed": 0, "chunks": 0}
-        self.errors = errors or []
 
 
 __all__ = [
