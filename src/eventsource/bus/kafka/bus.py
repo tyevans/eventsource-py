@@ -7,7 +7,8 @@ Features:
 - High-throughput event publishing
 - Consumer groups for horizontal scaling
 - At-least-once delivery guarantees
-- Partition-based ordering by aggregate_id
+- Partition-based ordering by aggregate_id (within a single publish() call;
+  not guaranteed across successive background=True calls -- see publish())
 - Dead letter queue for unrecoverable failures
 - Configurable retry policies with non-blocking republish
 - Consumer rebalance handling for safe horizontal scaling
@@ -708,7 +709,12 @@ class KafkaEventBus(BaseEventBus):
 
         Events are published to the configured topic with the aggregate_id as
         the partition key. This ensures events for the same aggregate are
-        processed in order.
+        processed in order -- **within a single publish() call**. When
+        background=True, each call is scheduled as an independent tracked
+        background task (see ``_track_background``); the send handoffs of
+        two successive background publish() calls for the same aggregate can
+        interleave, so cross-call per-aggregate ordering is NOT guaranteed
+        for background publishes.
 
         When tracing is enabled, creates OpenTelemetry spans for each publish
         operation and injects trace context into Kafka message headers for
@@ -717,11 +723,17 @@ class KafkaEventBus(BaseEventBus):
         Args:
             events: List of domain events to publish.
             background: If True, don't wait for broker acknowledgment.
-                Faster but less reliable.
+                Faster but less reliable: the publish is scheduled as a
+                background task and this method returns before delivery
+                (or even send) is confirmed. See "Raises" below.
 
         Raises:
             RuntimeError: If not connected to Kafka.
-            KafkaError: If publishing fails.
+            KafkaError: If publishing fails and background=False. When
+                background=True, send/serialization/ack failures do NOT
+                propagate to the caller -- they are only logged and recorded
+                in stats/metrics via the background task's error handling
+                (see KafkaPublisher._track_background_publish).
         """
         if not self._connected or not self._producer:
             raise RuntimeError("Not connected to Kafka. Call connect() first.")

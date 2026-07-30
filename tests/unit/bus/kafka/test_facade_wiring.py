@@ -17,8 +17,9 @@ Covers:
   ``register_consumer_lag_gauge``) only after a successful connect, and
   never as a side effect of a failed connect (Task 13 deferred item).
 - Background publishes are scheduled via ``_track_background`` so
-  ``get_background_task_count()`` rises while in flight and drains to zero
-  via ``_drain_background``.
+  ``get_background_task_count()`` rises while in flight, the tracked task
+  actually calls the publisher, and it drains to zero via
+  ``_drain_background``. A background-publish failure is logged, not raised.
 """
 
 from __future__ import annotations
@@ -130,19 +131,24 @@ async def test_shutdown_stops_consumer_loop_when_still_consuming(
     assert calls == ["drain_background", "consumer_loop.stop", "connection.disconnect"]
 
 
-def test_stats_identity_across_collaborators(bus_with_mocks: KafkaEventBus) -> None:
+def test_stats_identity_across_collaborators() -> None:
     """The stats object handed to publisher/consumer_loop/dlq_admin at
-    __init__ time is the same object get_stats_dict() reflects.
+    __init__ time is the SAME object get_stats_dict() reflects -- checked
+    against the real (unmocked) collaborators, so this would fail if
+    __init__ handed each collaborator its own fresh KafkaEventBusStats.
     """
-    bus = bus_with_mocks
+    config = KafkaEventBusConfig(bootstrap_servers="localhost:9092")
+    bus = KafkaEventBus(config=config)
 
-    # Collaborators were replaced with mocks post-construction, but the
-    # original real publisher/consumer_loop/dlq_admin received the same
-    # KafkaEventBusStats instance the facade still owns.
-    assert bus.stats is bus._stats
+    assert bus._publisher._stats is bus._stats
+    assert bus._consumer_loop._stats is bus._stats
+    assert bus._dlq_admin._stats is bus._stats
 
-    bus._stats.events_published += 3
+    # A collaborator-side mutation must be visible through the facade's
+    # public accessor -- not just object identity.
+    bus._publisher._stats.events_published += 3
     assert bus.get_stats_dict()["events_published"] == 3
+    assert bus.stats.events_published == 3
 
 
 @pytest.mark.asyncio
@@ -206,8 +212,10 @@ async def test_background_publish_tracked_and_drained(bus_with_mocks: KafkaEvent
     bus._connection_manager.producer = MagicMock()
 
     release = asyncio.Event()
+    recorded_calls: list[tuple[list[Any], bool]] = []
 
-    async def fake_publish_all(events: list[Any], background: bool) -> None:  # type: ignore[name-defined]
+    async def fake_publish_all(events: list[Any], background: bool) -> None:
+        recorded_calls.append((events, background))
         await release.wait()
 
     bus._publisher.publish_all = fake_publish_all
@@ -221,4 +229,34 @@ async def test_background_publish_tracked_and_drained(bus_with_mocks: KafkaEvent
     release.set()
     await bus._drain_background(timeout=1.0)
 
+    assert bus.get_background_task_count() == 0
+    # Prove the tracked task actually did the work, not just that it was
+    # scheduled and drained.
+    assert recorded_calls == [([event], True)]
+
+
+@pytest.mark.asyncio
+async def test_background_publish_failure_does_not_raise(
+    bus_with_mocks: KafkaEventBus,
+) -> None:
+    """A send/serialization failure inside a background publish is logged
+    (via the tracked task's on-done handling), not raised to the caller --
+    this pins the intentional error-surfacing semantics documented on
+    publish().
+    """
+    bus = bus_with_mocks
+    bus._connection_manager.is_connected = True
+    bus._connection_manager.producer = MagicMock()
+
+    async def failing_publish_all(events: list[Any], background: bool) -> None:
+        raise RuntimeError("boom")
+
+    bus._publisher.publish_all = failing_publish_all
+
+    event = SampleEvent(aggregate_id=uuid4())
+
+    # Must not raise, even though the underlying publish fails.
+    await bus.publish([event], background=True)
+
+    await bus._drain_background(timeout=1.0)
     assert bus.get_background_task_count() == 0
