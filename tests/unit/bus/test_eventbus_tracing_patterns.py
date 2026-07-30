@@ -262,7 +262,7 @@ class TestRabbitMQEventBusTracingCompliance:
 
     def test_uses_standard_span_names(self, check_rabbitmq_available: None) -> None:
         """RabbitMQEventBus should use standard span names."""
-        from eventsource.bus import rabbitmq as rabbitmq_module
+        from eventsource.bus.rabbitmq import bus as rabbitmq_module
 
         source = inspect.getsource(rabbitmq_module)
 
@@ -273,7 +273,7 @@ class TestRabbitMQEventBusTracingCompliance:
 
     def test_uses_standard_attributes(self, check_rabbitmq_available: None) -> None:
         """RabbitMQEventBus should use standard attribute constants."""
-        from eventsource.bus import rabbitmq as rabbitmq_module
+        from eventsource.bus.rabbitmq import bus as rabbitmq_module
 
         source = inspect.getsource(rabbitmq_module)
 
@@ -286,14 +286,14 @@ class TestRabbitMQEventBusTracingCompliance:
 
     def test_imports_otel_from_observability(self, check_rabbitmq_available: None) -> None:
         """RabbitMQEventBus should import OTEL_AVAILABLE from observability."""
-        from eventsource.bus import rabbitmq as rabbitmq_module
+        from eventsource.bus.rabbitmq import bus as rabbitmq_module
 
         source = inspect.getsource(rabbitmq_module)
         assert "from eventsource.observability import OTEL_AVAILABLE" in source
 
     def test_has_context_propagation(self, check_rabbitmq_available: None) -> None:
         """RabbitMQEventBus should have context propagation support."""
-        from eventsource.bus import rabbitmq as rabbitmq_module
+        from eventsource.bus.rabbitmq import bus as rabbitmq_module
 
         source = inspect.getsource(rabbitmq_module)
 

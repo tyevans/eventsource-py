@@ -104,7 +104,11 @@ except ImportError:
     StatusCode = None  # type: ignore[assignment, misc]
     PROPAGATION_AVAILABLE = False
 
-logger = logging.getLogger(__name__)
+
+# Named explicitly (not via __name__) so the logger name is stable across the
+# rabbitmq.py -> rabbitmq/bus.py package move -- callers that configure
+# logging by name ("eventsource.bus.rabbitmq") keep working unchanged.
+logger = logging.getLogger("eventsource.bus.rabbitmq")
 
 
 class RabbitMQNotAvailableError(ImportError):
@@ -665,8 +669,8 @@ class RabbitMQEventBus(BaseEventBus):
         # Shutdown state tracking
         self._shutdown_initiated: bool = False
 
-        # Logger
-        self._logger = logging.getLogger(__name__)
+        # Logger (named explicitly -- see module-level `logger` for rationale)
+        self._logger = logging.getLogger("eventsource.bus.rabbitmq")
 
         # Initialize tracing via composition (replaces TracingMixin)
         self._tracer = tracer or create_tracer(__name__, self._config.enable_tracing)

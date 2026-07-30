@@ -129,7 +129,7 @@ class TestRabbitMQEventBusAttributeConstants:
         """Verify that the code uses standard ATTR_* constants."""
         import inspect
 
-        from eventsource.bus import rabbitmq as rabbitmq_module
+        from eventsource.bus.rabbitmq import bus as rabbitmq_module
 
         source_code = inspect.getsource(rabbitmq_module)
 
@@ -146,7 +146,7 @@ class TestRabbitMQEventBusAttributeConstants:
         """Verify that OTEL_AVAILABLE is not duplicated in rabbitmq.py."""
         import inspect
 
-        from eventsource.bus import rabbitmq as rabbitmq_module
+        from eventsource.bus.rabbitmq import bus as rabbitmq_module
 
         source_code = inspect.getsource(rabbitmq_module)
 
@@ -170,7 +170,7 @@ class TestRabbitMQContextPropagation:
 
     def test_propagation_available_defined(self) -> None:
         """PROPAGATION_AVAILABLE should be defined for context propagation."""
-        from eventsource.bus import rabbitmq as rabbitmq_module
+        from eventsource.bus.rabbitmq import bus as rabbitmq_module
 
         assert hasattr(rabbitmq_module, "PROPAGATION_AVAILABLE")
 
@@ -178,7 +178,7 @@ class TestRabbitMQContextPropagation:
         """inject function should be available for trace context injection."""
         import inspect
 
-        from eventsource.bus import rabbitmq as rabbitmq_module
+        from eventsource.bus.rabbitmq import bus as rabbitmq_module
 
         source_code = inspect.getsource(rabbitmq_module)
 
@@ -189,7 +189,7 @@ class TestRabbitMQContextPropagation:
         """extract function should be available for trace context extraction."""
         import inspect
 
-        from eventsource.bus import rabbitmq as rabbitmq_module
+        from eventsource.bus.rabbitmq import bus as rabbitmq_module
 
         source_code = inspect.getsource(rabbitmq_module)
 
@@ -204,7 +204,7 @@ class TestRabbitMQSpanNaming:
         """Span names should follow 'eventsource.event_bus.*' convention."""
         import inspect
 
-        from eventsource.bus import rabbitmq as rabbitmq_module
+        from eventsource.bus.rabbitmq import bus as rabbitmq_module
 
         source_code = inspect.getsource(rabbitmq_module)
 
