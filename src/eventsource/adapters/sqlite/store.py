@@ -20,6 +20,7 @@ sufficient; there is no gap to skip.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime
@@ -104,6 +105,7 @@ class SQLiteEventStore:
         self._connection: aiosqlite.Connection | None = None
         self._store_id = store_id or f"sqlite:{database}"
         self._codec = IntPositionCodec(self._store_id)
+        self._lock = asyncio.Lock()
 
     async def _conn(self) -> aiosqlite.Connection:
         """Return the live connection, opening and initializing it on first use."""
@@ -169,70 +171,8 @@ class SQLiteEventStore:
         aggregate_id_str = str(stream.aggregate_id)
         category = stream.category
 
-        try:
-            cursor = await conn.execute(
-                """
-                SELECT COALESCE(MAX(version), 0)
-                FROM events
-                WHERE aggregate_id = ? AND aggregate_type = ?
-                """,
-                (aggregate_id_str, category),
-            )
-            row = await cursor.fetchone()
-            current_version = row[0] if row else 0
-
-            self._check_expected(current_version, expected, stream)
-
-            seen_in_batch: set[UUID] = set()
-            for event in events:
-                if event.event_id in seen_in_batch:
-                    raise DuplicateEventError(
-                        f"event_id {event.event_id} already exists in the store"
-                    )
-                seen_in_batch.add(event.event_id)
-
-            version = current_version
-            first_position: Position | None = None
-            now = datetime.now(UTC).isoformat()
-
-            for event in events:
-                version += 1
-                cursor = await conn.execute(
-                    """
-                    INSERT INTO events (
-                        event_id, event_type, aggregate_type, aggregate_id,
-                        tenant_id, actor_id, version, timestamp, payload, created_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        str(event.event_id),
-                        event.event_type,
-                        category,
-                        aggregate_id_str,
-                        str(event.tenant_id) if event.tenant_id else None,
-                        event.actor_id,
-                        version,
-                        event.occurred_at.isoformat(),
-                        json_dumps(event.model_dump(mode="json")),
-                        now,
-                    ),
-                )
-                global_position = cursor.lastrowid or 0
-                if first_position is None:
-                    first_position = self._codec.encode(global_position)
-
-            await conn.commit()
-            return AppendResult(stream=stream, new_version=version, position=first_position)
-
-        except aiosqlite.IntegrityError as e:
-            await conn.rollback()
-            error_str = str(e).lower()
-            if "event_id" in error_str:
-                raise DuplicateEventError(
-                    f"an event_id in this batch already exists in the store: {e}"
-                ) from e
-            if "unique" in error_str and ("aggregate_id" in error_str or "version" in error_str):
+        async with self._lock:
+            try:
                 cursor = await conn.execute(
                     """
                     SELECT COALESCE(MAX(version), 0)
@@ -242,11 +182,76 @@ class SQLiteEventStore:
                     (aggregate_id_str, category),
                 )
                 row = await cursor.fetchone()
-                actual_version = row[0] if row else 0
-                raise OptimisticLockError(
-                    stream.aggregate_id, self._expected_sentinel(expected), actual_version
-                ) from e
-            raise
+                current_version = row[0] if row else 0
+
+                self._check_expected(current_version, expected, stream)
+
+                seen_in_batch: set[UUID] = set()
+                for event in events:
+                    if event.event_id in seen_in_batch:
+                        raise DuplicateEventError(
+                            f"event_id {event.event_id} already exists in the store"
+                        )
+                    seen_in_batch.add(event.event_id)
+
+                version = current_version
+                first_position: Position | None = None
+                now = datetime.now(UTC).isoformat()
+
+                for event in events:
+                    version += 1
+                    cursor = await conn.execute(
+                        """
+                        INSERT INTO events (
+                            event_id, event_type, aggregate_type, aggregate_id,
+                            tenant_id, actor_id, version, timestamp, payload, created_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            str(event.event_id),
+                            event.event_type,
+                            category,
+                            aggregate_id_str,
+                            str(event.tenant_id) if event.tenant_id else None,
+                            event.actor_id,
+                            version,
+                            event.occurred_at.isoformat(),
+                            json_dumps(event.model_dump(mode="json")),
+                            now,
+                        ),
+                    )
+                    global_position = cursor.lastrowid or 0
+                    if first_position is None:
+                        first_position = self._codec.encode(global_position)
+
+                await conn.commit()
+                return AppendResult(stream=stream, new_version=version, position=first_position)
+
+            except aiosqlite.IntegrityError as e:
+                await conn.rollback()
+                error_str = str(e).lower()
+                if "event_id" in error_str:
+                    raise DuplicateEventError(
+                        f"an event_id in this batch already exists in the store: {e}"
+                    ) from e
+                if "unique" in error_str and (
+                    "aggregate_id" in error_str or "version" in error_str
+                ):
+                    cursor = await conn.execute(
+                        """
+                        SELECT COALESCE(MAX(version), 0)
+                        FROM events
+                        WHERE aggregate_id = ? AND aggregate_type = ?
+                        """,
+                        (aggregate_id_str, category),
+                    )
+                    row = await cursor.fetchone()
+                    actual_version = row[0] if row else 0
+                    raise OptimisticLockError(
+                        stream.aggregate_id, self._expected_sentinel(expected), actual_version
+                    ) from e
+                raise
 
     def read_stream(
         self,
@@ -388,9 +393,10 @@ class SQLiteEventStore:
         # Filtered and ordered by `created_at` (storage time), not `timestamp`
         # (the event's own `occurred_at`) -- this matches the port contract
         # (`EventEnvelope.stored_at`), mirroring the memory adapter's
-        # `read_category`, which filters/orders on `stored_at`.
+        # `read_category`, which filters/orders on `stored_at`. `from_timestamp`
+        # is inclusive per the port contract, hence `>=`.
         if options.from_timestamp is not None:
-            query_parts.append("AND created_at > ?")
+            query_parts.append("AND created_at >= ?")
             params.append(options.from_timestamp.isoformat())
 
         query_parts.append("ORDER BY created_at ASC")

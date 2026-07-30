@@ -95,6 +95,22 @@ class CategoryQueryConformance(ABC):
 
         assert [e.event.payload for e in envelopes] == ["late"]  # type: ignore[attr-defined]
 
+    async def test_from_timestamp_is_inclusive(self, store: _AppenderCategory) -> None:
+        stream = make_stream(category="Inclusive")
+        await store.append(
+            stream,
+            [ConformanceEvent(aggregate_id=stream.aggregate_id, payload="boundary")],
+            ExpectedVersion.any_(),
+        )
+        envelopes = await collect(store.read_category("Inclusive"))
+        boundary_stored_at = envelopes[0].stored_at
+
+        envelopes = await collect(
+            store.read_category("Inclusive", CategoryReadOptions(from_timestamp=boundary_stored_at))
+        )
+
+        assert [e.event.payload for e in envelopes] == ["boundary"]  # type: ignore[attr-defined]
+
     async def test_tenant_filter_honored(self, store: _AppenderCategory) -> None:
         tenant_a = uuid4()
         tenant_b = uuid4()
