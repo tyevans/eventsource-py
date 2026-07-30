@@ -363,7 +363,7 @@ class TestKafkaEventBusTracingCompliance:
 
     def test_has_context_propagation(self, check_kafka_available: None) -> None:
         """KafkaEventBus should have context propagation support."""
-        from eventsource.bus import kafka as kafka_module
+        from eventsource.bus.kafka import bus as kafka_module
 
         source = inspect.getsource(kafka_module)
 

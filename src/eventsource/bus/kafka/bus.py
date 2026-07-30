@@ -148,7 +148,9 @@ except ImportError:
     StatusCode = None  # type: ignore[assignment, misc]
     PROPAGATION_AVAILABLE = False
 
-logger = logging.getLogger(__name__)
+# Pinned explicitly: __name__ is "eventsource.bus.kafka.bus" after the
+# package move, but the public logger name must stay "eventsource.bus.kafka".
+logger = logging.getLogger("eventsource.bus.kafka")
 
 # Module-level meter cache for lazy initialization
 _meter: Any = None
