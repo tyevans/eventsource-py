@@ -115,7 +115,6 @@ jobs:
             --verbose
             --no-progress
             --accept 200,204,206
-            --exclude-mail
             --exclude-path './site'
             --exclude 'tyevans.github.io'
             --exclude 'localhost'
