@@ -1,6 +1,6 @@
 [project]
 name = "eventsource-py"
-version = "0.6.0"
+version = "0.7.0"
 description = "Production-ready event sourcing library for Python"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -206,6 +206,12 @@ only_mutate = [
     "src/eventsource/bus/registry.py",
     "src/eventsource/bus/retry.py",
     "src/eventsource/bus/base.py",
+    "src/eventsource/bus/rabbitmq/death_headers.py",
+    "src/eventsource/bus/rabbitmq/serialization.py",
+    "src/eventsource/bus/kafka/serialization.py",
+    "src/eventsource/bus/rabbitmq/consumer.py",
+    "src/eventsource/bus/kafka/consumer.py",
+    "src/eventsource/bus/memory.py",
 ]
 pytest_add_cli_args_test_selection = [
     "tests/unit/test_engine.py",
@@ -214,6 +220,9 @@ pytest_add_cli_args_test_selection = [
     "tests/unit/bus/test_registry.py",
     "tests/unit/bus/test_retry.py",
     "tests/unit/bus/test_base.py",
+    "tests/unit/bus/rabbitmq/",
+    "tests/unit/bus/kafka/",
+    "tests/unit/bus/test_memory.py",
 ]
 pytest_add_cli_args = ["--no-cov", "-x", "-q", "-p", "no:randomly"]
 
