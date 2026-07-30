@@ -2568,24 +2568,24 @@ class TestRabbitMQDeclarationErrors:
     async def test_declare_exchange_without_channel_raises(
         self, config: RabbitMQEventBusConfig
     ) -> None:
-        """Test that _declare_exchange raises if channel not initialized."""
+        """Test that _declare_exchange raises if not connected."""
         from eventsource.bus.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus(config=config)
 
-        with pytest.raises(RuntimeError, match="Channel not initialized"):
+        with pytest.raises(RuntimeError, match="Not connected to RabbitMQ"):
             await bus._declare_exchange()
 
     @pytest.mark.asyncio
     async def test_declare_queue_without_channel_raises(
         self, config: RabbitMQEventBusConfig
     ) -> None:
-        """Test that _declare_queue raises if channel not initialized."""
+        """Test that _declare_queue raises if not connected."""
         from eventsource.bus.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus(config=config)
 
-        with pytest.raises(RuntimeError, match="Channel not initialized"):
+        with pytest.raises(RuntimeError, match="Not connected to RabbitMQ"):
             await bus._declare_queue()
 
     @pytest.mark.asyncio
@@ -2600,12 +2600,12 @@ class TestRabbitMQDeclarationErrors:
 
     @pytest.mark.asyncio
     async def test_declare_dlq_without_channel_raises(self, config: RabbitMQEventBusConfig) -> None:
-        """Test that _declare_dlq raises if channel not initialized."""
+        """Test that _declare_dlq raises if not connected."""
         from eventsource.bus.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus(config=config)
 
-        with pytest.raises(RuntimeError, match="Channel not initialized"):
+        with pytest.raises(RuntimeError, match="Not connected to RabbitMQ"):
             await bus._declare_dlq()
 
 
@@ -6952,10 +6952,10 @@ class TestRabbitMQReconnectionCallbacks:
         mock_connection.channel = AsyncMock(return_value=mock_channel)
 
         # Mock topology declaration methods
-        bus._declare_dlq = AsyncMock()
-        bus._declare_exchange = AsyncMock()
-        bus._declare_queue = AsyncMock()
-        bus._bind_queue = AsyncMock()
+        bus._topology._declare_dlq = AsyncMock()
+        bus._topology._declare_exchange = AsyncMock()
+        bus._topology._declare_queue = AsyncMock()
+        bus._topology._bind_queue = AsyncMock()
 
         await bus._on_reconnect(mock_connection)
 
@@ -6974,10 +6974,10 @@ class TestRabbitMQReconnectionCallbacks:
         mock_channel.close_callbacks = MagicMock()
         mock_connection.channel = AsyncMock(return_value=mock_channel)
 
-        bus._declare_dlq = AsyncMock()
-        bus._declare_exchange = AsyncMock()
-        bus._declare_queue = AsyncMock()
-        bus._bind_queue = AsyncMock()
+        bus._topology._declare_dlq = AsyncMock()
+        bus._topology._declare_exchange = AsyncMock()
+        bus._topology._declare_queue = AsyncMock()
+        bus._topology._bind_queue = AsyncMock()
 
         await bus._on_reconnect(mock_connection)
         await bus._on_reconnect(mock_connection)
@@ -6993,10 +6993,10 @@ class TestRabbitMQReconnectionCallbacks:
         mock_channel.close_callbacks = MagicMock()
         mock_connection.channel = AsyncMock(return_value=mock_channel)
 
-        bus._declare_dlq = AsyncMock()
-        bus._declare_exchange = AsyncMock()
-        bus._declare_queue = AsyncMock()
-        bus._bind_queue = AsyncMock()
+        bus._topology._declare_dlq = AsyncMock()
+        bus._topology._declare_exchange = AsyncMock()
+        bus._topology._declare_queue = AsyncMock()
+        bus._topology._bind_queue = AsyncMock()
 
         await bus._on_reconnect(mock_connection)
 
@@ -7011,10 +7011,10 @@ class TestRabbitMQReconnectionCallbacks:
         mock_channel.close_callbacks = MagicMock()
         mock_connection.channel = AsyncMock(return_value=mock_channel)
 
-        bus._declare_dlq = AsyncMock()
-        bus._declare_exchange = AsyncMock()
-        bus._declare_queue = AsyncMock()
-        bus._bind_queue = AsyncMock()
+        bus._topology._declare_dlq = AsyncMock()
+        bus._topology._declare_exchange = AsyncMock()
+        bus._topology._declare_queue = AsyncMock()
+        bus._topology._bind_queue = AsyncMock()
 
         await bus._on_reconnect(mock_connection)
 
@@ -7030,14 +7030,14 @@ class TestRabbitMQReconnectionCallbacks:
         mock_channel.close_callbacks = MagicMock()
         mock_connection.channel = AsyncMock(return_value=mock_channel)
 
-        bus._declare_dlq = AsyncMock()
-        bus._declare_exchange = AsyncMock()
-        bus._declare_queue = AsyncMock()
-        bus._bind_queue = AsyncMock()
+        bus._topology._declare_dlq = AsyncMock()
+        bus._topology._declare_exchange = AsyncMock()
+        bus._topology._declare_queue = AsyncMock()
+        bus._topology._bind_queue = AsyncMock()
 
         await bus._on_reconnect(mock_connection)
 
-        bus._declare_dlq.assert_called_once()
+        bus._topology._declare_dlq.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_on_reconnect_skips_dlq_when_disabled(self, bus: RabbitMQEventBus) -> None:
@@ -7049,14 +7049,14 @@ class TestRabbitMQReconnectionCallbacks:
         mock_channel.close_callbacks = MagicMock()
         mock_connection.channel = AsyncMock(return_value=mock_channel)
 
-        bus._declare_dlq = AsyncMock()
-        bus._declare_exchange = AsyncMock()
-        bus._declare_queue = AsyncMock()
-        bus._bind_queue = AsyncMock()
+        bus._topology._declare_dlq = AsyncMock()
+        bus._topology._declare_exchange = AsyncMock()
+        bus._topology._declare_queue = AsyncMock()
+        bus._topology._bind_queue = AsyncMock()
 
         await bus._on_reconnect(mock_connection)
 
-        bus._declare_dlq.assert_not_called()
+        bus._topology._declare_dlq.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_on_reconnect_redeclares_exchange(self, bus: RabbitMQEventBus) -> None:
@@ -7066,14 +7066,14 @@ class TestRabbitMQReconnectionCallbacks:
         mock_channel.close_callbacks = MagicMock()
         mock_connection.channel = AsyncMock(return_value=mock_channel)
 
-        bus._declare_dlq = AsyncMock()
-        bus._declare_exchange = AsyncMock()
-        bus._declare_queue = AsyncMock()
-        bus._bind_queue = AsyncMock()
+        bus._topology._declare_dlq = AsyncMock()
+        bus._topology._declare_exchange = AsyncMock()
+        bus._topology._declare_queue = AsyncMock()
+        bus._topology._bind_queue = AsyncMock()
 
         await bus._on_reconnect(mock_connection)
 
-        bus._declare_exchange.assert_called_once()
+        bus._topology._declare_exchange.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_on_reconnect_redeclares_queue(self, bus: RabbitMQEventBus) -> None:
@@ -7083,15 +7083,15 @@ class TestRabbitMQReconnectionCallbacks:
         mock_channel.close_callbacks = MagicMock()
         mock_connection.channel = AsyncMock(return_value=mock_channel)
 
-        bus._declare_dlq = AsyncMock()
-        bus._declare_exchange = AsyncMock()
-        bus._declare_queue = AsyncMock()
-        bus._bind_queue = AsyncMock()
+        bus._topology._declare_dlq = AsyncMock()
+        bus._topology._declare_exchange = AsyncMock()
+        bus._topology._declare_queue = AsyncMock()
+        bus._topology._bind_queue = AsyncMock()
 
         await bus._on_reconnect(mock_connection)
 
-        bus._declare_queue.assert_called_once()
-        bus._bind_queue.assert_called_once()
+        bus._topology._declare_queue.assert_called_once()
+        bus._topology._bind_queue.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_on_reconnect_sets_connected_true_on_success(self, bus: RabbitMQEventBus) -> None:
@@ -7103,10 +7103,10 @@ class TestRabbitMQReconnectionCallbacks:
         mock_channel.close_callbacks = MagicMock()
         mock_connection.channel = AsyncMock(return_value=mock_channel)
 
-        bus._declare_dlq = AsyncMock()
-        bus._declare_exchange = AsyncMock()
-        bus._declare_queue = AsyncMock()
-        bus._bind_queue = AsyncMock()
+        bus._topology._declare_dlq = AsyncMock()
+        bus._topology._declare_exchange = AsyncMock()
+        bus._topology._declare_queue = AsyncMock()
+        bus._topology._bind_queue = AsyncMock()
 
         await bus._on_reconnect(mock_connection)
 
@@ -7136,10 +7136,10 @@ class TestRabbitMQReconnectionCallbacks:
         mock_channel.close_callbacks = MagicMock()
         mock_connection.channel = AsyncMock(return_value=mock_channel)
 
-        bus._declare_dlq = AsyncMock()
-        bus._declare_exchange = AsyncMock()
-        bus._declare_queue = AsyncMock()
-        bus._bind_queue = AsyncMock()
+        bus._topology._declare_dlq = AsyncMock()
+        bus._topology._declare_exchange = AsyncMock()
+        bus._topology._declare_queue = AsyncMock()
+        bus._topology._bind_queue = AsyncMock()
 
         await bus._on_reconnect(mock_connection)
 
