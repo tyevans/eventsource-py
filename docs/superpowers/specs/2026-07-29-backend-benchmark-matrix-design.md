@@ -26,6 +26,26 @@ each backend reacts and scales under the same workloads.
 - Auto-generated, committed benchmark numbers in docs. Numbers land in docs by
   manual curation; the report provides evidence, the doc makes claims.
 
+## ADR Impact
+
+Reviewed against `docs/adrs/`. No ADR is amended or superseded; the harness is
+internal tooling that observes existing decisions rather than changing them.
+
+| ADR | Impact |
+|---|---|
+| 0001 async-first design | **Stands.** The harness is a native-async runner; it exists partly because pytest-benchmark's sync-callable model conflicts with this ADR's async-first reality. |
+| 0007 event bus delivery semantics | **Stands.** Fairness rules follow its explicit guidance to disable tracing (`NullTracer`) in benchmarks. |
+| 0010 uniform event bus contract | **Stands.** Bus scenarios exercise only the uniform contract, which is what makes cross-bus comparison valid. |
+| 0011 handler error isolation with no-ack | **Stands.** Fan-out scenarios use non-failing handlers; error-path behavior is out of scope. |
+| 0015 optional dependency extras | **Stands.** `bench/` is repo tooling outside the package; it adds no extras and imports optional backends only behind availability checks. |
+| 0016 optional tracing no-op by default | **Stands.** Benchmarks run with tracing off. |
+| 0017 snapshot strategy pattern | **Stands.** The end-to-end scenario consumes the strategy pattern as designed (none vs threshold). |
+| 0008, 0009 (both), 0012, 0013, 0014, 0018 | **Stands / not touched.** Mutation testing, subscription coordination, advisory locks, event-type derivation, handler registry, migration cutover, and tenant isolation are outside the harness's scope. |
+
+No new ADR is needed: the harness is internal, makes no public contract, and
+its one notable choice (standalone runner over pytest-benchmark) is recorded
+in this spec's Decision Summary.
+
 ## Decision Summary
 
 | Decision | Choice |
