@@ -513,10 +513,10 @@ class KafkaEventBus(BaseEventBus):
                 with contextlib.suppress(asyncio.CancelledError):
                     await self._consume_task
 
-        # Drain any tracked background tasks (base class bookkeeping; kept
-        # for consistency with the other backends even though Kafka's
-        # background publishes are tracked via aiokafka producer futures,
-        # not asyncio tasks).
+        # Drain any tracked background tasks. background=True publishes are
+        # scheduled via _track_background (see publish()/_publish_and_record),
+        # so this waits for outstanding background publishes before
+        # disconnecting rather than losing track of them.
         await self._drain_background(timeout or self._config.shutdown_timeout)
 
         # Disconnect
@@ -741,6 +741,33 @@ class KafkaEventBus(BaseEventBus):
             },
         )
 
+        if background:
+            # Schedule the send/ack-tracking + stats bookkeeping as a
+            # tracked background task (mirrors MemoryEventBus/RedisEventBus)
+            # so shutdown()'s _drain_background() can wait for outstanding
+            # background publishes instead of losing track of them.
+            self._track_background(self._publish_and_record(events, background, start_time))
+        else:
+            await self._publish_and_record(events, background, start_time)
+
+    async def _publish_and_record(
+        self,
+        events: list[DomainEvent],
+        background: bool,
+        start_time: float,
+    ) -> None:
+        """Hand events to the publisher, then record stats and metrics.
+
+        Split out of ``publish()`` so the background path can run this as a
+        tracked background task via ``_track_background`` while the
+        synchronous path awaits it directly.
+
+        Args:
+            events: The domain events to publish.
+            background: Whether this is a background (fire-and-forget) publish.
+            start_time: ``time.perf_counter()`` value captured at the start
+                of ``publish()``, used for the publish-duration histogram.
+        """
         # Split-phase send/ack mechanics (sequential send handoff preserving
         # per-aggregate ordering, then batched ack-await or background
         # tracking) are delegated to KafkaPublisher.
