@@ -122,23 +122,11 @@ def json_result(value: object) -> Any:
     `json_param` used to encode -- if `json_loads` is later backed by
     orjson, this call site moves with it instead of silently continuing to
     decode with stdlib.
-
-    Note: Uses sys.modules lookup to allow monkeypatching through the
-    transition re-export module at eventsource.repositories._dialect.
     """
     if value is None:
         return None
     if isinstance(value, str | bytes):
-        import sys
-
-        # Try to look up through re-export first (for test monkeypatching),
-        # fall back to local json_loads
-        repo_dialect = sys.modules.get("eventsource.repositories._dialect")
-        if repo_dialect is not None and hasattr(repo_dialect, "json_loads"):
-            loader = repo_dialect.json_loads
-        else:
-            loader = globals()["json_loads"]
-        return loader(value)
+        return json_loads(value)
     return value
 
 
@@ -150,8 +138,6 @@ def now_expr(dialect: Dialect) -> str:
 __all__ = [
     "Dialect",
     "dialect_of",
-    "json_dumps",
-    "json_loads",
     "json_param",
     "json_result",
     "now_expr",

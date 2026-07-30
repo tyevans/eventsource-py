@@ -8,8 +8,6 @@ Imports should migrate to eventsource.adapters._sql.dialect over time.
 from eventsource.adapters._sql.dialect import (
     Dialect,
     dialect_of,
-    json_dumps,
-    json_loads,
     json_param,
     json_result,
     now_expr,
@@ -22,8 +20,6 @@ from eventsource.adapters._sql.dialect import (
 __all__ = [
     "Dialect",
     "dialect_of",
-    "json_dumps",
-    "json_loads",
     "json_param",
     "json_result",
     "now_expr",
