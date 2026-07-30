@@ -17,11 +17,13 @@
 UNIT_MARKERS := not integration and not postgres and not redis and not e2e
 
 COMPOSE := docker compose -f docker-compose.test.yml
+BENCH_COMPOSE := docker compose -f docker-compose.bench.yml
 
 .DEFAULT_GOAL := help
 .PHONY: help install check lint format types arch sec audit test cov \
         integration integration-up integration-down mutation mutation-cosmic \
-        docs docs-examples precommit fix clean
+        docs docs-examples precommit fix clean \
+        bench-up bench-down bench bench-quick bench-report
 
 ## ---------------------------------------------------------------------------
 ## Everyday
@@ -58,7 +60,7 @@ format: ## Alias for `fix`
 	@$(MAKE) fix
 
 types:  ## mypy strict
-	uv run mypy src/ --config-file=pyproject.toml
+	uv run mypy src/ bench/ --config-file=pyproject.toml
 
 arch:  ## import-linter architecture contracts
 	uv run lint-imports
@@ -96,6 +98,25 @@ integration: integration-up  ## Integration suite against real Postgres/Redis
 
 mutation:  ## mutmut against the curated set (slow -- see docs/development/mutation-testing.md)
 	scripts/mutation.sh $(MODULE)
+
+## ---------------------------------------------------------------------------
+## Benchmark harness (bench/)
+## ---------------------------------------------------------------------------
+
+bench-up:  ## Start Postgres + Redis + Kafka + RabbitMQ benchmark services
+	$(BENCH_COMPOSE) up -d --wait
+
+bench-down:  ## Stop and remove the benchmark services
+	$(BENCH_COMPOSE) down -v
+
+bench:  ## Run the full benchmark matrix (services optional; unavailable backends skip)
+	uv run python -m bench run
+
+bench-quick:  ## Fast sanity pass over the matrix
+	uv run python -m bench run --quick
+
+bench-report:  ## Render a results file: make bench-report RESULTS=bench/results/bench-<ts>.json
+	uv run python -m bench report $(RESULTS)
 
 mutation-cosmic:  ## cosmic-ray for one module: make mutation-cosmic MODULE=engine
 	@test -n "$(MODULE)" || { \
