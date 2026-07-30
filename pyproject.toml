@@ -212,6 +212,10 @@ only_mutate = [
     "src/eventsource/bus/rabbitmq/consumer.py",
     "src/eventsource/bus/kafka/consumer.py",
     "src/eventsource/bus/memory.py",
+    # Core-rings surface (Task 14): entities, ports, and adapters
+    "src/eventsource/domain",
+    "src/eventsource/ports",
+    "src/eventsource/adapters",
 ]
 pytest_add_cli_args_test_selection = [
     "tests/unit/test_engine.py",
@@ -223,6 +227,9 @@ pytest_add_cli_args_test_selection = [
     "tests/unit/bus/rabbitmq/",
     "tests/unit/bus/kafka/",
     "tests/unit/bus/test_memory.py",
+    # Core-rings surface (Task 14)
+    "tests/unit/adapters/",
+    "tests/unit/test_public_api.py",
 ]
 pytest_add_cli_args = ["--no-cov", "-x", "-q", "-p", "no:randomly"]
 

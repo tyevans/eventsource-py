@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **New ports/value-object surface (`eventsource.ports`)** -- `StreamId`, `Position`, `ExpectedVersion`, `EventEnvelope`, `AppendResult`, `StreamReadOptions`, `FeedReadOptions`, `CategoryReadOptions`, `ReadDirection`, and the five composable store ports (`EventAppender`, `StreamReader`, `EventLookup`, `GlobalEventFeed`, `CategoryQuery`, composed as `FullEventStore`) plus the `collect` helper. `StreamId`, `Position`, `EventEnvelope`, `StreamReadOptions`, `FeedReadOptions`, `CategoryReadOptions`, and the five ports are re-exported from top-level `eventsource`; `ExpectedVersion`, `ReadDirection`, and `AppendResult` are not (see Changed).
+- **Three new backend adapters** implementing the ports above: `eventsource.adapters.memory.MemoryEventStore` (re-exported as `eventsource.MemoryEventStore`), `eventsource.adapters.sqlite.SQLiteEventStore`, `eventsource.adapters.postgresql.PostgreSQLEventStore`. All three expose a public `store_id` property.
+- **`eventsource.LegacyStoreAdapter`** (`eventsource.stores.legacy`) -- implements the OLD `EventStore` ABC by delegating to any adapter satisfying the new `FullEventStore` protocol, so existing call sites keep working unmodified against the new architecture.
+- **PostgreSQL global feed no-skip guarantee**: the PostgreSQL adapter's feed reader no longer risks skipping events committed out of insertion order under concurrent writers.
+- **Conformance suites for the new ports** (`eventsource.testing.conformance_ports`) -- `AppenderConformance`, `StreamReaderConformance`, `EventLookupConformance`, `GlobalFeedConformance`, `CategoryQueryConformance`, and `SnapshotConformance`, run against the memory, sqlite, and (integration) postgresql adapters.
+- New exceptions `DuplicateEventError`, `PositionDecodeError`, `PositionForeignError`, and the `IntPositionCodec` position codec are re-exported from top-level `eventsource`.
+
+### Changed
+
+- **Snapshot store implementations re-homed** into their adapters: `InMemorySnapshotStore` -> `eventsource.adapters.memory.snapshots`, `SQLiteSnapshotStore` -> `eventsource.adapters.sqlite.snapshots`, `PostgreSQLSnapshotStore` -> `eventsource.adapters.postgresql.snapshots`. The old `eventsource.snapshots.in_memory` / `.sqlite` / `.postgresql` modules are now `# TRANSITION` re-export shims; the `SnapshotStore` contract and `eventsource.snapshots` public imports are unchanged.
+- **Colliding names stay path-only.** The new `ExpectedVersion` VO, `ReadDirection` enum, and `AppendResult` VO in `eventsource.ports` share a name with existing top-level exports of a *different* class (`eventsource.stores.interface.ExpectedVersion` / `.ReadDirection` / `.AppendResult`). To avoid silently changing what an existing export name means, the new port-layer classes are **not** rebound at the top level -- import them from `eventsource.ports` explicitly. Likewise, the new adapter classes `eventsource.adapters.sqlite.SQLiteEventStore` and `eventsource.adapters.postgresql.PostgreSQLEventStore` collide with the legacy `eventsource.SQLiteEventStore` / `eventsource.PostgreSQLEventStore` and are available path-only from their adapter modules.
+
 ## [0.7.0] - 2026-07-30
 
 ### Changed

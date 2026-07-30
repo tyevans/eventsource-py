@@ -4,12 +4,13 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from eventsource.adapters.memory import MemoryEventStore
+from eventsource.adapters.memory import InMemorySnapshotStore, MemoryEventStore
 from eventsource.testing.conformance_ports import (
     AppenderConformance,
     CategoryQueryConformance,
     EventLookupConformance,
     GlobalFeedConformance,
+    SnapshotConformance,
     StreamReaderConformance,
 )
 
@@ -42,3 +43,9 @@ class TestMemoryCategoryQuery(CategoryQueryConformance):
     @pytest.fixture
     async def store(self) -> AsyncIterator[MemoryEventStore]:
         yield MemoryEventStore()
+
+
+class TestMemorySnapshotStore(SnapshotConformance):
+    @pytest.fixture
+    async def store(self) -> AsyncIterator[InMemorySnapshotStore]:
+        yield InMemorySnapshotStore()

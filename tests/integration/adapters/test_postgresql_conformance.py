@@ -17,7 +17,7 @@ from collections.abc import AsyncIterator
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 
 from ..conftest import skip_if_no_postgres_infra
 
@@ -40,12 +40,17 @@ def _make_registry():
     return registry
 
 
-from eventsource.adapters.postgresql import PostgreSQLEventStore  # noqa: E402
+from eventsource.adapters.postgresql import (  # noqa: E402
+    PostgreSQLEventStore,
+    PostgreSQLSnapshotStore,
+)
+from eventsource.migrations import get_schema  # noqa: E402
 from eventsource.testing.conformance_ports import (  # noqa: E402
     AppenderConformance,
     CategoryQueryConformance,
     EventLookupConformance,
     GlobalFeedConformance,
+    SnapshotConformance,
     StreamReaderConformance,
 )
 
@@ -112,6 +117,20 @@ class TestPostgreSQLCategoryQuery(CategoryQueryConformance):
         store = await _fresh_store(ports_postgres_connection_url)
         yield store
         await store.close()
+
+
+class TestPostgreSQLSnapshotStore(SnapshotConformance):
+    @pytest.fixture
+    async def store(
+        self, ports_postgres_connection_url: str
+    ) -> AsyncIterator[PostgreSQLSnapshotStore]:
+        engine = create_async_engine(ports_postgres_connection_url)
+        async with engine.begin() as conn:
+            await conn.execute(text("DROP TABLE IF EXISTS snapshots CASCADE"))
+            await conn.execute(text(get_schema("snapshots", "postgresql")))
+        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        yield PostgreSQLSnapshotStore(session_factory)
+        await engine.dispose()
 
 
 async def test_store_id_stable_across_restarts(ports_postgres_connection_url: str) -> None:

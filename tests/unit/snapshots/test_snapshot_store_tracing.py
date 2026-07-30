@@ -389,7 +389,7 @@ class TestSnapshotStoreStandardAttributes:
                 "grep",
                 "-c",
                 "from eventsource.observability import",
-                "src/eventsource/snapshots/in_memory.py",
+                "src/eventsource/adapters/memory/snapshots.py",
             ],
             capture_output=True,
             text=True,
@@ -404,7 +404,7 @@ class TestSnapshotStoreStandardAttributes:
         import subprocess
 
         result = subprocess.run(
-            ["grep", "-c", "ATTR_", "src/eventsource/snapshots/in_memory.py"],
+            ["grep", "-c", "ATTR_", "src/eventsource/adapters/memory/snapshots.py"],
             capture_output=True,
             text=True,
             cwd=Path(__file__).parents[3],
@@ -422,7 +422,7 @@ class TestSnapshotStoreStandardAttributes:
                 "grep",
                 "-c",
                 "from eventsource.observability import",
-                "src/eventsource/snapshots/postgresql.py",
+                "src/eventsource/adapters/postgresql/snapshots.py",
             ],
             capture_output=True,
             text=True,
@@ -437,7 +437,7 @@ class TestSnapshotStoreStandardAttributes:
         import subprocess
 
         result = subprocess.run(
-            ["grep", "-c", "ATTR_", "src/eventsource/snapshots/postgresql.py"],
+            ["grep", "-c", "ATTR_", "src/eventsource/adapters/postgresql/snapshots.py"],
             capture_output=True,
             text=True,
             cwd=Path(__file__).parents[3],
@@ -455,7 +455,7 @@ class TestSnapshotStoreStandardAttributes:
                 "grep",
                 "-c",
                 "from eventsource.observability import",
-                "src/eventsource/snapshots/sqlite.py",
+                "src/eventsource/adapters/sqlite/snapshots.py",
             ],
             capture_output=True,
             text=True,
@@ -470,7 +470,7 @@ class TestSnapshotStoreStandardAttributes:
         import subprocess
 
         result = subprocess.run(
-            ["grep", "-c", "ATTR_", "src/eventsource/snapshots/sqlite.py"],
+            ["grep", "-c", "ATTR_", "src/eventsource/adapters/sqlite/snapshots.py"],
             capture_output=True,
             text=True,
             cwd=Path(__file__).parents[3],

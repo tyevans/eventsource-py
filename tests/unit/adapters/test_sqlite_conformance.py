@@ -1,9 +1,11 @@
 """Conformance tests for SQLiteEventStore against the port suites."""
 
+import tempfile
 import threading
 import time
 from collections.abc import AsyncIterator
 
+import aiosqlite
 import pytest
 from hypothesis import settings
 
@@ -30,13 +32,15 @@ def _make_registry():
     return registry
 
 
-from eventsource.adapters.sqlite import SQLiteEventStore  # noqa: E402
+from eventsource.adapters.sqlite import SQLiteEventStore, SQLiteSnapshotStore  # noqa: E402
+from eventsource.migrations import get_schema  # noqa: E402
 from eventsource.ports import ExpectedVersion  # noqa: E402
 from eventsource.testing.conformance_ports import (  # noqa: E402
     AppenderConformance,
     CategoryQueryConformance,
     EventLookupConformance,
     GlobalFeedConformance,
+    SnapshotConformance,
     StreamReaderConformance,
 )
 from eventsource.testing.conformance_ports._fixtures import (  # noqa: E402
@@ -85,6 +89,18 @@ class TestSQLiteCategoryQuery(CategoryQueryConformance):
         store = SQLiteEventStore(":memory:", event_registry=_make_registry())
         yield store
         await store.close()
+
+
+class TestSQLiteSnapshotStore(SnapshotConformance):
+    @pytest.fixture
+    async def store(self) -> AsyncIterator[SQLiteSnapshotStore]:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = f"{tmpdir}/snapshots.db"
+            async with aiosqlite.connect(db_path) as conn:
+                schema = get_schema("snapshots", "sqlite")
+                await conn.executescript(schema)
+                await conn.commit()
+            yield SQLiteSnapshotStore(db_path)
 
 
 class SQLiteStateMachine(StoreStateMachine):
