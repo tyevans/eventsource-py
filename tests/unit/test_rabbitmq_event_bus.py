@@ -9391,7 +9391,7 @@ class TestOpenTelemetryTracing:
         bus = RabbitMQEventBus(config=config)
 
         # Mock inject to verify it gets called
-        with patch("eventsource.bus.rabbitmq.bus.inject") as mock_inject:
+        with patch("eventsource.bus.rabbitmq.serialization.inject") as mock_inject:
             mock_span = MagicMock()
             message = bus._create_message_with_tracing(event, mock_span)
 
