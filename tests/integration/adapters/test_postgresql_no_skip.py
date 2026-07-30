@@ -32,8 +32,8 @@ def _make_registry() -> EventRegistry:
     return registry
 
 
-async def _run_no_skip_scenario(postgres_connection_url: str) -> None:
-    engine = create_async_engine(postgres_connection_url)
+async def _run_no_skip_scenario(ports_postgres_connection_url: str) -> None:
+    engine = create_async_engine(ports_postgres_connection_url)
     async with engine.begin() as conn:
         await conn.execute(text("DROP TABLE IF EXISTS events CASCADE"))
 
@@ -46,7 +46,7 @@ async def _run_no_skip_scenario(postgres_connection_url: str) -> None:
     stream_a = make_stream(aggregate_id=uuid4())
     stream_b = make_stream(aggregate_id=uuid4())
 
-    writer_a_engine = create_async_engine(postgres_connection_url)
+    writer_a_engine = create_async_engine(ports_postgres_connection_url)
 
     async def writer_a() -> None:
         event = ConformanceEvent(aggregate_id=stream_a.aggregate_id, payload="a")
@@ -117,6 +117,6 @@ async def _run_no_skip_scenario(postgres_connection_url: str) -> None:
 
 
 async def test_no_skip_horizon_holds_back_uncommitted_lower_position(
-    postgres_connection_url: str,
+    ports_postgres_connection_url: str,
 ) -> None:
-    await asyncio.wait_for(_run_no_skip_scenario(postgres_connection_url), timeout=10)
+    await asyncio.wait_for(_run_no_skip_scenario(ports_postgres_connection_url), timeout=10)
