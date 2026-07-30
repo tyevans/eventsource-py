@@ -41,6 +41,7 @@ from eventsource.bus.rabbitmq import death_headers, serialization
 from eventsource.bus.rabbitmq.config import RabbitMQEventBusConfig
 from eventsource.bus.rabbitmq.connection import RabbitMQConnectionManager
 from eventsource.bus.rabbitmq.consumer import RabbitMQConsumer
+from eventsource.bus.rabbitmq.dlq import RabbitMQDLQAdmin
 from eventsource.bus.rabbitmq.models import (
     BatchPublishError,
     DLQMessage,
@@ -222,6 +223,14 @@ class RabbitMQEventBus(BaseEventBus):
             resolve_event_class=self._resolve_event_class,
             tracer=tracer_instance,
             enable_tracing=tracer_instance.enabled,
+        )
+
+        # DLQ inspection/replay/purge is owned by RabbitMQDLQAdmin.
+        self._dlq_admin = RabbitMQDLQAdmin(
+            config=self._config,
+            connection=self._connection_manager,
+            topology=self._topology,
+            stats=self._stats,
         )
 
     @property
@@ -1088,93 +1097,7 @@ class RabbitMQEventBus(BaseEventBus):
             >>> for msg in messages:
             ...     print(f"{msg.message_id}: {msg.event_type} - {msg.dlq_reason}")
         """
-        if not self._connected or not self._config.enable_dlq:
-            return []
-
-        if not self._channel:
-            self._logger.warning(
-                "Cannot get DLQ messages: channel not initialized",
-                extra={
-                    "dlq_queue": self._config.dlq_queue_name,
-                },
-            )
-            return []
-
-        messages: list[DLQMessage] = []
-
-        try:
-            # Get queue reference - declare passively to ensure it exists
-            dlq_queue = await self._channel.get_queue(
-                self._config.dlq_queue_name,
-            )
-
-            for _ in range(limit):
-                # Get message without auto-ack
-                message = await dlq_queue.get(no_ack=False)
-                if message is None:
-                    # No more messages in queue
-                    break
-
-                headers = dict(message.headers or {})
-                body = message.body.decode("utf-8")
-
-                # Extract retry count with type safety
-                dlq_retry_count_value = headers.get("x-dlq-retry-count")
-                if dlq_retry_count_value is None:
-                    dlq_retry_count = None
-                elif isinstance(dlq_retry_count_value, int):
-                    dlq_retry_count = dlq_retry_count_value
-                else:
-                    dlq_retry_count = int(str(dlq_retry_count_value))
-
-                dlq_message = DLQMessage(
-                    message_id=message.message_id,
-                    routing_key=message.routing_key,
-                    body=body,
-                    headers=headers,
-                    event_type=str(headers.get("event_type"))
-                    if headers.get("event_type")
-                    else None,
-                    dlq_reason=str(headers.get("x-dlq-reason"))
-                    if headers.get("x-dlq-reason")
-                    else None,
-                    dlq_error_type=str(headers.get("x-dlq-error-type"))
-                    if headers.get("x-dlq-error-type")
-                    else None,
-                    dlq_retry_count=dlq_retry_count,
-                    dlq_timestamp=str(headers.get("x-dlq-timestamp"))
-                    if headers.get("x-dlq-timestamp")
-                    else None,
-                    original_routing_key=str(headers.get("x-original-routing-key"))
-                    if headers.get("x-original-routing-key")
-                    else None,
-                )
-                messages.append(dlq_message)
-
-                # Reject with requeue to put message back in queue (non-destructive read)
-                await message.reject(requeue=True)
-
-            self._logger.info(
-                f"Retrieved {len(messages)} messages from DLQ",
-                extra={
-                    "dlq_queue": self._config.dlq_queue_name,
-                    "message_count": len(messages),
-                    "limit": limit,
-                },
-            )
-
-        except Exception as e:
-            self._logger.error(
-                f"Failed to get DLQ messages: {e}",
-                exc_info=True,
-                extra={
-                    "dlq_queue": self._config.dlq_queue_name,
-                    "error": str(e),
-                    "error_type": type(e).__name__,
-                },
-            )
-
-        return messages
+        return await self._dlq_admin.get_messages(limit=limit)
 
     async def get_dlq_message_count(self) -> int:
         """Get the number of messages in the dead letter queue.
@@ -1196,47 +1119,7 @@ class RabbitMQEventBus(BaseEventBus):
             >>> if count > 0:
             ...     print(f"Warning: {count} messages in DLQ")
         """
-        if not self._connected or not self._config.enable_dlq:
-            return 0
-
-        if not self._channel:
-            self._logger.warning(
-                "Cannot get DLQ count: channel not initialized",
-                extra={
-                    "dlq_queue": self._config.dlq_queue_name,
-                },
-            )
-            return 0
-
-        try:
-            # Declare queue passively to get message count
-            # This will fail if queue doesn't exist, which is fine
-            queue_info = await self._channel.declare_queue(
-                name=self._config.dlq_queue_name,
-                passive=True,
-            )
-
-            count = queue_info.declaration_result.message_count or 0
-            self._logger.debug(
-                f"DLQ message count: {count}",
-                extra={
-                    "dlq_queue": self._config.dlq_queue_name,
-                    "message_count": count,
-                },
-            )
-            return count
-
-        except Exception as e:
-            self._logger.error(
-                f"Failed to get DLQ message count: {e}",
-                exc_info=True,
-                extra={
-                    "dlq_queue": self._config.dlq_queue_name,
-                    "error": str(e),
-                    "error_type": type(e).__name__,
-                },
-            )
-            return 0
+        return await self._dlq_admin.get_message_count()
 
     async def replay_dlq_message(
         self,
@@ -1268,88 +1151,7 @@ class RabbitMQEventBus(BaseEventBus):
             >>> if success:
             ...     print("Message replayed successfully")
         """
-        if not self._connected or not self._exchange:
-            self._logger.warning(
-                "Cannot replay DLQ message: not connected or exchange not initialized",
-                extra={
-                    "message_id": message_id,
-                    "dlq_queue": self._config.dlq_queue_name,
-                    "is_connected": self._connected,
-                    "exchange_initialized": self._exchange is not None,
-                },
-            )
-            return False
-
-        if not self._channel or not self._config.enable_dlq:
-            self._logger.warning(
-                "Cannot replay DLQ message: channel not initialized or DLQ disabled",
-                extra={
-                    "message_id": message_id,
-                    "dlq_queue": self._config.dlq_queue_name,
-                    "dlq_enabled": self._config.enable_dlq,
-                    "channel_initialized": self._channel is not None,
-                },
-            )
-            return False
-
-        try:
-            dlq_queue = await self._channel.get_queue(
-                self._config.dlq_queue_name,
-            )
-
-            # Search for the message (with iteration limit to prevent infinite loops)
-            max_search = 1000
-            found = False
-
-            for _ in range(max_search):
-                message = await dlq_queue.get(no_ack=False)
-                if message is None:
-                    # Reached end of queue
-                    break
-
-                if message.message_id == message_id:
-                    # Found the message - replay it
-                    await self._replay_message(message)
-                    await message.ack()  # Remove from DLQ
-                    found = True
-
-                    self._logger.info(
-                        f"Replayed DLQ message: {message_id}",
-                        extra={
-                            "message_id": message_id,
-                            "event_type": (message.headers or {}).get("event_type"),
-                            "dlq_queue": self._config.dlq_queue_name,
-                        },
-                    )
-                    break
-                else:
-                    # Not the message we want - put back in queue
-                    await message.reject(requeue=True)
-
-            if not found:
-                self._logger.warning(
-                    f"DLQ message not found for replay: {message_id}",
-                    extra={
-                        "message_id": message_id,
-                        "dlq_queue": self._config.dlq_queue_name,
-                        "max_search": max_search,
-                    },
-                )
-
-            return found
-
-        except Exception as e:
-            self._logger.error(
-                f"Failed to replay DLQ message {message_id}: {e}",
-                exc_info=True,
-                extra={
-                    "message_id": message_id,
-                    "dlq_queue": self._config.dlq_queue_name,
-                    "error": str(e),
-                    "error_type": type(e).__name__,
-                },
-            )
-            return False
+        return await self._dlq_admin.replay_message(message_id)
 
     async def _replay_message(
         self,
@@ -1378,55 +1180,7 @@ class RabbitMQEventBus(BaseEventBus):
         Raises:
             RuntimeError: If exchange is not initialized
         """
-        if not self._exchange:
-            raise RuntimeError("Exchange not initialized")
-
-        # Copy headers and remove DLQ-specific ones
-        headers = dict(message.headers or {})
-        dlq_headers_to_remove = [
-            "x-dlq-reason",
-            "x-dlq-error-type",
-            "x-dlq-retry-count",
-            "x-dlq-timestamp",
-            "x-original-routing-key",
-            "x-death",  # RabbitMQ's built-in death header
-        ]
-        for key in dlq_headers_to_remove:
-            headers.pop(key, None)
-
-        # Reset retry count and add replay marker
-        headers["x-retry-count"] = 0
-        headers["x-replayed-from-dlq"] = datetime.now(UTC).isoformat()
-
-        # Get original routing key (from our custom header or message routing key)
-        original_headers = message.headers or {}
-        original_routing_key = original_headers.get(
-            "x-original-routing-key", message.routing_key or ""
-        )
-
-        # Create replay message
-        replay_message = Message(
-            body=message.body,
-            content_type=message.content_type,
-            content_encoding=message.content_encoding,
-            delivery_mode=DeliveryMode.PERSISTENT,
-            message_id=message.message_id,
-            headers=headers,
-        )
-
-        await self._exchange.publish(
-            replay_message,
-            routing_key=str(original_routing_key),
-        )
-
-        self._logger.debug(
-            "Republished message to exchange",
-            extra={
-                "message_id": message.message_id,
-                "routing_key": original_routing_key,
-                "exchange": self._config.exchange_name,
-            },
-        )
+        await self._dlq_admin._replay_message(message)
 
     async def purge_dlq(self) -> int:
         """Remove all messages from the dead letter queue.
@@ -1449,49 +1203,7 @@ class RabbitMQEventBus(BaseEventBus):
             >>> count = await bus.purge_dlq()
             >>> print(f"Purged {count} messages from DLQ")
         """
-        if not self._connected or not self._config.enable_dlq:
-            return 0
-
-        if not self._channel:
-            self._logger.warning(
-                "Cannot purge DLQ: channel not initialized",
-                extra={
-                    "dlq_queue": self._config.dlq_queue_name,
-                },
-            )
-            return 0
-
-        try:
-            # Get queue reference
-            dlq_queue = await self._channel.get_queue(
-                self._config.dlq_queue_name,
-            )
-
-            # Purge the queue - purge() returns PurgeOk with message_count attribute
-            purge_result = await dlq_queue.purge()
-            purged_count = purge_result.message_count or 0
-
-            self._logger.info(
-                f"Purged {purged_count} messages from DLQ",
-                extra={
-                    "dlq_queue": self._config.dlq_queue_name,
-                    "purged_count": purged_count,
-                },
-            )
-
-            return purged_count
-
-        except Exception as e:
-            self._logger.error(
-                f"Failed to purge DLQ: {e}",
-                exc_info=True,
-                extra={
-                    "dlq_queue": self._config.dlq_queue_name,
-                    "error": str(e),
-                    "error_type": type(e).__name__,
-                },
-            )
-            return 0
+        return await self._dlq_admin.purge()
 
     # =========================================================================
     # Graceful Shutdown Methods (P2-005)
