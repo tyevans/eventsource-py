@@ -24,11 +24,12 @@ Example:
     >>> strategy = create_snapshot_strategy("background", threshold=100)
 """
 
-import asyncio
 import logging
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
+
+from eventsource._internal.background_tasks import BackgroundTaskManager
 
 if TYPE_CHECKING:
     from eventsource.aggregates.base import AggregateRoot
@@ -262,7 +263,7 @@ class BackgroundSnapshotStrategy(BaseSnapshotStrategy):
             threshold: Number of events between snapshots
         """
         super().__init__(threshold)
-        self._pending_tasks: list[asyncio.Task[None]] = []
+        self._tasks = BackgroundTaskManager()
 
     async def execute_snapshot(
         self,
@@ -281,11 +282,9 @@ class BackgroundSnapshotStrategy(BaseSnapshotStrategy):
         Returns:
             None (snapshot is created asynchronously)
         """
-        task = asyncio.create_task(
+        self._tasks.submit(
             self._create_snapshot_background(aggregate, snapshot_store, aggregate_type)
         )
-        self._pending_tasks.append(task)
-        self._cleanup_completed_tasks()
         return None
 
     async def _create_snapshot_background(
@@ -319,15 +318,10 @@ class BackgroundSnapshotStrategy(BaseSnapshotStrategy):
                 exc_info=True,
             )
 
-    def _cleanup_completed_tasks(self) -> None:
-        """Remove completed tasks from the pending list."""
-        self._pending_tasks = [task for task in self._pending_tasks if not task.done()]
-
     @property
     def pending_count(self) -> int:
         """Get the number of pending background tasks."""
-        self._cleanup_completed_tasks()
-        return len(self._pending_tasks)
+        return self._tasks.pending_count
 
     async def await_pending(self) -> int:
         """
@@ -338,28 +332,7 @@ class BackgroundSnapshotStrategy(BaseSnapshotStrategy):
         Returns:
             Number of tasks that were awaited
         """
-        if not self._pending_tasks:
-            return 0
-
-        count = len(self._pending_tasks)
-
-        # Wait for all tasks
-        results = await asyncio.gather(
-            *self._pending_tasks,
-            return_exceptions=True,
-        )
-
-        # Log any unexpected exceptions
-        for result in results:
-            if isinstance(result, Exception):
-                logger.error(
-                    "Unexpected error in background snapshot task: %s",
-                    result,
-                    exc_info=result,
-                )
-
-        self._pending_tasks.clear()
-        return count
+        return await self._tasks.await_all()
 
 
 class NoSnapshotStrategy(BaseSnapshotStrategy):

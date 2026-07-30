@@ -13,6 +13,7 @@ import logging
 from collections.abc import Coroutine
 from typing import Any
 
+from eventsource._internal.background_tasks import BackgroundTaskManager
 from eventsource.bus.interface import EventBus, EventHandlerFunc
 from eventsource.bus.registry import SubscriptionRegistry
 from eventsource.events.base import DomainEvent
@@ -43,7 +44,7 @@ class BaseEventBus(EventBus):
         """
         self._registry = SubscriptionRegistry()
         self._event_registry = event_registry
-        self._background_tasks: set[asyncio.Task[None]] = set()
+        self._tasks = BackgroundTaskManager()
 
     # =========================================================================
     # Subscription management
@@ -150,23 +151,28 @@ class BaseEventBus(EventBus):
         Returns:
             The created task.
         """
-        task = asyncio.create_task(coro)
-        self._background_tasks.add(task)
-        task.add_done_callback(self._on_background_task_done)
-        return task
+        return self._tasks.submit(coro, on_done=self._on_background_task_done)
 
     def _on_background_task_done(self, task: asyncio.Task[None]) -> None:
-        """Discard a finished task and log any unexpected failure."""
-        self._background_tasks.discard(task)
+        """Log any unexpected failure.
+
+        Discarding from tracking is handled by the underlying
+        BackgroundTaskManager.
+        """
         if task.cancelled():
             return
         exc = task.exception()
         if exc is not None:
             logger.error(f"Background task failed: {exc}", exc_info=exc)
 
+    @property
+    def _background_tasks(self) -> set[asyncio.Task[None]]:
+        """In-flight background tasks. Exposed for introspection/tests."""
+        return self._tasks.tasks
+
     def get_background_task_count(self) -> int:
         """Number of background tasks currently in flight."""
-        return len(self._background_tasks)
+        return self._tasks.pending_count
 
     async def _drain_background(self, timeout: float = 30.0) -> None:
         """Wait for background tasks to finish, cancelling any stragglers.
@@ -174,7 +180,7 @@ class BaseEventBus(EventBus):
         Args:
             timeout: Seconds to wait before cancelling remaining tasks.
         """
-        pending = list(self._background_tasks)
+        pending = list(self._tasks.tasks)
         if not pending:
             return
 

@@ -14,7 +14,6 @@ Aggregate pattern implementations. Aggregates are the consistency boundaries in 
 - `base.py` -- `AggregateRoot`, `DeclarativeAggregate`, core aggregate logic
 - `repository.py` -- `AggregateRepository` for persistence operations
 - `snapshot_manager.py` -- `SnapshotManager` for snapshot optimization
-- `task_manager.py` -- `TaskManager` for async task coordination
 
 ## Invariants
 
