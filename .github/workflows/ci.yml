@@ -155,6 +155,41 @@ jobs:
           path: coverage.xml
           retention-days: 7
 
+  # Redis bus tests. Runs on every PR, unlike the broader `integration` job
+  # below, so the shipped `redis` extra's supported range stays verified
+  # against a real server instead of only on pushes to main.
+  redis:
+    runs-on: ubuntu-latest
+
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.11'
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --all-extras --locked
+
+      - name: Run redis tests
+        env:
+          REDIS_URL: redis://localhost:6379
+        run: uv run pytest -m redis
+
   # Integration tests (optional, requires services)
   integration:
     runs-on: ubuntu-latest
