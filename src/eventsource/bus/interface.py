@@ -135,10 +135,14 @@ class EventBus(ABC):
                        skips the publisher confirm. In every case the event is
                        still delivered.
 
-                       Handler errors during delivery are isolated per handler
-                       and aggregated into ``HandlerDispatchError`` on the
-                       consume path, so a failing handler neither starves its
-                       peers nor acknowledges the message.
+                       Handler errors during delivery are always isolated per
+                       handler -- a failing handler never starves its peers.
+                       On broker consume paths (Redis, RabbitMQ, Kafka),
+                       errors are additionally aggregated into
+                       ``HandlerDispatchError`` and the message's ack is
+                       withheld so the broker redelivers it. InMemory has no
+                       broker to redeliver from, so its handler errors are
+                       logged rather than raised.
 
         Raises:
             Exception: If publishing fails critically (only in synchronous mode)

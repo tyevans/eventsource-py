@@ -53,10 +53,12 @@ async def test_max_events_bounds_memory() -> None:
     """The unbounded list on InMemoryEventBus leaked in long-lived processes."""
     bus = RecordingEventBus(InMemoryEventBus(), max_events=3)
 
-    for _ in range(10):
-        await bus.publish([RecordedEvent(aggregate_id=uuid4())])
+    events = [RecordedEvent(aggregate_id=uuid4()) for _ in range(10)]
+    for event in events:
+        await bus.publish([event])
 
-    assert len(bus.published_events) == 3
+    retained_ids = [e.event_id for e in bus.published_events]
+    assert retained_ids == [e.event_id for e in events[-3:]]
 
 
 async def test_max_events_none_means_unbounded() -> None:
@@ -78,3 +80,43 @@ async def test_in_memory_published_events_warns_but_still_works() -> None:
 
     assert len(events) == 1
     assert any(issubclass(w.category, DeprecationWarning) for w in caught)
+
+
+async def test_clear_subscribers_delegates_to_wrapped_bus() -> None:
+    inner = InMemoryEventBus()
+    bus = RecordingEventBus(inner)
+
+    async def handler(event: DomainEvent) -> None:
+        pass
+
+    bus.subscribe(RecordedEvent, handler)
+    assert bus.get_subscriber_count(RecordedEvent) == 1
+
+    bus.clear_subscribers()
+
+    assert bus.get_subscriber_count(RecordedEvent) == 0
+
+
+async def test_get_subscriber_count_delegates_to_wrapped_bus() -> None:
+    inner = InMemoryEventBus()
+    bus = RecordingEventBus(inner)
+
+    async def handler(event: DomainEvent) -> None:
+        pass
+
+    assert bus.get_subscriber_count() == 0
+    bus.subscribe(RecordedEvent, handler)
+    assert bus.get_subscriber_count() == 1
+    assert bus.get_subscriber_count(RecordedEvent) == 1
+
+
+async def test_get_wildcard_subscriber_count_delegates_to_wrapped_bus() -> None:
+    inner = InMemoryEventBus()
+    bus = RecordingEventBus(inner)
+
+    async def handler(event: DomainEvent) -> None:
+        pass
+
+    assert bus.get_wildcard_subscriber_count() == 0
+    bus.subscribe_to_all_events(handler)
+    assert bus.get_wildcard_subscriber_count() == 1

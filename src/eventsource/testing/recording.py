@@ -55,6 +55,14 @@ class RecordingEventBus(EventBus):
         events: list[DomainEvent],
         background: bool = False,
     ) -> None:
+        """Record then delegate.
+
+        Events are appended to ``published_events`` before delegating to the
+        wrapped bus, so a publish that later fails (raises, or -- in
+        ``background=True`` mode -- fails asynchronously) still shows up in
+        ``published_events``. This is deliberate: tests observing "what was
+        published" should see it even when delivery itself failed.
+        """
         with self._lock:
             self._published.extend(events)
         await self._wrapped.publish(events, background=background)
@@ -87,6 +95,18 @@ class RecordingEventBus(EventBus):
         handler: FlexibleEventHandler | EventHandlerFunc,
     ) -> bool:
         return self._wrapped.unsubscribe_from_all_events(handler)
+
+    def clear_subscribers(self) -> None:
+        """Delegate to the wrapped bus. Requires a bus providing this method."""
+        self._wrapped.clear_subscribers()  # type: ignore[attr-defined]
+
+    def get_subscriber_count(self, event_type: type[DomainEvent] | None = None) -> int:
+        """Delegate to the wrapped bus. Requires a bus providing this method."""
+        return self._wrapped.get_subscriber_count(event_type)  # type: ignore[attr-defined, no-any-return]
+
+    def get_wildcard_subscriber_count(self) -> int:
+        """Delegate to the wrapped bus. Requires a bus providing this method."""
+        return self._wrapped.get_wildcard_subscriber_count()  # type: ignore[attr-defined, no-any-return]
 
 
 __all__ = ["RecordingEventBus"]

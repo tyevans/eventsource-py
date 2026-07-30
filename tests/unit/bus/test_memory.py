@@ -6,6 +6,7 @@ added to InMemoryEventBus for testing purposes.
 """
 
 import threading
+import warnings
 from uuid import uuid4
 
 import pytest
@@ -291,3 +292,28 @@ class TestPublishedEventsWithBackgroundPublishing:
 
         assert len(bus.published_events) == 1
         assert bus.published_events[0] == sample_event
+
+
+# =============================================================================
+# Test Bounded Published Events Store
+# =============================================================================
+
+
+class TestPublishedEventsBounded:
+    """The deprecated published_events store must not grow unbounded."""
+
+    @pytest.mark.asyncio
+    async def test_published_events_bounded_at_10_000(self) -> None:
+        bus = InMemoryEventBus()
+        events = [SampleEvent(aggregate_id=uuid4()) for _ in range(10_001)]
+        for event in events:
+            await bus.publish([event])
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            retained = bus.published_events
+
+        assert len(retained) == 10_000
+        retained_ids = {e.event_id for e in retained}
+        assert events[0].event_id not in retained_ids
+        assert events[-1].event_id in retained_ids

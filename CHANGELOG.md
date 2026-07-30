@@ -15,11 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`eventsource.bus.registry.SubscriptionRegistry`** - Thread-safe registry of event handlers keyed by event class, with a cached specific-then-wildcard handler tuple per event type so dispatch allocates nothing per event. Used internally by all four bus backends, replacing four independent (and inconsistent) implementations.
 - **`eventsource.bus.retry.RetryPolicy`** - Shared retry/backoff policy with symmetric jitter, used by the broker-backed buses for consume-side redelivery and publish retries.
 - **`eventsource.testing.RecordingEventBus`** - Purpose-built in-memory bus for tests that need to assert on published events, replacing the ad hoc `InMemoryEventBus.published_events` / `clear_published_events` attributes.
-- **`eventsource.bus.HandlerDispatchError`** - New public exception. Broker consume paths (Kafka, RabbitMQ, Redis) now run every registered handler for a delivered event, aggregate any failures into a `HandlerDispatchError`, and withhold the ack so the broker redelivers -- instead of aborting on the first handler failure and silently dropping the rest.
-- CI now runs the Kafka and RabbitMQ integration suites in a blocking `broker-tests` job, backed by real broker services in CI.
+- **`eventsource.HandlerDispatchError`** - New public exception. Broker consume paths (Kafka, RabbitMQ, Redis) now run every registered handler for a delivered event, aggregate any failures into a `HandlerDispatchError`, and withhold the ack so the broker redelivers -- instead of aborting on the first handler failure and silently dropping the rest.
+- CI now runs the Kafka and RabbitMQ integration suites, run against real brokers via testcontainers in a blocking CI job.
 - ADR 0010 and ADR 0011, documenting the event bus contract decisions behind this release (shared base/registry/retry, uniform handler-error isolation, broker CI).
 
 ### Changed
+
+- **`EventBusConformanceSuite` gained a new abstract method `create_subscriber`** (and an overridable `await_delivery` hook). Existing third-party subclasses of the conformance suite must implement `create_subscriber` to keep passing on upgrade.
 
 - **`RedisEventBus.publish` now honors `background=True`.** Previously the parameter was accepted but silently ignored for Redis (documented as "Ignored for Redis"); background publishes are now genuinely fire-and-forget, matching the other backends.
 - **Uniform handler-error isolation across all backends.** Every registered handler now runs for each delivered event, regardless of whether an earlier handler raised. Previously Redis and RabbitMQ aborted dispatch on the first handler failure, silently skipping any handlers registered after it.

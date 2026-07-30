@@ -11,6 +11,7 @@ import asyncio
 import logging
 import threading
 import warnings
+from collections import deque
 
 from eventsource.bus.base import BaseEventBus
 from eventsource.events.base import DomainEvent
@@ -83,7 +84,7 @@ class InMemoryEventBus(BaseEventBus):
 
         # Track published events for testing purposes.
         # Deprecated -- see RecordingEventBus. Removed in a later task.
-        self._published_events: list[DomainEvent] = []
+        self._published_events: deque[DomainEvent] = deque(maxlen=10_000)
         self._published_lock = threading.RLock()
 
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
@@ -106,8 +107,9 @@ class InMemoryEventBus(BaseEventBus):
 
         Deprecated:
             Use ``RecordingEventBus`` from ``eventsource.testing`` instead.
-            This list is unbounded and leaks in long-lived processes. It will
-            be removed in a future release.
+            This list is now bounded to the newest 10,000 events (oldest are
+            dropped past that). ``RecordingEventBus`` remains the intended
+            replacement and will be removed in a future release.
 
         Example:
             >>> bus = InMemoryEventBus()
