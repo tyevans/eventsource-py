@@ -333,6 +333,51 @@ class RabbitMQConnectionManager:
 
         self._connected = False
 
+    def health_slice(self) -> dict[str, Any]:
+        """Connection/channel health used by ``RabbitMQEventBus.health_check()``.
+
+        Mirrors the connection- and channel-status checks that used to be
+        inline in the facade's ``health_check`` body. Returns a dict rather
+        than a dataclass so the facade can freely merge it with the
+        queue/DLQ slices without introducing another public model type.
+
+        Returns:
+            Dict with ``healthy`` (bool), ``connection_status`` (str),
+            ``channel_status`` (str), and ``errors`` (list[str]) -- the
+            error messages contributed by this slice, in check order.
+        """
+        healthy = True
+        errors: list[str] = []
+
+        if not self._connection:
+            connection_status = "disconnected"
+            healthy = False
+            errors.append("Not connected to RabbitMQ")
+        elif self._connection.is_closed:
+            connection_status = "closed"
+            healthy = False
+            errors.append("RabbitMQ connection is closed")
+        else:
+            connection_status = "connected"
+
+        if not self._channel:
+            channel_status = "not_initialized"
+            healthy = False
+            errors.append("Channel not initialized")
+        elif self._channel.is_closed:
+            channel_status = "closed"
+            healthy = False
+            errors.append("AMQP channel is closed")
+        else:
+            channel_status = "open"
+
+        return {
+            "healthy": healthy,
+            "connection_status": connection_status,
+            "channel_status": channel_status,
+            "errors": errors,
+        }
+
     def _sanitize_url(self, url: str) -> str:
         """Remove credentials from URL for logging.
 

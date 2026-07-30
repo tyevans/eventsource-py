@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from eventsource.bus.rabbitmq import serialization
 from eventsource.bus.rabbitmq.config import RabbitMQEventBusConfig
+from eventsource.bus.rabbitmq.models import QueueInfo
 from eventsource.events.base import DomainEvent
 
 if TYPE_CHECKING:
@@ -94,6 +95,68 @@ class RabbitMQTopology:
     async def redeclare(self) -> None:
         """Reconnect path: re-declare everything (current ``_on_reconnect`` behavior)."""
         await self.declare_all()
+
+    async def queue_health(self, queue_name: str) -> QueueInfo | None:
+        """Passively query a queue's message/consumer counts.
+
+        Used by both the facade's public ``get_queue_info()`` (for the
+        consumer queue) and its ``health_check()`` (for the consumer queue
+        and, separately, the DLQ queue). Uses passive declaration, so it
+        never creates or modifies the queue.
+
+        Args:
+            queue_name: Name of the queue to query.
+
+        Returns:
+            ``QueueInfo`` with ``state`` "running"/"idle" on success, or
+            ``state="error"`` with ``error`` set if the passive declare
+            raises. Returns ``None`` only if there is no live channel to
+            query with (caller decides what that means -- e.g. "not
+            connected" vs. "not initialized").
+        """
+        channel = self._connection.channel
+        if channel is None or channel.is_closed:
+            return None
+
+        try:
+            declared = await channel.declare_queue(name=queue_name, passive=True)
+            message_count = declared.declaration_result.message_count or 0
+            consumer_count = declared.declaration_result.consumer_count or 0
+            state = "running" if consumer_count > 0 else "idle"
+
+            self._logger.debug(
+                f"Queue info retrieved: {queue_name}",
+                extra={
+                    "queue_name": queue_name,
+                    "message_count": message_count,
+                    "consumer_count": consumer_count,
+                    "state": state,
+                },
+            )
+
+            return QueueInfo(
+                name=queue_name,
+                message_count=message_count,
+                consumer_count=consumer_count,
+                state=state,
+            )
+        except Exception as e:
+            self._logger.error(
+                f"Failed to get queue info: {e}",
+                exc_info=True,
+                extra={
+                    "queue_name": queue_name,
+                    "error": str(e),
+                    "error_type": type(e).__name__,
+                },
+            )
+            return QueueInfo(
+                name=queue_name,
+                message_count=0,
+                consumer_count=0,
+                state="error",
+                error=str(e),
+            )
 
     # =========================================================================
     # Exchange and Queue Declaration Methods (moved from bus.py P1-006)

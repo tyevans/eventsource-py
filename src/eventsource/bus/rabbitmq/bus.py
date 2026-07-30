@@ -1364,55 +1364,18 @@ class RabbitMQEventBus(BaseEventBus):
                 error="Not connected to RabbitMQ",
             )
 
-        try:
-            # Use passive declaration to get queue info without modifying it
-            queue_info = await self._channel.declare_queue(
-                name=self._config.queue_name,
-                passive=True,
-            )
-
-            # Extract message and consumer counts from declaration result
-            message_count = queue_info.declaration_result.message_count or 0
-            consumer_count = queue_info.declaration_result.consumer_count or 0
-
-            # Determine queue state based on consumer count
-            state = "running" if consumer_count > 0 else "idle"
-
-            self._logger.debug(
-                f"Queue info retrieved: {self._config.queue_name}",
-                extra={
-                    "queue_name": self._config.queue_name,
-                    "message_count": message_count,
-                    "consumer_count": consumer_count,
-                    "state": state,
-                },
-            )
-
-            return QueueInfo(
-                name=self._config.queue_name,
-                message_count=message_count,
-                consumer_count=consumer_count,
-                state=state,
-            )
-
-        except Exception as e:
-            self._logger.error(
-                f"Failed to get queue info: {e}",
-                exc_info=True,
-                extra={
-                    "queue_name": self._config.queue_name,
-                    "error": str(e),
-                    "error_type": type(e).__name__,
-                },
-            )
-
+        # Delegate the passive-declare check to RabbitMQTopology.
+        queue_info = await self._topology.queue_health(self._config.queue_name)
+        if queue_info is None:
+            # No live channel to query -- same "not connected" shape as above.
             return QueueInfo(
                 name=self._config.queue_name,
                 message_count=0,
                 consumer_count=0,
                 state="error",
-                error=str(e),
+                error="Not connected to RabbitMQ",
             )
+        return queue_info
 
     async def health_check(self) -> HealthCheckResult:
         """Perform a comprehensive health check of the event bus.
@@ -1444,47 +1407,23 @@ class RabbitMQEventBus(BaseEventBus):
             ...     print(f"Unhealthy: {result.error}")
             ...     print(f"Details: {result.details}")
         """
-        healthy = True
-        error_messages: list[str] = []
+        # Connection/channel checks are owned by RabbitMQConnectionManager.
+        connection_slice = self._connection_manager.health_slice()
+        healthy = bool(connection_slice["healthy"])
+        error_messages: list[str] = list(connection_slice["errors"])
+        connection_status = connection_slice["connection_status"]
+        channel_status = connection_slice["channel_status"]
 
-        # Check connection status
-        if not self._connection:
-            connection_status = "disconnected"
-            healthy = False
-            error_messages.append("Not connected to RabbitMQ")
-        elif self._connection.is_closed:
-            connection_status = "closed"
-            healthy = False
-            error_messages.append("RabbitMQ connection is closed")
-        else:
-            connection_status = "connected"
-
-        # Check channel status
-        if not self._channel:
-            channel_status = "not_initialized"
-            healthy = False
-            error_messages.append("Channel not initialized")
-        elif self._channel.is_closed:
-            channel_status = "closed"
-            healthy = False
-            error_messages.append("AMQP channel is closed")
-        else:
-            channel_status = "open"
-
-        # Check consumer queue accessibility
+        # Check consumer queue accessibility (passive declare owned by RabbitMQTopology)
         queue_status = "not_initialized"
         if self._consumer_queue and self._channel and not self._channel.is_closed:
-            try:
-                # Use passive declaration to check queue accessibility
-                await self._channel.declare_queue(
-                    name=self._config.queue_name,
-                    passive=True,
-                )
-                queue_status = "accessible"
-            except Exception as e:
-                queue_status = f"error: {e}"
+            queue_info = await self._topology.queue_health(self._config.queue_name)
+            if queue_info is not None and queue_info.state == "error":
+                queue_status = f"error: {queue_info.error}"
                 healthy = False
-                error_messages.append(f"Queue check failed: {e}")
+                error_messages.append(f"Queue check failed: {queue_info.error}")
+            else:
+                queue_status = "accessible"
         elif not self._consumer_queue:
             queue_status = "not_initialized"
             # Don't mark as unhealthy if we simply haven't connected yet
@@ -1492,24 +1431,21 @@ class RabbitMQEventBus(BaseEventBus):
                 healthy = False
                 error_messages.append("Consumer queue not initialized")
 
-        # Check DLQ status if enabled
+        # Check DLQ status if enabled (passive declare owned by RabbitMQTopology)
         dlq_status: str | None = None
         if self._config.enable_dlq:
             if self._channel and not self._channel.is_closed:
-                try:
-                    await self._channel.declare_queue(
-                        name=self._config.dlq_queue_name,
-                        passive=True,
-                    )
-                    dlq_status = "accessible"
-                except Exception as e:
-                    dlq_status = f"error: {e}"
+                dlq_info = await self._topology.queue_health(self._config.dlq_queue_name)
+                if dlq_info is not None and dlq_info.state == "error":
+                    dlq_status = f"error: {dlq_info.error}"
                     # DLQ errors don't make the overall bus unhealthy
                     # but we log them
                     self._logger.warning(
-                        f"DLQ health check failed: {e}",
+                        f"DLQ health check failed: {dlq_info.error}",
                         extra={"dlq_queue": self._config.dlq_queue_name},
                     )
+                else:
+                    dlq_status = "accessible"
             else:
                 dlq_status = "inaccessible"
         else:

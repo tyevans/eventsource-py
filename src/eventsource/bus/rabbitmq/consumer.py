@@ -235,6 +235,14 @@ class RabbitMQConsumer:
         Intended as a reconnect hook. Reads the ``_was_consuming`` flag the
         connection manager sets from its close callbacks, clears it, and
         restarts the consume loop in the background.
+
+        Note:
+            Not currently registered via ``RabbitMQConnectionManager.on_reconnect``
+            -- the facade only wires ``RabbitMQTopology.redeclare``. This
+            matches the original (pre-decomposition) behavior, which never
+            resumed consuming automatically after a reconnect. Registering
+            this method would change that behavior and needs an explicit
+            decision, not a silent side effect of refactoring.
         """
         if not self._connection._was_consuming:
             return
