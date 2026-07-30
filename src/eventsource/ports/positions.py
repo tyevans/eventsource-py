@@ -67,3 +67,33 @@ class Position:
         except (json.JSONDecodeError, TypeError, KeyError) as exc:
             raise PositionDecodeError(f"not a position: {raw!r}") from exc
         return cls(store_id=store_id, key=tuple(key))
+
+
+@dataclass(frozen=True, slots=True)
+class ExpectedVersion:
+    """Optimistic-concurrency expectation for append.
+
+    Versions are 1-based event counts; an absent stream has version 0.
+    ``exact(n)`` means "the stream currently has exactly n events".
+    """
+
+    kind: str
+    version: int | None = None
+
+    @classmethod
+    def any_(cls) -> "ExpectedVersion":
+        return cls(kind="any")
+
+    @classmethod
+    def no_stream(cls) -> "ExpectedVersion":
+        return cls(kind="no_stream")
+
+    @classmethod
+    def stream_exists(cls) -> "ExpectedVersion":
+        return cls(kind="stream_exists")
+
+    @classmethod
+    def exact(cls, version: int) -> "ExpectedVersion":
+        if version < 0:
+            raise ValueError(f"exact version must be >= 0, got {version}")
+        return cls(kind="exact", version=version)
