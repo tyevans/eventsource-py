@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Kafka retry jitter is now symmetric.** Previously jitter was one-sided positive, which meant effective backoff could exceed `retry_max_delay`. Jitter is now applied symmetrically, so backoff never exceeds the configured maximum.
 - **Kafka publishes are now batched** rather than awaiting one broker round-trip per event, improving publish throughput for multi-event batches.
 - **Kafka handler dispatch is now keyed by event class** rather than by class name. Previously, an event class whose `event_type` field differed from its class name would silently fail to reach its handlers; dispatch now resolves handlers the same way as the other backends.
+- **Kafka background publishes no longer crash.** A misuse of aiokafka's `Future` API in the background-publish path is fixed.
 - Subscription management (subscribe/unsubscribe/wildcard/clear/count) is now genuinely thread-safe in all four backends, via the shared `SubscriptionRegistry`.
 
 ### Deprecated
