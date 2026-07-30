@@ -32,7 +32,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import re
 import ssl
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -40,6 +39,7 @@ from typing import TYPE_CHECKING, Any
 from eventsource.bus.base import BaseEventBus
 from eventsource.bus.rabbitmq import death_headers, serialization
 from eventsource.bus.rabbitmq.config import RabbitMQEventBusConfig
+from eventsource.bus.rabbitmq.connection import RabbitMQConnectionManager
 from eventsource.bus.rabbitmq.models import (
     BatchPublishError,
     DLQMessage,
@@ -174,10 +174,7 @@ class RabbitMQEventBus(BaseEventBus):
 
         self._config = config or RabbitMQEventBusConfig()
 
-        # Connection state
-        self._connection: AbstractRobustConnection | None = None
-        self._channel: AbstractRobustChannel | None = None
-        self._connected = False
+        # Consumer state (not yet extracted -- see Tasks 5/7)
         self._consuming = False
 
         # Exchange and queue references (set in P1-006)
@@ -186,10 +183,29 @@ class RabbitMQEventBus(BaseEventBus):
         self._consumer_queue: AbstractQueue | None = None
         self._dlq_queue: AbstractQueue | None = None
 
-        self._lock = asyncio.Lock()
-
         # Statistics
         self._stats = RabbitMQEventBusStats()
+
+        # Connection lifecycle (connection/channel/connect-lock/reconnect
+        # and close callbacks) is owned by RabbitMQConnectionManager.
+        self._connection_manager = RabbitMQConnectionManager(config=self._config, stats=self._stats)
+        self._connection_manager._is_consuming = lambda: self._consuming
+
+        # Temporary reconnect callbacks: topology redeclare and consumer
+        # (queue) resume still live on the facade until Tasks 5/7 extract
+        # them into dedicated topology/consumer collaborators. These get
+        # swapped to point at the new collaborators' methods then.
+        async def _redeclare_topology() -> None:
+            if self._config.enable_dlq:
+                await self._declare_dlq()
+            await self._declare_exchange()
+
+        async def _resume_consumer_topology() -> None:
+            await self._declare_queue()
+            await self._bind_queue()
+
+        self._connection_manager.on_reconnect(_redeclare_topology)
+        self._connection_manager.on_reconnect(_resume_consumer_topology)
 
         self._retry_policy = RetryPolicy(
             base_delay=self._config.retry_base_delay,
@@ -200,10 +216,6 @@ class RabbitMQEventBus(BaseEventBus):
 
         # Background tasks
         self._consumer_task: asyncio.Task[None] | None = None
-
-        # Reconnection state tracking
-        self._was_consuming: bool = False
-        self._reconnecting: bool = False
 
         # Shutdown state tracking
         self._shutdown_initiated: bool = False
@@ -226,7 +238,58 @@ class RabbitMQEventBus(BaseEventBus):
 
         Returns True only if the connection is established and not closed.
         """
-        return self._connected and self._connection is not None and not self._connection.is_closed
+        return self._connection_manager.is_connected
+
+    # -------------------------------------------------------------------
+    # Backward-compatible internal accessors -- these proxy the private
+    # connection-state fields now owned by RabbitMQConnectionManager, so
+    # that facade code (and tests) that read/write them directly keep
+    # working unchanged.
+    # -------------------------------------------------------------------
+
+    @property
+    def _connection(self) -> AbstractRobustConnection | None:
+        return self._connection_manager._connection
+
+    @_connection.setter
+    def _connection(self, value: AbstractRobustConnection | None) -> None:
+        self._connection_manager._connection = value
+
+    @property
+    def _channel(self) -> AbstractRobustChannel | None:
+        return self._connection_manager._channel  # type: ignore[return-value]
+
+    @_channel.setter
+    def _channel(self, value: AbstractRobustChannel | None) -> None:
+        self._connection_manager._channel = value
+
+    @property
+    def _connected(self) -> bool:
+        return self._connection_manager._connected
+
+    @_connected.setter
+    def _connected(self, value: bool) -> None:
+        self._connection_manager._connected = value
+
+    @property
+    def _reconnecting(self) -> bool:
+        return self._connection_manager._reconnecting
+
+    @_reconnecting.setter
+    def _reconnecting(self, value: bool) -> None:
+        self._connection_manager._reconnecting = value
+
+    @property
+    def _was_consuming(self) -> bool:
+        return self._connection_manager._was_consuming
+
+    @_was_consuming.setter
+    def _was_consuming(self, value: bool) -> None:
+        self._connection_manager._was_consuming = value
+
+    @property
+    def _lock(self) -> asyncio.Lock:
+        return self._connection_manager._lock
 
     @property
     def is_consuming(self) -> bool:
@@ -336,24 +399,15 @@ class RabbitMQEventBus(BaseEventBus):
         # Preserve connected_at if still connected to maintain accurate uptime
         connected_at = self._stats.connected_at if self._connected else None
         self._stats = RabbitMQEventBusStats(connected_at=connected_at)
+        # Keep the connection manager's stats reference in sync -- it was
+        # handed the original instance at construction time.
+        self._connection_manager._stats = self._stats
         self._logger.info("Statistics reset")
 
     def _create_ssl_context(self) -> ssl.SSLContext | None:
         """Create SSL context from configuration.
 
-        Creates an SSL context based on the TLS configuration options. The
-        method follows this priority order:
-        1. Use ssl_context if explicitly provided
-        2. Create context from ca_file/cert_file/key_file if provided
-        3. Create default context if URL uses amqps://
-        4. Return None for non-TLS connections
-
-        Returns:
-            SSLContext if TLS is configured or required by URL, None otherwise.
-
-        Raises:
-            ssl.SSLError: If certificate files cannot be loaded
-            FileNotFoundError: If certificate files don't exist
+        Delegates to :class:`RabbitMQConnectionManager`.
 
         Example:
             >>> config = RabbitMQEventBusConfig(
@@ -364,72 +418,7 @@ class RabbitMQEventBus(BaseEventBus):
             >>> ctx = bus._create_ssl_context()
             >>> assert ctx is not None
         """
-        # Check if URL is amqps:// (TLS required)
-        is_tls_url = self._config.rabbitmq_url.startswith("amqps://")
-
-        # Determine if TLS is needed
-        needs_tls = (
-            is_tls_url
-            or self._config.ssl_context is not None
-            or self._config.ca_file is not None
-            or self._config.cert_file is not None
-        )
-
-        if not needs_tls:
-            return None
-
-        # Use provided context if available (takes precedence)
-        if self._config.ssl_context is not None:
-            self._logger.debug("Using pre-configured SSL context")
-            return self._config.ssl_context
-
-        # Create context from configuration
-        ctx = ssl.create_default_context(
-            purpose=ssl.Purpose.SERVER_AUTH,
-        )
-
-        # Load CA certificate if provided
-        if self._config.ca_file:
-            self._logger.debug(
-                "Loading CA certificate",
-                extra={"ca_file": self._config.ca_file},
-            )
-            ctx.load_verify_locations(cafile=self._config.ca_file)
-
-        # Load client certificate for mTLS
-        if self._config.cert_file and self._config.key_file:
-            self._logger.debug(
-                "Loading client certificate for mutual TLS",
-                extra={
-                    "cert_file": self._config.cert_file,
-                    "key_file": self._config.key_file,
-                },
-            )
-            ctx.load_cert_chain(
-                certfile=self._config.cert_file,
-                keyfile=self._config.key_file,
-            )
-        elif self._config.cert_file or self._config.key_file:
-            # Warn if only one of cert_file/key_file is provided
-            self._logger.warning(
-                "Both cert_file and key_file must be provided for mutual TLS. "
-                "Client certificate authentication will not be used.",
-                extra={
-                    "cert_file": self._config.cert_file,
-                    "key_file": self._config.key_file,
-                },
-            )
-
-        # Configure verification
-        if not self._config.verify_ssl:
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-            self._logger.warning(
-                "SSL certificate verification disabled - NOT RECOMMENDED for production",
-                extra={"verify_ssl": False},
-            )
-
-        return ctx
+        return self._connection_manager._create_ssl_context()
 
     async def connect(self) -> None:
         """Connect to RabbitMQ and set up exchanges/queues.
@@ -445,106 +434,7 @@ class RabbitMQEventBus(BaseEventBus):
             Exception: If connection or setup fails
             ssl.SSLError: If SSL/TLS configuration or handshake fails
         """
-        if self._connected:
-            self._logger.warning("RabbitMQEventBus already connected")
-            return
-
-        ssl_context: ssl.SSLContext | None = None
-        try:
-            # Prepare SSL context if needed
-            ssl_context = self._create_ssl_context()
-
-            # Build connection parameters
-            connect_kwargs: dict[str, Any] = {
-                "heartbeat": self._config.heartbeat,
-                "reconnect_interval": self._config.reconnect_delay,
-            }
-
-            # Add SSL context if TLS is configured
-            if ssl_context is not None:
-                connect_kwargs["ssl_context"] = ssl_context
-
-            # Add additional SSL options if provided
-            if self._config.ssl_options:
-                connect_kwargs.update(self._config.ssl_options)
-
-            # Create robust connection (handles reconnection automatically)
-            self._connection = await aio_pika.connect_robust(
-                self._config.rabbitmq_url,
-                **connect_kwargs,
-            )
-
-            # Register connection callbacks for reconnection handling
-            # Note: aio-pika's type hints are inconsistent with actual usage
-            self._connection.reconnect_callbacks.add(self._on_reconnect)  # type: ignore[arg-type]
-            self._connection.close_callbacks.add(self._on_connection_close)  # type: ignore[arg-type]
-
-            # Create channel (RobustConnection returns RobustChannel)
-            self._channel = await self._connection.channel()  # type: ignore[assignment]
-
-            # Register channel close callback
-            self._channel.close_callbacks.add(self._on_channel_close)  # type: ignore[union-attr]
-
-            # Set prefetch count for consumer flow control
-            await self._channel.set_qos(prefetch_count=self._config.prefetch_count)  # type: ignore[union-attr]
-
-            # Declare DLQ first if enabled (main queue will reference it)
-            if self._config.enable_dlq:
-                await self._declare_dlq()
-
-            # Declare exchange
-            await self._declare_exchange()
-
-            # Declare and bind queue
-            await self._declare_queue()
-            await self._bind_queue()
-
-            self._connected = True
-            self._stats.connected_at = datetime.now(UTC)
-
-            # Log connection status with TLS info
-            tls_status = "TLS" if ssl_context is not None else "plaintext"
-            self._logger.info(
-                f"Connected to RabbitMQ ({tls_status}) and initialized topology",
-                extra={
-                    "rabbitmq_url": self._sanitize_url(self._config.rabbitmq_url),
-                    "exchange": self._config.exchange_name,
-                    "queue": self._config.queue_name,
-                    "consumer_group": self._config.consumer_group,
-                    "dlq_enabled": self._config.enable_dlq,
-                    "tls_enabled": ssl_context is not None,
-                },
-            )
-
-        except ssl.SSLError as e:
-            self._logger.error(
-                f"SSL error connecting to RabbitMQ: {e}",
-                exc_info=True,
-                extra={
-                    "rabbitmq_url": self._sanitize_url(self._config.rabbitmq_url),
-                    "error": str(e),
-                    "error_type": type(e).__name__,
-                    "tls_enabled": ssl_context is not None,
-                },
-            )
-            # Clean up partial connection
-            await self.disconnect()
-            raise
-
-        except Exception as e:
-            self._logger.error(
-                f"Failed to connect to RabbitMQ: {e}",
-                exc_info=True,
-                extra={
-                    "rabbitmq_url": self._sanitize_url(self._config.rabbitmq_url),
-                    "exchange": self._config.exchange_name,
-                    "error": str(e),
-                    "error_type": type(e).__name__,
-                },
-            )
-            # Clean up partial connection
-            await self.disconnect()
-            raise
+        await self._connection_manager.connect()
 
     async def disconnect(self) -> None:
         """Disconnect from RabbitMQ.
@@ -559,34 +449,15 @@ class RabbitMQEventBus(BaseEventBus):
                 await self._consumer_task
             self._consumer_task = None
 
-        # Close channel
-        if self._channel and not self._channel.is_closed:
-            await self._channel.close()
-            self._channel = None
+        await self._connection_manager.disconnect()
 
-        # Close connection
-        if self._connection and not self._connection.is_closed:
-            await self._connection.close()
-            self._connection = None
-
-        self._connected = False
         self._consuming = False
-        self._stats.connected_at = None
 
         # Clear exchange/queue references
         self._exchange = None
         self._dlq_exchange = None
         self._consumer_queue = None
         self._dlq_queue = None
-
-        self._logger.info(
-            "Disconnected from RabbitMQ",
-            extra={
-                "exchange": self._config.exchange_name,
-                "queue": self._config.queue_name,
-                "consumer_group": self._config.consumer_group,
-            },
-        )
 
     async def __aenter__(self) -> RabbitMQEventBus:
         """Async context manager entry.
@@ -620,86 +491,34 @@ class RabbitMQEventBus(BaseEventBus):
     def _sanitize_url(self, url: str) -> str:
         """Remove credentials from URL for logging.
 
+        Delegates to :class:`RabbitMQConnectionManager`.
+
         Args:
             url: The RabbitMQ connection URL
 
         Returns:
             URL with credentials replaced by ***
         """
-        return re.sub(r"://[^:]+:[^@]+@", "://***:***@", url)
+        return self._connection_manager._sanitize_url(url)
 
     # =========================================================================
     # Reconnection Callback Methods (P2-004)
+    #
+    # Channel re-establishment and the aio-pika close/reconnect callbacks
+    # themselves now live on RabbitMQConnectionManager. These facade methods
+    # are thin delegations kept for backward compatibility (they're invoked
+    # directly, and monkeypatched, by existing tests and callers).
     # =========================================================================
 
     async def _on_reconnect(self, connection: AbstractRobustConnection) -> None:
         """Handle connection restoration after disconnection.
 
-        This callback is invoked by aio-pika's RobustConnection when the
-        connection is restored after a disconnection. It re-establishes
-        the channel and re-declares the topology (exchanges, queues, bindings).
+        Delegates to :class:`RabbitMQConnectionManager`.
 
         Args:
             connection: The restored RobustConnection instance
         """
-        self._stats.reconnections += 1
-        self._reconnecting = True
-
-        self._logger.info(
-            "RabbitMQ connection restored, re-establishing topology",
-            extra={
-                "reconnections": self._stats.reconnections,
-                "was_consuming": self._was_consuming,
-            },
-        )
-
-        try:
-            # Recreate channel (RobustConnection returns RobustChannel)
-            self._channel = await connection.channel()  # type: ignore[assignment]
-
-            # Register channel close callback on new channel
-            self._channel.close_callbacks.add(self._on_channel_close)  # type: ignore[union-attr]
-
-            # Set prefetch count for consumer flow control
-            await self._channel.set_qos(prefetch_count=self._config.prefetch_count)  # type: ignore[union-attr]
-
-            # Redeclare topology in the correct order
-            # DLQ first (main queue references it)
-            if self._config.enable_dlq:
-                await self._declare_dlq()
-
-            # Declare main exchange
-            await self._declare_exchange()
-
-            # Declare and bind consumer queue
-            await self._declare_queue()
-            await self._bind_queue()
-
-            self._connected = True
-            self._reconnecting = False
-
-            self._logger.info(
-                "Topology restored after reconnection",
-                extra={
-                    "reconnections": self._stats.reconnections,
-                    "exchange": self._config.exchange_name,
-                    "queue": self._config.queue_name,
-                    "was_consuming": self._was_consuming,
-                },
-            )
-
-        except Exception as e:
-            self._connected = False
-            self._reconnecting = False
-
-            self._logger.error(
-                f"Failed to restore topology after reconnection: {e}",
-                exc_info=True,
-                extra={
-                    "reconnections": self._stats.reconnections,
-                    "error": str(e),
-                },
-            )
+        await self._connection_manager._on_reconnect(connection)
 
     def _on_connection_close(
         self,
@@ -708,42 +527,14 @@ class RabbitMQEventBus(BaseEventBus):
     ) -> None:
         """Handle connection closure.
 
-        This callback is invoked when the connection is closed, either
-        gracefully or due to an error. Updates the connection state and
-        logs the event.
-
-        Note: This is a synchronous callback as required by aio-pika's
-        close_callbacks interface.
+        Delegates to :class:`RabbitMQConnectionManager`.
 
         Args:
             connection: The closed connection instance (may be None)
             exception: The exception that caused the closure, or None
                       if closed gracefully
         """
-        # Track if we were consuming before disconnect (for potential resumption)
-        if self._consuming:
-            self._was_consuming = True
-
-        self._connected = False
-
-        if exception:
-            self._logger.warning(
-                f"RabbitMQ connection closed unexpectedly: {exception}",
-                extra={
-                    "error": str(exception),
-                    "error_type": type(exception).__name__,
-                    "was_consuming": self._was_consuming,
-                    "reconnections": self._stats.reconnections,
-                },
-            )
-        else:
-            self._logger.info(
-                "RabbitMQ connection closed",
-                extra={
-                    "was_consuming": self._was_consuming,
-                    "reconnections": self._stats.reconnections,
-                },
-            )
+        self._connection_manager._on_connection_close(connection, exception)
 
     def _on_channel_close(
         self,
@@ -752,36 +543,14 @@ class RabbitMQEventBus(BaseEventBus):
     ) -> None:
         """Handle channel closure.
 
-        This callback is invoked when the channel is closed. The channel
-        will be recreated automatically on reconnection or the next
-        operation that requires it.
-
-        Note: This is a synchronous callback as required by aio-pika's
-        close_callbacks interface.
+        Delegates to :class:`RabbitMQConnectionManager`.
 
         Args:
             channel: The closed channel instance (may be None)
             exception: The exception that caused the closure, or None
                       if closed gracefully
         """
-        if exception:
-            self._logger.warning(
-                f"RabbitMQ channel closed: {exception}",
-                extra={
-                    "error": str(exception),
-                    "error_type": type(exception).__name__,
-                    "exchange": self._config.exchange_name,
-                    "queue": self._config.queue_name,
-                },
-            )
-        else:
-            self._logger.debug(
-                "RabbitMQ channel closed normally",
-                extra={
-                    "exchange": self._config.exchange_name,
-                    "queue": self._config.queue_name,
-                },
-            )
+        self._connection_manager._on_channel_close(channel, exception)
 
     # =========================================================================
     # Exchange and Queue Declaration Methods (P1-006)
@@ -3250,25 +3019,7 @@ class RabbitMQEventBus(BaseEventBus):
                 await self._consumer_task
             self._consumer_task = None
 
-        # Close channel (suppress errors)
-        if self._channel:
-            try:
-                if not self._channel.is_closed:
-                    await self._channel.close()
-            except Exception:  # nosec B110 - intentionally suppress during force disconnect
-                pass
-            self._channel = None
-
-        # Close connection (suppress errors)
-        if self._connection:
-            try:
-                if not self._connection.is_closed:
-                    await self._connection.close()
-            except Exception:  # nosec B110 - intentionally suppress during force disconnect
-                pass
-            self._connection = None
-
-        self._connected = False
+        await self._connection_manager.force_disconnect()
 
         # Clear exchange/queue references
         self._exchange = None
