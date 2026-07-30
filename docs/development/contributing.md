@@ -284,8 +284,7 @@ Blank issues are disabled; pick one of the two templates in `.github/ISSUE_TEMPL
 
 For anything that is not a defect or a proposal, `config.yml` points elsewhere: the
 [documentation site](https://tyevans.github.io/eventsource-py) for questions the docs already
-answer, and [GitHub Discussions](https://github.com/tyevans/eventsource-py/discussions) for
-open-ended questions and ideas.
+answer, and open-ended questions and ideas can go in a GitHub issue tagged `question`.
 
 ## Project conventions to follow
 

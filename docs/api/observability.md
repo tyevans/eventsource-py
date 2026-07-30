@@ -29,9 +29,8 @@ Public names covered here:
 | `ATTR_*` | constants | Canonical span attribute keys (`eventsource.*` plus OTEL semantic `db.*` / `messaging.*`) |
 
 Related material lives elsewhere: see
-[guides/observability.md](../guides/observability.md) for task-oriented setup
-and [tutorials/20-observability.md](../tutorials/20-observability.md) for a
-worked walkthrough. This page documents the surface, not the workflow.
+[guides/observability.md](../guides/observability.md) for task-oriented setup.
+This page documents the surface, not the workflow.
 
 ## Overview
 
