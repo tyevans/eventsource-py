@@ -45,12 +45,14 @@ from eventsource.testing.conformance import (
     EventStoreConformanceSuite,
 )
 from eventsource.testing.harness import InMemoryTestHarness
+from eventsource.testing.recording import RecordingEventBus
 
 __all__ = [
     # Core classes
     "EventBuilder",
     "InMemoryTestHarness",
     "EventAssertions",
+    "RecordingEventBus",
     # BDD helpers
     "given_events",
     "when_command",

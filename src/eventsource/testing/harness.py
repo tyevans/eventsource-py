@@ -22,6 +22,7 @@ Example:
 
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING
 
 from eventsource.bus.memory import InMemoryEventBus
@@ -78,6 +79,15 @@ class InMemoryTestHarness:
         self._event_bus = InMemoryEventBus(enable_tracing=False)
         self._checkpoint_repo = InMemoryCheckpointRepository(enable_tracing=False)
         self._dlq_repo = InMemoryDLQRepository(enable_tracing=False)
+        self._published_lock = threading.RLock()
+        self._published: list[DomainEvent] = []
+        self._event_bus.subscribe_to_all_events(self._record_published)
+
+    async def _record_published(self, event: DomainEvent) -> None:
+        """Track a published event independently of the deprecated
+        ``InMemoryEventBus.published_events`` accessor."""
+        with self._published_lock:
+            self._published.append(event)
 
     @property
     def event_store(self) -> InMemoryEventStore:
@@ -160,7 +170,8 @@ class InMemoryTestHarness:
             >>> assert len(harness.published_events) == 2
             >>> assert harness.published_events[0] == event1
         """
-        return self._event_bus.published_events
+        with self._published_lock:
+            return list(self._published)
 
     def reset(self) -> None:
         """
@@ -180,6 +191,9 @@ class InMemoryTestHarness:
         self._event_bus = InMemoryEventBus(enable_tracing=False)
         self._checkpoint_repo = InMemoryCheckpointRepository(enable_tracing=False)
         self._dlq_repo = InMemoryDLQRepository(enable_tracing=False)
+        self._published_lock = threading.RLock()
+        self._published = []
+        self._event_bus.subscribe_to_all_events(self._record_published)
 
     def clear_published_events(self) -> None:
         """
@@ -196,7 +210,8 @@ class InMemoryTestHarness:
             >>> await execute_command(harness)
             >>> assert len(harness.published_events) == 1
         """
-        self._event_bus.clear_published_events()
+        with self._published_lock:
+            self._published.clear()
 
     def get_events_of_type(self, event_type: type[DomainEvent]) -> list[DomainEvent]:
         """

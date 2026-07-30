@@ -10,6 +10,7 @@ For distributed deployments, use RedisEventBus instead.
 import asyncio
 import logging
 import threading
+import warnings
 
 from eventsource.bus.base import BaseEventBus
 from eventsource.events.base import DomainEvent
@@ -103,12 +104,23 @@ class InMemoryEventBus(BaseEventBus):
             Returns a copy to prevent external mutation.
             For thread-safe access, this uses the internal lock.
 
+        Deprecated:
+            Use ``RecordingEventBus`` from ``eventsource.testing`` instead.
+            This list is unbounded and leaks in long-lived processes. It will
+            be removed in a future release.
+
         Example:
             >>> bus = InMemoryEventBus()
             >>> await bus.publish([event1, event2])
             >>> assert len(bus.published_events) == 2
             >>> assert bus.published_events[0] == event1
         """
+        warnings.warn(
+            "InMemoryEventBus.published_events is deprecated and will be "
+            "removed; wrap the bus in eventsource.testing.RecordingEventBus.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         with self._published_lock:
             return list(self._published_events)
 
@@ -119,7 +131,16 @@ class InMemoryEventBus(BaseEventBus):
         Useful for resetting state between tests.
 
         Thread-safe: Can be called from any thread.
+
+        Deprecated:
+            Use ``RecordingEventBus`` from ``eventsource.testing`` instead.
         """
+        warnings.warn(
+            "InMemoryEventBus.clear_published_events is deprecated; wrap the "
+            "bus in eventsource.testing.RecordingEventBus.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         with self._published_lock:
             self._published_events.clear()
         logger.debug("Published events cleared")
