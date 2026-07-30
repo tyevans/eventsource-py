@@ -1293,6 +1293,7 @@ class TestRabbitMQEventBusEdgeCases:
 class TestRabbitMQEventBusPerformance:
     """Performance-related tests."""
 
+    @pytest.mark.benchmark
     async def test_batch_publish_performance(
         self,
         rabbitmq_event_bus: RabbitMQEventBus,
@@ -1320,6 +1321,7 @@ class TestRabbitMQEventBusPerformance:
         # All events should be published
         assert rabbitmq_event_bus.stats.events_published == 100
 
+    @pytest.mark.benchmark
     async def test_high_throughput_publish_consume(
         self,
         rabbitmq_event_bus: RabbitMQEventBus,
@@ -1768,6 +1770,7 @@ class TestRabbitMQReliabilityRetry:
 class TestRabbitMQReliabilityShutdown:
     """Tests for graceful shutdown reliability features."""
 
+    @pytest.mark.benchmark
     async def test_shutdown_completes_within_timeout(
         self,
         rabbitmq_event_bus_factory: Any,
@@ -2748,6 +2751,7 @@ class TestAdvancedBatchPublishing:
     These tests verify large batch performance and partial failure handling.
     """
 
+    @pytest.mark.benchmark
     async def test_large_batch_publish_performance(
         self,
         rabbitmq_event_bus: RabbitMQEventBus,

@@ -2176,6 +2176,7 @@ class TestKafkaMetricsPerformance:
             # Stats should still be tracked
             assert bus.stats.events_published == 1
 
+    @pytest.mark.benchmark
     async def test_metrics_overhead_acceptable(
         self,
         kafka_container: Any,

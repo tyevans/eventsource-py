@@ -275,4 +275,5 @@ jobs:
         run: uv sync --all-extras --locked
 
       - name: Run broker integration tests
-        run: uv run pytest -m "kafka or rabbitmq" --no-cov
+        # Exclude benchmark-marked tests: wall-clock threshold assertions are nondeterministic on shared runners
+        run: uv run pytest -m "(kafka or rabbitmq) and not benchmark" --no-cov
