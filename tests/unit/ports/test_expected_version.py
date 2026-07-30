@@ -17,6 +17,10 @@ class TestExpectedVersion:
         with pytest.raises(ValueError):
             ExpectedVersion.exact(-1)
 
+    def test_exact_zero_is_legal(self) -> None:
+        ev = ExpectedVersion.exact(0)
+        assert (ev.kind, ev.version) == ("exact", 0)
+
     def test_equality(self) -> None:
         assert ExpectedVersion.exact(2) == ExpectedVersion.exact(2)
         assert ExpectedVersion.any_() != ExpectedVersion.no_stream()
