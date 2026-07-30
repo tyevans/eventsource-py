@@ -13,7 +13,9 @@ class Position:
 
     Totally ordered within one store; ordering across stores raises
     PositionForeignError; equality across stores is False. Consumers
-    compare and persist — never arithmetic.
+    compare and persist — never arithmetic. Key element types are uniform
+    within one store (the adapter defines the shape); ordering between
+    differently-shaped keys is undefined.
     """
 
     store_id: str

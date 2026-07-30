@@ -11,6 +11,9 @@ keys = st.lists(
     max_size=3,
 ).map(tuple)
 
+int_keys = st.lists(st.integers(min_value=0, max_value=2**62), min_size=1, max_size=3).map(tuple)
+str_keys = st.lists(st.text(max_size=32), min_size=1, max_size=3).map(tuple)
+
 
 class TestPositionOrdering:
     def test_same_store_orders_by_key(self) -> None:
@@ -28,9 +31,10 @@ class TestPositionOrdering:
         assert Position("pg:a", (1,)) != 1
         assert Position("pg:a", (1,)) in {Position("pg:a", (1,))}
 
-    @given(a=keys, b=keys, c=keys)
-    def test_ordering_laws_within_store(self, a, b, c) -> None:
-        pa, pb, pc = (Position("s", k) for k in (a, b, c))
+    @given(data=st.data())
+    def test_ordering_laws_within_store(self, data: st.DataObject) -> None:
+        key_strategy = data.draw(st.sampled_from([int_keys, str_keys]))
+        pa, pb, pc = (Position("s", data.draw(key_strategy)) for _ in range(3))
         assert (pa < pb) == (not (pb < pa or pa == pb))  # trichotomy-ish
         if pa < pb and pb < pc:
             assert pa < pc  # transitivity
