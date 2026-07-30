@@ -1,5 +1,7 @@
 """Conformance tests for SQLiteEventStore against the port suites."""
 
+import threading
+import time
 from collections.abc import AsyncIterator
 
 import pytest
@@ -29,12 +31,17 @@ def _make_registry():
 
 
 from eventsource.adapters.sqlite import SQLiteEventStore  # noqa: E402
+from eventsource.ports import ExpectedVersion  # noqa: E402
 from eventsource.testing.conformance_ports import (  # noqa: E402
     AppenderConformance,
     CategoryQueryConformance,
     EventLookupConformance,
     GlobalFeedConformance,
     StreamReaderConformance,
+)
+from eventsource.testing.conformance_ports._fixtures import (  # noqa: E402
+    ConformanceEvent,
+    make_stream,
 )
 from eventsource.testing.conformance_ports.stateful import StoreStateMachine  # noqa: E402
 from eventsource.testing.sync_facade import SyncStoreFacade  # noqa: E402
@@ -92,3 +99,33 @@ TestSQLiteStateful = SQLiteStateMachine.TestCase
 # than the memory adapter's (25) because SQLite round-trips through real I/O
 # and JSON (de)serialization per event, making each example slower.
 TestSQLiteStateful.settings = settings(max_examples=10, deadline=None, derandomize=True)
+
+
+def test_sync_facade_close_closes_underlying_store() -> None:
+    """`SyncStoreFacade.close()` must close the wrapped store, not just the loop.
+
+    Regression test: aiosqlite's connection is backed by a non-daemon
+    `threading.Thread`; leaving it open leaks a thread per facade and
+    prevents clean interpreter shutdown.
+    """
+    store = SQLiteEventStore(":memory:", event_registry=_make_registry())
+    facade = SyncStoreFacade(store)
+    stream = make_stream()
+    facade.append(
+        stream,
+        [ConformanceEvent(aggregate_id=stream.aggregate_id)],
+        ExpectedVersion.any_(),
+    )
+    del stream
+
+    before = threading.active_count()
+
+    facade.close()
+
+    deadline = time.monotonic() + 2.0
+    after = threading.active_count()
+    while after > before - 1 and time.monotonic() < deadline:
+        time.sleep(0.01)
+        after = threading.active_count()
+
+    assert after == before - 1
