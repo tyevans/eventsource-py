@@ -82,6 +82,7 @@ from eventsource.exceptions import (
     EventNotFoundError,
     EventSourceError,
     EventVersionError,
+    HandlerDispatchError,
     OptimisticLockError,
     ProjectionError,
 )
@@ -273,6 +274,7 @@ __all__ = [
     "EventNotFoundError",
     "EventSourceError",
     "EventVersionError",
+    "HandlerDispatchError",
     "OptimisticLockError",
     "ProjectionError",
     # Repository infrastructure (Task 12)

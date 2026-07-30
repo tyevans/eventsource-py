@@ -680,48 +680,6 @@ class TestRedisEventBusConformance(EventBusConformanceSuite):
 
         return Subscriber()
 
-    async def test_handler_error_isolation(self) -> None:
-        """Redis dispatch does not isolate handler errors like the base suite expects.
-
-        ``RedisEventBus._dispatch_event`` invokes handlers sequentially and
-        deliberately re-raises on the first failure (see
-        ``_invoke_handler``'s "Re-raise to prevent acking the message"), so a
-        later handler is never reached on the same delivery attempt -- the
-        message is left unacked for at-least-once redelivery instead. This is
-        pre-existing, intentional behavior distinct from the in-process
-        buses' fire-and-forget isolation, and out of scope for this task, so
-        this override documents the divergence rather than asserting the
-        base suite's isolation contract against it.
-        """
-        bus = self.create_bus()
-        aggregate_id = uuid4()
-        event = self.create_test_event(aggregate_id)
-
-        received_by_good_handler: list[DomainEvent] = []
-
-        async def failing_handler(e: DomainEvent) -> None:
-            raise ValueError("Handler error for testing")
-
-        async def good_handler(e: DomainEvent) -> None:
-            received_by_good_handler.append(e)
-
-        event_type = type(event)
-        bus.subscribe(event_type, failing_handler)
-        bus.subscribe(event_type, good_handler)
-
-        # Publishing (and the consumer loop processing it) must not crash
-        # the bus even though the handler raises.
-        await self._bus_no_wait_publish([event])
-
-        await asyncio.sleep(1.0)
-
-        assert isinstance(bus, RedisEventBus)
-        assert bus.stats.handler_errors >= 1
-
-    async def _bus_no_wait_publish(self, events: list[DomainEvent]) -> None:
-        """Publish without the delivery-wait wrapper (would never catch up)."""
-        await RedisEventBus.publish(self._bus, events)
-
     async def await_delivery(self, bus: EventBus) -> None:
         """Poll until the consumer loop has caught up, bounded to 10s."""
         assert isinstance(bus, RedisEventBus)

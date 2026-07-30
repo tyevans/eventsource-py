@@ -19,6 +19,7 @@ import pytest
 
 from eventsource.events.base import DomainEvent
 from eventsource.events.registry import EventRegistry
+from eventsource.exceptions import HandlerDispatchError
 from eventsource.observability import (
     ATTR_AGGREGATE_ID,
     ATTR_EVENT_COUNT,
@@ -512,7 +513,7 @@ class TestRedisEventBusHandlerSpanCreation:
 
         event = RedisTracingTestEvent(aggregate_id=uuid4(), name="Test")
 
-        with pytest.raises(ValueError, match="Handler failed intentionally"):
+        with pytest.raises(HandlerDispatchError):
             await bus._dispatch_event(event, "msg-123")
 
         # Verify handler span was created (failure is recorded within the span)

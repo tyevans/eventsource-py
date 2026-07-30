@@ -179,3 +179,27 @@ class AggregateNotCreatedError(EventSourceError):
             message += f" Hint: {suggestion}"
 
         super().__init__(message)
+
+
+class HandlerDispatchError(EventSourceError):
+    """
+    Raised after a delivery attempt when one or more handlers failed.
+
+    Buses that dispatch a single delivery to multiple handlers must invoke
+    every handler for that delivery -- one handler's failure must not skip
+    the rest (error isolation). Once all handlers have run, if any failed,
+    the bus raises this aggregate error so the caller's no-ack / redelivery
+    path is unchanged: the individual failures are isolated from each other,
+    but the delivery as a whole is still treated as failed and eligible for
+    retry (and eventually the dead letter queue), exactly as if a single
+    handler had raised.
+
+    Attributes:
+        failures: List of (handler_name, exception) pairs, one per handler
+            that raised, in the order handlers were invoked.
+    """
+
+    def __init__(self, failures: list[tuple[str, Exception]]) -> None:
+        self.failures = failures
+        handler_names = ", ".join(name for name, _ in failures)
+        super().__init__(f"{len(failures)} handler(s) failed during dispatch: {handler_names}")

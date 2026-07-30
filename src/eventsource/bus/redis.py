@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING, Any
 
 from eventsource.bus.base import BaseEventBus
 from eventsource.events.base import DomainEvent
+from eventsource.exceptions import HandlerDispatchError
 from eventsource.handlers.adapter import HandlerAdapter
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
@@ -760,16 +761,27 @@ class RedisEventBus(BaseEventBus):
                 ATTR_MESSAGING_SYSTEM: "redis",
             },
         ):
-            # Process handlers sequentially for ordering guarantees
+            # Process handlers sequentially for ordering guarantees. Every
+            # handler runs for this delivery even if an earlier one failed
+            # (error isolation) -- failures are collected and raised together
+            # as one HandlerDispatchError afterward, so the message is still
+            # left unacked for redelivery/DLQ exactly as a single raise
+            # would have done.
+            failures: list[tuple[str, Exception]] = []
             for adapter in handlers:
-                await self._invoke_handler(adapter, event, message_id)
+                exc = await self._invoke_handler(adapter, event, message_id)
+                if exc is not None:
+                    failures.append((adapter.name, exc))
+
+            if failures:
+                raise HandlerDispatchError(failures)
 
     async def _invoke_handler(
         self,
         adapter: HandlerAdapter,
         event: DomainEvent,
         message_id: str,
-    ) -> None:
+    ) -> Exception | None:
         """
         Invoke a single handler with tracing support.
 
@@ -777,6 +789,12 @@ class RedisEventBus(BaseEventBus):
             adapter: The HandlerAdapter wrapping the handler
             event: The event to handle
             message_id: Redis message ID for logging
+
+        Returns:
+            The exception raised by the handler, or None on success. Does
+            not re-raise: callers (``_dispatch_event``) are responsible for
+            running every handler regardless of individual failures and
+            aggregating them afterward.
         """
         # Trace handler execution with dynamic attributes and error recording
         with self._tracer.span(
@@ -801,6 +819,7 @@ class RedisEventBus(BaseEventBus):
                         "event_id": str(event.event_id),
                     },
                 )
+                return None
             except Exception as e:
                 if span:
                     span.set_attribute(ATTR_HANDLER_SUCCESS, False)
@@ -816,8 +835,7 @@ class RedisEventBus(BaseEventBus):
                         "message_id": message_id,
                     },
                 )
-                # Re-raise to prevent acking the message
-                raise
+                return e
 
     async def recover_pending_messages(
         self,
