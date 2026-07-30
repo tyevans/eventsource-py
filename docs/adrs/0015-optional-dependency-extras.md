@@ -1,4 +1,4 @@
-# 7. Optional Dependency Extras and the Core/Backend Split
+# 15. Optional Dependency Extras and the Core/Backend Split
 
 Installing `eventsource-py` pulls in exactly two third-party packages: `pydantic>=2.0,<3.0` and `sqlalchemy>=2.0,<3.0`. Everything that talks to a real piece of infrastructure -- asyncpg for PostgreSQL, aiosqlite for SQLite, redis for the Redis Streams bus, aio-pika for RabbitMQ, aiokafka for Kafka, the OpenTelemetry API and SDK for tracing and metrics -- sits behind a named extra in `pyproject.toml` and is absent unless you ask for it.
 

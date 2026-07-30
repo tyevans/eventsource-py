@@ -1,4 +1,4 @@
-# ADR-0007: Optional Tracing, No-Op by Default
+# ADR-0016: Optional Tracing, No-Op by Default
 
 Every durable component in this library can emit OpenTelemetry spans -- event stores, event buses, aggregate repositories, snapshot stores, projections, read models, distributed locks, and the live-migration tooling all accept a `tracer` and an `enable_tracing` flag. None of them require OpenTelemetry to be installed, and none of them pay for tracing when it is switched off.
 

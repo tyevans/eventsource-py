@@ -1,4 +1,4 @@
-# ADR-0007: Tenant Isolation Model
+# ADR-0018: Tenant Isolation Model
 
 ## Status
 

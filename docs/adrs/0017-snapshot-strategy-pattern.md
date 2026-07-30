@@ -1,4 +1,4 @@
-# 0007. Snapshot Strategy Pattern
+# 0017. Snapshot Strategy Pattern
 
 Snapshots make loading a long-lived aggregate cheap: instead of replaying every
 event from version 0, the repository restores serialized state at version N and
