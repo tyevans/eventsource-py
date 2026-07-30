@@ -3,8 +3,9 @@
 ## Status
 
 Accepted (2026-07-29). Implemented by `eventsource.exceptions.HandlerDispatchError`
-and its use in `src/eventsource/bus/memory.py`, `redis.py`, `rabbitmq.py`, and
-`kafka.py`.
+and its use on the consume paths of `src/eventsource/bus/redis.py`,
+`rabbitmq.py`, and `kafka.py`. `src/eventsource/bus/memory.py` is unaffected:
+`InMemoryEventBus.publish()` continues to swallow-and-log per 0007 D3.
 
 This ADR **amends** [0007 - Event Bus Delivery Semantics and Tracing
 Contract](0007-event-bus-delivery-semantics.md), specifically D3 ("Handler
@@ -70,9 +71,23 @@ failure's error type and message are preserved in DLQ metadata exactly as
 before this change -- callers inspecting DLQ entries see no format change for
 the single-failure case.
 
-### On broker consume paths, the aggregate prevents ack
+### The raise is a broker consume-path contract, not a `publish()` contract
 
-`RedisEventBus`, `RabbitMQEventBus`, and `KafkaEventBus` now let
+`HandlerDispatchError` is raised by the dispatch layer specifically on the
+three brokers' **consume** paths -- `redis.py:777`, `rabbitmq.py:3227`, and
+`kafka.py:2537` -- where dispatch happens as part of processing a delivered
+message inside `start_consuming`, immediately before the ack/commit decision.
+It is not raised from any backend's `publish()`. `InMemoryEventBus.publish()`
+dispatches directly (there is no separate consume loop) and keeps 0007's
+swallow-and-log contract unchanged: `_safe_handle` still catches, logs, and
+does not raise, and `publish()` does not raise due to a handler failure. This
+is not a divergence from the uniform-isolation ruling -- the ruling's
+substance, that every handler runs regardless of an earlier handler's
+failure, has always held for InMemory and continues to hold everywhere. What
+differs is only whether there is an ack/commit for the aggregate failure to
+withhold, and InMemory has none.
+
+`RedisEventBus`, `RabbitMQEventBus`, and `KafkaEventBus` let
 `HandlerDispatchError` propagate out of dispatch on their consume loops,
 which prevents the ack/commit that would otherwise follow a successful
 delivery:
@@ -91,28 +106,26 @@ Each backend's existing retry-count/backoff/DLQ machinery is unchanged by
 this ADR; the change is only that a handler failure now reaches that
 machinery instead of being absorbed before it.
 
-`InMemoryEventBus` has no ack/commit step, so this decision is a no-op for it
-beyond raising `HandlerDispatchError` from `publish()` -- which is itself a
-change from 0007's "Do not expect `await bus.publish(...)` to raise" guidance,
-now backend-uniform.
+`InMemoryEventBus` has no ack/commit step and no consume loop, so this
+decision does not apply to it: `publish()` keeps 0007's "will not raise due
+to handler failure" guidance unchanged, on every path.
 
 ## Consequences
 
 ### For users writing handlers
-
-`await bus.publish(...)` can now raise `HandlerDispatchError` when any
-subscribed handler fails, on every backend including `InMemoryEventBus`. Code
-that previously relied on `publish()` never raising due to handler failure
-(0007's explicit guidance) must be updated: either catch
-`HandlerDispatchError` where publish result matters, or continue to rely on
-logs/spans/DLQ depth for monitoring and let the exception propagate as a
-signal of "at least one handler did not complete."
 
 For applications consuming from Redis, RabbitMQ, or Kafka, a handler
 exception now results in redelivery (subject to each backend's existing
 `max_retries` and DLQ routing) rather than silent, permanent loss of that
 handler's side effect. Handlers must already be idempotent per 0007 D1, so
 this closes a correctness gap rather than introducing a new burden.
+
+`await bus.publish(...)` on `InMemoryEventBus` still does not raise due to
+handler failure -- 0007's guidance there is unchanged. Code that consumes
+from a broker via `start_consuming` and inspects processing internals (or
+subclasses a consume loop) may now observe `HandlerDispatchError` where it
+previously observed nothing; code that only calls `publish()` sees no new
+exception on any backend.
 
 ### For contributors adding a fifth adapter
 
@@ -165,8 +178,8 @@ the ack/commit decision itself.
 - `src/eventsource/exceptions.py` -- `HandlerDispatchError`
 - `src/eventsource/bus/redis.py`, `rabbitmq.py`, `kafka.py` -- unwrap-and-raise
   at the consume path, DLQ metadata preservation for the single-failure case
-- `src/eventsource/bus/memory.py` -- `publish()` now raises
-  `HandlerDispatchError`
+- `src/eventsource/bus/memory.py` -- unaffected; `publish()` continues to
+  swallow-and-log per 0007 D3, no `HandlerDispatchError` import or raise
 - `docs/adrs/0007-event-bus-delivery-semantics.md` -- D1, D3; amended by this
   ADR
 - `.superpowers/sdd/2026-07-29-event-bus-contract-and-coverage/progress.md` --
