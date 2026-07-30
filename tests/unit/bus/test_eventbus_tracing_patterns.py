@@ -313,14 +313,22 @@ class TestRabbitMQEventBusTracingCompliance:
         assert "from eventsource.observability import OTEL_AVAILABLE" in source
 
     def test_has_context_propagation(self, check_rabbitmq_available: None) -> None:
-        """RabbitMQEventBus should have context propagation support."""
-        from eventsource.bus.rabbitmq import bus as rabbitmq_module
+        """RabbitMQEventBus should have context propagation support.
 
-        source = inspect.getsource(rabbitmq_module)
+        Propagation lives with the collaborators that use it: ``inject`` in
+        ``serialization.create_message_with_tracing`` on the publish side,
+        ``extract`` in ``RabbitMQConsumer`` on the consume side. The facade
+        itself no longer imports either.
+        """
+        from eventsource.bus.rabbitmq import consumer as consumer_module
+        from eventsource.bus.rabbitmq import publisher as publisher_module
+        from eventsource.bus.rabbitmq import serialization as serialization_module
 
-        # Check for trace context propagation
-        assert "from opentelemetry.propagate import extract, inject" in source
-        assert hasattr(rabbitmq_module, "PROPAGATION_AVAILABLE")
+        assert "from opentelemetry.propagate import inject" in inspect.getsource(
+            serialization_module
+        )
+        assert "from opentelemetry.propagate import extract" in inspect.getsource(consumer_module)
+        assert hasattr(publisher_module, "PROPAGATION_AVAILABLE")
 
 
 class TestKafkaEventBusTracingCompliance:

@@ -182,31 +182,38 @@ class TestRabbitMQContextPropagation:
 
     def test_propagation_available_defined(self) -> None:
         """PROPAGATION_AVAILABLE should be defined for context propagation."""
-        from eventsource.bus.rabbitmq import bus as rabbitmq_module
+        from eventsource.bus.rabbitmq import publisher as publisher_module
 
-        assert hasattr(rabbitmq_module, "PROPAGATION_AVAILABLE")
+        assert hasattr(publisher_module, "PROPAGATION_AVAILABLE")
 
     def test_inject_imported_for_propagation(self) -> None:
-        """inject function should be available for trace context injection."""
+        """inject function should be available for trace context injection.
+
+        ``inject`` is used by ``serialization.create_message_with_tracing``
+        on the publish side.
+        """
         import inspect
 
-        from eventsource.bus.rabbitmq import bus as rabbitmq_module
+        from eventsource.bus.rabbitmq import serialization as serialization_module
 
-        source_code = inspect.getsource(rabbitmq_module)
+        source_code = inspect.getsource(serialization_module)
 
         # Should import inject from opentelemetry.propagate
-        assert "from opentelemetry.propagate import extract, inject" in source_code
+        assert "from opentelemetry.propagate import inject" in source_code
 
     def test_extract_imported_for_propagation(self) -> None:
-        """extract function should be available for trace context extraction."""
+        """extract function should be available for trace context extraction.
+
+        ``extract`` is used by ``RabbitMQConsumer`` on the consume side.
+        """
         import inspect
 
-        from eventsource.bus.rabbitmq import bus as rabbitmq_module
+        from eventsource.bus.rabbitmq import consumer as consumer_module
 
-        source_code = inspect.getsource(rabbitmq_module)
+        source_code = inspect.getsource(consumer_module)
 
         # Should import extract from opentelemetry.propagate
-        assert "from opentelemetry.propagate import extract, inject" in source_code
+        assert "from opentelemetry.propagate import extract" in source_code
 
 
 class TestRabbitMQSpanNaming:

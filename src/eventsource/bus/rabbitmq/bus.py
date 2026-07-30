@@ -88,21 +88,6 @@ except ImportError:
     AbstractRobustChannel = None  # type: ignore[assignment, misc]
     AbstractRobustConnection = None  # type: ignore[assignment, misc]
 
-# OpenTelemetry propagation imports - kept separate for distributed tracing context
-# These are NOT in TracingMixin and must be imported directly for inject/extract
-try:
-    from opentelemetry.propagate import extract, inject
-    from opentelemetry.trace import SpanKind, Status, StatusCode
-
-    PROPAGATION_AVAILABLE = OTEL_AVAILABLE
-except ImportError:
-    extract = None  # type: ignore[assignment]
-    inject = None  # type: ignore[assignment]
-    SpanKind = None  # type: ignore[assignment, misc]
-    Status = None  # type: ignore[assignment, misc]
-    StatusCode = None  # type: ignore[assignment, misc]
-    PROPAGATION_AVAILABLE = False
-
 
 # Named explicitly (not via __name__) so the logger name is stable across the
 # rabbitmq.py -> rabbitmq/bus.py package move -- callers that configure
@@ -1220,7 +1205,8 @@ class RabbitMQEventBus(BaseEventBus):
         1. Stop accepting new messages (set _consuming flag to False)
         2. Wait for the consumer task to finish processing current messages
         3. Wait for any in-flight message processing to complete
-        4. Disconnect from RabbitMQ (close channel and connection)
+        4. Drain outstanding background publish tasks
+        5. Disconnect from RabbitMQ (close channel and connection)
 
         After shutdown is initiated, the event bus cannot be reused without
         creating a new instance. Attempting to publish or start consuming after
