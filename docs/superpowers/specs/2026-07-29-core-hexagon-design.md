@@ -1,8 +1,8 @@
-# Core Hexagon Design
+# Core Rings Design: Entities, Ports, and Store Adapters
 
 **Date:** 2026-07-29
 **Status:** Approved (brainstorm complete, pending implementation plan)
-**Sub-project:** 1 of 3 in the hexagonal architecture redesign
+**Sub-project:** 1 of 3 in the Clean Architecture redesign
 
 ## Context
 
@@ -16,8 +16,12 @@ default that raises `NotImplementedError` while `get_global_position` is
 
 Decisions made during brainstorming:
 
-- **Scope:** full store contract review, executed as hexagonal architecture
-  (ports & adapters) with hard DDD and SOLID discipline.
+- **Scope:** full store contract review, executed as Clean Architecture —
+  concentric rings (Entities, Use Cases, Interface Adapters, Frameworks &
+  Drivers), the Dependency Rule, boundary ports — with hard DDD and SOLID
+  discipline. Our store/repository/bus interfaces are Clean Architecture
+  **output ports** (gateways): owned by the inner rings, implemented by
+  adapters.
 - **Design constraints:** the contract must accommodate four backend families —
   SQL (PostgreSQL, SQLite, MySQL, CockroachDB), wide-column/partitioned
   (Cassandra, ScyllaDB, DynamoDB), document (MongoDB change streams), and
@@ -34,8 +38,9 @@ Decisions made during brainstorming:
 The redesign decomposes into three sub-projects, each with its own spec, plan,
 and implementation cycle:
 
-1. **Core hexagon** (this spec): `domain/` + `ports/` layers, store contract,
-   memory/sqlite/postgresql adapters, conformance restructure.
+1. **Core rings** (this spec): the entities ring (`domain/`) + boundary ports
+   (`ports/`), store contract, memory/sqlite/postgresql adapters, conformance
+   restructure.
 2. **Application layer:** subscriptions, projections, migration re-architected
    as application services consuming ports; catch-up consumes `GlobalEventFeed`.
 3. **Context packaging:** repositories, bus, locks, multitenancy, GDPR folded
@@ -72,7 +77,11 @@ src/eventsource/
 
 Properties:
 
-- Dependencies point inward only: adapters → application → ports → domain.
+- The Dependency Rule: source dependencies point only inward. Ring map:
+  `domain/` = Entities; `ports/` = boundary interfaces owned by the inner
+  rings; `application/` = Use Cases; `adapters/` = Interface Adapters, inside
+  which framework/driver imports (sqlalchemy, asyncpg, aiosqlite) are confined
+  as the outermost ring. Driver types never appear in port signatures.
 - `ports/` + `domain/` have zero dependencies beyond stdlib and pydantic. This
   **is** the Tier 0 surface `docs/core-surface.md` describes; the long-standing
   blocker (protocol definitions colocated with SQLAlchemy implementations in
