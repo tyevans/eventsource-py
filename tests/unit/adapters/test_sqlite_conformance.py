@@ -117,6 +117,59 @@ TestSQLiteStateful = SQLiteStateMachine.TestCase
 TestSQLiteStateful.settings = settings(max_examples=10, deadline=None, derandomize=True)
 
 
+async def test_append_rolls_back_on_non_integrity_error(monkeypatch) -> None:
+    """A non-`IntegrityError` failure mid-batch must still roll back.
+
+    Only `aiosqlite.IntegrityError` was rolled back previously; any other
+    exception (e.g. a serialization failure) left a dirty open transaction
+    on the shared connection, which the *next* `append()`'s `commit()`
+    would silently fold in.
+    """
+    from eventsource.ports import CategoryReadOptions
+
+    store = SQLiteEventStore(":memory:", event_registry=_make_registry())
+    stream = make_stream()
+
+    import eventsource.adapters.sqlite.store as sqlite_store_module
+
+    original_json_dumps = sqlite_store_module.json_dumps
+    call_count = 0
+
+    def flaky_json_dumps(obj):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            raise RuntimeError("boom: simulated mid-batch serialization failure")
+        return original_json_dumps(obj)
+
+    monkeypatch.setattr(sqlite_store_module, "json_dumps", flaky_json_dumps)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await store.append(
+            stream,
+            [
+                ConformanceEvent(aggregate_id=stream.aggregate_id, payload="1"),
+                ConformanceEvent(aggregate_id=stream.aggregate_id, payload="2"),
+            ],
+            ExpectedVersion.any_(),
+        )
+
+    monkeypatch.setattr(sqlite_store_module, "json_dumps", original_json_dumps)
+
+    envelopes = [e async for e in store.read_category(stream.category, CategoryReadOptions())]
+    assert envelopes == []
+
+    # A subsequent append must succeed cleanly (no leftover dirty transaction).
+    result = await store.append(
+        stream,
+        [ConformanceEvent(aggregate_id=stream.aggregate_id, payload="3")],
+        ExpectedVersion.any_(),
+    )
+    assert result.new_version == 1
+
+    await store.close()
+
+
 def test_sync_facade_close_closes_underlying_store() -> None:
     """`SyncStoreFacade.close()` must close the wrapped store, not just the loop.
 

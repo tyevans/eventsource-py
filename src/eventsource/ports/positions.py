@@ -80,6 +80,22 @@ class ExpectedVersion:
     kind: str
     version: int | None = None
 
+    _KNOWN_KINDS = frozenset({"any", "no_stream", "stream_exists", "exact"})
+
+    def __post_init__(self) -> None:
+        if self.kind not in self._KNOWN_KINDS:
+            raise ValueError(f"unknown ExpectedVersion kind: {self.kind!r}")
+        if self.kind == "exact":
+            if self.version is None or self.version < 0:
+                raise ValueError(
+                    f"exact ExpectedVersion requires version >= 0, got {self.version!r}"
+                )
+        elif self.version is not None:
+            raise ValueError(
+                f"ExpectedVersion(kind={self.kind!r}) must not carry a version, "
+                f"got {self.version!r}"
+            )
+
     @classmethod
     def any_(cls) -> "ExpectedVersion":
         return cls(kind="any")

@@ -148,6 +148,12 @@ class TestGetEventsByType:
         events = await legacy.get_events_by_type("Thing")
         assert events == [event]
 
+    async def test_naive_from_timestamp_rejected(self, legacy: LegacyStoreAdapter) -> None:
+        from datetime import datetime
+
+        with pytest.raises(ValueError, match="timezone-aware"):
+            await legacy.get_events_by_type("Thing", from_timestamp=datetime(2024, 1, 1))
+
 
 class TestReadAll:
     async def test_yields_stored_events_with_int_positions(

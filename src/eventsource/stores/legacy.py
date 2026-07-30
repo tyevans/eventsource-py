@@ -21,6 +21,7 @@ from eventsource.ports import FullEventStore
 from eventsource.ports.envelopes import CategoryReadOptions, FeedReadOptions, StreamReadOptions
 from eventsource.ports.positions import ExpectedVersion as PortExpectedVersion
 from eventsource.ports.positions import Position
+from eventsource.stores._compat import validate_timestamp
 from eventsource.stores.interface import (
     AppendResult,
     EventStore,
@@ -84,6 +85,23 @@ class LegacyStoreAdapter(EventStore):
           `to_timestamp`) are applied client-side after collecting from the
           port iterator, since `StreamReadOptions`/`FeedReadOptions` have no
           timestamp fields -- no pushdown to the adapter.
+        - `get_events_by_type(from_timestamp=...)` changes semantics versus
+          the legacy stores (`InMemoryEventStore`, `SQLiteEventStore`,
+          `PostgreSQLEventStore` in this same package): the legacy stores
+          filter on the *event's own* `occurred_at` (`DomainEvent.occurred_at`
+          / the `timestamp` column), EXCLUSIVE (`occurred_at > from_timestamp`),
+          ordered by that same `timestamp` column. This wrapper instead pushes
+          `from_timestamp` down to `CategoryReadOptions.from_timestamp`,
+          which every new-ring adapter (`memory`/`sqlite`/`postgresql`)
+          filters and orders on STORAGE time (`EventEnvelope.stored_at`,
+          i.e. `created_at`/`stored_at` in storage -- when the row was
+          written, not when the event occurred), INCLUSIVE
+          (`stored_at >= from_timestamp`). This wrapper additionally rejects
+          naive datetimes with `ValueError` (the legacy stores only
+          type-checked; a naive value compared against timezone-aware
+          storage times is a silent bug). The boundary semantics (occurred
+          vs. stored time, exclusive vs. inclusive) do not match the legacy
+          stores' behavior.
     """
 
     def __init__(self, adapter: FullEventStore, store_id: str | None = None) -> None:
@@ -161,7 +179,12 @@ class LegacyStoreAdapter(EventStore):
         tenant_id: UUID | None = None,
         from_timestamp: datetime | None = None,
     ) -> list[DomainEvent]:
-        options = CategoryReadOptions(tenant_id=tenant_id, from_timestamp=from_timestamp)
+        validated_timestamp = validate_timestamp(from_timestamp, "from_timestamp")
+        if validated_timestamp is not None and validated_timestamp.tzinfo is None:
+            # Stricter than the legacy stores (which only type-check): a naive
+            # datetime compared against timezone-aware stored_at is a silent bug.
+            raise ValueError("from_timestamp must be timezone-aware, got a naive datetime")
+        options = CategoryReadOptions(tenant_id=tenant_id, from_timestamp=validated_timestamp)
         events: list[DomainEvent] = []
         async for envelope in self._adapter.read_category(aggregate_type, options):
             events.append(envelope.event)

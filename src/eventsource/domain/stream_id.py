@@ -4,7 +4,9 @@ import re
 from dataclasses import dataclass
 from uuid import UUID
 
-CATEGORY_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
+# `\Z` (not `$`) as the end anchor: `$` matches just before a trailing
+# newline, so `"Order\n"` would otherwise validate as a legal category.
+CATEGORY_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+\Z")
 
 
 @dataclass(frozen=True, slots=True)

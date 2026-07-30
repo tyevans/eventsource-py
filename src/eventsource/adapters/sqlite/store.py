@@ -106,29 +106,47 @@ class SQLiteEventStore:
         self._store_id = store_id or f"sqlite:{database}"
         self._codec = IntPositionCodec(self._store_id)
         self._lock = asyncio.Lock()
+        # Dedicated lock for connection setup, distinct from `self._lock`
+        # (held around `append`'s read-check-write sequence). `append` calls
+        # `_conn()` before acquiring `self._lock`; guarding connection setup
+        # with the same lock would be fine for that ordering, but a separate
+        # lock keeps `_conn()` safe to call from any code path (readers too)
+        # without coupling to append's locking discipline.
+        self._init_lock = asyncio.Lock()
 
     @property
     def store_id(self) -> str:
         return self._store_id
 
     async def _conn(self) -> aiosqlite.Connection:
-        """Return the live connection, opening and initializing it on first use."""
+        """Return the live connection, opening and initializing it on first use.
+
+        Double-checked locking around `self._init_lock` (mirroring
+        `PostgreSQLEventStore._ensure_schema`'s pattern): without it, two
+        concurrent first-callers can each open an `aiosqlite.connect()` --
+        a non-daemon background thread each -- and the loser's connection
+        is simply discarded, leaking its thread for the process lifetime.
+        """
         if self._connection is not None:
             return self._connection
 
-        conn = await aiosqlite.connect(self._database)
-        await conn.execute("PRAGMA foreign_keys = ON")
-        await conn.execute(f"PRAGMA busy_timeout = {self._busy_timeout}")
-        if self._wal_mode:
-            await conn.execute("PRAGMA journal_mode = WAL")
-        conn.row_factory = aiosqlite.Row
+        async with self._init_lock:
+            if self._connection is not None:
+                return self._connection
 
-        schema = get_schema("all", backend="sqlite")
-        await conn.executescript(schema)
-        await conn.commit()
+            conn = await aiosqlite.connect(self._database)
+            await conn.execute("PRAGMA foreign_keys = ON")
+            await conn.execute(f"PRAGMA busy_timeout = {self._busy_timeout}")
+            if self._wal_mode:
+                await conn.execute("PRAGMA journal_mode = WAL")
+            conn.row_factory = aiosqlite.Row
 
-        self._connection = conn
-        return conn
+            schema = get_schema("all", backend="sqlite")
+            await conn.executescript(schema)
+            await conn.commit()
+
+            self._connection = conn
+            return conn
 
     async def close(self) -> None:
         """Close the underlying connection, if open. Safe to call multiple times."""
@@ -255,6 +273,16 @@ class SQLiteEventStore:
                     raise OptimisticLockError(
                         stream.aggregate_id, self._expected_sentinel(expected), actual_version
                     ) from e
+                raise
+            except BaseException:
+                # Any non-IntegrityError failure mid-batch (e.g. an
+                # OperationalError, or a serialization failure from
+                # `json_dumps`/`event.model_dump`) still leaves a dirty open
+                # transaction on the shared connection -- the *next*
+                # `append()`'s `commit()` would silently commit a torn
+                # batch. Roll back on every exception, not just the
+                # classified IntegrityError path above.
+                await conn.rollback()
                 raise
 
     def read_stream(
@@ -403,7 +431,9 @@ class SQLiteEventStore:
             query_parts.append("AND created_at >= ?")
             params.append(options.from_timestamp.isoformat())
 
-        query_parts.append("ORDER BY created_at ASC")
+        # `created_at` alone ties within a batch (SQLite stamps one `now`
+        # per batch), so `global_position` breaks the tie deterministically.
+        query_parts.append("ORDER BY created_at ASC, global_position ASC")
 
         if options.limit is not None:
             query_parts.append("LIMIT ?")

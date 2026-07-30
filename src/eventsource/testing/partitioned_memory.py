@@ -182,6 +182,14 @@ class PartitionedMemoryStore:
         if options.from_timestamp is not None:
             envelopes = [e for e in envelopes if e.stored_at >= options.from_timestamp]
 
+        # `position` is always `None` on this adapter (see module docstring),
+        # so there is no position key to break `stored_at` ties with. `sorted`
+        # is stable, so ties fall back to the order envelopes were collected
+        # above: `self._streams` dict-insertion order (i.e. first-append-wins
+        # across streams), then per-stream append order. That is a
+        # deterministic, if adapter-specific, tie-break -- not `stored_at`
+        # collisions resolved by a storage-assigned sequence like the other
+        # adapters, but stable and reproducible for a given append sequence.
         envelopes = sorted(envelopes, key=lambda e: e.stored_at)
 
         if options.limit is not None:

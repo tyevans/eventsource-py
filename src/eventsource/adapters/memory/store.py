@@ -223,7 +223,13 @@ class MemoryEventStore:
         if options.from_timestamp is not None:
             envelopes = [e for e in envelopes if e.stored_at >= options.from_timestamp]
 
-        envelopes = sorted(envelopes, key=lambda e: e.stored_at)
+        # `stored_at` alone can tie within a batch (all events in one
+        # `append()` call share the same `datetime.now(UTC)` snapshot); the
+        # position key breaks the tie deterministically, mirroring the
+        # sqlite/postgresql adapters' `created_at, global_position` order.
+        envelopes = sorted(
+            envelopes, key=lambda e: (e.stored_at, e.position.key if e.position else ())
+        )
 
         if options.limit is not None:
             envelopes = envelopes[: options.limit]

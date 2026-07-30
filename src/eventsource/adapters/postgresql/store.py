@@ -496,7 +496,10 @@ class PostgreSQLEventStore:
             query_parts.append("AND created_at >= :from_timestamp")
             params["from_timestamp"] = options.from_timestamp
 
-        query_parts.append("ORDER BY created_at ASC")
+        # `created_at` alone ties within a batch (NOW() is transaction time,
+        # constant across the whole INSERT loop), so `global_position` breaks
+        # the tie deterministically.
+        query_parts.append("ORDER BY created_at ASC, global_position ASC")
 
         if options.limit is not None:
             query_parts.append("LIMIT :limit")
