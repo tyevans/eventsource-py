@@ -1,6 +1,9 @@
 # ADR 0014: Live Migration Cutover Semantics
 
-**Status:** Accepted
+**Status:** Accepted. Amended by [ADR 0019](0019-clean-architecture-store-ports.md):
+opaque feed positions abolish the int position-delta lag criteria this record
+assumes; sub-project 2 of the Clean Architecture redesign re-expresses cutover
+lag in wall-clock or count-behind terms.
 
 **Date:** 2026-07-27
 
