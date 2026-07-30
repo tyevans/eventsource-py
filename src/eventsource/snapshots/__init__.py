@@ -140,3 +140,7 @@ def __getattr__(name: str) -> object:
             "SQLITE_AVAILABLE": SQLITE_AVAILABLE,
         }[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
