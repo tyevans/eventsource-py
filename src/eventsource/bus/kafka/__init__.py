@@ -7,15 +7,17 @@ modules and are not part of the public API.
 
 from eventsource.bus.kafka.bus import (
     KAFKA_AVAILABLE,
-    DeserializationError,
-    EventSerializer,
     KafkaEventBus,
-    KafkaEventBusConfig,
     KafkaEventBusMetrics,
-    KafkaEventBusStats,
-    KafkaNotAvailableError,
     KafkaRebalanceListener,
 )
+from eventsource.bus.kafka.config import KafkaEventBusConfig
+from eventsource.bus.kafka.models import (
+    DeserializationError,
+    KafkaEventBusStats,
+    KafkaNotAvailableError,
+)
+from eventsource.bus.kafka.serialization import EventSerializer
 
 __all__ = [
     "DeserializationError",
