@@ -79,6 +79,35 @@ def test_handlers_for_is_stable_across_calls_without_mutation() -> None:
     assert first is second
 
 
+def test_handlers_for_cache_is_keyed_by_event_type_and_reused() -> None:
+    """Regression test: a naive cache keyed by the wrong value, or one that
+    stores ``None`` instead of the combined tuple, would still pass an
+    identity check when concatenating a non-empty tuple with an *empty*
+    wildcard tuple -- CPython's tuple ``+`` returns the left operand
+    unchanged in that case. Registering a wildcard handler too forces a real
+    concatenation each time, so this only passes if the cache genuinely
+    short-circuits recomputation.
+    """
+    registry = SubscriptionRegistry()
+    registry.add(RegistryEventA, _handler)
+
+    def wildcard(event: DomainEvent) -> None: ...
+
+    registry.add_wildcard(wildcard)
+
+    first = registry.handlers_for(RegistryEventA)
+    second = registry.handlers_for(RegistryEventA)
+
+    assert first is second
+    assert len(first) == 2
+
+    # A second, distinct event type must get its own cache entry rather than
+    # sharing (or clobbering) RegistryEventA's.
+    third = registry.handlers_for(RegistryEventB)
+    assert third is not first
+    assert len(third) == 1
+
+
 def test_cache_is_invalidated_on_mutation() -> None:
     registry = SubscriptionRegistry()
     registry.add(RegistryEventA, _handler)

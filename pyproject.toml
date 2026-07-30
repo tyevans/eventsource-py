@@ -1,6 +1,6 @@
 [project]
 name = "eventsource-py"
-version = "0.5.0"
+version = "0.6.0"
 description = "Production-ready event sourcing library for Python"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -123,10 +123,10 @@ source = ["src/eventsource"]
 source = ["src/eventsource"]
 
 [tool.coverage.report]
-# Current unit-suite coverage measured at 87% (2026-07-28, tests/unit/ only,
+# Unit-suite coverage measured at 88% (2026-07-29, tests/unit/ only,
 # excluding integration/postgres/redis-marked tests). Set slightly below that
 # as a regression ratchet, not a stretch target.
-fail_under = 86
+fail_under = 87
 
 [tool.mypy]
 python_version = "3.11"
@@ -199,11 +199,17 @@ only_mutate = [
     "src/eventsource/engine.py",
     "src/eventsource/repositories/_dialect.py",
     "src/eventsource/serialization/json.py",
+    "src/eventsource/bus/registry.py",
+    "src/eventsource/bus/retry.py",
+    "src/eventsource/bus/base.py",
 ]
 pytest_add_cli_args_test_selection = [
     "tests/unit/test_engine.py",
     "tests/unit/repositories/test_dialect.py",
     "tests/unit/serialization/",
+    "tests/unit/bus/test_registry.py",
+    "tests/unit/bus/test_retry.py",
+    "tests/unit/bus/test_base.py",
 ]
 pytest_add_cli_args = ["--no-cov", "-x", "-q", "-p", "no:randomly"]
 
