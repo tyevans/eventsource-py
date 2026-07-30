@@ -1,14 +1,21 @@
 """
-Background task manager for async operations.
+Background task manager for fire-and-forget asyncio work.
 
-This module provides the BackgroundTaskManager class for managing
-fire-and-forget asyncio tasks with proper lifecycle tracking.
+This is an internal helper, not part of the public API. It exists because
+two independent pieces of the library needed the same bookkeeping for
+fire-and-forget ``asyncio.Task`` objects:
 
-This extraction addresses the Single Responsibility Principle by
-separating background task management from repository logic.
+- ``eventsource.snapshots.strategies.BackgroundSnapshotStrategy`` uses it to
+  track in-flight background snapshot creation and to support
+  ``await_pending()`` in tests.
+- ``eventsource.bus.base.BaseEventBus`` uses it to track in-flight publish
+  work and to support draining on shutdown.
+
+Both call sites previously hand-rolled nearly identical task tracking; this
+module is the shared implementation they now delegate to.
 
 Example:
-    >>> from eventsource.aggregates.task_manager import BackgroundTaskManager
+    >>> from eventsource._internal.background_tasks import BackgroundTaskManager
     >>>
     >>> manager = BackgroundTaskManager()
     >>> manager.submit(create_snapshot_coro())
@@ -16,10 +23,12 @@ Example:
     >>> count = await manager.await_all()
 """
 
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import logging
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -36,7 +45,8 @@ class BackgroundTaskManager:
     - Deferred cleanup operations
 
     Features:
-    - Task tracking with automatic cleanup
+    - Task tracking with automatic cleanup via done-callback discard
+      (no unbounded growth between calls)
     - Graceful shutdown with timeout
     - Pending task count monitoring
     - Error logging for failed tasks
@@ -56,39 +66,47 @@ class BackgroundTaskManager:
     """
 
     def __init__(self) -> None:
-        """Initialize the task manager with empty task list."""
-        self._tasks: list[asyncio.Task[Any]] = []
+        """Initialize the task manager with an empty task set."""
+        self.tasks: set[asyncio.Task[Any]] = set()
 
-    def submit(self, coro: Coroutine[Any, Any, Any]) -> asyncio.Task[Any]:
+    def submit(
+        self,
+        coro: Coroutine[Any, Any, Any],
+        *,
+        on_done: Callable[[asyncio.Task[Any]], None] | None = None,
+    ) -> asyncio.Task[Any]:
         """
         Submit a coroutine as a background task.
 
-        The task is tracked and can be awaited later. Completed tasks
-        are automatically cleaned up on subsequent operations.
+        The task is tracked and automatically discarded from tracking as
+        soon as it completes (via a done-callback), so pending tasks never
+        accumulate between calls.
 
         Args:
-            coro: The coroutine to run in the background
+            coro: The coroutine to run in the background.
+            on_done: Optional callback invoked with the finished task
+                instead of this manager's default error logging. Callers
+                that need failures logged under their own module's logger
+                (e.g. to keep existing log output stable) can pass one.
 
         Returns:
             The created asyncio.Task
         """
         task = asyncio.create_task(coro)
-        self._tasks.append(task)
-
-        # Add done callback for logging
-        task.add_done_callback(self._on_task_done)
-
-        # Cleanup completed tasks to prevent memory growth
-        self._cleanup_completed()
-
+        self.tasks.add(task)
+        task.add_done_callback(lambda t: self._on_task_done(t, on_done))
         return task
 
-    def _on_task_done(self, task: asyncio.Task[Any]) -> None:
-        """
-        Callback when a task completes.
-
-        Logs any exceptions that occurred in the task.
-        """
+    def _on_task_done(
+        self,
+        task: asyncio.Task[Any],
+        on_done: Callable[[asyncio.Task[Any]], None] | None,
+    ) -> None:
+        """Discard a finished task and either delegate or log its failure."""
+        self.tasks.discard(task)
+        if on_done is not None:
+            on_done(task)
+            return
         if not task.cancelled():
             exc = task.exception()
             if exc:
@@ -98,10 +116,6 @@ class BackgroundTaskManager:
                     exc_info=exc,
                 )
 
-    def _cleanup_completed(self) -> None:
-        """Remove completed tasks from the tracking list."""
-        self._tasks = [task for task in self._tasks if not task.done()]
-
     @property
     def pending_count(self) -> int:
         """
@@ -110,8 +124,7 @@ class BackgroundTaskManager:
         Returns:
             Number of tasks still running
         """
-        self._cleanup_completed()
-        return len(self._tasks)
+        return len(self.tasks)
 
     @property
     def has_pending(self) -> bool:
@@ -137,19 +150,15 @@ class BackgroundTaskManager:
         Note:
             Tasks that don't complete within the timeout are cancelled.
         """
-        if not self._tasks:
-            return 0
-
-        pending = [task for task in self._tasks if not task.done()]
+        pending = {task for task in self.tasks if not task.done()}
         if not pending:
-            self._tasks.clear()
             return 0
 
         count = len(pending)
 
         if timeout is not None:
             # Wait with timeout
-            done, remaining = await asyncio.wait(
+            _done, remaining = await asyncio.wait(
                 pending,
                 timeout=timeout,
                 return_when=asyncio.ALL_COMPLETED,
@@ -182,7 +191,6 @@ class BackgroundTaskManager:
                         exc_info=result,
                     )
 
-        self._tasks.clear()
         return count
 
     def cancel_all(self) -> int:
@@ -192,13 +200,12 @@ class BackgroundTaskManager:
         Returns:
             Number of tasks that were cancelled
         """
-        pending = [task for task in self._tasks if not task.done()]
+        pending = [task for task in self.tasks if not task.done()]
         count = len(pending)
 
         for task in pending:
             task.cancel()
 
-        self._tasks.clear()
         return count
 
     def __repr__(self) -> str:

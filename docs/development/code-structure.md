@@ -93,7 +93,9 @@ that follow trace those splits in detail.
 When a class starts answering two unrelated questions — "how do I persist this aggregate?" and
 "when should I snapshot it?" — the second question moves out, into a module named for the answer.
 That is the literal history of `aggregates/snapshot_manager.py`: `AggregateSnapshotManager` was
-carved out of `AggregateRepository`, and `aggregates/task_manager.py` exists for the same reason.
+carved out of `AggregateRepository`. Background task tracking was carved out for the same reason,
+but it lives in `_internal/background_tasks.py` rather than `aggregates/`, since its consumers
+are the snapshot strategy and the event bus, not the repository.
 
 The test for whether a module has one responsibility is not line count; it is whether the
 failure modes are shared. Persistence fails with `OptimisticLockError` and must propagate.
@@ -387,27 +389,27 @@ callers never need to reach for the manager:
 - `snapshot_store`, `snapshot_threshold`, `snapshot_mode`, `has_snapshot_support` — read-only
   views of the configuration.
 
-### `aggregates/task_manager.py` — `BackgroundTaskManager`
+### `_internal/background_tasks.py` — `BackgroundTaskManager`
 
 `BackgroundTaskManager` is a small, dependency-free collaborator for fire-and-forget asyncio
-work. `submit(coro)` creates and tracks a task, attaches a done-callback that logs any exception,
-and prunes finished tasks so the list cannot grow unbounded. `pending_count` / `has_pending`
-report status, `await_all(timeout=None)` waits (cancelling stragglers past the timeout and
-logging a warning), and `cancel_all()` cancels everything and returns the count.
+work. `submit(coro)` creates and tracks a task in a set, attaches a done-callback that discards
+it from the set and logs any exception, so pending tasks never accumulate between calls.
+`pending_count` / `has_pending` report status, `await_all(timeout=None)` waits (cancelling
+stragglers past the timeout and logging a warning), and `cancel_all()` cancels everything and
+returns the count.
 
-It is a standalone building block rather than a wired-in dependency: today
-`BackgroundSnapshotStrategy` keeps its own `_pending_tasks` list, and nothing in `aggregates/`
-imports `BackgroundTaskManager`. Treat it as the intended landing place for that duplicated task
-bookkeeping, and as the reusable answer for any other component that wants background work with
-lifecycle tracking.
+It is internal (not part of the public API) and has two real consumers today:
+`snapshots.strategies.BackgroundSnapshotStrategy` delegates its pending-task bookkeeping and
+`await_pending()` to an instance, and `bus.base.BaseEventBus` delegates `_track_background` /
+`get_background_task_count` / `_drain_background` to one, while keeping its own timeout-specific
+log messages at the call site so existing log output is unchanged.
 
-### Why task tracking is a collaborator, not repository state
+### Why task tracking is a collaborator, not inline state
 
-A list of in-flight tasks is state with its own lifecycle rules — creation, error logging,
-draining under timeout, cancellation on shutdown. Held as `self._tasks` on a repository, that
-lifecycle becomes indistinguishable from persistence state, is only reachable through the
-repository's API, and has to be reimplemented by the next component that needs it. As a separate
-object it can be constructed in a test, driven directly, and shared.
+A set of in-flight tasks is state with its own lifecycle rules — creation, error logging,
+draining under timeout, cancellation on shutdown. Held as ad hoc state on each owner, that
+lifecycle has to be reimplemented by every component that needs it. As a separate object it can
+be constructed in a test, driven directly, and shared.
 
 ## Tracing by composition, not `TracingMixin`
 
@@ -484,7 +486,7 @@ A workable order:
 3. `snapshot_manager.py` — `load_valid_snapshot` and `maybe_create_snapshot`.
 4. `snapshots/strategies.py` — `BaseSnapshotStrategy` then the three subclasses.
 5. `observability/tracer.py` — only if you are touching spans.
-6. `task_manager.py` — standalone; read whenever background tasks come up.
+6. `_internal/background_tasks.py` — standalone; read whenever background tasks come up.
 
 ## The same split elsewhere
 
