@@ -18,13 +18,20 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from eventsource.events import DomainEvent
-from eventsource.events.registry import get_event_class, register_event
+from eventsource.events.registry import default_registry, get_event_class
 from eventsource.serialization import json_dumps, json_loads
 
 
-@register_event
 class RoundTripEvent(DomainEvent):
-    """Test event with an arbitrary JSON-safe payload dict."""
+    """Test event with an arbitrary JSON-safe payload dict.
+
+    Deliberately NOT decorated with ``@register_event`` at import time --
+    other unit test modules (e.g. ``test_event_registry.py``) clear the
+    default registry, and under randomized test ordering (pytest-randomly)
+    an import-time registration can be wiped out before this module's own
+    test runs. Instead, register/unregister around the test body so it
+    passes regardless of collection order.
+    """
 
     aggregate_type: str = "RoundTrip"
     payload: dict[str, Any]
@@ -43,15 +50,19 @@ payloads = st.dictionaries(st.text(max_size=20), json_scalars, max_size=5)
 
 @given(payload=payloads)
 def test_event_round_trips_through_canonical_wire_path(payload: dict[str, Any]) -> None:
-    original = RoundTripEvent(aggregate_id=uuid4(), payload=payload)
+    default_registry.register(RoundTripEvent)
+    try:
+        original = RoundTripEvent(aggregate_id=uuid4(), payload=payload)
 
-    wire = json_dumps(original.to_dict())
-    data = json_loads(wire)
+        wire = json_dumps(original.to_dict())
+        data = json_loads(wire)
 
-    event_class = get_event_class(data["event_type"])
-    assert event_class is RoundTripEvent
-    rehydrated = RoundTripEvent.from_dict(data)
+        event_class = get_event_class(data["event_type"])
+        assert event_class is RoundTripEvent
+        rehydrated = RoundTripEvent.from_dict(data)
 
-    assert rehydrated.payload == original.payload
-    assert rehydrated.event_id == original.event_id
-    assert rehydrated == original
+        assert rehydrated.payload == original.payload
+        assert rehydrated.event_id == original.event_id
+        assert rehydrated == original
+    finally:
+        default_registry.unregister("RoundTripEvent")

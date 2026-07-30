@@ -241,8 +241,8 @@ class TestRabbitMQEventBusConnection:
 
         try:
             # Verify exchange was created by checking internal state
-            assert bus._exchange is not None
-            assert bus._consumer_queue is not None
+            assert bus._topology.exchange is not None
+            assert bus._topology.consumer_queue is not None
         finally:
             await bus.disconnect()
 
@@ -259,8 +259,8 @@ class TestRabbitMQEventBusConnection:
         await bus.connect()
 
         try:
-            assert bus._dlq_exchange is not None
-            assert bus._dlq_queue is not None
+            assert bus._topology.dlq_exchange is not None
+            assert bus._topology.dlq_queue is not None
         finally:
             await bus.disconnect()
 
@@ -277,8 +277,8 @@ class TestRabbitMQEventBusConnection:
         await bus.connect()
 
         try:
-            assert bus._dlq_exchange is None
-            assert bus._dlq_queue is None
+            assert bus._topology.dlq_exchange is None
+            assert bus._topology.dlq_queue is None
         finally:
             await bus.disconnect()
 
@@ -1658,9 +1658,9 @@ class TestRabbitMQReliabilityRetry:
             max_retries=max_retries,
         )
         # Override retry delays for faster testing
-        bus._config.retry_base_delay = 0.1
-        bus._config.retry_max_delay = 0.5
-        bus._config.retry_jitter = 0.0
+        bus.config.retry_base_delay = 0.1
+        bus.config.retry_max_delay = 0.5
+        bus.config.retry_jitter = 0.0
 
         await bus.connect()
 
@@ -1718,9 +1718,9 @@ class TestRabbitMQReliabilityRetry:
             max_retries=max_retries,
         )
         # Fast retries for testing
-        bus._config.retry_base_delay = 0.1
-        bus._config.retry_max_delay = 0.3
-        bus._config.retry_jitter = 0.0
+        bus.config.retry_base_delay = 0.1
+        bus.config.retry_max_delay = 0.3
+        bus.config.retry_jitter = 0.0
 
         await bus.connect()
 
@@ -1821,7 +1821,7 @@ class TestRabbitMQReliabilityShutdown:
             exchange_name=f"test_ctx_shutdown_{unique_suffix}",
             consumer_group=f"test_ctx_shutdown_group_{unique_suffix}",
         )
-        bus._config.shutdown_timeout = 10.0
+        bus.config.shutdown_timeout = 10.0
 
         async with bus:
             assert bus.is_connected
@@ -2011,8 +2011,8 @@ class TestRabbitMQReliabilityStats:
             enable_dlq=True,
             max_retries=1,
         )
-        bus._config.retry_base_delay = 0.1
-        bus._config.retry_jitter = 0.0
+        bus.config.retry_base_delay = 0.1
+        bus.config.retry_jitter = 0.0
 
         await bus.connect()
 
@@ -2069,7 +2069,7 @@ class TestRabbitMQReliabilityQueueInfo:
         info = await rabbitmq_event_bus.get_queue_info()
 
         # Should return valid queue info
-        assert info.name == rabbitmq_event_bus._config.queue_name
+        assert info.name == rabbitmq_event_bus.config.queue_name
         assert info.message_count >= 0
         assert info.consumer_count >= 0
         assert info.state in ("running", "idle")

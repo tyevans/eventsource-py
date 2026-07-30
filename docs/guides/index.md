@@ -203,7 +203,7 @@ the subscription guides below.
 | [Coordinate work with distributed locks](distributed-locks.md) | Serialize an operation across instances using PostgreSQL advisory locks |
 
 Background: [ADR 0009: multi-instance subscription coordination](../adrs/0009-multi-instance-subscription-coordination.md)
-and [ADR 0009: PostgreSQL advisory locks](../adrs/0009-postgresql-advisory-locks.md).
+and [ADR 0019: PostgreSQL advisory locks](../adrs/0019-postgresql-advisory-locks.md).
 
 ### Multi-tenancy
 

@@ -1614,7 +1614,7 @@ def metrics_provider() -> Any:
     if not OTEL_METRICS_AVAILABLE:
         pytest.skip("opentelemetry-sdk not installed")
 
-    import eventsource.bus.kafka as kafka_module
+    import eventsource.bus.kafka.bus as kafka_module
 
     # Only set up the provider once per session
     if _TEST_METER_PROVIDER is None:
@@ -1648,7 +1648,7 @@ def metrics_setup(metrics_provider: Any) -> Any:
     if not OTEL_METRICS_AVAILABLE:
         pytest.skip("opentelemetry-sdk not installed")
 
-    import eventsource.bus.kafka as kafka_module
+    import eventsource.bus.kafka.bus as kafka_module
 
     # Reset the cached meter so each test gets a fresh one from our provider
     kafka_module._meter = None
