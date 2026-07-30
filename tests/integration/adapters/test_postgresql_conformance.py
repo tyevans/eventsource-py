@@ -54,7 +54,7 @@ async def _fresh_store(postgres_connection_url: str) -> PostgreSQLEventStore:
     engine = create_async_engine(postgres_connection_url)
     async with engine.begin() as conn:
         await conn.execute(text("DROP TABLE IF EXISTS events CASCADE"))
-    return PostgreSQLEventStore(engine, event_registry=_make_registry())
+    return PostgreSQLEventStore(engine, event_registry=_make_registry(), create_schema=True)
 
 
 class TestPostgreSQLAppender(AppenderConformance):
@@ -99,7 +99,11 @@ class TestPostgreSQLCategoryQuery(CategoryQueryConformance):
 
 def test_store_id_stable_across_restarts(postgres_engine: AsyncEngine) -> None:
     """`store_id` derives from the engine URL's database name -- stable, not random."""
-    store_a = PostgreSQLEventStore(postgres_engine, event_registry=_make_registry())
-    store_b = PostgreSQLEventStore(postgres_engine, event_registry=_make_registry())
+    store_a = PostgreSQLEventStore(
+        postgres_engine, event_registry=_make_registry(), create_schema=True
+    )
+    store_b = PostgreSQLEventStore(
+        postgres_engine, event_registry=_make_registry(), create_schema=True
+    )
     assert store_a.store_id == store_b.store_id
     assert store_a.store_id == f"pg:{postgres_engine.url.database}"

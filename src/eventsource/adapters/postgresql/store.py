@@ -35,6 +35,7 @@ from eventsource.domain import StreamId
 from eventsource.events import DomainEvent
 from eventsource.events.registry import EventRegistry, default_registry
 from eventsource.exceptions import DuplicateEventError, OptimisticLockError
+from eventsource.migrations import get_schema
 from eventsource.ports import (
     AppendResult,
     CategoryReadOptions,
@@ -78,45 +79,28 @@ _SELECT_COLUMNS = """
 # added.
 _HORIZON_PREDICATE = "xmin::text::bigint < pg_snapshot_xmin(pg_current_snapshot())::text::bigint"
 
-_SCHEMA_STATEMENTS = [
-    """
-    CREATE TABLE IF NOT EXISTS events (
-        global_position BIGSERIAL PRIMARY KEY,
-        event_id UUID NOT NULL UNIQUE,
-        aggregate_id UUID NOT NULL,
-        aggregate_type VARCHAR(255) NOT NULL,
-        event_type VARCHAR(255) NOT NULL,
-        tenant_id UUID,
-        actor_id VARCHAR(255),
-        version INTEGER NOT NULL,
-        timestamp TIMESTAMPTZ NOT NULL,
-        payload JSONB NOT NULL,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        CONSTRAINT uq_events_aggregate_version UNIQUE (aggregate_id, aggregate_type, version)
-    )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS idx_events_aggregate
-    ON events (aggregate_id, aggregate_type)
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS idx_events_type
-    ON events (event_type)
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS idx_events_tenant_id
-    ON events (tenant_id)
-    WHERE tenant_id IS NOT NULL
-    """,
-]
+# Constraint names from the canonical `migrations/schemas/events.sql` (verified
+# against a live PostgreSQL 15 by introspecting `asyncpg.exceptions
+# .UniqueViolationError.constraint_name` on both conflict paths -- see
+# `_classify_integrity_error`).
+_EVENT_ID_UNIQUE_CONSTRAINT = "events_event_id_key"
+_AGGREGATE_VERSION_UNIQUE_CONSTRAINT = "uq_events_aggregate_version"
 
 
 class PostgreSQLEventStore:
     """PostgreSQL implementation of `FullEventStore`.
 
-    Uses async SQLAlchemy with the asyncpg driver. The `events` table is
-    created lazily (guarded by an `asyncio.Lock`) on first use, mirroring
-    the SQLite adapter.
+    Uses async SQLAlchemy with the asyncpg driver.
+
+    Schema ownership: like the legacy `stores/postgresql.py`, this adapter
+    does NOT create the `events` table by default -- production deployments
+    apply the canonical `migrations/schemas/events.sql` (via `migrations/`
+    tooling) out of band, and this store simply queries an existing table.
+    Pass `create_schema=True` (tests, local dev only) to opt into lazy
+    `CREATE TABLE IF NOT EXISTS` schema creation on first use, guarded by an
+    `asyncio.Lock`, using the same canonical schema. Leaving it `False` in
+    production also avoids concurrent `CREATE INDEX IF NOT EXISTS` racing
+    across processes ("tuple concurrently updated").
 
     Structural conformance only -- no inheritance from the port protocols.
 
@@ -132,6 +116,7 @@ class PostgreSQLEventStore:
         event_registry: EventRegistry | None = None,
         *,
         store_id: str | None = None,
+        create_schema: bool = False,
     ) -> None:
         if not ASYNCPG_AVAILABLE:
             raise ImportError(
@@ -146,6 +131,7 @@ class PostgreSQLEventStore:
         database = engine.url.database or "postgres"
         self._store_id = store_id or f"pg:{database}"
         self._codec = IntPositionCodec(self._store_id)
+        self._create_schema = create_schema
         self._schema_ready = False
         self._schema_lock = asyncio.Lock()
 
@@ -154,14 +140,36 @@ class PostgreSQLEventStore:
         return self._store_id
 
     async def _ensure_schema(self) -> None:
-        if self._schema_ready:
+        """Lazily create the `events` table, only when `create_schema=True`.
+
+        No-op otherwise (the default): production deployments manage schema
+        via `migrations/`, and queries against a missing table fail
+        naturally -- same behavior as the legacy `EventStore` ABC
+        implementation.
+
+        Runs the canonical `migrations/schemas/events.sql` (the same file
+        `get_schema("events")` serves to Alembic/manual setup) as a single
+        script via the raw asyncpg driver connection. SQLAlchemy's
+        `Connection.execute()` cannot run a multi-statement script through
+        asyncpg (it uses the extended query protocol, which asyncpg
+        rejects for multiple commands); asyncpg's own `Connection.execute()`
+        uses the simple query protocol when no arguments are bound, which
+        does support multi-statement scripts, so the raw driver connection
+        is used here instead of `text()` execution. `events.sql` contains
+        only DDL and `COMMENT ON` statements (no functions/dollar-quoting),
+        which is exactly what the simple query protocol supports.
+        """
+        if not self._create_schema or self._schema_ready:
             return
         async with self._schema_lock:
             if self._schema_ready:
                 return
-            async with self._engine.begin() as conn:
-                for statement in _SCHEMA_STATEMENTS:
-                    await conn.execute(text(statement))
+            async with self._engine.connect() as conn:
+                raw = await conn.get_raw_connection()
+                driver_connection = raw.driver_connection
+                assert driver_connection is not None
+                await driver_connection.execute(get_schema("events"))
+                await conn.commit()
             self._schema_ready = True
 
     async def close(self) -> None:
@@ -193,6 +201,42 @@ class PostgreSQLEventStore:
         if expected.kind == "stream_exists":
             return _STREAM_EXISTS_SENTINEL
         return expected.version or 0
+
+    def _classify_integrity_error(self, e: IntegrityError) -> str | None:
+        """Classify an append `IntegrityError` by the real constraint name.
+
+        SQLAlchemy's asyncpg dialect wraps the driver exception in its own
+        DBAPI-compat `IntegrityError` (`e.orig`), which does not itself
+        carry `constraint_name`; the underlying `asyncpg.exceptions
+        .UniqueViolationError` (`e.orig.__cause__`) does. Verified against a
+        live PostgreSQL 15 server: `events_event_id_key` for the `event_id`
+        unique violation, `uq_events_aggregate_version` for the
+        `(aggregate_id, aggregate_type, version)` conflict.
+
+        Falls back to substring-matching the stringified exception only
+        when no `constraint_name` attribute is found on either the DBAPI
+        exception or its cause (e.g. a future driver/dialect change) --
+        this keeps the classification working, just less precisely.
+        """
+        constraint_name = getattr(e.orig, "constraint_name", None) or getattr(
+            getattr(e.orig, "__cause__", None), "constraint_name", None
+        )
+        if constraint_name == _EVENT_ID_UNIQUE_CONSTRAINT:
+            return "event_id"
+        if constraint_name == _AGGREGATE_VERSION_UNIQUE_CONSTRAINT:
+            return "aggregate_version"
+        if constraint_name is not None:
+            return None
+
+        # Fallback: no constraint_name available anywhere -- substring match.
+        error_str = str(e).lower()
+        if "event_id" in error_str:
+            return "event_id"
+        if "uq_events_aggregate_version" in error_str or (
+            "unique" in error_str and "aggregate" in error_str and "version" in error_str
+        ):
+            return "aggregate_version"
+        return None
 
     async def append(
         self,
@@ -270,14 +314,12 @@ class PostgreSQLEventStore:
 
             except IntegrityError as e:
                 await session.rollback()
-                error_str = str(e).lower()
-                if "event_id" in error_str:
+                conflict = self._classify_integrity_error(e)
+                if conflict == "event_id":
                     raise DuplicateEventError(
                         f"an event_id in this batch already exists in the store: {e}"
                     ) from e
-                if "uq_events_aggregate_version" in error_str or (
-                    "unique" in error_str and "aggregate" in error_str and "version" in error_str
-                ):
+                if conflict == "aggregate_version":
                     result = await session.execute(
                         text(
                             """
