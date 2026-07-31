@@ -97,7 +97,7 @@ from eventsource.migration.subscription_migrator import (
 )
 from eventsource.migration.sync_lag_tracker import SyncLagTracker
 from eventsource.observability import Tracer, create_tracer
-from eventsource.ports import FullEventStore
+from eventsource.ports import FullEventStore, Position
 
 if TYPE_CHECKING:
     from eventsource.locks import PostgreSQLLockManager
@@ -970,8 +970,7 @@ class MigrationCoordinator:
                 target_store_id=migration.target_store_id,
                 config=migration.config,
                 timeout_ms=timeout_ms,
-                since=migration.last_source_position,
-                already_synced=self._already_synced(migration_id),
+                since=self._lag_anchor(migration),
             )
 
             # Handle result
@@ -1170,14 +1169,21 @@ class MigrationCoordinator:
         self._consistency_reports.pop(migration_id, None)
         self._subscription_summaries.pop(migration_id, None)
 
-    def _already_synced(self, migration_id: UUID) -> int:
-        """Events the live interceptor has already mirrored to the target.
+    def _lag_anchor(self, migration: Migration) -> Position | None:
+        """The position to count lag from for this migration.
 
-        Zero when no interceptor is installed (before dual-write, or after
-        a coordinator restart -- see `SyncLagTracker.calculate_lag`).
+        The bulk-copy checkpoint, advanced over whatever the live
+        dual-write interceptor has provably mirrored -- but never past a
+        mirroring failure. With no interceptor installed (before
+        dual-write, or after a coordinator restart) this is just the
+        checkpoint, which is conservative: already-mirrored events count
+        as lag and cutover refuses until a fresh copy pass advances the
+        checkpoint. See `DualWriteInterceptor.safe_lag_anchor`.
         """
-        interceptor = self._interceptors.get(migration_id)
-        return interceptor.dual_write_success_count if interceptor else 0
+        interceptor = self._interceptors.get(migration.id)
+        if interceptor is None:
+            return migration.last_source_position
+        return interceptor.safe_lag_anchor(migration.last_source_position)
 
     async def get_sync_lag(self, migration_id: UUID) -> SyncLag | None:
         """
@@ -1204,10 +1210,7 @@ class MigrationCoordinator:
         if lag_tracker is None:
             return None
 
-        return await lag_tracker.calculate_lag(
-            since=migration.last_source_position,
-            already_synced=self._already_synced(migration_id),
-        )
+        return await lag_tracker.calculate_lag(since=self._lag_anchor(migration))
 
     async def is_cutover_ready(self, migration_id: UUID) -> tuple[bool, str | None]:
         """
@@ -1242,10 +1245,7 @@ class MigrationCoordinator:
             return False, "No sync lag tracker found for migration"
 
         # Calculate current lag
-        await lag_tracker.calculate_lag(
-            since=migration.last_source_position,
-            already_synced=self._already_synced(migration_id),
-        )
+        await lag_tracker.calculate_lag(since=self._lag_anchor(migration))
 
         if lag_tracker.is_sync_ready():
             return True, None

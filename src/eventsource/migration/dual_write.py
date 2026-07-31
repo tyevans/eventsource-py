@@ -178,6 +178,8 @@ class DualWriteInterceptor:
         _failed_writes: List of failed target writes for recovery.
         _affected_aggregates: Set of aggregate IDs with failed writes.
         _dual_write_success_count: Events successfully mirrored to the target.
+        _last_synced_source_position: Watermark of the latest successful mirror.
+        _first_failed_source_position: Where mirroring first fell behind.
     """
 
     max_append_batch: int | None = None
@@ -217,7 +219,15 @@ class DualWriteInterceptor:
         self._affected_aggregates: set[UUID] = set()
 
         # Count of EVENTS (not appends) successfully mirrored to the target.
+        # Statistics only -- it does NOT feed the lag calculation, because a
+        # count cannot distinguish "five mirrored" from "five mirrored after
+        # three were dropped".
         self._dual_write_success_count = 0
+
+        # Sync watermarks. Source positions throughout, so they are always
+        # mutually comparable.
+        self._last_synced_source_position: Position | None = None
+        self._first_failed_source_position: Position | None = None
 
     # =========================================================================
     # Public Properties
@@ -242,16 +252,74 @@ class DualWriteInterceptor:
     def dual_write_success_count(self) -> int:
         """Events successfully mirrored to the target since construction.
 
-        Counts EVENTS, not append calls. `SyncLagTracker` subtracts this
-        from its count-behind: every one of these events is in the source
-        feed after the bulk-copy checkpoint AND already in the target, so
-        counting them as lag would keep a write-active tenant permanently
-        above the cutover threshold.
-
-        In-memory and not persisted -- see `calculate_lag`'s
-        `already_synced` caveat.
+        Counts EVENTS, not append calls. STATISTICS ONLY -- it must never
+        be subtracted from a lag count. A bare success count cannot tell
+        "five mirrored" from "five mirrored after three were dropped", so
+        subtracting it can report zero lag over a hole. Use
+        `safe_lag_anchor` instead, which stops at the first failure.
         """
         return self._dual_write_success_count
+
+    @property
+    def last_synced_source_position(self) -> Position | None:
+        """Source position of the most recent successful mirror.
+
+        The first-of-batch position, which is a conservative (never
+        optimistic) monotone watermark: for a multi-event append the
+        batch's remaining events sit after it and keep counting as lag
+        until the next successful mirror moves the watermark past them.
+        """
+        return self._last_synced_source_position
+
+    @property
+    def first_failed_source_position(self) -> Position | None:
+        """Source position where mirroring first failed.
+
+        Set once, on the first failure, and NEVER cleared -- a later
+        success does not retroactively deliver the event that was
+        dropped. This is what stops `safe_lag_anchor` from advancing over
+        a hole.
+        """
+        return self._first_failed_source_position
+
+    def safe_lag_anchor(self, checkpoint: Position | None) -> Position | None:
+        """The furthest source position provably present in the target.
+
+        Counting lag from here is safe: every source event at or before
+        the returned position is known to be in the target.
+
+        Starts from `checkpoint` (the migration's `last_source_position`,
+        i.e. what the bulk copy proved) and advances to the synced
+        watermark ONLY when doing so cannot skip a failure. If mirroring
+        has failed at all, the anchor advances only when the whole synced
+        run precedes that first failure; otherwise it stays at the
+        checkpoint. The anchor never moves backward.
+
+        Args:
+            checkpoint: Last source position the bulk copy proved copied.
+
+        Returns:
+            The anchor to pass as `SyncLagTracker.calculate_lag(since=...)`.
+        """
+        candidate = self._last_synced_source_position
+        if candidate is None:
+            return checkpoint
+
+        first_failed = self._first_failed_source_position
+        if first_failed is not None:
+            # Same store (source positions), so this ordering is always
+            # defined -- PositionForeignError is impossible here.
+            assert candidate.store_id == first_failed.store_id
+            if candidate >= first_failed:
+                # Successes after a failure prove nothing about the hole.
+                return checkpoint
+
+        if checkpoint is not None:
+            assert candidate.store_id == checkpoint.store_id
+            if candidate <= checkpoint:
+                return checkpoint
+
+        return candidate
 
     # =========================================================================
     # Failure Tracking
@@ -393,6 +461,8 @@ class DualWriteInterceptor:
             try:
                 await self._target.append(stream, events, expected)
                 self._dual_write_success_count += len(events)
+                if source_result.position is not None:
+                    self._last_synced_source_position = source_result.position
                 logger.debug(
                     f"Dual-write success for tenant {self._tenant_id}, stream {stream.render()}"
                 )
@@ -402,6 +472,11 @@ class DualWriteInterceptor:
                     f"Target write failed for tenant {self._tenant_id}, "
                     f"stream {stream.render()}: {e}"
                 )
+                if (
+                    self._first_failed_source_position is None
+                    and source_result.position is not None
+                ):
+                    self._first_failed_source_position = source_result.position
                 self._record_sync_failure(
                     aggregate_id=stream.aggregate_id,
                     aggregate_type=stream.category,

@@ -996,51 +996,113 @@ class TestSyncLagTracking:
         assert stats.min_lag == 1  # First lag was 1
 
 
-class TestSyncLagOnWriteActiveTenant:
-    """Lag must converge on a tenant that keeps writing during dual-write.
+class FlakyTarget:
+    """`FullEventStore` wrapper that rejects the first `reject_first` appends.
 
-    The count-behind reads the source feed after `since`, which includes
-    every event the DualWriteInterceptor has ALREADY mirrored to the
-    target. Without discounting those, lag grows monotonically with write
-    traffic and cutover can never fire on a live tenant.
+    Composition, not inheritance -- it stands in wherever a
+    `FullEventStore` is expected and lets the wrapped store see only the
+    appends it does not reject.
+    """
+
+    max_append_batch: int | None = None
+
+    def __init__(self, inner: MemoryEventStore, *, reject_first: int = 0) -> None:
+        self._inner = inner
+        self._reject_first = reject_first
+        self.append_calls = 0
+
+    async def append(self, stream, events, expected):  # type: ignore[no-untyped-def]
+        self.append_calls += 1
+        if self.append_calls <= self._reject_first:
+            raise RuntimeError("target unavailable")
+        return await self._inner.append(stream, events, expected)
+
+    def read_stream(self, stream, options=None):  # type: ignore[no-untyped-def]
+        return self._inner.read_stream(stream, options)
+
+    async def get_stream_version(self, stream):  # type: ignore[no-untyped-def]
+        return await self._inner.get_stream_version(stream)
+
+    async def event_exists(self, event_id):  # type: ignore[no-untyped-def]
+        return await self._inner.event_exists(event_id)
+
+    def read_all(self, from_position=None, options=None):  # type: ignore[no-untyped-def]
+        return self._inner.read_all(from_position, options)
+
+    async def current_position(self):  # type: ignore[no-untyped-def]
+        return await self._inner.current_position()
+
+    def read_category(self, category, options=None):  # type: ignore[no-untyped-def]
+        return self._inner.read_category(category, options)
+
+
+async def drive_dual_writes(
+    interceptor: DualWriteInterceptor,
+    tenant_id: UUID,
+    count: int,
+) -> None:
+    """Push `count` single-event appends through the interceptor."""
+    for _i in range(count):
+        aggregate_id = uuid4()
+        event = SampleTestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)
+        await interceptor.append(
+            StreamId(aggregate_id=aggregate_id, category="SampleAggregate"),
+            [event],
+            ExpectedVersion.no_stream(),
+        )
+
+
+async def seed_copied_prefix(
+    source_store: MemoryEventStore,
+    target_store: MemoryEventStore,
+    tenant_id: UUID,
+    count: int,
+) -> Position | None:
+    """Write `count` events to BOTH stores; return the last source position.
+
+    Stands in for a completed bulk-copy pass.
+    """
+    last_source_position: Position | None = None
+    for _i in range(count):
+        aggregate_id = uuid4()
+        event = SampleTestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)
+        stream = StreamId(aggregate_id=aggregate_id, category="SampleAggregate")
+        result = await source_store.append(stream, [event], ExpectedVersion.no_stream())
+        last_source_position = result.position
+        await target_store.append(stream, [event], ExpectedVersion.no_stream())
+    return last_source_position
+
+
+class TestSyncLagAnchorOnWriteActiveTenant:
+    """Lag must converge on a live tenant WITHOUT ever hiding missing events.
+
+    The count-behind reads the source feed after its anchor, which
+    includes everything the `DualWriteInterceptor` has already mirrored.
+    The anchor therefore advances to the interceptor's synced watermark --
+    but never past its first failure, because events at or after that
+    point may be missing from the target.
     """
 
     @pytest.mark.asyncio
-    async def test_dual_written_events_do_not_count_as_lag(
+    async def test_healthy_tenant_converges_unbounded(
         self,
         source_store: MemoryEventStore,
         target_store: MemoryEventStore,
         tenant_id: UUID,
     ) -> None:
-        """Events the interceptor already mirrored are not behind."""
-        # Bulk copy finished: 10 events in both stores.
-        last_source_position: Position | None = None
-        for _i in range(10):
-            aggregate_id = uuid4()
-            event = SampleTestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)
-            stream = StreamId(aggregate_id=aggregate_id, category="SampleAggregate")
-            result = await source_store.append(stream, [event], ExpectedVersion.no_stream())
-            last_source_position = result.position
-            await target_store.append(stream, [event], ExpectedVersion.no_stream())
+        """All writes mirrored, no failures: lag 0, and not a bounded guess."""
+        copied_through = await seed_copied_prefix(source_store, target_store, tenant_id, 10)
 
-        # Dual-write phase: the tenant keeps writing, and every write
-        # lands in BOTH stores through the interceptor.
         interceptor = DualWriteInterceptor(
             source_store=source_store,
             target_store=target_store,
             tenant_id=tenant_id,
             enable_tracing=False,
         )
-        for _i in range(5):
-            aggregate_id = uuid4()
-            event = SampleTestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)
-            await interceptor.append(
-                StreamId(aggregate_id=aggregate_id, category="SampleAggregate"),
-                [event],
-                ExpectedVersion.no_stream(),
-            )
+        await drive_dual_writes(interceptor, tenant_id, 5)
 
-        assert interceptor.dual_write_success_count == 5
+        assert interceptor.first_failed_source_position is None
+        assert interceptor.last_synced_source_position is not None
 
         tracker = SyncLagTracker(
             source_store=source_store,
@@ -1050,93 +1112,163 @@ class TestSyncLagOnWriteActiveTenant:
             enable_tracing=False,
         )
 
-        lag = await tracker.calculate_lag(
-            since=last_source_position,
-            already_synced=interceptor.dual_write_success_count,
-        )
+        anchor = interceptor.safe_lag_anchor(copied_through)
+        lag = await tracker.calculate_lag(since=anchor)
 
-        # The events after `since` are all in the target already.
         assert lag.events == 0
-        assert tracker.is_sync_ready()
-        # The raw count hit its bound (5 events, threshold 3), so the
-        # discounted number is a lower bound and stays flagged as such.
-        assert lag.count_is_bounded is True
+        assert lag.count_is_bounded is False
+        assert tracker.is_sync_ready() is True
 
     @pytest.mark.asyncio
-    async def test_failed_dual_writes_still_count_as_lag(
+    async def test_failed_prefix_never_reads_as_converged(
+        self,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
+        tenant_id: UUID,
+        routing_repo: InMemoryRoutingRepository,
+        router: TenantStoreRouter,
+        lock_manager: MockLockManager,
+    ) -> None:
+        """Failures followed by successes must not hide the missing events.
+
+        This is the data-loss case: the target was down for the first
+        three writes and recovered for the next five. The successes must
+        NOT advance the anchor past the failure, or the missing three
+        vanish from the count and cutover proceeds over a hole.
+        """
+        migration_id = uuid4()
+        copied_through = await seed_copied_prefix(source_store, target_store, tenant_id, 4)
+
+        flaky = FlakyTarget(target_store, reject_first=3)
+        interceptor = DualWriteInterceptor(
+            source_store=source_store,
+            target_store=flaky,
+            tenant_id=tenant_id,
+            enable_tracing=False,
+        )
+        await drive_dual_writes(interceptor, tenant_id, 8)
+
+        # Three events never reached the target.
+        assert interceptor.first_failed_source_position is not None
+
+        config = MigrationConfig(cutover_max_lag_events=3)
+        tracker = SyncLagTracker(
+            source_store=source_store,
+            target_store=target_store,
+            config=config,
+            tenant_id=tenant_id,
+            enable_tracing=False,
+        )
+
+        anchor = interceptor.safe_lag_anchor(copied_through)
+        lag = await tracker.calculate_lag(since=anchor)
+
+        # At least the three missing events are still counted.
+        assert lag.events >= 3
+        assert tracker.is_sync_ready() is False
+
+        # And cutover refuses.
+        await routing_repo.set_migration_state(
+            tenant_id, TenantMigrationState.DUAL_WRITE, migration_id
+        )
+        router.register_store("dedicated", target_store)
+        cutover_manager = CutoverManager(
+            lock_manager=lock_manager,
+            router=router,
+            routing_repo=routing_repo,
+            enable_tracing=False,
+        )
+        result = await cutover_manager.execute_cutover(
+            migration_id=migration_id,
+            tenant_id=tenant_id,
+            lag_tracker=tracker,
+            target_store_id="dedicated",
+            config=config,
+            timeout_ms=500.0,
+            since=anchor,
+        )
+
+        assert result.success is False
+        routing = await routing_repo.get_routing(tenant_id)
+        assert routing is not None
+        assert routing.store_id != "dedicated"
+
+    @pytest.mark.asyncio
+    async def test_first_failure_watermark_does_not_move_on_recovery(
         self,
         source_store: MemoryEventStore,
         target_store: MemoryEventStore,
         tenant_id: UUID,
     ) -> None:
-        """A write the target never received is genuinely behind."""
-
-        class RejectingTarget:
-            """Target that accepts the first append and rejects the rest."""
-
-            max_append_batch: int | None = None
-
-            def __init__(self, inner: MemoryEventStore) -> None:
-                self._inner = inner
-                self.calls = 0
-
-            async def append(self, stream, events, expected):  # type: ignore[no-untyped-def]
-                self.calls += 1
-                if self.calls > 1:
-                    raise RuntimeError("target unavailable")
-                return await self._inner.append(stream, events, expected)
-
-            def read_stream(self, stream, options=None):  # type: ignore[no-untyped-def]
-                return self._inner.read_stream(stream, options)
-
-            async def get_stream_version(self, stream):  # type: ignore[no-untyped-def]
-                return await self._inner.get_stream_version(stream)
-
-            async def event_exists(self, event_id):  # type: ignore[no-untyped-def]
-                return await self._inner.event_exists(event_id)
-
-            def read_all(self, from_position=None, options=None):  # type: ignore[no-untyped-def]
-                return self._inner.read_all(from_position, options)
-
-            async def current_position(self):  # type: ignore[no-untyped-def]
-                return await self._inner.current_position()
-
-            def read_category(self, category, options=None):  # type: ignore[no-untyped-def]
-                return self._inner.read_category(category, options)
-
-        rejecting = RejectingTarget(target_store)
-
+        """Later successes never clear or advance the first-failure mark."""
+        flaky = FlakyTarget(target_store, reject_first=1)
         interceptor = DualWriteInterceptor(
             source_store=source_store,
-            target_store=rejecting,
+            target_store=flaky,
             tenant_id=tenant_id,
             enable_tracing=False,
         )
-        for _i in range(3):
-            aggregate_id = uuid4()
-            event = SampleTestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)
-            await interceptor.append(
-                StreamId(aggregate_id=aggregate_id, category="SampleAggregate"),
-                [event],
-                ExpectedVersion.no_stream(),
-            )
 
-        # Only the first of the three reached the target.
-        assert interceptor.dual_write_success_count == 1
+        await drive_dual_writes(interceptor, tenant_id, 1)
+        first_failed = interceptor.first_failed_source_position
+        assert first_failed is not None
+
+        await drive_dual_writes(interceptor, tenant_id, 5)
+
+        assert interceptor.first_failed_source_position == first_failed
+        # Successes after the failure DO advance the synced watermark...
+        assert interceptor.last_synced_source_position is not None
+        assert interceptor.last_synced_source_position > first_failed
+        # ...but the anchor refuses to move past the failure.
+        assert interceptor.safe_lag_anchor(None) is None
+
+    @pytest.mark.asyncio
+    async def test_restart_refuses_until_a_fresh_copy_pass(
+        self,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
+        tenant_id: UUID,
+    ) -> None:
+        """A restarted orchestrator has no watermarks, so it refuses cutover.
+
+        The watermarks live in the interceptor's memory. After a restart
+        the anchor falls back to the bulk-copy checkpoint, so already
+        mirrored events count as lag and cutover refuses until a fresh
+        copy pass advances the checkpoint.
+        """
+        copied_through = await seed_copied_prefix(source_store, target_store, tenant_id, 4)
+
+        pre_restart = DualWriteInterceptor(
+            source_store=source_store,
+            target_store=target_store,
+            tenant_id=tenant_id,
+            enable_tracing=False,
+        )
+        await drive_dual_writes(pre_restart, tenant_id, 5)
+
+        # The process restarts: a brand-new interceptor, no watermarks.
+        restarted = DualWriteInterceptor(
+            source_store=source_store,
+            target_store=target_store,
+            tenant_id=tenant_id,
+            enable_tracing=False,
+        )
+        assert restarted.last_synced_source_position is None
+        assert restarted.safe_lag_anchor(copied_through) == copied_through
 
         tracker = SyncLagTracker(
             source_store=source_store,
             target_store=target_store,
-            config=MigrationConfig(cutover_max_lag_events=100),
+            config=MigrationConfig(cutover_max_lag_events=3),
             tenant_id=tenant_id,
             enable_tracing=False,
         )
-        lag = await tracker.calculate_lag(
-            since=None,
-            already_synced=interceptor.dual_write_success_count,
-        )
+        lag = await tracker.calculate_lag(since=restarted.safe_lag_anchor(copied_through))
 
-        assert lag.events == 2
+        # The five already-mirrored events read as lag -- conservative,
+        # and the documented consequence of not persisting the watermark.
+        assert lag.events > 0
+        assert tracker.is_sync_ready() is False
 
 
 # =============================================================================

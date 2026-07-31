@@ -692,6 +692,23 @@ class TestSyncLag:
         assert lag.is_within_threshold(50) is False
         assert lag.is_within_threshold(99) is False
 
+    def test_bounded_count_never_within_threshold(self) -> None:
+        """A bounded count is a lower bound, so it satisfies no threshold.
+
+        `events` here would pass on its face; the flag says the real
+        backlog is unknown and larger, so answering True would be
+        answering on no evidence.
+        """
+        lag = SyncLag(
+            events=5,
+            source_position=None,
+            target_position=None,
+            timestamp=datetime.now(),
+            count_is_bounded=True,
+        )
+        assert lag.is_within_threshold(100) is False
+        assert lag.is_within_threshold(5) is False
+
     def test_is_frozen(self) -> None:
         """Test that SyncLag is frozen (immutable)."""
         lag = SyncLag(

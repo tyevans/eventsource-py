@@ -774,12 +774,18 @@ class SyncLag:
         """
         Check if lag is within acceptable threshold for cutover.
 
+        A bounded count never satisfies a threshold: `events` is then a
+        lower bound standing for an unknown larger backlog, so answering
+        True would be answering on no evidence.
+
         Args:
             max_lag: Maximum acceptable lag in events.
 
         Returns:
-            True if lag is within threshold.
+            True if lag is within threshold and is not a bounded count.
         """
+        if self.count_is_bounded:
+            return False
         return self.events <= max_lag
 
 

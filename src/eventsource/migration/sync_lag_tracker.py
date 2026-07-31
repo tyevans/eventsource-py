@@ -233,12 +233,7 @@ class SyncLagTracker:
     # Lag Calculation
     # =========================================================================
 
-    async def calculate_lag(
-        self,
-        *,
-        since: Position | None = None,
-        already_synced: int = 0,
-    ) -> SyncLag:
+    async def calculate_lag(self, *, since: Position | None = None) -> SyncLag:
         """Count source events not yet copied, bounded by the sync threshold.
 
         `since` is the last source position the target has copied (the
@@ -253,23 +248,20 @@ class SyncLagTracker:
         come from different stores and are never compared with each other.
 
         Args:
-            since: Last source position copied to the target, or None.
-            already_synced: Events after `since` that the target already
-                holds -- the `DualWriteInterceptor`'s
-                `dual_write_success_count`. During dual-write, every
-                mirrored event is BOTH after the bulk-copy checkpoint and
-                in the target, so without this the count would grow
-                monotonically with write traffic and cutover could never
-                fire on a live tenant. The interceptor is installed
-                exactly when the `since` window opens (post-copy), so its
-                count and this window line up.
+            since: The anchor to count from -- the furthest source
+                position provably present in the target. During
+                dual-write this is `DualWriteInterceptor.safe_lag_anchor`
+                applied to the migration's `last_source_position`, which
+                advances over mirrored writes but never past a mirroring
+                failure. None counts from the head of the source feed.
 
-                CAVEAT: the count lives in the interceptor's memory and is
-                not persisted per event. An orchestrator-process restart
-                during dual-write resets it to zero, over-counting lag
-                until cutover is retried from a fresh copy pass. That
-                trade is accepted deliberately -- persisting a counter per
-                event would cost more than the failure mode it avoids.
+                The interceptor's watermarks are in memory and are not
+                persisted, so after an orchestrator restart the anchor
+                falls back to the bulk-copy checkpoint and CUTOVER WILL
+                REFUSE until a fresh copy pass advances that checkpoint.
+                That trade is accepted deliberately -- persisting a
+                watermark per event would cost more than the failure mode
+                it avoids.
 
         Returns:
             SyncLag with the count behind and both stores' positions.
@@ -292,10 +284,7 @@ class SyncLagTracker:
             ):
                 lag_events += 1
 
-            # A bounded raw count stays flagged after discounting: the
-            # adjusted number is a lower bound, not an exact backlog.
             count_is_bounded = lag_events > threshold
-            lag_events = max(0, lag_events - already_synced)
 
             # Reporting only: each store's own head position.
             source_position = await self._source.current_position()
@@ -340,10 +329,13 @@ class SyncLagTracker:
         """
         Check if stores are synchronized within the specified threshold.
 
-        `max_lag` may only TIGHTEN the configured threshold: the count is
-        bounded at `cutover_max_lag_events + 1`, so a looser override
-        could be satisfied by a bounded count that stands for an
-        arbitrarily larger backlog.
+        A bounded count NEVER converges: it is a lower bound standing for
+        an unknown larger backlog, and a lower bound cannot satisfy a
+        threshold.
+
+        `max_lag` may only TIGHTEN the configured threshold, for the same
+        reason -- a looser override could otherwise be satisfied by a
+        bounded count.
 
         Args:
             max_lag: Maximum acceptable lag in events. If None, uses
@@ -377,7 +369,7 @@ class SyncLagTracker:
         if self._current_lag is None:
             return False
 
-        return self._current_lag.events <= threshold
+        return self._current_lag.is_within_threshold(threshold)
 
     def is_sync_ready(self) -> bool:
         """
