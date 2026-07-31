@@ -22,6 +22,7 @@ from eventsource.ports.envelopes import (
     ReadDirection,
     StreamReadOptions,
 )
+from eventsource.ports.outbox import outbox_event_data
 from eventsource.ports.positions import ExpectedVersion, Position
 from eventsource.ports.snapshots import Snapshot, SnapshotStore
 from eventsource.ports.store import (
@@ -60,6 +61,8 @@ __all__ = [
     "SnapshotStore",
     # Bus port (TRANSITION re-home)
     "EventPublisher",
+    # Outbox port
+    "outbox_event_data",
     # Checkpoint / DLQ ports
     "CheckpointData",
     "CheckpointRepository",

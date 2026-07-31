@@ -44,6 +44,7 @@ from eventsource.ports import (
     Position,
     ReadDirection,
     StreamReadOptions,
+    outbox_event_data,
 )
 from eventsource.serialization import json_dumps, json_loads
 
@@ -146,7 +147,7 @@ class PostgreSQLEventStore:
 
         When `True`, the outbox row and the event row commit (or roll back)
         together -- the entire point of the transactional outbox pattern.
-        The outbox *reader* lives in `eventsource.repositories.outbox`.
+        The outbox *reader* implements `eventsource.ports.outbox.OutboxRepository`.
         """
         return self._outbox_enabled
 
@@ -360,28 +361,21 @@ class PostgreSQLEventStore:
         Must run on the same `AsyncSession` as the
         event `INSERT`, before `append`'s single `await session.commit()`
         -- that is the atomicity guarantee the transactional outbox
-        pattern exists to provide. The outbox *reader* lives in
-        `eventsource.repositories.outbox` and is unchanged; the payload
-        shape below (six keys, `payload` = `model_dump(mode="json")`) must
+        pattern exists to provide. The outbox *reader* implements
+        `eventsource.ports.outbox.OutboxRepository`; the payload
+        shape (six keys, `payload` = `model_dump(mode="json")`) must
         match what it expects exactly.
 
         Uses stdlib `json.dumps` rather than this module's `json_dumps`
-        (orjson-backed): the payload here is already reduced to JSON-safe
-        primitives (`str`/`dict`/`None`) by the time it is built, so the
-        two would serialize identically, but stdlib is used to mirror the
+        (orjson-backed): the payload returned from `ports.outbox.outbox_event_data`
+        is already reduced to JSON-safe primitives (`str`/`dict`/`None`),
+        so the two would serialize identically, but stdlib is used to mirror the
         legacy store byte-for-byte and avoid any doubt.
         """
         outbox_id = uuid4()
         now = datetime.now(UTC)
 
-        outbox_event_data = {
-            "event_id": str(event.event_id),
-            "aggregate_id": str(event.aggregate_id),
-            "aggregate_type": aggregate_type,
-            "tenant_id": str(event.tenant_id) if event.tenant_id else None,
-            "occurred_at": event.occurred_at.isoformat(),
-            "payload": event.model_dump(mode="json"),
-        }
+        event_data = outbox_event_data(event)
 
         await session.execute(
             text(
@@ -403,7 +397,7 @@ class PostgreSQLEventStore:
                 "aggregate_id": event.aggregate_id,
                 "aggregate_type": aggregate_type,
                 "tenant_id": str(event.tenant_id) if event.tenant_id else None,
-                "event_data": json.dumps(outbox_event_data),
+                "event_data": json.dumps(event_data),
                 "created_at": now,
             },
         )
