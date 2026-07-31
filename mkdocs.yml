@@ -42,6 +42,7 @@ plugins:
 exclude_docs: |
   tasks/
   futures/
+  superpowers/
 
 markdown_extensions:
   - pymdownx.highlight:
@@ -62,7 +63,9 @@ markdown_extensions:
 
 nav:
   - Home: index.md
-  - Getting Started: getting-started.md
+  - Getting Started:
+      - Getting Started: getting-started.md
+      - Installation: installation.md
   - Tutorials:
       - tutorials/index.md
       - "2. First Event": tutorials/02-first-event.md
@@ -73,30 +76,81 @@ nav:
       - "11. PostgreSQL": tutorials/11-postgresql.md
       - "14. Snapshotting": tutorials/14-snapshotting.md
       - "16. Multi-Tenancy": tutorials/16-multi-tenancy.md
-  - Architecture: architecture.md
-  - FAQ: faq.md
+  - Guides:
+      - guides/index.md
+      - Database Schema: guides/database-schema.md
+      - Choose an Event Store Backend: how-to/choose-an-event-store-backend.md
+      - Repository Pattern: guides/repository-pattern.md
+      - Repository Operations: guides/repository-operations.md
+      - Snapshotting: guides/snapshotting.md
+      - Event Bus: guides/event-bus.md
+      - Subscription Manager: guides/subscriptions.md
+      - Subscription Coordination: guides/subscription-coordination.md
+      - Read Models: guides/read-models.md
+      - Multi-Tenancy: guides/multi-tenant.md
+      - Distributed Locks: guides/distributed-locks.md
+      - Live Migration: guides/live-migration.md
+      - Observability: guides/observability.md
+      - Error Handling: guides/error-handling.md
+      - Sync Usage: guides/sync-usage.md
+      - Validate a Custom Backend: guides/validate-custom-backend.md
+  - Concepts:
+      - Architecture: architecture.md
+      - Core Surface Boundary: core-surface.md
+      - Aggregate Styles: explanation/aggregate-styles.md
+      - The Decider Pattern: explanation/decider-pattern.md
+      - Schema Design: explanation/schema-design.md
+      - SQL Backend Type Handling: explanation/sql-backend-type-handling.md
+  - Reference:
+      - Event Store Protocol: reference/event-store-protocol.md
+      - Serialization Limits: reference/serialization-limits.md
   - API Reference:
       - api/index.md
       - Events: api/events.md
       - Aggregates: api/aggregates.md
       - Snapshots: api/snapshots.md
       - Projections: api/projections.md
+      - Read Models: api/readmodels.md
       - Event Bus: api/bus.md
-  - Guides:
-      - Repository Pattern: guides/repository-pattern.md
-      - Snapshotting: guides/snapshotting.md
-      - Event Bus: guides/event-bus.md
-      - Subscription Manager: guides/subscriptions.md
-      - Multi-Tenancy: guides/multi-tenant.md
-      - Observability: guides/observability.md
-      - Error Handling: guides/error-handling.md
+      - Subscriptions: api/subscriptions.md
+      - Repositories: api/repositories.md
+      - Handlers: api/handlers.md
+      - Multi-Tenancy: api/multitenancy.md
+      - Distributed Locks: api/locks.md
+      - Migration: api/migration.md
+      - Migration Schema: api/migration-schema.md
+      - Migrations: api/migrations.md
+      - Observability: api/observability.md
+      - Sync: api/sync.md
+      - Testing: api/testing.md
+      - Exceptions: api/exceptions.md
+      - Types and Protocols: api/types.md
   - Examples:
       - Projections: examples/projections.md
   - ADRs:
       - adrs/index.md
       - "ADR-0001: Async-First Design": adrs/0001-async-first-design.md
+      - "ADR-0007: Event Bus Delivery Semantics": adrs/0007-event-bus-delivery-semantics.md
+      - "ADR-0008: Mutation Testing Tool Selection": adrs/0008-mutation-testing-tool-selection.md
+      - "ADR-0009: Multi-Instance Subscription Coordination": adrs/0009-multi-instance-subscription-coordination.md
+      - "ADR-0010: Uniform Event Bus Contract": adrs/0010-uniform-event-bus-contract.md
+      - "ADR-0011: Handler Error Isolation with No-Ack": adrs/0011-handler-error-isolation-with-no-ack.md
+      - "ADR-0012: Event Type Auto-Derivation": adrs/0012-event-type-auto-derivation.md
+      - "ADR-0013: Handler Registry Composition": adrs/0013-handler-registry-composition.md
+      - "ADR-0014: Live Migration Cutover Semantics": adrs/0014-live-migration-cutover-semantics.md
+      - "ADR-0015: Optional Dependency Extras": adrs/0015-optional-dependency-extras.md
+      - "ADR-0016: Optional Tracing, No-Op by Default": adrs/0016-optional-tracing-no-op-by-default.md
+      - "ADR-0017: Snapshot Strategy Pattern": adrs/0017-snapshot-strategy-pattern.md
+      - "ADR-0018: Tenant Isolation Model": adrs/0018-tenant-isolation-model.md
+      - "ADR-0019: Clean-Architecture Store Ports": adrs/0019-clean-architecture-store-ports.md
+      - "ADR-0020: Broker Backend Collaborator Decomposition": adrs/0020-broker-backend-collaborator-decomposition.md
+      - "ADR-0021: Snapshot Policy/Scheduler Composition": adrs/0021-snapshot-policy-scheduler-composition.md
       - "ADR-0022: Command Objects & Decider Style": adrs/0022-command-objects-and-decider-style.md
+      - "ADR-0023: PostgreSQL Advisory Locks": adrs/0023-postgresql-advisory-locks.md
   - Development:
+      - development/index.md
+      - Contributing: development/contributing.md
       - Code Structure: development/code-structure.md
       - Testing: development/testing.md
       - Mutation Testing: development/mutation-testing.md
+  - FAQ: faq.md
