@@ -1090,16 +1090,31 @@ class TestSyncLagAnchorOnWriteActiveTenant:
         target_store: MemoryEventStore,
         tenant_id: UUID,
     ) -> None:
-        """All writes mirrored, no failures: lag 0, and not a bounded guess."""
-        copied_through = await seed_copied_prefix(source_store, target_store, tenant_id, 10)
+        """All writes mirrored and the checkpoint covers the install window:
+        lag 0, and not a bounded guess.
 
+        The checkpoint must have reached the interceptor's coverage for
+        the anchor to advance at all -- see
+        `test_install_window_gap_blocks_cutover` for why. That means a
+        copy pass has to run with the interceptor already installed,
+        which is what `copied_through` stands for here.
+        """
         interceptor = DualWriteInterceptor(
             source_store=source_store,
             target_store=target_store,
             tenant_id=tenant_id,
             enable_tracing=False,
         )
-        await drive_dual_writes(interceptor, tenant_id, 5)
+        await drive_dual_writes(interceptor, tenant_id, 3)
+
+        # A copy pass ran with the interceptor installed, so the
+        # checkpoint now covers everything up to here.
+        copied_through = await source_store.current_position()
+        assert copied_through is not None
+        assert interceptor.first_seen_source_position is not None
+        assert copied_through >= interceptor.first_seen_source_position
+
+        await drive_dual_writes(interceptor, tenant_id, 2)
 
         assert interceptor.first_failed_source_position is None
         assert interceptor.last_synced_source_position is not None
@@ -1113,6 +1128,8 @@ class TestSyncLagAnchorOnWriteActiveTenant:
         )
 
         anchor = interceptor.safe_lag_anchor(copied_through)
+        assert anchor == interceptor.last_synced_source_position
+
         lag = await tracker.calculate_lag(since=anchor)
 
         assert lag.events == 0
@@ -1221,6 +1238,129 @@ class TestSyncLagAnchorOnWriteActiveTenant:
         assert interceptor.last_synced_source_position > first_failed
         # ...but the anchor refuses to move past the failure.
         assert interceptor.safe_lag_anchor(None) is None
+
+    @pytest.mark.asyncio
+    async def test_install_window_gap_blocks_cutover(
+        self,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
+        tenant_id: UUID,
+        routing_repo: InMemoryRoutingRepository,
+        router: TenantStoreRouter,
+        lock_manager: MockLockManager,
+    ) -> None:
+        """Writes landing before the interceptor was installed are mirrored
+        by nobody, and a later successful mirror must not advance the anchor
+        past them.
+
+        The copier stops at its final checkpoint; the interceptor is
+        installed a moment later. Writes in that window go to the source
+        alone. If the anchor advances to the first post-install success,
+        those events are silently omitted at cutover.
+        """
+        migration_id = uuid4()
+        copied_through = await seed_copied_prefix(source_store, target_store, tenant_id, 4)
+
+        # The install window: source-only writes, mirrored by nobody.
+        for _i in range(3):
+            aggregate_id = uuid4()
+            await source_store.append(
+                StreamId(aggregate_id=aggregate_id, category="SampleAggregate"),
+                [SampleTestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)],
+                ExpectedVersion.no_stream(),
+            )
+
+        # Interceptor installed only now, and mirroring cleanly.
+        interceptor = DualWriteInterceptor(
+            source_store=source_store,
+            target_store=target_store,
+            tenant_id=tenant_id,
+            enable_tracing=False,
+        )
+        await drive_dual_writes(interceptor, tenant_id, 2)
+
+        assert interceptor.first_failed_source_position is None
+        assert interceptor.last_synced_source_position is not None
+        assert interceptor.first_seen_source_position is not None
+
+        # The anchor must not advance over the gap.
+        anchor = interceptor.safe_lag_anchor(copied_through)
+        assert anchor == copied_through
+
+        # NOTE: the threshold has to be tighter than the backlog for
+        # cutover to refuse. Gap events counted but sitting UNDER a
+        # generous threshold would still permit cutover, because the
+        # threshold assumes the remainder drains during the pause -- and
+        # gap events never drain, since nobody is mirroring them.
+        config = MigrationConfig(cutover_max_lag_events=3)
+        tracker = SyncLagTracker(
+            source_store=source_store,
+            target_store=target_store,
+            config=config,
+            tenant_id=tenant_id,
+            enable_tracing=False,
+        )
+        lag = await tracker.calculate_lag(since=anchor)
+
+        # The 3 gap events are genuinely missing from the target.
+        assert lag.events >= 3
+        assert tracker.is_sync_ready() is False
+
+        await routing_repo.set_migration_state(
+            tenant_id, TenantMigrationState.DUAL_WRITE, migration_id
+        )
+        router.register_store("dedicated", target_store)
+        cutover_manager = CutoverManager(
+            lock_manager=lock_manager,
+            router=router,
+            routing_repo=routing_repo,
+            enable_tracing=False,
+        )
+        result = await cutover_manager.execute_cutover(
+            migration_id=migration_id,
+            tenant_id=tenant_id,
+            lag_tracker=tracker,
+            target_store_id="dedicated",
+            config=config,
+            timeout_ms=500.0,
+            since=anchor,
+        )
+
+        assert result.success is False
+        routing = await routing_repo.get_routing(tenant_id)
+        assert routing is not None
+        assert routing.store_id != "dedicated"
+
+    @pytest.mark.asyncio
+    async def test_anchor_advances_when_interceptor_covers_the_checkpoint(
+        self,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
+        tenant_id: UUID,
+    ) -> None:
+        """The install-window clamp is a gate, not a veto.
+
+        Once the checkpoint reaches the interceptor's coverage the anchor
+        advances normally -- otherwise the clamp would pin every
+        migration at its checkpoint forever.
+        """
+        interceptor = DualWriteInterceptor(
+            source_store=source_store,
+            target_store=target_store,
+            tenant_id=tenant_id,
+            enable_tracing=False,
+        )
+        await drive_dual_writes(interceptor, tenant_id, 1)
+
+        # Checkpoint exactly at the start of coverage: the boundary case.
+        checkpoint = interceptor.first_seen_source_position
+        assert checkpoint is not None
+
+        await drive_dual_writes(interceptor, tenant_id, 3)
+
+        anchor = interceptor.safe_lag_anchor(checkpoint)
+        assert anchor == interceptor.last_synced_source_position
+        assert anchor != checkpoint
 
     @pytest.mark.asyncio
     async def test_restart_refuses_until_a_fresh_copy_pass(

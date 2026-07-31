@@ -178,6 +178,7 @@ class DualWriteInterceptor:
         _failed_writes: List of failed target writes for recovery.
         _affected_aggregates: Set of aggregate IDs with failed writes.
         _dual_write_success_count: Events successfully mirrored to the target.
+        _first_seen_source_position: Where this interceptor's coverage starts.
         _last_synced_source_position: Watermark of the latest successful mirror.
         _first_failed_source_position: Where mirroring first fell behind.
     """
@@ -226,6 +227,7 @@ class DualWriteInterceptor:
 
         # Sync watermarks. Source positions throughout, so they are always
         # mutually comparable.
+        self._first_seen_source_position: Position | None = None
         self._last_synced_source_position: Position | None = None
         self._first_failed_source_position: Position | None = None
 
@@ -261,13 +263,29 @@ class DualWriteInterceptor:
         return self._dual_write_success_count
 
     @property
+    def first_seen_source_position(self) -> Position | None:
+        """Source position of the FIRST append this interceptor handled.
+
+        Set once, on the first append, whether or not the mirror
+        succeeded -- it marks where this interceptor's coverage starts,
+        not where it worked. Writes that landed before it were mirrored
+        by nobody.
+        """
+        return self._first_seen_source_position
+
+    @property
     def last_synced_source_position(self) -> Position | None:
         """Source position of the most recent successful mirror.
 
-        The first-of-batch position, which is a conservative (never
-        optimistic) monotone watermark: for a multi-event append the
-        batch's remaining events sit after it and keep counting as lag
-        until the next successful mirror moves the watermark past them.
+        The first-of-batch position, which is a CONSERVATIVE (never
+        optimistic) watermark -- not a monotone one: concurrent mirrors
+        can complete out of order, so this can move backward. That is
+        safe because every clamp errs toward counting more lag, so a
+        watermark that lags reality only ever refuses a cutover that
+        would have been allowed, never the reverse. For a multi-event
+        append the batch's remaining events sit after this position and
+        keep counting as lag until the next successful mirror moves past
+        them.
         """
         return self._last_synced_source_position
 
@@ -290,10 +308,28 @@ class DualWriteInterceptor:
 
         Starts from `checkpoint` (the migration's `last_source_position`,
         i.e. what the bulk copy proved) and advances to the synced
-        watermark ONLY when doing so cannot skip a failure. If mirroring
-        has failed at all, the anchor advances only when the whole synced
-        run precedes that first failure; otherwise it stays at the
-        checkpoint. The anchor never moves backward.
+        watermark only when BOTH clamps pass. The anchor never moves
+        backward.
+
+        Clamp 1 -- the install window. The copier stops at `checkpoint`
+        and this interceptor's coverage starts at
+        `first_seen_source_position`; anything in between was mirrored by
+        nobody. The anchor may advance only when the checkpoint has
+        reached the start of coverage, which is the only way to know no
+        such gap exists. Fail-closed: when the two cannot be shown to
+        meet, the anchor stays put even if there happened to be no events
+        in the window.
+
+        Clamp 2 -- the failure. If mirroring has ever failed, the anchor
+        advances only when the whole synced run precedes that first
+        failure.
+
+        CONSEQUENCE: events stranded in the install window (or behind a
+        failure) block cutover until a fresh copy pass absorbs them,
+        advancing the checkpoint past them. Re-copying is safe -- the
+        copier treats an event already in the target as already-copied
+        and continues -- so the accepted failure mode here is
+        stuck-until-recopied, never a cutover over missing data.
 
         Args:
             checkpoint: Last source position the bulk copy proved copied.
@@ -305,19 +341,30 @@ class DualWriteInterceptor:
         if candidate is None:
             return checkpoint
 
+        # Clamp 1: the checkpoint must have reached this interceptor's
+        # coverage, or events between them were mirrored by nobody.
+        first_seen = self._first_seen_source_position
+        if first_seen is None:
+            return checkpoint
+        if checkpoint is None:
+            # Nothing was copied, so everything before coverage is a gap.
+            return None
+        # Same store (source positions), so these orderings are always
+        # defined -- PositionForeignError is impossible here.
+        assert checkpoint.store_id == first_seen.store_id
+        if checkpoint < first_seen:
+            return checkpoint
+
+        # Clamp 2: successes after a failure prove nothing about the hole.
         first_failed = self._first_failed_source_position
         if first_failed is not None:
-            # Same store (source positions), so this ordering is always
-            # defined -- PositionForeignError is impossible here.
             assert candidate.store_id == first_failed.store_id
             if candidate >= first_failed:
-                # Successes after a failure prove nothing about the hole.
                 return checkpoint
 
-        if checkpoint is not None:
-            assert candidate.store_id == checkpoint.store_id
-            if candidate <= checkpoint:
-                return checkpoint
+        assert candidate.store_id == checkpoint.store_id
+        if candidate <= checkpoint:
+            return checkpoint
 
         return candidate
 
@@ -455,6 +502,11 @@ class DualWriteInterceptor:
             # Step 1: Write to source (authoritative). A concurrency
             # failure raises out of here, which is the honest propagation.
             source_result = await self._source.append(stream, events, expected)
+
+            # Coverage starts at the first append handled, successful
+            # mirror or not.
+            if self._first_seen_source_position is None and source_result.position is not None:
+                self._first_seen_source_position = source_result.position
 
             # Step 2: Write to target (best-effort)
             # Target failures are logged but don't fail the operation
