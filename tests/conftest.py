@@ -8,7 +8,7 @@ This module provides comprehensive test fixtures including:
 - Aggregate fixtures (test_aggregate, populated_aggregate)
 - Projection fixtures (test_projection)
 - Sample data fixtures (aggregate_id, tenant_id)
-- SQLite fixtures (sqlite_connection, sqlite_event_store, etc.)
+- SQLite fixtures (sqlite_connection, sqlite_checkpoint_repo, etc.)
 - OpenTelemetry metrics fixtures (metric_reader, reset_kafka_meter)
 
 All fixtures are properly scoped and documented for easy reuse.
