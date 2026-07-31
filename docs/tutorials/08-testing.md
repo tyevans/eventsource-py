@@ -30,7 +30,7 @@ A pytest module containing:
 Before you start:
 
 - Work through [Your First Aggregate](03-first-aggregate.md) -- you should be comfortable
-  with `DeclarativeAggregate`, `@handles`, `create_event()`, and `uncommitted_events`.
+  with `DeciderAggregate`, `decide()`/`evolve()`, `execute()`, and `uncommitted_events`.
 - [Building Projections](06-projections.md) helps for Step 6, but is not required.
 - Install `pytest` and `pytest-asyncio`. Nothing in Steps 1-6 needs an optional extra:
   `eventsource.testing` and the in-memory backends ride on the core dependencies

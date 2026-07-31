@@ -42,8 +42,9 @@ Here is what exists at the end of each phase.
 **After Phase 1 (Tutorials 1-5), you have a working domain model in memory.** You will
 have written `DomainEvent` subclasses for the three order events and watched them
 auto-register into the global `EventRegistry`; built an `OrderAggregate` on top of
-`AggregateRoot[OrderState]` with `create()`, `ship()`, and `cancel()` command methods
-that fold events into a frozen pydantic state model; appended and read those events
+`DeciderAggregate[OrderState]` with a `decide()`/`evolve()` pair driven by
+`CreateOrder`, `ShipOrder`, and `CancelOrder` commands that fold events into a frozen
+pydantic state model; appended and read those events
 through the `EventStore` interface using `InMemoryEventStore`; and wired an
 `AggregateRepository` in front of the store so saving an order is one `await` and
 concurrent writers collide with a real `OptimisticLockError` instead of silently
