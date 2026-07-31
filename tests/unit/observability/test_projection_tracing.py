@@ -141,7 +141,39 @@ class TestCheckpointTrackingProjectionTracing:
 
     @pytest.mark.asyncio
     async def test_span_sets_checkpoint_updated_on_success(self):
-        """Successful event processing sets checkpoint.updated attribute."""
+        """checkpoint.updated reflects whether a checkpoint repo is configured."""
+        from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
+        from eventsource.application.projections.base import CheckpointTrackingProjection
+
+        mock_tracer = Mock()
+        mock_span = MagicMock()
+        mock_span_cm = MagicMock()
+        mock_span_cm.__enter__ = Mock(return_value=mock_span)
+        mock_span_cm.__exit__ = Mock(return_value=None)
+        mock_tracer.span.return_value = mock_span_cm
+        mock_tracer.enabled = True
+
+        class TestProjection(CheckpointTrackingProjection):
+            def subscribed_to(self) -> list[type[DomainEvent]]:
+                return [OrderCreated]
+
+            async def _process_event(self, event: DomainEvent) -> None:
+                pass
+
+        projection = TestProjection(
+            checkpoint_repo=InMemoryCheckpointRepository(), enable_tracing=True
+        )
+        projection._tracer = mock_tracer
+
+        event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
+        await projection.handle(event)
+
+        # Verify checkpoint.updated attribute was set when a checkpoint repo exists
+        mock_span.set_attribute.assert_called_with("checkpoint.updated", True)
+
+    @pytest.mark.asyncio
+    async def test_span_sets_checkpoint_updated_false_without_repo(self):
+        """checkpoint.updated is False when checkpoint tracking is disabled."""
         from eventsource.application.projections.base import CheckpointTrackingProjection
 
         mock_tracer = Mock()
@@ -165,8 +197,8 @@ class TestCheckpointTrackingProjectionTracing:
         event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
         await projection.handle(event)
 
-        # Verify checkpoint.updated attribute was set
-        mock_span.set_attribute.assert_called_with("checkpoint.updated", True)
+        # No checkpoint repo configured -- the attribute must say so truthfully
+        mock_span.set_attribute.assert_called_with("checkpoint.updated", False)
 
     @pytest.mark.asyncio
     async def test_span_sets_retry_count_on_failure(self):

@@ -307,14 +307,16 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
                 await self._process_event(event)
 
                 # Update checkpoint after successful processing
-                if self._checkpoint_repo is not None:
+                checkpoint_repo = self._checkpoint_repo
+                checkpoint_updated = checkpoint_repo is not None
+                if checkpoint_repo is not None:
                     await record_checkpoint(
-                        self._checkpoint_repo, self._projection_name, event, self._tracer
+                        checkpoint_repo, self._projection_name, event, self._tracer
                     )
 
-                # Add success attribute to span if tracing enabled
+                # Record whether a checkpoint was actually updated
                 if span is not None:
-                    span.set_attribute("checkpoint.updated", True)
+                    span.set_attribute("checkpoint.updated", checkpoint_updated)
 
                 # Success - log and return
                 logger.debug(
@@ -356,8 +358,9 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
                         span.set_attribute(ATTR_RETRY_COUNT, attempt + 1)
 
                     # Send to DLQ
+                    sent_to_dlq = False
                     if self._dlq_repo is not None:
-                        await send_to_dlq(
+                        sent_to_dlq = await send_to_dlq(
                             self._dlq_repo,
                             self._projection_name,
                             event,
@@ -365,17 +368,27 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
                             attempt + 1,
                             self._tracer,
                         )
-                    logger.critical(
-                        "Event %s sent to DLQ after %d attempts",
-                        event.event_id,
-                        attempt + 1,
-                        extra={
-                            "projection": self._projection_name,
-                            "event_id": str(event.event_id),
-                            "event_type": event.event_type,
-                            "retry_count": attempt + 1,
-                        },
-                    )
+                    log_extra = {
+                        "projection": self._projection_name,
+                        "event_id": str(event.event_id),
+                        "event_type": event.event_type,
+                        "retry_count": attempt + 1,
+                    }
+                    if sent_to_dlq:
+                        logger.critical(
+                            "Event %s sent to DLQ after %d attempts",
+                            event.event_id,
+                            attempt + 1,
+                            extra=log_extra,
+                        )
+                    else:
+                        logger.critical(
+                            "Event %s failed permanently after %d attempts; "
+                            "NO DLQ entry was recorded",
+                            event.event_id,
+                            attempt + 1,
+                            extra=log_extra,
+                        )
                     # Re-raise the exception after exhausting all retries
                     raise
                 else:

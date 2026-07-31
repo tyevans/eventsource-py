@@ -161,10 +161,12 @@ that a hidden default silently stands in for it.
   (`InMemoryCheckpointRepository()` / `InMemoryDLQRepository()`) to keep
   their old behavior.
 - One extra `critical`-level log line appears when an event fails
-  permanently with no DLQ repository configured. The exception was already
-  re-raised in that path before this change and still is — no caller's
-  control flow changes, only the log volume for a configuration that was
-  already silently dropping failed events.
+  permanently with no DLQ repository configured, or when the DLQ write
+  itself fails; its message states plainly that no DLQ entry was recorded,
+  rather than claiming one was. The exception was already re-raised in that
+  path before this change and still is — no caller's control flow changes,
+  only the log volume and wording for a configuration that was already
+  silently dropping failed events.
 - The checkpoint and DLQ functions now trace under the projection's own
   tracer rather than a per-manager tracer. Span *names* are unchanged (see
   Decision 2), but the OpenTelemetry **instrumentation-scope name** for

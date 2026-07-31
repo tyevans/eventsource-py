@@ -171,9 +171,9 @@ The upper bound `<3.0` is a deliberate major-version guard, and the lower bound 
 
 SQLAlchemy is the shared SQL layer, not a database driver. The library uses its 2.0 **async** API -- `AsyncEngine`, `AsyncConnection`, `AsyncSession`, `async_sessionmaker`, and `text()` -- as the common abstraction that every SQL-backed component is written against:
 
-- `stores/postgresql.py` and `snapshots/postgresql.py` -- the PostgreSQL event and snapshot stores.
-- `repositories/checkpoint.py`, `repositories/dlq.py`, `repositories/outbox.py`, and the shared `repositories/_connection.py` helper.
-- `projections/base.py` and `readmodels/` -- database-backed projections and read models, which accept an engine or sessionmaker.
+- `adapters/postgresql/store.py` and `adapters/postgresql/snapshots.py` -- the PostgreSQL event and snapshot stores.
+- `adapters/sql/checkpoints.py`, `adapters/sql/dlq.py`, `repositories/outbox.py`, and the shared `repositories/_connection.py` helper.
+- `adapters/sql/projection.py` and `readmodels/` -- database-backed projections and read models, which accept an engine or sessionmaker. `application/projections/base.py`, by contrast, is sqlalchemy-free: it defines the checkpoint/DLQ/retry orchestration against pure ports and only the `adapters/sql/` implementations pull in the driver.
 - `locks/postgresql.py` -- advisory locks.
 - `migration/repositories/` -- the live-migration bookkeeping tables.
 
@@ -181,7 +181,7 @@ Because the async API is used throughout, SQLAlchemy 1.4 and the 2.0 legacy sync
 
 Two consequences are worth stating plainly:
 
-1. **SQLAlchemy is installed even if you never touch a database.** It is a core dependency because it is imported by modules reachable from the top-level package (the checkpoint/DLQ/outbox repositories, projection bases). An in-memory-only application still carries it.
+1. **SQLAlchemy is installed even if you never touch a database.** It is a core dependency because it is imported by modules reachable from the top-level package (the SQL-backed checkpoint/DLQ/outbox adapters, the PostgreSQL/SQLite projection and read model bases). An in-memory-only application still carries it.
 2. **SQLAlchemy alone cannot connect to anything.** A DBAPI driver is supplied by the extras: `asyncpg` via `postgresql`, `aiosqlite` via `sqlite`. Without one, creating an engine against `postgresql+asyncpg://...` raises a driver-not-found error from SQLAlchemy, not from `eventsource-py`.
 
 ### What is deliberately not a core dependency

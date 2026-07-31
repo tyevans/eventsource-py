@@ -270,12 +270,12 @@ remains between the current package and an `eventsource-core` distribution.
 ### Tier 1: backend implementations
 
 Tier 1 is where the contracts meet a driver. `stores/postgresql.py` and
-`stores/sqlite.py` subclass `EventStore`; `snapshots/postgresql.py` and
+`stores/sqlite.py` subclass `EventStore`; `adapters/postgresql/snapshots.py` and
 `snapshots/sqlite.py` subclass `SnapshotStore`; `bus/redis.py`,
 `bus/rabbitmq.py`, and `bus/kafka.py` subclass `EventBus`;
 `readmodels/postgresql.py` and `readmodels/sqlite.py` satisfy the
 `ReadModelRepository` protocol; the PostgreSQL and SQLite classes inside
-`repositories/checkpoint.py`, `repositories/dlq.py`, and
+`adapters/sql/checkpoints.py`, `adapters/sql/dlq.py`, and
 `repositories/outbox.py` back checkpoints, the dead letter queue, and the
 outbox. `locks/` belongs here too, and has exactly one implementation:
 `PostgreSQLLockManager`, built on advisory locks.
@@ -372,11 +372,15 @@ projection can be driven by hand with no subscription runtime at all, and a
 `FlowController` or `CircuitBreaker` is usable on its own.
 
 Being Tier 2 is about needing the world -- clocks, background tasks, OS signals,
-other processes -- not about importing a driver. Most of `subscriptions/` names
-its repositories only under `TYPE_CHECKING` and would be dependency-light on its
-own; it lands above Tier 1 because `repositories/checkpoint.py` and
-`repositories/dlq.py` pull SQLAlchemy in transitively, as noted above.
-`migration/` is the exception that genuinely reaches for a driver: its own
+other processes -- not about importing a driver. `subscriptions/` names its
+checkpoint and DLQ types only under `TYPE_CHECKING`, and those types are the
+pure `SubscriptionPositions` and `DLQRepository` Protocols from
+`ports/checkpoints.py` and `ports/dlq.py` -- not the SQLAlchemy-backed
+implementations, which live in `adapters/sql/` and are supplied by the caller
+at composition time. `subscriptions/` is genuinely dependency-light on its own;
+it lands above Tier 1 for the reason stated at the top of this section --
+lifetime and orchestration across restarts, not driver imports. `migration/`
+is the exception that reaches for a driver directly: its own
 `migration/repositories/` package imports `sqlalchemy` at module level for
 migration state, routing, position mapping, and the audit log.
 

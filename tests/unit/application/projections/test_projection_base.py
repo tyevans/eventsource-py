@@ -283,6 +283,87 @@ class TestCheckpointTrackingProjection:
         assert failed_events[0].projection_name == "FailingProjection"
 
     @pytest.mark.asyncio
+    async def test_failed_event_reraises_without_dlq_repo(
+        self,
+        checkpoint_repo: InMemoryCheckpointRepository,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """With no dlq_repo configured, the original exception still re-raises."""
+
+        class FailingProjection(CheckpointTrackingProjection):
+            MAX_RETRIES = 2
+            RETRY_BACKOFF_BASE = 0
+
+            def subscribed_to(self) -> list[type[DomainEvent]]:
+                return [OrderCreated]
+
+            async def _process_event(self, event: DomainEvent) -> None:
+                raise ValueError("Processing failed")
+
+        projection = FailingProjection(
+            checkpoint_repo=checkpoint_repo,
+            dlq_repo=None,
+        )
+
+        event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
+
+        import logging
+
+        with (
+            caplog.at_level(logging.CRITICAL),
+            pytest.raises(ValueError, match="Processing failed"),
+        ):
+            await projection.handle(event)
+
+        critical_records = [r for r in caplog.records if r.levelno == logging.CRITICAL]
+        assert len(critical_records) == 1
+        assert "NO DLQ entry was recorded" in critical_records[0].message
+        assert "sent to DLQ" not in critical_records[0].message
+
+    @pytest.mark.asyncio
+    async def test_failed_event_logs_no_entry_when_dlq_write_fails(
+        self,
+        checkpoint_repo: InMemoryCheckpointRepository,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """When the DLQ write itself fails, the critical log states no entry was recorded."""
+        from unittest.mock import AsyncMock
+
+        failing_dlq_repo = AsyncMock()
+        failing_dlq_repo.add_failed_event.side_effect = RuntimeError("DLQ unavailable")
+
+        class FailingProjection(CheckpointTrackingProjection):
+            MAX_RETRIES = 2
+            RETRY_BACKOFF_BASE = 0
+
+            def subscribed_to(self) -> list[type[DomainEvent]]:
+                return [OrderCreated]
+
+            async def _process_event(self, event: DomainEvent) -> None:
+                raise ValueError("Processing failed")
+
+        projection = FailingProjection(
+            checkpoint_repo=checkpoint_repo,
+            dlq_repo=failing_dlq_repo,
+        )
+
+        event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
+
+        import logging
+
+        with (
+            caplog.at_level(logging.CRITICAL),
+            pytest.raises(ValueError, match="Processing failed"),
+        ):
+            await projection.handle(event)
+
+        critical_records = [r for r in caplog.records if r.levelno == logging.CRITICAL]
+        # send_to_dlq itself also logs critical on the write failure; find our message.
+        no_entry_records = [r for r in critical_records if "NO DLQ entry was recorded" in r.message]
+        assert len(no_entry_records) == 1
+        assert "sent to DLQ" not in no_entry_records[0].message
+
+    @pytest.mark.asyncio
     async def test_get_checkpoint_returns_last_processed(
         self,
         checkpoint_repo: InMemoryCheckpointRepository,
