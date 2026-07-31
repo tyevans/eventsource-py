@@ -1197,10 +1197,12 @@ class TestKafkaEventBusCounterMetrics:
 
         kafka_module._meter = None
 
-        # Set up fresh metric reader and provider FIRST
+        # Private provider/reader per test. Never set the global meter
+        # provider here: it is set-once per process, and the first setter
+        # inherits stale _ProxyMeter instruments (e.g. connection gauges
+        # from earlier plain-bus tests) materialized onto its provider.
         self.reader = InMemoryMetricReader()
         self.provider = MeterProvider(metric_readers=[self.reader])
-        otel_metrics.set_meter_provider(self.provider)
 
         # Create a meter from the new provider
         self.meter = self.provider.get_meter("test.kafka.eventbus")
@@ -1351,10 +1353,12 @@ class TestKafkaEventBusHistogramMetrics:
 
         kafka_module._meter = None
 
-        # Set up fresh metric reader and provider
+        # Private provider/reader per test. Never set the global meter
+        # provider here: it is set-once per process, and the first setter
+        # inherits stale _ProxyMeter instruments (e.g. connection gauges
+        # from earlier plain-bus tests) materialized onto its provider.
         self.reader = InMemoryMetricReader()
         self.provider = MeterProvider(metric_readers=[self.reader])
-        otel_metrics.set_meter_provider(self.provider)
 
         # Create a meter from the new provider
         self.meter = self.provider.get_meter("test.kafka.eventbus")
@@ -1425,10 +1429,12 @@ class TestKafkaEventBusGaugeMetrics:
 
         kafka_module._meter = None
 
-        # Set up fresh metric reader and provider
+        # Private provider/reader per test. Never set the global meter
+        # provider here: it is set-once per process, and the first setter
+        # inherits stale _ProxyMeter instruments (e.g. connection gauges
+        # from earlier plain-bus tests) materialized onto its provider.
         self.reader = InMemoryMetricReader()
         self.provider = MeterProvider(metric_readers=[self.reader])
-        otel_metrics.set_meter_provider(self.provider)
 
         # Create a meter from the new provider
         self.meter = self.provider.get_meter("test.kafka.eventbus")
@@ -1636,10 +1642,10 @@ class TestKafkaEventBusMetricsEdgeCases:
 
         kafka_module._meter = None
 
-        # Set up fresh metric reader
+        # Private provider/reader for this test; the global meter provider
+        # is deliberately left untouched (set-once, see setup_metrics note).
         reader = InMemoryMetricReader()
         provider = MeterProvider(metric_readers=[reader])
-        otel_metrics.set_meter_provider(provider)
         meter = provider.get_meter("test.kafka.eventbus")
 
         try:
@@ -1686,10 +1692,10 @@ class TestKafkaEventBusMetricsEdgeCases:
 
         kafka_module._meter = None
 
-        # Set up fresh metric reader
+        # Private provider/reader for this test; the global meter provider
+        # is deliberately left untouched (set-once, see setup_metrics note).
         reader = InMemoryMetricReader()
         provider = MeterProvider(metric_readers=[reader])
-        otel_metrics.set_meter_provider(provider)
         meter = provider.get_meter("test.kafka.eventbus")
 
         try:
@@ -1734,10 +1740,10 @@ class TestKafkaEventBusMetricsEdgeCases:
 
         kafka_module._meter = None
 
-        # Set up fresh metric reader
+        # Private provider/reader for this test; the global meter provider
+        # is deliberately left untouched (set-once, see setup_metrics note).
         reader = InMemoryMetricReader()
         provider = MeterProvider(metric_readers=[reader])
-        otel_metrics.set_meter_provider(provider)
         meter = provider.get_meter("test.kafka.eventbus")
 
         try:
