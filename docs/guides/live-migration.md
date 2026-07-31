@@ -100,6 +100,15 @@ fourth control-plane repository, `MigrationAuditLogRepository`, is not passed to
 the coordinator -- you construct it separately and query it directly (see
 Observability). Steps 1-3 wire all of these up.
 
+Passing a `PositionMapper` is not by itself enough to get position mappings
+recorded: mappings are only written when the coordinator was constructed with
+one **and** `MigrationConfig.position_mapping_enabled` is `True`, which is
+the default. That gate has a cost -- with a mapper attached, the bulk copier
+appends one event at a time so each target position can be recorded, where
+it otherwise batches. Set `position_mapping_enabled=False` to keep the
+batched path if you do not need checkpoint translation (`migrate_subscriptions`
+will then have nothing to translate against).
+
 Two application-side assumptions carry through the whole guide. Tenant context
 must be propagated on every store operation, since routing decisions are keyed
 by tenant. And application code must reach the event store through
@@ -140,9 +149,19 @@ out-of-order phase update is rejected rather than corrupting state.
 Sync lag is anchored to the last source position the target has actually
 copied; once `BULK_COPY` completes, that anchor only advances through the
 dual-write mirror, and a mirror failure during `DUAL_WRITE` clamps it in
-place rather than letting the reported lag drift wrong. There is currently no
-in-phase resync for that case -- if mirroring falls behind after the copy has
-finished, the current remedy is to abort the migration and restart it.
+place rather than letting the reported lag drift wrong.
+
+When that happens, run an in-phase resync rather than aborting:
+
+    remaining = await coordinator.run_resync_pass(migration.id)
+    while remaining:
+        remaining = await coordinator.run_resync_pass(migration.id)
+
+Each call runs one bounded catch-up copy pass while the migration stays in
+`DUAL_WRITE`, and returns the number of unabsorbed mirror failures left. A
+return of 0 means the lag anchor is unclamped and cutover can proceed once
+lag drains. Bounding the retries is your policy, not the library's: a count
+that stops falling is a mirror problem to investigate, not a pass to repeat.
 
 `ABORTED` and `FAILED` are the two off-ramps. `abort_migration()` is available
 from `PENDING`, `BULK_COPY`, and `DUAL_WRITE`; `FAILED` is reachable from

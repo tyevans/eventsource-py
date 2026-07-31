@@ -812,12 +812,7 @@ class MigrationCoordinator:
             # by construction.
             interceptor = self._install_interceptor(migration, target_store)
 
-            copier = BulkCopier(
-                self._source_store,
-                target_store,
-                self._migration_repo,
-                enable_tracing=self._enable_tracing,
-            )
+            copier = self._build_copier(migration, target_store)
 
             self._active_copiers[migration.id] = copier
 
@@ -874,6 +869,154 @@ class MigrationCoordinator:
             finally:
                 self._active_copiers.pop(migration.id, None)
                 self._active_tasks.pop(migration.id, None)
+
+    def _build_copier(
+        self,
+        migration: Migration,
+        target_store: FullEventStore | None = None,
+    ) -> BulkCopier:
+        """Construct the migration's BulkCopier -- the only place that does.
+
+        Both copy entry points go through here: the automated bulk-copy
+        phase and the operator-triggered `run_resync_pass`. One
+        construction site means the two can never diverge on wiring, which
+        matters most for the position mapper: a resync pass that recorded
+        no mappings would leave subscription checkpoint translation with
+        holes the bulk pass had filled.
+
+        The mapper is attached only when the coordinator was given one AND
+        `config.position_mapping_enabled` is True (the documented default).
+        With a mapper attached the copier appends one event at a time so
+        each target position can be recorded; without one it batches. That
+        is the cost `position_mapping_enabled=False` buys back.
+
+        Args:
+            migration: Migration to build a copier for.
+            target_store: Target store to copy into. Resolved from the
+                coordinator's registry when omitted -- which is how
+                `run_resync_pass` calls it, since it has only an id.
+
+        Returns:
+            A BulkCopier that resumes from the migration's persisted
+            checkpoint.
+
+        Raises:
+            MigrationError: If no target store was passed and none is
+                registered for this migration (the shape a coordinator
+                restart leaves behind -- the registry is in-memory).
+        """
+        store = target_store or self._target_stores.get(migration.id)
+        if store is None:
+            raise MigrationError(
+                "No target store registered for migration; the coordinator "
+                "that started it holds that registry in memory, so a "
+                "restarted coordinator must re-register before copying.",
+                migration_id=migration.id,
+            )
+
+        mapper = self._position_mapper if migration.config.position_mapping_enabled else None
+
+        return BulkCopier(
+            self._source_store,
+            store,
+            self._migration_repo,
+            position_mapper=mapper,
+            enable_tracing=self._enable_tracing,
+        )
+
+    async def run_resync_pass(self, migration_id: UUID) -> int:
+        """Run one bounded catch-up copy pass while in DUAL_WRITE.
+
+        The remedy for a clamped lag anchor. `safe_lag_anchor` refuses to
+        advance past a mirror failure, and only a completed copy pass
+        attested by `mark_copy_pass_complete` releases that clamp -- which
+        until now only the bulk-copy loop could do, so a transient mirror
+        failure after the copy finished was a dead end whose only exit was
+        abort-and-restart.
+
+        The migration's phase is never touched: `BulkCopier.run` writes
+        progress and errors only, so the migration reads as DUAL_WRITE
+        throughout and the VALID_TRANSITIONS state machine is untouched.
+        Re-copying is safe by construction -- the copier treats
+        already-present events as copied.
+
+        One pass per call. The return value is the caller's bounding
+        policy: call again while it is nonzero, and stop when the
+        underlying mirror problem is not transient.
+
+        Args:
+            migration_id: UUID of the migration to resync.
+
+        Returns:
+            The number of unabsorbed mirror failures remaining. 0 means
+            the lag anchor is unclamped and cutover can proceed once lag
+            drains to the configured threshold.
+
+        Raises:
+            MigrationNotFoundError: If migration not found.
+            MigrationStateError: If migration is not in DUAL_WRITE phase.
+            MigrationError: If a copier is already active for this
+                migration, if no target store is registered, or if the
+                pass did not run to completion.
+            BulkCopyError: Propagated unchanged from the copy itself.
+        """
+        with self._tracer.span(
+            "eventsource.coordinator.run_resync_pass",
+            {"migration.id": str(migration_id)},
+        ):
+            migration = await self._migration_repo.get(migration_id)
+            if migration is None:
+                raise MigrationNotFoundError(migration_id)
+
+            if migration.phase != MigrationPhase.DUAL_WRITE:
+                raise MigrationStateError(
+                    message=(
+                        f"Cannot run a resync pass: migration is in {migration.phase.value} phase"
+                    ),
+                    migration_id=migration_id,
+                    current_phase=migration.phase,
+                    expected_phases=[MigrationPhase.DUAL_WRITE],
+                    operation="run_resync_pass",
+                )
+
+            if migration_id in self._active_copiers:
+                raise MigrationError(
+                    "A copy pass is already running for this migration",
+                    migration_id=migration_id,
+                )
+
+            copier = self._build_copier(migration)
+            self._active_copiers[migration_id] = copier
+            try:
+                completed = await self._run_copy_pass(copier, migration)
+            finally:
+                self._active_copiers.pop(migration_id, None)
+
+            if not completed:
+                raise MigrationError(
+                    "Resync pass did not run to completion; the lag anchor "
+                    "stays clamped (an incomplete pass attests nothing)",
+                    migration_id=migration_id,
+                )
+
+            current = await self._migration_repo.get(migration_id)
+            if current is None:
+                raise MigrationNotFoundError(migration_id)
+
+            interceptor = self._interceptors.get(migration_id)
+            if interceptor is None:
+                # Coordinator restart: interceptor state is in-memory, so
+                # there is no failure list left to absorb. The pass still
+                # advanced the persisted checkpoint, which is what
+                # `_lag_anchor` falls back to without an interceptor.
+                return 0
+
+            # The pass began after installation (the interceptor has been
+            # installed since bulk-copy start, and DUAL_WRITE postdates
+            # that) and ran to completion -- the two ordering facts only
+            # the coordinator can attest. See
+            # `DualWriteInterceptor.mark_copy_pass_complete`.
+            return interceptor.mark_copy_pass_complete(current.last_source_position)
 
     async def _run_copy_pass(self, copier: BulkCopier, migration: Migration) -> bool:
         """Run one copier pass, streaming progress to status observers.
