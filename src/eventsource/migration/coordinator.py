@@ -119,8 +119,10 @@ class MigrationCoordinator:
     CutoverManager to perform zero-downtime tenant migrations.
 
     The coordinator manages migrations through phases:
-    1. PENDING -> BULK_COPY: Start copying historical events
-    2. BULK_COPY -> DUAL_WRITE: Enable dual-write for new events
+    1. PENDING -> BULK_COPY: Install the dual-write interceptor, then copy
+       historical events (new writes are mirrored while the copy runs, so
+       no write is ever mirrored by nobody)
+    2. BULK_COPY -> DUAL_WRITE: Copy complete; only the mirror remains
     3. DUAL_WRITE -> CUTOVER: Perform atomic switch when sync lag is acceptable
     4. CUTOVER -> COMPLETED: Migration finished successfully
 
@@ -247,8 +249,9 @@ class MigrationCoordinator:
         # Target stores by migration_id (needed for dual-write interceptor creation)
         self._target_stores: dict[UUID, FullEventStore] = {}
 
-        # Live dual-write interceptors by migration_id. Held so the lag
-        # calls can discount the events already mirrored to the target.
+        # Live dual-write interceptors by migration_id. Installed at
+        # bulk-copy start; the lag calls anchor on their watermarks via
+        # `safe_lag_anchor`.
         self._interceptors: dict[UUID, DualWriteInterceptor] = {}
 
         # CutoverManager instance (created lazily when needed)
@@ -754,6 +757,13 @@ class MigrationCoordinator:
     # Private methods
     # =========================================================================
 
+    # Bounded catch-up rounds after the main copy pass. Each round absorbs
+    # the mirror failures the previous round left behind; a round with none
+    # left ends the loop. The cap only exists for pathological write
+    # patterns -- hitting it leaves the lag anchor clamped (fail-closed)
+    # until another pass absorbs the remainder.
+    _MAX_CATCHUP_ROUNDS = 10
+
     async def _run_bulk_copy(
         self,
         migration: Migration,
@@ -762,11 +772,24 @@ class MigrationCoordinator:
         """
         Run the bulk copy phase.
 
-        Streams historical events from source to target store.
-        Updates migration progress as batches complete.
+        Installs the DualWriteInterceptor FIRST, then streams historical
+        events from source to target store. Installing before the copy
+        means dual-write coverage overlaps the copy and there is no window
+        in which a write is mirrored by nobody: every event is either in
+        the pass's feed snapshot (copied) or appended through the
+        interceptor (mirrored, or recorded as a failure for the next
+        catch-up round to absorb). The overlap is safe because the copier
+        treats an event the mirror already landed as already-copied, and
+        the mirror only ever extends a fully converged target stream (see
+        `DualWriteInterceptor.append`).
 
-        After bulk copy completes, transitions to dual-write phase
-        where new events are written to both stores.
+        The migration reads as BULK_COPY while the copy runs, even though
+        the mirror is already active; DUAL_WRITE means the copy is
+        complete and only the mirror remains.
+
+        After the main pass, bounded catch-up rounds re-run the copier
+        until every recorded mirror failure is absorbed, then the phase
+        transitions to DUAL_WRITE.
 
         Args:
             migration: Migration instance
@@ -779,6 +802,11 @@ class MigrationCoordinator:
                 "tenant_id": str(migration.tenant_id),
             },
         ):
+            # Install the interceptor BEFORE the copy pass starts, so its
+            # coverage overlaps the pass and the install window is empty
+            # by construction.
+            interceptor = self._install_interceptor(migration, target_store)
+
             copier = BulkCopier(
                 self._source_store,
                 target_store,
@@ -789,20 +817,40 @@ class MigrationCoordinator:
             self._active_copiers[migration.id] = copier
 
             try:
-                last_progress: BulkCopyProgress | None = None
+                completed = await self._run_copy_pass(copier, migration)
 
-                async for progress in copier.run(migration):
-                    last_progress = progress
-                    await self._notify_status_update(migration.id)
+                rounds = 0
+                while completed:
+                    current = await self._migration_repo.get(migration.id)
+                    if current is None:
+                        raise MigrationNotFoundError(migration.id)
 
-                # Bulk copy complete
-                if last_progress and last_progress.is_complete:
+                    # The pass began after installation and completed:
+                    # attest it, absorbing failures the checkpoint covers.
+                    remaining = interceptor.mark_copy_pass_complete(current.last_source_position)
+                    if remaining == 0:
+                        break
+                    if rounds >= self._MAX_CATCHUP_ROUNDS:
+                        logger.warning(
+                            "Migration %s: %d mirror failures remain unabsorbed "
+                            "after %d catch-up rounds; the lag anchor stays "
+                            "clamped at the checkpoint until another copy pass "
+                            "absorbs them",
+                            migration.id,
+                            remaining,
+                            rounds,
+                        )
+                        break
+                    rounds += 1
                     logger.info(
-                        "Bulk copy complete for migration %s: %d events",
+                        "Migration %s: catch-up round %d to absorb %d mirror failure(s)",
                         migration.id,
-                        last_progress.events_copied,
+                        rounds,
+                        remaining,
                     )
+                    completed = await self._run_copy_pass(copier, current)
 
+                if completed:
                     # Transition to dual-write phase (P2-005)
                     await self._transition_to_dual_write(migration, target_store)
 
@@ -822,6 +870,64 @@ class MigrationCoordinator:
                 self._active_copiers.pop(migration.id, None)
                 self._active_tasks.pop(migration.id, None)
 
+    async def _run_copy_pass(self, copier: BulkCopier, migration: Migration) -> bool:
+        """Run one copier pass, streaming progress to status observers.
+
+        Args:
+            copier: The BulkCopier to run (resumes from the migration's
+                persisted checkpoint).
+            migration: Migration snapshot to run against.
+
+        Returns:
+            True if the pass ran to completion (not cancelled).
+        """
+        last_progress: BulkCopyProgress | None = None
+
+        async for progress in copier.run(migration):
+            last_progress = progress
+            await self._notify_status_update(migration.id)
+
+        if last_progress and last_progress.is_complete:
+            logger.info(
+                "Bulk copy pass complete for migration %s: %d events",
+                migration.id,
+                last_progress.events_copied,
+            )
+            return True
+        return False
+
+    def _install_interceptor(
+        self,
+        migration: Migration,
+        target_store: FullEventStore,
+    ) -> DualWriteInterceptor:
+        """Create and register the dual-write interceptor for a migration.
+
+        Idempotent: returns the already-installed interceptor if present,
+        so the bulk-copy path and `_transition_to_dual_write` can share
+        one instance.
+
+        Args:
+            migration: Migration instance
+            target_store: Target FullEventStore to mirror writes to
+
+        Returns:
+            The installed DualWriteInterceptor.
+        """
+        interceptor = self._interceptors.get(migration.id)
+        if interceptor is not None:
+            return interceptor
+
+        interceptor = DualWriteInterceptor(
+            source_store=self._source_store,
+            target_store=target_store,
+            tenant_id=migration.tenant_id,
+            enable_tracing=self._enable_tracing,
+        )
+        self._router.set_dual_write_interceptor(migration.tenant_id, interceptor)
+        self._interceptors[migration.id] = interceptor
+        return interceptor
+
     # =========================================================================
     # Phase 2 (P2-005): Dual-Write and Cutover Methods
     # =========================================================================
@@ -834,8 +940,11 @@ class MigrationCoordinator:
         """
         Transition from bulk copy to dual-write phase.
 
-        Sets up DualWriteInterceptor and SyncLagTracker for the migration.
-        The interceptor ensures new events are written to both stores.
+        The DualWriteInterceptor is normally installed already -- at the
+        start of the bulk-copy pass, so its coverage overlaps the copy --
+        and is reused here; it is only created now when this method is
+        driven directly (tests, manual orchestration). Sets up the
+        SyncLagTracker and moves phase and routing state to DUAL_WRITE.
 
         Args:
             migration: Migration instance
@@ -848,17 +957,9 @@ class MigrationCoordinator:
                 "tenant_id": str(migration.tenant_id),
             },
         ):
-            # Create dual-write interceptor
-            interceptor = DualWriteInterceptor(
-                source_store=self._source_store,
-                target_store=target_store,
-                tenant_id=migration.tenant_id,
-                enable_tracing=self._enable_tracing,
-            )
-
-            # Register interceptor with router
-            self._router.set_dual_write_interceptor(migration.tenant_id, interceptor)
-            self._interceptors[migration.id] = interceptor
+            # Reuse the interceptor installed at bulk-copy start (created
+            # here only if this method is driven directly).
+            self._install_interceptor(migration, target_store)
 
             # Create sync lag tracker
             lag_tracker = SyncLagTracker(

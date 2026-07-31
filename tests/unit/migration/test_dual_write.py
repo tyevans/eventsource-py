@@ -58,7 +58,7 @@ def create_mock_store(store_id: str = "store", position_key: tuple = (100,)) -> 
     store.append = AsyncMock(
         side_effect=lambda stream, events, expected: AppendResult(
             stream=stream,
-            new_version=1,
+            new_version=len(events),
             position=Position(store_id=store_id, key=(1,)),
         )
     )
@@ -308,7 +308,10 @@ class TestAppendSuccess:
 
         assert result.stream == stream
         source_store.append.assert_called_once_with(stream, [event], ExpectedVersion.no_stream())
-        target_store.append.assert_called_once_with(stream, [event], ExpectedVersion.no_stream())
+        # The mirror does not forward the caller's expectation: it appends
+        # at the exact pre-append source version, so it only ever extends
+        # a converged target stream.
+        target_store.append.assert_called_once_with(stream, [event], ExpectedVersion.exact(0))
 
     async def test_append_returns_source_result(
         self,
@@ -863,7 +866,8 @@ class TestEdgeCases:
 
         assert result.stream == stream
         source_store.append.assert_called_once_with(stream, events, ExpectedVersion.no_stream())
-        target_store.append.assert_called_once_with(stream, events, ExpectedVersion.no_stream())
+        # Derived mirror expectation: new_version (5) minus the batch (5).
+        target_store.append.assert_called_once_with(stream, events, ExpectedVersion.exact(0))
 
     async def test_failure_tracking_multiple_events(
         self,

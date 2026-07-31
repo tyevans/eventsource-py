@@ -180,7 +180,10 @@ class DualWriteInterceptor:
         _dual_write_success_count: Events successfully mirrored to the target.
         _first_seen_source_position: Where this interceptor's coverage starts.
         _last_synced_source_position: Watermark of the latest successful mirror.
-        _first_failed_source_position: Where mirroring first fell behind.
+        _unabsorbed_failure_positions: Mirror failures not yet proven
+            re-copied by a completed bulk-copy pass.
+        _coverage_complete: A copy pass starting after installation has
+            completed, so the install window is provably empty.
     """
 
     max_append_batch: int | None = None
@@ -229,7 +232,19 @@ class DualWriteInterceptor:
         # mutually comparable.
         self._first_seen_source_position: Position | None = None
         self._last_synced_source_position: Position | None = None
-        self._first_failed_source_position: Position | None = None
+
+        # Source positions of mirror failures not yet proven re-copied by
+        # a bulk-copy checkpoint. min() of this list is the first-failed
+        # watermark; `mark_copy_pass_complete` absorbs entries a completed
+        # pass has provably re-delivered. Capped fail-closed: once
+        # saturated, the anchor never advances again (see safe_lag_anchor).
+        self._unabsorbed_failure_positions: list[Position] = []
+        self._failure_positions_saturated = False
+
+        # Set by `mark_copy_pass_complete`: a copy pass that STARTED AFTER
+        # this interceptor was installed has completed, so no event was
+        # ever mirrored by nobody and the install-window clamp releases.
+        self._coverage_complete = False
 
     # =========================================================================
     # Public Properties
@@ -291,14 +306,18 @@ class DualWriteInterceptor:
 
     @property
     def first_failed_source_position(self) -> Position | None:
-        """Source position where mirroring first failed.
+        """Earliest source position of an unabsorbed mirror failure.
 
-        Set once, on the first failure, and NEVER cleared -- a later
-        success does not retroactively deliver the event that was
-        dropped. This is what stops `safe_lag_anchor` from advancing over
-        a hole.
+        A later mirror SUCCESS never clears or advances this -- it does
+        not retroactively deliver the event that was dropped. The only
+        release is `mark_copy_pass_complete`: a completed bulk-copy pass
+        whose checkpoint reaches the failure proves the copier
+        re-delivered the event, which absorbs it. This is what stops
+        `safe_lag_anchor` from advancing over a hole.
         """
-        return self._first_failed_source_position
+        if not self._unabsorbed_failure_positions:
+            return None
+        return min(self._unabsorbed_failure_positions)
 
     def safe_lag_anchor(self, checkpoint: Position | None) -> Position | None:
         """The furthest source position provably present in the target.
@@ -315,21 +334,26 @@ class DualWriteInterceptor:
         and this interceptor's coverage starts at
         `first_seen_source_position`; anything in between was mirrored by
         nobody. The anchor may advance only when the checkpoint has
-        reached the start of coverage, which is the only way to know no
-        such gap exists. Fail-closed: when the two cannot be shown to
-        meet, the anchor stays put even if there happened to be no events
-        in the window.
+        reached the start of coverage, which is the only way the
+        interceptor ALONE can know no such gap exists. The clamp is
+        released for good by `mark_copy_pass_complete`, the coordinator's
+        attestation that a copy pass beginning after installation
+        completed -- installed-before-copy means the window is empty by
+        construction. Fail-closed: without that attestation, when the two
+        watermarks cannot be shown to meet the anchor stays put even if
+        there happened to be no events in the window.
 
-        Clamp 2 -- the failure. If mirroring has ever failed, the anchor
-        advances only when the whole synced run precedes that first
-        failure.
+        Clamp 2 -- the failure. If mirroring has failed and no completed
+        copy pass has absorbed the failure (see
+        `mark_copy_pass_complete`), the anchor advances only when the
+        whole synced run precedes that first unabsorbed failure.
 
-        CONSEQUENCE: events stranded in the install window (or behind a
-        failure) block cutover until a fresh copy pass absorbs them,
-        advancing the checkpoint past them. Re-copying is safe -- the
-        copier treats an event already in the target as already-copied
-        and continues -- so the accepted failure mode here is
-        stuck-until-recopied, never a cutover over missing data.
+        CONSEQUENCE: events stranded behind an unabsorbed failure block
+        cutover until a copy pass absorbs them, advancing the checkpoint
+        past them. Re-copying is safe -- the copier treats an event
+        already in the target as already-copied and continues -- so the
+        accepted failure mode here is stuck-until-recopied, never a
+        cutover over missing data.
 
         Args:
             checkpoint: Last source position the bulk copy proved copied.
@@ -341,32 +365,80 @@ class DualWriteInterceptor:
         if candidate is None:
             return checkpoint
 
-        # Clamp 1: the checkpoint must have reached this interceptor's
-        # coverage, or events between them were mirrored by nobody.
-        first_seen = self._first_seen_source_position
-        if first_seen is None:
-            return checkpoint
-        if checkpoint is None:
-            # Nothing was copied, so everything before coverage is a gap.
-            return None
-        # Same store (source positions), so these orderings are always
-        # defined -- PositionForeignError is impossible here.
-        assert checkpoint.store_id == first_seen.store_id
-        if checkpoint < first_seen:
+        # Fail-closed under saturation: failure positions were dropped,
+        # so no advancement can ever be shown safe again.
+        if self._failure_positions_saturated:
             return checkpoint
 
+        # Clamp 1: the checkpoint must have reached this interceptor's
+        # coverage, or events between them were mirrored by nobody.
+        # A completed covered copy pass proves the window empty instead.
+        if not self._coverage_complete:
+            first_seen = self._first_seen_source_position
+            if first_seen is None:
+                return checkpoint
+            if checkpoint is None:
+                # Nothing was copied, so everything before coverage is a gap.
+                return None
+            # Same store (source positions), so these orderings are always
+            # defined -- PositionForeignError is impossible here.
+            assert checkpoint.store_id == first_seen.store_id
+            if checkpoint < first_seen:
+                return checkpoint
+
         # Clamp 2: successes after a failure prove nothing about the hole.
-        first_failed = self._first_failed_source_position
+        first_failed = self.first_failed_source_position
         if first_failed is not None:
             assert candidate.store_id == first_failed.store_id
             if candidate >= first_failed:
                 return checkpoint
 
-        assert candidate.store_id == checkpoint.store_id
-        if candidate <= checkpoint:
-            return checkpoint
+        if checkpoint is not None:
+            assert candidate.store_id == checkpoint.store_id
+            if candidate <= checkpoint:
+                return checkpoint
 
         return candidate
+
+    def mark_copy_pass_complete(self, checkpoint: Position | None) -> int:
+        """Record that a covered bulk-copy pass completed at `checkpoint`.
+
+        MUST only be called by the migration coordinator, and only for a
+        copy pass that BEGAN AFTER this interceptor was installed and ran
+        to completion -- both are ordering facts the interceptor cannot
+        observe on its own. Two proofs follow from them:
+
+        - The install window is empty. The pass's feed snapshot contains
+          every event predating this interceptor's coverage, so no event
+          was mirrored by nobody: the install-window clamp in
+          `safe_lag_anchor` is released permanently.
+        - Failures at or before `checkpoint` are absorbed. The copier
+          verified every feed event through its checkpoint (appended, or
+          confirmed already present), so a mirror that dropped one of
+          those events was re-delivered by the copy. Later failures stay:
+          the checkpoint proves nothing about them.
+
+        Args:
+            checkpoint: The completed pass's final source checkpoint
+                (`Migration.last_source_position`); None when the tenant
+                had no events to copy, which still proves the window
+                empty but absorbs nothing.
+
+        Returns:
+            The number of unabsorbed mirror failures remaining. Non-zero
+            means `safe_lag_anchor` stays clamped at the checkpoint until
+            another completed pass absorbs them.
+        """
+        self._coverage_complete = True
+        if checkpoint is not None:
+            self._unabsorbed_failure_positions = [
+                p for p in self._unabsorbed_failure_positions if p > checkpoint
+            ]
+        remaining = len(self._unabsorbed_failure_positions)
+        if self._failure_positions_saturated:
+            # Dropped positions are unknowable: never report clean.
+            return remaining + 1
+        return remaining
 
     # =========================================================================
     # Failure Tracking
@@ -474,6 +546,17 @@ class DualWriteInterceptor:
         to target store. Source failures propagate to the caller. Target
         failures are recorded but don't fail the operation.
 
+        The mirror does NOT forward the caller's `expected`: it appends to
+        the target with the exact stream version the source held before
+        this append (derived from the source result). The mirror therefore
+        lands only when the target stream has fully converged with the
+        source, which is what keeps the overlap with a running bulk-copy
+        pass safe: a mirror can never leapfrog events the copier has not
+        yet delivered, so the target's stream order always matches the
+        source's -- even for callers appending with `any`. A mirror
+        refused for non-convergence is recorded as a failure and the
+        event reaches the target through the copy pass instead.
+
         Args:
             stream: Identity of the stream to append to.
             events: Events to append.
@@ -511,7 +594,12 @@ class DualWriteInterceptor:
             # Step 2: Write to target (best-effort)
             # Target failures are logged but don't fail the operation
             try:
-                await self._target.append(stream, events, expected)
+                # Mirror at the exact pre-append source version so the
+                # mirror only ever extends a converged target stream --
+                # see the method docstring for why this is what makes
+                # overlap with a bulk-copy pass safe.
+                mirror_expected = ExpectedVersion.exact(source_result.new_version - len(events))
+                await self._target.append(stream, events, mirror_expected)
                 self._dual_write_success_count += len(events)
                 if source_result.position is not None:
                     self._last_synced_source_position = source_result.position
@@ -524,11 +612,14 @@ class DualWriteInterceptor:
                     f"Target write failed for tenant {self._tenant_id}, "
                     f"stream {stream.render()}: {e}"
                 )
-                if (
-                    self._first_failed_source_position is None
-                    and source_result.position is not None
-                ):
-                    self._first_failed_source_position = source_result.position
+                if source_result.position is not None:
+                    if len(self._unabsorbed_failure_positions) >= self._max_failure_history:
+                        # Fail-closed: dropping a position would make a
+                        # future absorption unsound, so pin the anchor
+                        # instead (see safe_lag_anchor).
+                        self._failure_positions_saturated = True
+                    else:
+                        self._unabsorbed_failure_positions.append(source_result.position)
                 self._record_sync_failure(
                     aggregate_id=stream.aggregate_id,
                     aggregate_type=stream.category,

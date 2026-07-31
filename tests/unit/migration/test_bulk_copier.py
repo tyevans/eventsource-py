@@ -21,9 +21,10 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from eventsource.adapters.memory import MemoryEventStore
 from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
-from eventsource.exceptions import DuplicateEventError
+from eventsource.exceptions import DuplicateEventError, OptimisticLockError
 from eventsource.migration.bulk_copier import (
     BulkCopier,
     BulkCopyProgress,
@@ -32,7 +33,7 @@ from eventsource.migration.bulk_copier import (
 )
 from eventsource.migration.exceptions import BulkCopyError
 from eventsource.migration.models import Migration, MigrationConfig, MigrationPhase
-from eventsource.ports import AppendResult, EventEnvelope, Position
+from eventsource.ports import AppendResult, EventEnvelope, ExpectedVersion, Position
 
 
 # Test event class for testing
@@ -887,10 +888,13 @@ class TestBulkCopierWriteBatch:
         stream1 = StreamId(aggregate_id=agg1_id, category="TestAggregate")
         stream2 = StreamId(aggregate_id=agg2_id, category="TestAggregate")
 
-        # First stream's batch append raises DuplicateEventError (already
-        # copied), second stream succeeds.
+        # First stream's batch append raises DuplicateEventError; the
+        # copier then retries that stream per event (the group could have
+        # straddled absent events) and the per-event append confirms the
+        # duplicate. Second stream succeeds batched.
         target_store.append = AsyncMock(
             side_effect=[
+                DuplicateEventError("already present"),
                 DuplicateEventError("already present"),
                 AppendResult(stream=stream2, new_version=1, position=_pos("target", 9)),
             ]
@@ -925,7 +929,9 @@ class TestBulkCopierWriteBatch:
         # Should not raise -- duplicate is swallowed and counted as copied.
         last_pos = await copier._write_batch(uuid4(), tenant_id, events)
 
-        assert target_store.append.call_count == 2
+        # Batched attempt + per-event confirmation for stream1, batched
+        # success for stream2.
+        assert target_store.append.call_count == 3
         # Only the successful (non-duplicate) stream contributes a position.
         assert last_pos == _pos("target", 9)
 
@@ -1042,10 +1048,13 @@ class TestBulkCopierRunProgress:
 
         target_store = AsyncMock()
         target_store.get_stream_version = AsyncMock(return_value=0)
-        # First batch appends for real; second batch is entirely duplicate.
+        # First batch appends for real; second batch is entirely duplicate
+        # (the batched attempt raises, then the per-event retry confirms
+        # the one event really is a duplicate).
         target_store.append = AsyncMock(
             side_effect=[
                 AppendResult(stream=streams[0], new_version=1, position=_pos("target", 4)),
+                DuplicateEventError("already present"),
                 DuplicateEventError("already present"),
             ]
         )
@@ -1072,6 +1081,137 @@ class TestBulkCopierRunProgress:
 
         # The all-duplicate second batch leaves the real position standing.
         assert progresses[-1].last_target_position == _pos("target", 4)
+
+
+class TestBulkCopierOverlapWithLiveMirror:
+    """The copy pass now runs with the dual-write interceptor installed,
+    so the copier and the mirror can race on the same stream. The copier
+    must tolerate events the mirror already landed without ever skipping
+    events the mirror did not."""
+
+    @pytest.mark.asyncio
+    async def test_mixed_group_falls_back_per_event_and_copies_absent_events(self) -> None:
+        """A batched group straddling an already-present event must not be
+        skipped wholesale: the absent events still reach the target, in
+        source stream order."""
+        target_store = MemoryEventStore("target")
+        tenant_id = uuid4()
+        aggregate_id = uuid4()
+        stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
+
+        mirrored = TestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id, value="mirrored")
+        absent = TestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id, value="absent")
+
+        # A dual-write mirror already landed the first event.
+        await target_store.append(stream, [mirrored], ExpectedVersion.no_stream())
+
+        envelopes = [
+            EventEnvelope(
+                event=mirrored,
+                stream_id=stream,
+                stream_version=1,
+                position=_pos("source", 1),
+                stored_at=datetime.now(UTC),
+            ),
+            EventEnvelope(
+                event=absent,
+                stream_id=stream,
+                stream_version=2,
+                position=_pos("source", 2),
+                stored_at=datetime.now(UTC),
+            ),
+        ]
+
+        copier = BulkCopier(
+            source_store=MagicMock(),
+            target_store=target_store,
+            migration_repo=MagicMock(),
+            enable_tracing=False,
+        )
+
+        last_pos = await copier._write_batch(uuid4(), tenant_id, envelopes)
+
+        assert last_pos is not None
+        assert await target_store.get_stream_version(stream) == 2
+        target_ids = [env.event.event_id async for env in target_store.read_stream(stream)]
+        assert target_ids == [mirrored.event_id, absent.event_id]
+
+    @pytest.mark.asyncio
+    async def test_conflicting_append_rechecks_and_confirms_duplicate(self) -> None:
+        """A mirror landing between the version read and the append raises
+        OptimisticLockError (not DuplicateEventError); the copier re-reads
+        the version and the retry confirms the duplicate. No mapping is
+        recorded for the event this run never appended."""
+        tenant_id = uuid4()
+        aggregate_id = uuid4()
+        stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
+        event = TestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)
+
+        target_store = AsyncMock()
+        target_store.get_stream_version = AsyncMock(side_effect=[0, 1])
+        target_store.append = AsyncMock(
+            side_effect=[
+                OptimisticLockError(aggregate_id, 0, 1),
+                DuplicateEventError("the mirror landed this very event"),
+            ]
+        )
+        position_mapper = AsyncMock()
+
+        copier = BulkCopier(
+            source_store=MagicMock(),
+            target_store=target_store,
+            migration_repo=MagicMock(),
+            position_mapper=position_mapper,
+            enable_tracing=False,
+        )
+
+        envelope = EventEnvelope(
+            event=event,
+            stream_id=stream,
+            stream_version=1,
+            position=_pos("source", 1),
+            stored_at=datetime.now(UTC),
+        )
+
+        last_pos = await copier._write_batch(uuid4(), tenant_id, [envelope])
+
+        assert last_pos is None
+        assert target_store.append.call_count == 2
+        # The retry used the re-read version.
+        retry_expected = target_store.append.call_args.args[2]
+        assert retry_expected == ExpectedVersion.exact(1)
+        position_mapper.record_mapping.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_sustained_conflict_fails_the_copy_honestly(self) -> None:
+        """A stream that keeps moving under the copier past the retry bound
+        fails the copy rather than spinning or skipping."""
+        tenant_id = uuid4()
+        aggregate_id = uuid4()
+        stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
+        event = TestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)
+
+        target_store = AsyncMock()
+        target_store.get_stream_version = AsyncMock(return_value=0)
+        target_store.append = AsyncMock(side_effect=OptimisticLockError(aggregate_id, 0, 1))
+
+        copier = BulkCopier(
+            source_store=MagicMock(),
+            target_store=target_store,
+            migration_repo=MagicMock(),
+            enable_tracing=False,
+        )
+
+        envelope = EventEnvelope(
+            event=event,
+            stream_id=stream,
+            stream_version=1,
+            position=_pos("source", 1),
+            stored_at=datetime.now(UTC),
+        )
+
+        with pytest.raises(BulkCopyError, match="kept moving under the copier"):
+            await copier._write_batch(uuid4(), tenant_id, [envelope])
 
 
 class TestBulkCopierCountTenantEvents:
