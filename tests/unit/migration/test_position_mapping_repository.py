@@ -114,7 +114,7 @@ class TestPostgreSQLPositionMappingRepositoryCreate:
     ) -> None:
         """Test create returns the database ID."""
         with patch(
-            "eventsource.migration.repositories.position_mapping.execute_with_connection"
+            "eventsource.migration.repositories.position_mapping.sql_connection"
         ) as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
@@ -134,7 +134,7 @@ class TestPostgreSQLPositionMappingRepositoryCreate:
     ) -> None:
         """Test create executes INSERT query with token params, not legacy int columns."""
         with patch(
-            "eventsource.migration.repositories.position_mapping.execute_with_connection"
+            "eventsource.migration.repositories.position_mapping.sql_connection"
         ) as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
@@ -202,7 +202,7 @@ class TestPostgreSQLPositionMappingRepositoryCreateBatch:
         ]
 
         with patch(
-            "eventsource.migration.repositories.position_mapping.execute_with_connection"
+            "eventsource.migration.repositories.position_mapping.sql_connection"
         ) as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
@@ -235,7 +235,7 @@ class TestPostgreSQLPositionMappingRepositoryCreateBatch:
         ]
 
         with patch(
-            "eventsource.migration.repositories.position_mapping.execute_with_connection"
+            "eventsource.migration.repositories.position_mapping.sql_connection"
         ) as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
@@ -278,7 +278,7 @@ class TestPostgreSQLPositionMappingRepositoryGet:
     ) -> None:
         """Test get returns None when mapping not found."""
         with patch(
-            "eventsource.migration.repositories.position_mapping.execute_with_connection"
+            "eventsource.migration.repositories.position_mapping.sql_connection"
         ) as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
@@ -312,7 +312,7 @@ class TestPostgreSQLPositionMappingRepositoryGet:
         )
 
         with patch(
-            "eventsource.migration.repositories.position_mapping.execute_with_connection"
+            "eventsource.migration.repositories.position_mapping.sql_connection"
         ) as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
@@ -349,7 +349,7 @@ class TestPostgreSQLPositionMappingRepositoryFindBySourcePosition:
     ) -> None:
         """Test find_by_source_position returns None when not found."""
         with patch(
-            "eventsource.migration.repositories.position_mapping.execute_with_connection"
+            "eventsource.migration.repositories.position_mapping.sql_connection"
         ) as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
@@ -376,7 +376,7 @@ class TestPostgreSQLPositionMappingRepositoryFindBySourcePosition:
         row = (1, migration_id, source_position.to_str(), target_position.to_str(), event_id, now)
 
         with patch(
-            "eventsource.migration.repositories.position_mapping.execute_with_connection"
+            "eventsource.migration.repositories.position_mapping.sql_connection"
         ) as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
@@ -403,7 +403,7 @@ class TestPostgreSQLPositionMappingRepositoryFindBySourcePosition:
         migration_id = uuid4()
 
         with patch(
-            "eventsource.migration.repositories.position_mapping.execute_with_connection"
+            "eventsource.migration.repositories.position_mapping.sql_connection"
         ) as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
@@ -442,7 +442,7 @@ class TestPostgreSQLPositionMappingRepositoryFindByTargetPosition:
     ) -> None:
         """Test find_by_target_position returns None when not found."""
         with patch(
-            "eventsource.migration.repositories.position_mapping.execute_with_connection"
+            "eventsource.migration.repositories.position_mapping.sql_connection"
         ) as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
@@ -469,7 +469,7 @@ class TestPostgreSQLPositionMappingRepositoryFindByTargetPosition:
         row = (1, migration_id, source_position.to_str(), target_position.to_str(), event_id, now)
 
         with patch(
-            "eventsource.migration.repositories.position_mapping.execute_with_connection"
+            "eventsource.migration.repositories.position_mapping.sql_connection"
         ) as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
@@ -661,7 +661,7 @@ class TestPostgreSQLPositionMappingRepositoryFindByEventId:
     ) -> None:
         """Test find_by_event_id returns None when not found."""
         with patch(
-            "eventsource.migration.repositories.position_mapping.execute_with_connection"
+            "eventsource.migration.repositories.position_mapping.sql_connection"
         ) as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
@@ -686,7 +686,7 @@ class TestPostgreSQLPositionMappingRepositoryFindByEventId:
         row = (1, migration_id, pos(1000, "src").to_str(), pos(500, "tgt").to_str(), event_id, now)
 
         with patch(
-            "eventsource.migration.repositories.position_mapping.execute_with_connection"
+            "eventsource.migration.repositories.position_mapping.sql_connection"
         ) as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
@@ -720,7 +720,7 @@ class TestPostgreSQLPositionMappingRepositoryListByMigration:
     ) -> None:
         """Test list_by_migration returns empty list when no mappings."""
         with patch(
-            "eventsource.migration.repositories.position_mapping.execute_with_connection"
+            "eventsource.migration.repositories.position_mapping.sql_connection"
         ) as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
@@ -748,7 +748,7 @@ class TestPostgreSQLPositionMappingRepositoryListByMigration:
         ]
 
         with patch(
-            "eventsource.migration.repositories.position_mapping.execute_with_connection"
+            "eventsource.migration.repositories.position_mapping.sql_connection"
         ) as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
@@ -776,7 +776,7 @@ class TestPostgreSQLPositionMappingRepositoryListByMigration:
         migration_id = uuid4()
 
         with patch(
-            "eventsource.migration.repositories.position_mapping.execute_with_connection"
+            "eventsource.migration.repositories.position_mapping.sql_connection"
         ) as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
@@ -881,7 +881,7 @@ class TestPostgreSQLPositionMappingRepositoryCountByMigration:
     ) -> None:
         """Test count_by_migration returns 0 when no mappings."""
         with patch(
-            "eventsource.migration.repositories.position_mapping.execute_with_connection"
+            "eventsource.migration.repositories.position_mapping.sql_connection"
         ) as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
@@ -900,7 +900,7 @@ class TestPostgreSQLPositionMappingRepositoryCountByMigration:
     ) -> None:
         """Test count_by_migration returns correct count."""
         with patch(
-            "eventsource.migration.repositories.position_mapping.execute_with_connection"
+            "eventsource.migration.repositories.position_mapping.sql_connection"
         ) as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
@@ -992,7 +992,7 @@ class TestPostgreSQLPositionMappingRepositoryDeleteByMigration:
     ) -> None:
         """Test delete_by_migration returns 0 when no mappings to delete."""
         with patch(
-            "eventsource.migration.repositories.position_mapping.execute_with_connection"
+            "eventsource.migration.repositories.position_mapping.sql_connection"
         ) as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
@@ -1011,7 +1011,7 @@ class TestPostgreSQLPositionMappingRepositoryDeleteByMigration:
     ) -> None:
         """Test delete_by_migration returns count of deleted mappings."""
         with patch(
-            "eventsource.migration.repositories.position_mapping.execute_with_connection"
+            "eventsource.migration.repositories.position_mapping.sql_connection"
         ) as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
@@ -1145,7 +1145,7 @@ class TestPositionMappingWorkflow:
         ]
 
         with patch(
-            "eventsource.migration.repositories.position_mapping.execute_with_connection"
+            "eventsource.migration.repositories.position_mapping.sql_connection"
         ) as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
@@ -1200,7 +1200,7 @@ class TestPositionMappingWorkflow:
         migration_id = uuid4()
 
         with patch(
-            "eventsource.migration.repositories.position_mapping.execute_with_connection"
+            "eventsource.migration.repositories.position_mapping.sql_connection"
         ) as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()

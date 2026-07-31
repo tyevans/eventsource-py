@@ -63,13 +63,13 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from eventsource.adapters._sql.connection import sql_connection
 from eventsource.migration.models import (
     TenantMigrationState,
     TenantRouting,
 )
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import ATTR_DB_SYSTEM, ATTR_TENANT_ID
-from eventsource.repositories._connection import execute_with_connection
 
 
 @runtime_checkable
@@ -287,7 +287,7 @@ class PostgreSQLTenantRoutingRepository:
                 WHERE tenant_id = :tenant_id
             """)
 
-            async with execute_with_connection(self._conn, transactional=False) as conn:
+            async with sql_connection(self._conn, write=False) as conn:
                 result = await conn.execute(query, {"tenant_id": tenant_id})
                 row = result.fetchone()
 
@@ -349,7 +349,7 @@ class PostgreSQLTenantRoutingRepository:
                           active_migration_id, created_at, updated_at
             """)
 
-            async with execute_with_connection(self._conn, transactional=True) as conn:
+            async with sql_connection(self._conn, write=True) as conn:
                 result = await conn.execute(
                     query,
                     {
@@ -417,7 +417,7 @@ class PostgreSQLTenantRoutingRepository:
                     updated_at = EXCLUDED.updated_at
             """)
 
-            async with execute_with_connection(self._conn, transactional=True) as conn:
+            async with sql_connection(self._conn, write=True) as conn:
                 await conn.execute(
                     query,
                     {
@@ -467,7 +467,7 @@ class PostgreSQLTenantRoutingRepository:
                 WHERE tenant_id = :tenant_id
             """)
 
-            async with execute_with_connection(self._conn, transactional=True) as conn:
+            async with sql_connection(self._conn, write=True) as conn:
                 await conn.execute(
                     query,
                     {
@@ -529,7 +529,7 @@ class PostgreSQLTenantRoutingRepository:
                 ORDER BY updated_at DESC
             """)
 
-            async with execute_with_connection(self._conn, transactional=False) as conn:
+            async with sql_connection(self._conn, write=False) as conn:
                 result = await conn.execute(query, {"state": state.value})
                 rows = result.fetchall()
 
@@ -565,7 +565,7 @@ class PostgreSQLTenantRoutingRepository:
                 ORDER BY created_at ASC
             """)
 
-            async with execute_with_connection(self._conn, transactional=False) as conn:
+            async with sql_connection(self._conn, write=False) as conn:
                 result = await conn.execute(query, {"store_id": store_id})
                 rows = result.fetchall()
 
@@ -596,7 +596,7 @@ class PostgreSQLTenantRoutingRepository:
                 WHERE tenant_id = :tenant_id
             """)
 
-            async with execute_with_connection(self._conn, transactional=True) as conn:
+            async with sql_connection(self._conn, write=True) as conn:
                 result = await conn.execute(query, {"tenant_id": tenant_id})
 
             # Invalidate cache

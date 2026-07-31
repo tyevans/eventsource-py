@@ -164,10 +164,8 @@ class TestPostgreSQLMigrationRepositoryCreate:
         # Mock get_by_tenant to return None (no existing migration)
         repo.get_by_tenant = AsyncMock(return_value=None)
 
-        # Mock execute_with_connection
-        with patch(
-            "eventsource.migration.repositories.migration.execute_with_connection"
-        ) as mock_ctx:
+        # Mock sql_connection
+        with patch("eventsource.migration.repositories.migration.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_ctx.return_value.__aenter__.return_value = mock_conn
 
@@ -218,9 +216,7 @@ class TestPostgreSQLMigrationRepositoryGet:
         repo: PostgreSQLMigrationRepository,
     ) -> None:
         """Test get returns None when migration not found."""
-        with patch(
-            "eventsource.migration.repositories.migration.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.migration.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.fetchone.return_value = None
@@ -272,9 +268,7 @@ class TestPostgreSQLMigrationRepositoryGet:
             "test@example.com",  # created_by
         )
 
-        with patch(
-            "eventsource.migration.repositories.migration.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.migration.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.fetchone.return_value = row
@@ -310,9 +304,7 @@ class TestPostgreSQLMigrationRepositoryGetByTenant:
         repo: PostgreSQLMigrationRepository,
     ) -> None:
         """Test get_by_tenant returns None when no active migration."""
-        with patch(
-            "eventsource.migration.repositories.migration.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.migration.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.fetchone.return_value = None
@@ -390,9 +382,7 @@ class TestPostgreSQLMigrationRepositoryUpdatePhase:
         )
         repo.get = AsyncMock(return_value=migration)
 
-        with patch(
-            "eventsource.migration.repositories.migration.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.migration.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_ctx.return_value.__aenter__.return_value = mock_conn
 
@@ -423,9 +413,7 @@ class TestPostgreSQLMigrationRepositoryUpdateProgress:
         migration_id = uuid4()
         source_position = Position(store_id="source", key=(500,))
 
-        with patch(
-            "eventsource.migration.repositories.migration.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.migration.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_ctx.return_value.__aenter__.return_value = mock_conn
 
@@ -452,9 +440,7 @@ class TestPostgreSQLMigrationRepositoryUpdateProgress:
         source_position = Position(store_id="source", key=(500,))
         target_position = Position(store_id="target", key=(250,))
 
-        with patch(
-            "eventsource.migration.repositories.migration.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.migration.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_ctx.return_value.__aenter__.return_value = mock_conn
 
@@ -493,9 +479,7 @@ class TestPostgreSQLMigrationRepositorySetEventsTotal:
         """Test setting events total."""
         migration_id = uuid4()
 
-        with patch(
-            "eventsource.migration.repositories.migration.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.migration.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_ctx.return_value.__aenter__.return_value = mock_conn
 
@@ -530,9 +514,7 @@ class TestPostgreSQLMigrationRepositoryRecordError:
         migration_id = uuid4()
         error_message = "Connection timeout"
 
-        with patch(
-            "eventsource.migration.repositories.migration.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.migration.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_ctx.return_value.__aenter__.return_value = mock_conn
 
@@ -553,9 +535,7 @@ class TestPostgreSQLMigrationRepositoryRecordError:
         migration_id = uuid4()
         long_error = "x" * 2000  # 2000 character error
 
-        with patch(
-            "eventsource.migration.repositories.migration.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.migration.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_ctx.return_value.__aenter__.return_value = mock_conn
 
@@ -589,9 +569,7 @@ class TestPostgreSQLMigrationRepositorySetPaused:
         migration_id = uuid4()
         reason = "Manual pause for maintenance"
 
-        with patch(
-            "eventsource.migration.repositories.migration.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.migration.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_ctx.return_value.__aenter__.return_value = mock_conn
 
@@ -611,9 +589,7 @@ class TestPostgreSQLMigrationRepositorySetPaused:
         """Test resuming a migration."""
         migration_id = uuid4()
 
-        with patch(
-            "eventsource.migration.repositories.migration.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.migration.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_ctx.return_value.__aenter__.return_value = mock_conn
 
@@ -645,9 +621,7 @@ class TestPostgreSQLMigrationRepositoryListActive:
         repo: PostgreSQLMigrationRepository,
     ) -> None:
         """Test list_active returns empty list when no active migrations."""
-        with patch(
-            "eventsource.migration.repositories.migration.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.migration.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.fetchall.return_value = []
@@ -724,9 +698,7 @@ class TestPostgreSQLMigrationRepositoryListActive:
             "test@example.com",  # created_by
         )
 
-        with patch(
-            "eventsource.migration.repositories.migration.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.migration.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.fetchall.return_value = [row1, row2]
@@ -1040,9 +1012,7 @@ class TestPhaseTransitionValidation:
         repo.get = AsyncMock(return_value=migration)
 
         if should_succeed:
-            with patch(
-                "eventsource.migration.repositories.migration.execute_with_connection"
-            ) as mock_ctx:
+            with patch("eventsource.migration.repositories.migration.sql_connection") as mock_ctx:
                 mock_conn = AsyncMock()
                 mock_ctx.return_value.__aenter__.return_value = mock_conn
 

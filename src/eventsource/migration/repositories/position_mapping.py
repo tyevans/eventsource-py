@@ -62,12 +62,12 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from eventsource.adapters._sql.connection import sql_connection
 from eventsource.exceptions import PositionDecodeError
 from eventsource.migration.models import PositionMapping
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import ATTR_DB_SYSTEM
 from eventsource.ports.positions import Position
-from eventsource.repositories._connection import execute_with_connection
 
 
 @runtime_checkable
@@ -382,7 +382,7 @@ class PostgreSQLPositionMappingRepository:
                 "mapped_at": mapping.mapped_at,
             }
 
-            async with execute_with_connection(self._conn, transactional=True) as conn:
+            async with sql_connection(self._conn, write=True) as conn:
                 result = await conn.execute(query, params)
                 row = result.fetchone()
 
@@ -443,7 +443,7 @@ class PostgreSQLPositionMappingRepository:
                 ON CONFLICT (migration_id, source_position_token) DO NOTHING
             """)  # nosec B608 - parameterized query construction
 
-            async with execute_with_connection(self._conn, transactional=True) as conn:
+            async with sql_connection(self._conn, write=True) as conn:
                 result = await conn.execute(query, params)
 
             return result.rowcount
@@ -473,7 +473,7 @@ class PostgreSQLPositionMappingRepository:
                 WHERE id = :id
             """)
 
-            async with execute_with_connection(self._conn, transactional=False) as conn:
+            async with sql_connection(self._conn, write=False) as conn:
                 result = await conn.execute(query, {"id": mapping_id})
                 row = result.fetchone()
 
@@ -519,7 +519,7 @@ class PostgreSQLPositionMappingRepository:
                   AND source_position_token = :source_position_token
             """)
 
-            async with execute_with_connection(self._conn, transactional=False) as conn:
+            async with sql_connection(self._conn, write=False) as conn:
                 result = await conn.execute(
                     query,
                     {
@@ -571,7 +571,7 @@ class PostgreSQLPositionMappingRepository:
                 LIMIT 1
             """)
 
-            async with execute_with_connection(self._conn, transactional=False) as conn:
+            async with sql_connection(self._conn, write=False) as conn:
                 result = await conn.execute(
                     query,
                     {
@@ -612,7 +612,7 @@ class PostgreSQLPositionMappingRepository:
             LIMIT 1 OFFSET :offset
         """)
 
-        async with execute_with_connection(self._conn, transactional=False) as conn:
+        async with sql_connection(self._conn, write=False) as conn:
             result = await conn.execute(
                 query,
                 {"migration_id": migration_id, "offset": ordinal},
@@ -781,7 +781,7 @@ class PostgreSQLPositionMappingRepository:
                   AND event_id = :event_id
             """)
 
-            async with execute_with_connection(self._conn, transactional=False) as conn:
+            async with sql_connection(self._conn, write=False) as conn:
                 result = await conn.execute(
                     query,
                     {
@@ -835,7 +835,7 @@ class PostgreSQLPositionMappingRepository:
                 LIMIT :limit OFFSET :offset
             """)
 
-            async with execute_with_connection(self._conn, transactional=False) as conn:
+            async with sql_connection(self._conn, write=False) as conn:
                 result = await conn.execute(
                     query,
                     {
@@ -915,7 +915,7 @@ class PostgreSQLPositionMappingRepository:
                 WHERE migration_id = :migration_id
             """)
 
-            async with execute_with_connection(self._conn, transactional=False) as conn:
+            async with sql_connection(self._conn, write=False) as conn:
                 result = await conn.execute(query, {"migration_id": migration_id})
                 row = result.fetchone()
 
@@ -984,7 +984,7 @@ class PostgreSQLPositionMappingRepository:
                 WHERE migration_id = :migration_id
             """)
 
-            async with execute_with_connection(self._conn, transactional=True) as conn:
+            async with sql_connection(self._conn, write=True) as conn:
                 result = await conn.execute(query, {"migration_id": migration_id})
 
             return result.rowcount

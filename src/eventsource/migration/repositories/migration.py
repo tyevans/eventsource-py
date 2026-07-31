@@ -51,6 +51,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from eventsource.adapters._sql.connection import sql_connection
 from eventsource.migration.exceptions import (
     InvalidPhaseTransitionError,
     MigrationAlreadyExistsError,
@@ -64,7 +65,6 @@ from eventsource.migration.models import (
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import ATTR_DB_SYSTEM, ATTR_TENANT_ID
 from eventsource.ports.positions import Position
-from eventsource.repositories._connection import execute_with_connection
 
 
 def _token(position: Position | None) -> str | None:
@@ -347,7 +347,7 @@ class PostgreSQLMigrationRepository:
                 "created_by": migration.created_by,
             }
 
-            async with execute_with_connection(self._conn, transactional=True) as conn:
+            async with sql_connection(self._conn, write=True) as conn:
                 await conn.execute(query, params)
 
             return migration.id
@@ -383,7 +383,7 @@ class PostgreSQLMigrationRepository:
                 WHERE id = :id
             """)
 
-            async with execute_with_connection(self._conn, transactional=False) as conn:
+            async with sql_connection(self._conn, write=False) as conn:
                 result = await conn.execute(query, {"id": migration_id})
                 row = result.fetchone()
 
@@ -428,7 +428,7 @@ class PostgreSQLMigrationRepository:
                 LIMIT 1
             """)
 
-            async with execute_with_connection(self._conn, transactional=False) as conn:
+            async with sql_connection(self._conn, write=False) as conn:
                 result = await conn.execute(query, {"tenant_id": tenant_id})
                 row = result.fetchone()
 
@@ -499,7 +499,7 @@ class PostgreSQLMigrationRepository:
                 **self._get_phase_timestamp_params(new_phase, now),
             }
 
-            async with execute_with_connection(self._conn, transactional=True) as conn:
+            async with sql_connection(self._conn, write=True) as conn:
                 await conn.execute(query, params)
 
     async def update_progress(
@@ -563,7 +563,7 @@ class PostgreSQLMigrationRepository:
                     "updated_at": now,
                 }
 
-            async with execute_with_connection(self._conn, transactional=True) as conn:
+            async with sql_connection(self._conn, write=True) as conn:
                 await conn.execute(query, params)
 
     async def set_events_total(
@@ -596,7 +596,7 @@ class PostgreSQLMigrationRepository:
                 WHERE id = :id
             """)
 
-            async with execute_with_connection(self._conn, transactional=True) as conn:
+            async with sql_connection(self._conn, write=True) as conn:
                 await conn.execute(
                     query,
                     {
@@ -639,7 +639,7 @@ class PostgreSQLMigrationRepository:
                 WHERE id = :id
             """)
 
-            async with execute_with_connection(self._conn, transactional=True) as conn:
+            async with sql_connection(self._conn, write=True) as conn:
                 await conn.execute(
                     query,
                     {
@@ -706,7 +706,7 @@ class PostgreSQLMigrationRepository:
                     "updated_at": now,
                 }
 
-            async with execute_with_connection(self._conn, transactional=True) as conn:
+            async with sql_connection(self._conn, write=True) as conn:
                 await conn.execute(query, params)
 
     async def list_active(self) -> list[Migration]:
@@ -738,7 +738,7 @@ class PostgreSQLMigrationRepository:
                 ORDER BY created_at ASC
             """)
 
-            async with execute_with_connection(self._conn, transactional=False) as conn:
+            async with sql_connection(self._conn, write=False) as conn:
                 result = await conn.execute(query, {})
                 rows = result.fetchall()
 

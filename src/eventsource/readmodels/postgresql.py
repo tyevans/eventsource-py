@@ -12,6 +12,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from eventsource.adapters._sql.connection import sql_connection
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_BATCH_SIZE,
@@ -26,7 +27,6 @@ from eventsource.observability.attributes import (
 from eventsource.readmodels.base import ReadModel
 from eventsource.readmodels.exceptions import OptimisticLockError, ReadModelNotFoundError
 from eventsource.readmodels.query import Filter, Query
-from eventsource.repositories._connection import execute_with_connection
 
 # Type variable for read model types
 TModel = TypeVar("TModel", bound=ReadModel)
@@ -104,7 +104,7 @@ class PostgreSQLReadModelRepository(Generic[TModel]):
                 WHERE id = :id AND deleted_at IS NULL
             """)  # nosec B608 - table_name from trusted class
 
-            async with execute_with_connection(self._conn, transactional=False) as conn:
+            async with sql_connection(self._conn, write=False) as conn:
                 result = await conn.execute(query, {"id": id})
                 row = result.fetchone()
 
@@ -146,7 +146,7 @@ class PostgreSQLReadModelRepository(Generic[TModel]):
                 WHERE id = ANY(:ids) AND deleted_at IS NULL
             """)  # nosec B608
 
-            async with execute_with_connection(self._conn, transactional=False) as conn:
+            async with sql_connection(self._conn, write=False) as conn:
                 result = await conn.execute(query, {"ids": ids})
                 rows = result.fetchall()
 
@@ -197,7 +197,7 @@ class PostgreSQLReadModelRepository(Generic[TModel]):
             data = model.model_dump(mode="python")
             data["updated_at"] = now
 
-            async with execute_with_connection(self._conn, transactional=True) as conn:
+            async with sql_connection(self._conn, write=True) as conn:
                 await conn.execute(query, data)
 
     async def save_many(self, models: list[TModel]) -> None:
@@ -239,7 +239,7 @@ class PostgreSQLReadModelRepository(Generic[TModel]):
                     version = {self._table_name}.version + 1
             """)  # nosec B608
 
-            async with execute_with_connection(self._conn, transactional=True) as conn:
+            async with sql_connection(self._conn, write=True) as conn:
                 for model in models:
                     data = model.model_dump(mode="python")
                     data["updated_at"] = now
@@ -272,7 +272,7 @@ class PostgreSQLReadModelRepository(Generic[TModel]):
                 WHERE id = :id
             """)  # nosec B608
 
-            async with execute_with_connection(self._conn, transactional=True) as conn:
+            async with sql_connection(self._conn, write=True) as conn:
                 result = await conn.execute(query, {"id": id})
                 return result.rowcount > 0
 
@@ -306,7 +306,7 @@ class PostgreSQLReadModelRepository(Generic[TModel]):
                 WHERE id = :id AND deleted_at IS NULL
             """)  # nosec B608
 
-            async with execute_with_connection(self._conn, transactional=True) as conn:
+            async with sql_connection(self._conn, write=True) as conn:
                 result = await conn.execute(query, {"id": id, "now": now})
                 return result.rowcount > 0
 
@@ -340,7 +340,7 @@ class PostgreSQLReadModelRepository(Generic[TModel]):
                 WHERE id = :id AND deleted_at IS NOT NULL
             """)  # nosec B608
 
-            async with execute_with_connection(self._conn, transactional=True) as conn:
+            async with sql_connection(self._conn, write=True) as conn:
                 result = await conn.execute(query, {"id": id, "now": now})
                 return result.rowcount > 0
 
@@ -371,7 +371,7 @@ class PostgreSQLReadModelRepository(Generic[TModel]):
                 WHERE id = :id AND deleted_at IS NOT NULL
             """)  # nosec B608 - table_name from trusted class
 
-            async with execute_with_connection(self._conn, transactional=False) as conn:
+            async with sql_connection(self._conn, write=False) as conn:
                 result = await conn.execute(query, {"id": id})
                 row = result.fetchone()
 
@@ -405,7 +405,7 @@ class PostgreSQLReadModelRepository(Generic[TModel]):
         ):
             sql, params = self._build_select_deleted_query(query)
 
-            async with execute_with_connection(self._conn, transactional=False) as conn:
+            async with sql_connection(self._conn, write=False) as conn:
                 result = await conn.execute(text(sql), params)
                 rows = result.fetchall()
 
@@ -439,7 +439,7 @@ class PostgreSQLReadModelRepository(Generic[TModel]):
                 LIMIT 1
             """)  # nosec B608
 
-            async with execute_with_connection(self._conn, transactional=False) as conn:
+            async with sql_connection(self._conn, write=False) as conn:
                 result = await conn.execute(query, {"id": id})
                 return result.fetchone() is not None
 
@@ -472,7 +472,7 @@ class PostgreSQLReadModelRepository(Generic[TModel]):
         ):
             sql, params = self._build_select_query(query)
 
-            async with execute_with_connection(self._conn, transactional=False) as conn:
+            async with sql_connection(self._conn, write=False) as conn:
                 result = await conn.execute(text(sql), params)
                 rows = result.fetchall()
 
@@ -506,7 +506,7 @@ class PostgreSQLReadModelRepository(Generic[TModel]):
         ):
             sql, params = self._build_count_query(query)
 
-            async with execute_with_connection(self._conn, transactional=False) as conn:
+            async with sql_connection(self._conn, write=False) as conn:
                 result = await conn.execute(text(sql), params)
                 row = result.fetchone()
 
@@ -533,7 +533,7 @@ class PostgreSQLReadModelRepository(Generic[TModel]):
         ):
             query = text(f"DELETE FROM {self._table_name}")  # nosec B608
 
-            async with execute_with_connection(self._conn, transactional=True) as conn:
+            async with sql_connection(self._conn, write=True) as conn:
                 result = await conn.execute(query)
                 return result.rowcount
 
@@ -590,7 +590,7 @@ class PostgreSQLReadModelRepository(Generic[TModel]):
             data["updated_at"] = now
             data["expected_version"] = model.version
 
-            async with execute_with_connection(self._conn, transactional=True) as conn:
+            async with sql_connection(self._conn, write=True) as conn:
                 result = await conn.execute(query, data)
                 row = result.fetchone()
 
@@ -600,7 +600,7 @@ class PostgreSQLReadModelRepository(Generic[TModel]):
                     SELECT version FROM {self._table_name} WHERE id = :id
                 """)  # nosec B608
 
-                async with execute_with_connection(self._conn, transactional=False) as conn:
+                async with sql_connection(self._conn, write=False) as conn:
                     result = await conn.execute(check_query, {"id": model.id})
                     check_row = result.fetchone()
 
