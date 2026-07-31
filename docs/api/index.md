@@ -33,8 +33,10 @@ shape the public methods take.
 
 ### Public Import Surface (`from eventsource import ...`)
 
-`eventsource.__all__` is the supported public surface. It contains 102 names when the
-SQLite extra is absent and 107 when it is present. The barrel is deliberately flat —
+`eventsource.__all__` is the supported public surface. It contains 130 names when the
+SQLite extra is absent and 133 when it is present (`SQLITE_AVAILABLE`, `SQLiteEventStore`,
+and `SQLiteOutboxRepository` are the only names conditionally appended). The barrel is
+deliberately flat —
 `from eventsource import DomainEvent, AggregateRoot, InMemoryEventStore` is the idiomatic
 import style, and the module paths underneath (`eventsource.events.base`,
 `eventsource.domain.aggregate`, `eventsource.stores.in_memory`) are where those names are

@@ -57,7 +57,7 @@ pre-commit run --all-files
 ```
 src/eventsource/
   domain/           # Entities ring: AggregateRoot, DeclarativeAggregate, StreamId (pure: stdlib + pydantic only)
-  application/       # Use-case ring: AggregateRepository, snapshot policy/scheduler collaborators
+  application/      # Use-case ring: AggregateRepository, snapshot policy/scheduler collaborators
   ports/            # Boundary interfaces: Snapshot/SnapshotStore, store/bus/envelope/position ports
   adapters/         # Interface adapters: memory/postgresql/sqlite snapshot + event store implementations
   bus/              # EventBus interface + InMemory, Redis, RabbitMQ, Kafka backends (implementations colocated)
