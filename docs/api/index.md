@@ -66,8 +66,10 @@ The exported names fall into these groups:
 Several public subsystems ship in the package but are **not** re-exported at the top
 level. They are imported from their own modules: `eventsource.testing`,
 `eventsource.subscriptions`, `eventsource.observability`, `eventsource.migration`,
-`eventsource.locks`, `eventsource.gdpr`, `eventsource.config`, and the raw SQL under
-`eventsource.migrations`.
+`eventsource.ports.locks` / `eventsource.adapters.postgresql.locks`,
+`eventsource.gdpr`, `eventsource.config`, and the raw SQL under
+`eventsource.migrations`. (`eventsource.locks` still resolves every name, deprecated,
+until 0.8.0.)
 
 A few names are also narrower at the barrel than in their defining adapter package.
 Snapshots are the clearest case: `PostgreSQLSnapshotStore` (`eventsource.adapters.postgresql`)
@@ -237,7 +239,7 @@ short-circuited by a snapshot, consumed by a projection, and distributed over a 
 | Event Stores | `eventsource.ports`, `eventsource.adapters.{memory,postgresql,sqlite}` | 15 (16 with the SQLite extra) |
 | [Aggregates](aggregates.md) | `eventsource.domain.aggregate`, `eventsource.application.aggregates`, `eventsource.handlers` | 4 |
 | [Snapshots](snapshots.md) | `eventsource.ports.snapshots`, `eventsource.application.aggregates.snapshotting`, `eventsource.adapters.{memory,postgresql,sqlite}` | 7 of 11 |
-| [Projections](projections.md) | `eventsource.application.projections`, `eventsource.readmodels` | 5 of 21 |
+| [Projections](projections.md) | `eventsource.application.projections`, `eventsource.ports.readmodels` | 5 of 21 |
 | [Event Bus](bus.md) | `eventsource.bus` | 20 |
 
 Where a page documents more names than the barrel exports — snapshots, projections and
@@ -350,7 +352,7 @@ The page's central invariant: a snapshot is an optimization artifact, never the 
 truth. A missing, unreadable, or schema-mismatched snapshot degrades to a full event
 replay rather than surfacing an error.
 
-### Projections — `api/projections.md` (`eventsource.application.projections.base`, `eventsource.readmodels`)
+### Projections — `api/projections.md` (`eventsource.application.projections.base`, `eventsource.ports.readmodels`)
 
 Covers the read side. From `eventsource.application.projections`: the `Projection` base
 class, `CheckpointTrackingProjection` for resumable consumers, and `DeclarativeProjection`
@@ -367,10 +369,14 @@ functions (`eventsource.application.projections.checkpoints`,
 `eventsource.application.projections.dlq`) are documented on the same page but must be
 imported from their own submodules.
 
-From `eventsource.readmodels`: the `ReadModel` base class, the `ReadModelRepository`
-protocol with its in-memory, PostgreSQL, and SQLite implementations, the `Query` and
-`Filter` builders, the schema-generation helpers, and the read-model exception types.
-Only `ReadModelProjection` reaches the top-level barrel.
+From `eventsource.ports.readmodels`: the `ReadModel` base class, the
+`ReadModelRepository` protocol, the `Query` and `Filter` builders, and the read-model
+exception types. The in-memory, PostgreSQL, and SQLite implementations and the
+schema-generation helpers live in their adapter modules
+(`eventsource.adapters.{memory,postgresql,sqlite}.readmodels`,
+`eventsource.adapters.sql.readmodel_schema`). Only `ReadModelProjection` reaches the
+top-level barrel. (`eventsource.readmodels` still resolves every name, deprecated,
+until 0.8.0.)
 
 ### Event Bus — `api/bus.md` (`eventsource.bus.interface`, `memory`, `redis`, `rabbitmq`, `kafka`)
 
@@ -435,7 +441,7 @@ Several public subsystems are intentionally *not* re-exported. They have their o
 | `eventsource.subscriptions` | 123 | `from eventsource.subscriptions import SubscriptionManager, SubscriptionConfig` |
 | `eventsource.observability` | 58 | `from eventsource.observability import get_tracer, OTEL_AVAILABLE` |
 | `eventsource.migration` | 66 | `from eventsource.migration import Migration, MigrationConfig` |
-| `eventsource.locks` | 5 | `from eventsource.locks import PostgreSQLLockManager` |
+| `eventsource.ports.locks` / `eventsource.adapters.postgresql.locks` | 5 | `from eventsource.adapters.postgresql.locks import PostgreSQLLockManager` |
 
 The size difference is the reason for the split: `subscriptions` and `migration` alone
 would more than double the barrel, and most applications need neither.
@@ -677,7 +683,7 @@ buses alike.
 | Multi-tenancy | `TenantDomainEvent`, `tenant_context`, `tenant_scope`, `get_current_tenant` — tenant identity is carried in a `contextvar`, not threaded through every call |
 | Serialization | `EventSourceJSONEncoder`, used by the store backends to persist event payloads |
 | Snapshots | `SnapshotStore` with in-memory, PostgreSQL, and SQLite implementations, to bound replay cost for long streams |
-| Distributed locking | `eventsource.locks` — PostgreSQL advisory locks for single-writer coordination |
+| Distributed locking | `eventsource.ports.locks` / `eventsource.adapters.postgresql.locks` — PostgreSQL advisory locks for single-writer coordination |
 | Synchronous callers | `SyncEventStoreAdapter`, which wraps any async `EventStore` |
 | Tracing | `eventsource.observability`, an optional OpenTelemetry integration |
 | Testing | `eventsource.testing` — assertions, BDD helpers, a harness, and conformance suites that any `EventStore` or `EventBus` implementation can be run against |
@@ -793,7 +799,7 @@ Import these from their module:
 
 | Module | Contents |
 | --- | --- |
-| `eventsource.locks` | `PostgreSQLLockManager`, `LockInfo`, `migration_lock_key`, `LockAcquisitionError`, `LockNotHeldError` |
+| `eventsource.ports.locks` / `eventsource.adapters.postgresql.locks` | `PostgreSQLLockManager` (adapter); `LockInfo`, `migration_lock_key` (port); `LockAcquisitionError`, `LockNotHeldError` (`eventsource.exceptions`) |
 | `eventsource.subscriptions` | Subscription manager, runners, retry policy, health, and flow control |
 | `eventsource.testing` | Assertions, BDD helpers, the test harness, builders, and the conformance suites |
 | `eventsource.observability` | OpenTelemetry tracing integration (`telemetry` extra) |

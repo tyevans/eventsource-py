@@ -1,8 +1,14 @@
 # Distributed Locks
 
-Technical reference for the `eventsource.locks` package: the
-`PostgreSQLLockManager` advisory-lock manager, the `LockInfo` value object, the
-`migration_lock_key` helper, and the two lock-specific exceptions.
+Technical reference for `eventsource.ports.locks` and
+`eventsource.adapters.postgresql.locks`: the `PostgreSQLLockManager`
+advisory-lock manager, the `LockInfo` value object, the `migration_lock_key`
+helper, and the two lock-specific exceptions.
+
+`eventsource.locks` -- the pre-slice-A import path for all of the above -- is
+**deprecated**. Every name still resolves from it with a `DeprecationWarning`
+naming its new home; the package is removed in 0.8.0. Update imports to the
+paths this page documents.
 
 The package provides mutual exclusion *across processes* — one holder at a time
 for a given string key, regardless of which application instance asks. It is
@@ -12,16 +18,15 @@ independent of table and row locks. A lock persists for the lifetime of the
 database session that holds it and is released automatically when that session
 ends, including on an unexpected disconnect.
 
-Everything in the package lives in a single source module,
-`eventsource.locks.postgresql`, and is re-exported from `eventsource.locks`:
+The names split across three modules along ring boundaries (ADR 0029):
 
-| Name | Kind |
-| --- | --- |
-| `PostgreSQLLockManager` | Lock manager class |
-| `LockInfo` | Frozen dataclass describing an acquired lock |
-| `migration_lock_key` | Lock-key naming helper |
-| `LockAcquisitionError` | Raised when a lock cannot be acquired |
-| `LockNotHeldError` | Raised when releasing a lock this manager does not hold |
+| Name | Kind | Lives in |
+| --- | --- | --- |
+| `PostgreSQLLockManager` | Lock manager class | `eventsource.adapters.postgresql.locks` |
+| `LockInfo` | Frozen dataclass describing an acquired lock | `eventsource.ports.locks` |
+| `migration_lock_key` | Lock-key naming helper | `eventsource.ports.locks` |
+| `LockAcquisitionError` | Raised when a lock cannot be acquired | `eventsource.exceptions` |
+| `LockNotHeldError` | Raised when releasing a lock this manager does not hold | `eventsource.exceptions` |
 
 The package's primary in-tree consumer is the live migration tooling
 (`eventsource.migration`), where a lock guards cutover so that only one instance
@@ -80,11 +85,18 @@ OpenTelemetry span when tracing is enabled, and both emit `DEBUG` log records.
 
 ## PostgreSQL-Only Constraint
 
-Unlike most subsystems in this library, `eventsource.locks` has no
-backend-agnostic interface and no second implementation. There is no
-`LockManager` Protocol or ABC, no `interface.py` or `base.py` in the package,
-and no in-memory or SQLite variant. `PostgreSQLLockManager` is the entire
-surface, and it requires a PostgreSQL connection.
+`eventsource.ports.locks` now defines `DistributedLock` and `LockRegistry` --
+small Protocols describing the shape of the dependency (acquire/release/
+is_held; bulk release and count), split along the two real consumer groups
+(ADR 0029). That is narrower than a backend-agnostic distributed-locking
+guarantee: the Protocols say nothing about cross-process exclusion, release
+on crash, or fairness, because only one implementation offers those
+properties. `PostgreSQLLockManager` is the only production implementation and
+requires a PostgreSQL connection; `InMemoryLockManager`
+(`eventsource.adapters.memory.locks`) conforms to the same Protocols for
+single-process testing only -- see
+[`InMemoryLockManager`](#inmemorylockmanager-test-only) below. There is no
+SQLite variant.
 
 The constraint is structural, not a matter of configuration.
 `PostgreSQLLockManager` issues three PostgreSQL-specific statements directly as
@@ -125,13 +137,14 @@ not in mechanics. There is no `try`/`except ImportError` wrapper and no
 nothing beyond the standard library, `sqlalchemy`, and
 `eventsource.observability` — and `sqlalchemy` is a core dependency. `asyncpg`
 is not imported here at all; the driver is whatever the caller's
-`async_sessionmaker` was built with. `import eventsource.locks` therefore always
-succeeds on a base install, and PostgreSQL availability is discoverable only by
-attempting an acquisition.
+`async_sessionmaker` was built with. `import eventsource.adapters.postgresql.locks`
+therefore always succeeds on a base install, and PostgreSQL availability is
+discoverable only by attempting an acquisition.
 
 Note also that the lock names are not re-exported from the top-level
-`eventsource` package. Import them from `eventsource.locks` (see
-[Import Surface](#import-surface)).
+`eventsource` package. **They are not reachable via `eventsource`.** Import
+them from `eventsource.ports.locks` / `eventsource.adapters.postgresql.locks`
+/ `eventsource.exceptions` (see [Import Surface](#import-surface)).
 
 ### Effect on migration cutover
 
@@ -149,25 +162,55 @@ package will not provide it — use an external coordination service, or, for
 single-process cases where cross-instance exclusion is not actually required, an
 `asyncio.Lock`.
 
-## Import Surface
+## `InMemoryLockManager` (test-only)
 
-All five public names are imported from `eventsource.locks`:
+**Lead with what it does not guarantee.** `InMemoryLockManager`
+(`eventsource.adapters.memory.locks`) excludes only coroutines running in one
+`asyncio` event loop in one process:
+
+- **No cross-process exclusion.** It is a dict guarded by an
+  `asyncio.Condition`, not a database primitive. Two OS processes never
+  contend against the same `InMemoryLockManager` instance.
+- **No release on crash.** There is no server session to drop a lock when the
+  holder disappears. A process that dies mid-critical-section leaves the lock
+  held until the manager itself is garbage collected.
+- **No fairness.** Waiters are woken in whatever order `asyncio.Condition`
+  happens to wake them; there is no FIFO queue.
+- **Single event loop, single process.** Construct one per test, per loop.
+  Sharing an instance across loops is unsupported, same as
+  `PostgreSQLLockManager`.
+
+It conforms to the same `DistributedLock` / `LockRegistry` Protocols as
+`PostgreSQLLockManager` -- same `acquire`/`try_acquire`/`release`/`is_held`
+signatures, same `LockAcquisitionError` / `LockNotHeldError` on failure, and
+the same key-to-lock-id hashing (`LockInfo.lock_id` matches what
+`PostgreSQLLockManager` would derive for the same key) -- so code written
+against the port can be tested against it without a database:
 
 ```python
-from eventsource.locks import (
-    LockAcquisitionError,
-    LockInfo,
-    LockNotHeldError,
-    PostgreSQLLockManager,
-    migration_lock_key,
-)
+from eventsource.adapters.memory.locks import InMemoryLockManager
+
+lock_manager = InMemoryLockManager(holder_id="test-worker")
+
+async with lock_manager.acquire("cutover:tenant-123") as lock_info:
+    ...  # exercise code that needs a DistributedLock
 ```
 
-That list is exactly the package's `__all__`, and it is exactly the contents of
-`eventsource.locks.postgresql`. The package `__init__.py` is a pure re-export
-shim over that one module, so `from eventsource.locks.postgresql import
-PostgreSQLLockManager` also works and resolves to the same object — but prefer
-the package path, since the module split is an implementation detail.
+Use it in unit tests that need a `DistributedLock` and nothing more. Use
+`PostgreSQLLockManager` anywhere two processes must actually coordinate.
+
+## Import Surface
+
+The five public names split across three modules by ring (ADR 0029):
+
+```python
+from eventsource.ports.locks import LockInfo, migration_lock_key
+from eventsource.exceptions import LockAcquisitionError, LockNotHeldError
+from eventsource.adapters.postgresql.locks import PostgreSQLLockManager
+```
+
+`eventsource.locks` (the pre-slice-A path) still resolves all five, lazily,
+each with a `DeprecationWarning` naming the module above -- removed in 0.8.0.
 
 ### Not exported from the top-level package
 
@@ -175,41 +218,42 @@ None of these names appear in the top-level `eventsource` namespace. `from
 eventsource import PostgreSQLLockManager` raises `ImportError`. This is a
 deliberate departure from the library's usual convention of re-exporting the
 public API from `eventsource/__init__.py`, and it is consistent with the
-package's PostgreSQL-only nature — the locks are a backend-specific tool rather
-than part of the core surface.
+locks' PostgreSQL-only production nature — they are a backend-specific tool
+rather than part of the core surface.
 
-### Exceptions do not live in `eventsource.exceptions`
+### The exceptions live in `eventsource.exceptions` now
 
-`LockAcquisitionError` and `LockNotHeldError` are defined in
-`eventsource/locks/postgresql.py`, not in the library's central
-`eventsource.exceptions` module, and they do not inherit from any
-eventsource-specific base — both derive directly from `Exception`. Two
+`LockAcquisitionError` and `LockNotHeldError` moved to
+`eventsource.exceptions` and now subclass `EventSourceError` (ADR 0029, the
+one semantic change in the slice A structure work -- widening only). Two
 consequences for calling code:
 
-- Import them from `eventsource.locks`. They are not reachable via
-  `eventsource.exceptions`.
-- Do not expect a shared eventsource error base to catch them. Catching
-  `EventSourceError` (or any other library base) will not catch a lock failure;
-  name the lock exceptions explicitly.
+- Import them from `eventsource.exceptions`, not from the locks modules.
+- **`except EventSourceError` now catches a lock failure too.** Every
+  existing `except LockAcquisitionError` and `except Exception` still catches
+  exactly as before; the newly-catching clause is `except EventSourceError`,
+  which caught nothing lock-related prior to this change.
 
 In-tree, `eventsource.migration.cutover` follows this pattern, importing
-`LockAcquisitionError` and `migration_lock_key` straight from
-`eventsource.locks`.
+`LockAcquisitionError` from `eventsource.exceptions` and `migration_lock_key`
+from `eventsource.ports.locks`.
 
 ### Typing-only imports
 
 `PostgreSQLLockManager` is referenced under `if TYPE_CHECKING:` in
 `eventsource.migration.cutover` and `eventsource.migration.coordinator`, which
 is the right approach for annotating a `lock_manager` parameter without pulling
-the locks package into module import at runtime. `from __future__ import
-annotations` is already in effect in those modules, so the deferred import costs
-nothing at runtime.
+`eventsource.adapters.postgresql.locks` into module import at runtime. `from
+__future__ import annotations` is already in effect in those modules, so the
+deferred import costs nothing at runtime.
 
 ### What the import costs
 
-Importing `eventsource.locks` pulls in the standard library (`asyncio`,
-`hashlib`, `logging`, `contextlib`, `dataclasses`, `datetime`, `uuid`),
-`sqlalchemy` (`text`, `AsyncSession`, `async_sessionmaker`), and
+`eventsource.ports.locks` is pure: stdlib only (`contextlib`, `dataclasses`,
+`datetime`, `typing`, `uuid`), no sqlalchemy. Importing
+`eventsource.adapters.postgresql.locks` pulls in the standard library
+(`asyncio`, `hashlib`, `logging`, `contextlib`, `datetime`), `sqlalchemy`
+(`text`, `AsyncSession`, `async_sessionmaker`), and
 `eventsource.observability` for `Tracer` / `create_tracer`. No PostgreSQL
 driver is imported — `asyncpg` never appears — so the import succeeds on a base
 install regardless of which extras are present. See
@@ -217,8 +261,8 @@ install regardless of which extras are present. See
 
 ## Quick Reference
 
-Constructor and full public surface at a glance. All names import from
-`eventsource.locks`.
+Constructor and full public surface at a glance. Import paths per
+[Import Surface](#import-surface) above.
 
 ```python
 PostgreSQLLockManager(
@@ -251,7 +295,7 @@ PostgreSQLLockManager(
 Blocking — waits indefinitely for the lock, releases on exit either way:
 
 ```python
-from eventsource.locks import PostgreSQLLockManager
+from eventsource.adapters.postgresql.locks import PostgreSQLLockManager
 
 lock_manager = PostgreSQLLockManager(session_factory, holder_id="worker-1")
 
@@ -264,7 +308,7 @@ Bounded — polls `pg_try_advisory_lock` every `retry_interval` seconds until th
 deadline, then raises:
 
 ```python
-from eventsource.locks import LockAcquisitionError
+from eventsource.exceptions import LockAcquisitionError
 
 try:
     async with lock_manager.acquire("cutover:tenant-123", timeout=5.0):
@@ -304,7 +348,7 @@ same key.
 ### Migration key helper
 
 ```python
-from eventsource.locks import migration_lock_key
+from eventsource.ports.locks import migration_lock_key
 
 key = migration_lock_key(tenant_id, "cutover")  # "cutover:<uuid>"
 async with lock_manager.acquire(key):
@@ -428,7 +472,7 @@ first session's bookkeeping. Do not nest acquisitions of the same key.
 
 ```python
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from eventsource.locks import PostgreSQLLockManager
+from eventsource.adapters.postgresql.locks import PostgreSQLLockManager
 
 engine = create_async_engine("postgresql+asyncpg://localhost/app", pool_size=10)
 session_factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -505,7 +549,7 @@ held; see [`release_all()`](#release_all).
 ```python
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from eventsource.locks import PostgreSQLLockManager
+from eventsource.adapters.postgresql.locks import PostgreSQLLockManager
 
 engine = create_async_engine("postgresql+asyncpg://localhost/app")
 session_factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -639,7 +683,7 @@ full treatment.
 ```python
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from eventsource.locks import PostgreSQLLockManager
+from eventsource.adapters.postgresql.locks import PostgreSQLLockManager
 
 engine = create_async_engine(
     "postgresql+asyncpg://localhost/app",

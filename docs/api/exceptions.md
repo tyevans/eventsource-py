@@ -3,7 +3,7 @@
 Reference for the error types raised by `eventsource`.
 
 The core hierarchy lives in `eventsource.exceptions` and is rooted at a single
-base class, `EventSourceError`. It contains eleven types:
+base class, `EventSourceError`. It contains thirteen types:
 
 | Exception | Structured attributes |
 | --- | --- |
@@ -19,6 +19,8 @@ base class, `EventSourceError`. It contains eleven types:
 | `EventVersionError` | `expected_version`, `actual_version`, `event_id`, `aggregate_id` |
 | `UnhandledEventError` | `event_type`, `event_id`, `handler_class`, `available_handlers` |
 | `AggregateNotCreatedError` | `aggregate_class`, `suggestion` |
+| `LockAcquisitionError` | `key`, `reason`, `timeout` (ADR 0029: rebased onto `EventSourceError`) |
+| `LockNotHeldError` | `key` (ADR 0029: rebased onto `EventSourceError`) |
 
 Every one of these accepts its attributes as constructor arguments and builds a
 human-readable message from them, so the attributes are always populated when
@@ -35,8 +37,8 @@ Other subsystems — multi-tenancy, snapshots, subscriptions, migration, the
 read-model layer, and the optional bus backends — define their own error types
 in their own modules. Those are catalogued under
 [Related exceptions outside the core hierarchy](#related-exceptions-outside-the-core-hierarchy);
-note in particular that `eventsource.readmodels.exceptions` defines a *second*,
-unrelated `OptimisticLockError`.
+note in particular that `eventsource.ports.readmodels.exceptions` defines a
+*second*, unrelated `OptimisticLockError`.
 
 ## Overview
 
@@ -53,9 +55,12 @@ group.
 `SnapshotError`, alongside the core hierarchy in `eventsource.exceptions`
 despite not deriving from it) — `eventsource.subscriptions`,
 `eventsource.migration`, `eventsource.multitenancy`,
-`eventsource.readmodels.exceptions`, and the optional bus backends each
+`eventsource.ports.readmodels.exceptions`, and the optional bus backends each
 define their own families. These are *not* subclasses of `EventSourceError`;
-catching the core base class will not catch them.
+catching the core base class will not catch them. (`LockAcquisitionError` and
+`LockNotHeldError` moved onto `EventSourceError` under ADR 0029 -- they used
+to be a fourth bare-`Exception` family and are now part of the core
+hierarchy; see the diagram below.)
 
 Three properties of the core hierarchy are worth knowing before you write
 handling code:
@@ -87,9 +92,11 @@ raise it, then catalogue the subsystem families and their import paths.
 
 ## Exception hierarchy
 
-`eventsource.exceptions` defines twelve classes: `EventSourceError` and eleven
-direct subclasses. There are no intermediate base classes inside the module —
-every error is exactly one level below the root.
+`eventsource.exceptions` defines fourteen classes: `EventSourceError` and
+thirteen direct subclasses (including `LockAcquisitionError` and
+`LockNotHeldError`, moved here from a standalone `Exception` base under ADR
+0029). There are no intermediate base classes inside the module — every error
+is exactly one level below the root.
 
 Two classes defined elsewhere also derive from `EventSourceError`:
 `TenantContextNotSetError` and `TenantMismatchError`, both in
@@ -134,7 +141,9 @@ Exception
 │   ├── UnhandledEventError
 │   ├── AggregateNotCreatedError
 │   ├── TenantContextNotSetError               eventsource.multitenancy.exceptions
-│   └── TenantMismatchError                    eventsource.multitenancy.exceptions
+│   ├── TenantMismatchError                    eventsource.multitenancy.exceptions
+│   ├── LockAcquisitionError                   (ADR 0029: rebased here, was a bare Exception)
+│   └── LockNotHeldError                       (ADR 0029: rebased here, was a bare Exception)
 │
 ├── SnapshotError                             eventsource.exceptions
 │   │                                          (not a subclass of EventSourceError)
@@ -142,7 +151,7 @@ Exception
 │   ├── SnapshotSchemaVersionError
 │   └── SnapshotNotFoundError
 │
-├── ReadModelError                            eventsource.readmodels.exceptions
+├── ReadModelError                            eventsource.ports.readmodels.exceptions
 │   ├── OptimisticLockError                    (distinct from the core one)
 │   └── ReadModelNotFoundError
 │
@@ -172,8 +181,6 @@ Exception
 │   └── SubscriptionMigrationError             eventsource.migration.subscription_migrator
 │
 ├── (standalone, direct Exception subclasses)
-│   ├── LockAcquisitionError                  eventsource.locks.postgresql
-│   ├── LockNotHeldError                      eventsource.locks.postgresql
 │   ├── RetryError                            eventsource.subscriptions.retry
 │   ├── CircuitBreakerOpenError               eventsource.subscriptions.retry
 │   │                                          (distinct from the migration one)
@@ -201,8 +208,9 @@ rather than from its position in the tree.
 
 Two names appear twice in the tree. `OptimisticLockError` is defined both in
 `eventsource.exceptions` (aggregate append conflicts) and in
-`eventsource.readmodels.exceptions` (read-model row conflicts), and the two are
-unrelated classes — catching one will not catch the other. `CircuitBreakerOpenError`
+`eventsource.ports.readmodels.exceptions` (read-model row conflicts), and the
+two are unrelated classes — catching one will not catch the other. (This
+collision predates ADR 0029 and is tracked in `BACKLOG.md`.) `CircuitBreakerOpenError`
 is likewise defined twice, in `eventsource.migration.exceptions` (a
 `MigrationError`) and in `eventsource.subscriptions.retry` (a bare `Exception`).
 Import these by module rather than pulling both into one namespace.
@@ -317,9 +325,9 @@ Optimistic lock error for aggregate <aggregate_id>: expected version
 <expected_version>, but current version is <actual_version>
 ```
 
-Note that `eventsource.readmodels.exceptions` defines an unrelated class with
+Note that `eventsource.ports.readmodels.exceptions` defines an unrelated class with
 the same name. See
-[Name collision: eventsource.readmodels.exceptions.OptimisticLockError](#name-collision-eventsourcereadmodelsexceptionsoptimisticlockerror).
+[Name collision: eventsource.ports.readmodels.exceptions.OptimisticLockError](#name-collision-eventsourceportsreadmodelsexceptionsoptimisticlockerror).
 
 ### Attributes: aggregate_id, expected_version, actual_version
 
@@ -438,7 +446,7 @@ recorded as a sync failure, never raised.
 
 Note that the read-model backends (`readmodels/postgresql.py`,
 `readmodels/sqlite.py`, `readmodels/in_memory.py`) also raise an
-`OptimisticLockError` — but the one from `eventsource.readmodels.exceptions`,
+`OptimisticLockError` — but the one from `eventsource.ports.readmodels.exceptions`,
 which is a different class. See
 [Name collision](#name-collision-eventsourcereadmodelsexceptionsoptimisticlockerror).
 

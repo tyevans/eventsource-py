@@ -74,9 +74,9 @@ class ReadModelProjection(DatabaseProjection, Generic[TModel]):
         - Use @handles(EventType) decorator to mark handler methods
 
     Example:
-        >>> from eventsource.readmodels import ReadModelProjection, ReadModel
+        >>> from eventsource import ReadModelProjection
+        >>> from eventsource.ports.readmodels import ReadModel
         >>> from eventsource.handlers import handles
-        >>> # Or: from eventsource import ReadModelProjection, handles
         >>>
         >>> class OrderSummary(ReadModel):
         ...     order_number: str

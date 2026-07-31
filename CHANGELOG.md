@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`eventsource.ports.outbox`** -- `OutboxRepository` (the transactional outbox Protocol), `OutboxEntry`, `OutboxStats`, and `outbox_event_data()` (the single authority for the JSON-safe payload dict stored in `event_outbox.event_data`, replacing four independent constructions of the same shape). Plus the three adapter modules (`eventsource.adapters.memory.outbox`, `eventsource.adapters.postgresql.outbox`, `eventsource.adapters.sqlite.outbox`) and `OutboxRepositoryConformance` in `eventsource.testing.conformance_ports`, exercised against all three. See ADR 0026.
 - **`AggregateStore`, `ASYNCPG_AVAILABLE`, `AIOSQLITE_AVAILABLE`** are now re-exported from top-level `eventsource`.
 - **`MigrationCoordinator.run_resync_pass(migration_id) -> int`** -- runs one bounded catch-up copy pass while a migration is in `DUAL_WRITE`, returning the number of unabsorbed dual-write mirror failures remaining (0 means the sync-lag anchor is unclamped and cutover can proceed). Previously a mirror failure after the bulk copy finished clamped the lag anchor permanently and the only remedy was to abort and restart the migration. The migration's phase is never touched. See ADR 0028.
+- **`eventsource.ports.locks`** -- `DistributedLock` and `LockRegistry` (small Protocols, ISP-split along the two real consumer groups: acquire/release individual locks vs. bulk lifecycle over everything one manager holds), `LockInfo`, and `migration_lock_key`. See ADR 0029.
+- **`eventsource.adapters.memory.locks.InMemoryLockManager`** -- a second `DistributedLock`/`LockRegistry` implementation, test-scoped only: single-process, no crash release, no fairness. Its docstring leads with what it does not guarantee. See ADR 0029.
+- **`eventsource.ports.readmodels`** -- a subpackage (not a flat module) holding `ReadModel`, `Query`, `Filter`, `ReadModelRepository`, and the read-model exception family (`ReadModelError`, `OptimisticLockError`, `ReadModelNotFoundError`). See ADR 0029.
+- **`DistributedLockConformance` and `ReadModelRepositoryConformance`** in `eventsource.testing.conformance_ports`, exercised against the memory and postgresql (locks) and memory/postgresql/sqlite (read models) adapters.
 
 ### Changed
 
@@ -43,6 +47,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - A duplicate append during bulk copy (e.g. on resume after a crash) is now counted as **already copied** rather than silently skipped -- resuming a bulk copy is idempotent in outcome, not just in effect.
   - `SyncLagTracker.calculate_lag()` reports a **bounded count** of source events not yet copied to the target, not a position delta -- opaque positions cannot be subtracted. The count is exact up to `cutover_max_lag_events + 1`; beyond that, `SyncLag.count_is_bounded` is `True` and the number is a floor, not an exact count. The anchor it counts from is clamped by any unabsorbed dual-write mirror failure (fail-closed), so a mirror error after `BULK_COPY` completes freezes the reported lag rather than letting it read as more caught-up than reality; there is no in-phase resync for that case today (abort and restart the migration).
   - `find_nearest_source_position` (checkpoint translation) is now a binary search over the position-mapping table's surrogate row order rather than a `source_position DESC` index scan, since opaque tokens have no SQL-orderable representation. See `docs/api/migration-schema.md` for the constraint this rests on.
+- **Locks ring migration** (ADR 0029, completing the split ADR 0024/0026 applied to checkpoints/DLQ and outbox): `PostgreSQLLockManager` moved from `eventsource.locks` to `eventsource.adapters.postgresql.locks`; `LockInfo` and `migration_lock_key` moved to `eventsource.ports.locks`. Top-level `eventsource` imports are unaffected -- none of these names were ever re-exported from `eventsource`.
+
+  | Old import | New import |
+  | --- | --- |
+  | `eventsource.locks.PostgreSQLLockManager` | `eventsource.adapters.postgresql.locks.PostgreSQLLockManager` |
+  | `eventsource.locks.LockInfo` | `eventsource.ports.locks.LockInfo` |
+  | `eventsource.locks.migration_lock_key` | `eventsource.ports.locks.migration_lock_key` |
+  | `eventsource.locks.LockAcquisitionError` | `eventsource.exceptions.LockAcquisitionError` |
+  | `eventsource.locks.LockNotHeldError` | `eventsource.exceptions.LockNotHeldError` |
+
+- **Read-model ring migration** (ADR 0029): the contract half moved from `eventsource.readmodels` to `eventsource.ports.readmodels`; the backend half split across three adapter modules plus `eventsource.adapters.sql`. Top-level `eventsource` imports are unaffected -- `ReadModelProjection` remains the only name re-exported from `eventsource`, unchanged.
+
+  | Old import | New import |
+  | --- | --- |
+  | `eventsource.readmodels.ReadModel` | `eventsource.ports.readmodels.ReadModel` |
+  | `eventsource.readmodels.Query` | `eventsource.ports.readmodels.Query` |
+  | `eventsource.readmodels.Filter` | `eventsource.ports.readmodels.Filter` |
+  | `eventsource.readmodels.ReadModelRepository` | `eventsource.ports.readmodels.ReadModelRepository` |
+  | `eventsource.readmodels.ReadModelError` | `eventsource.ports.readmodels.ReadModelError` |
+  | `eventsource.readmodels.OptimisticLockError` | `eventsource.ports.readmodels.OptimisticLockError` |
+  | `eventsource.readmodels.ReadModelNotFoundError` | `eventsource.ports.readmodels.ReadModelNotFoundError` |
+  | `eventsource.readmodels.InMemoryReadModelRepository` | `eventsource.adapters.memory.readmodels.InMemoryReadModelRepository` |
+  | `eventsource.readmodels.PostgreSQLReadModelRepository` | `eventsource.adapters.postgresql.readmodels.PostgreSQLReadModelRepository` |
+
+  (`SQLiteReadModelRepository` moved to `eventsource.adapters.sqlite.readmodels`; `ReadModelProjection` to `eventsource.adapters.sql.readmodel_projection`; `generate_schema`/`generate_indexes`/`generate_full_schema`/`POSTGRESQL_TYPE_MAP`/`SQLITE_TYPE_MAP` to `eventsource.adapters.sql.readmodel_schema` -- nine rows moved in total.)
+
+- **`eventsource/engine.py` moved to `eventsource/adapters/_sql/engine.py`.** `eventsource.create_async_engine` (the canonical public name) is unchanged in signature and behavior. Anyone importing `eventsource.engine` directly -- which the docs never told them to do -- should import from `eventsource` instead. See ADR 0029.
+- **`LockAcquisitionError` and `LockNotHeldError` now subclass `EventSourceError` and live in `eventsource.exceptions`** (ADR 0029). This is the one semantic change in the locks/readmodels/engine ring-migration slice, and it is widening only: every existing `except LockAcquisitionError` and `except Exception` still catches exactly as before; the newly-catching clause is `except EventSourceError`, which caught nothing lock-related before this change. Previously both derived directly from `Exception`, defined in `eventsource/locks/postgresql.py`.
 
 ### Removed
 
@@ -70,6 +102,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`OptimisticLockError` keeps its int-typed `expected_version` field, deliberately.** It is not retyped to carry the ports `ExpectedVersion` VO -- see ADR 0025.
 - **The legacy BIGINT position columns (`projection_checkpoints.global_position`, `migration_position_mappings.source_position` / `.target_position`, `tenant_migrations.last_source_position` / `.last_target_position`) are frozen, not dropped.** They are neither written nor read by the library after this release; they remain in the schema and die with their own schema revision, not this one (dropping a column is destructive, and `schemas/checkpoints.sql` is under the Do Not Modify rule).
 - Nearest-position lookup in migration checkpoint translation (`find_nearest_source_position`) is now a binary search over the position-mapping table's surrogate row order, resting on a documented monotonicity precondition, since opaque `Position` tokens have no SQL-orderable representation.
+
+### Deprecated
+
+- **`eventsource.locks` and `eventsource.readmodels` as import paths** (ADR 0029). Every name each package used to export still resolves, each with a `DeprecationWarning` naming its replacement. Both packages are removed in 0.8.0. No names are removed in this release.
 
 ### Fixed
 

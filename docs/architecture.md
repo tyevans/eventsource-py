@@ -1104,9 +1104,10 @@ and `OptimisticLockError` is raised carrying `aggregate_id`, `expected_version`,
 and `actual_version`. Nothing is written.
 
 That error is the write-side one, from `eventsource.exceptions`. Keep it
-separate in your head from `eventsource.readmodels.exceptions.OptimisticLockError`,
-which is keyed by `model_id` and belongs to a different problem; the section
-below on the two locks explains why they were never merged.
+separate in your head from
+`eventsource.ports.readmodels.exceptions.OptimisticLockError`, which is keyed
+by `model_id` and belongs to a different problem; the section below on the two
+locks explains why they were never merged.
 
 `ExpectedVersion` supplies three sentinels for the cases a plain integer cannot
 express: `NO_STREAM` (0) asserts the aggregate does not exist yet -- the right

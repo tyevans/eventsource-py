@@ -88,12 +88,32 @@ aggregates-application-ring final review (deliberately out of scope there).
 `import eventsource` eagerly loads sqlalchemy through the public front door.
 `stores/` and `repositories/` are both gone now (legacy store retirement and the
 outbox ring migration), so the chain `docs/core-surface.md` records post-slice is
-`eventsource/__init__.py` -> `eventsource.engine` / `eventsource.adapters.postgresql`
-directly at module level — no intermediate package to narrow, just two module-level
-imports in the top-level `__init__` itself. Correctness is unaffected (sqlalchemy is
-a core dep) but import time and the Tier 0 story would benefit from a PEP 562 lazy
-`__getattr__` front door. Pairs with the "Investigate making sqlalchemy an optional
-dependency" item above.
+`eventsource/__init__.py` -> `eventsource.adapters._sql.engine` /
+`eventsource.adapters.postgresql` directly at module level — one module deeper
+than the `eventsource.engine` path this note previously recorded (structure
+slice A / ADR 0029 moved `engine.py` under `adapters/_sql/`), but no cheaper:
+still exactly two module-level imports in the top-level `__init__` itself,
+same sqlalchemy cost either way. Structure slice A added nothing to this
+chain — the locks and readmodels adapters are reached only through their
+shims' lazy `__getattr__`, never eagerly, and `ReadModelProjection`'s
+top-level re-export already pulled sqlalchemy in via
+`adapters/sql/projection.py` before this slice; do not expand this entry's
+scope on the strength of that slice landing. Correctness is unaffected
+(sqlalchemy is a core dep) but import time and the Tier 0 story would benefit
+from a PEP 562 lazy `__getattr__` front door. Pairs with the "Investigate
+making sqlalchemy an optional dependency" item above.
+
+Note for whoever picks this up: the readmodels port-purity test
+(`tests/unit/ports/test_readmodels_port_surface.py`) had to be written as a
+static `ast` check — parsing the module source for import statements — rather
+than a runtime `sys.modules` check, precisely because the front door is
+eager. A runtime check (`import eventsource.ports.readmodels; assert
+"sqlalchemy" not in sys.modules`) would fail today for a reason unrelated to
+`ports/readmodels/` itself: importing `eventsource` at all, which
+`eventsource.ports` sits under, already loads sqlalchemy through this exact
+chain. That is a second, independent cost of the eager `__init__` beyond
+import time — it also makes runtime Tier-0 purity unverifiable for anything
+reached through the top-level package, forcing static analysis instead.
 
 ## Define store lifecycle in the ports layer (P2)
 
@@ -241,22 +261,6 @@ change the adapter to stop generating ids and surface the rowid. Whichever way,
 retarget the conftest fixture onto `get_schema()` so the migration is actually
 under test, then drop the xfail.
 
-## Migrate locks/ to ports/adapters (P2)
-
-`locks/` still bundles the lock interface with its PostgreSQL advisory-lock
-implementation in one package, pre-ring style. Split per the campaign pattern:
-`DistributedLock` Protocol into `ports/`, the postgres implementation into
-`adapters/postgresql/`, memory implementation into `adapters/memory/`, with a
-conformance suite in `testing/conformance_ports/`. Campaign residue item
-(2026-07-31, ADRs 0021/0024/0025/0026 establish the pattern).
-
-## Split readmodels/ into port + adapter (P2)
-
-`readmodels/postgresql.py` mixes the ReadModelProjection base contract with its
-PostgreSQL implementation (16 `sql_connection` call sites). Move the contract
-beside the other projection surfaces in `application/projections/`, the pg
-implementation to `adapters/`, mirroring how DatabaseProjection landed in
-`adapters/sql/projection.py` (ADR 0024). Campaign residue item (2026-07-31).
 
 ## Migrate bus/ interface and backends to ports/adapters (P2)
 
@@ -273,11 +277,18 @@ land first or together to avoid double-moving. Campaign residue item (2026-07-31
 sqlalchemy implementations living inside a use-case-shaped package, and since
 the outbox slice they import `eventsource.adapters._sql.connection` directly —
 accepted debt with no import-linter contract covering it (spec §2.3 of the
-outbox ring design). Relocate them under `adapters/` (or split port protocols
-out first), then add the missing contract so the application ring can't name
-adapters. Campaign residue item (2026-07-31). The same work should add a
-general import-linter `layers` contract pinning the ring order (ports must
-not import application/adapters), which no current contract enforces.
+outbox ring design; also recorded as still-open in `docs/core-surface.md`
+finding 7, alongside `readmodels/postgresql.py`'s now-resolved instance of
+the same debt). Relocate them under `adapters/` (or split port protocols out
+first), then add the missing contract so the application ring can't name
+adapters. Campaign residue item (2026-07-31). Structure slice A (ADR 0029,
+2026-07-31) added the general "Ports must not import adapters, application,
+or bus" import-linter contract, narrower than the `layers` contract this
+entry originally called for — it covers `ports/` only, not `application/`'s
+inability to name adapters (already covered separately by "Application ring
+must not import adapters") or a full ring-order pin. Whether a single
+`layers`-type contract subsuming both is still worth adding is this entry's
+remaining scope.
 
 ## Relocate subscriptions/ into the application ring (P2)
 
@@ -288,13 +299,49 @@ lives as a top-level package outside `application/`. Relocate under
 extend the Tier-0 import-linter contract to cover it. Campaign residue item
 (2026-07-31).
 
-## Decide engine.py's ring placement (P3)
+## Resolve the duplicate `OptimisticLockError` name (readmodels vs core) (P2)
 
-Top-level `engine.py` predates the ring structure and is imported eagerly by
-`eventsource/__init__` (part of the sqlalchemy-on-import chain noted in
-docs/core-surface.md finding 12). Decide whether it belongs in `adapters/_sql/`
-or dissolves into the existing connection helpers, and update the lazy-init
-backlog item's import-chain notes accordingly. Campaign residue item (2026-07-31).
+Two unrelated classes share the name: `eventsource.ports.readmodels.OptimisticLockError(ReadModelError)`
+with `(model_id, expected_version, actual_version=None)`, and
+`eventsource.exceptions.OptimisticLockError(EventSourceError)` with
+`(aggregate_id, expected_version, actual_version)`. They do not catch each
+other. Proposed resolution: rename the read-model one to
+`ReadModelVersionConflictError` with a deprecation alias. **The collision
+predates the structure slice A (locks/readmodels/engine ring migration,
+2026-07-31)** — record that, so a future reader does not attribute it to that
+slice.
+
+## Remove the `eventsource.locks` and `eventsource.readmodels` deprecation shims (P3)
+
+Scheduled for 0.8.0, alongside the existing `bus/` shim removal entry above.
+Includes: delete both `__init__.py` shims (`src/eventsource/locks/__init__.py`,
+`src/eventsource/readmodels/__init__.py`); delete the `eventsource.locks`
+entry from the "Application ring must not import adapters" `forbidden_modules`
+in `pyproject.toml` (see the comment beside that contract explaining why it
+stays correct only while the shim exists); delete the two shim test modules.
+Structure slice A (ADR 0029, 2026-07-31).
+
+## InMemoryReadModelRepository aliases live objects (P3)
+
+`get()`/`get_many()` return the live dict entry rather than a copy, and
+`save()`/`save_with_version_check()` mutate the caller's object in place
+(bumps `.version`, sets `.updated_at`) — while `PostgreSQLReadModelRepository`
+and `SQLiteReadModelRepository` always hydrate fresh instances from the
+database. A caller holding a reference to a model it previously saved or
+fetched can have it silently mutated by a later, unrelated write against the
+same repository. Fix direction: `model_copy()` on read, copy-before-mutate on
+save, so all three backends present the same aliasing contract. Found by the
+readmodels conformance work (structure slice A, 2026-07-31).
+
+## Decide engine.py's ring placement (P3) — Done (ADR 0029, structure slice A)
+
+`engine.py` moved to `src/eventsource/adapters/_sql/engine.py` — `adapters/_sql/`
+rather than dissolving into the existing connection helpers (a distinct
+concern, not naturally absorbed by `connection.py` or `dialect.py`) and rather
+than `adapters/sql/engine.py` (whose package `__init__` eagerly imports
+`projection.py`, reaching into `application/projections/` — see ADR 0029 §3.2
+for the full rejected-alternatives argument). The lazy-init backlog item below
+is updated with the new import-chain shape.
 
 ## Small ring-consistency cleanups (P3)
 
@@ -304,7 +351,17 @@ folding it into `testing/conformance.py`'s namespace or documenting the split;
 (b) move the tracing decorator used by adapters up to a ports-level helper so
 adapters stop importing `observability/` internals directly; (c) consolidate
 `protocols.py`'s remaining ABCs/Protocols with their ring homes (several now
-duplicate `ports/` definitions in spirit) with deprecation re-exports.
+duplicate `ports/` definitions in spirit) with deprecation re-exports; (d) the
+readmodels port-purity `ast`-based test (verifying `ports/readmodels/` imports
+no sqlalchemy) is blind to relative imports — none exist in that package
+today, so this is not a live gap, but tighten the test if `ports/` ever
+adopts relative imports (structure slice A, 2026-07-31); (e)
+`scripts/_mutmut_configure.py`'s `dialect`, `checkpoint`, and `json`
+(actually `dlq`) selector entries point at `src/eventsource/repositories/...`,
+a package deleted in an earlier slice — those selectors are dead until
+retargeted at the modules' current locations or removed outright. Found by
+the A6 engine-move task (structure slice A, 2026-07-31), out of scope there
+by the task's own boundary.
 
 ## Cutover can switch routing with up to cutover_max_lag_events missing (P2)
 

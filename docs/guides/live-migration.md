@@ -64,7 +64,7 @@ uv add "eventsource-py[postgresql]"   # pulls in asyncpg
 
 The control plane is PostgreSQL-only. `get_schema("migration")` ships a
 PostgreSQL template only (there is no SQLite equivalent), and cutover
-coordination goes through `PostgreSQLLockManager` from `eventsource.locks`.
+coordination goes through `PostgreSQLLockManager` from `eventsource.adapters.postgresql.locks`.
 The stores you migrate between can be anything implementing `FullEventStore`
 (the combined ports surface: append, stream read, event lookup, global feed,
 and category query); the database that holds migration state cannot.
@@ -84,7 +84,7 @@ tenant's events: nothing validates emptiness, and pre-existing events will skew
 the bulk-copy position mappings and the consistency check.
 
 **PostgreSQL advisory lock manager** -- `PostgreSQLLockManager(session_factory)`
-from `eventsource.locks`, built from a SQLAlchemy
+from `eventsource.adapters.postgresql.locks`, built from a SQLAlchemy
 `async_sessionmaker[AsyncSession]`. It is a keyword-only, optional constructor
 argument, but the coordinator raises `MigrationError` when it needs to build its
 `CutoverManager` without one, so treat it as required for any migration you

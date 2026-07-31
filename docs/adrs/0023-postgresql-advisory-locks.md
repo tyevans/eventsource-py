@@ -42,6 +42,18 @@ and `MigrationCutover` already depends on them. Nothing here is a proposal; the
 ADR exists to explain choices that were made incrementally and never written
 down.
 
+**Amended by [ADR 0029](0029-locks-readmodels-and-engine-rings.md).** The
+names above now live at `eventsource.adapters.postgresql.locks`
+(`PostgreSQLLockManager`) and `eventsource.ports.locks` (`LockInfo`,
+`migration_lock_key`); `LockAcquisitionError`/`LockNotHeldError` moved to
+`eventsource.exceptions` and now subclass `EventSourceError`.
+`eventsource.locks` remains importable as a deprecated shim until 0.8.0. ADR
+0029 adds a `ports/locks.py` Protocol pair (`DistributedLock`, `LockRegistry`)
+this record did not anticipate, but the amendment is narrow: the Protocols
+describe the shape of the dependency, not an equivalence of distributed
+semantics, and this record's single-primitive argument and PostgreSQL-only
+scope stand untouched. The Decision section below is unmodified.
+
 The record is not frozen, though. Two parts of it have been touched since the
 original decision and may be touched again:
 

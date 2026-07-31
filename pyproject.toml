@@ -309,6 +309,33 @@ type = "forbidden"
 source_modules = ["eventsource.application"]
 forbidden_modules = ["eventsource.adapters", "eventsource.bus", "eventsource.locks"]
 
+# The eventsource.locks entry above stays correct while the eventsource.locks
+# deprecation shim exists -- the shim's lazy __getattr__ resolves to
+# eventsource.adapters.postgresql.locks, so "eventsource.locks" is still, transitively,
+# an adapters import. It is deleted (not merely made redundant) when the shim itself is
+# removed in 0.8.0; see the BACKLOG.md entry for that removal.
+
+[[tool.importlinter.contracts]]
+name = "Ports must not import adapters, application, or bus"
+type = "forbidden"
+source_modules = ["eventsource.ports"]
+forbidden_modules = [
+    "eventsource.adapters",
+    "eventsource.application",
+    "eventsource.bus",
+    "eventsource.migration",
+]
+
+# Slice A (ADR 0029) created the first port with a sibling that moved to adapters/:
+# eventsource.ports.readmodels (the ReadModel/Query/Filter/ReadModelRepository contract)
+# beside eventsource.adapters.sql.readmodel_schema (DDL generation, dialect-specific).
+# An accidental "from eventsource.adapters.sql.readmodel_schema import generate_schema"
+# inside ports/readmodels/model.py would be a real regression the existing Tier 0
+# sqlalchemy-only contract cannot catch -- readmodel_schema.py imports no sqlalchemy, so
+# nothing there trips "must not import sqlalchemy." This contract closes that gap
+# directly: the ports ring may not name an adapter, an application-ring module, the bus,
+# or migration/, regardless of what those modules do or do not import themselves.
+
 # The projections/ Tier-0 blocker documented in docs/core-surface.md (projections/base.py
 # and the checkpoint/dlq managers pulling in sqlalchemy-backed repositories.checkpoint and
 # repositories.dlq) is resolved: projections/ and repositories/{checkpoint,dlq}.py were
@@ -319,3 +346,12 @@ forbidden_modules = ["eventsource.adapters", "eventsource.bus", "eventsource.loc
 # moved to eventsource.ports.outbox (pure) and eventsource.adapters.{memory,postgresql,
 # sqlite}.outbox (backend-specific), so "eventsource.repositories" no longer exists to
 # forbid above.
+
+# eventsource.readmodels.schema (now eventsource.adapters.sql.readmodel_schema) lost its
+# "must not import sqlalchemy" Tier 0 guard by design when it moved (ADR 0029 SS2.3): the
+# guard asserted the wrong property. The module has never imported sqlalchemy -- it
+# hardcodes POSTGRESQL_TYPE_MAP/SQLITE_TYPE_MAP and emits dialect-specific DDL text as
+# plain strings -- but dialect knowledge is an adapter concern regardless of whether the
+# code happens to avoid the sqlalchemy import to express it. The guard was not silently
+# dropped; the property it should have been asserting (does this module encode
+# backend-specific knowledge) was never "imports sqlalchemy" to begin with.

@@ -291,7 +291,7 @@ class ReadModelRepository(Protocol[TModel]):
             Consider using pagination for production queries.
 
         Example:
-            >>> from eventsource.readmodels import Query, Filter
+            >>> from eventsource.ports.readmodels import Query, Filter
             >>> query = Query(
             ...     filters=[Filter.eq("status", "shipped")],
             ...     order_by="created_at",

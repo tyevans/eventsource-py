@@ -355,8 +355,8 @@ Concurrency control is optimistic and explicit. Appends carry an
 `actual_version`, and the caller decides whether to retry or surface a conflict.
 `ExpectedVersion` provides the three semantic constants — `ANY` (skip the check),
 `NO_STREAM` (must be a new aggregate), `STREAM_EXISTS` (must already exist).
-Where optimistic retry is not enough, `eventsource.locks` offers PostgreSQL
-advisory locks for genuine pessimistic serialization.
+Where optimistic retry is not enough, `eventsource.adapters.postgresql.locks`
+offers PostgreSQL advisory locks for genuine pessimistic serialization.
 
 ### Projections, read models, and the subscription lifecycle
 

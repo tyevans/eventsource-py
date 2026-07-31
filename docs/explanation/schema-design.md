@@ -440,9 +440,10 @@ does not depend on the application's deployment topology**. There is no lock to
 acquire, no leader to elect, no requirement that writers for a given aggregate
 be routed to the same process. Deploy twenty replicas across three machines and
 the guarantee holds, because the arbiter is the one component all of them
-already share. This is why the PostgreSQL advisory locks in `eventsource.locks`
-exist for coordinating *operations* — tenant cutover, migration exclusivity —
-and not for guarding aggregate writes. Aggregate writes need no lock.
+already share. This is why the PostgreSQL advisory locks in
+`eventsource.adapters.postgresql.locks` exist for coordinating *operations* —
+tenant cutover, migration exclusivity — and not for guarding aggregate writes.
+Aggregate writes need no lock.
 
 The costs are real and worth stating:
 

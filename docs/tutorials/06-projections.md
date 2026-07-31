@@ -124,7 +124,7 @@ Check your install before you begin:
 
 ```bash
 python -c "import eventsource; print(eventsource.__version__)"
-python -c "from eventsource.readmodels import ReadModelProjection, generate_full_schema; print('ok')"
+python -c "from eventsource import ReadModelProjection; from eventsource.adapters.sql.readmodel_schema import generate_full_schema; print('ok')"
 ```
 
 If both print, you are ready.

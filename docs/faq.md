@@ -128,8 +128,8 @@ The library ships no command side of its own. There is no `Command` class, no
 command bus, no handler dispatch for commands — you call methods on your
 aggregate (`order.ship(tracking_number)`), and the aggregate raises events. What
 the library does provide is the query side: `Projection` and
-`DeclarativeProjection` consume events, and `ReadModelProjection` plus the
-`eventsource.readmodels` package persist denormalized views you query with
+`DeclarativeProjection` consume events, and `ReadModelProjection` plus
+`eventsource.ports.readmodels` and its adapters persist denormalized views you query with
 `Query` and `Filter` — `repo.find(Query(filters=[Filter.eq("status",
 "shipped")]))` — instead of replaying streams.
 

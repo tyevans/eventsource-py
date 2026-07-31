@@ -28,7 +28,7 @@ from eventsource.exceptions import (
 Four things are worth knowing before you write your first handler:
 
 - **Not every exception inherits from `EventSourceError`.** The subscription, snapshot, and read-model subsystems each define their own root that derives directly from `Exception`. A bare `except EventSourceError` will not catch them — see [Catching broadly at the application boundary](#catching-broadly-at-the-application-boundary).
-- **There are two `OptimisticLockError` classes.** `eventsource.exceptions.OptimisticLockError` is the aggregate/event-store version conflict; `eventsource.readmodels.exceptions.OptimisticLockError` is the read-model one. They are unrelated classes and neither catches the other.
+- **There are two `OptimisticLockError` classes.** `eventsource.exceptions.OptimisticLockError` is the aggregate/event-store version conflict; `eventsource.ports.readmodels.exceptions.OptimisticLockError` is the read-model one. They are unrelated classes and neither catches the other. (Pre-existing collision, not introduced by ADR 0029 -- tracked in `BACKLOG.md`.)
 - **Retryability is a property of the exception type, not of the operation.** `OptimisticLockError` is almost always worth retrying; `UnhandledEventError` never is. The sections below group the exceptions by that distinction so you can map each one to an action.
 - **Projections and subscriptions handle failure differently, and the difference decides where your `except` block goes.** A projection owns its own failures: `CheckpointTrackingProjection` retries under its `retry_policy` (by default `ExponentialBackoffRetryPolicy` with `max_retries=2`, so three attempts), writes the event to the DLQ, then re-raises. A subscription escalates instead: `SubscriptionManager` routes every handler failure through a per-subscription `SubscriptionErrorHandler`, which classifies the error and decides — via `ErrorHandlingStrategy` — whether to retry, continue, or route to the DLQ. Configure the projection's policy for projection failures; configure the subscription's handler for everything dispatched by the manager.
 
@@ -53,11 +53,21 @@ Exception
 │   ├── EventBusError
 │   ├── CheckpointError
 │   ├── TenantContextNotSetError        (eventsource.multitenancy.exceptions)
-│   └── TenantMismatchError             (eventsource.multitenancy.exceptions)
+│   ├── TenantMismatchError             (eventsource.multitenancy.exceptions)
+│   ├── LockAcquisitionError            key, reason, timeout
+│   └── LockNotHeldError                key
 ├── SubscriptionError                   (eventsource.subscriptions.exceptions)
 ├── SnapshotError                       (eventsource.exceptions -- not actually a subclass of EventSourceError)
-└── ReadModelError                      (eventsource.readmodels.exceptions)
+└── ReadModelError                      (eventsource.ports.readmodels.exceptions)
 ```
+
+`LockAcquisitionError` and `LockNotHeldError` moved onto `EventSourceError`
+under ADR 0029 (previously they derived directly from `Exception`, defined
+in `eventsource.locks.postgresql`). This is a widening change only: every
+existing `except LockAcquisitionError` still catches, and so does
+`except Exception`; the newly-catching clause is `except EventSourceError`,
+which caught nothing lock-related before. Both are now defined in
+`eventsource.exceptions`, importable alongside every other name in this tree.
 
 Write your handlers against this shape: catch the specific type when you can act on it, fall back to the subsystem root, and only then to `EventSourceError`.
 
@@ -135,13 +145,13 @@ except SnapshotError:
     snapshot = None  # fall back to replaying the full stream
 ```
 
-**`ReadModelError`** — `eventsource.readmodels.exceptions`, with `ReadModelNotFoundError` (`model_id`) and its own `OptimisticLockError`. Both are re-exported from `eventsource.readmodels`.
+**`ReadModelError`** — `eventsource.ports.readmodels.exceptions`, with `ReadModelNotFoundError` (`model_id`) and its own `OptimisticLockError`. Both are re-exported from `eventsource.ports.readmodels`. (`eventsource.readmodels` still resolves them, deprecated, until 0.8.0.)
 
-That last one is the trap. `eventsource.readmodels.exceptions.OptimisticLockError` inherits from `ReadModelError`, **not** from `EventSourceError`, and its attributes are different: `model_id`, `expected_version`, and `actual_version` (which may be `None` when the row was missing at check time), versus the aggregate version's `aggregate_id`, `expected_version`, `actual_version`. Neither class catches the other, so alias them on import whenever both are in scope:
+That last one is the trap. `eventsource.ports.readmodels.exceptions.OptimisticLockError` inherits from `ReadModelError`, **not** from `EventSourceError`, and its attributes are different: `model_id`, `expected_version`, and `actual_version` (which may be `None` when the row was missing at check time), versus the aggregate version's `aggregate_id`, `expected_version`, `actual_version`. Neither class catches the other, so alias them on import whenever both are in scope:
 
 ```python
 from eventsource import OptimisticLockError as AggregateConflict
-from eventsource.readmodels.exceptions import OptimisticLockError as ReadModelConflict
+from eventsource.ports.readmodels.exceptions import OptimisticLockError as ReadModelConflict
 
 try:
     await repo.save_with_version_check(summary)
@@ -244,7 +254,7 @@ Bound the loop. Conflicts on the same aggregate mean contention, and unbounded r
 
 Two ways to avoid the conflict rather than absorb it:
 
-- **Serialize the writers.** `PostgreSQLLockManager` (`eventsource.locks`) gives you advisory locks keyed by aggregate id, so a second writer waits instead of racing. Worth it when conflicts are frequent and the command is expensive to replay; see [Distributed locks](distributed-locks.md).
+- **Serialize the writers.** `PostgreSQLLockManager` (`eventsource.adapters.postgresql.locks`) gives you advisory locks keyed by aggregate id, so a second writer waits instead of racing. Worth it when conflicts are frequent and the command is expensive to replay; see [Distributed locks](distributed-locks.md).
 - **Opt out of the check.** `ExpectedVersion.ANY` (`-1`) tells `append()` to skip the version check entirely. That disables optimistic locking for that append, so reserve it for genuinely order-independent streams — it does not make concurrent writes safe, it makes them silent.
 
 Transient infrastructure failures are the second retryable class, and they are *not* `EventSourceError` subclasses — they arrive as `ConnectionError`, `TimeoutError`, `asyncio.TimeoutError`, or `OSError` from the driver, sometimes wrapped in `EventStoreError` or `EventBusError`. The library ships a helper for exactly this shape, `retry_async()` from `eventsource.subscriptions`:

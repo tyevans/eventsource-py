@@ -223,7 +223,7 @@ class Query:
         include_deleted: Whether to include soft-deleted records
 
     Example:
-        >>> from eventsource.readmodels import Query, Filter
+        >>> from eventsource.ports.readmodels import Query, Filter
         >>>
         >>> # Find shipped orders over $100, newest first
         >>> query = Query(

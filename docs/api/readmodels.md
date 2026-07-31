@@ -1,13 +1,20 @@
 # Read Models API Reference
 
-Reference documentation for `eventsource.readmodels`, the package that persists
-and queries denormalized projection state: the `ReadModel` Pydantic base class,
-the `Query`/`Filter` specification objects, the `ReadModelRepository` protocol
-and its in-memory, PostgreSQL, and SQLite implementations, the
-`ReadModelProjection` bridge between events and stored rows, and the DDL
-generation helpers.
+Reference documentation for `eventsource.ports.readmodels` and its adapters,
+which together persist and query denormalized projection state: the
+`ReadModel` Pydantic base class, the `Query`/`Filter` specification objects,
+the `ReadModelRepository` protocol and its in-memory, PostgreSQL, and SQLite
+implementations, the `ReadModelProjection` bridge between events and stored
+rows, and the DDL generation helpers.
 
-Public names covered here (everything in `eventsource.readmodels.__all__`):
+`eventsource.readmodels` -- the pre-slice-A import path for all sixteen names
+below -- is **deprecated**. Every name still resolves from it with a
+`DeprecationWarning` naming its new home; the package is removed in 0.8.0.
+Update imports to the paths this page documents.
+
+Public names covered here (everything the old `eventsource.readmodels.__all__`
+listed, now split across `eventsource.ports.readmodels` and three adapter
+modules):
 
 | Name | Kind | Purpose |
 | --- | --- | --- |
@@ -22,10 +29,11 @@ Public names covered here (everything in `eventsource.readmodels.__all__`):
 | `POSTGRESQL_TYPE_MAP` / `SQLITE_TYPE_MAP` | dicts | Python-to-SQL column type mappings used by schema generation |
 | `ReadModelError` / `OptimisticLockError` / `ReadModelNotFoundError` | exceptions | Error hierarchy for read model operations |
 
-All of these import directly from the package root:
+The pure ones import from the port; the backends from their adapter modules:
 
 ```python
-from eventsource.readmodels import ReadModel, Query, Filter, InMemoryReadModelRepository
+from eventsource.ports.readmodels import ReadModel, Query, Filter
+from eventsource.adapters.memory.readmodels import InMemoryReadModelRepository
 ```
 
 ## Overview
@@ -79,29 +87,25 @@ The three shipped implementations are interchangeable behind the protocol:
 production, and `SQLiteReadModelRepository` for embedded or development use —
 with the SQLite type-fidelity caveats noted under [Type Maps](#type-maps).
 
-## Import Surface (`eventsource.readmodels.__all__`)
+## Import Surface
 
-`eventsource/readmodels/__init__.py` re-exports the full public surface of the
-package. `__all__` contains exactly these 16 names:
+`eventsource.ports.readmodels` is a subpackage (ADR 0029) rather than a flat
+module, because it groups four genuinely distinct pure artifacts users import
+for four different reasons: a subclassable pydantic base, a query
+specification language, a 15-method repository Protocol, and an exception
+family. Its `__all__` contains eight names; the three backend repositories and
+three schema-generation names live in their adapter modules instead:
 
 ```python
 __all__ = [
-    "ReadModel",
-    "ReadModelRepository",
-    "ReadModelProjection",
-    "Query",
     "Filter",
-    "ReadModelError",
     "OptimisticLockError",
+    "Query",
+    "ReadModel",
+    "ReadModelError",
     "ReadModelNotFoundError",
-    "InMemoryReadModelRepository",
-    "PostgreSQLReadModelRepository",
-    "SQLiteReadModelRepository",
-    "generate_schema",
-    "generate_indexes",
-    "generate_full_schema",
-    "POSTGRESQL_TYPE_MAP",
-    "SQLITE_TYPE_MAP",
+    "ReadModelRepository",
+    "ReadModelRepositoryProtocol",
 ]
 ```
 
@@ -109,78 +113,81 @@ __all__ = [
 
 | Exported name | Defined in | Kind |
 | --- | --- | --- |
-| `ReadModel` | `eventsource.readmodels.base` | Pydantic `BaseModel` subclass |
-| `ReadModelRepository` | `eventsource.readmodels.repository` | `@runtime_checkable` `Protocol[TModel]` |
-| `ReadModelProjection` | `eventsource.readmodels.projection` | class (extends `DatabaseProjection`) |
-| `Query`, `Filter` | `eventsource.readmodels.query` | query specification classes |
-| `ReadModelError`, `OptimisticLockError`, `ReadModelNotFoundError` | `eventsource.readmodels.exceptions` | exceptions |
-| `InMemoryReadModelRepository` | `eventsource.readmodels.in_memory` | `Generic[TModel]` class |
-| `PostgreSQLReadModelRepository` | `eventsource.readmodels.postgresql` | `Generic[TModel]` class |
-| `SQLiteReadModelRepository` | `eventsource.readmodels.sqlite` | `Generic[TModel]` class |
-| `generate_schema`, `generate_indexes`, `generate_full_schema` | `eventsource.readmodels.schema` | functions |
-| `POSTGRESQL_TYPE_MAP`, `SQLITE_TYPE_MAP` | `eventsource.readmodels.schema` | `dict` constants |
+| `ReadModel` | `eventsource.ports.readmodels.model` | Pydantic `BaseModel` subclass |
+| `ReadModelRepository` | `eventsource.ports.readmodels.repository` | `@runtime_checkable` `Protocol[TModel]` |
+| `Query`, `Filter` | `eventsource.ports.readmodels.query` | query specification classes |
+| `ReadModelError`, `OptimisticLockError`, `ReadModelNotFoundError` | `eventsource.ports.readmodels.exceptions` | exceptions |
+| `ReadModelProjection` | `eventsource.adapters.sql.readmodel_projection` | class (extends `DatabaseProjection`) |
+| `InMemoryReadModelRepository` | `eventsource.adapters.memory.readmodels` | `Generic[TModel]` class |
+| `PostgreSQLReadModelRepository` | `eventsource.adapters.postgresql.readmodels` | `Generic[TModel]` class |
+| `SQLiteReadModelRepository` | `eventsource.adapters.sqlite.readmodels` | `Generic[TModel]` class |
+| `generate_schema`, `generate_indexes`, `generate_full_schema` | `eventsource.adapters.sql.readmodel_schema` | functions |
+| `POSTGRESQL_TYPE_MAP`, `SQLITE_TYPE_MAP` | `eventsource.adapters.sql.readmodel_schema` | `dict` constants |
 
-Import from the package root rather than the submodules — the submodule layout
-is an implementation detail:
+Import the pure names from the port package root — its submodule layout is an
+implementation detail — and the backend names from their adapter modules:
 
 ```python
-from eventsource.readmodels import (
+from eventsource.ports.readmodels import (
     Filter,
-    InMemoryReadModelRepository,
     OptimisticLockError,
     Query,
     ReadModel,
-    ReadModelProjection,
     ReadModelRepository,
-    generate_full_schema,
 )
+from eventsource.adapters.memory.readmodels import InMemoryReadModelRepository
+from eventsource.adapters.sql.readmodel_schema import generate_full_schema
 ```
 
-### Backend imports are unconditional
+### Backend imports are per-adapter, not eager on one namespace
 
-Unlike some optional-dependency packages in this library, `readmodels`
-imports **all three** repository implementations eagerly at package import
-time. There is no `*_AVAILABLE` flag and no `try/except ImportError` guard
-here:
+Unlike the pre-slice-A `eventsource.readmodels` package, which imported all
+three repository implementations eagerly at one package's import time,
+`eventsource.ports.readmodels` pulls in none of them — importing it costs no
+sqlalchemy and no aiosqlite. Each backend is its own adapter module,
+imported only when you need that backend:
 
-- `PostgreSQLReadModelRepository` depends only on `sqlalchemy`
+- `eventsource.adapters.postgresql.readmodels` depends on `sqlalchemy`
   (`AsyncConnection` / `AsyncEngine`), which is a core dependency.
-- `SQLiteReadModelRepository` type-hints `aiosqlite.Connection` under
-  `TYPE_CHECKING` only, so importing it does not require `aiosqlite` to be
-  installed. You need `aiosqlite` at runtime only when you actually construct
-  the repository and pass it a connection.
+- `eventsource.adapters.sqlite.readmodels` type-hints `aiosqlite.Connection`
+  under `TYPE_CHECKING` only, so importing it does not require `aiosqlite` to
+  be installed. You need `aiosqlite` at runtime only when you actually
+  construct the repository and pass it a connection.
 
-So `from eventsource.readmodels import SQLiteReadModelRepository` succeeds in a
-bare install; the missing-dependency error, if any, surfaces where you open the
-connection.
+So `from eventsource.adapters.sqlite.readmodels import SQLiteReadModelRepository`
+succeeds in a bare install; the missing-dependency error, if any, surfaces
+where you open the connection.
 
 ### Relationship to the top-level `eventsource` namespace
 
 Of these names, only `ReadModelProjection` is re-exported from the top-level
-`eventsource` package. Everything else must be imported from
-`eventsource.readmodels`:
+`eventsource` package — unchanged by this move. Everything else must be
+imported from `eventsource.ports.readmodels` or the relevant adapter module:
 
 ```python
-from eventsource import ReadModelProjection          # available
-from eventsource.readmodels import ReadModel, Query  # required form
+from eventsource import ReadModelProjection               # available
+from eventsource.ports.readmodels import ReadModel, Query  # required form
 ```
 
 ### Name collision: two `OptimisticLockError` classes
 
 The library defines **two distinct** exceptions with this name, and they are
-not related by inheritance:
+not related by inheritance. **This collision predates the slice A structure
+work** — it is not something the port split introduced — and is tracked in
+`BACKLOG.md` for resolution (proposed: rename the read-model one to
+`ReadModelVersionConflictError` with a deprecation alias):
 
 | Symbol | Base | Raised by |
 | --- | --- | --- |
 | `eventsource.OptimisticLockError` (from `eventsource.exceptions`) | `EventSourceError` | aggregate/event-store concurrency conflicts |
-| `eventsource.readmodels.OptimisticLockError` | `ReadModelError` | `save_with_version_check()` on a read model repository |
+| `eventsource.ports.readmodels.OptimisticLockError` | `ReadModelError` | `save_with_version_check()` on a read model repository |
 
 An `except eventsource.OptimisticLockError` block will **not** catch a read
 model version conflict. When both are in scope, alias one at the import site:
 
 ```python
 from eventsource import OptimisticLockError
-from eventsource.readmodels import OptimisticLockError as ReadModelOptimisticLockError
+from eventsource.ports.readmodels import OptimisticLockError as ReadModelOptimisticLockError
 ```
 
 See [Exceptions](#exceptions) for the attributes each carries.
@@ -191,15 +198,15 @@ See [Exceptions](#exceptions) for the attributes each carries.
 class ReadModel(BaseModel)
 ```
 
-Defined in `eventsource.readmodels.base`. The Pydantic base class for every
-persisted projection row. Subclass it, add domain fields, and the repository
-and schema-generation helpers take care of the rest.
+Defined in `eventsource.ports.readmodels.model`. The Pydantic base class for
+every persisted projection row. Subclass it, add domain fields, and the
+repository and schema-generation helpers take care of the rest.
 
 ```python
 from decimal import Decimal
 from uuid import uuid4
 
-from eventsource.readmodels import ReadModel
+from eventsource.ports.readmodels import ReadModel
 
 
 class OrderSummary(ReadModel):

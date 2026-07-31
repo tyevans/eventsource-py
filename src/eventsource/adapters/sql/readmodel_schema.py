@@ -9,8 +9,8 @@ This lives under `adapters/sql/` rather than `ports/` because it hardcodes
 `CREATE TABLE` text -- dialect knowledge belongs to an adapter, not a port.
 
 Example:
-    >>> from eventsource.readmodels import ReadModel
-    >>> from eventsource.readmodels.schema import generate_schema
+    >>> from eventsource.ports.readmodels import ReadModel
+    >>> from eventsource.adapters.sql.readmodel_schema import generate_schema
     >>> from decimal import Decimal
     >>>
     >>> class OrderSummary(ReadModel):
@@ -95,7 +95,7 @@ def generate_schema(
         CREATE TABLE SQL statement
 
     Example:
-        >>> from eventsource.readmodels import ReadModel
+        >>> from eventsource.ports.readmodels import ReadModel
         >>> from decimal import Decimal
         >>>
         >>> class OrderSummary(ReadModel):
@@ -160,7 +160,7 @@ def generate_indexes(
         List of CREATE INDEX SQL statements
 
     Example:
-        >>> from eventsource.readmodels import ReadModel
+        >>> from eventsource.ports.readmodels import ReadModel
         >>> from uuid import UUID
         >>>
         >>> class OrderSummary(ReadModel):
@@ -233,7 +233,7 @@ def generate_full_schema(
         Complete schema SQL with table and indexes
 
     Example:
-        >>> from eventsource.readmodels import ReadModel
+        >>> from eventsource.ports.readmodels import ReadModel
         >>>
         >>> class SimpleModel(ReadModel):
         ...     name: str
