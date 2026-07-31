@@ -1,4 +1,4 @@
-# ADR-0019: PostgreSQL Advisory Locks for Distributed Coordination
+# ADR-0023: PostgreSQL Advisory Locks for Distributed Coordination
 
 **Status:** Accepted
 
