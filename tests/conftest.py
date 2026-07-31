@@ -26,9 +26,11 @@ from hypothesis import HealthCheck, settings
 
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
 from eventsource.adapters.memory.dlq import InMemoryDLQRepository
+from eventsource.adapters.memory.store import MemoryEventStore
+from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
+from eventsource.ports import ExpectedVersion
 from eventsource.repositories.outbox import InMemoryOutboxRepository
-from eventsource.stores.in_memory import InMemoryEventStore
 
 # Import shared fixtures from fixtures module
 from tests.fixtures import (
@@ -300,25 +302,25 @@ def order_event_stream(aggregate_id: UUID, customer_id: UUID) -> list[DomainEven
 
 
 @pytest.fixture
-def in_memory_store() -> InMemoryEventStore:
+def in_memory_store() -> MemoryEventStore:
     """
-    Provide a fresh InMemoryEventStore instance.
+    Provide a fresh MemoryEventStore instance.
 
     Each test gets its own isolated event store.
 
     Returns:
-        A new InMemoryEventStore instance.
+        A new MemoryEventStore instance.
     """
-    return InMemoryEventStore()
+    return MemoryEventStore()
 
 
 @pytest_asyncio.fixture
 async def populated_store(
-    in_memory_store: InMemoryEventStore,
+    in_memory_store: MemoryEventStore,
     event_stream: list[DomainEvent],
-) -> AsyncGenerator[InMemoryEventStore, None]:
+) -> AsyncGenerator[MemoryEventStore, None]:
     """
-    Provide an InMemoryEventStore pre-populated with sample events.
+    Provide a MemoryEventStore pre-populated with sample events.
 
     Contains 3 counter events for a single aggregate (final value = 12).
 
@@ -330,11 +332,10 @@ async def populated_store(
         The event store populated with events.
     """
     aggregate_id = event_stream[0].aggregate_id
-    await in_memory_store.append_events(
-        aggregate_id=aggregate_id,
-        aggregate_type="Counter",
-        events=event_stream,
-        expected_version=0,
+    await in_memory_store.append(
+        StreamId(aggregate_id=aggregate_id, category="Counter"),
+        event_stream,
+        ExpectedVersion.no_stream(),
     )
     yield in_memory_store
 

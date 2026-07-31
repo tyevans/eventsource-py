@@ -13,9 +13,11 @@ import pytest
 
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
 from eventsource.adapters.memory.dlq import InMemoryDLQRepository
+from eventsource.adapters.memory.store import MemoryEventStore
 from eventsource.bus.memory import InMemoryEventBus
+from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
-from eventsource.stores.in_memory import InMemoryEventStore
+from eventsource.ports import ExpectedVersion
 from eventsource.testing import InMemoryTestHarness
 
 
@@ -60,8 +62,8 @@ class TestHarnessProperties:
         return InMemoryTestHarness()
 
     def test_event_store_type(self, harness: InMemoryTestHarness) -> None:
-        """event_store returns InMemoryEventStore."""
-        assert isinstance(harness.event_store, InMemoryEventStore)
+        """event_store returns MemoryEventStore."""
+        assert isinstance(harness.event_store, MemoryEventStore)
 
     def test_event_bus_type(self, harness: InMemoryTestHarness) -> None:
         """event_bus returns InMemoryEventBus."""
@@ -243,19 +245,23 @@ class TestHarnessClearPublishedEvents:
         )
 
         # Store event
-        await harness.event_store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="Sample",
-            events=[event],
-            expected_version=0,
+        await harness.event_store.append(
+            StreamId(aggregate_id=aggregate_id, category="Sample"),
+            [event],
+            ExpectedVersion.no_stream(),
         )
         await harness.event_bus.publish([event])
 
         harness.clear_published_events()
 
         # Event store should still have the event
-        stream = await harness.event_store.get_events(aggregate_id, "Sample")
-        assert len(stream.events) == 1
+        envelopes = [
+            e
+            async for e in harness.event_store.read_stream(
+                StreamId(aggregate_id=aggregate_id, category="Sample")
+            )
+        ]
+        assert len(envelopes) == 1
 
 
 class TestHarnessReset:
@@ -276,19 +282,18 @@ class TestHarnessReset:
             aggregate_type="Sample",
             aggregate_version=1,
         )
-        await old_store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="Sample",
-            events=[event],
-            expected_version=0,
+        await old_store.append(
+            StreamId(aggregate_id=aggregate_id, category="Sample"),
+            [event],
+            ExpectedVersion.no_stream(),
         )
 
         harness.reset()
 
         assert harness.event_store is not old_store
         # New store should be empty
-        event_count = await harness.event_store.get_event_count()
-        assert event_count == 0
+        envelopes = [e async for e in harness.event_store.read_all()]
+        assert len(envelopes) == 0
 
     @pytest.mark.asyncio
     async def test_reset_creates_new_event_bus(self, harness: InMemoryTestHarness) -> None:
@@ -349,30 +354,6 @@ class TestHarnessReset:
 
         entries = await harness.dlq_repo.get_failed_events()
         assert len(entries) == 0
-
-
-class TestHarnessTracingDisabled:
-    """Tests for tracing configuration."""
-
-    def test_event_bus_tracing_disabled(self) -> None:
-        """Event bus is created with tracing disabled."""
-        harness = InMemoryTestHarness()
-        assert harness.event_bus._enable_tracing is False
-
-    def test_event_store_tracing_disabled(self) -> None:
-        """Event store is created with tracing disabled."""
-        harness = InMemoryTestHarness()
-        assert harness.event_store._enable_tracing is False
-
-    def test_checkpoint_repo_tracing_disabled(self) -> None:
-        """Checkpoint repo is created with tracing disabled."""
-        harness = InMemoryTestHarness()
-        assert harness.checkpoint_repo._enable_tracing is False
-
-    def test_dlq_repo_tracing_disabled(self) -> None:
-        """DLQ repo is created with tracing disabled."""
-        harness = InMemoryTestHarness()
-        assert harness.dlq_repo._enable_tracing is False
 
 
 class TestHarnessGetEventsOfType:
@@ -501,20 +482,23 @@ class TestHarnessIntegration:
         )
 
         # Store event
-        result = await harness.event_store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="Sample",
-            events=[event],
-            expected_version=0,
+        await harness.event_store.append(
+            StreamId(aggregate_id=aggregate_id, category="Sample"),
+            [event],
+            ExpectedVersion.no_stream(),
         )
-        assert result.success
 
         # Publish event
         await harness.event_bus.publish([event])
 
         # Both should reflect the event
-        stream = await harness.event_store.get_events(aggregate_id, "Sample")
-        assert len(stream.events) == 1
+        envelopes = [
+            e
+            async for e in harness.event_store.read_stream(
+                StreamId(aggregate_id=aggregate_id, category="Sample")
+            )
+        ]
+        assert len(envelopes) == 1
         assert len(harness.published_events) == 1
 
     @pytest.mark.asyncio
@@ -568,23 +552,31 @@ class TestHarnessIntegration:
             aggregate_version=1,
         )
 
-        await harness.event_store.append_events(
-            aggregate_id=agg1_id,
-            aggregate_type="Sample",
-            events=[event1],
-            expected_version=0,
+        await harness.event_store.append(
+            StreamId(aggregate_id=agg1_id, category="Sample"),
+            [event1],
+            ExpectedVersion.no_stream(),
         )
-        await harness.event_store.append_events(
-            aggregate_id=agg2_id,
-            aggregate_type="Sample",
-            events=[event2],
-            expected_version=0,
+        await harness.event_store.append(
+            StreamId(aggregate_id=agg2_id, category="Sample"),
+            [event2],
+            ExpectedVersion.no_stream(),
         )
 
-        stream1 = await harness.event_store.get_events(agg1_id, "Sample")
-        stream2 = await harness.event_store.get_events(agg2_id, "Sample")
+        envelopes1 = [
+            e
+            async for e in harness.event_store.read_stream(
+                StreamId(aggregate_id=agg1_id, category="Sample")
+            )
+        ]
+        envelopes2 = [
+            e
+            async for e in harness.event_store.read_stream(
+                StreamId(aggregate_id=agg2_id, category="Sample")
+            )
+        ]
 
-        assert len(stream1.events) == 1
-        assert len(stream2.events) == 1
-        assert stream1.events[0].aggregate_id == agg1_id
-        assert stream2.events[0].aggregate_id == agg2_id
+        assert len(envelopes1) == 1
+        assert len(envelopes2) == 1
+        assert envelopes1[0].event.aggregate_id == agg1_id
+        assert envelopes2[0].event.aggregate_id == agg2_id

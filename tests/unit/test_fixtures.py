@@ -12,8 +12,8 @@ import pytest
 
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
 from eventsource.adapters.memory.dlq import InMemoryDLQRepository
+from eventsource.adapters.memory.store import MemoryEventStore
 from eventsource.events.base import DomainEvent
-from eventsource.stores.in_memory import InMemoryEventStore
 from tests.conftest import MockEventPublisher
 from tests.fixtures import (
     CounterAggregate,
@@ -390,15 +390,15 @@ class TestFixtureIntegration:
         # Versions should be sequential
         assert [e.aggregate_version for e in event_stream] == [1, 2, 3]
 
-    def test_in_memory_store_fixture(self, in_memory_store: InMemoryEventStore) -> None:
+    def test_in_memory_store_fixture(self, in_memory_store: MemoryEventStore) -> None:
         """in_memory_store fixture provides a fresh store."""
-        assert isinstance(in_memory_store, InMemoryEventStore)
+        assert isinstance(in_memory_store, MemoryEventStore)
 
     @pytest.mark.asyncio
-    async def test_populated_store_fixture(self, populated_store: InMemoryEventStore) -> None:
+    async def test_populated_store_fixture(self, populated_store: MemoryEventStore) -> None:
         """populated_store fixture has events pre-loaded."""
-        count = await populated_store.get_event_count()
-        assert count == 3
+        envelopes = [e async for e in populated_store.read_all()]
+        assert len(envelopes) == 3
 
     def test_checkpoint_repo_fixture(self, checkpoint_repo: InMemoryCheckpointRepository) -> None:
         """checkpoint_repo fixture provides a fresh repository."""

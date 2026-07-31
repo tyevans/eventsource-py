@@ -45,9 +45,11 @@ from collections.abc import Callable, Sequence
 from typing import Any, TypeVar
 from uuid import UUID, uuid4
 
+from eventsource.domain import StreamId
 from eventsource.domain.aggregate import AggregateRoot
 from eventsource.events.base import DomainEvent
 from eventsource.exceptions import CommandRejectedError
+from eventsource.ports import ExpectedVersion
 from eventsource.testing.harness import InMemoryTestHarness
 
 # Type variables for generic command/event handling
@@ -110,11 +112,10 @@ async def given_events(
 
     # Append each aggregate's events to the store
     for (agg_id, agg_type), agg_events in by_aggregate.items():
-        await harness.event_store.append_events(
-            aggregate_id=agg_id,
-            aggregate_type=agg_type,
-            events=agg_events,
-            expected_version=0,
+        await harness.event_store.append(
+            StreamId(aggregate_id=agg_id, category=agg_type),
+            agg_events,
+            ExpectedVersion.no_stream(),
         )
 
 

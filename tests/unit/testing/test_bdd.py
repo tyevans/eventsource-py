@@ -12,6 +12,7 @@ from uuid import uuid4
 import pytest
 from pydantic import BaseModel
 
+from eventsource.domain import StreamId
 from eventsource.domain.aggregate import AggregateRoot
 from eventsource.events.base import DomainEvent
 from eventsource.testing import InMemoryTestHarness
@@ -163,10 +164,15 @@ class TestGivenEvents:
 
         await given_events(harness, events)
 
-        stream = await harness.event_store.get_events(agg_id, "Sample")
-        assert len(stream.events) == 1
-        assert isinstance(stream.events[0], SampleCreated)
-        assert stream.events[0].name == "test-sample"
+        envelopes = [
+            e
+            async for e in harness.event_store.read_stream(
+                StreamId(aggregate_id=agg_id, category="Sample")
+            )
+        ]
+        assert len(envelopes) == 1
+        assert isinstance(envelopes[0].event, SampleCreated)
+        assert envelopes[0].event.name == "test-sample"
 
     async def test_loads_multiple_events_for_same_aggregate(
         self, harness: InMemoryTestHarness
@@ -195,11 +201,16 @@ class TestGivenEvents:
 
         await given_events(harness, events)
 
-        stream = await harness.event_store.get_events(agg_id, "Sample")
-        assert len(stream.events) == 3
-        assert isinstance(stream.events[0], SampleCreated)
-        assert isinstance(stream.events[1], SampleUpdated)
-        assert isinstance(stream.events[2], SampleDeleted)
+        envelopes = [
+            e
+            async for e in harness.event_store.read_stream(
+                StreamId(aggregate_id=agg_id, category="Sample")
+            )
+        ]
+        assert len(envelopes) == 3
+        assert isinstance(envelopes[0].event, SampleCreated)
+        assert isinstance(envelopes[1].event, SampleUpdated)
+        assert isinstance(envelopes[2].event, SampleDeleted)
 
     async def test_loads_events_for_multiple_aggregates(self, harness: InMemoryTestHarness) -> None:
         """Test loading events for multiple different aggregates."""
@@ -222,13 +233,23 @@ class TestGivenEvents:
 
         await given_events(harness, events)
 
-        stream1 = await harness.event_store.get_events(agg_id_1, "Sample")
-        stream2 = await harness.event_store.get_events(agg_id_2, "Sample")
+        envelopes1 = [
+            e
+            async for e in harness.event_store.read_stream(
+                StreamId(aggregate_id=agg_id_1, category="Sample")
+            )
+        ]
+        envelopes2 = [
+            e
+            async for e in harness.event_store.read_stream(
+                StreamId(aggregate_id=agg_id_2, category="Sample")
+            )
+        ]
 
-        assert len(stream1.events) == 1
-        assert stream1.events[0].name == "sample-1"
-        assert len(stream2.events) == 1
-        assert stream2.events[0].name == "sample-2"
+        assert len(envelopes1) == 1
+        assert envelopes1[0].event.name == "sample-1"
+        assert len(envelopes2) == 1
+        assert envelopes2[0].event.name == "sample-2"
 
     async def test_empty_events_is_noop(self, harness: InMemoryTestHarness) -> None:
         """Test that empty events list doesn't cause errors."""
@@ -258,11 +279,21 @@ class TestGivenEvents:
 
         await given_events(harness, events)
 
-        stream1 = await harness.event_store.get_events(agg_id_1, "Sample")
-        stream2 = await harness.event_store.get_events(agg_id_2, "OtherAggregate")
+        envelopes1 = [
+            e
+            async for e in harness.event_store.read_stream(
+                StreamId(aggregate_id=agg_id_1, category="Sample")
+            )
+        ]
+        envelopes2 = [
+            e
+            async for e in harness.event_store.read_stream(
+                StreamId(aggregate_id=agg_id_2, category="OtherAggregate")
+            )
+        ]
 
-        assert len(stream1.events) == 1
-        assert len(stream2.events) == 1
+        assert len(envelopes1) == 1
+        assert len(envelopes2) == 1
 
 
 # =============================================================================
@@ -745,8 +776,14 @@ class TestBDDIntegration:
 
         # Create an aggregate and load from history
         aggregate = SampleAggregate(agg_id)
-        stream = await harness.event_store.get_events(agg_id, "Sample")
-        aggregate.load_from_history(stream.events)
+        envelopes = [
+            e
+            async for e in harness.event_store.read_stream(
+                StreamId(aggregate_id=agg_id, category="Sample")
+            )
+        ]
+        events = [e.event for e in envelopes]
+        aggregate.load_from_history(events)
 
         # When: Execute a command
         new_events = when_command(aggregate, lambda a: a.update(99))
