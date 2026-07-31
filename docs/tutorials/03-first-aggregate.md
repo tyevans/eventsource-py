@@ -659,10 +659,11 @@ The class is now concrete. `initial_state`, `decide`, and `evolve` are all decla
 
 ```
 TypeError: Can't instantiate abstract class OrderAggregate without an
-implementation for abstract methods 'decide', 'evolve'
+implementation for abstract method 'decide'
 ```
 
-Three implementations, not two -- `DeciderAggregate` asks for one more abstract method
+At this point `initial_state` and `evolve` are already complete from the previous steps,
+so only `decide` is outstanding. `DeciderAggregate` asks for one more abstract method
 than the base `AggregateRoot` (which only requires `_apply()` and
 `_get_initial_state()`), because the decide/evolve split is itself the contract.
 With all three written, `OrderAggregate(uuid4())` builds cleanly.
