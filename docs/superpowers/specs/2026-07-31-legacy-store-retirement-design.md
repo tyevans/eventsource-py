@@ -579,9 +579,11 @@ until Slice (d). No consumer in `src/` imports it (verified — only
 
 Four slices. Each is independently green (full `make check`), reviewable, and
 carries its own migration table. **Ordering: (a) and (b) may run in parallel
-worktrees (disjoint files: (a) touches application/sync/testing/bench, (b)
-touches subscriptions + ports/checkpoints + checkpoint adapters). (c) is
-strictly after (b) (it consumes the Position-typed `SubscriptionPositions`
+worktrees (near-disjoint files: (a) touches application/sync/testing/bench,
+(b) touches subscriptions + ports/checkpoints + checkpoint adapters; the one
+shared file is `tests/conftest.py`, whose root store fixture both would
+retarget identically — a trivial merge, but the second lander rebases). (c)
+is strictly after (b) (it consumes the Position-typed `SubscriptionPositions`
 and the checkpoint token column). (d) is strictly after (a), (b), (c).**
 
 ### Slice (a) — leaf consumers
