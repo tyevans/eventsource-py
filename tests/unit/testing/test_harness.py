@@ -18,6 +18,7 @@ from eventsource.bus.memory import InMemoryEventBus
 from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.ports import ExpectedVersion
+from eventsource.ports.positions import Position
 from eventsource.testing import InMemoryTestHarness
 
 
@@ -329,7 +330,7 @@ class TestHarnessReset:
         event_id = uuid4()
         await harness.checkpoint_repo.save_position(
             subscription_id="test-projection",
-            position=42,
+            position=Position(store_id=harness.event_store.store_id, key=(42,)),
             event_id=event_id,
             event_type="TestEvent",
         )
@@ -525,15 +526,16 @@ class TestHarnessIntegration:
         """Checkpoint repository tracks positions correctly."""
         event_id = uuid4()
 
+        expected = Position(store_id=harness.event_store.store_id, key=(100,))
         await harness.checkpoint_repo.save_position(
             subscription_id="my-projection",
-            position=100,
+            position=expected,
             event_id=event_id,
             event_type="SampleEvent",
         )
 
         position = await harness.checkpoint_repo.get_position("my-projection")
-        assert position == 100
+        assert position == expected
 
     @pytest.mark.asyncio
     async def test_dlq_repo_stores_failures(self, harness: InMemoryTestHarness) -> None:
