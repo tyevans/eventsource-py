@@ -137,10 +137,10 @@ is clear.
 
 ### The event store answers one question well
 
-An event store is an append-only log. Look at what `EventStore` actually offers and the
-bias is obvious -- its primary read is `get_events(aggregate_id, ...)`, which returns the
-ordered stream for *one* aggregate, plus `read_stream()` and `read_all()` for walking the
-log itself.
+An event store is an append-only log. Look at what an event store actually offers and the
+bias is obvious -- its primary read is `read_stream(stream, ...)`, which returns the
+ordered stream for *one* aggregate, plus `read_all()` for walking the whole log and
+`read_category()` for walking every stream of one type.
 
 That is exactly what an aggregate needs. To decide whether an order may ship, you load
 that order's events, fold them into current state, and check an invariant. One stream,
@@ -167,7 +167,7 @@ So you keep two models of the same facts:
 | Source of truth | yes | no -- derived |
 | Optimized for | correct decisions, one aggregate at a time | fast reads, across many aggregates |
 | Rebuildable | no, it *is* the data | yes, from the events |
-| Written by | aggregates, via `append_events()` | projections |
+| Written by | aggregates, via `append()` | projections |
 
 A **projection** is the thing in the middle: it consumes `DomainEvent` instances and
 writes rows. A **read model** is what it writes -- an ordinary table you can `SELECT`
@@ -964,8 +964,8 @@ events = [
 ]
 ```
 
-In production you would not hand-build these -- they come out of the `EventStore` as
-`StoredEvent` wrappers carrying `stream_position` and `global_position` alongside the
+In production you would not hand-build these -- they come out of the event store as
+`EventEnvelope` wrappers carrying `stream_version` and `position` alongside the
 event, and the subscription machinery in Step 4 feeds them to the projection in global
 order. Constructing them directly keeps the next few steps runnable in a single file, and
 the handler code is identical either way: a handler only ever sees the `DomainEvent`.
@@ -1395,7 +1395,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from eventsource.bus.memory import InMemoryEventBus
 from eventsource import InMemoryCheckpointRepository
-from eventsource.stores.in_memory import InMemoryEventStore
+from eventsource.adapters.memory import InMemoryEventStore
+from eventsource.domain import StreamId
+from eventsource.ports import ExpectedVersion
 from eventsource.subscriptions import SubscriptionConfig, SubscriptionManager
 
 
@@ -1410,11 +1412,11 @@ async def main() -> None:
     checkpoints = InMemoryCheckpointRepository()
 
     # A backlog for the projection to catch up on.
-    await store.append_events(
-        aggregate_id=order_id,
-        aggregate_type="Order",
-        events=events,          # the OrderCreated + OrderShipped pair from Step 1
-        expected_version=0,
+    order_stream = StreamId(aggregate_id=order_id, category="Order")
+    await store.append(
+        order_stream,
+        events,          # the OrderCreated + OrderShipped pair from Step 1
+        ExpectedVersion.no_stream(),
     )
 
     projection = OrderSummaryProjection(
@@ -1555,7 +1557,7 @@ list -- `EventBus.publish` takes a batch, not a single event:
         aggregate_version=3,
         reason="customer request",
     )
-    await store.append_events(order_id, "Order", [cancelled], expected_version=2)
+    await store.append(order_stream, [cancelled], ExpectedVersion.exact(2))
     await bus.publish([cancelled])
     await asyncio.sleep(0.3)
 ```

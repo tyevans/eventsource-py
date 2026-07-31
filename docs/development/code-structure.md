@@ -46,7 +46,6 @@ thing, you can find its directory.
 | `adapters/` | Interface adapters: snapshot, checkpoint, DLQ, and event store implementations, one subpackage per technology (`memory/`, `postgresql/`, `sqlite/`) plus the dialect-parameterized SQL adapters (`sql/`, with private helpers in `_sql/`) that serve both PostgreSQL and SQLite for checkpoints, DLQ, and `DatabaseProjection` |
 | `events/` | `DomainEvent` (`base.py`) and the `EventRegistry` (`registry.py`) |
 | `handlers/` | The `@handles` decorator, its registry, and the sync/async handler adapter |
-| `stores/` | `EventStore` interface plus PostgreSQL / SQLite / in-memory implementations |
 | `bus/` | `EventBus` interface plus in-memory, Redis, RabbitMQ, and Kafka backends |
 | `readmodels/` | Read-model projections, query surface, schema, and per-backend repositories |
 | `subscriptions/` | Subscription lifecycle: manager, `runners/`, retry, health, flow control, pause/resume, shutdown |
@@ -61,13 +60,15 @@ thing, you can find its directory.
 
 Three properties of this map are worth naming, because they are choices rather than accidents.
 
-**Backends live next to the interface they implement.** `stores/postgresql.py`,
-`stores/sqlite.py`, and `stores/in_memory.py` all sit beside `stores/interface.py`; the same shape
-holds in `bus/` and `readmodels/`. Snapshot backends follow the ring-adapter version of the same
-idea: `adapters/memory/snapshots.py`, `adapters/postgresql/snapshots.py`, and
+**Backends live next to the interface they implement, or next to the ports they satisfy.**
+`bus/postgresql.py`-style colocation (interface plus each backend in the same package) still holds
+in `bus/` and `readmodels/`. Event stores follow the ring-adapter version of the same idea:
+`adapters/memory/store.py`, `adapters/postgresql/store.py`, and `adapters/sqlite/store.py` each
+implement the store ports declared in `ports/store.py`, one technology per subpackage rather than
+one file per technology beside a shared interface file. Snapshot backends follow the identical
+pattern: `adapters/memory/snapshots.py`, `adapters/postgresql/snapshots.py`, and
 `adapters/sqlite/snapshots.py` each implement the `SnapshotStore` port declared in
-`ports/snapshots.py`, one technology per subpackage rather than one file per technology beside a
-shared interface file. Reading one directory therefore tells you both what the contract is and how
+`ports/snapshots.py`. Reading one directory therefore tells you both what the contract is and how
 many ways it has been satisfied — and it makes an interface change impossible to ship without
 seeing every implementation it breaks. An `infrastructure/` package once held these; it was deleted
 precisely because it hid that coupling behind a directory boundary.
@@ -257,7 +258,7 @@ no I/O at all). Everything else on the class is either configuration read-back
 (`aggregate_type`, `event_store`, `event_publisher`) or a pass-through to the `SnapshotScheduler`.
 
 The constructor takes the whole dependency list, which is the point of the composition style: an
-`EventStore`, an `aggregate_factory` (the aggregate class itself), an optional `aggregate_type`
+`AggregateStore`, an `aggregate_factory` (the aggregate class itself), an optional `aggregate_type`
 string, an optional `EventPublisher`, the three snapshot mode/threshold knobs plus the
 `snapshot_policy=`/`snapshot_scheduler=` escape hatches, and the two tracing arguments.
 When `aggregate_type` is omitted, `_infer_aggregate_type` reads the `aggregate_type` class

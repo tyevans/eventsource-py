@@ -1,17 +1,18 @@
 # Sync API Reference
 
 Reference documentation for `eventsource.sync`, which contains a single public
-name: `SyncEventStoreAdapter`. The adapter wraps any async
-`EventStore` (`eventsource.stores.interface`) and exposes blocking `*_sync`
-counterparts of its methods, so event-sourced code can be called from
-synchronous runtimes such as Celery tasks, Django management commands, and RQ
-workers.
+name: `SyncEventStoreAdapter`. The adapter wraps any async, port-shaped event
+store (typed as `FullEventStore` from `eventsource.ports` — the union of the
+`EventAppender`, `StreamReader`, `EventLookup`, `GlobalEventFeed`, and
+`CategoryQuery` ports) and exposes blocking counterparts of its methods, so
+event-sourced code can be called from synchronous runtimes such as Celery
+tasks, Django management commands, and RQ workers.
 
 Public names covered here:
 
 | Name | Kind | Purpose |
 | --- | --- | --- |
-| `SyncEventStoreAdapter` | class | Blocking facade over an async `EventStore` |
+| `SyncEventStoreAdapter` | class | Blocking facade over an async `FullEventStore` |
 
 ```python
 from eventsource.sync import SyncEventStoreAdapter
@@ -24,17 +25,23 @@ The adapter delegates every call to the wrapped store — it adds no storage,
 caching, or retry behaviour of its own. What it adds is event-loop management
 (`asyncio.run()` when no loop is running, a shared thread pool when one is) and
 a default timeout applied to each operation, overridable per call. Return types,
-argument semantics, and exceptions are those of the underlying `EventStore`;
+argument semantics, and exceptions are those of the underlying store's ports;
 this page documents only how the sync wrapper changes their shape.
 
 ## Overview
 
-`SyncEventStoreAdapter` holds a reference to an async `EventStore` and, for each
-call, drives that store's coroutine to completion on an event loop it manages
-itself. Every method mirrors an `EventStore` method with a `_sync` suffix, the
-same positional arguments, and one extra keyword-only `timeout` parameter.
-There is no sync bus, sync repository, or sync projection runner — the adapter
-covers the event store surface only.
+`SyncEventStoreAdapter` holds a reference to an async, port-shaped event store
+(`FullEventStore`) and, for each call, drives that store's coroutine to
+completion on an event loop it manages itself. Every method mirrors one of the
+store's port methods **under the same name** (there is no `_sync` suffix — the
+adapter's methods are named `append`, `read_stream`, `get_stream_version`,
+`event_exists`, `read_all`, `read_category`, and `current_position`), taking
+the same positional arguments plus one extra keyword-only `timeout` parameter.
+Methods that return an async iterator on the underlying port (`read_stream`,
+`read_all`, `read_category`) return a plain `list[EventEnvelope]` here — the
+adapter collects the iterator before returning. There is no sync bus, sync
+repository, or sync projection runner — the adapter covers the event store
+surface only.
 
 ### When to use the sync adapter
 
@@ -58,7 +65,8 @@ running the loop — for example, sync code executed via `run_in_executor`. If
 you call a `*_sync` method directly from a coroutine on the loop thread, the
 call blocks that thread while the work it is waiting on is queued on the same
 thread, and the call cannot progress until the timeout expires and
-`TimeoutError` is raised. In async code, await the `EventStore` directly.
+`TimeoutError` is raised. In async code, await the wrapped store's async
+methods directly.
 
 Two further constraints follow from how the no-loop path works. Each call in
 that path runs `asyncio.run()`, which creates and closes a fresh event loop, so
@@ -86,23 +94,24 @@ the documented surface.
 
 The module has no optional dependencies of its own. It imports only standard
 library modules (`asyncio`, `logging`, `threading`, `concurrent.futures`,
-`collections.abc`, `datetime`, `typing`, `uuid`) plus
-[`DomainEvent`](events.md) and the `AppendResult`, `EventStore`, `EventStream`,
-`ReadOptions`, and `StoredEvent` types from
-`eventsource.stores.interface`. Importing `eventsource.sync` is
-therefore always safe; whatever extras the *wrapped* store needs (for example
-`asyncpg` for `PostgreSQLEventStore`) still apply at construction time.
+`collections.abc`, `typing`, `uuid`) plus [`DomainEvent`](events.md),
+[`StreamId`](domain.md), and the `AppendResult`, `CategoryReadOptions`,
+`EventEnvelope`, `ExpectedVersion`, `FeedReadOptions`, `FullEventStore`,
+`Position`, `StreamReadOptions`, and `collect` names from
+`eventsource.ports`. Importing `eventsource.sync` is therefore always safe;
+whatever extras the *wrapped* store needs (for example `asyncpg` for
+`PostgreSQLEventStore`) still apply at construction time.
 
 ## SyncEventStoreAdapter
 
 ```python
 class SyncEventStoreAdapter:
-    def __init__(self, event_store: EventStore, timeout: float = 30.0) -> None: ...
+    def __init__(self, store: FullEventStore, timeout: float = 30.0) -> None: ...
 ```
 
-A blocking facade over one async `EventStore`. The instance is stateless apart
-from the wrapped store and the default timeout; all event-loop machinery is
-created per call (or, for the shared executor, at class level).
+A blocking facade over one async, port-shaped event store. The instance is
+stateless apart from the wrapped store and the default timeout; all event-loop
+machinery is created per call (or, for the shared executor, at class level).
 
 `__repr__` renders as `SyncEventStoreAdapter(<StoreClassName>, timeout=<float>)`
 — for example `SyncEventStoreAdapter(InMemoryEventStore, timeout=30.0)`.
@@ -110,71 +119,54 @@ created per call (or, for the shared executor, at class level).
 ### Constructor
 
 ```python
-SyncEventStoreAdapter(event_store: EventStore, timeout: float = 30.0)
+SyncEventStoreAdapter(store: FullEventStore, timeout: float = 30.0)
 ```
 
-#### Parameters (`event_store`, `timeout=30.0`)
+#### Parameters (`store`, `timeout=30.0`)
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| `event_store` | `EventStore` | required | The async store to wrap. Retained as-is and exposed via `wrapped_store`. |
+| `store` | `FullEventStore` | required | The async, port-shaped store to wrap. Retained as-is and exposed via `wrapped_store`. |
 | `timeout` | `float` | `30.0` | Default timeout in seconds applied to every operation, overridable per call. |
 
 Both parameters are positional-or-keyword. The constructor does no I/O and does
-not touch an event loop: it validates the type, stores the two values, and
-returns. Constructing an adapter never connects to the backing store — any
-connection setup remains the wrapped store's responsibility and happens on the
-first call that reaches it.
+not touch an event loop: it stores the two values and returns — nothing else.
+Constructing an adapter never connects to the backing store — any connection
+setup remains the wrapped store's responsibility and happens on the first call
+that reaches it.
 
 `timeout` is not validated. Passing `0` or a negative value produces an
 immediately-expiring deadline rather than an error, and `float("inf")` disables
 the timeout entirely.
 
 ```python
-from eventsource.stores import InMemoryEventStore
+from eventsource.adapters.memory import InMemoryEventStore
 from eventsource.sync import SyncEventStoreAdapter
 
 sync_store = SyncEventStoreAdapter(InMemoryEventStore(), timeout=5.0)
 ```
 
-#### Raises: `TypeError` for non-`EventStore` arguments
+#### No type validation of `store`
 
-Before storing anything, the constructor runs `isinstance(event_store, EventStore)`
-and raises the builtin `TypeError` if the check fails:
+The constructor does not check its `store` argument at all — there is no
+`isinstance` check, no `TypeError`, and (since `FullEventStore` is a plain type
+alias / Protocol union, not an ABC to register against) nothing to register a
+virtual subclass with. `SyncEventStoreAdapter("not a store")` succeeds at
+construction time; the resulting adapter will only fail once a method is
+called and the wrapped object turns out not to implement the port methods
+being driven (an `AttributeError` from `self._store.append(...)` and similar,
+surfaced from inside `_run_sync`). `FullEventStore` is a typing-only contract
+— mypy will flag a mismatched argument, but nothing enforces it at runtime.
 
-```python
-SyncEventStoreAdapter("not a store")
-# TypeError: event_store must be an EventStore instance, got str
-```
-
-The message is
-`f"event_store must be an EventStore instance, got {type(event_store).__name__}"`,
-so the trailing word is the offending object's class name (`str`, `dict`,
-`Mock`, …). This is the constructor's only validation — `timeout` is accepted
-unchecked.
-
-`EventStore` (`eventsource.stores.interface.EventStore`) is an ABC, not a
-`@runtime_checkable` Protocol, so the check is nominal rather than structural.
-An object that implements every `EventStore` method but does not inherit from
-it is still rejected; so is an unwrapped `unittest.mock.Mock`. Two ways to
-satisfy the check:
-
-- subclass `EventStore` (the normal route for custom backends and test doubles), or
-- register an existing class as a virtual subclass with `EventStore.register(MyStore)`,
-  which makes `isinstance` succeed without inheritance.
-
-For tests, prefer `InMemoryEventStore` — it is a real `EventStore` subclass and
-needs no external services:
+For tests, prefer `InMemoryEventStore` — it implements every port and needs no
+external services:
 
 ```python
-from eventsource.stores import InMemoryEventStore
+from eventsource.adapters.memory import InMemoryEventStore
 from eventsource.sync import SyncEventStoreAdapter
 
 sync_store = SyncEventStoreAdapter(InMemoryEventStore())
 ```
-
-Because the check happens at construction, this failure surfaces at wiring time
-(module import, Celery app setup) rather than on the first store call.
 
 ### Event loop handling
 
@@ -232,10 +224,10 @@ does not mutate the `timeout` property.
 
 ```python
 # Adapter default of 30s for most work…
-sync_store.get_stream_version_sync(order_id, "Order")
+sync_store.get_stream_version(stream_id)
 
 # …but allow a long replay to run for five minutes.
-events = sync_store.read_all_sync(timeout=300.0)
+events = sync_store.read_all(timeout=300.0)
 ```
 
 The deadline covers the whole operation, including connection acquisition inside
@@ -247,8 +239,8 @@ paths raise the builtin `TimeoutError`, with path-specific messages:
 
 The `asyncio.TimeoutError` raised by `wait_for` is an alias of the builtin
 `TimeoutError` on Python 3.11+, so `except TimeoutError:` catches both variants.
-A timeout says nothing about whether a write landed: for
-`append_events_sync`, re-read the stream version before retrying.
+A timeout says nothing about whether a write landed: for `append`, re-read the
+stream version before retrying.
 
 #### Thread safety
 

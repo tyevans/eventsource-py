@@ -673,9 +673,12 @@ engine's `pool_timeout`, not by the `timeout` argument to `acquire()`.
 
 ##### Sharing with the rest of the application
 
-The factory may be the same one used by `PostgreSQLEventStore` and the other
-PostgreSQL-backed components — the manager holds no exclusive claim on it and
-adds no state to the sessions it borrows. What it must *not* be given is a
+The factory may be the same one used by other session-based PostgreSQL-backed
+components — the manager holds no exclusive claim on it and adds no state to
+the sessions it borrows. (Note that `PostgreSQLEventStore` itself is
+constructed from an `AsyncEngine`, not a session factory, so it is not a
+sharing candidate here — but `PostgreSQLSnapshotStore` and other
+session-factory-based components are.) What it must *not* be given is a
 single already-open `AsyncSession` wrapped in a lambda: every acquisition needs
 its own session, because two locks sharing one PostgreSQL session would also
 share lock ownership, and closing one would drop the other.

@@ -22,8 +22,8 @@ holds the aggregate's state, and subclasses must implement the abstract methods
 hand-written `_apply()` dispatch with handlers registered via the `@handles`
 decorator from `eventsource.handlers`. `AggregateRepository` is not generic over
 state — it is parameterized by the aggregate class itself and mediates between
-an aggregate and an `EventStore`, an optional `EventPublisher`, and an optional
-`SnapshotStore`.
+an aggregate and an `AggregateStore` (the `EventAppender` + `StreamReader`
+ports), an optional `EventPublisher`, and an optional `SnapshotStore`.
 
 Every method, property, and class attribute documented below is described as it
 behaves in the current source. Sections marked with a leading underscore
@@ -112,10 +112,11 @@ snapshot properties and methods, documented under
 
 Symbols that support these classes but live elsewhere — the `@handles`
 decorator (`eventsource.handlers`), `DomainEvent` (`eventsource.events`), the
-`EventStore` / `EventPublisher` / `SnapshotStore` contracts
-(`eventsource.protocols`, `eventsource.ports.snapshots`), and the exceptions
-raised by this package (`eventsource.exceptions`) — are all re-exported from
-the top level and are referenced by their public names throughout this page.
+`AggregateStore` / `EventPublisher` / `SnapshotStore` contracts
+(`eventsource.ports.store`, `eventsource.ports.bus`, `eventsource.ports.snapshots`),
+and the exceptions raised by this package (`eventsource.exceptions`) — are all
+re-exported from the top level and are referenced by their public names
+throughout this page.
 
 ## `AggregateRoot[TState]`
 

@@ -18,8 +18,10 @@ The library is built around three commitments that shape almost every API in it:
   model, so validation, JSON serialization, and static typing come from the same
   declaration. Event classes are registered in an `EventRegistry`, which is what
   lets stored events be rehydrated into the right Python type later.
-- **Backend-agnostic contracts.** `EventStore`, `EventBus`, `SnapshotStore`, and
-  the checkpoint/DLQ/outbox repositories are interfaces first. In-memory,
+- **Backend-agnostic contracts.** Event store access is a set of narrow ports
+  (`FullEventStore`, `AggregateStore`, and the five capability protocols they
+  compose), and `EventBus`, `SnapshotStore`, and the checkpoint/DLQ/outbox
+  repositories are interfaces first too. In-memory,
   PostgreSQL, SQLite, Redis, RabbitMQ, and Kafka implementations sit behind them,
   so the code you write against the interface in a test is the code that runs in
   production against a real database or broker.
@@ -58,23 +60,25 @@ state is the thing that can be rebuilt.
 ### What you get
 
 **An audit trail that cannot drift.** Every change is a `DomainEvent` appended
-to the store, and the store's write path is append-only: `EventStore` exposes
-`append_events`, `get_events`, and `read_stream`, but nothing that edits or
-deletes an event in place. Each persisted event is wrapped in a `StoredEvent`
-carrying its `stream_position` (position within one aggregate's stream) and
-`global_position` (position across the whole store), plus `stored_at`. The audit
-log and the write model are the same bytes, so there is no reconciliation job
-and no possibility of the two disagreeing.
+to the store, and the store's write path is append-only: the `EventAppender`
+port exposes a single `append(stream, events, expected)` method, and nothing in
+the store ports edits or deletes an event in place. Each persisted event comes
+back wrapped in an `EventEnvelope`, carrying its `stream_version` (position
+within one aggregate's stream) and `position` (an opaque, store-scoped
+`Position` for the global feed), plus `stored_at`. The audit log and the write
+model are the same bytes, so there is no reconciliation job and no possibility
+of the two disagreeing.
 
 **Time travel.** Because state is a fold over events, you can fold over a prefix
-instead. `get_events` accepts `from_version`, `from_timestamp`, and
-`to_timestamp`, so an aggregate can be rehydrated as it stood at a chosen version
-or moment. `read_stream` and `read_all` take a `ReadOptions` — starting position,
-direction (`ReadDirection.FORWARD` or `BACKWARD`), limit, timestamp bounds, and
-an optional `tenant_id` filter — for walking a single stream or the global one.
-Point-in-time reconstruction is the ordinary read path with a bound on it, not a
-special feature. Snapshots (`SnapshotStore`) are a performance optimization
-layered on top of this, never a replacement for the events.
+instead. `read_stream` takes a `StreamReadOptions` — direction
+(`ReadDirection.FORWARD` or `BACKWARD`) and a limit — so an aggregate can be
+rehydrated as it stood at a chosen version. `read_all` takes a `FeedReadOptions`
+(tenant filter, limit) starting from an optional `Position`, and
+`read_category` takes a `CategoryReadOptions` (tenant filter, timestamp bound,
+limit) for walking a whole aggregate-type category. Point-in-time
+reconstruction is the ordinary read path with a bound on it, not a special
+feature. Snapshots (`SnapshotStore`) are a performance optimization layered on
+top of this, never a replacement for the events.
 
 **Multiple read models from one write model.** The events are neutral about how
 they will be queried. A `Projection` consumes the stream and writes whatever
@@ -110,8 +114,8 @@ complexity. The cost is real and mostly paid up front:
   event types — is design work the library does not do for you. There is no
   `ALTER TABLE` for history.
 - **Deletion is hard on purpose.** An append-only log and a "delete all data
-  about this person" requirement are in genuine tension. `EventStore` has no
-  delete method, and resolving the tension takes deliberate design
+  about this person" requirement are in genuine tension. None of the store
+  ports has a delete method, and resolving the tension takes deliberate design
   (crypto-shredding, keeping personal data out of the events and referencing it
   by key) rather than a `DELETE` statement.
 - **Query cost.** Ad-hoc queries over the event log are slow and awkward. Every
@@ -148,33 +152,34 @@ event loop, and so every store, bus, and repository method is a coroutine. There
 is no parallel blocking hierarchy to keep in sync, and no hidden thread pool
 inside the interfaces.
 
-`EventStore` (`eventsource.stores.interface`) is an ABC rather than a Protocol,
-because it carries shared behavior as well as a signature. Its *abstract*
-surface — what an implementation must supply — is deliberately small:
+The event store is not one interface but five narrow `Protocol`s
+(`eventsource.ports.store`), each describing a single capability an adapter may
+offer:
 
-- `append_events(aggregate_id, aggregate_type, events, expected_version)` — the
-  only write path, returning an `AppendResult`.
-- `get_events(aggregate_id, aggregate_type=None, from_version=0,
-  from_timestamp=None, to_timestamp=None)` — returns an `EventStream` (aggregate
-  id, type, events, version).
-- `get_events_by_type(aggregate_type, tenant_id=None, from_timestamp=None)`.
-- `event_exists(event_id)` — for idempotency checks.
-- `get_global_position()` — the highest global position in the store, used by
-  the subscription manager to know when catch-up is finished.
+- **`EventAppender`** — `append(stream, events, expected)`, the only write
+  path, returning an `AppendResult`. `expected` is an `ExpectedVersion`, built
+  via its classmethod constructors (`ExpectedVersion.any_()`,
+  `.no_stream()`, `.stream_exists()`, `.exact(version)`) rather than a bare int.
+- **`StreamReader`** — `read_stream(stream, options=None)`, an async iterator
+  of `EventEnvelope`, plus `get_stream_version(stream)`.
+- **`EventLookup`** — `event_exists(event_id)`, for idempotency checks.
+- **`GlobalEventFeed`** — `read_all(from_position=None, options=None)` for the
+  store's whole ordered feed, plus `current_position()`, the highest `Position`
+  in the store, used by the subscription manager to know when catch-up is
+  finished.
+- **`CategoryQuery`** — `read_category(category, options=None)`, for reading
+  every stream of one aggregate type as a single ordered feed.
 
-Around those, the base class ships working defaults. `get_stream_version` and
-`read_stream` are implemented in terms of `get_events` — `read_stream` parses a
-`"{aggregate_id}:{aggregate_type}"` stream id, applies a `ReadOptions`
-(direction, `from_position`, `limit`, timestamp bounds, `tenant_id`), and yields
-`StoredEvent` wrappers — so a minimal backend gets the positional read surface
-for free and can override it with something more efficient. `read_all` is the
-exception: it is declared but raises `NotImplementedError` by default, because
-global ordering across streams is a real constraint that not every backend can
-honor.
+`FullEventStore` is the union of all five, and `AggregateStore` is the smaller
+union of just `EventAppender` and `StreamReader` — the only two
+`AggregateRepository` needs. A backend implements exactly the capabilities it
+can support; nothing forces a minimal adapter to supply a global feed or
+category reads it cannot honor efficiently.
 
-There is no update method and no delete method. Everything a caller can do to a
-store either appends or reads, and that is a property of the interface rather
-than a convention implementations are trusted to follow.
+There is no update method and no delete method anywhere in these ports.
+Everything a caller can do to a store either appends or reads, and that is a
+property of the interface rather than a convention implementations are trusted
+to follow.
 
 `EventBus` (`eventsource.bus.interface`) is the live-delivery half, and it is
 where async-first meets a practical concession. `publish(events,
@@ -221,13 +226,14 @@ projection's operational machinery behaves the same in a unit test as it does in
 production.
 
 Synchronous callers are served by exactly one explicit escape hatch:
-`SyncEventStoreAdapter` (`eventsource.sync`) wraps an async store and exposes
-`append_events_sync`, `get_events_sync`, `get_events_by_type_sync`,
-`get_stream_version_sync`, `event_exists_sync`, `read_all_sync`, and
-`get_global_position_sync`, running the coroutines on a dedicated thread pool
-with a timeout. The `_sync` suffix is intentional — the blocking path is visible
-at every call site rather than hidden behind an interface that looks
-asynchronous, and it is a bridge for legacy code, not a supported second API.
+`SyncEventStoreAdapter` (`eventsource.sync`) wraps a `FullEventStore` and
+exposes the same method names as the async ports — `append`, `read_stream`,
+`get_stream_version`, `event_exists`, `read_all`, `read_category`, and
+`current_position` — each accepting an optional `timeout` keyword and running
+the wrapped coroutine on a dedicated thread pool. The blocking nature is
+visible at the call site through the adapter type itself rather than through a
+`_sync` method suffix, and it is a bridge for legacy code, not a supported
+second API.
 
 ### Pydantic v2 domain events and the global EventRegistry
 

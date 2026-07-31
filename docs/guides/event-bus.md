@@ -444,10 +444,10 @@ recorded.
 async def place_order(order: Order) -> None:
     events = order.get_uncommitted_events()
 
-    await store.append_events(
-        aggregate_id=order.aggregate_id,
-        events=events,
-        expected_version=order.version,
+    await store.append(
+        StreamId(category="Order", aggregate_id=order.aggregate_id),
+        events,
+        ExpectedVersion.exact(order.version),
     )
     await bus.publish(events)          # only after the append succeeded
 

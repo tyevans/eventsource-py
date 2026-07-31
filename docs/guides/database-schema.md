@@ -1,7 +1,7 @@
 # Set Up the Database Schema
 
 The PostgreSQL and SQLite backends do not create their own tables. Before
-`PostgresEventStore`, `SQLiteEventStore`, or any of the outbox, checkpoint, DLQ,
+`PostgreSQLEventStore`, `SQLiteEventStore`, or any of the outbox, checkpoint, DLQ,
 and snapshot repositories will work, the tables they read and write have to
 exist. `eventsource.migrations` ships the SQL that creates them, plus helpers for
 loading that SQL from the installed package instead of copying it into your repo.
@@ -79,7 +79,7 @@ construct.
 
 | Table | Created by | Needed by | Backends |
 | --- | --- | --- | --- |
-| `events` | `get_schema("events")` | `PostgresEventStore`, `SQLiteEventStore` | postgresql, sqlite |
+| `events` | `get_schema("events")` | `PostgreSQLEventStore`, `SQLiteEventStore` | postgresql, sqlite |
 | `event_outbox` | `get_schema("outbox")` | `PostgreSQLOutboxRepository`, `SQLiteOutboxRepository`, and the event stores when you append and enqueue in one transaction | postgresql, sqlite |
 | `projection_checkpoints` | `get_schema("checkpoints")` | `PostgreSQLCheckpointRepository`, `SQLiteCheckpointRepository` -- resumable projections and subscriptions | postgresql, sqlite |
 | `dead_letter_queue` | `get_schema("dlq")` | `PostgreSQLDLQRepository`, `SQLiteDLQRepository` | postgresql, sqlite |

@@ -218,7 +218,7 @@ publishes nothing.
 
 ```python
 async with engine.begin() as conn:
-    await store.append_events(...)            # on the same connection
+    await store.append(stream, [event], expected)   # on the same connection
     outbox_id = await PostgreSQLOutboxRepository(conn).add_event(event)
 ```
 
@@ -251,7 +251,7 @@ means a loop:
 ```python
 async with engine.begin() as conn:
     outbox = PostgreSQLOutboxRepository(conn)
-    await store.append_events(aggregate_id, events, expected_version)
+    await store.append(stream, events, expected)
     for event in events:
         await outbox.add_event(event)
 ```

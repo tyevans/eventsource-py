@@ -278,7 +278,7 @@ do not behave identically, and the difference is the main thing to know here.
 - `PERIODIC` — calls the same per-event hook, but only writes when
   `elapsed >= config.checkpoint_interval_seconds`.
 - `EVERY_BATCH` — checkpoints once after the batch loop, using the last
-  `StoredEvent` seen. The guard is
+  `EventEnvelope` seen. The guard is
   `(events_in_batch > 0 or events_filtered > 0) and last_stored_event is not None`,
   so a batch in which *every* event was filtered out still checkpoints — that is
   what keeps a subscription with a narrow filter from re-reading the same
@@ -441,8 +441,10 @@ batch_limit = min(self.config.batch_size, remaining)
 
 so the runner never over-reads past the target position captured at startup,
 and a `batch_limit <= 0` ends the batch immediately (returning `0`, which
-breaks the catch-up loop). The limit is passed through to the store as
-`ReadOptions(direction=FORWARD, from_position=..., limit=batch_limit)`.
+breaks the catch-up loop). The read always proceeds forward; the limit and
+starting position are passed through to the store's `read_all()` as the
+`from_position` argument and `FeedReadOptions(limit=batch_limit)` (`read_all`
+has no direction parameter — the global feed only reads forward).
 
 `batch_size` interacts with checkpointing: under the default
 `CheckpointStrategy.EVERY_BATCH` it is also the checkpoint granularity, so it
@@ -453,7 +455,7 @@ that trade.
 
 Note that `batch_size` does not bound memory the way `max_in_flight` does — a
 batch is read into a list before its events are dispatched, so a very large
-`batch_size` holds a correspondingly large list of `StoredEvent` objects.
+`batch_size` holds a correspondingly large list of `EventEnvelope` objects.
 
 Both the configured value (`config.batch_size`) and the actual per-batch count
 (`events_in_batch`) appear in catch-up log records under the key `batch_size`;

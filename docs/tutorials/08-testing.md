@@ -578,42 +578,63 @@ exhausted.
 
 ## Step 7: Verify a custom backend with the conformance suites
 
-If you write your own `EventStore` or `EventBus`, do not hand-write contract tests --
-subclass the suites. Both are `ABC`s with abstract factory methods and a set of `async
-def test_*` methods; pytest collects those inherited tests when your subclass is named
-`Test*`.
+If you write your own event store adapter or `EventBus`, do not hand-write contract
+tests -- subclass the suites. The event store side is five narrow, per-port suites in
+`eventsource.testing.conformance_ports`, one per capability protocol in
+`eventsource.ports.store`; the bus side is the single `EventBusConformanceSuite` from
+`eventsource.testing.conformance`. Every suite supplies a set of `async def test_*`
+methods; pytest collects those inherited tests when your subclass is named `Test*`.
 
-### Subclassing EventStoreConformanceSuite: create_store and create_test_event
+### The store side: one `store` fixture per port suite
+
+Each port suite is abstract on exactly one thing -- an async `store` pytest fixture
+that yields a fresh adapter instance. There is no `create_store()` /
+`create_test_event()` factory pair to implement: the suites already share a
+registered, minimal event type internally, so you only supply the adapter.
+
+```python
+from collections.abc import AsyncIterator
+
+import pytest
+
+from eventsource.testing.conformance_ports import (
+    AppenderConformance,
+    CategoryQueryConformance,
+    EventLookupConformance,
+    GlobalFeedConformance,
+    StreamReaderConformance,
+)
+
+
+class TestMyStoreAppenderConformance(AppenderConformance):
+    @pytest.fixture
+    async def store(self) -> AsyncIterator["MyEventStore"]:
+        yield MyEventStore()
+
+
+class TestMyStoreStreamReaderConformance(StreamReaderConformance):
+    @pytest.fixture
+    async def store(self) -> AsyncIterator["MyEventStore"]:
+        yield MyEventStore()
+```
+
+Subclass only the suites your adapter's capabilities match --
+`AppenderConformance` and `StreamReaderConformance` are the minimum for any
+append/read backend; add `EventLookupConformance`, `GlobalFeedConformance`,
+and `CategoryQueryConformance` only if your adapter implements `event_exists`,
+`read_all`, and `read_category` respectively. The fixture must yield a
+*fresh, empty* instance -- each test method requests it independently, which
+is what keeps the suite's tests isolated from one another. Put any teardown
+(closing a connection, disposing an engine) after the `yield`.
+
+### The bus side: create_bus() and create_test_event()
+
+The bus suite keeps its original factory-method shape:
 
 ```python
 from uuid import UUID
 
 from eventsource.events.base import DomainEvent
-from eventsource.testing.conformance import EventStoreConformanceSuite
-
-
-class TestMyStoreConformance(EventStoreConformanceSuite):
-    def create_store(self):
-        return MyEventStore()
-
-    def create_test_event(self, aggregate_id: UUID, version: int = 1) -> DomainEvent:
-        return OrderPaid(
-            aggregate_id=aggregate_id,
-            aggregate_version=version,
-            amount=Decimal("1"),
-        )
-```
-
-`create_store()` must return a *fresh, empty* store -- each test method calls it itself,
-which is what keeps the suite's tests independent. `create_test_event` must honour the
-`version` argument; several tests append at versions 1 and 2 and check what comes back.
-The suite reads `aggregate_type` off the event you return, so you never pass it in.
-
-### Subclassing EventBusConformanceSuite
-
-Same shape, with `create_bus()` and a one-argument `create_test_event(aggregate_id)`:
-
-```python
 from eventsource.testing.conformance import EventBusConformanceSuite
 
 
@@ -625,24 +646,21 @@ class TestMyBusConformance(EventBusConformanceSuite):
         return OrderPaid(aggregate_id=aggregate_id, amount=Decimal("1"))
 ```
 
-You can add your own backend-specific tests to the subclass, and you can override an
-inherited test and call `await super().test_...()` inside it if a backend needs extra
-setup around the standard check.
+You can add your own backend-specific tests to any of these subclasses, and you can
+override an inherited test and call `await super().test_...()` inside it if a backend
+needs extra setup around the standard check.
 
 ### What the suites cover (roundtrip, stream isolation, optimistic locking, metadata, global position)
 
-`EventStoreConformanceSuite`:
+The `conformance_ports` store suites, one row per suite:
 
-| Test | Contract it pins down |
+| Suite | Contract it pins down |
 | --- | --- |
-| `test_append_and_get_roundtrip` | append then `get_events` returns the same events, `new_version == 2` |
-| `test_stream_isolation` | aggregate A's events never appear in aggregate B's stream |
-| `test_optimistic_locking` | a stale `expected_version` raises `OptimisticLockError` |
-| `test_empty_stream` | an unknown aggregate yields an empty stream, not an error |
-| `test_event_metadata_preserved` | `event_type`, `aggregate_id`, `aggregate_version`, timestamp survive the round trip |
-| `test_event_exists_idempotency` | `event_exists(event_id)` answers correctly before and after append |
-| `test_expected_version_any` | `ExpectedVersion.ANY` skips the version check |
-| `test_global_position_tracking` | position starts at 0, increases per append, matches `AppendResult.global_position` |
+| `AppenderConformance` | `append()` honors every `ExpectedVersion` kind (`exact`, `any_`, `no_stream`, `stream_exists`), raises `OptimisticLockError` on a mismatch, rejects duplicate `event_id`s atomically |
+| `StreamReaderConformance` | `read_stream()` returns exactly the appended events in order, honors `StreamReadOptions` (direction, version range, limit), `get_stream_version()` matches the appended count, streams stay isolated from one another |
+| `EventLookupConformance` | `event_exists()` answers correctly before and after append, and for unknown ids |
+| `GlobalFeedConformance` | `read_all()` returns events in position order, resumption from a `from_position` is exclusive, `current_position()` is `None` on an empty store and matches the last envelope otherwise |
+| `CategoryQueryConformance` | `read_category()` only returns events for streams in the named category, ordered by `stored_at`, honoring timestamp/tenant filters and limits |
 
 `EventBusConformanceSuite`: `test_publish_and_subscribe_roundtrip`,
 `test_multiple_subscribers`, `test_unsubscribe_stops_delivery`,
@@ -650,8 +668,10 @@ setup around the standard check.
 `test_handler_error_isolation` (one handler raising must not stop the others, and the bus
 must keep working afterwards).
 
-The library runs both suites against its own in-memory implementations in
-`tests/unit/test_conformance.py` -- a working reference if you get stuck.
+The library runs the port suites against its own `InMemoryEventStore` and
+`SQLiteEventStore` in `tests/unit/adapters/test_memory_conformance.py` and
+`test_sqlite_conformance.py`, and the bus suite against `InMemoryEventBus` in
+`tests/unit/test_conformance.py` -- working references if you get stuck.
 
 ## Step 8: Test a decider-style aggregate with DeciderScenario
 
@@ -879,8 +899,9 @@ You now have the whole testing toolkit:
 - `EventAssertions` covers the cases the `then_*` helpers do not, over any event list.
 - Projections are tested by calling `handle()` with harness-backed checkpoint and DLQ
   repositories.
-- `EventStoreConformanceSuite` and `EventBusConformanceSuite` verify a backend against the
-  contract from two factory methods.
+- The `conformance_ports` store suites and `EventBusConformanceSuite` verify a backend
+  against the contract -- a `store` fixture per port suite, and two factory methods for
+  the bus suite.
 
 ## Next steps
 
@@ -888,5 +909,6 @@ You now have the whole testing toolkit:
   genuinely need it.
 - Tutorial 16 (Multi-Tenancy) -- `EventBuilder.with_tenant_id` and the projection's
   `tenant_filter` are the testing entry points there.
-- Read `src/eventsource/testing/conformance.py` before writing a custom backend; the
-  suite is the most precise statement of the `EventStore` and `EventBus` contracts.
+- Read `src/eventsource/testing/conformance_ports/` and
+  `src/eventsource/testing/conformance.py` before writing a custom backend; together
+  they are the most precise statement of the store-port and `EventBus` contracts.

@@ -26,6 +26,7 @@ from eventsource import (
     DomainCommand,
     DomainEvent,
     InMemoryEventStore,
+    StreamId,
     register_event,
 )
 
@@ -236,8 +237,10 @@ async def main():
     # Show all events
     print("\n4. Event history:")
 
-    stream = await event_store.get_events(account_id, "BankAccount")
-    for i, event in enumerate(stream.events, 1):
+    stream_id = StreamId(aggregate_id=account_id, category="BankAccount")
+    envelopes = [envelope async for envelope in event_store.read_stream(stream_id)]
+    for i, envelope in enumerate(envelopes, 1):
+        event = envelope.event
         print(f"   [{i}] {event.event_type}")
         if isinstance(event, AccountOpened):
             print(f"       Owner: {event.owner_name}, Initial: ${event.initial_balance:.2f}")

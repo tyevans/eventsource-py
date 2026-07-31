@@ -2,9 +2,13 @@
 
 **Status:** Accepted and implemented — ports, memory/sqlite/postgresql adapters,
 conformance suites, and the `LegacyStoreAdapter` compatibility wrapper have
-landed on this branch. The legacy `EventStore` ABC remains the default shipped
-surface, behind that compatibility wrapper, until the application layer is
-retyped onto the new ports (sub-project 2).
+landed on this branch. The legacy `EventStore` ABC remained the default shipped
+surface, behind that compatibility wrapper, until the application layer was
+retyped onto the new ports (sub-project 2). That condition has now ended.
+
+**Amended by ADR 0025.** The retyping is complete: `LegacyStoreAdapter` and the
+legacy `EventStore` ABC are deleted, and the ports surface described below is
+the only surface. See Consequences.
 
 **Date:** 2026-07-29
 
@@ -79,3 +83,6 @@ Full design: `docs/superpowers/specs/2026-07-29-core-rings-design.md`.
 - ADR 0014 is amended as described in Decision 3.
 - ADR 0018's tenant model stands: tenancy remains a read-option filter, not a
   stream-identity component.
+- As of ADR 0025, the compatibility wrapper (`LegacyStoreAdapter`) and the
+  legacy `EventStore` ABC are deleted. All of this ADR's Decisions stand and
+  are now the only store surface; nothing here is superseded.

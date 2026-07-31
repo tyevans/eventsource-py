@@ -40,8 +40,9 @@ append-only stream — `OrderCreated`, `ItemAdded`, `OrderShipped` — and deriv
 the order's state by replaying that stream through the aggregate's `_apply`
 method. In this library the stream lives behind
 [`EventStore`](reference/event-store-protocol.md), whose write path is a single
-`append_events` call and whose read paths are `get_events`, `read_stream`, and
-`read_all`.
+`append` call and whose read paths are `read_stream` (one aggregate's stream),
+`read_category` (every stream of a given aggregate type), and `read_all` (the
+global feed).
 
 What you get in return:
 
@@ -51,9 +52,9 @@ What you get in return:
 - **Derived views you can rebuild.** Read models are projections over the
   stream. If a query view is wrong or you need a new one, you delete it and
   replay — the source of truth is untouched.
-- **Temporal queries.** `get_events` takes a `from_version` and optional
-  `from_timestamp`/`to_timestamp` bounds, so "what did this aggregate look like
-  as of last Tuesday?" is a normal read followed by a replay, not an archaeology
+- **Temporal queries.** `read_stream` takes a `StreamReadOptions` with
+  `from_version`/`to_version` bounds, so "what did this aggregate look like as
+  of version 12?" is a normal read followed by a replay, not an archaeology
   project.
 - **Explicit business vocabulary.** Events are named after things the domain
   actually does, which tends to surface modelling disagreements early.
@@ -109,8 +110,8 @@ Two practical consequences follow. First, the events carry the causal metadata
 you would otherwise bolt onto a log — `actor_id`, `correlation_id`,
 `causation_id`, `occurred_at`, plus a free-form `metadata` dict — as first-class
 fields on `DomainEvent`, and `frozen=True` means nothing rewrites them after the
-fact. Second, `aggregate_version` and the `expected_version` argument to
-`append_events` (which raises `OptimisticLockError` on a mismatch) give you a
+fact. Second, `aggregate_version` and the `expected` (`ExpectedVersion`) argument
+to `append` (which raises `OptimisticLockError` on a mismatch) give you a
 gap-free, strictly ordered stream per aggregate; an audit log with a missing row
 looks exactly like an audit log with no activity.
 
@@ -157,17 +158,21 @@ Because those two are the only things the *core* abstractions cannot be written
 without. `DomainEvent` is a pydantic `BaseModel` — validation, JSON round-trips,
 and `frozen=True` immutability all come from pydantic, so it is not an optional
 detail but the definition of what an event is. SQLAlchemy is required because
-the SQL-backed stores and repositories are written against
-`AsyncSession`/`async_sessionmaker` rather than against a specific driver:
-`PostgreSQLEventStore` imports only `sqlalchemy` and issues `text()` statements,
-and you hand it a sessionmaker built from an engine you created.
+the SQL-backed stores and repositories are written against SQLAlchemy's async
+engine and session machinery rather than against a specific driver:
+`PostgreSQLEventStore` takes a plain `AsyncEngine` you construct (it builds its
+own `async_sessionmaker` internally) and issues `text()` statements against it,
+so the only import at module scope is `sqlalchemy` — `asyncpg` is imported
+lazily behind an `ASYNCPG_AVAILABLE` guard and is only required when you
+actually instantiate the store.
 
 That split is the whole trick. SQLAlchemy is the *interface* to a database;
 `asyncpg` and `aiosqlite` are the *drivers*, and they live in extras. A `pip
 install eventsource-py` with nothing else gives you the event model, aggregates,
-projections, subscriptions, and the in-memory `EventStore`, `EventBus`, and
-checkpoint/DLQ/outbox repositories — a complete event-sourced application you
-can build and unit-test with no external service and no container runtime.
+projections, subscriptions, and the in-memory `InMemoryEventStore`,
+`InMemoryEventBus`, and checkpoint/DLQ/outbox repositories — a complete
+event-sourced application you can build and unit-test with no external service
+and no container runtime.
 
 The practical benefit is a small dependency surface for consumers who only need
 part of the library. A service that uses PostgreSQL and nothing else does not
@@ -245,18 +250,22 @@ worth knowing apart:
   `SQLiteSnapshotStore` with `SQLiteNotAvailableError`. All four subclass
   `ImportError` and carry the install command in the message, so the traceback
   tells you what to do.
-- **The SQLite store is not exported at all.** `SQLiteEventStore` and the
-  SQLite checkpoint/DLQ/outbox repositories are imported inside the guarded
-  block, so without `aiosqlite` they are absent from the namespace and
-  `from eventsource import SQLiteEventStore` fails with a plain
-  `ImportError: cannot import name`. That reads as a typo if you are not
-  expecting it; check `SQLITE_AVAILABLE` before concluding the name is wrong.
+- **`SQLiteEventStore` follows the same pattern.** It is always exported from
+  `eventsource` (`from eventsource import SQLiteEventStore` succeeds either
+  way), and `SQLITE_AVAILABLE` (backed by `AIOSQLITE_AVAILABLE` internally)
+  tells you whether `aiosqlite` is actually installed. Constructing the store
+  without it raises a plain `ImportError` — "aiosqlite is required for
+  SQLiteEventStore. Install with: pip install eventsource[sqlite]" — at
+  `__init__` time, not at import time. The `SQLiteOutboxRepository` is exported
+  conditionally, appended to `__all__` only when `SQLITE_AVAILABLE` is `True`,
+  which is the one place the older "absent from the namespace" behavior still
+  applies.
 
-PostgreSQL is a third case with no flag of its own. `PostgreSQLEventStore`
-imports cleanly with only SQLAlchemy installed, because you supply the
-sessionmaker; the missing driver shows up when SQLAlchemy tries to resolve
-`postgresql+asyncpg://` and raises its own "Can't load plugin" error at engine
-creation. Same for `sqlite+aiosqlite://`.
+PostgreSQL is a similar case with a flag of its own too now (`ASYNCPG_AVAILABLE`).
+`PostgreSQLEventStore` imports cleanly with only SQLAlchemy installed, because
+you supply the `AsyncEngine`; without `asyncpg` installed, construction itself
+raises `ImportError` from the store's `__init__`, before SQLAlchemy ever gets a
+chance to resolve `postgresql+asyncpg://` against a real connection.
 
 One wrinkle in the error messages themselves: they say
 `pip install eventsource[redis]`, but the distribution on PyPI is

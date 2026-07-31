@@ -21,6 +21,7 @@ from eventsource import (
     DeclarativeAggregate,
     DomainEvent,
     InMemoryEventStore,
+    StreamId,
     handles,
     register_event,
 )
@@ -441,8 +442,10 @@ async def main():
 
     # Show event history
     print("\n6. Event history:")
-    stream = await event_store.get_events(cart_id, "ShoppingCart")
-    for i, event in enumerate(stream.events, 1):
+    stream_id = StreamId(aggregate_id=cart_id, category="ShoppingCart")
+    envelopes = [envelope async for envelope in event_store.read_stream(stream_id)]
+    for i, envelope in enumerate(envelopes, 1):
+        event = envelope.event
         print(f"   [{i}] {event.event_type}")
 
     # Try to modify checked out cart (should fail)

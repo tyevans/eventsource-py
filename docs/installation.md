@@ -244,21 +244,21 @@ store = PostgreSQLEventStore(engine)
 
 Because the driver is resolved by the dialect name in the URL, a missing `asyncpg` surfaces as a SQLAlchemy `ModuleNotFoundError` at `create_async_engine` time, not as an `eventsource` error. Everything importable from `eventsource` for PostgreSQL is available on a core install; only the connection fails.
 
-`sqlite` installs `aiosqlite`, and here the import guard is visible in the package surface. `src/eventsource/stores/sqlite.py` imports `aiosqlite` at module top level, so the top-level `__init__.py` wraps the SQLite exports:
+`sqlite` installs `aiosqlite`, and here the import guard is visible in the package surface. `src/eventsource/adapters/sqlite/store.py` imports `aiosqlite` at module top level, so `eventsource.adapters.sqlite` (and the top-level `__init__.py`, which re-exports from it) wraps the SQLite exports:
 
 ```python
 try:
-    from eventsource.repositories.outbox import SQLiteOutboxRepository
-    from eventsource.stores.sqlite import SQLiteEventStore
+    import aiosqlite
 
-    SQLITE_AVAILABLE = True
+    AIOSQLITE_AVAILABLE = True
 except ImportError:
-    SQLITE_AVAILABLE = False
+    AIOSQLITE_AVAILABLE = False
+    aiosqlite = None
 ```
 
 `SQLCheckpointRepository` and `SQLDLQRepository` (`eventsource.adapters.sql`) are not behind this guard: they are dialect-parameterized over the same SQLAlchemy async API PostgreSQL and SQLite both already require through the core `sqlalchemy` dependency, so they're unconditional exports regardless of which optional driver extra is installed.
 
-The practical consequence: without the `sqlite` extra, `from eventsource import SQLiteEventStore` raises `ImportError` -- the name is simply not bound. Check `SQLITE_AVAILABLE` if you need to branch. `SQLiteSnapshotStore` is the exception; it guards `aiosqlite` internally and raises `SQLiteNotAvailableError` (a subclass of `ImportError`) from its constructor instead.
+The practical consequence: without the `sqlite` extra, `from eventsource import SQLiteEventStore` raises `ImportError` -- the name is simply not bound. Check `SQLITE_AVAILABLE` (or `AIOSQLITE_AVAILABLE`) if you need to branch. `SQLiteSnapshotStore` is the exception; it guards `aiosqlite` internally and raises `SQLiteNotAvailableError` (a subclass of `ImportError`) from its constructor instead.
 
 The two backends are not interchangeable in storage representation. PostgreSQL uses `JSONB` columns and the `uuid-ossp` extension; SQLite has no `JSONB` type, so payloads are stored as `TEXT`. Choose PostgreSQL for production, SQLite for embedded deployments and fast local integration tests without Docker.
 
@@ -322,7 +322,7 @@ except ImportError:
     trace = None
 ```
 
-`get_tracer(name)` returns `None` when OTel is absent, `should_trace(enable_tracing)` is `enable_tracing and OTEL_AVAILABLE`, and `create_tracer(...)` / the `@traced(...)` decorator degrade to no-ops. Instrumented code paths -- event stores, buses, subscriptions, the migration tooling -- therefore run identically with or without the extra. Components expose an `enable_tracing: bool = True` constructor argument (for example `PostgreSQLEventStore`), which is the *component-level* switch; the extra being installed is the *global* one, and both must be true for spans to be emitted.
+`get_tracer(name)` returns `None` when OTel is absent, `should_trace(enable_tracing)` is `enable_tracing and OTEL_AVAILABLE`, and `create_tracer(...)` / the `@traced(...)` decorator degrade to no-ops. Instrumented code paths -- event stores, buses, subscriptions, the migration tooling -- therefore run identically with or without the extra. The event store adapters (`InMemoryEventStore`, `SQLiteEventStore`, `PostgreSQLEventStore`) no longer take a `tracer`/`enable_tracing` constructor argument; check the current signature in `src/eventsource/adapters/*/store.py` before assuming tracing is component-configurable at construction time.
 
 Metrics use a parallel flag, `OTEL_METRICS_AVAILABLE`, guarding `from opentelemetry import metrics` independently in `subscriptions/metrics.py`, `subscriptions/shutdown.py`, and `migration/metrics.py`; the Kafka and RabbitMQ buses add `PROPAGATION_AVAILABLE` for injecting and extracting trace context in message headers.
 

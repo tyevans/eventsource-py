@@ -326,17 +326,19 @@ the same name. See
 | Attribute | Type | Meaning |
 | --- | --- | --- |
 | `aggregate_id` | `UUID` | The aggregate whose stream the append targeted. |
-| `expected_version` | `int` | The version the caller asserted, exactly as passed to `append_events`. |
+| `expected_version` | `int` | The version the caller asserted, derived from the `ExpectedVersion` passed to `append`. |
 | `actual_version` | `int` | The stream's current version at conflict-detection time. |
 
 All three are always populated: the constructor requires them, and every raise
-site in the library (`stores/in_memory.py`, `stores/postgresql.py`,
-`stores/sqlite.py`) passes all three positionally. Branching on them is safe
-without `getattr` guards.
+site in the library (`adapters/memory/store.py`, `adapters/postgresql/store.py`,
+`adapters/sqlite/store.py`) passes all three positionally. Branching on them is
+safe without `getattr` guards.
 
 ```python
+from eventsource.ports.positions import ExpectedVersion
+
 try:
-    await store.append_events(aggregate_id, "Order", events, expected_version=4)
+    await store.append(stream, events, ExpectedVersion.exact(4))
 except OptimisticLockError as exc:
     exc.aggregate_id      # UUID('...')
     exc.expected_version  # 4
@@ -350,23 +352,23 @@ The attributes are assigned before `super().__init__` formats the message, so
 the message is always consistent with them — never parse `str(exc)` to recover
 the numbers.
 
-One subtlety: `expected_version` is the *raw* argument, and `append_events`
-accepts the `ExpectedVersion` sentinels as well as real version numbers
-(`ExpectedVersion.ANY = -1`, `ExpectedVersion.NO_STREAM = 0`,
-`ExpectedVersion.STREAM_EXISTS = -2`, defined in `eventsource.stores.interface`).
-When a sentinel append conflicts, `expected_version` holds the sentinel value,
-so `exc.expected_version == -2` means "the caller required an existing stream",
-not "version negative two". Negative values are always sentinels; `0` is
-ambiguous between `NO_STREAM` and a genuine empty-stream expectation, which
-resolve to the same check anyway. `ExpectedVersion.ANY` disables the check and
-therefore never produces this error.
+One subtlety: `expected_version` is a plain `int` sentinel derived from the
+`ExpectedVersion` dataclass the caller passed to `append` (defined in
+`eventsource.ports.positions`), not the `ExpectedVersion` object itself. Each
+backend module keeps a small internal `_NO_STREAM_SENTINEL` /
+`_STREAM_EXISTS_SENTINEL` mapping to preserve this field's historical int
+shape: `ExpectedVersion.no_stream()` reports as `0`, `ExpectedVersion.stream_exists()`
+reports as `-2`, and `ExpectedVersion.exact(n)` reports as `n`. When a
+`no_stream`/`stream_exists` append conflicts, `expected_version` holds the
+sentinel value, so `exc.expected_version == -2` means "the caller required an
+existing stream", not "version negative two". `ExpectedVersion.any_()` disables
+the check and therefore never produces this error.
 
 `actual_version` is a real version number in every case: the count of events
-already in the stream for that `(aggregate_id, aggregate_type)` pair, `0` for a
-stream that does not exist.
+already in the stream, `0` for a stream that does not exist.
 
 `aggregate_id` is annotated `UUID` but not validated at runtime — it is stored
-verbatim from whatever the caller passed to `append_events`.
+verbatim from the `StreamId` passed to `append`.
 
 One attribute is *not* on the class but is worth knowing about: `__cause__`. On
 the PostgreSQL and SQLite unique-constraint path the error is raised with
@@ -378,22 +380,21 @@ we read it".
 
 ### Raised by
 
-Every raise site in the library is inside an event store's `append_events`.
+Every raise site in the library is inside an event store's `append`.
 Everything else in this list is a caller that lets the store's error propagate
 unchanged — no layer wraps, re-raises, or translates it.
 
-**`EventStore.append_events`** — the version check itself, and the only origin.
+**`EventAppender.append`** — the version check itself, and the only origin.
 All three shipped backends (`InMemoryEventStore`, `PostgreSQLEventStore`,
 `SQLiteEventStore`) implement the same four-branch logic against
-`current_version`, the number of events already stored for the
-`(aggregate_id, aggregate_type)` pair:
+`current_version`, the number of events already stored for the stream:
 
-| `expected_version` | Conflict condition |
+| `expected.kind` | Conflict condition |
 | --- | --- |
-| `ExpectedVersion.ANY` | never — check skipped |
-| `ExpectedVersion.STREAM_EXISTS` | `current_version == 0` |
-| `ExpectedVersion.NO_STREAM` | `current_version != 0` |
-| any other `int` | `current_version != expected_version` |
+| `"any"` | never — check skipped |
+| `"stream_exists"` | `current_version == 0` |
+| `"no_stream"` | `current_version != 0` |
+| `"exact"` | `current_version != expected.version` |
 
 `InMemoryEventStore` performs the check under an `asyncio.Lock`, so the
 pre-check is authoritative there.
@@ -410,9 +411,10 @@ two, as described above.
 
 **`AggregateRepository.save`** — propagates the store's error; it never
 constructs one. The repository derives
-`expected_version = aggregate.version - len(uncommitted_events)` and passes that
-straight to `append_events`, so a conflict here means another writer advanced
-the stream between your `load` and your `save`. Two consequences worth knowing:
+`expected_version = aggregate.version - len(uncommitted_events)`, wraps it in
+`ExpectedVersion.exact(expected_version)`, and passes that straight to
+`append`, so a conflict here means another writer advanced the stream between
+your `load` and your `save`. Two consequences worth knowing:
 
 - A `save` on an aggregate with no uncommitted events returns early and cannot
   raise.
@@ -424,11 +426,11 @@ the stream between your `load` and your `save`. Two consequences worth knowing:
 `AggregateRepository.load` and `load_or_create` never raise this error; they
 only read.
 
-**`SyncEventStoreAdapter.append_events_sync`** — runs the wrapped async store's
-`append_events` on the shared executor and re-raises whatever it produced, so
+**`SyncEventStoreAdapter.append`** — runs the wrapped async store's
+`append` on the shared executor and re-raises whatever it produced, so
 the same conflict surfaces identically to synchronous callers.
 
-**`DualWriteEventStore.append_events`** — writes to the source store first and
+**`DualWriteEventStore.append`** — writes to the source store first and
 lets its failures propagate, so a conflict on the *source* store reaches the
 caller unchanged. The target write is best-effort and wrapped in
 `except Exception`: a conflict against the migration target is logged and
@@ -541,5 +543,5 @@ retry policies in `eventsource.application.projections.retry` are for
 projection delivery and do not apply to the command side at all.
 
 If you deliberately do not want the version check — bulk import, replay into a
-fresh store — pass `ExpectedVersion.ANY` to `append_events` rather than catching
+fresh store — pass `ExpectedVersion.any_()` to `append` rather than catching
 and ignoring the error.

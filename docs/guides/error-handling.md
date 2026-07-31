@@ -209,7 +209,7 @@ If you retry a bucket you should not have, the failure mode is specific and wort
 
 Two kinds of failure are worth retrying in place: a *version conflict*, where another writer committed to the same aggregate between your load and your save, and a *transient infrastructure blip*, where the connection dropped or a call timed out. Everything else in this guide is either a bug or a genuine failure to report.
 
-The version conflict is the one you will actually see under load. Every `EventStore` implementation — PostgreSQL, SQLite, and in-memory alike — re-checks the aggregate's current version inside `append_events()` and raises `eventsource.exceptions.OptimisticLockError(aggregate_id, expected_version, actual_version)` if it moved. `AggregateRepository.save()` computes `expected_version` as `aggregate.version - len(uncommitted_events)` and passes it straight through, so the conflict surfaces from `save()`:
+The version conflict is the one you will actually see under load. Every `EventStore` implementation — PostgreSQL, SQLite, and in-memory alike — re-checks the aggregate's current version inside `append()` and raises `eventsource.exceptions.OptimisticLockError(aggregate_id, expected_version, actual_version)` if it moved. `AggregateRepository.save()` computes `expected_version` as `aggregate.version - len(uncommitted_events)` and passes it straight through, so the conflict surfaces from `save()`:
 
 ```python
 from eventsource import OptimisticLockError
@@ -245,7 +245,7 @@ Bound the loop. Conflicts on the same aggregate mean contention, and unbounded r
 Two ways to avoid the conflict rather than absorb it:
 
 - **Serialize the writers.** `PostgreSQLLockManager` (`eventsource.locks`) gives you advisory locks keyed by aggregate id, so a second writer waits instead of racing. Worth it when conflicts are frequent and the command is expensive to replay; see [Distributed locks](distributed-locks.md).
-- **Opt out of the check.** `ExpectedVersion.ANY` (`-1`) tells `append_events()` to skip the version check entirely. That disables optimistic locking for that append, so reserve it for genuinely order-independent streams — it does not make concurrent writes safe, it makes them silent.
+- **Opt out of the check.** `ExpectedVersion.ANY` (`-1`) tells `append()` to skip the version check entirely. That disables optimistic locking for that append, so reserve it for genuinely order-independent streams — it does not make concurrent writes safe, it makes them silent.
 
 Transient infrastructure failures are the second retryable class, and they are *not* `EventSourceError` subclasses — they arrive as `ConnectionError`, `TimeoutError`, `asyncio.TimeoutError`, or `OSError` from the driver, sometimes wrapped in `EventStoreError` or `EventBusError`. The library ships a helper for exactly this shape, `retry_async()` from `eventsource.subscriptions`:
 
@@ -340,7 +340,7 @@ class OptimisticLockError(EventSourceError):
 ```
 
 - `aggregate_id` — a `UUID`, the stream that conflicted. Convert it with `str()` before putting it in a log field or metric tag.
-- `expected_version` — exactly the value your caller passed to `append_events()`. For a `repo.save()` this is `aggregate.version - len(uncommitted_events)`, i.e. the version you loaded at.
+- `expected_version` — exactly the value your caller passed to `append()`. For a `repo.save()` this is `aggregate.version - len(uncommitted_events)`, i.e. the version you loaded at.
 - `actual_version` — the store's current version for that stream: the number of events already persisted for the `(aggregate_id, aggregate_type)` pair.
 
 The gap between them is the useful signal. `actual_version - expected_version` is how many events the winning writer(s) committed while you held your copy — `1` is a normal two-writer race, consistently larger values mean a hot aggregate with several concurrent writers, and that is a design problem no retry loop fixes:

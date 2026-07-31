@@ -233,7 +233,7 @@ the outbox rows and appending the events either both happen or neither does.
 
 ```python
 async with engine.begin() as conn:
-    await store.append_events(aggregate_id, events, expected_version)
+    await store.append(stream, events, expected=ExpectedVersion.exact(current_version))
     outbox = PostgreSQLOutboxRepository(conn)
     for event in events:
         await outbox.add_event(event)

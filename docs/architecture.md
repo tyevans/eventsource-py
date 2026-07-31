@@ -16,7 +16,7 @@ version-checked append, and a bus that fans the same events out to consumers who
 were not part of the write transaction.
 
 Most of the structure you will meet -- why `DomainEvent` is frozen while read
-models are explicitly mutable, why `EventStore` and `EventBus` are separate
+models are explicitly mutable, why the store ports and `EventBus` are separate
 interfaces with separate backends, why projections carry checkpoints and dead
 letter queues, why almost every public method is a coroutine -- is that
 commitment working itself out. Facts must not be lost or contradicted, so the
@@ -25,14 +25,16 @@ cheap to serve and cheap to rebuild, so the read path tolerates duplicate
 delivery, at-least-once semantics, and truncate-and-replay.
 
 A second organising idea runs alongside it: contracts are separated from the
-things that implement them. `events/base.py`, `stores/interface.py`,
+things that implement them. `events/base.py`, the store ports in `ports/`
+(`ports/store.py`, `ports/positions.py`, `ports/envelopes.py`, ...),
 `bus/interface.py`, `protocols.py`, `exceptions.py`, and `types.py` depend on
 nothing heavier than pydantic; the PostgreSQL, SQLite, Redis, RabbitMQ, and
 Kafka implementations sit behind them and are swappable.
 `docs/core-surface.md` records that boundary module by module. It is also why
 the in-memory backends are not toys but first-class implementations of the same
-ABCs -- the ones your unit tests run against, and the ones the conformance
-suites in `eventsource.testing.conformance` hold to the same contract as their
+ports -- the ones your unit tests run against, and the ones the conformance
+suites in `eventsource.testing.conformance_ports` (stores) and
+`eventsource.testing.conformance` (the bus) hold to the same contract as their
 database-backed siblings.
 
 This document explains how those pieces fit and why they are divided where they
@@ -135,7 +137,7 @@ because nothing has left the process. `AggregateRepository.save()` is where the
 loop crosses into durability. It reads `aggregate.uncommitted_events`, returns
 immediately if the list is empty, derives `expected_version` by subtracting the
 number of new events from the aggregate's current version -- that is, the version
-the stream was at when the command began -- and calls `append_events()` on the
+the stream was at when the command began -- and calls `append()` on the
 store with it. If another writer appended in the meantime, the store's version
 check fails and you get an `OptimisticLockError` rather than a silent
 interleaving. This is the one place in the library that refuses work outright,
@@ -214,27 +216,29 @@ bites.
 
 Tier 0 is the set of modules that import nothing heavier than the standard
 library and pydantic. It holds the vocabulary the rest of the library is written
-in: `events/base.py` (`DomainEvent`), `events/registry.py`, `aggregates/base.py`
-(`AggregateRoot`, `DeclarativeAggregate`), `stores/interface.py` (`EventStore`,
-`StoredEvent`, `EventStream`), `bus/interface.py` (`EventBus`),
-`snapshots/interface.py`, the `@handles` decorator and handler registry,
-`protocols.py`, `exceptions.py`, `types.py`, and the multi-tenancy and read-model
-contract modules. `serialization/` is the extreme case and a useful yardstick:
-its entire import block is `json`, `datetime`, `typing`, and `uuid`, with no
-pydantic and no reach back into the rest of the library.
+in: `events/base.py` (`DomainEvent`), `events/registry.py`, `domain/aggregate.py`
+(`AggregateRoot`, `DeclarativeAggregate`), the store ports in `ports/`
+(`ports/store.py`'s `EventAppender`, `StreamReader`, `EventLookup`,
+`GlobalEventFeed`, `CategoryQuery` Protocols; `ports/positions.py`;
+`ports/envelopes.py`), `bus/interface.py` (`EventBus`), `ports/snapshots.py`,
+the `@handles` decorator and handler registry, `protocols.py`, `exceptions.py`,
+`types.py`, and the multi-tenancy and read-model contract modules.
+`exceptions.py` is the extreme case and a useful yardstick: its entire import
+block is `uuid`, with no pydantic and no reach back into the rest of the
+library.
 
 Two things about Tier 0 are easy to get wrong.
 
 The first is that **the in-memory implementations live here too** --
-`stores/in_memory.py`, `bus/memory.py`, `snapshots/in_memory.py`,
+`adapters/memory/store.py`, `bus/memory.py`, `adapters/memory/snapshots.py`,
 `readmodels/in_memory.py`. They are not stubs kept for demos. They implement the
-same ABCs the database-backed classes do, and
-`eventsource.testing.conformance` holds both to the same suites, so a behaviour
-your unit tests rely on from `InMemoryEventStore` is one the contract obliges
-`PostgreSQLEventStore` to provide as well. This is what makes it reasonable to
-run the bulk of a test suite with no Docker daemon: you are not testing a
-different thing, you are testing the same contract on a backend whose storage
-happens to be a dict.
+same ports the database-backed classes do, and
+`eventsource.testing.conformance_ports` holds both to the same suites, so a
+behaviour your unit tests rely on from `InMemoryEventStore` is one the contract
+obliges `PostgreSQLEventStore` to provide as well. This is what makes it
+reasonable to run the bulk of a test suite with no Docker daemon: you are not
+testing a different thing, you are testing the same contract on a backend whose
+storage happens to be a dict.
 
 The second is that **Tier 0 is not the same as standalone**. A module can be
 perfectly Tier 0 and still be impossible to ship alone, because it imports other
@@ -243,10 +247,10 @@ canonical contract module, but line 35 is a module-level
 `from eventsource.events.base import DomainEvent` -- not under `TYPE_CHECKING`,
 not deferred -- so importing it executes `events/base.py`, which imports
 pydantic. `events/base.py` is an *extraction floor*: nothing above it moves
-without it, and the same shape repeats for `stores/interface.py`,
-`bus/interface.py`, and `aggregates/base.py`, which sit on `events/base.py`,
-`exceptions.py`, and `types.py`. `snapshots/interface.py` is the odd one out,
-with no in-library imports at all.
+without it, and the same shape repeats for `bus/interface.py` and
+`domain/aggregate.py`, which sit on `events/base.py`, `exceptions.py`, and
+`types.py`. `ports/snapshots.py` is the odd one out, with no in-library imports
+at all.
 
 Tier 0 used to be leaky here, and it's worth knowing what changed. All three
 modules under `repositories/` -- `checkpoint.py`, `dlq.py`, `outbox.py` --
@@ -269,25 +273,27 @@ remains between the current package and an `eventsource-core` distribution.
 
 ### Tier 1: backend implementations
 
-Tier 1 is where the contracts meet a driver. `stores/postgresql.py` and
-`stores/sqlite.py` subclass `EventStore`; `adapters/postgresql/snapshots.py` and
-`snapshots/sqlite.py` subclass `SnapshotStore`; `bus/redis.py`,
-`bus/rabbitmq.py`, and `bus/kafka.py` subclass `EventBus`;
-`readmodels/postgresql.py` and `readmodels/sqlite.py` satisfy the
+Tier 1 is where the contracts meet a driver. `adapters/postgresql/store.py` and
+`adapters/sqlite/store.py` satisfy the store ports (`EventAppender`,
+`StreamReader`, `EventLookup`, `GlobalEventFeed`, `CategoryQuery`);
+`adapters/postgresql/snapshots.py` and `adapters/sqlite/snapshots.py` subclass
+`SnapshotStore`; `bus/redis.py`, `bus/rabbitmq.py`, and `bus/kafka.py` subclass
+`EventBus`; `readmodels/postgresql.py` and `readmodels/sqlite.py` satisfy the
 `ReadModelRepository` protocol; the PostgreSQL and SQLite classes inside
 `adapters/sql/checkpoints.py`, `adapters/sql/dlq.py`, and
 `repositories/outbox.py` back checkpoints, the dead letter queue, and the
 outbox. `locks/` belongs here too, and has exactly one implementation:
 `PostgreSQLLockManager`, built on advisory locks.
 
-Note the two different ways a backend joins its contract. Stores, snapshot
-stores, and buses inherit from ABCs, so the relationship is declared and the
-abstract methods are enforced at instantiation. The repository backends do not
-inherit from anything -- `PostgreSQLCheckpointRepository`,
-`SQLiteOutboxRepository`, `PostgreSQLReadModelRepository` and their siblings are
-plain classes that structurally satisfy a `runtime_checkable` Protocol defined
-in the same file. Both arrangements give you substitutability; only the first
-tells you at import time that you missed a method.
+Note the two different ways a backend joins its contract. Snapshot stores and
+buses inherit from ABCs, so the relationship is declared and the abstract
+methods are enforced at instantiation. The event store adapters and the
+repository backends do not inherit from anything -- `PostgreSQLEventStore`,
+`SQLiteEventStore`, `PostgreSQLCheckpointRepository`, `SQLiteOutboxRepository`,
+`PostgreSQLReadModelRepository`, and their siblings are plain classes that
+structurally satisfy a `runtime_checkable` Protocol defined in `ports/`. Both
+arrangements give you substitutability; only the ABC form tells you at import
+time that you missed a method.
 
 The defining property of the tier is that **nothing above it names a member of
 it**. Application code selects a backend once, at composition time, and passes
@@ -310,27 +316,39 @@ a missing driver surfaces at connect time, not import time. The buses guard
 their own imports and set a module-level flag: `bus/redis.py` sets
 `REDIS_AVAILABLE` and its constructor raises `RedisNotAvailableError`
 immediately if it is `False`, with `RABBITMQ_AVAILABLE` and `KAFKA_AVAILABLE`
-following the same pattern. SQLite splits the difference by tier:
-`snapshots/sqlite.py` guards its own `aiosqlite` import and exports
-`SQLITE_AVAILABLE`, while `stores/sqlite.py` imports `aiosqlite` unguarded and
-is instead wrapped in a `try/except ImportError` by the package barrel, which
-sets the top-level `SQLITE_AVAILABLE` and simply omits `SQLiteEventStore` and
-the SQLite repositories from `eventsource`'s namespace when the extra is absent.
-The invariant that holds across all of it is the one that matters: `import
-eventsource` succeeds on a machine with no drivers installed, and you learn
-about a missing extra when you reach for the backend you did not install.
+following the same pattern. SQLite guards each of its two adapter modules
+independently, and each sets its own flag: `adapters/sqlite/snapshots.py`
+guards its own `aiosqlite` import and exports `SQLITE_AVAILABLE`;
+`adapters/sqlite/store.py` guards its own `aiosqlite` import separately and
+exports `AIOSQLITE_AVAILABLE`. The `adapters/sqlite/__init__.py` package barrel
+re-exports both flags as-is, and the top-level `eventsource` package re-exports
+them again unchanged -- there is no `try/except ImportError` reconciling the
+two into one flag; `SQLITE_AVAILABLE` derives from `adapters/sqlite/snapshots.py`
+independently of whatever `adapters/sqlite/store.py` decides about
+`AIOSQLITE_AVAILABLE`. The invariant that holds across all of it is the one
+that matters: `import eventsource` succeeds on a machine with no drivers
+installed, and you learn about a missing extra when you reach for the backend
+you did not install.
 
 A backend is also not free to be interesting. It inherits a contract it did not
-write -- the `ExpectedVersion` semantics of `append_events`, the ordering
-promises of `EventStream`, the `OptimisticLockError` raised on conflict -- and
-`eventsource.testing.conformance` holds it to the same suites as the in-memory
-implementation. Where a backend genuinely cannot honour something, the pattern
-the package follows is to say so in that backend's own documentation
-(`stores/README.md`, `bus/README.md`) rather than to soften the shared
-interface. What varies underneath is real: PostgreSQL and SQLite both go through
-`stores/_type_converter.py` to reconcile how each database hands back JSON, and
-both call `stores/_compat.py` to normalise timestamps. The contract is stable;
-the accommodations are private.
+write -- the `ExpectedVersion` semantics of `append`, the ordering
+promises of the read/feed ports, the `OptimisticLockError` raised on conflict
+-- and `eventsource.testing.conformance_ports` holds it to the same suites as
+the in-memory implementation. Where a backend genuinely cannot honour
+something, the pattern the package follows is to say so in that backend's own
+documentation rather than to soften the shared interface. What varies
+underneath is real -- PostgreSQL and SQLite hand back JSON differently and
+need their timestamps normalised -- but the library no longer centralises that
+reconciliation behind a shared `TypeConverter` abstraction. The
+`stores/_type_converter.py` and `stores/_compat.py` modules that used to do
+this are gone along with the rest of `stores/`; each adapter instead decodes
+its raw JSON payload and hands it to `event_class.model_validate(data)`,
+leaning on pydantic's own field coercion to reconstruct the concrete event
+type rather than walking the payload with a bespoke converter first. See
+`docs/explanation/sql-backend-type-handling.md` for the mechanics of what a
+store adapter still has to reconcile at the boundary (that page has not yet
+been fully updated for this removal; treat its `TypeConverter` sections as
+historical). The contract is stable; the accommodations are private.
 
 ### Tier 2: orchestration and lifecycle
 
@@ -415,38 +433,49 @@ do.
 
 ### The store: an ordered, version-checked log
 
-`EventStore` (`stores/interface.py`) is an ABC, not a Protocol, and its abstract
-surface is deliberately small: `append_events`, `get_events`,
-`get_events_by_type`, `event_exists`, and `get_global_position`. Everything else
-on the class -- `get_stream_version`, `read_stream`, `read_all` -- is a concrete
-convenience built on those primitives, so a new backend has five methods to
-implement and inherits the rest.
+The event store surface is not one ABC any more -- it is five narrow, composable
+Protocols in `ports/store.py`: `EventAppender` (`append`), `StreamReader`
+(`read_stream`, `get_stream_version`), `EventLookup` (`event_exists`),
+`GlobalEventFeed` (`read_all`, `current_position`), and `CategoryQuery`
+(`read_category`). None is `@runtime_checkable` by default -- that is added only
+where a consumer actually needs an `isinstance` check. `FullEventStore` is the
+union of all five, and `AggregateStore` (`EventAppender` + `StreamReader`) is
+the narrower composition `AggregateRepository` actually depends on: a
+repository never reads the global feed, never queries a category, and never
+probes for an individual event id, so its declared dependency does not
+type-require those capabilities. That narrowing is deliberate interface
+segregation, not an oversight -- a backend adapter still typically implements
+`FullEventStore` in full, but callers ask for only the slice they use.
 
 Two details of that surface carry most of the architectural weight. The first is
-that `append_events` takes an `expected_version: int` and returns an
-`AppendResult`; the `ExpectedVersion` constants (`ANY = -1`, `NO_STREAM = 0`,
-`STREAM_EXISTS = -2`) let a caller say "this stream must not exist yet" or "I
-read version 7 and I am writing on that basis" rather than trusting a
+that `append` takes an `expected: ExpectedVersion` and returns an
+`AppendResult`; `ExpectedVersion` is a small frozen dataclass built through its
+classmethods (`ExpectedVersion.any_()`, `.no_stream()`, `.stream_exists()`,
+`.exact(version)`), and they let a caller say "this stream must not exist yet"
+or "I read version 7 and I am writing on that basis" rather than trusting a
 last-writer-wins append. Concurrency control is therefore a property of the log
 itself, not of a lock the caller remembers to take. The second is
-`get_global_position()`, which returns the highest position across *all* streams.
-Per-stream ordering is what an aggregate needs; a single monotonic ordering over
-the whole store is what a subscription needs, and the fact that the store can
-report its current maximum is precisely what makes the catch-up watermark
-described later in this document possible.
+`current_position()`, which returns the highest `Position` across *all*
+streams. Per-stream ordering is what an aggregate needs; a single monotonic
+ordering over the whole store is what a subscription needs, and the fact that
+the store can report its current maximum is precisely what makes the catch-up
+watermark described later in this document possible.
 
-Reads come back as `StoredEvent`, a frozen wrapper that pairs the `DomainEvent`
-with `stream_id`, `stream_position`, `global_position`, and `stored_at`. The
-domain event carries no position of its own -- position is a fact about
-persistence, not about the domain -- and keeping the two apart is why the same
-event object can be replayed, published, and buffered without any layer
-mutating it.
+Reads come back as `EventEnvelope` (`ports/envelopes.py`), a frozen wrapper
+that pairs the `DomainEvent` with `stream_id`, `stream_position`,
+`global_position`, and `stored_at`. The domain event carries no position of its
+own -- position is a fact about persistence, not about the domain -- and
+keeping the two apart is why the same event object can be replayed, published,
+and buffered without any layer mutating it.
 
-The backends behind this interface (`in_memory.py`, `sqlite.py`,
-`postgresql.py`) differ in durability and concurrency, not in contract; the
-conformance suite in `eventsource.testing.conformance` holds all three to the
-same behaviour, which is what makes the in-memory store usable as a real test
-double rather than an approximation.
+The adapters behind these ports (`adapters/memory/store.py`,
+`adapters/sqlite/store.py`, `adapters/postgresql/store.py`) differ in
+durability and concurrency, not in contract; the per-port conformance suites in
+`eventsource.testing.conformance_ports` (`AppenderConformance`,
+`StreamReaderConformance`, `EventLookupConformance`, `GlobalFeedConformance`,
+`CategoryQueryConformance`, `TypeQueryConformance`) hold all three to the same
+behaviour, which is what makes the in-memory store usable as a real test double
+rather than an approximation.
 
 ### The bus: fan-out with weaker promises
 
@@ -463,7 +492,7 @@ That asymmetry is the point. The store is the authority and pays for it in
 write-path narrowness; the bus is a delivery mechanism and pays for its speed in
 guarantees. A bus subscriber learns about events that arrive *after* it
 subscribed and nothing about events that came before -- there is no
-`get_global_position()` equivalent, because there is no retained ordering to
+`current_position()` equivalent, because there is no retained ordering to
 report. Everything in `subscriptions/` follows from taking that limitation
 seriously rather than papering over it.
 
@@ -577,12 +606,12 @@ that safely.
 The two interfaces are not merely different in convenience; they are different
 in kind, and the differences are all in the same direction.
 
-The store is addressable. `get_events` takes an aggregate id and a
-`from_version` (plus optional timestamp bounds), `read_all` walks the whole log
-from a `from_position`, and every read comes back as `StoredEvent` with
+The store is addressable. `read_stream` takes a `StreamId` and optional
+`StreamReadOptions`, `read_all` walks the whole log from a `from_position`
+(`FeedReadOptions`), and every read comes back as an `EventEnvelope` with
 a `global_position` attached -- a single monotonic ordering over all streams,
 whose current maximum the store will report on demand via
-`get_global_position()`. You can ask it "what came after 4,271?" and get a
+`current_position()`. You can ask it "what came after 4,271?" and get a
 complete, ordered, repeatable answer.
 
 The bus is none of those things. `EventBus.publish` takes a `list[DomainEvent]`
@@ -590,7 +619,7 @@ and a `background` flag and returns nothing; `subscribe` and
 `subscribe_to_all_events` register a handler for what arrives *next*. There is
 no position argument anywhere on the interface, no history, and -- crucially --
 no position on the delivered object either. A bus subscriber is handed a
-`DomainEvent`, not a `StoredEvent`, because position is a fact about
+`DomainEvent`, not an `EventEnvelope`, because position is a fact about
 persistence and the domain event never carried one. `LiveRunner._get_event_position()`
 reflects this honestly: it looks for a `_global_position` attribute that a
 backend *may* have attached and returns `None` when it finds nothing. Ordering
@@ -689,9 +718,9 @@ flow, and the moment that joins them belongs to neither.
 
 **The two halves pull events in opposite directions.** `CatchUpRunner` is a
 loop: it decides when to read, computes its own batch limit from
-`target_position - last_processed_position`, calls `read_all()` with
-`ReadOptions(direction=FORWARD, from_position=..., limit=...)`, walks the
-returned `StoredEvent`s, and stops when it reaches the target or a batch comes
+`target_position - last_processed_position`, calls `read_all()` with a
+`FeedReadOptions(direction=FORWARD, ...)`, walks the
+returned `EventEnvelope`s, and stops when it reaches the target or a batch comes
 back empty. It owns its clock, so it can be paused mid-batch
 (`wait_if_paused()` is checked both between batches and between events within a
 batch), stopped at a safe point (`_stop_requested`), and slowed by
@@ -717,14 +746,15 @@ completion, so it has no result. One class cannot honestly have both shapes.
 
 **The third collaborator exists because the handoff is a decision neither
 runner is positioned to make.** `TransitionCoordinator.execute()` is the only
-code that reads `event_store.get_global_position()` for the watermark, and it
+code that reads `event_store.current_position()` for the watermark, and it
 does so *before* constructing anything. It then constructs `LiveRunner` and
 starts it with `buffer_events=True`, constructs `CatchUpRunner` and calls
 `run_until_position(target_position=self._watermark)`, calls `process_buffer()`,
 and finally `disable_buffer()`. Every ordering constraint in the protocol lives
 in that one method body, in the order the phases have to happen. The runners
-know nothing of each other: `CatchUpRunner` takes an `EventStore` and no bus,
-`LiveRunner` takes an `EventBus` and no store, and neither imports the other.
+know nothing of each other: `CatchUpRunner` takes a `GlobalEventFeed` (the store
+port, not the concrete store) and no bus, `LiveRunner` takes an `EventBus` and
+no store, and neither imports the other.
 Both are handed the same `Subscription` and the same `CheckpointRepository`,
 and that shared `Subscription` -- specifically `last_processed_position`,
 advanced by `record_event_processed()` on the catch-up side and compared
@@ -822,7 +852,7 @@ strategies are honoured at three different places in the loop.
 `_maybe_save_periodic_checkpoint()`, which compares `time.monotonic()` against
 `_last_checkpoint_time` and writes only once
 `checkpoint_interval_seconds` (default 5.0) has elapsed. `EVERY_BATCH` writes
-once at the end of `_process_batch()`, using the last `StoredEvent` seen --
+once at the end of `_process_batch()`, using the last `EventEnvelope` seen --
 and note the condition is `events_in_batch > 0 or events_filtered > 0`, so a
 batch consisting entirely of filtered events still checkpoints its progress,
 for the same reason those events advanced the position in the first place. All
@@ -850,10 +880,10 @@ finishes the event in hand and stops at the next of those checks, which is what
 position that was really processed.
 
 **What the runner deliberately does not do** is as informative as what it does.
-It never touches the event bus -- its constructor takes an `EventStore`, a
+It never touches the event bus -- its constructor takes a `GlobalEventFeed`, a
 `CheckpointRepository`, and a `Subscription`, and no bus at all. It never
 decides what its target should be; `target_position` is a parameter, supplied
-by the coordinator from `get_global_position()`. It never announces that it is
+by the coordinator from `current_position()`. It never announces that it is
 finished to anyone; it returns. Those three absences are what allow the same
 object to serve both the initial catch-up over the whole history and the short
 final catch-up during the handoff -- the second call is the same code with a
@@ -876,7 +906,7 @@ raises. `AggregateRepository.save` then takes the uncommitted events and hands
 them to the store with a version it computed itself -- `aggregate.version -
 len(uncommitted_events)`, the version the aggregate was at before it decided --
 and the store appends only if reality still matches that number. If another
-writer got there first, `append_events` raises `OptimisticLockError` and
+writer got there first, `append` raises `OptimisticLockError` and
 nothing durable has changed. The caller reloads and decides again.
 
 That is the whole failure model, and it is cheap because it is *pre-commit*.
@@ -1029,8 +1059,8 @@ which fills in `aggregate_id`, `aggregate_type`, and `aggregate_version` from
 the instance so the version arithmetic is not retyped at every call site. The
 resulting events sit in `_uncommitted_events` until `repository.save(aggregate)`
 appends them; if there are none, `save` is a no-op and returns immediately.
-Buffering is what makes a multi-event command atomic: `append_events` takes the
-whole list with one `expected_version`, so either every event a command produced
+Buffering is what makes a multi-event command atomic: `append` takes the
+whole list with one `expected: ExpectedVersion`, so either every event a command produced
 lands or none does. Only after that append reports success does the repository
 call `mark_events_as_committed`, publish to the configured publisher, and
 consider a snapshot -- the in-memory aggregate is not treated as authoritative
@@ -1055,7 +1085,7 @@ document.
 ### Optimistic concurrency on the event stream (`expected_version`)
 
 Nothing on the write path takes a lock in the ordinary sense. The guard is a
-condition on the append. `EventStore.append_events` takes an `expected_version`,
+condition on the append. `EventAppender.append` takes an `expected: ExpectedVersion`,
 and the repository computes it rather than asking you to:
 `aggregate.version - len(uncommitted_events)`, the version the stream was at
 when this aggregate was loaded. If the stream has moved since, the append fails
@@ -1195,8 +1225,8 @@ domain controls; folding a stream on every page render is a cost paid at
 whatever rate your traffic happens to be.
 
 The second is shape, and it is the one that actually decides the matter. Look at
-what the store can be asked: `get_events` and `read_stream` take an
-`aggregate_id`; `get_events_by_type` takes an event type; `read_all` takes a
+what the store can be asked: `read_stream` takes a `StreamId`;
+`read_category` takes a category name; `read_all` takes a
 global position. There is no `where`. The log is indexed by stream and by
 position because that is what appending and replaying need, and nothing more.
 Meanwhile `Query` on the read side carries a list of `Filter`s (`eq`, `ne`,

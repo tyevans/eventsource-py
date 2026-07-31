@@ -32,7 +32,7 @@ What to expect from the rest of this section:
 - **Build the Documentation** — serving MkDocs locally and adding a page to the nav.
 - **Release Process** — version bump, changelog, tagging, and the automated publish.
 
-The project is async-first and backend-agnostic: most interfaces (`EventStore`,
+The project is async-first and backend-agnostic: most interfaces (the event store ports,
 `EventBus`, the checkpoint/DLQ/outbox repositories) have several implementations behind
 one contract. That shapes development in two practical ways — new code is written
 `async def` by default, and any change to an interface needs to be carried through

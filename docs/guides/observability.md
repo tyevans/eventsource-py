@@ -1,9 +1,12 @@
 # Observability: Wiring OpenTelemetry Tracing
 
-Every eventsource component that does I/O — event stores, buses, snapshot stores,
+Every eventsource component that does I/O — buses, snapshot stores,
 repositories, projections, subscription runners, migration coordinators, and
 distributed locks — accepts an `enable_tracing` flag and emits OpenTelemetry
-spans when tracing is turned on. OpenTelemetry itself is an *optional*
+spans when tracing is turned on. (The event store adapters -- `InMemoryEventStore`,
+`SQLiteEventStore`, `PostgreSQLEventStore` -- do not currently accept
+`enable_tracing`; use a traced bus or repository for the examples below.)
+OpenTelemetry itself is an *optional*
 dependency: without it installed, `OTEL_AVAILABLE` is `False`, every component
 falls back to a `NullTracer`, and the tracing code paths cost nothing.
 
@@ -37,8 +40,8 @@ but you should not need to import from them directly.
 You need:
 
 - **Python 3.11+** and a working install of `eventsource-py`. Nothing in this
-  guide requires a database or broker — the examples use `InMemoryEventStore`
-  and `InMemoryEventBus` so they run anywhere.
+  guide requires a database or broker — the examples use `InMemoryEventBus`
+  and other in-memory components so they run anywhere.
 - **The `telemetry` extra**, which pulls in `opentelemetry-api>=1.0,<2.0` and
   `opentelemetry-sdk>=1.0,<2.0`. Without it `OTEL_AVAILABLE` is `False` and
   everything below silently degrades to no-ops. Installation is covered in the
@@ -47,17 +50,16 @@ You need:
   to confirm wiring; anything beyond local poking needs an OTLP endpoint (a
   collector, Jaeger, Tempo, Honeycomb, and so on).
 - **A component you construct yourself.** `enable_tracing` is a constructor
-  argument, so you must own the call site that builds the store, bus,
+  argument, so you must own the call site that builds the bus, snapshot store,
   repository, or projection you want instrumented.
 
 Two defaults are worth internalizing before you debug anything:
 
 - `enable_tracing` defaults to **`True`** on the components that accept it —
-  `PostgreSQLEventStore`, `SQLiteEventStore`, `InMemoryEventStore`, all four
-  buses, the snapshot stores, `AggregateRepository`, the checkpoint/DLQ/outbox
-  repositories, projections, subscription runners, the migration machinery, and
-  the PostgreSQL advisory locks. You are usually *not* switching tracing on;
-  you are switching the SDK on underneath it.
+  all four buses, the snapshot stores, `AggregateRepository`, the
+  checkpoint/DLQ/outbox repositories, projections, subscription runners, the
+  migration machinery, and the PostgreSQL advisory locks. You are usually
+  *not* switching tracing on; you are switching the SDK on underneath it.
 - `create_tracer(name, enable_tracing)` returns an `OpenTelemetryTracer` only
   when `enable_tracing and OTEL_AVAILABLE`; otherwise it returns a `NullTracer`.
   A stock install without the extra therefore behaves as though tracing were
@@ -244,22 +246,21 @@ With that in place, any traced component starts emitting:
 import asyncio
 from uuid import uuid4
 
-from eventsource import InMemoryEventStore
+from eventsource.adapters.memory import InMemorySnapshotStore
 
 async def main() -> None:
-    store = InMemoryEventStore(enable_tracing=True)
-    await store.get_events(uuid4())
+    store = InMemorySnapshotStore(enable_tracing=True)
+    await store.get_snapshot(uuid4(), "Order")
 
 asyncio.run(main())
 provider.shutdown()
 ```
 
-That prints one JSON span named `inmemory_event_store.get_events`, carrying the
-`aggregate.id`, `aggregate.type`, and `from_version` attributes the store sets
-plus the trace and span IDs. `append_events`, `get_events_by_type`, and the
-other store operations emit their own `inmemory_event_store.*` spans the same
-way — every backend prefixes its span names with its own component name
-(`postgresql_event_store.*`, `sqlite_event_store.*`, and so on).
+That prints one JSON span named `eventsource.snapshot.get`, carrying the
+`aggregate.id` and `aggregate.type` attributes the store sets plus the trace
+and span IDs. Every traced component follows the same idiom — buses,
+repositories, projections, and the migration machinery each emit their own
+`eventsource.*` spans the same way.
 
 `enable_tracing=True` is written out above for clarity, but it is already the
 default; the line that changed the behavior is `set_tracer_provider()`. If
@@ -442,13 +443,13 @@ the disabled path costs one generator and nothing else.
 
 The `name` argument becomes the OpenTelemetry *instrumentation scope* name via
 `trace.get_tracer(tracer_name)`. Components pass their own module's `__name__`,
-so spans from the in-memory store are scoped to
-`eventsource.stores.in_memory`, spans from the PostgreSQL store to
-`eventsource.stores.postgresql`, and so on. This is the scope your backend shows
+so spans from the in-memory snapshot store are scoped to
+`eventsource.adapters.memory.snapshots`, spans from the in-memory event bus to
+`eventsource.bus.memory`, and so on. This is the scope your backend shows
 as the instrumentation library — it is not the span name.
 
 Every instrumented component follows the identical two-line idiom in its
-constructor. From `stores/in_memory.py`:
+constructor. From `adapters/memory/snapshots.py`:
 
 ```python
 self._tracer = tracer or create_tracer(__name__, enable_tracing)
@@ -463,11 +464,11 @@ behavior:
   This is the injection point for `MockTracer` in tests.
 - `_enable_tracing` is *not* the argument you passed in. It is
   `tracer.enabled`, the resolved answer. Construct
-  `InMemoryEventStore(enable_tracing=True)` without OpenTelemetry installed and
-  `store._enable_tracing` is `False`, because `create_tracer` handed back a
+  `InMemorySnapshotStore(enable_tracing=True)` without OpenTelemetry installed
+  and `store._enable_tracing` is `False`, because `create_tracer` handed back a
   `NullTracer` whose `enabled` property is hard-coded `False`. The component
   normalizes your request against reality rather than storing your request.
-- The resolution happens **at construction**. A store built before
+- The resolution happens **at construction**. A component built before
   `trace.set_tracer_provider()` runs still gets an `OpenTelemetryTracer` (that
   only depends on `OTEL_AVAILABLE`), but its tracer was obtained from the proxy
   provider and may never emit. Order matters; see

@@ -1,514 +1,626 @@
-# Event Store Protocol
+# Event Store Ports
 
-Reference for the event store contract defined in `eventsource.stores.interface`: the
-`EventStore` abstract base class, the `EventPublisher` protocol, and the data types they
-exchange (`StoredEvent`, `ReadOptions`, `EventStream`, `AppendResult`, `ReadDirection`,
-and the `ExpectedVersion` sentinels).
+Reference for the store contract defined in `eventsource.ports.store` and
+`eventsource.ports.envelopes` / `eventsource.ports.positions`: the five segregated
+capability ports (`EventAppender`, `StreamReader`, `EventLookup`, `GlobalEventFeed`,
+`CategoryQuery`), the two convenience unions (`AggregateStore`, `FullEventStore`), and
+the value objects that cross the boundary (`EventEnvelope`, `AppendResult`, `Position`,
+`ExpectedVersion`, `ReadDirection`, and the three read-options records).
 
-The event store is the source of truth in this library. Every other component --
-`AggregateRepository`, projections, subscriptions, migration tooling -- reads and writes
-through this contract, so any backend that satisfies it can be swapped in without
-touching domain code. The library ships three implementations: `InMemoryEventStore`,
-`PostgreSQLEventStore`, and `SQLiteEventStore` (optional, requires `aiosqlite`).
+There is no `EventStore` base class. A backend implements whichever ports it can
+honestly satisfy -- an append-only log with no total ordering simply does not implement
+`GlobalEventFeed`, and that is a static (mypy-checked) fact about it, not a method that
+raises `NotImplementedError` at runtime. See ADR 0019 for the rationale and ADR 0025 for
+the retirement of the previous `EventStore` ABC that this page used to document.
 
-`EventStore` declares five abstract methods that every backend must implement
-(`append_events`, `get_events`, `get_events_by_type`, `event_exists`,
-`get_global_position`) and three concrete methods with overridable defaults
-(`get_stream_version`, `read_stream`, `read_all`). All methods are async.
-
-Everything on this page is re-exported from the top-level `eventsource` package as well
-as from `eventsource.stores`.
-
-## Overview
-
-The contract splits into a write path and a read path.
-
-**Write path.** `append_events(aggregate_id, aggregate_type, events, expected_version)`
-is the only write operation. It appends a non-empty list of `DomainEvent` atomically,
-guarded by optimistic locking on `expected_version`, and returns an `AppendResult`
-carrying `success`, `new_version`, `global_position`, and `conflict`. Callers pass either
-a concrete version number or one of the `ExpectedVersion` sentinels (`ANY = -1`,
-`NO_STREAM = 0`, `STREAM_EXISTS = -2`).
-
-**Read path.** Three shapes of read are available:
-
-| Method | Returns | Use |
-| --- | --- | --- |
-| `get_events()` | `EventStream` | Rehydrate one aggregate from its full (or partial) history |
-| `get_events_by_type()` | `list[DomainEvent]` | Fetch every event for an aggregate type, optionally tenant- and timestamp-filtered |
-| `read_stream()` / `read_all()` | `AsyncIterator[StoredEvent]` | Stream events lazily, with position metadata, for projections and subscriptions |
-
-Two supporting reads round out the surface: `event_exists(event_id)` for idempotency
-checks, and `get_global_position()` for the store-wide high-water mark that
-`SubscriptionManager` uses to decide when catch-up is complete.
-
-**Two position spaces.** Every persisted event has a *stream position* (its 1-based index
-within one aggregate's stream, which is also what `EventStream.version` counts) and a
-*global position* (its 1-based index across all events in the store). `StoredEvent`
-carries both. Aggregate reconstruction and optimistic locking use stream positions;
-catch-up subscriptions, projection checkpoints, and migration cutover use global
-positions.
-
-**Plain data types.** `StoredEvent`, `ReadOptions`, `EventStream`, and `AppendResult` are
-all frozen dataclasses with no backend coupling. `ReadOptions` validates itself in
-`__post_init__`, and `EventStream` / `AppendResult` provide constructor helpers
-(`EventStream.empty()`, `AppendResult.successful()`, `AppendResult.conflicted()`).
-
-**What a backend must actually write.** Only the five abstract methods are mandatory. The
-three concrete methods have working defaults: `get_stream_version()` loads the stream and
-returns its version, and `read_stream()` parses `stream_id` as
-`"<aggregate_id>:<aggregate_type>"` and delegates to `get_events()`. Both defaults are
-correct but unoptimized -- a backend that can answer them with a targeted query should
-override them. `read_all()` is different: its default raises `NotImplementedError`, so a
-backend that cannot provide a total global ordering may simply leave it alone, at the
-cost of not supporting catch-up subscriptions or global projections.
-
-**Multi-tenancy.** Tenant filtering is a read-side concern expressed through the
-`tenant_id` field on `ReadOptions` (honoured by `read_all()`) and the `tenant_id`
-parameter on `get_events_by_type()`. `append_events()` takes no tenant argument -- tenancy
-travels on the event itself via `TenantDomainEvent`.
-
-**`EventPublisher`** is a separate, single-method `Protocol` (`publish(events)`) for
-pushing events onward to external systems. It is structurally typed, so event bus
-implementations satisfy it without inheriting from anything.
+Everything else in the library reads and writes through these ports:
+`AggregateRepository` depends on `AggregateStore`, projections and subscriptions depend
+on `GlobalEventFeed` and `CategoryQuery`, migration tooling depends on `FullEventStore`.
+The library ships three adapters -- `InMemoryEventStore`, `PostgreSQLEventStore`
+(requires `asyncpg`), and `SQLiteEventStore` (optional, requires `aiosqlite`) -- and all
+three implement all five ports.
 
 ## Import Paths
-
-Everything in this reference lives in `eventsource.stores.interface` and is re-exported
-from both `eventsource.stores` and the top-level `eventsource` package. Prefer the
-top-level import in application code:
 
 ```python
 from eventsource import (
     AppendResult,
-    EventPublisher,
-    EventStore,
-    EventStream,
+    CategoryReadOptions,
+    EventEnvelope,
     ExpectedVersion,
+    FeedReadOptions,
+    Position,
     ReadDirection,
-    ReadOptions,
-    StoredEvent,
+    StreamReadOptions,
 )
 ```
 
-The bundled implementations are imported the same way:
+The ports themselves are typing-only constructs (`Protocol` classes) -- import them when
+you need to annotate a parameter, not to instantiate anything:
+
+```python
+from eventsource.ports.store import (
+    AggregateStore,
+    CategoryQuery,
+    EventAppender,
+    EventLookup,
+    FullEventStore,
+    GlobalEventFeed,
+    StreamReader,
+)
+```
+
+The bundled adapters:
 
 ```python
 from eventsource import InMemoryEventStore, PostgreSQLEventStore
-```
 
-| Name | Kind | Defining module |
-| --- | --- | --- |
-| `EventStore` | Abstract base class | `eventsource.stores.interface` |
-| `EventPublisher` | `Protocol` | `eventsource.stores.interface` |
-| `StoredEvent` | Frozen dataclass | `eventsource.stores.interface` |
-| `ReadOptions` | Frozen dataclass | `eventsource.stores.interface` |
-| `EventStream` | Frozen dataclass | `eventsource.stores.interface` |
-| `AppendResult` | Frozen dataclass | `eventsource.stores.interface` |
-| `ReadDirection` | `Enum` | `eventsource.stores.interface` |
-| `ExpectedVersion` | Constant holder class | `eventsource.stores.interface` |
-| `InMemoryEventStore` | Implementation | `eventsource.stores.in_memory` |
-| `PostgreSQLEventStore` | Implementation | `eventsource.stores.postgresql` |
-| `SQLiteEventStore` | Implementation (optional) | `eventsource.stores.sqlite` |
-
-### SQLiteEventStore is conditional
-
-`SQLiteEventStore` requires the optional `aiosqlite` dependency. Both `eventsource` and
-`eventsource.stores` import it inside a `try/except ImportError`, so the name is only
-present -- and only appears in `__all__` -- when `aiosqlite` is installed. Guard on the
-public flag rather than catching `ImportError` yourself:
-
-```python
 from eventsource import SQLITE_AVAILABLE
 
 if SQLITE_AVAILABLE:
     from eventsource import SQLiteEventStore
 ```
 
-`PostgreSQLEventStore` is imported unconditionally, but using it requires `asyncpg`;
-`InMemoryEventStore` has no extra dependencies and is the store used throughout the
-testing helpers.
+Guard the `SQLiteEventStore` import on `SQLITE_AVAILABLE` since `aiosqlite` is an
+optional dependency; `PostgreSQLEventStore` is importable unconditionally but needs
+`asyncpg` at call time, gated by `ASYNCPG_AVAILABLE`.
 
-### Importing from the defining module
+| Name | Kind | Defining module |
+| --- | --- | --- |
+| `EventAppender` | `Protocol` | `eventsource.ports.store` |
+| `StreamReader` | `Protocol` | `eventsource.ports.store` |
+| `EventLookup` | `Protocol` | `eventsource.ports.store` |
+| `GlobalEventFeed` | `Protocol` | `eventsource.ports.store` |
+| `CategoryQuery` | `Protocol` | `eventsource.ports.store` |
+| `AggregateStore` | `Protocol` (union) | `eventsource.ports.store` |
+| `FullEventStore` | `Protocol` (union) | `eventsource.ports.store` |
+| `EventEnvelope` | Frozen dataclass | `eventsource.ports.envelopes` |
+| `AppendResult` | Frozen dataclass | `eventsource.ports.envelopes` |
+| `StreamReadOptions` | Frozen dataclass | `eventsource.ports.envelopes` |
+| `FeedReadOptions` | Frozen dataclass | `eventsource.ports.envelopes` |
+| `CategoryReadOptions` | Frozen dataclass | `eventsource.ports.envelopes` |
+| `ReadDirection` | `Enum` | `eventsource.ports.envelopes` |
+| `Position` | Frozen dataclass | `eventsource.ports.positions` |
+| `ExpectedVersion` | Frozen dataclass | `eventsource.ports.positions` |
+| `InMemoryEventStore` | Adapter | `eventsource.adapters.memory` |
+| `PostgreSQLEventStore` | Adapter | `eventsource.adapters.postgresql` |
+| `SQLiteEventStore` | Adapter (optional) | `eventsource.adapters.sqlite` |
 
-Importing directly from `eventsource.stores.interface` is supported and is what the
-library itself does internally, but the top-level re-exports are the stable public
-surface -- module layout below `eventsource.stores` is an implementation detail.
+None of the ports is `@runtime_checkable` -- `isinstance(store, StreamReader)` does not
+work out of the box. That is a deliberate default (see the module docstring in
+`ports/store.py`); add the decorator only where a consumer genuinely needs the
+`isinstance` check.
 
-## Data Types
+## Overview
 
-Five plain data types travel across the event store boundary. Four are frozen
-dataclasses (`StoredEvent`, `ReadOptions`, `EventStream`, `AppendResult`), one is an
-`Enum` (`ReadDirection`), and `ExpectedVersion` is a bare class used only as a namespace
-for integer constants. None of them depend on a backend, so they can be constructed
-freely in tests and in domain code.
+The contract is Interface Segregation applied to a store: five narrow `Protocol`
+classes, each one capability, so a consumer's type annotation states exactly what it
+needs and nothing more.
+
+| Port | Capability | Consumers |
+| --- | --- | --- |
+| `EventAppender` | Append events to a stream, optimistic-locked | Every writer |
+| `StreamReader` | Read one stream's events, forward or backward; fetch its version | `AggregateRepository` |
+| `EventLookup` | Check whether an `event_id` has been stored | Idempotency checks |
+| `GlobalEventFeed` | Read the store-wide ordered feed; fetch the current position | Subscriptions, catch-up, live migration |
+| `CategoryQuery` | Read every stream in a category (aggregate type), storage-time filtered | Projection rebuilds, tenant-scoped migrations |
+
+Two convenience unions are provided rather than left for every caller to spell out:
+
+- **`AggregateStore = EventAppender & StreamReader`** -- what an aggregate repository
+  needs: write plus single-stream read/version. Deliberately narrower than
+  `FullEventStore`; a repository never touches the global feed, never queries a
+  category, and never probes for an individual event id, so it must not type-require
+  those capabilities.
+- **`FullEventStore`** -- the union of all five ports. Reach for it only when a consumer
+  (migration tooling is the one real example) genuinely needs every capability at once;
+  everything else should type-hint the narrowest union it uses.
+
+**Write path.** `EventAppender.append(stream, events, expected)` is the only write
+operation. It appends a non-empty sequence of `DomainEvent` atomically, guarded by
+`expected` (an `ExpectedVersion` value object, not a bare int), and returns an
+`AppendResult` carrying the stream identity, the new version, and the position of the
+first appended event.
+
+**Read path.** Three shapes of read, one per port:
+
+| Method | Port | Returns | Use |
+| --- | --- | --- | --- |
+| `read_stream()` | `StreamReader` | `AsyncIterator[EventEnvelope]` | Rehydrate one aggregate |
+| `read_all()` | `GlobalEventFeed` | `AsyncIterator[EventEnvelope]` | Catch-up subscriptions, global projections |
+| `read_category()` | `CategoryQuery` | `AsyncIterator[EventEnvelope]` | Rebuild a projection over every stream of one type |
+
+All three are async iterators of `EventEnvelope`, not eager lists and not a
+"stream vs. envelope" split -- there is no separate eager `get_events()` shape in the
+ports surface. Two supporting reads round out the capability set:
+`StreamReader.get_stream_version(stream)` for the current version without materializing
+events, and `EventLookup.event_exists(event_id)` for idempotency checks.
+`GlobalEventFeed.current_position()` returns the store's high-water `Position`, or
+`None` for an empty store -- not `0`, which was the legacy behavior.
+
+**Two position spaces.** Every `EventEnvelope` carries a *stream version*
+(`stream_version`, a 1-based integer counting events within one `StreamId`) and an
+optional *global-feed position* (`position`, an opaque `Position` token, `None` for a
+feedless store). Aggregate reconstruction and optimistic locking use stream versions;
+catch-up subscriptions, projection checkpoints, and migration cutover use `Position`.
+
+**Value objects.** `EventEnvelope`, `AppendResult`, `StreamReadOptions`,
+`FeedReadOptions`, `CategoryReadOptions`, and `Position` are all frozen dataclasses
+(`slots=True`) with no backend coupling; `ExpectedVersion` is a frozen dataclass too,
+constructed only through its four classmethods. None of them import a driver type, so
+they can be constructed freely in tests and in application code.
+
+**Multi-tenancy.** Tenant filtering is a read-side concern expressed through
+`tenant_id` on `FeedReadOptions` and `CategoryReadOptions`. `EventAppender.append()`
+takes no tenant argument -- tenancy travels on the event itself via `TenantDomainEvent`.
+
+**Duplicate appends.** Appending an event whose `event_id` already exists in the store
+raises `DuplicateEventError`. This replaces the legacy stores' silent skip-and-continue
+behavior (ADR 0025, Decision 5) -- migration tooling and any other idempotency-sensitive
+caller should catch `DuplicateEventError` explicitly rather than assume a duplicate
+append is a no-op.
+
+## The Ports
+
+### EventAppender
+
+```python
+class EventAppender(Protocol):
+    max_append_batch: int | None
+
+    async def append(
+        self,
+        stream: StreamId,
+        events: Sequence[DomainEvent],
+        expected: ExpectedVersion,
+    ) -> AppendResult: ...
+```
+
+The only write operation in the ports surface. `stream` identifies the target stream;
+`events` is the non-empty sequence of new `DomainEvent`s to append; `expected` is one of
+the four `ExpectedVersion` constructions and gates the write with optimistic
+concurrency. `max_append_batch` is an instance attribute, not a method -- `None` means
+the adapter enforces no batch-size limit (true of all three bundled adapters today).
+
+Guarantees:
+
+- The append is atomic: either every event in `events` is committed, or none are.
+- A version mismatch against `expected` raises `OptimisticLockError`.
+- A duplicate `event_id` anywhere in `events` raises `DuplicateEventError`.
+- An empty `events` sequence raises `ValueError` (not a silent successful no-op, which
+  was the legacy behavior).
+- `AppendResult.position` is the position of the **first** appended event, not the
+  last -- the reverse of the retired `EventStore.append_events()` contract (ADR 0025,
+  Decision 4).
+
+Implemented by: `InMemoryEventStore`, `PostgreSQLEventStore`, `SQLiteEventStore`.
+
+### StreamReader
+
+```python
+class StreamReader(Protocol):
+    def read_stream(
+        self,
+        stream: StreamId,
+        options: StreamReadOptions | None = None,
+    ) -> AsyncIterator[EventEnvelope]: ...
+
+    async def get_stream_version(self, stream: StreamId) -> int: ...
+```
+
+`read_stream()` yields `EventEnvelope`s for one stream, oldest-first by default;
+`options` (a `StreamReadOptions`) controls direction, version range, and limit.
+`get_stream_version()` returns the stream's current version (`0` for a stream with no
+events) without materializing any events -- the cheap call for an existence or
+version check.
+
+Implemented by: `InMemoryEventStore`, `PostgreSQLEventStore`, `SQLiteEventStore`. This
+is also the port `AggregateStore` composes alongside `EventAppender`, so it is what
+`AggregateRepository` depends on.
+
+### EventLookup
+
+```python
+class EventLookup(Protocol):
+    async def event_exists(self, event_id: UUID) -> bool: ...
+```
+
+A single-method port for idempotency checks -- "has this exact event already been
+persisted." Distinct from the `append()`-time `DuplicateEventError` guard: this lets a
+caller check *before* attempting a write.
+
+Implemented by: `InMemoryEventStore`, `PostgreSQLEventStore`, `SQLiteEventStore`.
+
+### GlobalEventFeed
+
+```python
+class GlobalEventFeed(Protocol):
+    def read_all(
+        self,
+        from_position: Position | None = None,
+        options: FeedReadOptions | None = None,
+    ) -> AsyncIterator[EventEnvelope]: ...
+
+    async def current_position(self) -> Position | None: ...
+```
+
+The store-wide ordered feed. `read_all()` yields every `EventEnvelope` in the store in
+total order (subject to `options`' `tenant_id` and `limit` filters), resuming strictly
+after `from_position` when given. `current_position()` returns the store's current
+high-water `Position`, or `None` for an empty store.
+
+This port carries the strongest guarantee in the surface: **exclusive resumption with
+no-skip delivery.** Resuming a read strictly after a feed-produced `Position` must never
+permanently skip a committed event, even one committed concurrently with the read. The
+PostgreSQL adapter honors this by bounding feed reads to a transaction-safe horizon
+rather than reading right up to the latest commit.
+
+Only a backend with a genuine total ordering across all its streams implements this
+port -- there is no default, no `NotImplementedError` fallback, and no way to call
+`read_all()` against a store that does not support it (mypy rejects the call statically
+against anything typed narrower than `GlobalEventFeed`). Catch-up subscriptions and live
+migration both type-require `GlobalEventFeed` for exactly this reason.
+
+There is no `ReadDirection.BACKWARD` equivalent for feed reads, and no
+`from_timestamp`/`to_timestamp` filter on `FeedReadOptions` -- both existed on the
+retired `ReadOptions` and were dropped rather than ported (ADR 0025 Consequences).
+
+Implemented by: `InMemoryEventStore`, `PostgreSQLEventStore`, `SQLiteEventStore`.
+
+### CategoryQuery
+
+```python
+class CategoryQuery(Protocol):
+    def read_category(
+        self,
+        category: str,
+        options: CategoryReadOptions | None = None,
+    ) -> AsyncIterator[EventEnvelope]: ...
+```
+
+Reads every stream belonging to one category (today's aggregate type) as a single
+merged, ordered feed -- the shape a projection rebuild or a tenant-scoped migration
+needs, where the caller does not know or care about individual stream identities ahead
+of time.
+
+**Filtering and ordering are on storage time, inclusive, with position as tie-break.**
+`read_category()` filters and orders on `EventEnvelope.stored_at` -- when the row was
+written -- not on the event's own `occurred_at`, and the `from_timestamp` bound in
+`CategoryReadOptions` is inclusive (`>=`). Where two envelopes share the same
+`stored_at`, `Position` breaks the tie deterministically. This is a reversal of the
+retired `get_events_by_type()`, which filtered/ordered on `occurred_at` and used an
+exclusive (`>`) bound (ADR 0025, Decision 6).
+
+**Naive datetimes are rejected.** `from_timestamp` must be timezone-aware; a naive
+`datetime` raises `ValueError` rather than being silently compared against
+timezone-aware `stored_at` values.
+
+Implemented by: `InMemoryEventStore`, `PostgreSQLEventStore`, `SQLiteEventStore`.
+
+### AggregateStore and FullEventStore
+
+```python
+class AggregateStore(EventAppender, StreamReader, Protocol):
+    """What an aggregate repository needs: append plus stream read/version."""
+
+
+class FullEventStore(
+    EventAppender, StreamReader, EventLookup, GlobalEventFeed, CategoryQuery, Protocol
+):
+    """Union of all five store capability ports."""
+```
+
+Both are pure type-level compositions -- no new methods, no implementation. Use
+`AggregateStore` for anything shaped like `AggregateRepository`; use `FullEventStore`
+only for a consumer that genuinely spans all five capabilities. Do not default to
+`FullEventStore` out of convenience -- it defeats the segregation the other four ports
+exist to provide (see `.claude/rules/architecture.md`).
+
+### collect()
+
+```python
+async def collect(it: AsyncIterator[EventEnvelope]) -> list[EventEnvelope]:
+    """Drain an async iterator into a list."""
+```
+
+A small helper for tests and scripts that want the eager list a legacy caller might
+have expected from `get_events()`. Production code should prefer consuming the async
+iterator lazily.
+
+## Value Objects
 
 ### ReadDirection
 
-`Enum` with two string-valued members controlling stream traversal order:
+`Enum` with two string-valued members, defined in `eventsource.ports.envelopes`:
 
 | Member | Value | Meaning |
 | --- | --- | --- |
 | `ReadDirection.FORWARD` | `"forward"` | Oldest event first (chronological) |
 | `ReadDirection.BACKWARD` | `"backward"` | Newest event first (reverse chronological) |
 
-`ReadDirection` is a plain `Enum` (not `StrEnum`), so members do not compare equal to
-their string values -- compare against the member, as every backend does
-(`if options.direction == ReadDirection.BACKWARD:`).
+`ReadDirection` is a plain `Enum`, not a `StrEnum` -- members do not compare equal to
+their string values; compare against the member.
 
-`FORWARD` is the default for `ReadOptions.direction`. Direction is only reachable through
-`ReadOptions`, so it applies to `read_stream()` and `read_all()` only; `get_events()` and
-`get_events_by_type()` have no direction parameter and always return events oldest-first.
+`FORWARD` is the default for `StreamReadOptions.direction`. **`BACKWARD` is meaningful
+for stream reads only** -- `StreamReadOptions` has a `direction` field, but
+`FeedReadOptions` does not. There is no backward-feed-read equivalent in the ports
+surface (see `GlobalEventFeed` above); a caller that needs the newest events from the
+global feed must read forward and take the tail, or maintain its own reverse index.
 
-Direction is applied *before* `limit`, so `ReadDirection.BACKWARD` with `limit=10` yields
-the 10 newest events, not the 10 oldest in reverse:
-
-```python
-options = ReadOptions(direction=ReadDirection.BACKWARD, limit=10)
-async for stored in store.read_stream(f"{order_id}:Order", options):
-    print(stored.stream_position)  # counts down from the stream's current version
-```
-
-Direction also changes how `stream_position` is computed on the yielded `StoredEvent`.
-Reading forward, positions ascend as `from_position + i + 1`; reading backward, they
-descend from the stream version as `version - i`. In-memory and default implementations
-reverse an already-materialized list, while the SQL backends push the ordering into the
-query (`ORDER BY version DESC` / `ASC`); the observable ordering is the same either way.
-
-### StoredEvent
-
-A frozen dataclass wrapping a persisted `DomainEvent` with the position metadata the
-store assigned to it. The read iterators (`read_stream()`, `read_all()`) yield
-`StoredEvent`; the eager reads (`get_events()`, `get_events_by_type()`) return bare
-`DomainEvent` objects instead.
+### EventEnvelope
 
 ```python
-stored = StoredEvent(
-    event=order_created_event,
-    stream_id=f"{order_id}:Order",
-    stream_position=1,
-    global_position=1000,
-    stored_at=datetime.now(UTC),
-)
+@dataclass(frozen=True, slots=True)
+class EventEnvelope:
+    event: DomainEvent
+    stream_id: StreamId
+    stream_version: int
+    position: Position | None
+    stored_at: datetime
 ```
 
-The dataclass is declared `@dataclass(frozen=True)`, so assigning to any field raises
-`AttributeError`. It carries both position spaces at once -- `stream_position` for
-aggregate-level reasoning and `global_position` for checkpoints, catch-up subscriptions,
-and migration cutover -- which is the reason projections and subscriptions consume the
-iterator forms of the read API rather than the eager ones.
-
-Backends construct `StoredEvent` themselves from their own storage rows, so the
-faithfulness of `global_position` and `stored_at` depends on the backend: the SQL stores
-populate them from the event table's global sequence and persisted timestamp column,
-while `EventStore`'s default `read_stream()` has neither available and fills in
-`global_position=0` and `stored_at=event.occurred_at`. Do not rely on `global_position`
-from a backend that has not overridden `read_stream()`.
-
-#### Fields
+The single container type yielded by all three read methods (`read_stream()`,
+`read_all()`, `read_category()`) -- there is no separate eager/bare-event return shape
+in the ports surface.
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `event` | `DomainEvent` | The underlying domain event |
-| `stream_id` | `str` | Identifier of the stream, conventionally `"<aggregate_id>:<aggregate_type>"` |
-| `stream_position` | `int` | 1-based position within that aggregate's stream |
-| `global_position` | `int` | 1-based position across all events in the store |
-| `stored_at` | `datetime` | When the event was persisted |
+| `event` | `DomainEvent` | The underlying domain event, unmodified |
+| `stream_id` | `StreamId` | Identity of the stream (`aggregate_id` + `category`) |
+| `stream_version` | `int` | 1-based position within that stream |
+| `position` | `Position \| None` | Opaque global-feed position; `None` for a feedless store |
+| `stored_at` | `datetime` | When the event was persisted (UTC) |
 
-All five fields are required -- none has a default, so every `StoredEvent` must be
-constructed with the full set, keyword or positional, in the order above.
+`stream_id` is a `StreamId` value object (see below), not a raw string. `position` is
+`None` only for a store that does not implement `GlobalEventFeed`; every bundled
+adapter implements it, so in practice `position` is always populated for
+`InMemoryEventStore`, `PostgreSQLEventStore`, and `SQLiteEventStore`.
 
-**`event`** is the `DomainEvent` itself, unmodified. The wrapper adds metadata around it
-rather than copying anything out of it; the four derived properties documented below
-read straight through to this object.
-
-**`stream_id`** is a `str`, not a `UUID`. The convention throughout the library is
-`"<aggregate_id>:<aggregate_type>"` -- that is the format `read_stream()` parses, and
-what the backends echo back into the events they yield. Nothing in the dataclass
-validates the format or cross-checks it against `event.aggregate_id`.
-
-**`stream_position`** is the 1-based index of the event within its aggregate's stream,
-the same number `EventStream.version` counts up to. Reading forward it ascends; reading
-backward the backends compute it descending from the stream's current version, so it
-always identifies the same event regardless of `ReadDirection`.
-
-**`global_position`** is the 1-based index across all events in the store, and is the
-value projections and subscriptions persist as a checkpoint. Its trustworthiness is
-backend-dependent: `PostgreSQLEventStore` reads it from the event table's global
-sequence column, `InMemoryEventStore` tracks it on its own append counter, and the
-default `read_stream()` in `EventStore` hardcodes `global_position=0` with the comment
-`# Not available in default implementation`. Treat `0` from an unoverridden backend as
-"unknown", not as "the first event".
-
-**`stored_at`** is nominally the persistence timestamp, distinct from the event's own
-`occurred_at`. Only `PostgreSQLEventStore` supplies a true persistence time (the row's
-`created_at` column); both `InMemoryEventStore` and the default `read_stream()` fill it
-from `event.occurred_at`. Code that needs to distinguish "when it happened" from "when
-it was written" should not assume the two differ on every backend.
-
-`__str__` renders as `StoredEvent(<event_type>, stream_pos=<n>, global_pos=<n>)` -- note
-that it shows the event *type*, not the event ID, which is what appears in log lines and
-test failure output. There is no custom `__repr__`; the dataclass-generated one is used
-for `repr()` and shows all five fields.
-
-#### Derived Properties (event_id, event_type, aggregate_id, aggregate_type)
-
-Four read-only `@property` accessors delegate straight to the wrapped event, so callers
-routing or filtering a `StoredEvent` do not have to reach through `.event`:
-
-| Property | Type | Returns | Source field on `DomainEvent` |
-| --- | --- | --- | --- |
-| `event_id` | `UUID` | `self.event.event_id` | `event_id`, defaults to `uuid4()` |
-| `event_type` | `str` | `self.event.event_type` | `event_type`, auto-derived from the class name |
-| `aggregate_id` | `UUID` | `self.event.aggregate_id` | `aggregate_id`, required |
-| `aggregate_type` | `str` | `self.event.aggregate_type` | `aggregate_type`, required |
+There are no derived `event_id`/`event_type`/`aggregate_id`/`aggregate_type` convenience
+properties on `EventEnvelope` -- read those straight off `.event` and `.stream_id`:
 
 ```python
-async for stored in store.read_all():
-    if stored.event_type == "OrderShipped":
-        await projection.handle(stored.event)
+async for envelope in store.read_all():
+    if envelope.event.event_type == "OrderShipped":
+        await projection.handle(envelope.event)
+    aggregate_id = envelope.stream_id.aggregate_id
 ```
 
-They are one-line delegations with no caching, no coercion, and no fallback -- reading
-`stored.event_type` and `stored.event.event_type` are interchangeable. Because
-`StoredEvent` is frozen and they are properties without setters, all four are read-only:
-assignment raises `AttributeError`.
+### StreamId
 
-**They read the event, never the metadata.** `aggregate_id` and `aggregate_type` come
-from the event payload, not from parsing `stream_id`. The two are conventionally the same
-information (`stream_id` is `"<aggregate_id>:<aggregate_type>"`), but nothing in the
-dataclass cross-checks them -- a backend that writes a `stream_id` disagreeing with the
-event's own `aggregate_id` produces a `StoredEvent` that silently reports both. When the
-two could diverge, `aggregate_id` is the authoritative one, since it is what the event
-itself was constructed with and what `AggregateRepository` replays against.
-
-**`event_type` is the auto-derived class name.** `DomainEvent.__init_subclass__` sets
-`event_type` to the subclass's `__name__` unless the class explicitly declares its own
-value, so string comparisons like `stored.event_type == "OrderShipped"` match the class
-name by default. A class that overrides `event_type` (for example
-`event_type: str = "order_created_v2"`) changes what this property returns -- match on
-the declared value, not the class name, for such events.
-
-**`event_id` is what idempotency keys off.** It is the same UUID that
-`event_exists(event_id)` checks and that the append path uses to skip already-persisted
-events, which makes `stored.event_id` the natural deduplication key for a projection or
-subscription handler processing a `StoredEvent`.
-
-The only other member of `StoredEvent` derived from the event is `__str__`, which uses
-`self.event_type` -- so a log line reading `StoredEvent(OrderShipped, ...)` is showing
-this property, not the `stream_id`.
-
-### ReadOptions
-
-A frozen dataclass bundling the read parameters for `read_stream()` and `read_all()`.
-Every field has a default, so `ReadOptions()` is a valid "read everything forward from
-the beginning" request. Passing `options=None` to either method is equivalent.
+`StreamId` is a domain value object (`eventsource.domain.StreamId`), not part of the
+ports module, but it is the identity every port method keys reads and writes on:
 
 ```python
-# First 100 events, forward
-ReadOptions(limit=100)
-
-# Last 10 events, newest first
-ReadOptions(direction=ReadDirection.BACKWARD, limit=10)
-
-# From position 50 onward
-ReadOptions(from_position=50, limit=100)
-
-# Everything belonging to one tenant
-ReadOptions(tenant_id=my_tenant_uuid)
+@dataclass(frozen=True)
+class StreamId:
+    aggregate_id: UUID
+    category: str
 ```
 
-#### Fields
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `direction` | `ReadDirection` | `FORWARD` | Traversal order |
-| `from_position` | `int` | `0` | Starting position; `0` means the beginning, `-1` means the end |
-| `limit` | `int \| None` | `None` | Maximum events to return; `None` means unlimited |
-| `from_timestamp` | `datetime \| None` | `None` | Only events at or after this time |
-| `to_timestamp` | `datetime \| None` | `None` | Only events at or before this time |
-| `tenant_id` | `UUID \| None` | `None` | Restrict to one tenant; `None` means all tenants |
-
-Which position space `from_position` refers to depends on the method: `read_stream()`
-passes it through as `from_version` (a stream position), while `read_all()` implementations
-interpret it as a global position.
-
-#### Validation Rules (from_position, limit)
-
-`__post_init__` enforces two rules and raises `ValueError` otherwise:
-
-- `from_position` must be `>= 0`, with `-1` allowed as the "from the end" sentinel. Any
-  other negative value raises `ValueError("from_position must be >= 0 or -1 (for end)")`.
-- `limit`, when not `None`, must be `>= 0`. A negative limit raises
-  `ValueError("limit must be >= 0")`. `limit=0` is accepted and yields nothing.
-
-Nothing else is validated: the timestamps are not checked for ordering, and an
-inconsistent `from_timestamp`/`to_timestamp` pair simply produces an empty result.
-
-#### tenant_id Read Filter
-
-`tenant_id` is purely a read-side filter. It exists because tenancy travels on the event
-itself -- `TenantDomainEvent` populates the `tenant_id` field that `DomainEvent` declares
-as optional -- rather than being a parameter of the write path. `append_events()` takes
-no tenant argument at all.
-
-Only `read_all()` consumes `ReadOptions.tenant_id`; `read_stream()`'s default
-implementation ignores it, since a stream already belongs to exactly one aggregate. The
-parallel filter for the eager read path is the separate `tenant_id` parameter on
-`get_events_by_type()`, which backends translate into an `AND tenant_id = ...` clause.
-
-Its main uses are tenant-scoped migrations and per-tenant projection rebuilds.
-
-### EventStream
-
-A frozen dataclass holding one aggregate's events plus its resulting version. This is
-what `get_events()` returns and what `AggregateRepository` replays to rehydrate an
-aggregate.
-
-```python
-stream = await event_store.get_events(order_id, "Order")
-for event in stream.events:
-    aggregate.apply_event(event, is_new=False)
-```
-
-#### Fields
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `aggregate_id` | `UUID` | -- | Identifier of the aggregate |
-| `aggregate_type` | `str` | -- | Type name, e.g. `"Order"` |
-| `events` | `list[DomainEvent]` | `[]` (per-instance) | Events in chronological order, oldest first |
-| `version` | `int` | `0` | Aggregate version after applying all events |
-
-`events` uses `field(default_factory=list)`, so each instance gets its own list.
-`__post_init__` normalizes an explicitly-passed `None` back to `[]` via
-`object.__setattr__`. The dataclass is frozen, but the `events` list itself is mutable --
-treat it as read-only.
-
-`version` is a separate field, not computed from `len(events)`. For a full read of the
-stream the two coincide, but a partial read (`from_version=5`) returns the aggregate's
-true current version alongside a shorter event list, which is exactly what optimistic
-locking needs. Nothing enforces the relationship, so a hand-constructed `EventStream` can
-carry any version you give it.
-
-#### Properties (is_empty, latest_event)
-
-| Property | Type | Behavior |
-| --- | --- | --- |
-| `is_empty` | `bool` | `True` when `events` has no entries |
-| `latest_event` | `DomainEvent \| None` | Last element of `events`, or `None` when empty |
-
-`latest_event` is the last event *in the returned list*, which for a partial read is not
-necessarily the newest event in the underlying stream.
-
-#### EventStream.empty()
-
-```python
-stream = EventStream.empty(aggregate_id, "Order")
-assert stream.is_empty
-assert stream.version == 0
-```
-
-Classmethod constructing an `EventStream` with no events and `version=0`. Backends return
-it when an aggregate has no history, so callers can distinguish "nothing stored yet"
-without a `None` check. `AggregateRepository` treats it as the signal to build a fresh
-aggregate rather than raise.
+`category` must match `[A-Za-z0-9_.-]+` -- `:` is banned because `render()` produces
+`"{aggregate_id}:{category}"`, the same wire format the legacy `stream_id` string used.
+`StreamId.parse(raw)` is the inverse. Construct a `StreamId` to call `read_stream()` or
+`append()`; do not build the `"<uuid>:<category>"` string by hand.
 
 ### AppendResult
 
-A frozen dataclass describing the outcome of `append_events()`.
-
 ```python
-result = await event_store.append_events(...)
-if result.success:
-    print(f"appended, new version {result.new_version}")
-elif result.conflict:
-    print("concurrent modification, retry")
+@dataclass(frozen=True, slots=True)
+class AppendResult:
+    stream: StreamId
+    new_version: int
+    position: Position | None
 ```
 
-#### Fields
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `success` | `bool` | -- | Whether the append committed |
-| `new_version` | `int` | -- | Aggregate version after the append |
-| `global_position` | `int` | `0` | Global position of the last appended event |
-| `conflict` | `bool` | `False` | Whether the failure was an optimistic-lock conflict |
-
-Because the bundled backends *raise* `OptimisticLockError` on a version mismatch rather
-than returning a value, in practice a returned `AppendResult` is a success. The
-`conflict` field exists for backends that prefer to report conflicts as values, and for
-callers that want a uniform shape. Handle both: catch `OptimisticLockError` and check
-`result.success`.
-
-Two edge cases in the shipped implementations are worth knowing. An empty `events` list
-short-circuits to `AppendResult.successful(expected_version)` -- no write, and
-`new_version` echoes what you passed in. And appends are idempotent by `event_id`: events
-whose ID already exists are skipped, so `new_version` can advance by fewer than
-`len(events)`.
-
-#### AppendResult.successful()
+Returned by `EventAppender.append()` on success (a failed append raises rather than
+returning a falsy result -- see `OptimisticLockError` and `DuplicateEventError` above).
+`position` is the position of the **first** event appended in this call, `None` for a
+feedless store.
 
 ```python
-AppendResult.successful(new_version=3, global_position=1042)
+result = await store.append(stream, events, ExpectedVersion.no_stream())
+print(f"stream now at version {result.new_version}, first event at {result.position}")
 ```
 
-Classmethod building `success=True, conflict=False` with the given version and
-`global_position` (defaulting to `0`). This is the constructor backends use on the happy
-path.
-
-#### AppendResult.conflicted()
+### StreamReadOptions
 
 ```python
-AppendResult.conflicted(current_version=5)
+@dataclass(frozen=True, slots=True)
+class StreamReadOptions:
+    direction: ReadDirection = ReadDirection.FORWARD
+    from_version: int | None = None
+    to_version: int | None = None
+    limit: int | None = None
 ```
 
-Classmethod building `success=False, conflict=True, global_position=0`. Note the
-parameter name: the aggregate's *actual* current version is stored in the `new_version`
-field, so a caller recovering from a conflict reads `result.new_version` to learn what the
-version really is before retrying.
-
-### ExpectedVersion Sentinels
-
-`ExpectedVersion` is not an enum or a dataclass -- it is a plain class holding three
-`int` class attributes, used as a namespace. The values are ordinary integers passed as
-the `expected_version` argument to `append_events()`, and backends distinguish them from
-real version numbers by their negative or zero value.
-
-| Constant | Value | Precondition |
+| Field | Default | Description |
 | --- | --- | --- |
-| `ExpectedVersion.ANY` | `-1` | None -- version check disabled |
-| `ExpectedVersion.NO_STREAM` | `0` | Stream must not exist |
-| `ExpectedVersion.STREAM_EXISTS` | `-2` | Stream must exist |
+| `direction` | `FORWARD` | Traversal order for this stream |
+| `from_version` | `None` | Starting version (inclusive); `None` means the stream start |
+| `to_version` | `None` | Ending version (inclusive); `None` means the stream end |
+| `limit` | `None` | Maximum events to return; `None` means unlimited |
 
-Any other value is treated as a concrete expected version and must equal the stream's
-current version exactly. In all three failing cases the backend raises
-`OptimisticLockError(aggregate_id, expected_version, current_version)`.
+```python
+# Last 10 events of a stream, newest first
+options = StreamReadOptions(direction=ReadDirection.BACKWARD, limit=10)
+async for envelope in store.read_stream(stream, options):
+    print(envelope.stream_version)  # counts down
+```
 
-#### ANY (-1)
+### FeedReadOptions
+
+```python
+@dataclass(frozen=True, slots=True)
+class FeedReadOptions:
+    tenant_id: UUID | None = None
+    limit: int | None = None
+```
+
+| Field | Default | Description |
+| --- | --- | --- |
+| `tenant_id` | `None` | Restrict to one tenant; `None` means all tenants |
+| `limit` | `None` | Maximum events to return; `None` means unlimited |
+
+Deliberately narrower than the retired `ReadOptions`: no `direction` (feed reads are
+always forward -- see `ReadDirection` above) and no `from_timestamp`/`to_timestamp`
+(dropped, not ported, per ADR 0025 Consequences). Resumption is via the
+`from_position` parameter on `read_all()` itself, not a field on this record.
+
+### CategoryReadOptions
+
+```python
+@dataclass(frozen=True, slots=True)
+class CategoryReadOptions:
+    tenant_id: UUID | None = None
+    from_timestamp: datetime | None = None
+    limit: int | None = None
+```
+
+| Field | Default | Description |
+| --- | --- | --- |
+| `tenant_id` | `None` | Restrict to one tenant; `None` means all tenants |
+| `from_timestamp` | `None` | Minimum `stored_at` (inclusive); `None` means no minimum |
+| `limit` | `None` | Maximum events to return; `None` means unlimited |
+
+`from_timestamp` filters on storage time (`EventEnvelope.stored_at`), inclusive, not on
+the event's own `occurred_at` -- see `CategoryQuery` above for the full inclusive/
+tie-break/naive-datetime rules. There is no `to_timestamp` field.
+
+### Position
+
+```python
+@dataclass(frozen=True, slots=True)
+class Position:
+    store_id: str
+    key: tuple[int | str, ...]
+```
+
+An opaque, ordered, serializable token identifying a point in one store's global feed.
+Produced only by `GlobalEventFeed` implementers (`current_position()`, and via
+`EventEnvelope.position` / `AppendResult.position`), and consumed by passing it back
+into `read_all(from_position=...)` or persisting it as a checkpoint.
+
+**Totally ordered within one store; not comparable across stores.** `<`, `<=`, `>`,
+`>=` compare `key` lexicographically once both operands share `store_id`; comparing
+`Position`s from two different `store_id`s raises `PositionForeignError`. Equality
+(`==`) is a plain dataclass comparison of both fields together, so positions from
+different stores are simply unequal rather than raising.
+
+**No arithmetic.** `Position` deliberately exposes no subtraction, no distance, no way
+to compute "how far behind." Lag metrics built on positions became count-behind or
+wall-clock lag as of ADR 0019/0025 (amending ADR 0014) -- see `key` as an opaque tuple
+whose shape is adapter-defined, not a number to do math on.
+
+```python
+pos = await store.current_position()
+if pos is not None:
+    serialized = pos.to_str()          # '{"s":"pg-main","k":[1042]}'
+    restored = Position.from_str(serialized)
+    assert restored == pos
+```
+
+`to_str()` / `from_str()` round-trip through JSON for checkpoint persistence.
+`from_str()` raises `PositionDecodeError` on malformed input (not valid JSON, wrong
+shape, or a `key` element that is not an `int`/`str` -- `bool` is explicitly excluded
+even though `bool` is an `int` subclass in Python).
+
+### ExpectedVersion
+
+```python
+@dataclass(frozen=True, slots=True)
+class ExpectedVersion:
+    kind: str
+    version: int | None = None
+```
+
+Optimistic-concurrency expectation for `EventAppender.append()`. Not an int, not an
+enum member -- a frozen dataclass constructed only through its four classmethods; the
+raw constructor validates `kind` against a known set and enforces that `version` is
+present if and only if `kind == "exact"`.
+
+| Classmethod | `kind` | Precondition |
+| --- | --- | --- |
+| `ExpectedVersion.any_()` | `"any"` | None -- version check disabled |
+| `ExpectedVersion.no_stream()` | `"no_stream"` | Stream must not exist (version 0) |
+| `ExpectedVersion.stream_exists()` | `"stream_exists"` | Stream must exist (version > 0) |
+| `ExpectedVersion.exact(n)` | `"exact"` | Stream's current version must equal exactly `n` |
+
+Any mismatch raises `OptimisticLockError(aggregate_id, expected_version, current_version)`.
+
+**Adapters translate by name, never by numeric coincidence.** The retired
+`ExpectedVersion` sentinels were bare ints (`ANY = -1`, `NO_STREAM = 0`,
+`STREAM_EXISTS = -2`); a caller migrating old integer call sites maps `-1 -> any_()`,
+`0 -> no_stream()`, `-2 -> stream_exists()`, and any other non-negative int
+`n -> exact(n)`. `OptimisticLockError` itself still carries the legacy sentinel ints in
+its `expected_version` field for message fidelity -- that is a private adapter-internal
+formatting detail, not part of the ports contract (ADR 0025, Decision 11), so do not
+infer a VO's `kind` from `OptimisticLockError.expected_version`.
+
+#### any_()
 
 Skips the version check entirely; the append always proceeds. Use it for append-only
 streams where no invariant depends on prior state (audit logs, telemetry, imports), and
 for backfills where concurrent writers are acceptable. It gives up the only concurrency
-protection the store offers, so it is the wrong default for aggregate writes.
+protection the store offers -- the wrong default for aggregate writes.
 
-The conformance suite asserts this behavior: consecutive appends with
-`ExpectedVersion.ANY` succeed regardless of the stream's current version.
+#### no_stream()
 
-#### NO_STREAM (0)
+Requires the stream to be empty (current version `0`). This is the creation guard: it
+fails if another writer already created the aggregate.
 
-Requires the stream to be empty -- current version must be `0`. This is the creation
-guard: it fails if another writer already created the aggregate.
+#### stream_exists()
 
-`NO_STREAM` and the literal `0` are the same value, which is why "pass `expected_version=0`
-for a new aggregate" and "pass `ExpectedVersion.NO_STREAM`" describe the same call. The
-concrete-version branch would compare `0 != current_version` and reach the identical
-conclusion, so the sentinel is a readability choice rather than a behavioral one.
+Requires the stream to be non-empty (current version `> 0`) but does not care which
+version. Use it for updates that must apply to an existing aggregate yet tolerate
+concurrent appends, such as adding an annotation or a compensating event. It rejects
+writes to a non-existent aggregate while providing no protection against lost updates.
 
-#### STREAM_EXISTS (-2)
+#### exact(n)
 
-Requires the stream to be non-empty -- current version must be greater than `0` -- but
-does not care which version it is. Use it for updates that must apply to an existing
-aggregate yet tolerate concurrent appends, such as adding an annotation or a
-compensating event. It rejects writes to a non-existent aggregate while providing no
-protection against lost updates.
+Requires the stream's current version to equal `n` precisely -- the strict form used by
+`AggregateRepository` on every normal save, where `n` is the version the aggregate was
+loaded at. Raises `ValueError` at construction time if `n < 0`.
+
+## Errors
+
+| Exception | Raised by | When |
+| --- | --- | --- |
+| `OptimisticLockError` | `EventAppender.append()` | `expected` does not match the stream's current version |
+| `DuplicateEventError` | `EventAppender.append()` | An event in the batch has an `event_id` already stored |
+| `PositionForeignError` | `Position` comparison operators | Comparing positions from two different `store_id`s |
+| `PositionDecodeError` | `Position.from_str()` | Input is not valid, well-shaped JSON for a `Position` |
+| `ValueError` | `EventAppender.append()`, `CategoryQuery.read_category()`, `ExpectedVersion.exact()` | Empty `events` sequence; naive `from_timestamp`; negative `exact()` version |
+
+All of these live in `eventsource.exceptions` and are re-exported from the top-level
+`eventsource` package.
+
+## What Changed From the Retired `EventStore` ABC
+
+For anyone migrating call sites off the legacy surface (`eventsource.stores`, deleted
+per ADR 0025):
+
+- One `EventStore` ABC with five abstract + three overridable-default methods becomes
+  five segregated `Protocol` ports; a backend implements only what it can honor, with
+  mypy enforcing the boundary instead of `NotImplementedError` at runtime.
+- `StoredEvent` becomes `EventEnvelope`; its four derived properties
+  (`event_id`/`event_type`/`aggregate_id`/`aggregate_type`) are gone -- read `.event`
+  and `.stream_id` directly.
+- `stream_id: str` (`"<uuid>:<category>"`) becomes `stream_id: StreamId`, a proper value
+  object with `.render()` / `.parse()`.
+- `ReadOptions` splits into three narrower records (`StreamReadOptions`,
+  `FeedReadOptions`, `CategoryReadOptions`); `direction` and timestamp filters no longer
+  apply to feed reads.
+- Integer `global_position` becomes the opaque `Position` value object: comparable and
+  serializable, never arithmetic.
+- `int` `expected_version` (with `-1`/`0`/`-2` sentinels) becomes the `ExpectedVersion`
+  value object, constructed via `.any_()` / `.no_stream()` / `.stream_exists()` /
+  `.exact(n)`.
+- `AppendResult.global_position` (last event) becomes `AppendResult.position` (first
+  event) -- the ordering flips.
+- Silent duplicate-append skipping becomes `DuplicateEventError`.
+- `get_events_by_type()` (occurred_at, exclusive) becomes `read_category()` (stored_at,
+  inclusive, position tie-break) and drops the cross-type (`aggregate_type=None`) mode.
+- `get_global_position()` returning `0` for an empty store becomes `current_position()`
+  returning `None`.
+- `EventPublisher` is gone from this surface entirely; it was never a store capability.

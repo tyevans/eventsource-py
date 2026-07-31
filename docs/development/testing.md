@@ -392,7 +392,7 @@ whose source lives in a package you would otherwise have to pick a subdirectory 
 | --- | --- |
 | `test_domain_event.py`, `test_event_registry.py`, `test_event_type_auto.py`, `test_timestamp_types.py` | `DomainEvent` semantics, auto-registration, the global `EventRegistry` |
 | `test_aggregate_root.py`, `test_aggregate_repository.py`, `test_transition.py` | `AggregateRoot`, `AggregateRepository`, state transitions |
-| `test_event_store_interface.py`, `test_in_memory_event_store.py`, `test_postgresql_event_store.py`, `test_eventstore_global_position.py`, `test_connection_helper.py` | the `EventStore` contract and its implementations |
+| `test_connection_helper.py` | the shared SQLAlchemy connection-helper used by the SQL-backed adapters |
 | `test_event_bus.py`, `test_redis_event_bus.py`, `test_kafka_event_bus.py`, `test_rabbitmq_event_bus.py`, `test_rabbitmq_exports.py`, `test_redis_event_bus_tracing.py` | bus interface and each broker client |
 | `test_checkpoint_repository.py`, `test_checkpoint_position.py`, `test_outbox_repository.py`, `test_dlq_repository.py` | checkpoint, outbox, and DLQ repositories |
 | `test_projection_base.py`, `test_projection_decorators.py`, `test_projection_protocols.py`, `test_projection_coordinator.py` | projection base classes and wiring |
@@ -402,8 +402,8 @@ whose source lives in a package you would otherwise have to pick a subdirectory 
 
 The package subdirectories mirror source packages one-for-one: `aggregates/`, `bus/`,
 `handlers/`, `migration/`, `migrations/`, `multitenancy/`, `observability/`,
-`projections/`, `readmodels/`, `repositories/`, `serialization/`, `snapshots/`,
-`stores/`, `subscriptions/`, `sync/`, and `testing/`. These hold the deeper,
+`projections/`, `readmodels/`, `repositories/`, `serialization/`,
+`adapters/`, `ports/`, `subscriptions/`, `sync/`, and `testing/`. These hold the deeper,
 feature-specific coverage — `migration/` alone has 25 modules covering dual-write,
 cutover, position mapping, and chaos scenarios, and `subscriptions/` has 15 covering
 backpressure, drain, retry, health, and pause/resume.
@@ -458,46 +458,44 @@ Run just this tier with:
 uv run pytest tests/unit --no-cov
 ```
 
-### `tests/stores/`, `tests/repositories/`, `tests/locks/` — backend-specific suites
+### `tests/repositories/`, `tests/locks/` — backend-specific suites
 
-Three small top-level suites sit beside `unit/`. They exist as their own directories
+Two small top-level suites sit beside `unit/`. They exist as their own directories
 because they are organised around a *backend* rather than a source package, and because
 each one is the non-Docker half of a pair whose other half lives in
-`tests/integration/`. Four test modules in total:
+`tests/integration/`. The equivalent real-`SQLiteEventStore` coverage now lives under
+`tests/unit/adapters/` (`test_sqlite_conformance.py`) alongside the other adapter suites
+rather than in its own top-level directory.
 
 | Directory | Modules | Needs |
 | --- | --- | --- |
-| `tests/stores/` | `test_sqlite_event_store.py`, `test_read_all_tenant_filter.py` | `aiosqlite` for the first; nothing for the second |
 | `tests/repositories/` | `test_sqlite_repos.py` | `aiosqlite` |
 | `tests/locks/` | `test_postgresql_locks.py` | nothing |
 
 Each directory has an `__init__.py` and no `conftest.py` of its own — every fixture they
 use comes from `tests/conftest.py`.
 
-#### `tests/stores/`
+#### `tests/unit/adapters/test_sqlite_conformance.py`
 
-`test_sqlite_event_store.py` is the one place a real `SQLiteEventStore` is driven
-end-to-end. It constructs stores directly rather than through a fixture (both
-`":memory:"` and temp-file databases, so it can assert that file-backed data survives a
-close-and-reopen and in-memory data does not), and covers WAL mode and busy-timeout
-configuration, schema initialization, the async context-manager lifecycle, append and
-optimistic locking, idempotency, retrieval, stream reading, version queries, and error
-handling. It is guarded module-wide:
+This is the one place a real `SQLiteEventStore` (imported from
+`eventsource.adapters.sqlite`) is driven end-to-end against the store port
+conformance suites in `eventsource.testing.conformance_ports`, alongside
+`SQLiteSnapshotStore` and the SQL-backed checkpoint/DLQ repositories. It
+constructs stores directly rather than through a fixture, covers WAL mode and
+busy-timeout configuration, schema initialization, append and optimistic
+locking, idempotency, retrieval, stream reading, and version queries, and is
+guarded module-wide:
 
 ```python
-from tests.conftest import AIOSQLITE_AVAILABLE, skip_if_no_aiosqlite
+from tests.conftest import skip_if_no_aiosqlite
 
 pytestmark = [pytest.mark.sqlite, skip_if_no_aiosqlite]
 ```
 
-The `if AIOSQLITE_AVAILABLE:` block around the `eventsource.stores.sqlite` imports is
-what keeps collection working on an install without the driver — the marker alone would
-not save you from an `ImportError` at import time.
-
-`test_read_all_tenant_filter.py` is the odd one out: it exercises `read_all()`'s
-`tenant_id` filtering against `InMemoryEventStore` and needs no backend at all. It is
-filed here for topical reasons — it belongs with the store tests — and carries no
-`pytestmark`, so it runs on a bare `dev` install and survives every deselection filter.
+Tenant-filtering coverage for `read_all()` and `read_category()` now lives
+alongside the other port-level and application-level tenant tests (for example
+`tests/unit/application/projections/test_tenant_filter.py`) rather than in a
+dedicated store-tenant-filter module.
 
 #### `tests/repositories/`
 
@@ -703,7 +701,7 @@ backend:
 
 | Module | Measures |
 | --- | --- |
-| `test_event_store.py` | `InMemoryEventStore` append (single, batch of 10/100, sequential), reads (100 and 1000 events, by type, stream iterator, `get_stream_version`), concurrency (parallel appends/reads, mixed workload), and idempotency (`event_exists`) |
+| `test_event_store.py` | `InMemoryEventStore` append (single, batch of 10/100, sequential), reads (100 and 1000 events, `read_all`, stream iterator, `get_stream_version`), concurrency (parallel appends/reads, mixed workload), and idempotency (`event_exists`) |
 | `test_projections.py` | `DeclarativeProjection` throughput for 1/100/1000 events, multi-handler dispatch, checkpoint-tracking overhead, an order lifecycle, a deliberately compute-heavy handler, and handler-routing lookup |
 | `test_repositories.py` | The in-memory checkpoint, DLQ, and outbox repositories — update/get/reset/lag metrics, add and query failed events, the full outbox add → pending → publish workflow, and concurrent updates |
 | `test_serialization.py` | `to_dict`/`from_dict`, pydantic `model_dump`/`model_validate`, JSON encode/decode, round trips at 1 and 100 events, and the `with_*` copy helpers |

@@ -83,10 +83,11 @@ src/eventsource/
   repositories/     # Outbox repository only (postgres, sqlite, memory backends) -- checkpoint and
                     #   DLQ moved to ports/ + adapters/ (ADR 0024)
   serialization/    # JSON encoding (EventSourceJSONEncoder)
-  stores/           # EventStore interface + PostgreSQL, SQLite, InMemory implementations
   subscriptions/    # Subscription lifecycle: manager, runners, retry, health, flow control
-  sync/             # SyncEventStoreAdapter (wraps async store for sync callers)
-  testing/          # Test helpers: assertions, BDD, builder, harness
+  sync/             # SyncEventStoreAdapter (wraps a FullEventStore for sync callers)
+  testing/          # Test helpers: assertions, BDD, builder, harness;
+                    #   testing/conformance_ports/: backend conformance suites for the store/snapshot/
+                    #   checkpoint/DLQ ports (EventStoreConformanceSuite's replacement)
   gdpr/             # GDPR compliance utilities
   _internal/        # Internal helpers (not public API)
   config.py         # Configuration utilities
