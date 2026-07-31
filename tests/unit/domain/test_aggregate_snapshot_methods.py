@@ -18,7 +18,7 @@ from uuid import uuid4
 import pytest
 from pydantic import BaseModel, Field, ValidationError
 
-from eventsource.aggregates.base import AggregateRoot, DeclarativeAggregate
+from eventsource.domain.aggregate import AggregateRoot, DeclarativeAggregate
 from eventsource.events.base import DomainEvent
 from eventsource.handlers import handles
 

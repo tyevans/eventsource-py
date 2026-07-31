@@ -17,7 +17,7 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import BaseModel
 
-from eventsource.aggregates.base import DeclarativeAggregate
+from eventsource.domain.aggregate import DeclarativeAggregate
 from eventsource.events.base import DomainEvent
 from eventsource.exceptions import AggregateNotCreatedError
 from eventsource.handlers import handles

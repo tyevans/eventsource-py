@@ -18,7 +18,7 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import BaseModel
 
-from eventsource.aggregates.base import AggregateRoot, DeclarativeAggregate
+from eventsource.domain.aggregate import AggregateRoot, DeclarativeAggregate
 from eventsource.events.base import DomainEvent
 from eventsource.handlers import handles
 
@@ -322,7 +322,7 @@ class TestCreateEventTenantContext:
                 },
             ),
             patch(
-                "eventsource.aggregates.base.AggregateRoot._get_tenant_from_context",
+                "eventsource.domain.aggregate.AggregateRoot._get_tenant_from_context",
                 return_value=tenant_id,
             ),
         ):

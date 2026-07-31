@@ -19,7 +19,7 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import BaseModel, Field
 
-from eventsource.aggregates.base import (
+from eventsource.domain.aggregate import (
     AggregateRoot,
     DeclarativeAggregate,
 )

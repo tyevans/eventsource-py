@@ -33,7 +33,7 @@ from eventsource.observability.attributes import (
 )
 
 if TYPE_CHECKING:
-    from eventsource.aggregates.base import AggregateRoot
+    from eventsource.domain.aggregate import AggregateRoot
     from eventsource.snapshots.interface import Snapshot, SnapshotStore
     from eventsource.snapshots.strategies import SnapshotStrategy
 

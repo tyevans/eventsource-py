@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 from eventsource._internal.background_tasks import BackgroundTaskManager
 
 if TYPE_CHECKING:
-    from eventsource.aggregates.base import AggregateRoot
+    from eventsource.domain.aggregate import AggregateRoot
     from eventsource.snapshots.interface import Snapshot, SnapshotStore
 
 logger = logging.getLogger(__name__)

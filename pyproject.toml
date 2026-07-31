@@ -256,7 +256,7 @@ type = "forbidden"
 source_modules = [
     "eventsource.events.base",
     "eventsource.events.registry",
-    "eventsource.aggregates.base",
+    "eventsource.domain.aggregate",
     "eventsource.protocols",
     "eventsource.stores.interface",
     "eventsource.bus.interface",

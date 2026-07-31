@@ -22,8 +22,8 @@ from uuid import uuid4
 import pytest
 from pydantic import BaseModel, Field
 
-from eventsource.aggregates.base import AggregateRoot
 from eventsource.aggregates.repository import AggregateRepository
+from eventsource.domain.aggregate import AggregateRoot
 from eventsource.events.base import DomainEvent
 from eventsource.exceptions import AggregateNotFoundError
 from eventsource.snapshots import InMemorySnapshotStore, Snapshot

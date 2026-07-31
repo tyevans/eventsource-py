@@ -38,7 +38,6 @@ except PackageNotFoundError:
 # `eventsource.adapters.postgresql.PostgreSQLEventStore` path-only.
 from eventsource.adapters._sql.positions import IntPositionCodec
 from eventsource.adapters.memory import MemoryEventStore
-from eventsource.aggregates.base import AggregateRoot, DeclarativeAggregate
 from eventsource.aggregates.repository import AggregateRepository
 
 # Event bus (Task 10)
@@ -78,6 +77,7 @@ from eventsource.bus.redis import (
 from eventsource.bus.registry import SubscriptionRegistry
 from eventsource.bus.retry import RetryPolicy
 from eventsource.domain import StreamId
+from eventsource.domain.aggregate import AggregateRoot, DeclarativeAggregate
 
 # Shared async engine factory
 from eventsource.engine import create_async_engine

@@ -9,8 +9,8 @@ import logging
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
 from uuid import UUID
 
-from eventsource.aggregates.base import AggregateRoot
 from eventsource.aggregates.snapshot_manager import AggregateSnapshotManager
+from eventsource.domain.aggregate import AggregateRoot
 from eventsource.exceptions import AggregateNotFoundError
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (

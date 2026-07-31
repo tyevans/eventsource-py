@@ -11,8 +11,8 @@ import logging
 from typing import TYPE_CHECKING, Generic, TypeVar
 from uuid import UUID
 
-from eventsource.aggregates.base import AggregateRoot
 from eventsource.aggregates.repository import AggregateRepository
+from eventsource.domain.aggregate import AggregateRoot
 from eventsource.multitenancy.context import get_required_tenant
 from eventsource.multitenancy.exceptions import TenantMismatchError
 

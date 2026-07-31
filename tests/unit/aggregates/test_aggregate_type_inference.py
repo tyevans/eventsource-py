@@ -15,8 +15,8 @@ from uuid import UUID
 import pytest
 from pydantic import BaseModel
 
-from eventsource.aggregates.base import AggregateRoot, DeclarativeAggregate
 from eventsource.aggregates.repository import AggregateRepository
+from eventsource.domain.aggregate import AggregateRoot, DeclarativeAggregate
 from eventsource.events.base import DomainEvent
 
 # =============================================================================

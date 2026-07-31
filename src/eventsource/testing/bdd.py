@@ -44,7 +44,7 @@ from collections.abc import Callable, Sequence
 from typing import Any, TypeVar
 from uuid import UUID
 
-from eventsource.aggregates.base import AggregateRoot
+from eventsource.domain.aggregate import AggregateRoot
 from eventsource.events.base import DomainEvent
 from eventsource.testing.harness import InMemoryTestHarness
 
