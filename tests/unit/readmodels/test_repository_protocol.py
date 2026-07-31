@@ -11,11 +11,11 @@ class TestReadModelRepositoryProtocol:
 
     def test_protocol_is_runtime_checkable(self) -> None:
         """Test that protocol can be used with isinstance()."""
-        # Protocol should be marked as runtime_checkable
-        # Python 3.12+ uses __protocol_attrs__, Python 3.11 uses _is_runtime_protocol
-        assert hasattr(ReadModelRepository, "__protocol_attrs__") or getattr(
-            ReadModelRepository, "_is_runtime_protocol", False
-        )
+        # `_is_runtime_protocol` is the attribute @runtime_checkable itself
+        # sets, stable across Python versions -- unlike `__protocol_attrs__`
+        # (a CPython 3.12+ implementation detail unrelated to isinstance
+        # support).
+        assert getattr(ReadModelRepository, "_is_runtime_protocol", False)
 
     def test_protocol_methods_exist(self) -> None:
         """Test that all required methods are defined."""

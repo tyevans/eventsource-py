@@ -35,11 +35,13 @@ class TestLeaderElectorProtocol:
 
     def test_protocol_is_runtime_checkable(self) -> None:
         """Test that protocol can be used with isinstance."""
-        # Protocol should be marked as runtime checkable
-        # In Python 3.12+, this is __protocol_attrs__; in 3.11, it's _is_protocol
-        assert getattr(LeaderElector, "_is_protocol", False) or hasattr(
-            LeaderElector, "__protocol_attrs__"
-        )
+        # Protocol should be marked as runtime checkable. `_is_runtime_protocol`
+        # is the attribute set by @runtime_checkable itself (stable since
+        # Python 3.8's typing module) -- unlike `__protocol_attrs__`, it
+        # actually reflects runtime-checkability rather than just "is a
+        # Protocol" (every Protocol subclass has `_is_protocol = True`,
+        # runtime-checkable or not).
+        assert getattr(LeaderElector, "_is_runtime_protocol", False)
 
     def test_protocol_has_required_methods(self) -> None:
         """Test that protocol defines all required abstract methods."""
@@ -116,11 +118,9 @@ class TestLeaderElectorWithLeaseProtocol:
 
     def test_protocol_is_runtime_checkable(self) -> None:
         """Test that extended protocol can be used with isinstance."""
-        # Protocol should be marked as runtime checkable
-        # In Python 3.12+, this is __protocol_attrs__; in 3.11, it's _is_protocol
-        assert getattr(LeaderElectorWithLease, "_is_protocol", False) or hasattr(
-            LeaderElectorWithLease, "__protocol_attrs__"
-        )
+        # Protocol should be marked as runtime checkable. See the identical
+        # note in TestLeaderElectorProtocol.test_protocol_is_runtime_checkable.
+        assert getattr(LeaderElectorWithLease, "_is_runtime_protocol", False)
 
     def test_protocol_extends_leader_elector(self) -> None:
         """Test that LeaderElectorWithLease extends LeaderElector."""

@@ -31,8 +31,11 @@ class TestTracerProtocol:
 
     def test_protocol_is_runtime_checkable(self):
         """Tracer protocol supports isinstance checks."""
-        # The protocol should be marked as runtime_checkable
-        assert hasattr(Tracer, "__protocol_attrs__") or hasattr(Tracer, "_is_runtime_protocol")
+        # `_is_runtime_protocol` is the attribute @runtime_checkable itself
+        # sets, stable across Python versions -- unlike `__protocol_attrs__`
+        # (a CPython 3.12+ implementation detail unrelated to isinstance
+        # support).
+        assert getattr(Tracer, "_is_runtime_protocol", False)
 
     def test_null_tracer_implements_protocol(self):
         """NullTracer implements Tracer protocol."""
