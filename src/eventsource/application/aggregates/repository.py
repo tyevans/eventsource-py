@@ -19,6 +19,7 @@ from eventsource.application.aggregates.snapshotting import (
     read_valid_snapshot,
     take_snapshot,
 )
+from eventsource.domain import StreamId
 from eventsource.domain.aggregate import AggregateRoot
 from eventsource.exceptions import AggregateNotFoundError
 from eventsource.observability import Tracer, create_tracer
@@ -29,7 +30,9 @@ from eventsource.observability.attributes import (
     ATTR_VERSION,
 )
 from eventsource.ports.bus import EventPublisher
-from eventsource.stores.interface import EventStore
+from eventsource.ports.envelopes import StreamReadOptions
+from eventsource.ports.positions import ExpectedVersion
+from eventsource.ports.store import AggregateStore
 
 if TYPE_CHECKING:
     from eventsource.ports.snapshots import Snapshot, SnapshotStore
@@ -114,7 +117,7 @@ class AggregateRepository(Generic[TAggregate]):
 
     def __init__(
         self,
-        event_store: EventStore,
+        event_store: AggregateStore,
         aggregate_factory: type[TAggregate],
         aggregate_type: str | None = None,
         event_publisher: EventPublisher | None = None,
@@ -138,7 +141,7 @@ class AggregateRepository(Generic[TAggregate]):
         When both are provided, the explicit parameter takes precedence.
 
         Args:
-            event_store: Event store for persistence and retrieval
+            event_store: Event store port for appending and reading this aggregate's stream
             aggregate_factory: Class to instantiate when loading aggregates
             aggregate_type: Optional type name of the aggregate (e.g., 'Order').
                           If not provided, inferred from aggregate_factory.aggregate_type.
@@ -277,13 +280,17 @@ class AggregateRepository(Generic[TAggregate]):
             f'     AggregateRepository(..., aggregate_type="YourTypeName")'
         )
 
+    def _stream(self, aggregate_id: UUID) -> StreamId:
+        """Stream identity for one aggregate of this repository's type."""
+        return StreamId(aggregate_id=aggregate_id, category=self._aggregate_type)
+
     @property
     def aggregate_type(self) -> str:
         """Get the aggregate type this repository manages."""
         return self._aggregate_type
 
     @property
-    def event_store(self) -> EventStore:
+    def event_store(self) -> AggregateStore:
         """Get the event store used by this repository."""
         return self._event_store
 
@@ -385,14 +392,14 @@ class AggregateRepository(Generic[TAggregate]):
                     )
 
             # Get events from event store (from snapshot version or 0)
-            event_stream = await self._event_store.get_events(
-                aggregate_id,
-                aggregate_type=self._aggregate_type,
-                from_version=from_version,
-            )
+            stream = self._stream(aggregate_id)
+            options = StreamReadOptions(from_version=from_version + 1) if from_version > 0 else None
+            events = [
+                envelope.event async for envelope in self._event_store.read_stream(stream, options)
+            ]
 
             # Handle case: no snapshot and no events
-            if snapshot is None and not event_stream.events:
+            if snapshot is None and not events:
                 raise AggregateNotFoundError(aggregate_id, self._aggregate_type)
 
             # Create aggregate instance
@@ -413,22 +420,20 @@ class AggregateRepository(Generic[TAggregate]):
                         exc_info=True,
                     )
                     # Re-fetch all events
-                    event_stream = await self._event_store.get_events(
-                        aggregate_id,
-                        aggregate_type=self._aggregate_type,
-                        from_version=0,
-                    )
-                    if not event_stream.events:
+                    events = [
+                        envelope.event async for envelope in self._event_store.read_stream(stream)
+                    ]
+                    if not events:
                         raise AggregateNotFoundError(aggregate_id, self._aggregate_type) from None
                     # Reset aggregate
                     aggregate = self._aggregate_factory(aggregate_id)
 
             # Apply events since snapshot (or all events if no snapshot)
-            if event_stream.events:
-                aggregate.load_from_history(event_stream.events)
+            if events:
+                aggregate.load_from_history(events)
 
             if span:
-                span.set_attribute("events.replayed", len(event_stream.events))
+                span.set_attribute("events.replayed", len(events))
                 span.set_attribute(ATTR_VERSION, aggregate.version)
 
             logger.debug(
@@ -437,7 +442,7 @@ class AggregateRepository(Generic[TAggregate]):
                 aggregate_id,
                 aggregate.version,
                 "yes" if snapshot else "no",
-                len(event_stream.events),
+                len(events),
             )
 
             return aggregate
@@ -512,42 +517,40 @@ class AggregateRepository(Generic[TAggregate]):
             expected_version = aggregate.version - len(uncommitted_events)
 
             # Append events to event store
-            result = await self._event_store.append_events(
-                aggregate_id=aggregate.aggregate_id,
-                aggregate_type=self._aggregate_type,
-                events=uncommitted_events,
-                expected_version=expected_version,
+            await self._event_store.append(
+                self._stream(aggregate.aggregate_id),
+                uncommitted_events,
+                ExpectedVersion.exact(expected_version),
             )
 
-            if result.success:
-                # Mark events as committed on the aggregate
-                aggregate.mark_events_as_committed()
+            # Mark events as committed on the aggregate
+            aggregate.mark_events_as_committed()
 
-                if span:
-                    span.set_attribute("save.success", True)
-                    span.set_attribute("new_version", aggregate.version)
+            if span:
+                span.set_attribute("save.success", True)
+                span.set_attribute("new_version", aggregate.version)
 
-                # Publish events if publisher is configured
-                if self._event_publisher:
-                    await self._event_publisher.publish(uncommitted_events)
+            # Publish events if publisher is configured
+            if self._event_publisher:
+                await self._event_publisher.publish(uncommitted_events)
 
-                # Create snapshot if the policy says so
-                if self._snapshot_store is not None and self._snapshot_policy.should_snapshot(
-                    aggregate, len(uncommitted_events)
+            # Create snapshot if the policy says so
+            if self._snapshot_store is not None and self._snapshot_policy.should_snapshot(
+                aggregate, len(uncommitted_events)
+            ):
+                with self._tracer.span(
+                    "eventsource.repository.snapshot",
+                    {
+                        ATTR_AGGREGATE_ID: str(aggregate.aggregate_id),
+                        ATTR_AGGREGATE_TYPE: self._aggregate_type,
+                        ATTR_VERSION: aggregate.version,
+                    },
                 ):
-                    with self._tracer.span(
-                        "eventsource.repository.snapshot",
-                        {
-                            ATTR_AGGREGATE_ID: str(aggregate.aggregate_id),
-                            ATTR_AGGREGATE_TYPE: self._aggregate_type,
-                            ATTR_VERSION: aggregate.version,
-                        },
-                    ):
-                        await self._snapshot_scheduler.schedule(
-                            take_snapshot(aggregate, self._aggregate_type, self._snapshot_store),
-                            aggregate_type=self._aggregate_type,
-                            aggregate_id=aggregate.aggregate_id,
-                        )
+                    await self._snapshot_scheduler.schedule(
+                        take_snapshot(aggregate, self._aggregate_type, self._snapshot_store),
+                        aggregate_type=self._aggregate_type,
+                        aggregate_id=aggregate.aggregate_id,
+                    )
 
     async def create_snapshot(self, aggregate: TAggregate) -> "Snapshot":
         """
@@ -665,11 +668,7 @@ class AggregateRepository(Generic[TAggregate]):
                 ATTR_AGGREGATE_TYPE: self._aggregate_type,
             },
         ) as span:
-            event_stream = await self._event_store.get_events(
-                aggregate_id,
-                aggregate_type=self._aggregate_type,
-            )
-            exists = len(event_stream.events) > 0
+            exists = await self._event_store.get_stream_version(self._stream(aggregate_id)) > 0
 
             if span:
                 span.set_attribute("exists", exists)
@@ -686,11 +685,7 @@ class AggregateRepository(Generic[TAggregate]):
         Returns:
             Current version (0 if aggregate doesn't exist)
         """
-        event_stream = await self._event_store.get_events(
-            aggregate_id,
-            aggregate_type=self._aggregate_type,
-        )
-        return event_stream.version
+        return await self._event_store.get_stream_version(self._stream(aggregate_id))
 
     async def get_or_raise(self, aggregate_id: UUID) -> TAggregate:
         """

@@ -17,15 +17,16 @@ from uuid import uuid4
 import pytest
 
 from eventsource import DomainEvent, InMemoryEventBus
+from eventsource.adapters.memory.store import MemoryEventStore
 from eventsource.application.aggregates.repository import AggregateRepository
+from eventsource.domain import StreamId
 from eventsource.observability import (
     ATTR_AGGREGATE_ID,
     ATTR_AGGREGATE_TYPE,
-    ATTR_EVENT_COUNT,
     ATTR_EVENT_TYPE,
     ATTR_HANDLER_NAME,
 )
-from eventsource.stores.in_memory import InMemoryEventStore
+from eventsource.ports import ExpectedVersion, collect
 
 from .conftest import TracingTestEvent, TracingTestEventCreated, TracingTestEventUpdated
 
@@ -67,7 +68,7 @@ class TracingTestAggregate:
 
     @property
     def uncommitted_events(self):
-        return self._uncommitted_events
+        return self._uncommitted_events.copy()
 
     @property
     def has_uncommitted_events(self):
@@ -112,126 +113,6 @@ class TracingTestAggregate:
             value=value,
         )
         self.apply_event(event)
-
-
-# ============================================================================
-# Event Store Tracing Tests
-# ============================================================================
-
-
-class TestEventStoreTracing:
-    """Integration tests for event store tracing."""
-
-    @pytest.mark.asyncio
-    async def test_inmemory_append_events_creates_span(
-        self,
-        trace_provider: Any,
-        trace_exporter: Any,
-        find_span: Callable[[str], Any | None],
-        sample_aggregate_id,
-    ):
-        """InMemoryEventStore.append_events creates a proper span with attributes."""
-        store = InMemoryEventStore(enable_tracing=True)
-
-        event = TracingTestEvent(
-            aggregate_id=sample_aggregate_id,
-            aggregate_version=1,
-            name="Test",
-            value=42,
-        )
-
-        await store.append_events(
-            aggregate_id=sample_aggregate_id,
-            aggregate_type="TracingTestAggregate",
-            events=[event],
-            expected_version=0,
-        )
-
-        # Find the append span
-        span = find_span("inmemory_event_store.append_events")
-        assert span is not None, "append_events should create a span"
-
-        # Verify standard attributes
-        attributes = dict(span.attributes)
-        assert ATTR_AGGREGATE_ID in attributes
-        assert attributes[ATTR_AGGREGATE_ID] == str(sample_aggregate_id)
-        assert ATTR_AGGREGATE_TYPE in attributes
-        assert attributes[ATTR_AGGREGATE_TYPE] == "TracingTestAggregate"
-        assert ATTR_EVENT_COUNT in attributes
-        assert attributes[ATTR_EVENT_COUNT] == 1
-
-    @pytest.mark.asyncio
-    async def test_inmemory_get_events_creates_span(
-        self,
-        trace_provider: Any,
-        trace_exporter: Any,
-        find_span: Callable[[str], Any | None],
-        sample_aggregate_id,
-    ):
-        """InMemoryEventStore.get_events creates a proper span."""
-        store = InMemoryEventStore(enable_tracing=True)
-
-        # First append an event
-        event = TracingTestEvent(
-            aggregate_id=sample_aggregate_id,
-            aggregate_version=1,
-            name="Test",
-        )
-        await store.append_events(
-            aggregate_id=sample_aggregate_id,
-            aggregate_type="TracingTestAggregate",
-            events=[event],
-            expected_version=0,
-        )
-
-        # Clear the exporter to isolate the get_events span
-        trace_exporter.clear()
-
-        # Now get events
-        await store.get_events(sample_aggregate_id, "TracingTestAggregate")
-
-        span = find_span("inmemory_event_store.get_events")
-        assert span is not None, "get_events should create a span"
-
-        attributes = dict(span.attributes)
-        assert ATTR_AGGREGATE_ID in attributes
-        assert ATTR_AGGREGATE_TYPE in attributes
-
-    @pytest.mark.asyncio
-    async def test_multiple_operations_create_separate_spans(
-        self,
-        trace_provider: Any,
-        get_spans: Callable[[], list[Any]],
-        sample_aggregate_id,
-    ):
-        """Multiple event store operations create separate, properly named spans."""
-        store = InMemoryEventStore(enable_tracing=True)
-
-        # Perform multiple operations
-        event = TracingTestEvent(
-            aggregate_id=sample_aggregate_id,
-            aggregate_version=1,
-            name="Test",
-        )
-        await store.append_events(
-            aggregate_id=sample_aggregate_id,
-            aggregate_type="TracingTestAggregate",
-            events=[event],
-            expected_version=0,
-        )
-        await store.get_events(sample_aggregate_id, "TracingTestAggregate")
-
-        spans = get_spans()
-
-        # Should have at least 2 spans
-        assert len(spans) >= 2
-
-        # Find spans by name
-        append_spans = [s for s in spans if "append" in s.name]
-        get_spans_list = [s for s in spans if "get_events" in s.name]
-
-        assert len(append_spans) == 1, "Should have exactly one append span"
-        assert len(get_spans_list) == 1, "Should have exactly one get_events span"
 
 
 # ============================================================================
@@ -357,7 +238,7 @@ class TestRepositoryTracing:
         find_span: Callable[[str], Any | None],
     ):
         """AggregateRepository.save creates a span."""
-        store = InMemoryEventStore(enable_tracing=True)
+        store = MemoryEventStore()
         repo = AggregateRepository(
             event_store=store,
             aggregate_factory=TracingTestAggregate,
@@ -386,7 +267,7 @@ class TestRepositoryTracing:
         find_span: Callable[[str], Any | None],
     ):
         """AggregateRepository.load creates a span."""
-        store = InMemoryEventStore(enable_tracing=True)
+        store = MemoryEventStore()
         repo = AggregateRepository(
             event_store=store,
             aggregate_factory=TracingTestAggregate,
@@ -417,85 +298,6 @@ class TestRepositoryTracing:
 
 class TestSpanHierarchy:
     """Tests for correct span parent-child relationships."""
-
-    @pytest.mark.asyncio
-    async def test_repository_save_contains_store_child_span(
-        self,
-        trace_provider: Any,
-        get_spans: Callable[[], list[Any]],
-    ):
-        """Repository.save span should contain event_store.append as child span."""
-        store = InMemoryEventStore(enable_tracing=True)
-        repo = AggregateRepository(
-            event_store=store,
-            aggregate_factory=TracingTestAggregate,
-            aggregate_type="TracingTestAggregate",
-            enable_tracing=True,
-        )
-
-        aggregate_id = uuid4()
-        aggregate = TracingTestAggregate(aggregate_id)
-        aggregate.create(name="Test")
-
-        await repo.save(aggregate)
-
-        spans = get_spans()
-
-        # Find parent (repository) and child (event store) spans
-        repo_span = next((s for s in spans if "repository.save" in s.name), None)
-        store_span = next((s for s in spans if "append" in s.name), None)
-
-        assert repo_span is not None, "Should have repository.save span"
-        assert store_span is not None, "Should have event_store span"
-
-        # Verify parent-child relationship
-        # The store span's parent should reference the repo span's context
-        if store_span.parent is not None:
-            assert store_span.parent.span_id == repo_span.context.span_id, (
-                "Event store span should be a child of repository span"
-            )
-
-    @pytest.mark.asyncio
-    async def test_repository_load_contains_store_child_span(
-        self,
-        trace_provider: Any,
-        trace_exporter: Any,
-        get_spans: Callable[[], list[Any]],
-    ):
-        """Repository.load span should contain event_store.get as child span."""
-        store = InMemoryEventStore(enable_tracing=True)
-        repo = AggregateRepository(
-            event_store=store,
-            aggregate_factory=TracingTestAggregate,
-            aggregate_type="TracingTestAggregate",
-            enable_tracing=True,
-        )
-
-        # First create an aggregate
-        aggregate_id = uuid4()
-        aggregate = TracingTestAggregate(aggregate_id)
-        aggregate.create(name="Test")
-        await repo.save(aggregate)
-
-        # Clear exporter
-        trace_exporter.clear()
-
-        # Load the aggregate
-        await repo.load(aggregate_id)
-
-        spans = get_spans()
-
-        repo_span = next((s for s in spans if "repository.load" in s.name), None)
-        store_span = next((s for s in spans if "get_events" in s.name), None)
-
-        assert repo_span is not None, "Should have repository.load span"
-        assert store_span is not None, "Should have event_store.get_events span"
-
-        # Verify parent-child relationship
-        if store_span.parent is not None:
-            assert store_span.parent.span_id == repo_span.context.span_id, (
-                "Event store span should be a child of repository span"
-            )
 
     @pytest.mark.asyncio
     async def test_event_bus_handler_spans_are_children_of_dispatch(
@@ -545,7 +347,7 @@ class TestTracingGracefulDegradation:
         sample_aggregate_id,
     ):
         """Event store operations work correctly when tracing is disabled."""
-        store = InMemoryEventStore(enable_tracing=False)
+        store = MemoryEventStore()
 
         event = TracingTestEvent(
             aggregate_id=sample_aggregate_id,
@@ -553,18 +355,13 @@ class TestTracingGracefulDegradation:
             name="Test",
         )
 
-        result = await store.append_events(
-            aggregate_id=sample_aggregate_id,
-            aggregate_type="TracingTestAggregate",
-            events=[event],
-            expected_version=0,
-        )
+        stream = StreamId(aggregate_id=sample_aggregate_id, category="TracingTestAggregate")
+        result = await store.append(stream, [event], ExpectedVersion.exact(0))
 
-        assert result.success is True
-        assert result.new_version == 1
+        assert result.position is not None
 
-        stream = await store.get_events(sample_aggregate_id, "TracingTestAggregate")
-        assert len(stream.events) == 1
+        events = await collect(store.read_stream(stream))
+        assert len(events) == 1
 
     @pytest.mark.asyncio
     async def test_event_bus_works_without_tracing(self):
@@ -591,7 +388,7 @@ class TestTracingGracefulDegradation:
     @pytest.mark.asyncio
     async def test_repository_works_without_tracing(self):
         """Repository operations work correctly when tracing is disabled."""
-        store = InMemoryEventStore(enable_tracing=False)
+        store = MemoryEventStore()
         repo = AggregateRepository(
             event_store=store,
             aggregate_factory=TracingTestAggregate,
@@ -607,31 +404,6 @@ class TestTracingGracefulDegradation:
 
         loaded = await repo.load(aggregate_id)
         assert loaded.state.name == "Test"
-
-    @pytest.mark.asyncio
-    async def test_tracing_disabled_no_spans_created(
-        self,
-        trace_provider: Any,
-        trace_exporter: Any,
-    ):
-        """When tracing is disabled, no spans should be created."""
-        store = InMemoryEventStore(enable_tracing=False)
-
-        event = TracingTestEvent(
-            aggregate_id=uuid4(),
-            aggregate_version=1,
-            name="Test",
-        )
-
-        await store.append_events(
-            aggregate_id=event.aggregate_id,
-            aggregate_type="TracingTestAggregate",
-            events=[event],
-            expected_version=0,
-        )
-
-        spans = trace_exporter.get_finished_spans()
-        assert len(spans) == 0, "No spans should be created when tracing is disabled"
 
 
 # ============================================================================
@@ -649,7 +421,7 @@ class TestTraceIdConsistency:
         get_spans: Callable[[], list[Any]],
     ):
         """All spans created during a single logical operation share the same trace ID."""
-        store = InMemoryEventStore(enable_tracing=True)
+        store = MemoryEventStore()
         bus = InMemoryEventBus(enable_tracing=True)
         repo = AggregateRepository(
             event_store=store,
@@ -667,8 +439,7 @@ class TestTraceIdConsistency:
 
         # Perform a save which should:
         # 1. Create repository.save span
-        # 2. Create event_store.append span (child)
-        # 3. Publish event, creating bus dispatch/handle spans
+        # 2. Publish event, creating bus dispatch/handle spans
         aggregate_id = uuid4()
         aggregate = TracingTestAggregate(aggregate_id)
         aggregate.create(name="Test")
@@ -694,39 +465,6 @@ class TestTraceIdConsistency:
 
 class TestStandardAttributes:
     """Tests for standard attribute usage across components."""
-
-    @pytest.mark.asyncio
-    async def test_event_store_uses_standard_attributes(
-        self,
-        trace_provider: Any,
-        find_span: Callable[[str], Any | None],
-    ):
-        """Event store spans use standard ATTR_* attribute keys."""
-        store = InMemoryEventStore(enable_tracing=True)
-
-        aggregate_id = uuid4()
-        event = TracingTestEvent(
-            aggregate_id=aggregate_id,
-            aggregate_version=1,
-            name="Test",
-        )
-
-        await store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="TracingTestAggregate",
-            events=[event],
-            expected_version=0,
-        )
-
-        span = find_span("append")
-        assert span is not None
-
-        attributes = dict(span.attributes)
-
-        # Check for standard attribute keys (from observability.attributes)
-        assert ATTR_AGGREGATE_ID in attributes
-        assert ATTR_AGGREGATE_TYPE in attributes
-        assert ATTR_EVENT_COUNT in attributes
 
     @pytest.mark.asyncio
     async def test_event_bus_uses_standard_attributes(
@@ -770,7 +508,7 @@ class TestStandardAttributes:
         find_span: Callable[[str], Any | None],
     ):
         """Repository spans use standard ATTR_* attribute keys."""
-        store = InMemoryEventStore(enable_tracing=True)
+        store = MemoryEventStore()
         repo = AggregateRepository(
             event_store=store,
             aggregate_factory=TracingTestAggregate,

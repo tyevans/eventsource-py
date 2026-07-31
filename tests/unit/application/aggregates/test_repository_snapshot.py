@@ -23,12 +23,14 @@ import pytest
 from pydantic import BaseModel, Field
 
 from eventsource.adapters.memory.snapshots import InMemorySnapshotStore
+from eventsource.adapters.memory.store import MemoryEventStore
 from eventsource.application.aggregates.repository import AggregateRepository
+from eventsource.domain import StreamId
 from eventsource.domain.aggregate import AggregateRoot
 from eventsource.events.base import DomainEvent
 from eventsource.exceptions import AggregateNotFoundError
+from eventsource.ports import ExpectedVersion
 from eventsource.ports.snapshots import Snapshot
-from eventsource.stores.in_memory import InMemoryEventStore
 
 # =============================================================================
 # Test Fixtures
@@ -132,14 +134,14 @@ class TestRepositoryConstructor:
     """Test repository constructor with snapshot parameters."""
 
     @pytest.fixture
-    def event_store(self) -> InMemoryEventStore:
-        return InMemoryEventStore()
+    def event_store(self) -> MemoryEventStore:
+        return MemoryEventStore()
 
     @pytest.fixture
     def snapshot_store(self) -> InMemorySnapshotStore:
         return InMemorySnapshotStore()
 
-    def test_constructor_without_snapshot_params(self, event_store: InMemoryEventStore) -> None:
+    def test_constructor_without_snapshot_params(self, event_store: MemoryEventStore) -> None:
         """Default values without snapshot params."""
         repo = AggregateRepository(
             event_store=event_store,
@@ -153,7 +155,7 @@ class TestRepositoryConstructor:
         assert repo.has_snapshot_support is False
 
     def test_constructor_with_snapshot_store(
-        self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
+        self, event_store: MemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """With snapshot store provided."""
         repo = AggregateRepository(
@@ -167,7 +169,7 @@ class TestRepositoryConstructor:
         assert repo.has_snapshot_support is True
 
     def test_constructor_with_all_params(
-        self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
+        self, event_store: MemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """With all snapshot parameters."""
         repo = AggregateRepository(
@@ -183,7 +185,7 @@ class TestRepositoryConstructor:
         assert repo.snapshot_mode == "background"
 
     def test_constructor_with_manual_mode(
-        self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
+        self, event_store: MemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """With manual snapshot mode."""
         repo = AggregateRepository(
@@ -207,15 +209,15 @@ class TestRepositorySnapshotLoad:
     """Test snapshot-aware load functionality."""
 
     @pytest.fixture
-    def event_store(self) -> InMemoryEventStore:
-        return InMemoryEventStore()
+    def event_store(self) -> MemoryEventStore:
+        return MemoryEventStore()
 
     @pytest.fixture
     def snapshot_store(self) -> InMemorySnapshotStore:
         return InMemorySnapshotStore()
 
     @pytest.mark.asyncio
-    async def test_load_without_snapshot_store(self, event_store: InMemoryEventStore) -> None:
+    async def test_load_without_snapshot_store(self, event_store: MemoryEventStore) -> None:
         """Load works without snapshot store (full event replay)."""
         repo = AggregateRepository(
             event_store=event_store,
@@ -236,7 +238,7 @@ class TestRepositorySnapshotLoad:
 
     @pytest.mark.asyncio
     async def test_load_uses_snapshot_when_available(
-        self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
+        self, event_store: MemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """Load uses snapshot and replays only events since snapshot."""
         aggregate_id = uuid4()
@@ -251,11 +253,10 @@ class TestRepositorySnapshotLoad:
             )
             for i in range(5)
         ]
-        await event_store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="Test",
-            events=initial_events,
-            expected_version=0,
+        await event_store.append(
+            StreamId(aggregate_id=aggregate_id, category="Test"),
+            initial_events,
+            ExpectedVersion.exact(0),
         )
 
         # Pre-populate snapshot at version 5
@@ -276,11 +277,10 @@ class TestRepositorySnapshotLoad:
             aggregate_version=6,
             value="after_snapshot",
         )
-        await event_store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="Test",
-            events=[event],
-            expected_version=5,
+        await event_store.append(
+            StreamId(aggregate_id=aggregate_id, category="Test"),
+            [event],
+            ExpectedVersion.exact(5),
         )
 
         repo = AggregateRepository(
@@ -299,7 +299,7 @@ class TestRepositorySnapshotLoad:
 
     @pytest.mark.asyncio
     async def test_load_falls_back_on_schema_mismatch(
-        self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
+        self, event_store: MemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """Load falls back to full replay when schema version doesn't match."""
         aggregate_id = uuid4()
@@ -325,11 +325,10 @@ class TestRepositorySnapshotLoad:
             )
             for i in range(3)
         ]
-        await event_store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="Test",
-            events=events,
-            expected_version=0,
+        await event_store.append(
+            StreamId(aggregate_id=aggregate_id, category="Test"),
+            events,
+            ExpectedVersion.exact(0),
         )
 
         repo = AggregateRepository(
@@ -347,7 +346,7 @@ class TestRepositorySnapshotLoad:
         assert loaded.state.value == "event_2"
 
     @pytest.mark.asyncio
-    async def test_load_falls_back_on_snapshot_error(self, event_store: InMemoryEventStore) -> None:
+    async def test_load_falls_back_on_snapshot_error(self, event_store: MemoryEventStore) -> None:
         """Load falls back when snapshot store errors."""
         mock_snapshot_store = MagicMock()
         mock_snapshot_store.get_snapshot = AsyncMock(side_effect=Exception("Store error"))
@@ -361,11 +360,10 @@ class TestRepositorySnapshotLoad:
             aggregate_version=1,
             value="test",
         )
-        await event_store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="Test",
-            events=[event],
-            expected_version=0,
+        await event_store.append(
+            StreamId(aggregate_id=aggregate_id, category="Test"),
+            [event],
+            ExpectedVersion.exact(0),
         )
 
         repo = AggregateRepository(
@@ -381,7 +379,7 @@ class TestRepositorySnapshotLoad:
 
     @pytest.mark.asyncio
     async def test_load_falls_back_on_deserialization_error(
-        self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
+        self, event_store: MemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """Load falls back when snapshot deserialization fails."""
         aggregate_id = uuid4()
@@ -407,11 +405,10 @@ class TestRepositorySnapshotLoad:
             )
             for i in range(2)
         ]
-        await event_store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="Test",
-            events=events,
-            expected_version=0,
+        await event_store.append(
+            StreamId(aggregate_id=aggregate_id, category="Test"),
+            events,
+            ExpectedVersion.exact(0),
         )
 
         repo = AggregateRepository(
@@ -427,7 +424,7 @@ class TestRepositorySnapshotLoad:
 
     @pytest.mark.asyncio
     async def test_load_raises_not_found_when_no_events(
-        self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
+        self, event_store: MemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """Load raises AggregateNotFoundError when no events exist."""
         repo = AggregateRepository(
@@ -442,7 +439,7 @@ class TestRepositorySnapshotLoad:
 
     @pytest.mark.asyncio
     async def test_load_no_events_after_snapshot(
-        self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
+        self, event_store: MemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """Load works when snapshot exists but no events after it."""
         aggregate_id = uuid4()
@@ -480,8 +477,8 @@ class TestRepositoryAutoSnapshot:
     """Test automatic snapshot creation at threshold."""
 
     @pytest.fixture
-    def event_store(self) -> InMemoryEventStore:
-        return InMemoryEventStore()
+    def event_store(self) -> MemoryEventStore:
+        return MemoryEventStore()
 
     @pytest.fixture
     def snapshot_store(self) -> InMemorySnapshotStore:
@@ -489,7 +486,7 @@ class TestRepositoryAutoSnapshot:
 
     @pytest.mark.asyncio
     async def test_auto_snapshot_at_threshold(
-        self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
+        self, event_store: MemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """Snapshot created when version reaches threshold."""
         repo = AggregateRepository(
@@ -521,7 +518,7 @@ class TestRepositoryAutoSnapshot:
 
     @pytest.mark.asyncio
     async def test_no_snapshot_below_threshold(
-        self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
+        self, event_store: MemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """No snapshot created below threshold."""
         repo = AggregateRepository(
@@ -540,7 +537,7 @@ class TestRepositoryAutoSnapshot:
 
     @pytest.mark.asyncio
     async def test_no_auto_snapshot_in_manual_mode(
-        self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
+        self, event_store: MemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """No automatic snapshot in manual mode."""
         repo = AggregateRepository(
@@ -560,7 +557,7 @@ class TestRepositoryAutoSnapshot:
 
     @pytest.mark.asyncio
     async def test_snapshot_at_multiples_of_threshold(
-        self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
+        self, event_store: MemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """Snapshots created at threshold multiples (e.g., 100, 200, 300)."""
         repo = AggregateRepository(
@@ -587,7 +584,7 @@ class TestRepositoryAutoSnapshot:
         assert snapshot.version == 10
 
     @pytest.mark.asyncio
-    async def test_snapshot_failure_doesnt_fail_save(self, event_store: InMemoryEventStore) -> None:
+    async def test_snapshot_failure_doesnt_fail_save(self, event_store: MemoryEventStore) -> None:
         """Snapshot failure doesn't fail the save operation."""
         mock_snapshot_store = MagicMock()
         mock_snapshot_store.get_snapshot = AsyncMock(return_value=None)
@@ -621,8 +618,8 @@ class TestRepositoryManualSnapshot:
     """Test manual snapshot creation."""
 
     @pytest.fixture
-    def event_store(self) -> InMemoryEventStore:
-        return InMemoryEventStore()
+    def event_store(self) -> MemoryEventStore:
+        return MemoryEventStore()
 
     @pytest.fixture
     def snapshot_store(self) -> InMemorySnapshotStore:
@@ -630,7 +627,7 @@ class TestRepositoryManualSnapshot:
 
     @pytest.mark.asyncio
     async def test_create_snapshot_returns_snapshot(
-        self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
+        self, event_store: MemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """create_snapshot returns the created Snapshot object."""
         repo = AggregateRepository(
@@ -655,7 +652,7 @@ class TestRepositoryManualSnapshot:
 
     @pytest.mark.asyncio
     async def test_create_snapshot_raises_without_store(
-        self, event_store: InMemoryEventStore
+        self, event_store: MemoryEventStore
     ) -> None:
         """create_snapshot raises RuntimeError without snapshot store."""
         repo = AggregateRepository(
@@ -671,7 +668,7 @@ class TestRepositoryManualSnapshot:
 
     @pytest.mark.asyncio
     async def test_create_snapshot_works_in_manual_mode(
-        self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
+        self, event_store: MemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """Manual snapshot works even in manual mode."""
         repo = AggregateRepository(
@@ -692,7 +689,7 @@ class TestRepositoryManualSnapshot:
 
     @pytest.mark.asyncio
     async def test_create_snapshot_overwrites_existing(
-        self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
+        self, event_store: MemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """Creating snapshot overwrites existing snapshot (upsert)."""
         repo = AggregateRepository(
@@ -732,8 +729,8 @@ class TestRepositoryBackgroundSnapshot:
     """Test background snapshot mode."""
 
     @pytest.fixture
-    def event_store(self) -> InMemoryEventStore:
-        return InMemoryEventStore()
+    def event_store(self) -> MemoryEventStore:
+        return MemoryEventStore()
 
     @pytest.fixture
     def snapshot_store(self) -> InMemorySnapshotStore:
@@ -741,7 +738,7 @@ class TestRepositoryBackgroundSnapshot:
 
     @pytest.mark.asyncio
     async def test_background_mode_creates_task(
-        self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
+        self, event_store: MemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """Background mode creates async task for snapshot."""
         repo = AggregateRepository(
@@ -765,7 +762,7 @@ class TestRepositoryBackgroundSnapshot:
         assert snapshot_store.snapshot_count == 1
 
     @pytest.mark.asyncio
-    async def test_background_mode_doesnt_block(self, event_store: InMemoryEventStore) -> None:
+    async def test_background_mode_doesnt_block(self, event_store: MemoryEventStore) -> None:
         """Background mode returns before snapshot completes."""
 
         async def slow_save(snapshot: Snapshot) -> None:
@@ -799,7 +796,7 @@ class TestRepositoryBackgroundSnapshot:
 
     @pytest.mark.asyncio
     async def test_await_pending_snapshots_waits_for_all(
-        self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
+        self, event_store: MemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """await_pending_snapshots waits for all pending tasks."""
         repo = AggregateRepository(
@@ -823,7 +820,7 @@ class TestRepositoryBackgroundSnapshot:
         assert snapshot_store.snapshot_count == 3
 
     @pytest.mark.asyncio
-    async def test_pending_snapshot_count(self, event_store: InMemoryEventStore) -> None:
+    async def test_pending_snapshot_count(self, event_store: MemoryEventStore) -> None:
         """pending_snapshot_count returns correct count."""
 
         async def slow_save(snapshot: Snapshot) -> None:
@@ -868,14 +865,14 @@ class TestSnapshotPolicyLogic:
     """
 
     @pytest.fixture
-    def event_store(self) -> InMemoryEventStore:
-        return InMemoryEventStore()
+    def event_store(self) -> MemoryEventStore:
+        return MemoryEventStore()
 
     @pytest.fixture
     def snapshot_store(self) -> InMemorySnapshotStore:
         return InMemorySnapshotStore()
 
-    def test_returns_false_without_store(self, event_store: InMemoryEventStore) -> None:
+    def test_returns_false_without_store(self, event_store: MemoryEventStore) -> None:
         """Without snapshot store, repository falls back to Never() policy."""
         repo = AggregateRepository(
             event_store=event_store,
@@ -888,7 +885,7 @@ class TestSnapshotPolicyLogic:
         assert repo._snapshot_store is None
 
     def test_returns_false_without_threshold(
-        self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
+        self, event_store: MemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """Without threshold, repository falls back to Never() policy."""
         from eventsource.application.aggregates.snapshotting import Never
@@ -906,7 +903,7 @@ class TestSnapshotPolicyLogic:
         assert repo._snapshot_policy.should_snapshot(aggregate, events_since_snapshot=100) is False
 
     def test_returns_false_in_manual_mode(
-        self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
+        self, event_store: MemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """Manual mode (snapshot_mode='manual') doesn't auto-snapshot."""
         from eventsource.application.aggregates.snapshotting import Never
@@ -919,7 +916,7 @@ class TestSnapshotPolicyLogic:
         assert policy.should_snapshot(aggregate, events_since_snapshot=100) is False
 
     def test_returns_true_at_threshold(
-        self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
+        self, event_store: MemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """Returns True at exact threshold."""
         from eventsource.application.aggregates.snapshotting import EveryNEvents
@@ -931,7 +928,7 @@ class TestSnapshotPolicyLogic:
         assert policy.should_snapshot(aggregate, events_since_snapshot=100) is True
 
     def test_returns_true_at_threshold_multiples(
-        self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
+        self, event_store: MemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """Returns True at threshold multiples."""
         from eventsource.application.aggregates.snapshotting import EveryNEvents
@@ -944,7 +941,7 @@ class TestSnapshotPolicyLogic:
             assert policy.should_snapshot(aggregate, events_since_snapshot=version) is True
 
     def test_returns_false_between_thresholds(
-        self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
+        self, event_store: MemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """Returns False between threshold multiples."""
         from eventsource.application.aggregates.snapshotting import EveryNEvents
@@ -957,7 +954,7 @@ class TestSnapshotPolicyLogic:
             assert policy.should_snapshot(aggregate, events_since_snapshot=version) is False
 
     def test_returns_false_at_version_zero(
-        self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
+        self, event_store: MemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """Returns False at version zero."""
         from eventsource.application.aggregates.snapshotting import EveryNEvents
@@ -978,8 +975,8 @@ class TestFullCycleIntegration:
     """Test complete cycle: save events -> create snapshot -> load from snapshot."""
 
     @pytest.fixture
-    def event_store(self) -> InMemoryEventStore:
-        return InMemoryEventStore()
+    def event_store(self) -> MemoryEventStore:
+        return MemoryEventStore()
 
     @pytest.fixture
     def snapshot_store(self) -> InMemorySnapshotStore:
@@ -987,7 +984,7 @@ class TestFullCycleIntegration:
 
     @pytest.mark.asyncio
     async def test_full_cycle_with_auto_snapshot(
-        self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
+        self, event_store: MemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """Complete cycle with automatic snapshot creation."""
         repo = AggregateRepository(
@@ -1030,7 +1027,7 @@ class TestFullCycleIntegration:
 
     @pytest.mark.asyncio
     async def test_full_cycle_with_manual_snapshot(
-        self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
+        self, event_store: MemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """Complete cycle with manual snapshot creation."""
         repo = AggregateRepository(
@@ -1065,7 +1062,7 @@ class TestFullCycleIntegration:
 
     @pytest.mark.asyncio
     async def test_snapshot_invalidation_on_schema_change(
-        self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
+        self, event_store: MemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """Snapshot is invalidated when schema version changes."""
         # Create repo with schema_version=1
@@ -1110,8 +1107,8 @@ class TestEdgeCases:
     """Test edge cases and boundary conditions."""
 
     @pytest.fixture
-    def event_store(self) -> InMemoryEventStore:
-        return InMemoryEventStore()
+    def event_store(self) -> MemoryEventStore:
+        return MemoryEventStore()
 
     @pytest.fixture
     def snapshot_store(self) -> InMemorySnapshotStore:
@@ -1119,7 +1116,7 @@ class TestEdgeCases:
 
     @pytest.mark.asyncio
     async def test_concurrent_loads_with_snapshot(
-        self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
+        self, event_store: MemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """Multiple concurrent loads should work with snapshot."""
         aggregate_id = uuid4()
@@ -1155,7 +1152,7 @@ class TestEdgeCases:
 
     @pytest.mark.asyncio
     async def test_save_with_no_changes_and_snapshot_store(
-        self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
+        self, event_store: MemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """Saving with no changes should not create snapshot."""
         repo = AggregateRepository(
@@ -1175,7 +1172,7 @@ class TestEdgeCases:
 
     @pytest.mark.asyncio
     async def test_multiple_aggregates_independent_snapshots(
-        self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
+        self, event_store: MemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """Each aggregate should have independent snapshots."""
         repo = AggregateRepository(

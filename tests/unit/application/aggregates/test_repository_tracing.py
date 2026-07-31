@@ -22,7 +22,9 @@ import pytest
 from pydantic import BaseModel, Field
 
 from eventsource.adapters.memory.snapshots import InMemorySnapshotStore
+from eventsource.adapters.memory.store import MemoryEventStore
 from eventsource.application.aggregates.repository import AggregateRepository
+from eventsource.domain import StreamId
 from eventsource.domain.aggregate import AggregateRoot
 from eventsource.events.base import DomainEvent
 from eventsource.observability import (
@@ -33,8 +35,8 @@ from eventsource.observability import (
     MockTracer,
     NullTracer,
 )
+from eventsource.ports import ExpectedVersion
 from eventsource.ports.snapshots import Snapshot
-from eventsource.stores.in_memory import InMemoryEventStore
 
 # ============================================================================
 # Test Fixtures
@@ -97,8 +99,8 @@ class TestAggregateRepositoryTracingComposition:
     """Tests for AggregateRepository Tracer composition integration."""
 
     @pytest.fixture
-    def event_store(self) -> InMemoryEventStore:
-        return InMemoryEventStore()
+    def event_store(self) -> MemoryEventStore:
+        return MemoryEventStore()
 
     def test_uses_tracer_composition(self):
         """AggregateRepository uses Tracer composition pattern."""
@@ -108,7 +110,7 @@ class TestAggregateRepositoryTracingComposition:
         sig = inspect.signature(AggregateRepository.__init__)
         assert "tracer" in sig.parameters
 
-    def test_tracing_enabled_by_default(self, event_store: InMemoryEventStore):
+    def test_tracing_enabled_by_default(self, event_store: MemoryEventStore):
         """Tracing is enabled by default when OTEL is available."""
         repo = AggregateRepository(
             event_store=event_store,
@@ -122,7 +124,7 @@ class TestAggregateRepositoryTracingComposition:
         # Tracer should be set (either OpenTelemetry or NullTracer)
         assert repo._tracer is not None
 
-    def test_tracing_disabled_when_requested(self, event_store: InMemoryEventStore):
+    def test_tracing_disabled_when_requested(self, event_store: MemoryEventStore):
         """Tracing can be disabled via constructor parameter."""
         repo = AggregateRepository(
             event_store=event_store,
@@ -135,7 +137,7 @@ class TestAggregateRepositoryTracingComposition:
         # Tracer should be a NullTracer when disabled
         assert isinstance(repo._tracer, NullTracer)
 
-    def test_custom_tracer_can_be_injected(self, event_store: InMemoryEventStore):
+    def test_custom_tracer_can_be_injected(self, event_store: MemoryEventStore):
         """Custom tracer can be injected via constructor."""
         custom_tracer = NullTracer()
         repo = AggregateRepository(
@@ -147,7 +149,7 @@ class TestAggregateRepositoryTracingComposition:
 
         assert repo._tracer is custom_tracer
 
-    def test_backward_compatible_constructor(self, event_store: InMemoryEventStore):
+    def test_backward_compatible_constructor(self, event_store: MemoryEventStore):
         """Constructor without enable_tracing should work (default True)."""
         repo = AggregateRepository(
             event_store=event_store,
@@ -173,8 +175,8 @@ class TestAggregateRepositorySpanCreation:
         return MockTracer()
 
     @pytest.fixture
-    def event_store(self) -> InMemoryEventStore:
-        return InMemoryEventStore()
+    def event_store(self) -> MemoryEventStore:
+        return MemoryEventStore()
 
     @pytest.fixture
     def snapshot_store(self) -> InMemorySnapshotStore:
@@ -252,11 +254,10 @@ class TestAggregateRepositorySpanCreation:
             aggregate_version=1,
             value="test",
         )
-        await event_store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="TracingTest",
-            events=[event],
-            expected_version=0,
+        await event_store.append(
+            StreamId(aggregate_id=aggregate_id, category="TracingTest"),
+            [event],
+            ExpectedVersion.exact(0),
         )
 
         await traced_repo.load(aggregate_id)
@@ -274,11 +275,10 @@ class TestAggregateRepositorySpanCreation:
             aggregate_version=1,
             value="test",
         )
-        await event_store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="TracingTest",
-            events=[event],
-            expected_version=0,
+        await event_store.append(
+            StreamId(aggregate_id=aggregate_id, category="TracingTest"),
+            [event],
+            ExpectedVersion.exact(0),
         )
 
         await traced_repo.load(aggregate_id)
@@ -376,8 +376,8 @@ class TestAggregateRepositoryTracingDisabled:
     """Tests for AggregateRepository behavior when tracing is disabled."""
 
     @pytest.fixture
-    def event_store(self) -> InMemoryEventStore:
-        return InMemoryEventStore()
+    def event_store(self) -> MemoryEventStore:
+        return MemoryEventStore()
 
     @pytest.fixture
     def snapshot_store(self) -> InMemorySnapshotStore:
@@ -484,8 +484,8 @@ class TestAggregateRepositorySpanDynamicAttributes:
         return MockTracer()
 
     @pytest.fixture
-    def event_store(self) -> InMemoryEventStore:
-        return InMemoryEventStore()
+    def event_store(self) -> MemoryEventStore:
+        return MemoryEventStore()
 
     @pytest.fixture
     def snapshot_store(self) -> InMemorySnapshotStore:
@@ -512,11 +512,10 @@ class TestAggregateRepositorySpanDynamicAttributes:
             )
             for i in range(3)
         ]
-        await event_store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="TracingTest",
-            events=events,
-            expected_version=0,
+        await event_store.append(
+            StreamId(aggregate_id=aggregate_id, category="TracingTest"),
+            events,
+            ExpectedVersion.exact(0),
         )
 
         await repo.load(aggregate_id)
@@ -644,8 +643,8 @@ class TestAggregateRepositoryTracingMultipleEvents:
         return MockTracer()
 
     @pytest.fixture
-    def event_store(self) -> InMemoryEventStore:
-        return InMemoryEventStore()
+    def event_store(self) -> MemoryEventStore:
+        return MemoryEventStore()
 
     @pytest.mark.asyncio
     async def test_multiple_events_count_attribute(self, event_store, mock_tracer):
