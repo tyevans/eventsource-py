@@ -10,6 +10,8 @@ from bench.adapters.stores import (
     SQLiteStoreAdapter,
 )
 from bench.core.domain import make_events
+from eventsource.domain.stream_id import StreamId
+from eventsource.ports import ExpectedVersion, collect
 
 
 def test_registries_contain_sql_backends() -> None:
@@ -29,12 +31,11 @@ async def test_sqlite_store_adapter_appends_and_reads() -> None:
     await adapter.setup()
     store = await adapter.create()
     aggregate_id = uuid4()
-    result = await store.append_events(
-        aggregate_id, "Bench", make_events(aggregate_id, 3), expected_version=0
-    )
-    assert result.success
-    stream = await store.get_events(aggregate_id, "Bench")
-    assert stream.version == 3
+    stream = StreamId(aggregate_id=aggregate_id, category="Bench")
+    result = await store.append(stream, make_events(aggregate_id, 3), ExpectedVersion.no_stream())
+    assert result.new_version == 3
+    envelopes = await collect(store.read_stream(stream))
+    assert len(envelopes) == 3
     await adapter.destroy(store)
     await adapter.teardown()
 

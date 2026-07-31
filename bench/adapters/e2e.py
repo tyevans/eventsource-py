@@ -3,14 +3,14 @@
 from bench.adapters.base import BenchAdapter
 from bench.adapters.snapshots import SNAPSHOT_ADAPTERS
 from bench.adapters.stores import STORE_ADAPTERS
+from eventsource.ports import FullEventStore
 from eventsource.ports.snapshots import SnapshotStore
-from eventsource.stores.interface import EventStore
 
 
-class E2EAdapter(BenchAdapter[tuple[EventStore, SnapshotStore]]):
+class E2EAdapter(BenchAdapter[tuple[FullEventStore, SnapshotStore]]):
     def __init__(
         self,
-        store_adapter: BenchAdapter[EventStore],
+        store_adapter: BenchAdapter[FullEventStore],
         snapshot_adapter: BenchAdapter[SnapshotStore],
     ) -> None:
         self._store = store_adapter
@@ -29,10 +29,10 @@ class E2EAdapter(BenchAdapter[tuple[EventStore, SnapshotStore]]):
         await self._snapshot.teardown()
         await self._store.teardown()
 
-    async def create(self) -> tuple[EventStore, SnapshotStore]:
+    async def create(self) -> tuple[FullEventStore, SnapshotStore]:
         return (await self._store.create(), await self._snapshot.create())
 
-    async def destroy(self, resource: tuple[EventStore, SnapshotStore]) -> None:
+    async def destroy(self, resource: tuple[FullEventStore, SnapshotStore]) -> None:
         store, snapshot_store = resource
         await self._store.destroy(store)
         await self._snapshot.destroy(snapshot_store)
