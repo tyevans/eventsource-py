@@ -9,7 +9,7 @@ The module reuses the existing RetryConfig from subscriptions.retry
 for consistency across the codebase.
 
 Example:
-    >>> from eventsource.projections.retry import (
+    >>> from eventsource.application.projections.retry import (
     ...     RetryPolicy,
     ...     ExponentialBackoffRetryPolicy,
     ... )

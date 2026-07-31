@@ -15,18 +15,18 @@ from uuid import uuid4
 import pytest
 from pydantic import Field
 
-from eventsource.events.base import DomainEvent
-from eventsource.exceptions import UnhandledEventError
-from eventsource.handlers import handles
-from eventsource.projections.base import (
+from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
+from eventsource.adapters.memory.dlq import InMemoryDLQRepository
+from eventsource.application.projections.base import (
     CheckpointTrackingProjection,
     DeclarativeProjection,
     EventHandlerBase,
     Projection,
     SyncProjection,
 )
-from eventsource.repositories.checkpoint import InMemoryCheckpointRepository
-from eventsource.repositories.dlq import InMemoryDLQRepository
+from eventsource.events.base import DomainEvent
+from eventsource.exceptions import UnhandledEventError
+from eventsource.handlers import handles
 
 
 # Sample events for testing
@@ -361,8 +361,8 @@ class TestCheckpointTrackingProjection:
         assert projection.projection_name == "MyCustomProjection"
 
     @pytest.mark.asyncio
-    async def test_uses_default_in_memory_repos_when_none_provided(self) -> None:
-        """Uses in-memory repositories by default."""
+    async def test_bare_projection_disables_checkpoint_tracking(self) -> None:
+        """No checkpoint_repo means checkpoint tracking is disabled entirely."""
 
         class TestProjection(CheckpointTrackingProjection):
             def subscribed_to(self) -> list[type[DomainEvent]]:
@@ -377,7 +377,8 @@ class TestCheckpointTrackingProjection:
         event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
         await projection.handle(event)
 
-        assert await projection.get_checkpoint() is not None
+        # No checkpoint repo configured, so no checkpoint was ever written
+        assert await projection.get_checkpoint() is None
 
 
 class TestDeclarativeProjection:

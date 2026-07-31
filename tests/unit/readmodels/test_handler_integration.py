@@ -13,8 +13,8 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import Field
 
+from eventsource.application.projections import handles
 from eventsource.events import DomainEvent
-from eventsource.projections import handles
 from eventsource.readmodels import ReadModel, ReadModelProjection
 
 # =============================================================================
@@ -255,7 +255,7 @@ class TestExports:
 
     def test_handles_decorator_importable_from_projections(self) -> None:
         """Test @handles decorator can be imported from projections module."""
-        from eventsource.projections import handles
+        from eventsource.application.projections import handles
 
         assert handles is not None
         assert callable(handles)
@@ -436,11 +436,11 @@ class TestNoCircularImports:
 
     def test_import_handles_from_projections(self) -> None:
         """Test importing handles from projections module."""
+        from eventsource.application.projections import handles
         from eventsource.handlers import (
             get_handled_event_type,
             is_event_handler,
         )
-        from eventsource.projections import handles
 
         assert handles is not None
         assert get_handled_event_type is not None

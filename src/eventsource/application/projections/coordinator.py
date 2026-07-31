@@ -17,6 +17,7 @@ import asyncio
 import logging
 from typing import Any
 
+from eventsource.application.projections.base import EventHandlerBase, Projection
 from eventsource.events.base import DomainEvent
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
@@ -24,7 +25,6 @@ from eventsource.observability.attributes import (
     ATTR_EVENT_ID,
     ATTR_EVENT_TYPE,
 )
-from eventsource.projections.base import EventHandlerBase, Projection
 from eventsource.protocols import EventSubscriber
 
 logger = logging.getLogger(__name__)

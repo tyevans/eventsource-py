@@ -52,6 +52,11 @@ Example with tenant filtering:
 
 # Re-export handles from canonical location for backward compatibility
 # Users should import from eventsource.handlers instead
+from eventsource.application.projections.coordinator import (
+    ProjectionCoordinator,
+    ProjectionRegistry,
+    SubscriberRegistry,
+)
 from eventsource.handlers import (
     get_handled_event_type,
     handles,
@@ -65,11 +70,6 @@ from eventsource.projections.base import (
     Projection,
     SyncProjection,
     TenantFilter,
-)
-from eventsource.projections.coordinator import (
-    ProjectionCoordinator,
-    ProjectionRegistry,
-    SubscriberRegistry,
 )
 
 # Protocols from canonical location (TD-007)

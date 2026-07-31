@@ -15,13 +15,13 @@ from uuid import uuid4
 import pytest
 from pydantic import Field
 
-from eventsource.events.base import DomainEvent
-from eventsource.projections.base import EventHandlerBase, Projection
-from eventsource.projections.coordinator import (
+from eventsource.application.projections.base import EventHandlerBase, Projection
+from eventsource.application.projections.coordinator import (
     ProjectionCoordinator,
     ProjectionRegistry,
     SubscriberRegistry,
 )
+from eventsource.events.base import DomainEvent
 from eventsource.protocols import EventSubscriber
 
 

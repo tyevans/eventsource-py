@@ -28,15 +28,15 @@ from uuid import uuid4
 import pytest
 import pytest_asyncio
 
+from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
+from eventsource.adapters.memory.dlq import InMemoryDLQRepository
+from eventsource.application.projections import handles
 from eventsource.events import DomainEvent
-from eventsource.projections import handles
 from eventsource.readmodels import (
     ReadModel,
     ReadModelProjection,
     generate_schema,
 )
-from eventsource.repositories.checkpoint import InMemoryCheckpointRepository
-from eventsource.repositories.dlq import InMemoryDLQRepository
 
 from ..conftest import skip_if_no_postgres_infra
 

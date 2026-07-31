@@ -48,7 +48,7 @@ class TestCheckpointTrackingProjectionTracing:
 
     def test_enable_tracing_parameter_default_false(self):
         """enable_tracing defaults to False for projections."""
-        from eventsource.projections.base import CheckpointTrackingProjection
+        from eventsource.application.projections.base import CheckpointTrackingProjection
 
         class TestProjection(CheckpointTrackingProjection):
             def subscribed_to(self) -> list[type[DomainEvent]]:
@@ -68,7 +68,7 @@ class TestCheckpointTrackingProjectionTracing:
 
     def test_enable_tracing_parameter_true(self):
         """enable_tracing=True enables tracing."""
-        from eventsource.projections.base import CheckpointTrackingProjection
+        from eventsource.application.projections.base import CheckpointTrackingProjection
 
         class TestProjection(CheckpointTrackingProjection):
             def subscribed_to(self) -> list[type[DomainEvent]]:
@@ -86,7 +86,7 @@ class TestCheckpointTrackingProjectionTracing:
     @pytest.mark.asyncio
     async def test_handle_creates_span_when_enabled(self):
         """handle() creates span when tracing enabled."""
-        from eventsource.projections.base import CheckpointTrackingProjection
+        from eventsource.application.projections.base import CheckpointTrackingProjection
 
         mock_tracer = Mock()
         mock_span = MagicMock()
@@ -121,7 +121,7 @@ class TestCheckpointTrackingProjectionTracing:
     @pytest.mark.asyncio
     async def test_handle_no_span_when_disabled(self):
         """handle() does not create span when tracing disabled."""
-        from eventsource.projections.base import CheckpointTrackingProjection
+        from eventsource.application.projections.base import CheckpointTrackingProjection
 
         class TestProjection(CheckpointTrackingProjection):
             def subscribed_to(self) -> list[type[DomainEvent]]:
@@ -142,7 +142,7 @@ class TestCheckpointTrackingProjectionTracing:
     @pytest.mark.asyncio
     async def test_span_sets_checkpoint_updated_on_success(self):
         """Successful event processing sets checkpoint.updated attribute."""
-        from eventsource.projections.base import CheckpointTrackingProjection
+        from eventsource.application.projections.base import CheckpointTrackingProjection
 
         mock_tracer = Mock()
         mock_span = MagicMock()
@@ -171,10 +171,10 @@ class TestCheckpointTrackingProjectionTracing:
     @pytest.mark.asyncio
     async def test_span_sets_retry_count_on_failure(self):
         """Failed event processing sets retry count attribute."""
-        from eventsource.projections.base import CheckpointTrackingProjection
-        from eventsource.projections.retry import ExponentialBackoffRetryPolicy
-        from eventsource.repositories.checkpoint import InMemoryCheckpointRepository
-        from eventsource.repositories.dlq import InMemoryDLQRepository
+        from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
+        from eventsource.adapters.memory.dlq import InMemoryDLQRepository
+        from eventsource.application.projections.base import CheckpointTrackingProjection
+        from eventsource.application.projections.retry import ExponentialBackoffRetryPolicy
         from eventsource.subscriptions.retry import RetryConfig
 
         mock_tracer = Mock()
@@ -225,8 +225,8 @@ class TestDeclarativeProjectionTracing:
 
     def test_enable_tracing_passed_through(self):
         """enable_tracing is passed to parent class."""
+        from eventsource.application.projections.base import DeclarativeProjection
         from eventsource.handlers import handles
-        from eventsource.projections.base import DeclarativeProjection
 
         class TestProjection(DeclarativeProjection):
             @handles(OrderCreated)
@@ -241,8 +241,8 @@ class TestDeclarativeProjectionTracing:
     @pytest.mark.asyncio
     async def test_handler_dispatch_creates_span(self):
         """Handler dispatch creates span when tracing enabled."""
+        from eventsource.application.projections.base import DeclarativeProjection
         from eventsource.handlers import handles
-        from eventsource.projections.base import DeclarativeProjection
 
         mock_tracer = Mock()
         mock_span_handle = MagicMock()
@@ -333,7 +333,7 @@ class TestProjectionRegistryTracing:
 
     def test_enable_tracing_parameter_default_false(self):
         """enable_tracing defaults to False."""
-        from eventsource.projections.coordinator import ProjectionRegistry
+        from eventsource.application.projections.coordinator import ProjectionRegistry
 
         registry = ProjectionRegistry()
 
@@ -344,7 +344,7 @@ class TestProjectionRegistryTracing:
 
     def test_enable_tracing_parameter_true(self):
         """enable_tracing=True enables tracing."""
-        from eventsource.projections.coordinator import ProjectionRegistry
+        from eventsource.application.projections.coordinator import ProjectionRegistry
 
         registry = ProjectionRegistry(enable_tracing=True)
 
@@ -354,8 +354,8 @@ class TestProjectionRegistryTracing:
     @pytest.mark.asyncio
     async def test_dispatch_creates_span_when_enabled(self):
         """dispatch() creates span when tracing enabled."""
-        from eventsource.projections.base import Projection
-        from eventsource.projections.coordinator import ProjectionRegistry
+        from eventsource.application.projections.base import Projection
+        from eventsource.application.projections.coordinator import ProjectionRegistry
 
         mock_tracer = Mock()
         mock_span = MagicMock()
@@ -387,8 +387,8 @@ class TestProjectionRegistryTracing:
     @pytest.mark.asyncio
     async def test_dispatch_no_span_when_disabled(self):
         """dispatch() does not create span when tracing disabled."""
-        from eventsource.projections.base import Projection
-        from eventsource.projections.coordinator import ProjectionRegistry
+        from eventsource.application.projections.base import Projection
+        from eventsource.application.projections.coordinator import ProjectionRegistry
 
         handled_events = []
 
@@ -417,7 +417,7 @@ class TestProjectionCoordinatorTracing:
 
     def test_enable_tracing_parameter_default_false(self):
         """enable_tracing defaults to False."""
-        from eventsource.projections.coordinator import (
+        from eventsource.application.projections.coordinator import (
             ProjectionCoordinator,
             ProjectionRegistry,
         )
@@ -432,7 +432,7 @@ class TestProjectionCoordinatorTracing:
 
     def test_enable_tracing_parameter_true(self):
         """enable_tracing=True enables tracing."""
-        from eventsource.projections.coordinator import (
+        from eventsource.application.projections.coordinator import (
             ProjectionCoordinator,
             ProjectionRegistry,
         )
@@ -446,7 +446,7 @@ class TestProjectionCoordinatorTracing:
     @pytest.mark.asyncio
     async def test_dispatch_events_creates_span_when_enabled(self):
         """dispatch_events() creates span when tracing enabled."""
-        from eventsource.projections.coordinator import (
+        from eventsource.application.projections.coordinator import (
             ProjectionCoordinator,
             ProjectionRegistry,
         )
@@ -478,7 +478,8 @@ class TestBackwardCompatibility:
     @pytest.mark.asyncio
     async def test_checkpoint_projection_without_tracing_arg_works(self):
         """CheckpointTrackingProjection works without enable_tracing arg."""
-        from eventsource.projections.base import CheckpointTrackingProjection
+        from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
+        from eventsource.application.projections.base import CheckpointTrackingProjection
 
         class TestProjection(CheckpointTrackingProjection):
             def subscribed_to(self) -> list[type[DomainEvent]]:
@@ -488,7 +489,7 @@ class TestBackwardCompatibility:
                 pass
 
         # Should work without enable_tracing argument
-        projection = TestProjection()
+        projection = TestProjection(checkpoint_repo=InMemoryCheckpointRepository())
 
         event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
         await projection.handle(event)
@@ -500,8 +501,8 @@ class TestBackwardCompatibility:
     @pytest.mark.asyncio
     async def test_declarative_projection_without_tracing_arg_works(self):
         """DeclarativeProjection works without enable_tracing arg."""
+        from eventsource.application.projections.base import DeclarativeProjection
         from eventsource.handlers import handles
-        from eventsource.projections.base import DeclarativeProjection
 
         handled_events = []
 
@@ -521,8 +522,8 @@ class TestBackwardCompatibility:
     @pytest.mark.asyncio
     async def test_registry_without_tracing_arg_works(self):
         """ProjectionRegistry works without enable_tracing arg."""
-        from eventsource.projections.base import Projection
-        from eventsource.projections.coordinator import ProjectionRegistry
+        from eventsource.application.projections.base import Projection
+        from eventsource.application.projections.coordinator import ProjectionRegistry
 
         handled_events = []
 
@@ -545,7 +546,7 @@ class TestBackwardCompatibility:
     @pytest.mark.asyncio
     async def test_coordinator_without_tracing_arg_works(self):
         """ProjectionCoordinator works without enable_tracing arg."""
-        from eventsource.projections.coordinator import (
+        from eventsource.application.projections.coordinator import (
             ProjectionCoordinator,
             ProjectionRegistry,
         )

@@ -16,9 +16,9 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from eventsource.application.projections import DeclarativeProjection, TenantFilter
 from eventsource.events.base import DomainEvent
 from eventsource.handlers import handles
-from eventsource.projections import DeclarativeProjection, TenantFilter
 
 # --- Sample Event Classes ---
 
@@ -530,7 +530,7 @@ class TestTenantFilterTypeAlias:
 
     def test_tenant_filter_is_exported(self) -> None:
         """TenantFilter type is exported from projections module."""
-        from eventsource.projections import TenantFilter
+        from eventsource.application.projections import TenantFilter
 
         # Just verify it's importable and is a type alias
         assert TenantFilter is not None
