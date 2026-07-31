@@ -30,13 +30,11 @@ import pytest_asyncio
 
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
 from eventsource.adapters.memory.dlq import InMemoryDLQRepository
+from eventsource.adapters.sql.readmodel_projection import ReadModelProjection
+from eventsource.adapters.sql.readmodel_schema import generate_schema
 from eventsource.application.projections import handles
 from eventsource.events import DomainEvent
-from eventsource.readmodels import (
-    ReadModel,
-    ReadModelProjection,
-    generate_schema,
-)
+from eventsource.ports.readmodels import ReadModel
 
 from ..conftest import skip_if_no_postgres_infra
 

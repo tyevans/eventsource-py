@@ -11,8 +11,8 @@ from uuid import uuid4
 import pytest
 
 from eventsource.adapters.postgresql.readmodels import PostgreSQLReadModelRepository
+from eventsource.ports.readmodels.model import ReadModel
 from eventsource.ports.readmodels.query import Filter, Query
-from eventsource.readmodels import ReadModel
 
 
 class OrderSummary(ReadModel):

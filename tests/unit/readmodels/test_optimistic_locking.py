@@ -4,8 +4,8 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.readmodels import (
-    InMemoryReadModelRepository,
+from eventsource.adapters.memory.readmodels import InMemoryReadModelRepository
+from eventsource.ports.readmodels import (
     OptimisticLockError,
     ReadModel,
     ReadModelError,
@@ -326,8 +326,8 @@ class TestOptimisticLockingExports:
     """Test that optimistic locking classes are properly exported."""
 
     def test_exceptions_exported_from_readmodels(self) -> None:
-        """Test exceptions can be imported from eventsource.readmodels."""
-        from eventsource.readmodels import (
+        """Test exceptions can be imported from eventsource.ports.readmodels."""
+        from eventsource.ports.readmodels import (
             OptimisticLockError,
             ReadModelError,
             ReadModelNotFoundError,
@@ -339,7 +339,7 @@ class TestOptimisticLockingExports:
 
     def test_exceptions_in_all(self) -> None:
         """Test exceptions are in __all__."""
-        from eventsource import readmodels
+        from eventsource.ports import readmodels
 
         assert "OptimisticLockError" in readmodels.__all__
         assert "ReadModelError" in readmodels.__all__

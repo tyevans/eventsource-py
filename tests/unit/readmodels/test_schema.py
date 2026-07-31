@@ -18,7 +18,7 @@ from eventsource.adapters.sql.readmodel_schema import (
     generate_indexes,
     generate_schema,
 )
-from eventsource.readmodels import ReadModel
+from eventsource.ports.readmodels.model import ReadModel
 
 
 # Test models
@@ -594,7 +594,7 @@ class TestIntegration:
 
     def test_module_exports(self) -> None:
         """Test that schema utilities are exported from module."""
-        from eventsource.readmodels import (
+        from eventsource.adapters.sql.readmodel_schema import (
             POSTGRESQL_TYPE_MAP,
             SQLITE_TYPE_MAP,
             generate_full_schema,

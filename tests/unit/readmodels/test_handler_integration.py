@@ -13,9 +13,10 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import Field
 
+from eventsource.adapters.sql.readmodel_projection import ReadModelProjection
 from eventsource.application.projections import handles
 from eventsource.events import DomainEvent
-from eventsource.readmodels import ReadModel, ReadModelProjection
+from eventsource.ports.readmodels import ReadModel
 
 # =============================================================================
 # Test Events
@@ -235,8 +236,8 @@ class TestExports:
     """Tests for module exports."""
 
     def test_readmodels_package_exports_projection(self) -> None:
-        """Test that ReadModelProjection is exported from readmodels."""
-        from eventsource.readmodels import ReadModelProjection
+        """Test that ReadModelProjection is exported from its adapter module."""
+        from eventsource.adapters.sql.readmodel_projection import ReadModelProjection
 
         assert ReadModelProjection is not None
 
@@ -423,12 +424,9 @@ class TestNoCircularImports:
         assert handles is not None
 
     def test_import_from_readmodels(self) -> None:
-        """Test imports from eventsource.readmodels without circular import errors."""
-        from eventsource.readmodels import (
-            ReadModel,
-            ReadModelProjection,
-            ReadModelRepository,
-        )
+        """Test imports from the read-model ports/adapters without circular import errors."""
+        from eventsource.adapters.sql.readmodel_projection import ReadModelProjection
+        from eventsource.ports.readmodels import ReadModel, ReadModelRepository
 
         assert ReadModel is not None
         assert ReadModelProjection is not None

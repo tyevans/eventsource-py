@@ -19,14 +19,14 @@ from uuid import uuid4
 import pytest
 import pytest_asyncio
 
-from eventsource.readmodels import (
+from eventsource.adapters.memory.readmodels import InMemoryReadModelRepository
+from eventsource.adapters.sql.readmodel_schema import generate_schema
+from eventsource.ports.readmodels import (
     Filter,
-    InMemoryReadModelRepository,
     OptimisticLockError,
     Query,
     ReadModel,
     ReadModelNotFoundError,
-    generate_schema,
 )
 
 from ..conftest import skip_if_no_postgres_infra
@@ -77,7 +77,7 @@ async def enhanced_sqlite_repo(tmp_path: Any) -> Any:
     except ImportError:
         pytest.skip("aiosqlite not installed")
 
-    from eventsource.readmodels import SQLiteReadModelRepository
+    from eventsource.adapters.sqlite.readmodels import SQLiteReadModelRepository
 
     db_path = tmp_path / "test_enhanced_features.db"
     async with aiosqlite.connect(db_path) as db:
@@ -98,7 +98,7 @@ async def enhanced_postgresql_repo(postgres_engine: Any) -> Any:
     """PostgreSQL repository for enhanced feature tests."""
     from sqlalchemy import text
 
-    from eventsource.readmodels import PostgreSQLReadModelRepository
+    from eventsource.adapters.postgresql.readmodels import PostgreSQLReadModelRepository
 
     # Create table using schema generation utility
     async with postgres_engine.begin() as conn:

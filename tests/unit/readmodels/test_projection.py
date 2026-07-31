@@ -20,9 +20,10 @@ from pydantic import Field
 
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
 from eventsource.adapters.memory.dlq import InMemoryDLQRepository
+from eventsource.adapters.sql.readmodel_projection import ReadModelProjection
 from eventsource.events.base import DomainEvent
 from eventsource.handlers import handles
-from eventsource.readmodels import ReadModel, ReadModelProjection
+from eventsource.ports.readmodels import ReadModel
 
 # =============================================================================
 # Test Events
@@ -856,13 +857,15 @@ class TestImports:
     """Tests for module imports and exports."""
 
     def test_can_import_from_readmodels_module(self) -> None:
-        """Test ReadModelProjection can be imported from readmodels module."""
-        from eventsource.readmodels import ReadModelProjection as RMProjection
+        """Test ReadModelProjection can be imported from its adapter module."""
+        from eventsource.adapters.sql.readmodel_projection import (
+            ReadModelProjection as RMProjection,
+        )
 
         assert RMProjection is not None
 
     def test_is_in_readmodels_all(self) -> None:
-        """Test ReadModelProjection is in __all__."""
-        from eventsource import readmodels
+        """Test ReadModelProjection is in top-level __all__."""
+        import eventsource
 
-        assert "ReadModelProjection" in readmodels.__all__
+        assert "ReadModelProjection" in eventsource.__all__

@@ -20,7 +20,7 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.locks import LockAcquisitionError, LockInfo
+from eventsource.exceptions import LockAcquisitionError
 from eventsource.migration.cutover import CutoverManager
 from eventsource.migration.models import (
     CutoverResult,
@@ -30,6 +30,7 @@ from eventsource.migration.models import (
     TenantRouting,
 )
 from eventsource.ports import Position
+from eventsource.ports.locks import LockInfo
 
 # =============================================================================
 # Test Fixtures

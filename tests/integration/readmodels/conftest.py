@@ -17,11 +17,9 @@ from uuid import uuid4
 import pytest
 import pytest_asyncio
 
-from eventsource.readmodels import (
-    InMemoryReadModelRepository,
-    ReadModel,
-    generate_schema,
-)
+from eventsource.adapters.memory.readmodels import InMemoryReadModelRepository
+from eventsource.adapters.sql.readmodel_schema import generate_schema
+from eventsource.ports.readmodels import ReadModel
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -103,7 +101,7 @@ async def sqlite_repo(
     except ImportError:
         pytest.skip("aiosqlite not installed")
 
-    from eventsource.readmodels import SQLiteReadModelRepository
+    from eventsource.adapters.sqlite.readmodels import SQLiteReadModelRepository
 
     db_path = tmp_path / "test_readmodels.db"
     async with aiosqlite.connect(db_path) as db:
@@ -132,7 +130,7 @@ async def postgresql_repo(
     """PostgreSQL repository for testing."""
     from sqlalchemy import text
 
-    from eventsource.readmodels import PostgreSQLReadModelRepository
+    from eventsource.adapters.postgresql.readmodels import PostgreSQLReadModelRepository
 
     # Create table using schema generation utility
     async with postgres_engine.begin() as conn:

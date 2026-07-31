@@ -21,7 +21,7 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.readmodels import Filter, Query
+from eventsource.ports.readmodels import Filter, Query
 
 from ..conftest import skip_if_no_postgres_infra
 
