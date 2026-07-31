@@ -617,8 +617,8 @@ async def sqlite_checkpoint_repo(tmp_path: Any) -> AsyncGenerator[Any, None]:
     if not AIOSQLITE_AVAILABLE:
         pytest.skip("aiosqlite not installed")
 
+    from eventsource import create_async_engine
     from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository
-    from eventsource.engine import create_async_engine
     from eventsource.migrations import get_schema
 
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/checkpoint_repo.db")
@@ -676,8 +676,8 @@ async def sqlite_dlq_repo(tmp_path: Any) -> AsyncGenerator[Any, None]:
     if not AIOSQLITE_AVAILABLE:
         pytest.skip("aiosqlite not installed")
 
+    from eventsource import create_async_engine
     from eventsource.adapters.sql.dlq import SQLDLQRepository
-    from eventsource.engine import create_async_engine
     from eventsource.migrations import get_schema
 
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/dlq_repo.db")

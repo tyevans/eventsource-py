@@ -15,6 +15,15 @@ did not choose. Projections rely on a read-then-write-then-commit sequence
 being atomic, so the driver must be put under explicit transaction control.
 
 See https://docs.sqlalchemy.org/en/20/dialects/sqlite.html
+
+Why ``adapters/_sql/`` and not ``adapters/sql/``: ``adapters/_sql/__init__.py``
+is import-free, while ``adapters/sql/__init__.py`` eagerly imports
+``checkpoints``, ``dlq``, and ``projection``, and ``projection`` reaches into
+``application/projections/``. Placing a leaf engine factory there would drag
+the application projection ring into the front-door import chain that
+``docs/core-surface.md``'s finding 12 exists to narrow. The public name is and
+remains ``eventsource.create_async_engine``; the module path was never the
+advertised surface. See ADR 0029.
 """
 
 import logging

@@ -22,7 +22,7 @@ expensive and hard to notice by other means:
 
 | Module | Test subset |
 | --- | --- |
-| `src/eventsource/engine.py` | `tests/unit/test_engine.py` |
+| `src/eventsource/adapters/_sql/engine.py` | `tests/unit/test_engine.py` |
 | `src/eventsource/repositories/_dialect.py` | `tests/unit/repositories/test_dialect.py` |
 | `src/eventsource/serialization/json.py` | `tests/unit/serialization/` |
 | `src/eventsource/bus/registry.py` | `tests/unit/bus/test_registry.py` |
@@ -46,7 +46,7 @@ and why two rather than a version pin or a full switch, is its own section below
 
 ```bash
 scripts/mutation.sh              # mutmut: all three modules, sequentially
-scripts/mutation.sh engine       # mutmut: just src/eventsource/engine.py
+scripts/mutation.sh engine       # mutmut: just src/eventsource/adapters/_sql/engine.py
 scripts/mutation.sh dialect      # mutmut: just repositories/_dialect.py
 scripts/mutation.sh json         # mutmut: just serialization/json.py
 
@@ -391,7 +391,7 @@ and the fix in `6de02cf`.
 
 **With cosmic-ray, this check now passes as literally specified.** Applied the
 `begin`-listener's `RemoveDecorator` mutant by hand
-(`uv run cosmic-ray apply src/eventsource/engine.py core/RemoveDecorator 1`), which
+(`uv run cosmic-ray apply src/eventsource/adapters/_sql/engine.py core/RemoveDecorator 1`), which
 strips `@event.listens_for(engine.sync_engine, "begin")` off `_emit_begin` entirely —
 the listener is defined but never registered, so `BEGIN` is never emitted by any
 connection, which is a strictly stronger and more direct proxy for "the BEGIN

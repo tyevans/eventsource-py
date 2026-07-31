@@ -298,7 +298,7 @@ except ImportError:
 
 async def _sqlite_checkpoint_engine(tmp_path, *, with_events: bool = True):
     """Build a SQLite engine with the checkpoints (and optionally events) schema."""
-    from eventsource.engine import create_async_engine
+    from eventsource import create_async_engine
     from eventsource.migrations import get_schema
 
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/tracing.db")

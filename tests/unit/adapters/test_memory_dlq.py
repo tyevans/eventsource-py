@@ -704,7 +704,7 @@ class TestSQLDLQRepository:
 
     @pytest.fixture
     async def sqlite_engine(self, tmp_path):
-        from eventsource.engine import create_async_engine
+        from eventsource import create_async_engine
         from eventsource.migrations import get_schema
 
         engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/dlq.db")
@@ -1191,7 +1191,7 @@ class TestSQLDLQRepositoryProtocol:
 
     @pytest.fixture
     async def sqlite_engine(self, tmp_path):
-        from eventsource.engine import create_async_engine
+        from eventsource import create_async_engine
         from eventsource.migrations import get_schema
 
         engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/dlq_protocol.db")

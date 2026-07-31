@@ -479,7 +479,7 @@ class TestSQLDLQRepositoryCrossDialectAgreement:
         postgres_dlq_repo: SQLDLQRepository,
         tmp_path,
     ) -> None:
-        from eventsource.engine import create_async_engine
+        from eventsource import create_async_engine
         from eventsource.migrations import get_schema
 
         sqlite_engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/dlq_cross.db")
@@ -520,7 +520,7 @@ class TestSQLDLQRepositoryCrossDialectAgreement:
         """Calling get_failed_events with no projection filter must behave
         identically on both dialects -- empty/None filters are exactly
         where an unconditional dialect branch would silently diverge."""
-        from eventsource.engine import create_async_engine
+        from eventsource import create_async_engine
         from eventsource.migrations import get_schema
 
         sqlite_engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/dlq_cross2.db")

@@ -6,7 +6,7 @@
 #
 #   scripts/mutation.sh              # all three modules, each against its
 #                                     # own test subset (sequential)
-#   scripts/mutation.sh engine       # just src/eventsource/engine.py
+#   scripts/mutation.sh engine       # just src/eventsource/adapters/_sql/engine.py
 #   scripts/mutation.sh dialect      # just repositories/_dialect.py
 #   scripts/mutation.sh json         # just serialization/json.py
 #

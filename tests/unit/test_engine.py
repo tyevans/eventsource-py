@@ -7,7 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.ext.asyncio import create_async_engine as sa_create_async_engine
 
-from eventsource.engine import create_async_engine
+from eventsource import create_async_engine
 
 
 def _factory_engine(path: str, **kwargs: Any) -> AsyncEngine:
@@ -113,7 +113,7 @@ async def test_memory_sqlite_applies_busy_timeout_after_journal_mode_skip(monkey
     a value that could never be a coincidental default to make the
     assertion actually discriminate.
     """
-    import eventsource.engine as engine_module
+    import eventsource.adapters._sql.engine as engine_module
 
     monkeypatch.setitem(engine_module.SQLITE_PRAGMAS, "busy_timeout", 4321)
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
@@ -233,3 +233,16 @@ async def test_sqlite_autocommit_write_persists_without_explicit_commit(tmp_path
         f"AUTOCOMMIT write was lost via {route}: the begin listener wrapped "
         f"it in a transaction that was never committed"
     )
+
+
+def test_module_lives_under_sql_adapters():
+    """`create_async_engine` is adapter-ring content (ADR 0029).
+
+    It constructs a SQLAlchemy AsyncEngine and registers dialect-specific
+    driver listeners, so it belongs under `adapters/`. `_sql/` rather than
+    `sql/` because `adapters/_sql/__init__.py` is import-free while
+    `adapters/sql/__init__.py` eagerly imports three modules, one of which
+    reaches into `application/projections/` -- the front-door import chain
+    must not widen while relocating the module that chain names.
+    """
+    assert create_async_engine.__module__ == "eventsource.adapters._sql.engine"

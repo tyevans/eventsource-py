@@ -17,7 +17,7 @@
 # run stays in the tens of seconds; a whole-package run would not.
 
 [cosmic-ray]
-module-path = "src/eventsource/engine.py"
+module-path = "src/eventsource/adapters/_sql/engine.py"
 timeout = 10.0
 excluded-modules = []
 test-command = "python -m pytest tests/unit/test_engine.py -x -q --no-cov -p no:randomly"

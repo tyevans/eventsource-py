@@ -347,7 +347,7 @@ class TestSQLCheckpointRepository:
 
     @pytest.fixture
     async def sqlite_engine(self, tmp_path):
-        from eventsource.engine import create_async_engine
+        from eventsource import create_async_engine
         from eventsource.migrations import get_schema
 
         engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/cp.db")
@@ -922,8 +922,8 @@ class TestSQLCheckpointRepositoryProtocol:
     """Tests to verify SQLCheckpointRepository implements the protocol."""
 
     async def test_implements_protocol(self, tmp_path):
+        from eventsource import create_async_engine
         from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository
-        from eventsource.engine import create_async_engine
         from eventsource.migrations import get_schema
 
         engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/cp2.db")

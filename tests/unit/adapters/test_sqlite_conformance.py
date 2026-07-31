@@ -34,11 +34,11 @@ def _make_registry():
     return registry
 
 
+from eventsource import create_async_engine  # noqa: E402
 from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository  # noqa: E402
 from eventsource.adapters.sql.dlq import SQLDLQRepository  # noqa: E402
 from eventsource.adapters.sqlite import SQLiteEventStore, SQLiteSnapshotStore  # noqa: E402
 from eventsource.adapters.sqlite.outbox import SQLiteOutboxRepository  # noqa: E402
-from eventsource.engine import create_async_engine  # noqa: E402
 from eventsource.migrations import get_schema  # noqa: E402
 from eventsource.ports import ExpectedVersion  # noqa: E402
 from eventsource.testing.conformance_ports import (  # noqa: E402

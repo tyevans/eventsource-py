@@ -201,7 +201,7 @@ source_paths = [
     "src",
 ]
 only_mutate = [
-    "src/eventsource/engine.py",
+    "src/eventsource/adapters/_sql/engine.py",
     "src/eventsource/adapters/_sql/dialect.py",
     "src/eventsource/serialization/json.py",
     "src/eventsource/bus/registry.py",

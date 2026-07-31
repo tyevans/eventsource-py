@@ -23,6 +23,8 @@ except PackageNotFoundError:
 # Exceptions - available immediately
 # Aggregates (Task 07, Task 08)
 # Core-rings surface: domain value objects, boundary ports, and the adapters.
+# Shared async engine factory
+from eventsource.adapters._sql.engine import create_async_engine
 from eventsource.adapters._sql.positions import IntPositionCodec
 
 # Repository infrastructure (Task 12)
@@ -101,9 +103,6 @@ from eventsource.commands import DomainCommand
 from eventsource.domain import StreamId
 from eventsource.domain.aggregate import AggregateRoot, DeclarativeAggregate
 from eventsource.domain.decider import DeciderAggregate
-
-# Shared async engine factory
-from eventsource.engine import create_async_engine
 
 # Core event primitives (Task 02)
 from eventsource.events.base import DomainEvent
