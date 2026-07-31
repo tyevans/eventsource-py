@@ -245,9 +245,9 @@ include_external_packages = true
 name = "Infrastructure backends must not import each other"
 type = "independence"
 modules = [
-    "eventsource.stores.postgresql",
-    "eventsource.stores.sqlite",
-    "eventsource.stores.in_memory",
+    "eventsource.adapters.postgresql",
+    "eventsource.adapters.sqlite",
+    "eventsource.adapters.memory",
     "eventsource.bus.redis",
     "eventsource.bus.kafka",
     "eventsource.bus.rabbitmq",
@@ -281,6 +281,8 @@ source_modules = [
     "eventsource.testing.builder",
     "eventsource.testing.assertions",
     "eventsource.testing.conformance",
+    "eventsource.testing.sync_facade",
+    "eventsource.sync.adapter",
     "eventsource.multitenancy.context",
     "eventsource.multitenancy.events",
     "eventsource.multitenancy.exceptions",
