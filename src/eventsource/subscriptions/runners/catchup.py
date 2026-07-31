@@ -304,49 +304,62 @@ class CatchUpRunner:
 
         events_in_batch = 0
         events_filtered = 0
+        delivered_this_batch = 0
         last_stored_event: StoredEvent | None = None
 
-        for stored_event in events:
-            if self._stop_requested:
-                break
+        try:
+            for stored_event in events:
+                if self._stop_requested:
+                    break
 
-            # Check for pause within batch processing
-            await self.subscription.wait_if_paused()
-            if self._stop_requested:
-                break
+                # Check for pause within batch processing
+                await self.subscription.wait_if_paused()
+                if self._stop_requested:
+                    break
 
-            # Apply event type filtering early before delivery
-            if not self._filter.matches(stored_event.event):
-                events_filtered += 1
-                # Still update position to track progress through the stream
-                await self.subscription.record_event_processed(
-                    position=stored_event.global_position,
-                    event_id=stored_event.event_id,
-                    event_type=stored_event.event_type,
-                )
+                # Apply event type filtering early before delivery
+                if not self._filter.matches(stored_event.event):
+                    events_filtered += 1
+                    # Still update position to track progress through the stream
+                    await self.subscription.record_event_processed(
+                        position=stored_event.global_position,
+                        event_id=stored_event.event_id,
+                        event_type=stored_event.event_type,
+                    )
+                    delivered_this_batch += 1
+                    last_stored_event = stored_event
+                    continue
+
+                # Acquire flow control slot (may block if at capacity)
+                async with await self._flow_controller.acquire():
+                    # Deliver event to subscriber
+                    await self._deliver_event(stored_event)
+
+                    # Update subscription position
+                    await self.subscription.record_event_processed(
+                        position=stored_event.global_position,
+                        event_id=stored_event.event_id,
+                        event_type=stored_event.event_type,
+                    )
+
                 last_stored_event = stored_event
-                continue
+                events_in_batch += 1
+                delivered_this_batch += 1
 
-            # Acquire flow control slot (may block if at capacity)
-            async with await self._flow_controller.acquire():
-                # Deliver event to subscriber
-                await self._deliver_event(stored_event)
-
-                # Update subscription position
-                await self.subscription.record_event_processed(
-                    position=stored_event.global_position,
-                    event_id=stored_event.event_id,
-                    event_type=stored_event.event_type,
-                )
-
-            last_stored_event = stored_event
-            events_in_batch += 1
-
-            # Handle checkpoint strategies
-            if self.config.checkpoint_strategy == CheckpointStrategy.EVERY_EVENT:
-                await self._save_checkpoint_with_retry(stored_event)
-            elif self.config.checkpoint_strategy == CheckpointStrategy.PERIODIC:
-                await self._maybe_save_periodic_checkpoint(stored_event)
+                # Handle checkpoint strategies
+                if self.config.checkpoint_strategy == CheckpointStrategy.EVERY_EVENT:
+                    await self._save_checkpoint_with_retry(stored_event)
+                elif self.config.checkpoint_strategy == CheckpointStrategy.PERIODIC:
+                    await self._maybe_save_periodic_checkpoint(stored_event)
+        finally:
+            # On any exit (normal completion, stop request, or exception),
+            # reconcile events read-but-not-delivered so the seen-counter
+            # doesn't outlive this batch. Without this, a re-read of the
+            # abandoned tail on resume would double-count it and inflate
+            # lag permanently (it never decreases on its own).
+            undelivered = len(events) - delivered_this_batch
+            if undelivered > 0:
+                await self.subscription.record_events_unseen(undelivered)
 
         # Checkpoint after batch if configured
         if (

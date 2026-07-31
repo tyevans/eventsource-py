@@ -636,6 +636,60 @@ class TestCatchUpRunnerStop:
         assert result.events_processed < 100
         assert result.error is None
 
+    @pytest.mark.asyncio
+    async def test_lag_clears_after_stop_mid_batch_and_resume(
+        self,
+        event_store: InMemoryEventStore,
+        checkpoint_repo: InMemoryCheckpointRepository,
+        subscriber: MockSubscriber,
+    ):
+        """Test lag doesn't accumulate phantom counts when a batch is
+        abandoned mid-delivery and its tail is re-read on resume.
+
+        Reproduces: record_events_seen(len(events)) fires before the
+        delivery loop; if the loop stops early, the undelivered tail stays
+        counted as seen. The next run re-reads and re-counts that tail,
+        permanently inflating events_seen relative to events_delivered.
+        """
+        # All 10 events land in a single batch (batch_size == 10).
+        await add_events_to_store(event_store, 10)
+        target = await event_store.get_global_position()
+
+        config = SubscriptionConfig(batch_size=10)
+        subscription = Subscription(
+            name="StopResumeTest",
+            config=config,
+            subscriber=subscriber,
+        )
+        first_runner = CatchUpRunner(event_store, checkpoint_repo, subscription)
+
+        # Stop after 4 of 10 events have been delivered, mid-batch.
+        original_handle = subscriber.handle
+
+        async def stopping_handle(event: DomainEvent) -> None:
+            await original_handle(event)
+            if len(subscriber.handled_events) == 4:
+                await first_runner.stop()
+
+        subscriber.handle = stopping_handle  # type: ignore[method-assign]
+
+        first_result = await first_runner.run_until_position(target_position=target)
+        assert first_result.completed is False
+        assert first_result.events_processed == 4
+
+        # Simulate a quiescent state between runs (a real stop/resume cycle
+        # would pause or restart the subscription rather than leave it
+        # mid-CATCHING_UP), then resume with a fresh runner over the same
+        # subscription and deliver the rest.
+        await subscription.transition_to(SubscriptionState.PAUSED)
+        subscriber.handle = original_handle  # type: ignore[method-assign]
+        second_runner = CatchUpRunner(event_store, checkpoint_repo, subscription)
+        second_result = await second_runner.run_until_position(target_position=target)
+
+        assert second_result.completed is True
+        assert len(subscriber.handled_events) == 10
+        assert subscription.lag == 0
+
 
 # --- Position Tracking Tests ---
 

@@ -443,6 +443,22 @@ class Subscription:
         async with self._lock:
             self._events_seen += count
 
+    async def record_events_unseen(self, count: int) -> None:
+        """Reconcile the seen-counter when a read batch is abandoned early.
+
+        Called when a batch is read but only partially delivered (stop
+        request, exception, state transition) before its remaining events
+        are handed off to a fresh run. Without this, the undelivered tail
+        would be double-counted the next time it is read, permanently
+        inflating `_events_seen` relative to `_events_delivered` and
+        producing lag that never clears.
+
+        Args:
+            count: Number of events read but not delivered in this batch.
+        """
+        async with self._lock:
+            self._events_seen = max(0, self._events_seen - count)
+
     @property
     def lag(self) -> int:
         """
@@ -452,6 +468,12 @@ class Subscription:
         that have not yet been delivered -- it rises by a batch and falls
         as the batch drains, rather than being a store-wide position
         distance.
+
+        Invariant: across any stop boundary, `events_seen - events_delivered`
+        equals the number of read-but-unprocessed events, so lag never
+        accumulates phantom counts. Callers that abandon a partially
+        delivered batch must call `record_events_unseen` for the
+        undelivered remainder before the batch is re-read.
 
         Returns:
             Number of events seen but not yet delivered.
