@@ -15,7 +15,9 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from eventsource.commands.base import DomainCommand
 from eventsource.domain.aggregate import AggregateRoot, DeclarativeAggregate
+from eventsource.domain.decider import DeciderAggregate
 from eventsource.events.base import DomainEvent
 from eventsource.handlers import handles
 from tests.fixtures.events import (
@@ -197,11 +199,30 @@ class DeclarativeCounterAggregate(DeclarativeAggregate[CounterState]):
 
 
 # =============================================================================
-# Order Aggregate (Complex state management)
+# Order Aggregate (Complex state management, decider style)
 # =============================================================================
 
 
-class OrderAggregate(AggregateRoot[OrderState]):
+class CreateOrder(DomainCommand):
+    """Request to create an order for a customer."""
+
+    customer_id: UUID
+
+
+class AddOrderItem(DomainCommand):
+    """Request to add an item to an order."""
+
+    item_name: str
+    price: float
+
+
+class ShipOrder(DomainCommand):
+    """Request to ship an order with a tracking number."""
+
+    tracking_number: str
+
+
+class OrderAggregate(DeciderAggregate[OrderState]):
     """
     Order aggregate for testing complex state management scenarios.
 
@@ -209,66 +230,87 @@ class OrderAggregate(AggregateRoot[OrderState]):
     - Lifecycle: draft -> created -> shipped
     - Nested state: items list, running total
     - Business rule validation
+
+    Implemented in the decider style (``decide``/``evolve``); the original
+    ``create``/``add_item``/``ship`` methods survive as thin wrappers over
+    ``execute`` so existing tests are unaffected.
     """
 
     aggregate_type = "Order"
 
-    def _get_initial_state(self) -> OrderState:
+    @staticmethod
+    def initial_state(aggregate_id: UUID) -> OrderState:
         """Return the initial state for a new order."""
-        return OrderState(order_id=self.aggregate_id)
+        return OrderState(order_id=aggregate_id)
 
-    def _apply(self, event: DomainEvent) -> None:
-        """Apply an event to update aggregate state."""
-        if isinstance(event, OrderCreated):
-            self._state = OrderState(
-                order_id=self.aggregate_id,
-                customer_id=event.customer_id,
-                status="created",
-            )
-        elif isinstance(event, OrderItemAdded):
-            if self._state:
-                self._state = self._state.model_copy(
+    @staticmethod
+    def decide(command: object, state: OrderState) -> list[DomainEvent]:
+        """Given current state, return the events a command produces, or raise."""
+        match command, state:
+            case CreateOrder(customer_id=customer_id), OrderState(status="draft"):
+                return [
+                    OrderCreated(
+                        aggregate_id=state.order_id,
+                        customer_id=customer_id,
+                    )
+                ]
+            case CreateOrder(), _:
+                # Behavior-preserving: original guard was `self.version > 0`.
+                raise ValueError("Order already exists")
+            case AddOrderItem(item_name=item_name, price=price), OrderState(status=status) if (
+                status not in ("draft", "shipped")
+            ):
+                return [
+                    OrderItemAdded(
+                        aggregate_id=state.order_id,
+                        item_name=item_name,
+                        price=price,
+                    )
+                ]
+            case AddOrderItem(), _:
+                # Behavior-preserving: original guard was
+                # `not self._state or self._state.status == "shipped"`.
+                raise ValueError("Cannot add items to this order")
+            case ShipOrder(tracking_number=tracking_number), OrderState(status="created"):
+                return [
+                    OrderShipped(
+                        aggregate_id=state.order_id,
+                        tracking_number=tracking_number,
+                    )
+                ]
+            case ShipOrder(), _:
+                # Behavior-preserving: original guard was
+                # `not self._state or self._state.status != "created"`.
+                raise ValueError("Cannot ship order in current state")
+            case _:
+                raise ValueError(f"unknown command: {command!r}")
+
+    @staticmethod
+    def evolve(state: OrderState, event: DomainEvent) -> OrderState:
+        """Return the next state after an event."""
+        match event:
+            case OrderCreated(customer_id=customer_id):
+                return state.model_copy(update={"customer_id": customer_id, "status": "created"})
+            case OrderItemAdded(item_name=item_name, price=price):
+                return state.model_copy(
                     update={
-                        "items": [*self._state.items, event.item_name],
-                        "total": self._state.total + event.price,
+                        "items": [*state.items, item_name],
+                        "total": state.total + price,
                     }
                 )
-        elif isinstance(event, OrderShipped) and self._state:
-            self._state = self._state.model_copy(update={"status": "shipped"})
+            case OrderShipped():
+                return state.model_copy(update={"status": "shipped"})
+            case _:
+                return state
 
     def create(self, customer_id: UUID) -> None:
         """Command: Create the order for a customer."""
-        if self.version > 0:
-            raise ValueError("Order already exists")
-        event = OrderCreated(
-            aggregate_id=self.aggregate_id,
-            aggregate_type=self.aggregate_type,
-            aggregate_version=self.get_next_version(),
-            customer_id=customer_id,
-        )
-        self.apply_event(event)
+        self.execute(CreateOrder(customer_id=customer_id))
 
     def add_item(self, item_name: str, price: float) -> None:
         """Command: Add an item to the order."""
-        if not self._state or self._state.status == "shipped":
-            raise ValueError("Cannot add items to this order")
-        event = OrderItemAdded(
-            aggregate_id=self.aggregate_id,
-            aggregate_type=self.aggregate_type,
-            aggregate_version=self.get_next_version(),
-            item_name=item_name,
-            price=price,
-        )
-        self.apply_event(event)
+        self.execute(AddOrderItem(item_name=item_name, price=price))
 
     def ship(self, tracking_number: str) -> None:
         """Command: Ship the order with a tracking number."""
-        if not self._state or self._state.status != "created":
-            raise ValueError("Cannot ship order in current state")
-        event = OrderShipped(
-            aggregate_id=self.aggregate_id,
-            aggregate_type=self.aggregate_type,
-            aggregate_version=self.get_next_version(),
-            tracking_number=tracking_number,
-        )
-        self.apply_event(event)
+        self.execute(ShipOrder(tracking_number=tracking_number))

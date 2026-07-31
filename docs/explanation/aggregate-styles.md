@@ -30,10 +30,11 @@ The rest of this document walks through what the two styles share, what each one
 like in the example code, how `@handles` dispatch is actually wired up, what only the
 declarative style can do, and how to move an existing `_apply` aggregate over.
 
-There is also a third way to organize an aggregate that builds on `AggregateRoot`
-rather than being shipped as a class: pure `decide`/`evolve` functions behind a thin
-adapter. See [The Decider Pattern on Top of AggregateRoot](decider-pattern.md) for the
-pattern, its one integration gotcha, and benchmarks against the imperative style.
+There is also a third style, built on `AggregateRoot` and shipped as a class:
+`DeciderAggregate`, the decider pattern of pure `decide`/`evolve` functions behind a
+thin adapter. It is the library's primary showcased style for new aggregates — see
+[The Decider Pattern on Top of AggregateRoot](decider-pattern.md) for the full pattern,
+`DomainCommand` provenance, and benchmarks against the imperative style.
 
 ## Why two styles exist
 
