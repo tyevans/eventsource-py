@@ -1794,11 +1794,14 @@ Finally, the composed `CheckpointRepository` protocol carries a second,
 parallel position API that these functions never touch:
 `get_position(subscription_id)` and `save_position(subscription_id, position,
 event_id, event_type)` from `SubscriptionPositions` — a segregated port in its
-own right (ADR 0024), backed by a `global_position` column. That pair exists
-for the subscription runtime, which resumes from an integer offset rather than
-an event id. Be aware they share storage but not discipline —
+own right (ADR 0024, amended by ADR 0025), backed by a `position_token` column
+holding the opaque `Position` value object. That pair exists for the
+subscription runtime, which resumes from a position token rather than an
+event id. Be aware they share storage but not discipline —
 `update_checkpoint` on the in-memory repository rebuilds `CheckpointData`
-without carrying `global_position` forward, so a projection checkpointing
+without carrying `position_token` forward, so a projection checkpointing
 through `record_checkpoint` will clear a position previously saved by a
-subscription under the same key. Keep the two names distinct unless you have
-checked the backend you are using.
+subscription under the same key; a row that carries only the legacy
+`global_position` column reads back as no-position and restarts catch-up.
+Keep the two names distinct unless you have checked the backend you are
+using.

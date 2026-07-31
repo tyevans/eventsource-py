@@ -1447,9 +1447,9 @@ runner in the background and returns immediately, which is why the snippet sleep
 | Value | Meaning |
 | --- | --- |
 | `"checkpoint"` (default) | Resume from the stored position for this subscription name. |
-| `"beginning"` | Global position 0 -- a full replay. |
+| `"beginning"` | Start of the feed -- a full replay. |
 | `"end"` | Live only; ignore everything already in the store. |
-| an `int` | Start from that specific global position. |
+| a `Position` | Start from that specific opaque position token. |
 
 The rest of the config is throughput and safety knobs -- `batch_size` (100),
 `max_in_flight` (1000), `processing_timeout` (30s), `continue_on_error` (True), plus
@@ -1469,16 +1469,17 @@ recording progress, and they record different things.**
    you read with `await projection.get_checkpoint()`.
 2. **The subscription's position** -- written by the catch-up and live runners via
    `checkpoint_repo.save_position(subscription_id, position, event_id, event_type)`,
-   keyed by the *subscription name* and storing a global **position** (an integer). This
-   is what `start_from="checkpoint"` reads on the next boot.
+   keyed by the *subscription name* and storing an opaque **`Position`** token (rendered
+   into the `position_token` column). This is what `start_from="checkpoint"` reads on the
+   next boot.
 
 Both live in the same `projection_checkpoints` table, in a row keyed by name -- so if the
 subscription name equals the projection class name, they collide on one row. That is the
 default, because `subscribe()` falls back to `subscriber.__class__.__name__`. The
 collision is not harmless: `update_checkpoint` rewrites the row without a
-`global_position`, so the projection's own write erases the position the subscription
+`position_token`, so the projection's own write erases the position the subscription
 saved, `events_processed` counts both writers, and the next `start_from="checkpoint"`
-boot finds nothing and replays the entire stream.
+boot reads that row as no-position and replays the entire stream.
 
 Pass an explicit `name=` -- as the snippet above does with `"order-summary"` -- and the
 two live in separate rows. (Giving the projection its own `CheckpointRepository` instance

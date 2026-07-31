@@ -20,6 +20,18 @@ manager-dissolution move, applied to projections. Implemented in
 (`checkpoints.py`, `dlq.py`, `projection.py`), and
 `src/eventsource/adapters/memory/` (`checkpoints.py`, `dlq.py`).
 
+Amended by ADR 0025 (legacy store retirement): `SubscriptionPositions` and
+`CheckpointData` carry the opaque `Position` value object rather than an
+integer global position. The integer was the legacy store's global position
+leaking through a port.
+
+The migration ring temporarily imports
+`adapters/_sql/positions.IntPositionCodec` at the `subscription_migrator.py`
+boundary to convert opaque `Position` values back to legacy integer global
+positions. This is a documented slice-(c) seam/debt: the migrator itself is
+redesigned in slice (c), at which point this boundary conversion is
+removed.
+
 ## Context
 
 `docs/core-surface.md` carried a KNOWN VIOLATIONS block recording that

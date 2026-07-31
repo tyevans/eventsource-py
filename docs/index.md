@@ -375,7 +375,7 @@ shutdown that stops accepting events, drains in-flight work, and saves final
 checkpoints before exiting.
 
 `SubscriptionConfig` is where the operational behavior lives: `start_from`
-(`"beginning"`, `"end"`, `"checkpoint"`, or an explicit integer position),
+(`"beginning"`, `"end"`, `"checkpoint"`, or an explicit opaque `Position` token),
 `batch_size` and `max_in_flight` with a `backpressure_threshold`, a
 `checkpoint_strategy` and interval, event/aggregate-type and `tenant_id`
 filters, `continue_on_error`, exponential-backoff retry settings, and a circuit

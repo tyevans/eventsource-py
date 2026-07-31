@@ -218,6 +218,8 @@ only_mutate = [
     "src/eventsource/ports",
     "src/eventsource/adapters",
     "src/eventsource/application",
+    # Store retirement slice (b): opaque positions in subscriptions
+    "src/eventsource/subscriptions",
 ]
 pytest_add_cli_args_test_selection = [
     "tests/unit/test_engine.py",
@@ -234,6 +236,10 @@ pytest_add_cli_args_test_selection = [
     "tests/unit/domain/",
     "tests/unit/ports/",
     "tests/unit/test_public_api.py",
+    # Store retirement slice (b): opaque positions in subscriptions
+    "tests/unit/test_catchup_runner.py",
+    "tests/unit/test_transition.py",
+    "tests/unit/subscriptions/",
 ]
 pytest_add_cli_args = ["--no-cov", "-x", "-q", "-p", "no:randomly"]
 

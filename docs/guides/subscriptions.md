@@ -297,14 +297,14 @@ for event, exc in failures:
 
 ## Choose where a subscription starts
 
-`SubscriptionConfig.start_from` decides the position a subscription resolves to when `start()` runs. It accepts four things (`StartPosition = Literal["beginning", "end", "checkpoint"] | int`), resolved by `StartFromResolver`:
+`SubscriptionConfig.start_from` decides the position a subscription resolves to when `start()` runs. It accepts four things (`StartPosition = Literal["beginning", "end", "checkpoint"] | Position`), resolved by `StartFromResolver`:
 
 | `start_from` | Resolves to | Use it for |
 | --- | --- | --- |
-| `"checkpoint"` (default) | The saved checkpoint for this subscription name, or `0` if there is none | Normal long-running projections that must resume after a restart |
-| `"beginning"` | `0` | Rebuilding a read model from the full history, every time it starts |
-| `"end"` | `await event_store.get_global_position()` | Live-only consumers (notifications, cache invalidation) that must not replay history |
-| `int` | That exact global position | Backfills and repairs from a known point |
+| `"checkpoint"` (default) | The saved checkpoint for this subscription name, or the start of the feed if there is none | Normal long-running projections that must resume after a restart |
+| `"beginning"` | The start of the feed | Rebuilding a read model from the full history, every time it starts |
+| `"end"` | `await event_store.current_position()` | Live-only consumers (notifications, cache invalidation) that must not replay history |
+| `Position` | That exact opaque position token | Backfills and repairs from a known point |
 
 ```python
 from eventsource.subscriptions import SubscriptionConfig
@@ -312,12 +312,13 @@ from eventsource.subscriptions import SubscriptionConfig
 await manager.subscribe(OrderProjection(), SubscriptionConfig())                       # resume
 await manager.subscribe(RebuildProjection(), SubscriptionConfig(start_from="beginning"))
 await manager.subscribe(Notifier(), SubscriptionConfig(start_from="end"))
-await manager.subscribe(Repair(), SubscriptionConfig(start_from=48210), name="repair-48210")
+repair_position = await event_store.current_position()
+await manager.subscribe(Repair(), SubscriptionConfig(start_from=repair_position), name="repair-from-known-point")
 ```
 
-Positions are **exclusive**: the catch-up runner reads with `from_position=<resolved position>`, and the stores translate that to `global_position > from_position`. A resolved position of `0` therefore reads the entire store, and `start_from=48210` delivers events from 48211 onwards. Since a checkpoint records the *last processed* position, resuming never redelivers the checkpointed event itself.
+Positions are **exclusive** and opaque: the catch-up runner reads with `from_position=<resolved position>`, and the store returns only events strictly after it. `start_from="beginning"` therefore reads the entire feed, and a `Position` token delivers events from just after that point onward. Since a checkpoint records the *last processed* position, resuming never redelivers the checkpointed event itself. `Position` values are totally ordered only within the store that produced them — comparing or mixing tokens from different stores raises `PositionForeignError` (see [ADR 0024](../adrs/0024-projection-persistence-ports.md)).
 
-Negative integers are rejected at construction time — `SubscriptionConfig(start_from=-1)` raises `ValueError`. Use `"end"` rather than `-1` for "only new events".
+`SubscriptionConfig` no longer accepts a bare `int` for `start_from`; pass one of the string literals or a `Position` obtained from the store or a prior checkpoint.
 
 ### "checkpoint" when no checkpoint exists
 
