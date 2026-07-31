@@ -316,8 +316,12 @@ class SQLiteEventStore(EventStore):
 
         assert self._connection is not None
 
-        # Get SQLite schema from migrations
-        schema = get_schema("all", backend="sqlite")
+        # Get SQLite schema from migrations. This legacy store predates the
+        # additive-fragment mechanism, never reads position_token, and is
+        # deleted in slice (d) -- it opts out of additive fragments rather
+        # than growing PRAGMA-guard machinery; the ports adapter
+        # (adapters/sqlite/store.py) owns guarded additive application.
+        schema = get_schema("all", backend="sqlite", additive=False)
 
         # Execute the schema (executescript for multiple statements)
         await self._connection.executescript(schema)
