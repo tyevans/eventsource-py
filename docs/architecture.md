@@ -253,23 +253,29 @@ without it, and the same shape repeats for `bus/interface.py` and
 at all.
 
 Tier 0 used to be leaky here, and it's worth knowing what changed. All three
-modules under `repositories/` -- `checkpoint.py`, `dlq.py`, `outbox.py` --
-used to pack four layers into one file: the `runtime_checkable` Protocol, the
-data-transfer dataclasses, a stdlib-only in-memory implementation, and both
-SQL backends, under a module-level `from sqlalchemy import text`. Importing
-the Protocol therefore imported SQLAlchemy, and that single decision
-propagated: `projections/base.py`, `projections/checkpoint_manager.py`,
-`projections/dlq_manager.py`, `testing/harness.py`, `testing/bdd.py`, and
-`readmodels/projection.py` were all outside Tier 0 for no reason of their own.
+modules that used to live under `repositories/` -- `checkpoint.py`, `dlq.py`,
+`outbox.py` -- used to pack four layers into one file each: the
+`runtime_checkable` Protocol, the data-transfer dataclasses, a stdlib-only
+in-memory implementation, and the SQL backend(s), under a module-level
+`from sqlalchemy import text`. Importing the Protocol therefore imported
+SQLAlchemy, and that single decision propagated: `projections/base.py`,
+`projections/checkpoint_manager.py`, `projections/dlq_manager.py`,
+`testing/harness.py`, `testing/bdd.py`, and `readmodels/projection.py` were
+all outside Tier 0 for no reason of their own.
 [ADR 0024](adrs/0024-projection-persistence-ports.md) closed the checkpoint
 and DLQ half of that gap the same way ADR 0019 closed it for the event store:
 the Protocols and dataclasses moved to `ports/checkpoints.py` and
 `ports/dlq.py` (stdlib and typing only), the SQL implementations moved to
 `adapters/sql/`, and the in-memory ones to `adapters/memory/`.
+[ADR 0026](adrs/0026-outbox-ring-migration.md) closed the outbox half the
+same way, completing the set: the Protocol, dataclasses, and payload helper
+moved to `ports/outbox.py`, and the three backends moved to
+`adapters/memory/outbox.py`, `adapters/postgresql/outbox.py`, and
+`adapters/sqlite/outbox.py` -- one module per technology rather than one
+dialect-parameterized module, since the SQLite implementation is written
+against a raw `aiosqlite.Connection` rather than a sqlalchemy engine.
 `application/projections/*` -- the module `projections/` became -- is now
-Tier-0-clean as a whole ring. `repositories/` now holds the outbox alone, and
-splitting it the same way is the one piece of pre-extraction cleanup that
-remains between the current package and an `eventsource-core` distribution.
+Tier-0-clean as a whole ring, and `repositories/` no longer exists at all.
 
 ### Tier 1: backend implementations
 
@@ -280,9 +286,10 @@ Tier 1 is where the contracts meet a driver. `adapters/postgresql/store.py` and
 `SnapshotStore`; `bus/redis.py`, `bus/rabbitmq.py`, and `bus/kafka.py` subclass
 `EventBus`; `readmodels/postgresql.py` and `readmodels/sqlite.py` satisfy the
 `ReadModelRepository` protocol; the PostgreSQL and SQLite classes inside
-`adapters/sql/checkpoints.py`, `adapters/sql/dlq.py`, and
-`repositories/outbox.py` back checkpoints, the dead letter queue, and the
-outbox. `locks/` belongs here too, and has exactly one implementation:
+`adapters/sql/checkpoints.py` and `adapters/sql/dlq.py` back checkpoints and
+the dead letter queue, and `adapters/postgresql/outbox.py` and
+`adapters/sqlite/outbox.py` back the outbox. `locks/` belongs here too, and
+has exactly one implementation:
 `PostgreSQLLockManager`, built on advisory locks.
 
 Note the two different ways a backend joins its contract. Snapshot stores and

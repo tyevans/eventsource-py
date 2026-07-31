@@ -32,7 +32,7 @@ The rings, innermost first:
    the checkpoint and DLQ functions, and the retry policies) — `projections/` is no
    longer a transitional location for any of it.
 3. **Interface adapters** (`adapters/` — during transition `stores/`,
-   `repositories/`, `bus/`, `locks/` backend modules): Gateways that
+   `bus/`, `locks/` backend modules): Gateways that
    implement the ports for a specific technology, converting between the use-case
    format (value objects, domain events) and the storage/wire format (rows, JSON,
    frames). Snapshot store backends (`InMemorySnapshotStore`,
@@ -41,8 +41,12 @@ The rings, innermost first:
    transitional adapter location. Checkpoint and DLQ adapters (dialect-parameterized
    for PostgreSQL and SQLite, plus `DatabaseProjection`) live under `adapters/sql/`;
    the in-memory checkpoint and DLQ adapters live under `adapters/memory/`.
-   `repositories/` now holds the transactional outbox only — checkpoint and DLQ
-   repositories are no longer a transitional location there.
+   Outbox adapters are per-technology rather than dialect-parameterized — one
+   module each under `adapters/memory/`, `adapters/postgresql/`, and
+   `adapters/sqlite/`, since the SQLite implementation takes a raw
+   `aiosqlite.Connection` rather than a sqlalchemy engine or session. The
+   `repositories/` package no longer exists — it is not a transitional
+   location for anything.
 4. **Frameworks & drivers**: sqlalchemy, asyncpg, aiosqlite, redis, aiokafka,
    aio-pika. Imported only inside the adapter that needs them, always guarded
    (see below). Driver types never appear in port signatures.

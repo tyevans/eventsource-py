@@ -42,14 +42,13 @@ thing, you can find its directory.
 | `domain/` | Entities ring: `AggregateRoot`, `DeclarativeAggregate` (`aggregate.py`), `StreamId` |
 | `application/aggregates/` | Use-case ring: `AggregateRepository`, plus the `SnapshotPolicy`/`SnapshotScheduler` collaborators (`snapshotting.py`) |
 | `application/projections/` | Use-case ring: `Projection`/`CheckpointTrackingProjection`/`DeclarativeProjection` (`base.py`), `ProjectionCoordinator`/`ProjectionRegistry`/`SubscriberRegistry` (`coordinator.py`), the checkpoint and DLQ functions (`checkpoints.py`, `dlq.py`), retry policies (`retry.py`) |
-| `ports/` | Boundary interfaces: `Snapshot`/`SnapshotStore` (`snapshots.py`), `ProjectionCheckpoints`/`SubscriptionPositions`/`CheckpointRepository` (`checkpoints.py`), `DLQRepository` (`dlq.py`), store/bus/envelope/position ports |
-| `adapters/` | Interface adapters: snapshot, checkpoint, DLQ, and event store implementations, one subpackage per technology (`memory/`, `postgresql/`, `sqlite/`) plus the dialect-parameterized SQL adapters (`sql/`, with private helpers in `_sql/`) that serve both PostgreSQL and SQLite for checkpoints, DLQ, and `DatabaseProjection` |
+| `ports/` | Boundary interfaces: `Snapshot`/`SnapshotStore` (`snapshots.py`), `ProjectionCheckpoints`/`SubscriptionPositions`/`CheckpointRepository` (`checkpoints.py`), `DLQRepository` (`dlq.py`), `OutboxRepository`/`outbox_event_data` (`outbox.py`), store/bus/envelope/position ports |
+| `adapters/` | Interface adapters: snapshot, checkpoint, DLQ, outbox, and event store implementations, one subpackage per technology (`memory/`, `postgresql/`, `sqlite/` — each with its own `outbox.py`) plus the dialect-parameterized SQL adapters (`sql/`, with private helpers in `_sql/`) that serve both PostgreSQL and SQLite for checkpoints, DLQ, and `DatabaseProjection` |
 | `events/` | `DomainEvent` (`base.py`) and the `EventRegistry` (`registry.py`) |
 | `handlers/` | The `@handles` decorator, its registry, and the sync/async handler adapter |
 | `bus/` | `EventBus` interface plus in-memory, Redis, RabbitMQ, and Kafka backends |
 | `readmodels/` | Read-model projections, query surface, schema, and per-backend repositories |
 | `subscriptions/` | Subscription lifecycle: manager, `runners/`, retry, health, flow control, pause/resume, shutdown |
-| `repositories/` | Transactional outbox persistence only — checkpoint and DLQ moved to `ports/` + `adapters/` (ADR 0024) |
 | `migration/` | Live event-store migration: dual write, routing, cutover, consistency, position mapping |
 | `migrations/` | SQL schema files (`schemas/`, `updates/`, `templates/`) — append-only |
 | `observability/` | `Tracer` protocol, tracer implementations, standard span attribute constants |

@@ -67,10 +67,13 @@ src/eventsource/
                     #   application/projections/: Projection, DeclarativeProjection, coordinator,
                     #   checkpoint/DLQ functions, retry policies (DatabaseProjection is an adapter, not here)
   ports/            # Boundary interfaces: Snapshot/SnapshotStore, ProjectionCheckpoints/SubscriptionPositions/
-                    #   CheckpointRepository, DLQRepository, store/bus/envelope/position ports
+                    #   CheckpointRepository, DLQRepository, OutboxRepository/outbox_event_data,
+                    #   store/bus/envelope/position ports
   adapters/         # Interface adapters: memory/postgresql/sqlite snapshot + event store implementations;
                     #   adapters/sql/: dialect-parameterized checkpoint, DLQ, and DatabaseProjection (both
-                    #   PostgreSQL and SQLite); adapters/memory/: in-memory checkpoint and DLQ repositories
+                    #   PostgreSQL and SQLite); adapters/memory/: in-memory checkpoint, DLQ, and outbox
+                    #   repositories; adapters/postgresql/ and adapters/sqlite/: per-technology outbox
+                    #   repositories (not dialect-parameterized -- SQLite takes a raw aiosqlite.Connection)
   bus/              # EventBus interface + InMemory, Redis, RabbitMQ, Kafka backends (implementations colocated)
   events/           # DomainEvent (pydantic BaseModel), EventRegistry
   handlers/         # @handles decorator for declarative event routing
@@ -80,8 +83,6 @@ src/eventsource/
   multitenancy/     # Tenant context (contextvars), scopes, TenantDomainEvent
   observability/    # OpenTelemetry tracing integration (optional dep)
   readmodels/       # ReadModelProjection
-  repositories/     # Outbox repository only (postgres, sqlite, memory backends) -- checkpoint and
-                    #   DLQ moved to ports/ + adapters/ (ADR 0024)
   serialization/    # JSON encoding (EventSourceJSONEncoder)
   subscriptions/    # Subscription lifecycle: manager, runners, retry, health, flow control
   sync/             # SyncEventStoreAdapter (wraps a FullEventStore for sync callers)
@@ -101,7 +102,7 @@ src/eventsource/
 - **Async-first**: All store/bus/projection interfaces are async. `SyncEventStoreAdapter` wraps async for sync callers.
 - **Pydantic v2**: DomainEvent is a Pydantic BaseModel. Event data validated/serialized via pydantic. `model_config = ConfigDict(frozen=True)`.
 - **Mixed Protocols + ABCs**: `protocols.py` has both Python Protocols (EventHandler, SyncEventHandler, FlexibleEventHandler) and ABCs (EventSubscriber, AsyncEventHandler). Protocols enable structural subtyping; ABCs are used where additional methods are needed.
-- **Backend-agnostic**: EventStore, EventBus, repositories all have multiple backend implementations behind shared interfaces defined in `interface.py` or `base.py` files.
+- **Backend-agnostic**: EventStore, EventBus, repositories all have multiple backend implementations behind shared interfaces defined in `ports/`.
 - **Optimistic locking**: Aggregates use `expected_version` for concurrency control via `OptimisticLockError`.
 
 ## Key Patterns

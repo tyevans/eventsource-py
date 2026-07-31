@@ -172,7 +172,7 @@ The upper bound `<3.0` is a deliberate major-version guard, and the lower bound 
 SQLAlchemy is the shared SQL layer, not a database driver. The library uses its 2.0 **async** API -- `AsyncEngine`, `AsyncConnection`, `AsyncSession`, `async_sessionmaker`, and `text()` -- as the common abstraction that every SQL-backed component is written against:
 
 - `adapters/postgresql/store.py` and `adapters/postgresql/snapshots.py` -- the PostgreSQL event and snapshot stores.
-- `adapters/sql/checkpoints.py`, `adapters/sql/dlq.py`, `repositories/outbox.py`, and the shared `repositories/_connection.py` helper.
+- `adapters/sql/checkpoints.py`, `adapters/sql/dlq.py`, `adapters/postgresql/outbox.py`, and the shared `adapters/_sql/connection.py` helper. (`adapters/sqlite/outbox.py` is not on this list -- it is written against `aiosqlite`, not sqlalchemy.)
 - `adapters/sql/projection.py` and `readmodels/` -- database-backed projections and read models, which accept an engine or sessionmaker. `application/projections/base.py`, by contrast, is sqlalchemy-free: it defines the checkpoint/DLQ/retry orchestration against pure ports and only the `adapters/sql/` implementations pull in the driver.
 - `locks/postgresql.py` -- advisory locks.
 - `migration/repositories/` -- the live-migration bookkeeping tables.

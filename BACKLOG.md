@@ -16,12 +16,19 @@ accounting symmetric across phases. Surfaced by the slice-(b) final review (2026
 
 ## Investigate making sqlalchemy an optional dependency (P3)
 
-Investigate whether sqlalchemy can be moved from core deps to optional extras. It's
-used in `stores/postgresql.py`, `stores/sqlite.py`, `repositories/`,
-`snapshots/postgresql.py`, `locks/postgresql.py`, and `migration/`. The key question:
-do any core interfaces import sqlalchemy at module level? If the interfaces are clean
-(pydantic-only), sqlalchemy can become optional. If not, identify what needs to change.
-This further lightens the base install toward the Tier 0 goal.
+Investigate whether sqlalchemy can be moved from core deps to optional extras. Its
+current importers, per `grep -rlE '^(from|import) sqlalchemy' src/eventsource/`:
+`adapters/postgresql/outbox.py`, `adapters/postgresql/snapshots.py`,
+`adapters/postgresql/store.py`, `adapters/sql/checkpoints.py`,
+`adapters/_sql/connection.py`, `adapters/_sql/dialect.py`, `adapters/sql/dlq.py`,
+`engine.py`, `locks/postgresql.py`, `migration/repositories/audit_log.py`,
+`migration/repositories/migration.py`, `migration/repositories/position_mapping.py`,
+`migration/repositories/routing.py`, and `readmodels/postgresql.py`. (`stores/` and
+`repositories/` no longer exist — both were deleted by the store retirement and
+outbox ring migration slices.) The key question: do any core interfaces import
+sqlalchemy at module level? If the interfaces are clean (pydantic-only), sqlalchemy
+can become optional. If not, identify what needs to change. This further lightens
+the base install toward the Tier 0 goal.
 
 Prerequisite (done): drop redis from core dependencies.
 
@@ -37,21 +44,14 @@ already cover this before doing more work here. As of ADR 0024, import-linter no
 covers the whole `eventsource.application` ring plus the memory adapters, so the
 remaining question is narrower than it was: whether a runtime `sys.modules` assertion
 adds anything over the static contract, or whether the static contract alone is
-sufficient and this item can be closed.
+sufficient and this item can be closed. Task 3 Step 9 of the outbox ring migration
+(2026-07-31) added exactly this kind of check for one module —
+`uv run python -c "import sys, eventsource.ports.outbox; assert 'sqlalchemy' not in
+sys.modules"` — as a working example of the runtime assertion this item proposes
+generalizing.
 
 Prerequisite (done): document core surface boundary for future Tier 0 extraction
 (`docs/core-surface.md`).
-
-## Migrate outbox repository to ports/adapters (P2)
-
-`src/eventsource/repositories/outbox.py` still mixes the `OutboxRepository` Protocol
-with its three implementations (PostgreSQL, SQLite, in-memory) in one file — the same
-defect ADR 0024 just fixed for the checkpoint and DLQ repositories. Moving it the same
-way (Protocol + dataclasses to `ports/outbox.py`, SQL implementation to
-`adapters/sql/outbox.py`, in-memory implementation to `adapters/memory/outbox.py`) is
-what finally lets `repositories/` disappear as a package, and lets the two SQL
-connection helpers (`adapters/_sql/connection.py` and `repositories/_connection.py`)
-merge into one.
 
 ## Deterministic or scheduled coverage for bus performance assertions (P3)
 
@@ -85,11 +85,15 @@ aggregates-application-ring final review (deliberately out of scope there).
 
 ## Lazy top-level eventsource/__init__ (P3)
 
-`import eventsource` eagerly loads sqlalchemy through the public front door
-(`application/aggregates/repository.py` -> `stores/__init__` -> `stores/postgresql`).
-Correctness is unaffected (sqlalchemy is a core dep) but import time and the Tier 0
-story would benefit from a PEP 562 lazy `__getattr__` front door. Pairs with the
-"Investigate making sqlalchemy an optional dependency" item above.
+`import eventsource` eagerly loads sqlalchemy through the public front door.
+`stores/` and `repositories/` are both gone now (legacy store retirement and the
+outbox ring migration), so the chain `docs/core-surface.md` records post-slice is
+`eventsource/__init__.py` -> `eventsource.engine` / `eventsource.adapters.postgresql`
+directly at module level — no intermediate package to narrow, just two module-level
+imports in the top-level `__init__` itself. Correctness is unaffected (sqlalchemy is
+a core dep) but import time and the Tier 0 story would benefit from a PEP 562 lazy
+`__getattr__` front door. Pairs with the "Investigate making sqlalchemy an optional
+dependency" item above.
 
 ## Define store lifecycle in the ports layer (P2)
 

@@ -325,8 +325,12 @@ store = PostgreSQLEventStore(engine, outbox_enabled=True)
 ```
 
 The outbox *reader* — the component that drains `event_outbox` and publishes
-to a bus — lives separately in `eventsource.repositories.outbox`; enabling
-the flag here only controls whether `append` writes the row.
+to a bus — lives separately in `eventsource.ports.outbox` (the
+`OutboxRepository` contract) and its adapters
+(`eventsource.adapters.postgresql.PostgreSQLOutboxRepository`,
+`eventsource.adapters.sqlite.SQLiteOutboxRepository`,
+`eventsource.adapters.memory.InMemoryOutboxRepository`); enabling the flag
+here only controls whether `append` writes the row.
 
 ### Reading the global feed: `current_position()`
 

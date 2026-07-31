@@ -596,7 +596,7 @@ attribute chain to walk from the package object: `from eventsource import Domain
 AggregateRoot, InMemoryEventStore` is the whole import model. The subsections that
 follow group the names thematically for reading, not by module path — the grouping is
 editorial, and the module a name happens to live in
-(`eventsource.ports.store`, `eventsource.repositories`, and so on) is
+(`eventsource.ports.store`, `eventsource.ports.outbox`, and so on) is
 implementation detail for anything listed in `__all__`.
 
 ### Ordering of the subsections

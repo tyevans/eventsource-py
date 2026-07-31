@@ -203,8 +203,9 @@ correctness — which is exactly why the interface is allowed to expose deletion
 when the event store is not.
 
 Three supporting repositories back the projection runtime. Unlike the three
-above, these are defined as `Protocol`s in `eventsource.repositories`, so any
-object with the right async methods satisfies them — no inheritance required:
+above, these are defined as `Protocol`s in `eventsource.ports` (`checkpoints.py`,
+`dlq.py`, `outbox.py`), so any object with the right async methods satisfies
+them — no inheritance required:
 
 - **`CheckpointRepository`** — where a projection has got to.
   `get_checkpoint` / `update_checkpoint` record the last processed event per
