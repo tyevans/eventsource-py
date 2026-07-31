@@ -227,7 +227,6 @@ pytest_add_cli_args_test_selection = [
     "tests/unit/bus/test_base.py",
     "tests/unit/bus/rabbitmq/",
     "tests/unit/bus/kafka/",
-    "tests/unit/bus/test_memory.py",
     # Core-rings surface (Task 14)
     "tests/unit/adapters/",
     "tests/unit/application/",
@@ -287,6 +286,8 @@ source_modules = [
     "eventsource.readmodels.repository",
     "eventsource.readmodels.in_memory",
     "eventsource.readmodels.exceptions",
+    "eventsource.application.aggregates.repository",
+    "eventsource.multitenancy.repository",
 ]
 forbidden_modules = ["sqlalchemy"]
 
@@ -298,26 +299,20 @@ forbidden_modules = ["eventsource.adapters", "eventsource.bus", "eventsource.rep
 
 # KNOWN VIOLATIONS (not enforced -- see task-2e-report.md for detail):
 #
-# 1. docs/core-surface.md and .claude/rules/architecture.md claim events/,
-#    aggregates/, projections/ are "core domain" with no infrastructure imports.
-#    In practice:
-#      - projections/base.py imports eventsource.repositories.checkpoint and
-#        eventsource.repositories.dlq (both sqlalchemy-backed)
-#      - projections/checkpoint_manager.py imports eventsource.repositories.checkpoint
-#      - projections/dlq_manager.py imports eventsource.repositories.dlq
-#    repositories/checkpoint.py and repositories/dlq.py mix Protocol definitions
-#    with sqlalchemy implementations in the same module, so there is no way to
-#    import the protocol without importing sqlalchemy.
+# docs/core-surface.md and .claude/rules/architecture.md claim events/,
+# aggregates/, projections/ are "core domain" with no infrastructure imports.
+# In practice:
+#   - projections/base.py imports eventsource.repositories.checkpoint and
+#     eventsource.repositories.dlq (both sqlalchemy-backed)
+#   - projections/checkpoint_manager.py imports eventsource.repositories.checkpoint
+#   - projections/dlq_manager.py imports eventsource.repositories.dlq
+# repositories/checkpoint.py and repositories/dlq.py mix Protocol definitions
+# with sqlalchemy implementations in the same module, so there is no way to
+# import the protocol without importing sqlalchemy.
 #
-# 2. docs/core-surface.md lists eventsource.aggregates.repository and (via it)
-#    eventsource.multitenancy.repository as Tier 0, on the theory that snapshot
-#    types are imported lazily/under TYPE_CHECKING. This was true against the
-#    old eventsource/snapshots/__init__.py, which unconditionally imported
-#    PostgreSQLSnapshotStore (pulling in sqlalchemy) the moment anything touched
-#    eventsource.snapshots. The snapshots-package dissolution (Task 4 of the
-#    aggregates/application-ring redesign) removed that module; the two modules
-#    remain excluded from the contract's source_modules above pending
-#    re-verification that they are now clean.
+# (eventsource.application.aggregates.repository and
+# eventsource.multitenancy.repository were re-verified clean after the
+# snapshots-package dissolution and are now enforced in source_modules above.)
 #
 # Per task instructions: report the drift, do not weaken the contract to hide
 # it, and do not fix the violations here.
