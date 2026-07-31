@@ -177,7 +177,9 @@ class TestPostgreSQLSnapshotStore(SnapshotConformance):
 # bodies and fails with `PostgresSyntaxError: unrecognized GET DIAGNOSTICS
 # item`. So these two tables are provisioned as bare DDL, one statement at a
 # time via `text()`, mirroring `tests/integration/conftest.py`'s
-# `CHECKPOINTS_SCHEMA_STATEMENTS`/`DLQ_SCHEMA_STATEMENTS`.
+# `CHECKPOINTS_SCHEMA_STATEMENTS`/`DLQ_SCHEMA_STATEMENTS` -- both exist
+# solely because of this PL/pgSQL constraint, not because of any schema
+# drift (that drift, for `events.tenant_id`, was reconciled by ADR 0027).
 _CHECKPOINTS_DDL = [
     """
     CREATE TABLE IF NOT EXISTS projection_checkpoints (

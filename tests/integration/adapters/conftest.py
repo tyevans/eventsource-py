@@ -1,20 +1,13 @@
 """Fixtures private to the port-adapter integration tests.
 
-The new-port PostgreSQL conformance/no-skip tests DROP + recreate the
-`events` table against the canonical `migrations/schemas/events.sql`
-schema (`tenant_id UUID`). The legacy `tests/integration/stores/
-test_postgresql.py` suite shares the same session-scoped testcontainer but
-provisions `events` itself with `tenant_id VARCHAR(255)` (see
-`tests/integration/conftest.py`'s `EVENTS_SCHEMA_STATEMENTS`) and its store
-binds `str(...)` for that column. If both suites touch the same database's
-`events` table in the same session, whichever runs first leaves behind a
-schema the other can't use (`DatatypeMismatchError`).
-
-To avoid that cross-suite drift (a real, but out-of-scope, VARCHAR-vs-UUID
-inconsistency between the legacy conftest and the canonical migrations
-schema) without touching the legacy fixtures or store, this module gives
-the port-adapter tests their own private database on the same
-testcontainer.
+These suites DROP and recreate the `events` table between fixtures. The
+shared session-scoped `postgres_engine` (tests/integration/conftest.py)
+provisions the same canonical `migrations/schemas/events.sql` schema, so
+there is no longer any schema drift between them -- but a suite that
+recreates tables mid-session would still pull the rug out from under
+every other suite sharing the database. This module gives the
+port-adapter tests their own private database on the same
+testcontainer, so their table churn is invisible to everything else.
 """
 
 from collections.abc import AsyncGenerator

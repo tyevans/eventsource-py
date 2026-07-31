@@ -2,8 +2,7 @@
 
 ## Status
 
-Proposed. Built across the correctness-fixes slice; parts (b) and (c) land
-in the same slice's later tasks. Accepted when part (c) lands.
+Accepted. Built across the correctness-fixes slice, parts (a), (b), and (c).
 
 ## Context (part a)
 
@@ -220,3 +219,82 @@ shape for its next run.
 - `tests/unit/adapters/test_postgresql_feed_horizon.py` — query-shape
   regression guard; true epoch wraparound is not reproducible in a
   testcontainer.
+
+## Context (part c)
+
+The canonical `src/eventsource/migrations/schemas/events.sql` declares
+`events.tenant_id UUID`, matching `DomainEvent.tenant_id: UUID | None`,
+`TenantId`, `FeedReadOptions.tenant_id`, and the ports PostgreSQL
+adapter's `uuid.UUID` binds end to end. `tests/integration/conftest.py`'s
+session-scoped `postgres_engine` fixture instead hand-rolled its own
+`events` table with `tenant_id VARCHAR(255)`, plus a different index/
+constraint name set (`idx_events_aggregate`/`idx_events_type` and a
+separately-created `uq_events_aggregate_version` index rather than the
+canonical table constraint). Every test running against that fixture
+therefore exercised a table the adapters never see in production, and the
+drift is why the ports conformance suite retreated to its own private
+`ports_conformance` database (`tests/integration/adapters/conftest.py`)
+rather than trusting the shared fixture's `events` table.
+
+## Decision (part c)
+
+`tests/integration/conftest.py`'s `postgres_engine` fixture now provisions
+`events` from `get_schema("events")` — the same canonical schema (plus
+the additive `txid` fragment from part (b)) the adapters and every
+deployed database use — through the raw asyncpg driver connection,
+mirroring the pattern already used for `events`/`snapshots` in
+`tests/integration/adapters/test_postgresql_conformance.py`. The
+hand-rolled `EVENTS_SCHEMA_STATEMENTS` list is deleted.
+
+Flipping the fixture and running the full `-m postgres` suite surfaced
+zero failures: no test bound a `str` tenant id into the column, asserted
+on the old index/constraint names, or otherwise depended on the
+hand-rolled shape. No test file needed changes and no adapter defect was
+found.
+
+`checkpoints`, `dlq`, and `outbox` are unaffected by this decision and
+keep their existing bare-DDL provisioning in the same fixture — see
+Consequences below.
+
+## Rejected Alternatives (part c)
+
+**Make the canonical schema `VARCHAR(255)` to match the fixture.** Fights
+the type system end to end (`DomainEvent.tenant_id: UUID | None`,
+`TenantId`, `FeedReadOptions.tenant_id`, the adapter's `uuid.UUID` binds)
+and would break every already-deployed database provisioned from the
+canonical `migrations/schemas/events.sql`. Not built.
+
+**Keep both schemas and document the drift.** Two schemas for one table,
+where one is test-only fiction that never runs against the real adapter
+code path, is the defect this record fixes, not a state to formalize.
+Not built.
+
+## Consequences (part c)
+
+`checkpoints`, `dlq`, and `outbox` keep explicit, hand-written test DDL
+in `tests/integration/conftest.py` rather than moving onto
+`get_schema()`: their canonical scripts ship PL/pgSQL helper functions
+with dollar-quoted bodies (`GET DIAGNOSTICS`) that asyncpg's simple-query
+path mis-splits — the same constraint already documented above
+`_CHECKPOINTS_DDL` in `tests/integration/adapters/test_postgresql_
+conformance.py`. Reconciling those three onto the canonical schema is a
+separate piece of work, gated on a splitting strategy that respects
+dollar-quoting (or per-statement provisioning of base DDL plus fragments)
+rather than the raw-script execution this record uses for `events`.
+
+`tests/integration/adapters/conftest.py`'s private `ports_conformance`
+database is retained: its original justification (schema drift between
+suites) no longer applies, but its surviving justification does — those
+suites DROP and recreate `events` mid-session, which would still disrupt
+every other suite sharing the database regardless of schema agreement.
+
+## References (part c)
+
+- `tests/integration/conftest.py` — `postgres_engine`, provisioning
+  `events` via `get_schema("events")`.
+- `tests/integration/adapters/conftest.py`,
+  `tests/integration/adapters/test_postgresql_conformance.py` — the
+  pattern this fixture now mirrors, and the PL/pgSQL constraint
+  documentation shared with part (c)'s Consequences.
+- `src/eventsource/migrations/schemas/events.sql` — the canonical schema,
+  now the single source of truth for `events` in every test suite.
