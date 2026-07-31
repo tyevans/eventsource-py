@@ -267,7 +267,7 @@ source_modules = [
     "eventsource.stores.interface",
     "eventsource.bus.interface",
     "eventsource.ports",
-    "eventsource.application.aggregates.snapshotting",
+    "eventsource.application",
     "eventsource.handlers.decorators",
     "eventsource.handlers.registry",
     "eventsource.handlers.adapter",
@@ -276,6 +276,8 @@ source_modules = [
     "eventsource.stores.in_memory",
     "eventsource.bus.memory",
     "eventsource.adapters.memory.snapshots",
+    "eventsource.adapters.memory.checkpoints",
+    "eventsource.adapters.memory.dlq",
     "eventsource.testing.builder",
     "eventsource.testing.assertions",
     "eventsource.testing.conformance",
@@ -288,7 +290,6 @@ source_modules = [
     "eventsource.readmodels.repository",
     "eventsource.readmodels.in_memory",
     "eventsource.readmodels.exceptions",
-    "eventsource.application.aggregates.repository",
     "eventsource.multitenancy.repository",
 ]
 forbidden_modules = ["sqlalchemy"]
