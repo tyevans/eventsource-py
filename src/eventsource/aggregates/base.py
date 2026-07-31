@@ -12,6 +12,7 @@ from collections.abc import Callable
 from typing import Any, ClassVar, Generic, TypeVar, cast, get_args, get_origin
 from uuid import UUID
 
+from eventsource.commands.base import DomainCommand
 from eventsource.events.base import DomainEvent
 from eventsource.exceptions import (
     AggregateNotCreatedError,
@@ -380,6 +381,8 @@ class AggregateRoot(Generic[TState], ABC):
     def create_event(
         self,
         event_class: type[TEvent],
+        *,
+        command: object | None = None,
         **kwargs: Any,
     ) -> TEvent:
         """
@@ -392,11 +395,13 @@ class AggregateRoot(Generic[TState], ABC):
         - aggregate_type from self.aggregate_type
         - aggregate_version from self.get_next_version()
         - tenant_id from tenant_context (if available and not explicitly set)
+        - causation_id, correlation_id, actor_id, tenant_id from command (if provided)
 
         The event is automatically applied to the aggregate after creation.
 
         Args:
             event_class: The event class to instantiate
+            command: Optional DomainCommand to extract provenance from
             **kwargs: Event-specific fields (can override auto-populated fields)
 
         Returns:
@@ -416,15 +421,15 @@ class AggregateRoot(Generic[TState], ABC):
                 ...     self.apply_event(event)
 
             After (with create_event):
-                >>> def ship(self, tracking_number: str) -> None:
+                >>> def ship(self, tracking_number: str, cmd: ShipOrder) -> None:
                 ...     if self.state.status != "paid":
                 ...         raise ValueError("Cannot ship unpaid order")
-                ...     self.create_event(OrderShipped, tracking_number=tracking_number)
+                ...     self.create_event(OrderShipped, command=cmd, tracking_number=tracking_number)
 
         Note:
             Explicit kwargs always override auto-populated values.
             For example, passing `aggregate_version=5` will use 5 instead
-            of the calculated next version.
+            of the calculated next version. Precedence: explicit kwargs > command > tenant context > auto fields.
         """
         # Start with auto-populated aggregate fields
         event_kwargs: dict[str, Any] = {
@@ -438,6 +443,15 @@ class AggregateRoot(Generic[TState], ABC):
             tenant_id = self._get_tenant_from_context()
             if tenant_id is not None:
                 event_kwargs["tenant_id"] = tenant_id
+
+        # Optionally auto-populate provenance from a command object
+        if isinstance(command, DomainCommand):
+            event_kwargs["causation_id"] = command.command_id
+            event_kwargs["correlation_id"] = command.correlation_id
+            if command.actor_id is not None:
+                event_kwargs["actor_id"] = command.actor_id
+            if command.tenant_id is not None:
+                event_kwargs["tenant_id"] = command.tenant_id
 
         # User kwargs override auto-populated values
         event_kwargs.update(kwargs)

@@ -194,3 +194,53 @@ class TestSnapshotRoundTrip:
         restored._restore_from_snapshot(snapshot, version=1)
         assert restored.state == acct.state
         assert restored.version == 1
+
+
+class TestCreateEventCommandProvenance:
+    def test_create_event_stamps_provenance_from_command(self) -> None:
+        from eventsource.aggregates.base import AggregateRoot
+
+        class ImperativeAccount(AggregateRoot[AccountState]):
+            aggregate_type = "Account"
+
+            def _get_initial_state(self) -> AccountState:
+                return AccountState(account_id=self.aggregate_id)
+
+            def _apply(self, event: DomainEvent) -> None:
+                if isinstance(event, AccountOpened):
+                    self._state = AccountState(
+                        account_id=self.aggregate_id, owner=event.owner, is_open=True
+                    )
+
+            def open(self, command: OpenAccount) -> None:
+                self.create_event(AccountOpened, command=command, owner=command.owner)
+
+        acct = ImperativeAccount(uuid4())
+        cmd = OpenAccount(owner="alice", actor_id="user-1")
+        acct.open(cmd)
+        (event,) = acct.uncommitted_events
+        assert event.causation_id == cmd.command_id
+        assert event.correlation_id == cmd.correlation_id
+        assert event.actor_id == "user-1"
+
+    def test_explicit_kwargs_beat_command_fields(self) -> None:
+        from eventsource.aggregates.base import AggregateRoot
+
+        explicit = uuid4()
+
+        class ImperativeAccount(AggregateRoot[AccountState]):
+            aggregate_type = "Account"
+
+            def _get_initial_state(self) -> AccountState:
+                return AccountState(account_id=self.aggregate_id)
+
+            def _apply(self, event: DomainEvent) -> None:
+                pass
+
+        acct = ImperativeAccount(uuid4())
+        cmd = OpenAccount(owner="alice")
+        event = acct.create_event(
+            AccountOpened, command=cmd, owner="alice", correlation_id=explicit
+        )
+        assert event.correlation_id == explicit
+        assert event.causation_id == cmd.command_id
