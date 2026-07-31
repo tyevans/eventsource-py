@@ -312,6 +312,7 @@ CHECKPOINTS_SCHEMA_STATEMENTS = [
         last_processed_at TIMESTAMPTZ,
         events_processed BIGINT DEFAULT 0,
         global_position BIGINT,
+        position_token TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )

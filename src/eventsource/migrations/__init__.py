@@ -59,6 +59,33 @@ BackendName = Literal["postgresql", "sqlite"]
 _PACKAGE_DIR = Path(__file__).parent
 _TEMPLATES_DIR = _PACKAGE_DIR / "templates"
 _SCHEMAS_DIR = _PACKAGE_DIR / "schemas"
+_ADDITIVE_DIR = _PACKAGE_DIR / "additive"
+
+# Schema fragments appended at composition time. Base schema files under
+# schemas/ and templates/ are append-only BY FILE: a new column arrives as
+# a new fragment here plus an operator script under updates/, never as an
+# edit to a base file.
+_ADDITIVE_FRAGMENTS: dict[tuple[str, str], tuple[str, ...]] = {
+    ("checkpoints", "postgresql"): ("checkpoints_position_token",),
+    ("checkpoints", "sqlite"): ("checkpoints_position_token",),
+    ("all", "postgresql"): ("checkpoints_position_token",),
+    ("all", "sqlite"): ("checkpoints_position_token",),
+}
+
+
+def _get_backend_additive_dir(backend: BackendName) -> Path:
+    """
+    Get the additive-fragment directory for a specific backend.
+
+    Args:
+        backend: The database backend (postgresql, sqlite)
+
+    Returns:
+        Path to the backend-specific additive fragments directory
+    """
+    if backend == "postgresql":
+        return _ADDITIVE_DIR
+    return _ADDITIVE_DIR / backend
 
 
 def _get_backend_templates_dir(backend: BackendName) -> Path:
@@ -119,7 +146,9 @@ def get_template_path(name: SchemaName, backend: BackendName = "postgresql") -> 
     return path
 
 
-def get_schema(name: SchemaName, backend: BackendName = "postgresql") -> str:
+def get_schema(
+    name: SchemaName, backend: BackendName = "postgresql", *, additive: bool = True
+) -> str:
     """
     Load a SQL schema template by name and backend.
 
@@ -135,6 +164,15 @@ def get_schema(name: SchemaName, backend: BackendName = "postgresql") -> str:
         backend: The database backend. One of:
             - "postgresql": Full-featured PostgreSQL schemas (default)
             - "sqlite": SQLite-compatible schemas
+        additive: When True (the default), append any registered additive
+            fragments for this (name, backend) pair after the base schema
+            text. Base schema files under `schemas/` and `templates/` are
+            append-only by file: new columns arrive as fragments under
+            `additive/`, composed here, never as edits to a base file. Pass
+            False to get the base file's text alone -- only needed by a
+            caller that must apply a fragment under its own guard (e.g. the
+            SQLite store re-applying schema to a file that may already carry
+            the column).
 
     Returns:
         SQL schema definition as a string
@@ -171,7 +209,24 @@ def get_schema(name: SchemaName, backend: BackendName = "postgresql") -> str:
             )
         raise FileNotFoundError(f"Schema file not found: {path}")
 
-    return path.read_text()
+    text = path.read_text()
+
+    if not additive:
+        return text
+
+    fragments = _ADDITIVE_FRAGMENTS.get((name, backend), ())
+    if not fragments:
+        return text
+
+    additive_dir = _get_backend_additive_dir(backend)
+    parts = [text]
+    for fragment_name in fragments:
+        fragment_path = additive_dir / f"{fragment_name}.sql"
+        if not fragment_path.exists():
+            raise FileNotFoundError(f"Additive fragment not found: {fragment_path}")
+        parts.append(fragment_path.read_text())
+
+    return "\n\n".join(parts)
 
 
 def get_all_schemas(backend: BackendName = "postgresql") -> str:

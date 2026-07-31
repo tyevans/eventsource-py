@@ -141,12 +141,25 @@ class SQLiteEventStore:
                 await conn.execute("PRAGMA journal_mode = WAL")
             conn.row_factory = aiosqlite.Row
 
-            schema = get_schema("all", backend="sqlite")
+            schema = get_schema("all", backend="sqlite", additive=False)
             await conn.executescript(schema)
+            await self._apply_additive_updates(conn)
             await conn.commit()
 
             self._connection = conn
             return conn
+
+    async def _apply_additive_updates(self, conn: aiosqlite.Connection) -> None:
+        """Apply additive schema fragments SQLite cannot express idempotently.
+
+        SQLite has no `ADD COLUMN IF NOT EXISTS`, and this schema is applied
+        on every first connection -- including to a file that already carries
+        the column from an earlier process.
+        """
+        async with conn.execute("PRAGMA table_info(projection_checkpoints)") as cursor:
+            columns = {row[1] for row in await cursor.fetchall()}
+        if "position_token" not in columns:
+            await conn.execute("ALTER TABLE projection_checkpoints ADD COLUMN position_token TEXT")
 
     async def close(self) -> None:
         """Close the underlying connection, if open. Safe to call multiple times."""

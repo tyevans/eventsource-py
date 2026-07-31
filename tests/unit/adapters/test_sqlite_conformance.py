@@ -249,3 +249,31 @@ def test_sync_facade_close_closes_underlying_store() -> None:
         after = threading.active_count()
 
     assert after == before - 1
+
+
+async def test_reopening_same_file_backed_db_does_not_fail_on_additive_column(
+    tmp_path,
+) -> None:
+    """Regression: a second process opening the same file must not raise on
+    the additive `position_token` column that the first process already added.
+
+    Schema is applied on every first connection (`_conn`), including to a
+    file that already carries the column -- the naive `ALTER TABLE ADD
+    COLUMN` (without the `PRAGMA table_info` guard) raises
+    `sqlite3.OperationalError: duplicate column name` here.
+    """
+    db_path = str(tmp_path / "reopen.db")
+
+    store1 = SQLiteEventStore(db_path, event_registry=_make_registry())
+    conn1 = await store1._conn()
+    async with conn1.execute("PRAGMA table_info(projection_checkpoints)") as cursor:
+        columns1 = {row[1] for row in await cursor.fetchall()}
+    assert "position_token" in columns1
+    await store1.close()
+
+    store2 = SQLiteEventStore(db_path, event_registry=_make_registry())
+    conn2 = await store2._conn()
+    async with conn2.execute("PRAGMA table_info(projection_checkpoints)") as cursor:
+        columns2 = {row[1] for row in await cursor.fetchall()}
+    assert "position_token" in columns2
+    await store2.close()
