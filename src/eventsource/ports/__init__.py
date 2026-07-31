@@ -1,6 +1,19 @@
 """Boundary ports (Clean Architecture output ports). Depends on domain only."""
 
 from eventsource.ports.bus import EventPublisher
+from eventsource.ports.checkpoints import (
+    CheckpointData,
+    CheckpointRepository,
+    LagMetrics,
+    ProjectionCheckpoints,
+    SubscriptionPositions,
+)
+from eventsource.ports.dlq import (
+    DLQEntry,
+    DLQRepository,
+    DLQStats,
+    ProjectionFailureCount,
+)
 from eventsource.ports.envelopes import (
     AppendResult,
     CategoryReadOptions,
@@ -45,4 +58,14 @@ __all__ = [
     "SnapshotStore",
     # Bus port (TRANSITION re-home)
     "EventPublisher",
+    # Checkpoint / DLQ ports
+    "CheckpointData",
+    "CheckpointRepository",
+    "LagMetrics",
+    "ProjectionCheckpoints",
+    "SubscriptionPositions",
+    "DLQEntry",
+    "DLQRepository",
+    "DLQStats",
+    "ProjectionFailureCount",
 ]
