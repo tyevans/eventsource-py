@@ -113,3 +113,15 @@ All three adapters reimplement `_check_expected`/`_expected_sentinel` verbatim; 
 read_category batch-timestamp tie-break divergence showed what this duplication
 invites. Hoist into a shared `adapters/_common/` helper, and add a rules note that
 behavior asserted by a conformance suite should be implemented once.
+
+## Reconcile DLQ delete_resolved_events cutoff semantics (P3)
+
+`delete_resolved_events(older_than_days)` computes its cutoff differently per
+backend: `adapters/memory/dlq.py` truncates to midnight UTC before subtracting
+days, while `adapters/sql/dlq.py` subtracts from `now()` directly — so at
+`older_than_days=0` a moments-ago resolution is deleted by SQL backends but kept
+by the memory backend. The port docstring (`ports/dlq.py`, `delete_resolved_events`)
+does not specify cutoff semantics, which is why two conforming-looking adapters
+diverged. Pick one semantic, make both conform, update the conformance suite's
+per-backend day-zero tests back into the shared suite, and tighten the port
+docstring. Found by the Task 7 conformance review (projections-ring slice).
