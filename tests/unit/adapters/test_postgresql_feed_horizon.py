@@ -6,7 +6,7 @@
 cluster crosses its first xid epoch -- fail-open, in exactly the
 high-write-volume deployments that need the no-skip guard. The predicate
 now filters on the `events.txid xid8` column against a horizon bound once
-per batch. True epoch wraparound cannot be reproduced in a
+per read_all/current_position call. True epoch wraparound cannot be reproduced in a
 testcontainer, so these query-shape assertions are the regression guard;
 ADR 0027 records the reasoning.
 """

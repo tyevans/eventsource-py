@@ -41,7 +41,7 @@ class SQLiteOutboxRepository:
     - UUIDs stored as TEXT (36 characters, hyphenated format)
     - Timestamps stored as TEXT in ISO 8601 format
     - Uses `?` positional parameters instead of named parameters
-    - Uses `datetime('now', '-' || ? || ' days')` for interval arithmetic
+    - Cleanup cutoffs are computed in Python as UTC isoformat and bound as parameters
     - Uses `SUM(CASE WHEN ... THEN 1 ELSE 0 END)` instead of `COUNT(*) FILTER`
 
     Example:
