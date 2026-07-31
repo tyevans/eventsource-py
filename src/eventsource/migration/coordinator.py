@@ -247,6 +247,10 @@ class MigrationCoordinator:
         # Target stores by migration_id (needed for dual-write interceptor creation)
         self._target_stores: dict[UUID, FullEventStore] = {}
 
+        # Live dual-write interceptors by migration_id. Held so the lag
+        # calls can discount the events already mirrored to the target.
+        self._interceptors: dict[UUID, DualWriteInterceptor] = {}
+
         # CutoverManager instance (created lazily when needed)
         self._cutover_manager: CutoverManager | None = None
 
@@ -854,6 +858,7 @@ class MigrationCoordinator:
 
             # Register interceptor with router
             self._router.set_dual_write_interceptor(migration.tenant_id, interceptor)
+            self._interceptors[migration.id] = interceptor
 
             # Create sync lag tracker
             lag_tracker = SyncLagTracker(
@@ -966,6 +971,7 @@ class MigrationCoordinator:
                 config=migration.config,
                 timeout_ms=timeout_ms,
                 since=migration.last_source_position,
+                already_synced=self._already_synced(migration_id),
             )
 
             # Handle result
@@ -1157,9 +1163,21 @@ class MigrationCoordinator:
         # Remove target store reference
         self._target_stores.pop(migration_id, None)
 
+        # Remove the dual-write interceptor reference
+        self._interceptors.pop(migration_id, None)
+
         # Phase 3 (P3-005) cleanup: consistency reports and subscription summaries
         self._consistency_reports.pop(migration_id, None)
         self._subscription_summaries.pop(migration_id, None)
+
+    def _already_synced(self, migration_id: UUID) -> int:
+        """Events the live interceptor has already mirrored to the target.
+
+        Zero when no interceptor is installed (before dual-write, or after
+        a coordinator restart -- see `SyncLagTracker.calculate_lag`).
+        """
+        interceptor = self._interceptors.get(migration_id)
+        return interceptor.dual_write_success_count if interceptor else 0
 
     async def get_sync_lag(self, migration_id: UUID) -> SyncLag | None:
         """
@@ -1186,7 +1204,10 @@ class MigrationCoordinator:
         if lag_tracker is None:
             return None
 
-        return await lag_tracker.calculate_lag(since=migration.last_source_position)
+        return await lag_tracker.calculate_lag(
+            since=migration.last_source_position,
+            already_synced=self._already_synced(migration_id),
+        )
 
     async def is_cutover_ready(self, migration_id: UUID) -> tuple[bool, str | None]:
         """
@@ -1221,7 +1242,10 @@ class MigrationCoordinator:
             return False, "No sync lag tracker found for migration"
 
         # Calculate current lag
-        await lag_tracker.calculate_lag(since=migration.last_source_position)
+        await lag_tracker.calculate_lag(
+            since=migration.last_source_position,
+            already_synced=self._already_synced(migration_id),
+        )
 
         if lag_tracker.is_sync_ready():
             return True, None

@@ -382,7 +382,7 @@ class TestSuccessfulCutover:
         # Set up mock to return different lags on successive calls
         call_count = 0
 
-        async def update_lag(*, since=None):
+        async def update_lag(*, since=None, already_synced=0):
             nonlocal call_count
             call_count += 1
             if call_count == 1:

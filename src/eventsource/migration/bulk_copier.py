@@ -335,10 +335,12 @@ class BulkCopier:
 
                     # Process batch when full
                     if len(batch) >= config.batch_size:
-                        last_target_position = await self._write_batch(
-                            migration.id,
-                            tenant_id,
-                            batch,
+                        # An all-duplicate batch appends nothing and
+                        # returns None; keep the last real position rather
+                        # than nulling progress that was genuinely made.
+                        last_target_position = (
+                            await self._write_batch(migration.id, tenant_id, batch)
+                            or last_target_position
                         )
 
                         events_copied += len(batch)
@@ -381,10 +383,9 @@ class BulkCopier:
 
                 # Process remaining events
                 if batch and not self._is_cancelled:
-                    last_target_position = await self._write_batch(
-                        migration.id,
-                        tenant_id,
-                        batch,
+                    last_target_position = (
+                        await self._write_batch(migration.id, tenant_id, batch)
+                        or last_target_position
                     )
 
                     events_copied += len(batch)

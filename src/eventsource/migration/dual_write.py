@@ -177,6 +177,7 @@ class DualWriteInterceptor:
         _tenant_id: The tenant this interceptor handles.
         _failed_writes: List of failed target writes for recovery.
         _affected_aggregates: Set of aggregate IDs with failed writes.
+        _dual_write_success_count: Events successfully mirrored to the target.
     """
 
     max_append_batch: int | None = None
@@ -215,6 +216,9 @@ class DualWriteInterceptor:
         self._failed_writes: list[FailedWrite] = []
         self._affected_aggregates: set[UUID] = set()
 
+        # Count of EVENTS (not appends) successfully mirrored to the target.
+        self._dual_write_success_count = 0
+
     # =========================================================================
     # Public Properties
     # =========================================================================
@@ -233,6 +237,21 @@ class DualWriteInterceptor:
     def tenant_id(self) -> UUID:
         """Get the tenant ID this interceptor handles."""
         return self._tenant_id
+
+    @property
+    def dual_write_success_count(self) -> int:
+        """Events successfully mirrored to the target since construction.
+
+        Counts EVENTS, not append calls. `SyncLagTracker` subtracts this
+        from its count-behind: every one of these events is in the source
+        feed after the bulk-copy checkpoint AND already in the target, so
+        counting them as lag would keep a write-active tenant permanently
+        above the cutover threshold.
+
+        In-memory and not persisted -- see `calculate_lag`'s
+        `already_synced` caveat.
+        """
+        return self._dual_write_success_count
 
     # =========================================================================
     # Failure Tracking
@@ -373,6 +392,7 @@ class DualWriteInterceptor:
             # Target failures are logged but don't fail the operation
             try:
                 await self._target.append(stream, events, expected)
+                self._dual_write_success_count += len(events)
                 logger.debug(
                     f"Dual-write success for tenant {self._tenant_id}, stream {stream.render()}"
                 )

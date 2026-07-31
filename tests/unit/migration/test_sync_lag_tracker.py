@@ -517,14 +517,29 @@ class TestConvergenceDetection:
         tracker: SyncLagTracker,
         source_store: MemoryEventStore,
     ) -> None:
-        """Test is_converged with custom max_lag parameter."""
+        """Test is_converged with a custom (tightening) max_lag parameter."""
         await seed_events(source_store, 50)
         await tracker.calculate_lag()  # lag = 50
 
-        assert tracker.is_converged(max_lag=100) is True
+        assert tracker.is_converged(max_lag=100) is True  # == configured threshold
         assert tracker.is_converged(max_lag=50) is True
         assert tracker.is_converged(max_lag=49) is False
         assert tracker.is_converged(max_lag=10) is False
+
+    @pytest.mark.asyncio
+    async def test_is_converged_rejects_looser_threshold(
+        self,
+        tracker: SyncLagTracker,
+        source_store: MemoryEventStore,
+    ) -> None:
+        """max_lag may only tighten: the count is bounded, so a looser
+        threshold could be satisfied by a bounded count standing for an
+        arbitrarily larger backlog."""
+        await seed_events(source_store, 50)
+        await tracker.calculate_lag()
+
+        with pytest.raises(ValueError, match="exceeds the configured"):
+            tracker.is_converged(max_lag=101)
 
     @pytest.mark.asyncio
     async def test_is_sync_ready_no_measurement(
@@ -974,7 +989,11 @@ class TestEdgeCases:
         assert lag.events == strict_config.cutover_max_lag_events + 1
         assert lag.count_is_bounded is True
         assert tracker.is_sync_ready() is False
-        assert tracker.is_converged(max_lag=1_000) is True
+        # A looser override cannot be honored against a bounded count: 11
+        # here stands for 1_000, so `max_lag=1_000` would answer True on
+        # no evidence.
+        with pytest.raises(ValueError, match="exceeds the configured"):
+            tracker.is_converged(max_lag=1_000)
 
     @pytest.mark.asyncio
     async def test_exact_threshold(

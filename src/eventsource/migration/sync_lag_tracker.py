@@ -233,7 +233,12 @@ class SyncLagTracker:
     # Lag Calculation
     # =========================================================================
 
-    async def calculate_lag(self, *, since: Position | None = None) -> SyncLag:
+    async def calculate_lag(
+        self,
+        *,
+        since: Position | None = None,
+        already_synced: int = 0,
+    ) -> SyncLag:
         """Count source events not yet copied, bounded by the sync threshold.
 
         `since` is the last source position the target has copied (the
@@ -249,6 +254,22 @@ class SyncLagTracker:
 
         Args:
             since: Last source position copied to the target, or None.
+            already_synced: Events after `since` that the target already
+                holds -- the `DualWriteInterceptor`'s
+                `dual_write_success_count`. During dual-write, every
+                mirrored event is BOTH after the bulk-copy checkpoint and
+                in the target, so without this the count would grow
+                monotonically with write traffic and cutover could never
+                fire on a live tenant. The interceptor is installed
+                exactly when the `since` window opens (post-copy), so its
+                count and this window line up.
+
+                CAVEAT: the count lives in the interceptor's memory and is
+                not persisted per event. An orchestrator-process restart
+                during dual-write resets it to zero, over-counting lag
+                until cutover is retried from a fresh copy pass. That
+                trade is accepted deliberately -- persisting a counter per
+                event would cost more than the failure mode it avoids.
 
         Returns:
             SyncLag with the count behind and both stores' positions.
@@ -271,7 +292,10 @@ class SyncLagTracker:
             ):
                 lag_events += 1
 
+            # A bounded raw count stays flagged after discounting: the
+            # adjusted number is a lower bound, not an exact backlog.
             count_is_bounded = lag_events > threshold
+            lag_events = max(0, lag_events - already_synced)
 
             # Reporting only: each store's own head position.
             source_position = await self._source.current_position()
@@ -316,6 +340,11 @@ class SyncLagTracker:
         """
         Check if stores are synchronized within the specified threshold.
 
+        `max_lag` may only TIGHTEN the configured threshold: the count is
+        bounded at `cutover_max_lag_events + 1`, so a looser override
+        could be satisfied by a bounded count that stands for an
+        arbitrarily larger backlog.
+
         Args:
             max_lag: Maximum acceptable lag in events. If None, uses
                 the configured cutover_max_lag_events threshold.
@@ -323,18 +352,31 @@ class SyncLagTracker:
         Returns:
             True if current lag is within the threshold.
 
+        Raises:
+            ValueError: If max_lag exceeds the configured threshold.
+
         Example:
             >>> if tracker.is_converged():
             ...     print("Stores are synchronized!")
             >>>
-            >>> # Use custom threshold
+            >>> # Use a tighter threshold
             >>> if tracker.is_converged(max_lag=10):
             ...     print("Within 10 events!")
         """
+        threshold = self._config.cutover_max_lag_events
+        if max_lag is not None:
+            if max_lag > threshold:
+                raise ValueError(
+                    f"max_lag={max_lag} exceeds the configured "
+                    f"cutover_max_lag_events={threshold}; the count behind is "
+                    f"bounded at {threshold + 1}, so a looser threshold cannot "
+                    f"be evaluated honestly"
+                )
+            threshold = max_lag
+
         if self._current_lag is None:
             return False
 
-        threshold = max_lag if max_lag is not None else self._config.cutover_max_lag_events
         return self._current_lag.events <= threshold
 
     def is_sync_ready(self) -> bool:

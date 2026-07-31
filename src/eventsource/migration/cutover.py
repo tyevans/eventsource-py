@@ -181,6 +181,7 @@ class CutoverManager:
         config: MigrationConfig | None = None,
         timeout_ms: float | None = None,
         since: Position | None = None,
+        already_synced: int = 0,
     ) -> CutoverResult:
         """
         Execute the atomic cutover from source to target store.
@@ -202,6 +203,8 @@ class CutoverManager:
             since: Last source position copied to the target (the
                 migration's `last_source_position`), used as the lag
                 tracker's count anchor.
+            already_synced: Events after `since` the target already holds
+                (the dual-write interceptor's success count).
 
         Returns:
             CutoverResult indicating success/failure and timing details.
@@ -253,6 +256,7 @@ class CutoverManager:
                         config=config,
                         timeout_ms=effective_timeout_ms,
                         since=since,
+                        already_synced=already_synced,
                     )
 
             except LockAcquisitionError as e:
@@ -277,6 +281,7 @@ class CutoverManager:
         config: MigrationConfig,
         timeout_ms: float,
         since: Position | None,
+        already_synced: int,
     ) -> CutoverResult:
         """
         Execute cutover while holding the advisory lock.
@@ -293,6 +298,7 @@ class CutoverManager:
             timeout_ms: Maximum cutover pause time.
             since: Last source position copied to the target, used as the
                 lag tracker's count anchor.
+            already_synced: Events after `since` the target already holds.
 
         Returns:
             CutoverResult with outcome details.
@@ -308,7 +314,7 @@ class CutoverManager:
             logger.debug("Paused writes for tenant %s", tenant_id)
 
             # Step 2: Pre-cutover validation - verify sync lag
-            await lag_tracker.calculate_lag(since=since)
+            await lag_tracker.calculate_lag(since=since, already_synced=already_synced)
             lag = lag_tracker.current_lag
 
             if lag is None:
@@ -354,7 +360,7 @@ class CutoverManager:
                 await asyncio.sleep(min(remaining_ms / 1000, 0.010))  # Max 10ms wait
 
             # Step 6: Final lag check after brief wait
-            await lag_tracker.calculate_lag(since=since)
+            await lag_tracker.calculate_lag(since=since, already_synced=already_synced)
             final_lag = lag_tracker.current_lag
 
             if final_lag:
@@ -534,6 +540,7 @@ class CutoverManager:
         config: MigrationConfig | None = None,
         *,
         since: Position | None = None,
+        already_synced: int = 0,
     ) -> tuple[bool, str | None]:
         """
         Validate that conditions are met for cutover to proceed.
@@ -547,6 +554,7 @@ class CutoverManager:
             config: Optional migration configuration.
             since: Last source position copied to the target, used as the
                 lag tracker's count anchor.
+            already_synced: Events after `since` the target already holds.
 
         Returns:
             Tuple of (is_ready, error_message).
@@ -571,7 +579,7 @@ class CutoverManager:
             },
         ):
             # Check 1: Verify sync lag
-            await lag_tracker.calculate_lag(since=since)
+            await lag_tracker.calculate_lag(since=since, already_synced=already_synced)
             lag = lag_tracker.current_lag
 
             if lag is None:

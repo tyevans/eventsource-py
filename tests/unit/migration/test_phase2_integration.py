@@ -996,6 +996,149 @@ class TestSyncLagTracking:
         assert stats.min_lag == 1  # First lag was 1
 
 
+class TestSyncLagOnWriteActiveTenant:
+    """Lag must converge on a tenant that keeps writing during dual-write.
+
+    The count-behind reads the source feed after `since`, which includes
+    every event the DualWriteInterceptor has ALREADY mirrored to the
+    target. Without discounting those, lag grows monotonically with write
+    traffic and cutover can never fire on a live tenant.
+    """
+
+    @pytest.mark.asyncio
+    async def test_dual_written_events_do_not_count_as_lag(
+        self,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
+        tenant_id: UUID,
+    ) -> None:
+        """Events the interceptor already mirrored are not behind."""
+        # Bulk copy finished: 10 events in both stores.
+        last_source_position: Position | None = None
+        for _i in range(10):
+            aggregate_id = uuid4()
+            event = SampleTestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)
+            stream = StreamId(aggregate_id=aggregate_id, category="SampleAggregate")
+            result = await source_store.append(stream, [event], ExpectedVersion.no_stream())
+            last_source_position = result.position
+            await target_store.append(stream, [event], ExpectedVersion.no_stream())
+
+        # Dual-write phase: the tenant keeps writing, and every write
+        # lands in BOTH stores through the interceptor.
+        interceptor = DualWriteInterceptor(
+            source_store=source_store,
+            target_store=target_store,
+            tenant_id=tenant_id,
+            enable_tracing=False,
+        )
+        for _i in range(5):
+            aggregate_id = uuid4()
+            event = SampleTestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)
+            await interceptor.append(
+                StreamId(aggregate_id=aggregate_id, category="SampleAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
+            )
+
+        assert interceptor.dual_write_success_count == 5
+
+        tracker = SyncLagTracker(
+            source_store=source_store,
+            target_store=target_store,
+            config=MigrationConfig(cutover_max_lag_events=3),
+            tenant_id=tenant_id,
+            enable_tracing=False,
+        )
+
+        lag = await tracker.calculate_lag(
+            since=last_source_position,
+            already_synced=interceptor.dual_write_success_count,
+        )
+
+        # The events after `since` are all in the target already.
+        assert lag.events == 0
+        assert tracker.is_sync_ready()
+        # The raw count hit its bound (5 events, threshold 3), so the
+        # discounted number is a lower bound and stays flagged as such.
+        assert lag.count_is_bounded is True
+
+    @pytest.mark.asyncio
+    async def test_failed_dual_writes_still_count_as_lag(
+        self,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
+        tenant_id: UUID,
+    ) -> None:
+        """A write the target never received is genuinely behind."""
+
+        class RejectingTarget:
+            """Target that accepts the first append and rejects the rest."""
+
+            max_append_batch: int | None = None
+
+            def __init__(self, inner: MemoryEventStore) -> None:
+                self._inner = inner
+                self.calls = 0
+
+            async def append(self, stream, events, expected):  # type: ignore[no-untyped-def]
+                self.calls += 1
+                if self.calls > 1:
+                    raise RuntimeError("target unavailable")
+                return await self._inner.append(stream, events, expected)
+
+            def read_stream(self, stream, options=None):  # type: ignore[no-untyped-def]
+                return self._inner.read_stream(stream, options)
+
+            async def get_stream_version(self, stream):  # type: ignore[no-untyped-def]
+                return await self._inner.get_stream_version(stream)
+
+            async def event_exists(self, event_id):  # type: ignore[no-untyped-def]
+                return await self._inner.event_exists(event_id)
+
+            def read_all(self, from_position=None, options=None):  # type: ignore[no-untyped-def]
+                return self._inner.read_all(from_position, options)
+
+            async def current_position(self):  # type: ignore[no-untyped-def]
+                return await self._inner.current_position()
+
+            def read_category(self, category, options=None):  # type: ignore[no-untyped-def]
+                return self._inner.read_category(category, options)
+
+        rejecting = RejectingTarget(target_store)
+
+        interceptor = DualWriteInterceptor(
+            source_store=source_store,
+            target_store=rejecting,
+            tenant_id=tenant_id,
+            enable_tracing=False,
+        )
+        for _i in range(3):
+            aggregate_id = uuid4()
+            event = SampleTestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)
+            await interceptor.append(
+                StreamId(aggregate_id=aggregate_id, category="SampleAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
+            )
+
+        # Only the first of the three reached the target.
+        assert interceptor.dual_write_success_count == 1
+
+        tracker = SyncLagTracker(
+            source_store=source_store,
+            target_store=target_store,
+            config=MigrationConfig(cutover_max_lag_events=100),
+            tenant_id=tenant_id,
+            enable_tracing=False,
+        )
+        lag = await tracker.calculate_lag(
+            since=None,
+            already_synced=interceptor.dual_write_success_count,
+        )
+
+        assert lag.events == 2
+
+
 # =============================================================================
 # Cutover Tests
 # =============================================================================
