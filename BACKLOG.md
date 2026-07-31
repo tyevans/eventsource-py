@@ -140,3 +140,20 @@ does not specify cutoff semantics, which is why two conforming-looking adapters
 diverged. Pick one semantic, make both conform, update the conformance suite's
 per-backend day-zero tests back into the shared suite, and tighten the port
 docstring. Found by the Task 7 conformance review (projections-ring slice).
+
+## Catch-up can end early with completed=False when a batch is entirely filtered (P3)
+
+`_process_batch` in `subscriptions/runners/catchup.py` returns a delivered-event
+count of 0 when every envelope in a read batch is excluded by the subscription's
+event-type filter, and the outer catch-up loop breaks on a zero-delivered batch —
+even though the store position advanced and more of the feed remains unread. The
+loop conflates "empty read" (genuinely caught up) with "all filtered" (not caught
+up, just nothing this batch matched); catch-up exits with `completed=False` and the
+subscription is left short of the actual watermark. The live runner happens to
+cover the gap once it takes over, so this does not currently drop events end to
+end, but it means catch-up's own completion signal is unreliable for
+heavily-filtered subscriptions. Pre-existing behavior, surfaced by the store
+retirement slice (b) Task 3 review. Suggested fix direction: distinguish "empty
+read" from "all filtered" in `_process_batch`'s return contract (e.g. report
+envelopes-read alongside envelopes-delivered) so the loop can tell the two cases
+apart.
