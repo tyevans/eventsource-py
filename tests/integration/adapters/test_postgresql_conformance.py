@@ -14,6 +14,7 @@ VARCHAR(255)`.
 """
 
 from collections.abc import AsyncIterator
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
@@ -44,10 +45,14 @@ from eventsource.adapters.postgresql import (  # noqa: E402
     PostgreSQLEventStore,
     PostgreSQLSnapshotStore,
 )
+from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository  # noqa: E402
+from eventsource.adapters.sql.dlq import SQLDLQRepository  # noqa: E402
 from eventsource.migrations import get_schema  # noqa: E402
 from eventsource.testing.conformance_ports import (  # noqa: E402
     AppenderConformance,
     CategoryQueryConformance,
+    CheckpointRepositoryConformance,
+    DLQRepositoryConformance,
     EventLookupConformance,
     GlobalFeedConformance,
     SnapshotConformance,
@@ -137,6 +142,59 @@ class TestPostgreSQLSnapshotStore(SnapshotConformance):
         session_factory = async_sessionmaker(engine, expire_on_commit=False)
         yield PostgreSQLSnapshotStore(session_factory)
         await engine.dispose()
+
+
+class TestPostgreSQLCheckpointRepository(CheckpointRepositoryConformance):
+    @pytest.fixture
+    async def store(
+        self, ports_postgres_connection_url: str
+    ) -> AsyncIterator[SQLCheckpointRepository]:
+        engine = create_async_engine(ports_postgres_connection_url)
+        async with engine.begin() as conn:
+            await conn.execute(text("DROP TABLE IF EXISTS projection_checkpoints CASCADE"))
+            await conn.execute(text("DROP TABLE IF EXISTS events CASCADE"))
+            raw = await conn.get_raw_connection()
+            driver_connection = raw.driver_connection
+            assert driver_connection is not None
+            await driver_connection.execute(get_schema("checkpoints", "postgresql"))
+            await driver_connection.execute(get_schema("events", "postgresql"))
+        yield SQLCheckpointRepository(engine)
+        await engine.dispose()
+
+
+class TestPostgreSQLDLQRepository(DLQRepositoryConformance):
+    @pytest.fixture
+    async def store(self, ports_postgres_connection_url: str) -> AsyncIterator[SQLDLQRepository]:
+        engine = create_async_engine(ports_postgres_connection_url)
+        async with engine.begin() as conn:
+            await conn.execute(text("DROP TABLE IF EXISTS dead_letter_queue CASCADE"))
+            raw = await conn.get_raw_connection()
+            driver_connection = raw.driver_connection
+            assert driver_connection is not None
+            await driver_connection.execute(get_schema("dlq", "postgresql"))
+        yield SQLDLQRepository(engine)
+        await engine.dispose()
+
+    async def test_postgres_delete_resolved_events_removes_past_cutoff_entries(
+        self, store: SQLDLQRepository
+    ) -> None:
+        # Same cutoff semantics as the sqlite adapter (both use the shared
+        # `SQLDLQRepository`): `now` minus `older_than_days`, not
+        # truncated to midnight like the memory adapter.
+        await store.add_failed_event(
+            event_id=uuid4(),
+            projection_name="P",
+            event_type="Created",
+            event_data={},
+            error=RuntimeError("boom"),
+        )
+        (entry,) = await store.get_failed_events()
+        await store.mark_resolved(entry.id, "alice")
+
+        deleted = await store.delete_resolved_events(older_than_days=0)
+
+        assert deleted == 1
+        assert await store.get_failed_event_by_id(entry.id) is None
 
 
 async def test_store_id_stable_across_restarts(ports_postgres_connection_url: str) -> None:

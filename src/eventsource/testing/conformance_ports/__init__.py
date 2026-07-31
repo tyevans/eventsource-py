@@ -13,6 +13,12 @@ module and will replace it once all adapters migrate to the port suites.
 
 from eventsource.testing.conformance_ports.appender import AppenderConformance
 from eventsource.testing.conformance_ports.category import CategoryQueryConformance
+from eventsource.testing.conformance_ports.checkpoints import (
+    CheckpointRepositoryConformance,
+    ProjectionCheckpointsConformance,
+    SubscriptionPositionsConformance,
+)
+from eventsource.testing.conformance_ports.dlq import DLQRepositoryConformance
 from eventsource.testing.conformance_ports.event_lookup import EventLookupConformance
 from eventsource.testing.conformance_ports.feed import GlobalFeedConformance
 from eventsource.testing.conformance_ports.snapshots import SnapshotConformance
@@ -25,4 +31,8 @@ __all__ = [
     "GlobalFeedConformance",
     "CategoryQueryConformance",
     "SnapshotConformance",
+    "ProjectionCheckpointsConformance",
+    "SubscriptionPositionsConformance",
+    "CheckpointRepositoryConformance",
+    "DLQRepositoryConformance",
 ]

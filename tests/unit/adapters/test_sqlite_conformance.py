@@ -4,6 +4,7 @@ import tempfile
 import threading
 import time
 from collections.abc import AsyncIterator
+from uuid import uuid4
 
 import aiosqlite
 import pytest
@@ -32,12 +33,17 @@ def _make_registry():
     return registry
 
 
+from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository  # noqa: E402
+from eventsource.adapters.sql.dlq import SQLDLQRepository  # noqa: E402
 from eventsource.adapters.sqlite import SQLiteEventStore, SQLiteSnapshotStore  # noqa: E402
+from eventsource.engine import create_async_engine  # noqa: E402
 from eventsource.migrations import get_schema  # noqa: E402
 from eventsource.ports import ExpectedVersion  # noqa: E402
 from eventsource.testing.conformance_ports import (  # noqa: E402
     AppenderConformance,
     CategoryQueryConformance,
+    CheckpointRepositoryConformance,
+    DLQRepositoryConformance,
     EventLookupConformance,
     GlobalFeedConformance,
     SnapshotConformance,
@@ -101,6 +107,51 @@ class TestSQLiteSnapshotStore(SnapshotConformance):
                 await conn.executescript(schema)
                 await conn.commit()
             yield SQLiteSnapshotStore(db_path)
+
+
+class TestSQLiteCheckpointRepository(CheckpointRepositoryConformance):
+    @pytest.fixture
+    async def store(self, tmp_path) -> AsyncIterator[SQLCheckpointRepository]:
+        engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/checkpoint_repo.db")
+        async with engine.begin() as conn:
+            raw = await conn.get_raw_connection()
+            await raw.driver_connection.executescript(get_schema("checkpoints", backend="sqlite"))
+            await raw.driver_connection.executescript(get_schema("events", backend="sqlite"))
+        yield SQLCheckpointRepository(engine)
+        await engine.dispose()
+
+
+class TestSQLiteDLQRepository(DLQRepositoryConformance):
+    @pytest.fixture
+    async def store(self, tmp_path) -> AsyncIterator[SQLDLQRepository]:
+        engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/dlq_repo.db")
+        async with engine.begin() as conn:
+            raw = await conn.get_raw_connection()
+            await raw.driver_connection.executescript(get_schema("dlq", backend="sqlite"))
+        yield SQLDLQRepository(engine)
+        await engine.dispose()
+
+    async def test_sqlite_delete_resolved_events_removes_past_cutoff_entries(
+        self, store: SQLDLQRepository
+    ) -> None:
+        # Unlike the memory adapter, the SQL adapter's cutoff is `now`
+        # minus `older_than_days`, not truncated to midnight -- an entry
+        # resolved moments ago is already past an `older_than_days=0`
+        # cutoff by the time the delete query runs.
+        await store.add_failed_event(
+            event_id=uuid4(),
+            projection_name="P",
+            event_type="Created",
+            event_data={},
+            error=RuntimeError("boom"),
+        )
+        (entry,) = await store.get_failed_events()
+        await store.mark_resolved(entry.id, "alice")
+
+        deleted = await store.delete_resolved_events(older_than_days=0)
+
+        assert deleted == 1
+        assert await store.get_failed_event_by_id(entry.id) is None
 
 
 class SQLiteStateMachine(StoreStateMachine):
