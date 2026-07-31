@@ -12,7 +12,7 @@ Example:
     ... )
     >>>
     >>> with tracer.start_as_current_span(
-    ...     "eventsource.event_store.append_events",
+    ...     "eventsource.snapshot.save",
     ...     attributes={
     ...         ATTR_AGGREGATE_ID: str(aggregate_id),
     ...         ATTR_EVENT_TYPE: event.__class__.__name__,

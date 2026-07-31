@@ -1,7 +1,7 @@
 # 8. Mutation Testing Tool Selection: mutmut Plus cosmic-ray, Not One Tool
 
 This project runs mutation testing against a small, curated set of modules
-(`src/eventsource/engine.py`, `src/eventsource/repositories/_dialect.py`,
+(`src/eventsource/engine.py` (now `src/eventsource/adapters/_sql/engine.py`), `src/eventsource/repositories/_dialect.py`,
 `src/eventsource/serialization/json.py`) using **two** tools rather than one:
 [mutmut](https://mutmut.readthedocs.io/) 3.x as the default, and
 [cosmic-ray](https://cosmic-ray.readthedocs.io/) scoped specifically to modules

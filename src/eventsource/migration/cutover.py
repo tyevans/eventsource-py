@@ -60,7 +60,7 @@ import time
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from eventsource.locks import LockAcquisitionError, migration_lock_key
+from eventsource.exceptions import LockAcquisitionError
 from eventsource.migration.exceptions import (
     CutoverError,
     CutoverLagError,
@@ -72,12 +72,14 @@ from eventsource.migration.models import (
     TenantMigrationState,
 )
 from eventsource.observability import ATTR_TENANT_ID, Tracer, create_tracer
+from eventsource.ports import Position
+from eventsource.ports.locks import migration_lock_key
 
 if TYPE_CHECKING:
-    from eventsource.locks import PostgreSQLLockManager
     from eventsource.migration.repositories.routing import TenantRoutingRepository
     from eventsource.migration.router import TenantStoreRouter
     from eventsource.migration.sync_lag_tracker import SyncLagTracker
+    from eventsource.ports.locks import DistributedLock
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +136,7 @@ class CutoverManager:
         ...     print(f"Cutover completed in {result.duration_ms:.2f}ms")
 
     Attributes:
-        _lock_manager: PostgreSQL advisory lock manager for coordination.
+        _lock_manager: Distributed lock manager for coordination.
         _router: TenantStoreRouter for write pause/resume and routing.
         _routing_repo: Repository for atomic routing state updates.
         _lock_acquisition_timeout: Timeout for acquiring advisory lock.
@@ -142,7 +144,7 @@ class CutoverManager:
 
     def __init__(
         self,
-        lock_manager: PostgreSQLLockManager,
+        lock_manager: DistributedLock,
         router: TenantStoreRouter,
         routing_repo: TenantRoutingRepository,
         *,
@@ -154,7 +156,7 @@ class CutoverManager:
         Initialize the cutover manager.
 
         Args:
-            lock_manager: PostgreSQL advisory lock manager for distributed coordination.
+            lock_manager: Distributed lock manager for distributed coordination.
             router: TenantStoreRouter for managing write pause/resume.
             routing_repo: Repository for updating tenant routing state.
             lock_acquisition_timeout: Timeout in seconds for acquiring the advisory lock.
@@ -179,6 +181,7 @@ class CutoverManager:
         *,
         config: MigrationConfig | None = None,
         timeout_ms: float | None = None,
+        since: Position | None = None,
     ) -> CutoverResult:
         """
         Execute the atomic cutover from source to target store.
@@ -197,6 +200,9 @@ class CutoverManager:
                 defaults are used.
             timeout_ms: Maximum time in milliseconds for the cutover pause.
                 If not provided, uses config.cutover_timeout_ms or 500ms.
+            since: The lag tracker's count anchor -- the furthest source
+                position provably present in the target (see
+                `DualWriteInterceptor.safe_lag_anchor`).
 
         Returns:
             CutoverResult indicating success/failure and timing details.
@@ -247,6 +253,7 @@ class CutoverManager:
                         target_store_id=target_store_id,
                         config=config,
                         timeout_ms=effective_timeout_ms,
+                        since=since,
                     )
 
             except LockAcquisitionError as e:
@@ -270,6 +277,7 @@ class CutoverManager:
         target_store_id: str,
         config: MigrationConfig,
         timeout_ms: float,
+        since: Position | None,
     ) -> CutoverResult:
         """
         Execute cutover while holding the advisory lock.
@@ -284,6 +292,8 @@ class CutoverManager:
             target_store_id: Target store to switch to.
             config: Migration configuration.
             timeout_ms: Maximum cutover pause time.
+            since: The lag tracker's count anchor (see
+                `DualWriteInterceptor.safe_lag_anchor`).
 
         Returns:
             CutoverResult with outcome details.
@@ -299,7 +309,7 @@ class CutoverManager:
             logger.debug("Paused writes for tenant %s", tenant_id)
 
             # Step 2: Pre-cutover validation - verify sync lag
-            await lag_tracker.calculate_lag()
+            await lag_tracker.calculate_lag(since=since)
             lag = lag_tracker.current_lag
 
             if lag is None:
@@ -345,7 +355,7 @@ class CutoverManager:
                 await asyncio.sleep(min(remaining_ms / 1000, 0.010))  # Max 10ms wait
 
             # Step 6: Final lag check after brief wait
-            await lag_tracker.calculate_lag()
+            await lag_tracker.calculate_lag(since=since)
             final_lag = lag_tracker.current_lag
 
             if final_lag:
@@ -364,7 +374,7 @@ class CutoverManager:
             try:
                 target_store = self._router.get_store(target_store_id)
                 if target_store is not None:
-                    await target_store.get_global_position()
+                    await target_store.current_position()
                 else:
                     logger.warning(
                         "Target store %s not found in router registry",
@@ -523,6 +533,8 @@ class CutoverManager:
         tenant_id: UUID,
         lag_tracker: SyncLagTracker,
         config: MigrationConfig | None = None,
+        *,
+        since: Position | None = None,
     ) -> tuple[bool, str | None]:
         """
         Validate that conditions are met for cutover to proceed.
@@ -534,6 +546,8 @@ class CutoverManager:
             tenant_id: Tenant to validate.
             lag_tracker: SyncLagTracker with current lag information.
             config: Optional migration configuration.
+            since: The lag tracker's count anchor (see
+                `DualWriteInterceptor.safe_lag_anchor`).
 
         Returns:
             Tuple of (is_ready, error_message).
@@ -558,7 +572,7 @@ class CutoverManager:
             },
         ):
             # Check 1: Verify sync lag
-            await lag_tracker.calculate_lag()
+            await lag_tracker.calculate_lag(since=since)
             lag = lag_tracker.current_lag
 
             if lag is None:

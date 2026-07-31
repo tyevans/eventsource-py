@@ -2,7 +2,7 @@
 
 Technical reference for the `eventsource.testing` package: the fluent
 `EventBuilder`, the `InMemoryTestHarness` that bundles in-memory infrastructure,
-the `EventAssertions` helper, the Given/When/Then BDD functions, and the two
+the `EventAssertions` helper, the Given/When/Then BDD functions, and the
 abstract conformance suites used to validate backend implementations.
 
 These names are **not** re-exported from the top-level `eventsource` package.
@@ -10,7 +10,8 @@ Import them from `eventsource.testing` (or the individual submodules). The
 package is intended for test code only and should not be imported from
 production code paths.
 
-The package is organized into six source modules:
+The package is organized into six source modules, plus a separate
+`conformance_ports` subpackage for store conformance:
 
 | Module | Contains |
 | --- | --- |
@@ -19,19 +20,28 @@ The package is organized into six source modules:
 | `eventsource.testing.assertions` | `EventAssertions` |
 | `eventsource.testing.recording` | `RecordingEventBus` |
 | `eventsource.testing.bdd` | `given_events`, `when_command`, `then_event_published`, `then_no_events_published`, `then_event_sequence`, `then_event_count`, `DeciderScenario` |
-| `eventsource.testing.conformance` | `EventStoreConformanceSuite`, `EventBusConformanceSuite` |
+| `eventsource.testing.conformance` | `EventBusConformanceSuite` |
+| `eventsource.testing.conformance_ports` | `AppenderConformance`, `StreamReaderConformance`, `EventLookupConformance`, `GlobalFeedConformance`, `CategoryQueryConformance`, `SnapshotConformance`, `ProjectionCheckpointsConformance`, `SubscriptionPositionsConformance`, `CheckpointRepositoryConformance`, `DLQRepositoryConformance` |
 
-Everything listed above is re-exported from `eventsource.testing` itself, and
-those thirteen names are the whole of its `__all__`.
+The twelve names from the first six modules are re-exported from
+`eventsource.testing` itself and are the whole of its `__all__`.
+`conformance_ports` is a separate subpackage — its suites are imported from
+`eventsource.testing.conformance_ports` directly, not from the `eventsource.testing`
+root.
 
 The pieces are designed to compose but are independent: `EventBuilder` produces
 `DomainEvent` instances with no harness involved, `InMemoryTestHarness` wires
 `InMemoryEventStore`, `InMemoryEventBus`, `InMemoryCheckpointRepository`, and
 `InMemoryDLQRepository` together with tracing disabled, `EventAssertions` wraps
 any list of events, and the BDD helpers are thin functions over a harness. The
-conformance suites are separate: they are abstract `unittest`-style test base
-classes you subclass in your own pytest suite to check that a custom
-`EventStore` or `EventBus` backend honors the interface contract.
+conformance suites are separate: they are abstract pytest-fixture-based (or, for
+the bus suite, `unittest`-style) test base classes you subclass in your own
+pytest suite to check that a custom event store port implementation or
+`EventBus` backend honors its contract. There is no single `EventStore`
+interface any more — event stores are split into five focused ports
+(`EventAppender`, `StreamReader`, `EventLookup`, `GlobalEventFeed`,
+`CategoryQuery`), each with its own conformance suite in
+`eventsource.testing.conformance_ports`.
 
 > **Note on the harness docstring.** The module docstring in `harness.py` shows
 > `harness.create_repository(OrderAggregate)`. No such method exists on
@@ -76,12 +86,18 @@ against `harness.published_events`. Note the asymmetry: `given_events` and the
 `then_*` helpers take the harness, but `when_command` takes an aggregate and a
 callable — it never touches the harness.
 
-**Backend conformance.** `EventStoreConformanceSuite` and
-`EventBusConformanceSuite` are ABCs holding `async def test_*` methods written
-against the `EventStore` / `EventBus` interfaces. You subclass one, implement
-its two abstract factory methods, and pytest collects the inherited tests
-against your backend. They are contract checks for implementors, not helpers for
-application tests.
+**Backend conformance.** `EventBusConformanceSuite` is an ABC holding `async def
+test_*` methods written against the `EventBus` interface. You subclass it,
+implement its abstract factory methods, and pytest collects the inherited tests
+against your backend. Store backends conform to the port suites in
+`eventsource.testing.conformance_ports` instead — one suite per port
+(`AppenderConformance`, `StreamReaderConformance`, `EventLookupConformance`,
+`GlobalFeedConformance`, `CategoryQueryConformance`, plus `SnapshotConformance`
+and the checkpoint/DLQ repository suites). Each is a mixin with an abstract
+`store` (or `repo`) pytest fixture; a backend adapter subclasses the suite and
+provides that fixture, yielding a fresh instance, to verify conformance to the
+corresponding port contract. All of these are contract checks for implementors,
+not helpers for application tests.
 
 A typical application test uses `EventBuilder` to make history,
 `InMemoryTestHarness` to hold it, and either `EventAssertions` or the `then_*`
@@ -103,23 +119,26 @@ uv sync --all-extras
 
 Everything the package imports is either stdlib or first-party: `EventBuilder`
 imports only `DomainEvent`; `EventAssertions` only `DomainEvent`; `bdd` imports
-`AggregateRoot`, `DomainEvent`, and `InMemoryTestHarness`; the conformance
-suites import the `EventStore`/`EventBus` interfaces plus `OptimisticLockError`
-and `ExpectedVersion`; and `InMemoryTestHarness` imports the four in-memory
-implementations. None of the backend extras (`postgresql`, `sqlite`, `redis`,
-`rabbitmq`, `kafka`, `telemetry`) are required to use anything in this package
-— you only need them if the backend you are conformance-testing needs them.
+`AggregateRoot`, `DomainEvent`, and `InMemoryTestHarness`; `EventBusConformanceSuite`
+imports the `EventBus` interface; the `conformance_ports` suites import only from
+`eventsource.ports`, `eventsource.domain`, `eventsource.events`,
+`eventsource.exceptions`, and pytest/stdlib (they are sqlalchemy-free); and
+`InMemoryTestHarness` imports the four in-memory implementations. None of the
+backend extras (`postgresql`, `sqlite`, `redis`, `rabbitmq`, `kafka`,
+`telemetry`) are required to use anything in this package — you only need them
+if the backend you are conformance-testing needs them.
 
 ### Importing
 
-The eleven public names are re-exported from the package root, which is the
-import path to prefer:
+The twelve public names in the first six modules are re-exported from the
+package root, which is the import path to prefer:
 
 ```python
 from eventsource.testing import (
     EventBuilder,
     InMemoryTestHarness,
     EventAssertions,
+    RecordingEventBus,
     given_events,
     when_command,
     then_event_published,
@@ -127,7 +146,6 @@ from eventsource.testing import (
     then_event_sequence,
     then_event_count,
     DeciderScenario,
-    EventStoreConformanceSuite,
     EventBusConformanceSuite,
 )
 ```
@@ -137,6 +155,19 @@ Submodule imports work identically and are useful when you want only one piece:
 ```python
 from eventsource.testing.builder import EventBuilder
 from eventsource.testing.conformance import EventBusConformanceSuite
+```
+
+Store port conformance suites are not part of the `eventsource.testing` root
+export and must be imported from the `conformance_ports` subpackage:
+
+```python
+from eventsource.testing.conformance_ports import (
+    AppenderConformance,
+    StreamReaderConformance,
+    EventLookupConformance,
+    GlobalFeedConformance,
+    CategoryQueryConformance,
+)
 ```
 
 Two import facts worth internalizing:

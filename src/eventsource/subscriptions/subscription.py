@@ -26,6 +26,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
+from eventsource.ports.positions import Position
 from eventsource.subscriptions.config import SubscriptionConfig
 from eventsource.subscriptions.exceptions import SubscriptionStateError
 
@@ -35,6 +36,15 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+def render_position(position: Position | None) -> str | None:
+    """Render a position as its opaque token string, or None.
+
+    Span attributes, log `extra` payloads and DLQ records must carry
+    primitives, never the value object's repr.
+    """
+    return position.to_str() if position is not None else None
 
 
 class SubscriptionState(Enum):
@@ -156,7 +166,7 @@ class RecentErrorInfo:
     Attributes:
         event_id: ID of the failed event
         event_type: Type of the failed event
-        position: Global position of the failed event
+        position: Global-feed position of the failed event, None if unknown
         error_type: Exception class name
         error_message: Error message (truncated)
         timestamp: When the error occurred
@@ -165,7 +175,7 @@ class RecentErrorInfo:
 
     event_id: UUID
     event_type: str
-    position: int
+    position: Position | None
     error_type: str
     error_message: str
     timestamp: datetime
@@ -176,7 +186,7 @@ class RecentErrorInfo:
         return {
             "event_id": str(self.event_id),
             "event_type": self.event_type,
-            "position": self.position,
+            "position": render_position(self.position),
             "error_type": self.error_type,
             "error_message": self.error_message,
             "timestamp": self.timestamp.isoformat(),
@@ -195,7 +205,8 @@ class SubscriptionStatus:
     Attributes:
         name: Subscription name
         state: Current state as string
-        position: Last processed global position
+        position: Last processed global-feed position, None if nothing
+            has been processed
         lag_events: Number of events behind
         events_processed: Total events successfully processed
         events_failed: Total events that failed processing
@@ -209,7 +220,7 @@ class SubscriptionStatus:
 
     name: str
     state: str
-    position: int
+    position: Position | None
     lag_events: int
     events_processed: int
     events_failed: int
@@ -230,7 +241,7 @@ class SubscriptionStatus:
         return {
             "name": self.name,
             "state": self.state,
-            "position": self.position,
+            "position": render_position(self.position),
             "lag_events": self.lag_events,
             "events_processed": self.events_processed,
             "events_failed": self.events_failed,
@@ -277,7 +288,7 @@ class Subscription:
     _previous_state: SubscriptionState | None = field(default=None, repr=False)
 
     # Position tracking
-    last_processed_position: int = field(default=0)
+    last_processed_position: Position | None = field(default=None)
     last_event_id: UUID | None = field(default=None)
     last_event_type: str | None = field(default=None)
 
@@ -300,7 +311,8 @@ class Subscription:
 
     # Internal
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
-    _max_position: int = field(default=0, repr=False)  # For lag calculation
+    _events_seen: int = field(default=0, repr=False)  # For lag calculation
+    _events_delivered: int = field(default=0, repr=False)  # For lag calculation
     _recent_errors: list[RecentErrorInfo] = field(default_factory=list, repr=False)
     _max_recent_errors: int = field(default=100, repr=False)
 
@@ -356,7 +368,7 @@ class Subscription:
 
     async def record_event_processed(
         self,
-        position: int,
+        position: Position | None,
         event_id: UUID,
         event_type: str,
     ) -> None:
@@ -364,7 +376,8 @@ class Subscription:
         Record that an event was successfully processed.
 
         Args:
-            position: Global position of the event
+            position: Global-feed position of the event, None if the feed
+                supplied no position for it
             event_id: UUID of the event
             event_type: Type of the event
         """
@@ -373,6 +386,7 @@ class Subscription:
             self.last_event_id = event_id
             self.last_event_type = event_type
             self.events_processed += 1
+            self._events_delivered += 1
             self.last_processed_at = datetime.now(UTC)
 
     async def record_event_failed(self, error: Exception) -> None:
@@ -391,7 +405,7 @@ class Subscription:
         self,
         event_id: UUID,
         event_type: str,
-        position: int,
+        position: Position | None,
         error: Exception,
         sent_to_dlq: bool = False,
     ) -> None:
@@ -401,7 +415,7 @@ class Subscription:
         Args:
             event_id: ID of the failed event
             event_type: Type of the failed event
-            position: Global position of the failed event
+            position: Global-feed position of the failed event, None if unknown
             error: The exception that occurred
             sent_to_dlq: Whether event was sent to DLQ
         """
@@ -429,27 +443,60 @@ class Subscription:
             if sent_to_dlq:
                 self.events_dlq += 1
 
-    async def update_max_position(self, position: int) -> None:
-        """
-        Update the known maximum position in the event store.
+    async def record_events_seen(self, count: int) -> None:
+        """Record events observed but not yet delivered.
 
-        Used for calculating lag.
+        "Seen" means read from the feed (catch-up) or received from the
+        bus (live) -- one counter shared across both phases. Lag is a
+        count, not a distance: global positions are opaque tokens that
+        cannot be subtracted (ADR 0019).
 
         Args:
-            position: Current max position in event store
+            count: Number of events observed in this read.
         """
         async with self._lock:
-            self._max_position = position
+            self._events_seen += count
+
+    async def record_events_unseen(self, count: int) -> None:
+        """Reconcile the seen-counter when a read batch is abandoned early.
+
+        Called when a batch is read but only partially delivered (stop
+        request, exception, state transition) before its remaining events
+        are handed off to a fresh run. Without this, the undelivered tail
+        would be double-counted the next time it is read, permanently
+        inflating `_events_seen` relative to `_events_delivered` and
+        producing lag that never clears.
+
+        Args:
+            count: Number of events read but not delivered in this batch.
+        """
+        async with self._lock:
+            self._events_seen = max(0, self._events_seen - count)
 
     @property
     def lag(self) -> int:
         """
         Calculate current lag (events behind).
 
+        Lag is the count of events seen from the feed in the current run
+        that have not yet been delivered -- it rises by a batch and falls
+        as the batch drains, rather than being a store-wide position
+        distance. During catch-up, "seen" means read from the feed; during
+        live, it means received from the bus, so lag is receipts not yet
+        delivered. That includes both the catch-up-to-live transition
+        buffer and the pause buffer, so a paused or stalled subscription
+        shows growing lag while a healthy live subscription reports ~0.
+
+        Invariant: across any stop boundary, `events_seen - events_delivered`
+        equals the number of read-but-unprocessed events, so lag never
+        accumulates phantom counts. Callers that abandon a partially
+        delivered batch must call `record_events_unseen` for the
+        undelivered remainder before the batch is re-read.
+
         Returns:
-            Number of events behind the current max position
+            Number of events seen but not yet delivered.
         """
-        return max(0, self._max_position - self.last_processed_position)
+        return max(0, self._events_seen - self._events_delivered)
 
     @property
     def is_running(self) -> bool:
@@ -599,7 +646,7 @@ class Subscription:
             extra={
                 "subscription": self.name,
                 "reason": reason.value,
-                "position": self.last_processed_position,
+                "position": render_position(self.last_processed_position),
                 "previous_state": self._state_before_pause.value
                 if self._state_before_pause
                 else None,
@@ -650,7 +697,7 @@ class Subscription:
             extra={
                 "subscription": self.name,
                 "reason": pause_reason.value if pause_reason else None,
-                "position": self.last_processed_position,
+                "position": render_position(self.last_processed_position),
                 "resumed_to": target_state.value,
                 "pause_duration_seconds": pause_duration,
             },
@@ -737,11 +784,12 @@ class Subscription:
         """String representation."""
         return (
             f"Subscription({self.name}, state={self.state.value}, "
-            f"pos={self.last_processed_position})"
+            f"pos={render_position(self.last_processed_position) or '-'})"
         )
 
 
 __all__ = [
+    "render_position",
     "SubscriptionState",
     "SubscriptionStatus",
     "Subscription",

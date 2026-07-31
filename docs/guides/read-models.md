@@ -3,8 +3,8 @@
 A *read model* is a denormalized, directly persisted view of aggregate state,
 shaped for the queries your application actually runs. Where an aggregate is
 rebuilt by replaying its events, a read model row is written once by a
-projection handler and then read back cheaply. `eventsource.readmodels` gives
-you the pieces for that: a `ReadModel` base class, three repository backends
+projection handler and then read back cheaply. `eventsource.ports.readmodels`
+and its adapters give you the pieces for that: a `ReadModel` base class, three repository backends
 behind one `ReadModelRepository` protocol, a backend-agnostic `Query` / `Filter`
 pair, DDL generation from the model definition, and `ReadModelProjection` to
 drive the whole thing from events.
@@ -65,7 +65,7 @@ Your subclass adds domain fields on top:
 
 ```python
 from decimal import Decimal
-from eventsource.readmodels import ReadModel
+from eventsource.ports.readmodels import ReadModel
 
 
 class OrderSummary(ReadModel):
@@ -128,7 +128,7 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from eventsource.readmodels import ReadModel
+from eventsource.ports.readmodels import ReadModel
 
 
 class OrderSummary(ReadModel):
@@ -324,15 +324,15 @@ Three implementations ship with the library, all satisfying the same
 identical method set — `get`, `get_many`, `save`, `save_many`,
 `save_with_version_check`, `find`, `count`, `exists`, `delete`, `soft_delete`,
 `restore`, `get_deleted`, `find_deleted`, `truncate` — so projection code
-written against the protocol runs unchanged on any of them. All three are
-imported from `eventsource.readmodels`.
+written against the protocol runs unchanged on any of them. Each is imported
+from its own adapter module.
 
 ```python
-from eventsource.readmodels import (
-    InMemoryReadModelRepository,
-    PostgreSQLReadModelRepository,
+from eventsource.adapters.memory.readmodels import InMemoryReadModelRepository
+from eventsource.adapters.postgresql.readmodels import PostgreSQLReadModelRepository
+from eventsource.adapters.sqlite.readmodels import SQLiteReadModelRepository
+from eventsource.ports.readmodels import (
     ReadModelRepository,
-    SQLiteReadModelRepository,
 )
 ```
 
@@ -355,7 +355,7 @@ class and start saving:
 ```python
 from uuid import uuid4
 
-from eventsource.readmodels import InMemoryReadModelRepository
+from eventsource.adapters.memory.readmodels import InMemoryReadModelRepository
 
 repo = InMemoryReadModelRepository(OrderSummary)
 
@@ -446,11 +446,8 @@ Takes an open `aiosqlite.Connection` plus the model class:
 ```python
 import aiosqlite
 
-from eventsource.readmodels import (
-    SQLiteReadModelRepository,
-    generate_indexes,
-    generate_schema,
-)
+from eventsource.adapters.sql.readmodel_schema import generate_indexes, generate_schema
+from eventsource.adapters.sqlite.readmodels import SQLiteReadModelRepository
 
 async with aiosqlite.connect("readmodels.db") as db:
     await db.execute(generate_schema(OrderSummary, dialect="sqlite"))
@@ -463,7 +460,7 @@ async with aiosqlite.connect("readmodels.db") as db:
 ```
 
 `aiosqlite` is an optional dependency, imported only under `TYPE_CHECKING` in
-the module, so importing `eventsource.readmodels` does not require it — but
+the module, so importing `eventsource.adapters.sqlite.readmodels` does not require it — but
 constructing the connection does. Install the `aiosqlite` extra.
 
 Notable characteristics:
@@ -492,7 +489,7 @@ Takes a SQLAlchemy `AsyncConnection` **or** an `AsyncEngine`, plus the model
 class:
 
 ```python
-from eventsource.readmodels import PostgreSQLReadModelRepository
+from eventsource.adapters.postgresql.readmodels import PostgreSQLReadModelRepository
 
 async with engine.begin() as conn:
     repo = PostgreSQLReadModelRepository(conn, OrderSummary)

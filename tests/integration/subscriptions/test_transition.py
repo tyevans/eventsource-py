@@ -14,6 +14,8 @@ from uuid import uuid4
 
 import pytest
 
+from eventsource.domain import StreamId
+from eventsource.ports.positions import ExpectedVersion
 from eventsource.subscriptions import SubscriptionConfig
 
 from .conftest import (
@@ -24,6 +26,14 @@ from .conftest import (
 )
 
 pytestmark = pytest.mark.asyncio
+
+
+async def position_after(store, n: int):
+    """The token of the nth (1-based) event in the feed."""
+    envelopes = [e async for e in store.read_all()]
+    position = envelopes[n - 1].position
+    assert position is not None
+    return position
 
 
 class TestSeamlessTransition:
@@ -58,11 +68,10 @@ class TestSeamlessTransition:
                 order_number=f"ORD-{i:05d}",
                 amount=100.0 + i,
             )
-            await in_memory_event_store.append_events(
-                aggregate_id=event.aggregate_id,
-                aggregate_type="SubTestOrder",
-                events=[event],
-                expected_version=0,
+            await in_memory_event_store.append(
+                StreamId(aggregate_id=event.aggregate_id, category="SubTestOrder"),
+                [event],
+                ExpectedVersion.no_stream(),
             )
             await in_memory_event_bus.publish([event])
 
@@ -206,11 +215,10 @@ class TestNoGapDuringTransition:
                 order_number=f"ORD-{i:05d}",
                 amount=100.0 + i,
             )
-            await in_memory_event_store.append_events(
-                aggregate_id=event.aggregate_id,
-                aggregate_type="SubTestOrder",
-                events=[event],
-                expected_version=0,
+            await in_memory_event_store.append(
+                StreamId(aggregate_id=event.aggregate_id, category="SubTestOrder"),
+                [event],
+                ExpectedVersion.no_stream(),
             )
             await in_memory_event_bus.publish([event])
             await asyncio.sleep(0.01)  # Small delay
@@ -257,11 +265,10 @@ class TestNoGapDuringTransition:
                     order_number=f"ORD-{i:05d}",
                     amount=100.0 + i,
                 )
-                await in_memory_event_store.append_events(
-                    aggregate_id=event.aggregate_id,
-                    aggregate_type="SubTestOrder",
-                    events=[event],
-                    expected_version=0,
+                await in_memory_event_store.append(
+                    StreamId(aggregate_id=event.aggregate_id, category="SubTestOrder"),
+                    [event],
+                    ExpectedVersion.no_stream(),
                 )
                 await in_memory_event_bus.publish([event])
                 await asyncio.sleep(0.01)
@@ -373,5 +380,7 @@ class TestTransitionPhases:
         await projection.wait_for_events(50)
 
         subscription = subscription_manager.get_subscription("CollectingProjection")
-        # Position should be at or past 50
-        assert subscription.last_processed_position >= 50
+        # Position should be at or past the 50th event
+        assert subscription.last_processed_position >= await position_after(
+            in_memory_event_store, 50
+        )

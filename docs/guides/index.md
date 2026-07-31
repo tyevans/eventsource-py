@@ -37,7 +37,7 @@ Guides are the right page when you can phrase your need as a task:
   a dead-letter queue, flow control, schema migrations, and live event store
   migration with dual-write and cutover.
 - **"I need to make it safe to change."** Test harnesses, BDD helpers, and the
-  `EventStore` / `EventBus` conformance suites in `eventsource.testing.conformance`
+  per-port conformance suites in `eventsource.testing.conformance_ports`
   for validating a backend you wrote yourself.
 - **"I need to call async code from a sync context."** Apply
   `SyncEventStoreAdapter` at the boundary.
@@ -97,7 +97,7 @@ the guide shows how to apply it to a domain you already have.
 **Guides versus reference.** A guide shows one call path that works and names the
 arguments that matter for the task. It does not enumerate every parameter, every
 overload, or every exception a method can raise. When you need the full contract --
-what `append_events` promises about ordering, what raises `OptimisticLockError`, what
+what `append()` promises about ordering, what raises `OptimisticLockError`, what
 a custom backend must implement -- read the
 [EventStore protocol reference](../reference/event-store-protocol.md) and the
 generated [API docs](../api/events.md). If a guide's snippet and the reference ever
@@ -234,7 +234,7 @@ Tracing is a no-op unless you opt in; see
 
 | Guide | Use it to |
 | --- | --- |
-| [Validate a custom backend with the conformance suites](validate-custom-backend.md) | Run the shared `EventStore` / `EventBus` suites from `eventsource.testing.conformance` against a backend you wrote |
+| [Validate a custom backend with the conformance suites](validate-custom-backend.md) | Run the per-port suites from `eventsource.testing.conformance_ports` against a backend you wrote |
 
 For testing your own domain code rather than a backend, the helpers in
 `eventsource.testing` -- assertions, BDD helpers, the builder, and the harness --
@@ -269,33 +269,34 @@ If you are moving an existing deployment between stores, do it with
 | [Use the event store from synchronous code](sync-usage.md) | Call an async `EventStore` from Celery tasks, Django views and management commands, RQ workers, notebooks, and scripts, via `SyncEventStoreAdapter` |
 | [Live tenant store migration](live-migration.md) | Move one tenant's events between stores with bulk copy, dual-write, sync-lag tracking, and a gated cutover, without downtime |
 
-All three backends are exported from `eventsource.stores` and implement the same
-`EventStore` interface, so switching is an infrastructure change: your aggregates,
-repositories, and projections do not move. What does change between them is setup
-and lifecycle, and that is where these guides spend their time:
+All three backends live under `eventsource.adapters` (`adapters.memory`,
+`adapters.sqlite`, `adapters.postgresql`) and implement the same store ports
+(`eventsource.ports.store`), so switching is an infrastructure change: your
+aggregates, repositories, and projections do not move. What does change between
+them is setup and lifecycle, and that is where these guides spend their time:
 
-- **Schema.** `PostgreSQLEventStore` never creates tables -- apply the bundled SQL
-  before it runs ([set up the database schema](database-schema.md)).
-  `SQLiteEventStore` can create its own via `await store.initialize()`, which runs
-  the bundled SQLite schema and is idempotent. `InMemoryEventStore` has no schema
-  at all.
-- **Construction.** `PostgreSQLEventStore` takes a SQLAlchemy
-  `async_sessionmaker` you own; `SQLiteEventStore` takes a file path or
-  `":memory:"` and is used as an async context manager;
-  `InMemoryEventStore()` takes nothing. Only `PostgreSQLEventStore` supports the
-  transactional outbox (`outbox_enabled=True`).
-- **Optional extras.** `SQLiteEventStore` is only importable from
-  `eventsource.stores` when the `sqlite` extra (aiosqlite) is installed;
-  PostgreSQL needs the `postgresql` extra (asyncpg). See
+- **Schema.** `PostgreSQLEventStore` does not create tables by default -- apply
+  the bundled SQL before it runs ([set up the database schema](database-schema.md)),
+  or pass `create_schema=True` for tests and local dev. `SQLiteEventStore`
+  self-initializes lazily on first use -- no `initialize()` call or `async with`
+  needed. `InMemoryEventStore` has no schema at all.
+- **Construction.** `PostgreSQLEventStore(engine, event_registry=None, *,
+  store_id=None, create_schema=False, outbox_enabled=False)` takes an
+  `AsyncEngine` you own; `SQLiteEventStore(database, event_registry=None, *,
+  store_id=None, wal_mode=True, busy_timeout=5000)` takes a file path or
+  `":memory:"`; `InMemoryEventStore(store_id="memory", *, event_registry=None)`
+  takes nothing required. Only `PostgreSQLEventStore` supports the transactional
+  outbox (`outbox_enabled=True`).
+- **Optional extras.** `SQLiteEventStore` needs the `sqlite` extra (aiosqlite)
+  installed; PostgreSQL needs the `postgresql` extra (asyncpg). See
   [installation](../installation.md).
 - **Deserialization.** Every SQL backend rebuilds events through an
   `EventRegistry`, and `DomainEvent` subclasses only register when their module is
   imported -- so import your event modules at startup or events will not come back
-  out. Field types are restored by a `TypeConverter`; if an id-shaped field of
-  yours is not a UUID, pass `string_id_fields` (or a strict converter) rather than
-  letting auto-detection guess.
+  out.
 
-For the reading side -- `get_events`, `read_stream`, `read_all`, `ReadOptions`, and
+For the reading side -- `read_stream`, `read_all`, `read_category`,
+`StreamReadOptions`/`FeedReadOptions`/`CategoryReadOptions`, and
 what each backend guarantees about global ordering -- use the
 [EventStore protocol reference](../reference/event-store-protocol.md); note that
 `read_all()` is opt-in and raises `NotImplementedError` on backends that do not

@@ -55,14 +55,6 @@ def test_top_level_import_matches_handlers_import():
     assert handles is h2
 
 
-def test_projections_import_matches_handlers_import():
-    """Verify projections re-export resolves to same object as handlers."""
-    from eventsource.handlers import handles as h1
-    from eventsource.projections import handles as h2
-
-    assert h1 is h2
-
-
 def test_all_decorator_utilities_accessible():
     """Verify all decorator utilities are accessible from handlers."""
     from eventsource.handlers import (

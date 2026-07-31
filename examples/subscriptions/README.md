@@ -216,7 +216,7 @@ combinations (for example `max_retry_delay < initial_retry_delay`) raise
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `start_from` | `"checkpoint"` | Where to start: `"beginning"`, `"end"`, `"checkpoint"`, or an integer global position |
+| `start_from` | `"checkpoint"` | Where to start: `"beginning"`, `"end"`, `"checkpoint"`, or an opaque `Position` token |
 | `batch_size` | `100` | Events per batch during catch-up (must be >= 1) |
 | `max_in_flight` | `1000` | Maximum events being processed concurrently (must be >= 1) |
 | `backpressure_threshold` | `0.8` | Fraction of `max_in_flight` (0.0-1.0) at which backpressure is signalled |

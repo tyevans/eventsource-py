@@ -19,6 +19,7 @@ from uuid import uuid4
 import pytest
 
 from eventsource.events.base import DomainEvent
+from eventsource.ports.positions import Position
 from eventsource.protocols import EventSubscriber
 from eventsource.subscriptions import (
     PauseReason,
@@ -29,6 +30,11 @@ from eventsource.subscriptions import (
 )
 
 # Test fixtures
+
+
+def pos(n: int) -> Position:
+    """Build a test-store position token standing in for an int position."""
+    return Position(store_id="test", key=(n,))
 
 
 class MockSubscriber(EventSubscriber):
@@ -176,12 +182,12 @@ class TestSubscriptionPause:
         """Test pause does not change last_processed_position."""
         await subscription.transition_to(SubscriptionState.LIVE)
         await subscription.record_event_processed(
-            position=42,
+            position=pos(42),
             event_id=uuid4(),
             event_type="TestEvent",
         )
         await subscription.pause()
-        assert subscription.last_processed_position == 42
+        assert subscription.last_processed_position == pos(42)
 
 
 # Subscription Pause Invalid State Tests
@@ -280,13 +286,13 @@ class TestSubscriptionResume:
         """Test resume does not change last_processed_position."""
         await subscription.transition_to(SubscriptionState.LIVE)
         await subscription.record_event_processed(
-            position=42,
+            position=pos(42),
             event_id=uuid4(),
             event_type="TestEvent",
         )
         await subscription.pause()
         await subscription.resume()
-        assert subscription.last_processed_position == 42
+        assert subscription.last_processed_position == pos(42)
 
 
 # Subscription Resume Invalid State Tests
@@ -505,7 +511,7 @@ class TestMultiplePauseResumeCycles:
 
         for i in range(5):
             await subscription.record_event_processed(
-                position=i,
+                position=pos(i),
                 event_id=uuid4(),
                 event_type="TestEvent",
             )
@@ -513,7 +519,7 @@ class TestMultiplePauseResumeCycles:
             await subscription.resume()
 
         # Position should be last recorded position
-        assert subscription.last_processed_position == 4
+        assert subscription.last_processed_position == pos(4)
 
     @pytest.mark.asyncio
     async def test_pause_resume_from_different_states(self, subscription: Subscription):

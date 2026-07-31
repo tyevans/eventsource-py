@@ -21,7 +21,7 @@ from pathlib import Path
 
 # module name -> (file to mutate, test subset(s) to run against every mutant)
 MODULES: dict[str, tuple[str, str | list[str]]] = {
-    "engine": ("src/eventsource/engine.py", "tests/unit/test_engine.py"),
+    "engine": ("src/eventsource/adapters/_sql/engine.py", "tests/unit/test_engine.py"),
     "dialect": (
         "src/eventsource/repositories/_dialect.py",
         "tests/unit/repositories/test_dialect.py",

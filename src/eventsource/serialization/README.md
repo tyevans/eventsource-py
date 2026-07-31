@@ -61,9 +61,10 @@ from eventsource import EventSourceJSONEncoder  # listed in eventsource.__all__
 `json_dumps` and `json_loads` are *not* in the top-level `__all__` — import them
 from `eventsource.serialization`.
 
-All three names are additionally re-exported from `eventsource.repositories`,
-which is where the DLQ and outbox implementations consume them. See
-*Deprecated Import Path* for the compatibility shim behind that re-export.
+`EventSourceJSONEncoder` is additionally imported directly by the
+`eventsource.adapters.postgresql.outbox` and `eventsource.adapters.sqlite.outbox`
+modules, which consume it at their `add_event` call sites. See *Deprecated
+Import Path* for the compatibility shim behind the top-level re-export.
 
 ### Stability notes
 
@@ -482,12 +483,13 @@ are allowed to rely on; a change that breaks one is a breaking change.
 11. **`__all__` is the same three names in both modules.**
     `eventsource.serialization` and `eventsource.serialization.json` export
     `EventSourceJSONEncoder`, `json_dumps`, and `json_loads` — nothing more.
-12. **Re-export asymmetry is intentional.** The top-level `eventsource` package
-    exports only `EventSourceJSONEncoder` (`__init__.py:143`, `__all__:289`);
-    `eventsource.repositories` re-exports all three
-    (`repositories/__init__.py:66-68`, `98-100`). Do not "fix" this by widening
-    the top-level surface without a deliberate API decision.
+12. **Top-level export is deliberately narrower than the module.** The
+    top-level `eventsource` package exports only `EventSourceJSONEncoder`
+    (`__init__.py:143`, `__all__:289`); `json_dumps` and `json_loads` are not
+    re-exported there. Do not "fix" this by widening the top-level surface
+    without a deliberate API decision.
 13. **Nothing inside `src/eventsource/` calls `json_loads`.** The library only
-    writes JSON (`dlq.py` at lines 346, 732, 1104; `outbox.py` at 282, 568,
-    854). Read paths return the stored column value as-is, so parsing and
-    rehydration are consumer responsibilities by design, not an oversight.
+    writes JSON (`dlq.py` at lines 346, 732, 1104; the postgresql and sqlite
+    outbox adapters at their `add_event` call sites). Read paths return the
+    stored column value as-is, so parsing and rehydration are consumer
+    responsibilities by design, not an oversight.

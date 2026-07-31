@@ -210,32 +210,34 @@ from eventsource.subscriptions import (
 ### `StartPosition`
 
 ```python
-StartPosition = Literal["beginning", "end", "checkpoint"] | int
+StartPosition = Literal["beginning", "end", "checkpoint"] | Position
 ```
 
-A type alias, not a class — there is nothing to instantiate. It is the
-annotation of `SubscriptionConfig.start_from` and the set of values
-`StartFromResolver.resolve()` (in `eventsource.subscriptions.transition`)
+A type alias, not a class — there is nothing to instantiate beyond a `Position`
+itself. It is the annotation of `SubscriptionConfig.start_from` and the set of
+values `StartFromResolver.resolve()` (in `eventsource.subscriptions.transition`)
 understands:
 
 | Value | Resolved starting position |
 | --- | --- |
-| `"beginning"` | `0` |
-| `"end"` | `await event_store.get_global_position()` — the current end, so only new events are seen |
-| `"checkpoint"` | The subscription's stored checkpoint position; falls back to `0` (logging an info message) when no checkpoint exists |
-| `int` | That exact global position, returned unchanged |
+| `"beginning"` | `None` — read from the start of the feed |
+| `"end"` | `await event_store.current_position()` — the current end, so only new events are seen |
+| `"checkpoint"` | The subscription's stored checkpoint position; falls back to `None` (logging an info message) when no checkpoint exists |
+| `Position` | That exact opaque position token, returned unchanged |
 
-The `int` branch is tested first (`isinstance(start_from, int)`), so an explicit
-position is never confused with a literal. Any other value raises
+The `Position` branch is tested first (`isinstance(start_from, Position)`), so an
+explicit position is never confused with a literal. Any other value raises
 `ValueError: Unknown start_from value: ...` at resolve time — string literals
 are *not* validated by `SubscriptionConfig.__post_init__`, only by the resolver.
-Negative integers, by contrast, are rejected earlier, at config construction.
+`SubscriptionConfig` no longer accepts a bare `int` for `start_from` at all — the
+member was deleted when positions became opaque; pass a `Position` obtained from
+the store or a checkpoint instead.
 
 The default for `SubscriptionConfig.start_from` is `"checkpoint"`, which makes
 resume-from-where-you-left-off the behavior you get without asking for it. Note
-that `"checkpoint"` degrades to `0` — a full replay — for a subscription that
-has never checkpointed; use an explicit `int` or `"end"` if a fresh
-subscription must not read history.
+that `"checkpoint"` degrades to reading from the start of the feed for a
+subscription that has never checkpointed; use an explicit `Position` or `"end"`
+if a fresh subscription must not read history.
 
 ### `CheckpointStrategy`
 
@@ -276,7 +278,7 @@ do not behave identically, and the difference is the main thing to know here.
 - `PERIODIC` — calls the same per-event hook, but only writes when
   `elapsed >= config.checkpoint_interval_seconds`.
 - `EVERY_BATCH` — checkpoints once after the batch loop, using the last
-  `StoredEvent` seen. The guard is
+  `EventEnvelope` seen. The guard is
   `(events_in_batch > 0 or events_filtered > 0) and last_stored_event is not None`,
   so a batch in which *every* event was filtered out still checkpoints — that is
   what keeps a subscription with a narrow filter from re-reading the same
@@ -401,23 +403,24 @@ bounds concurrency for the lifetime of the runner.
 ##### `start_from`
 
 Typed [`StartPosition`](#startposition) — one of `"beginning"`, `"end"`,
-`"checkpoint"`, or an explicit `int` global position. The default,
+`"checkpoint"`, or an explicit `Position` token. The default,
 `"checkpoint"`, means resume: an existing subscription picks up after its last
 saved position, and a subscription that has never checkpointed falls back to
-`0` (a full replay) with an info-level log from `StartFromResolver.resolve()`.
-If a fresh subscription must *not* read history, say so explicitly with
-`"end"` or an `int`.
+reading from the start of the feed with an info-level log from
+`StartFromResolver.resolve()`. If a fresh subscription must *not* read
+history, say so explicitly with `"end"` or a `Position`.
 
 The field is consumed only by `StartFromResolver.resolve()` in
 `eventsource.subscriptions.transition`, which is called once when the
 subscription starts. Changing `start_from` on a running subscription is not
 possible (the config is frozen) and would have no effect mid-run anyway.
 
-Validation is asymmetric, and worth knowing: `__post_init__` rejects a negative
-`int` (`start_from position must be >= 0`) but does **not** check the string
-literals. A typo such as `start_from="checkpont"` constructs successfully and
-fails later, at resolve time, with `ValueError: Unknown start_from value:
-checkpont`. The resolver tests `isinstance(start_from, int)` first, so an
+`start_from` no longer accepts a bare `int` — with opaque positions the
+integer form is unrepresentable, and `__post_init__` no longer has a numeric
+value to range-check. It does **not** validate the string literals either: a
+typo such as `start_from="checkpont"` constructs successfully and fails
+later, at resolve time, with `ValueError: Unknown start_from value:
+checkpont`. The resolver tests `isinstance(start_from, Position)` first, so an
 explicit position is never confused with a literal.
 
 `str(config.start_from)` is what `SubscriptionRegistry` records in its
@@ -438,8 +441,10 @@ batch_limit = min(self.config.batch_size, remaining)
 
 so the runner never over-reads past the target position captured at startup,
 and a `batch_limit <= 0` ends the batch immediately (returning `0`, which
-breaks the catch-up loop). The limit is passed through to the store as
-`ReadOptions(direction=FORWARD, from_position=..., limit=batch_limit)`.
+breaks the catch-up loop). The read always proceeds forward; the limit and
+starting position are passed through to the store's `read_all()` as the
+`from_position` argument and `FeedReadOptions(limit=batch_limit)` (`read_all`
+has no direction parameter — the global feed only reads forward).
 
 `batch_size` interacts with checkpointing: under the default
 `CheckpointStrategy.EVERY_BATCH` it is also the checkpoint granularity, so it
@@ -450,7 +455,7 @@ that trade.
 
 Note that `batch_size` does not bound memory the way `max_in_flight` does — a
 batch is read into a list before its events are dispatched, so a very large
-`batch_size` holds a correspondingly large list of `StoredEvent` objects.
+`batch_size` holds a correspondingly large list of `EventEnvelope` objects.
 
 Both the configured value (`config.batch_size`) and the actual per-batch count
 (`events_in_batch`) appear in catch-up log records under the key `batch_size`;
@@ -606,7 +611,6 @@ offending value, and most suggest a workable default.
 | --- | --- |
 | `batch_size` must be positive | `batch_size < 1` |
 | `max_in_flight` must be positive | `max_in_flight < 1` |
-| `start_from` position must be `>= 0` | `start_from` is an `int` and negative |
 | `processing_timeout` must be positive | `<= 0` |
 | `shutdown_timeout` must be positive | `<= 0` |
 | `checkpoint_interval_seconds` must be positive | `<= 0` |
@@ -621,9 +625,10 @@ offending value, and most suggest a workable default.
 | `circuit_breaker_recovery_timeout` must be positive | `<= 0` |
 
 Note the boundaries: `backpressure_threshold` and `retry_jitter` accept both
-`0.0` and `1.0`; `retry_exponential_base` is strictly greater than `1.0`; the
-string values of `start_from` are not validated here at all — an unrecognized
-string is only caught later by `StartFromResolver.resolve()`.
+`0.0` and `1.0`; `retry_exponential_base` is strictly greater than `1.0`;
+`start_from` has no numeric range to validate here at all now that the `int`
+member is gone — an unrecognized string value is only caught later by
+`StartFromResolver.resolve()`.
 
 #### `get_retry_config() -> RetryConfig`
 
@@ -695,7 +700,7 @@ Takes no arguments. Returns a `SubscriptionConfig` with `start_from="end"`,
 `batch_size=100`, and `checkpoint_strategy=CheckpointStrategy.EVERY_EVENT` —
 a subscription that skips history entirely and checkpoints after each event.
 
-`start_from="end"` resolves to the event store's current global position at
+`start_from="end"` resolves to the event store's current position token at
 startup, so any events written before the subscription starts are never
 delivered. This is the intended shape for tail-following consumers that must not
 replay history; it is not appropriate for projections that need a complete

@@ -2,20 +2,24 @@
 
 Asserts that every name intended for top-level export actually imports
 from `eventsource` and appears in `eventsource.__all__`. Also pins the
-Task 14 collision decisions: names that intentionally do NOT get rebound
-at top level because a same-named, different class already occupies that
-slot in the legacy surface.
+blessed store surface: after the legacy `eventsource.stores` package was
+retired, each store name at top level has exactly one referent -- a port
+value object or an adapter class -- and the legacy names are gone.
 """
+
+import pytest
 
 import eventsource
 
-# Core-rings surface (Task 14): names that must be importable from the
-# top-level package and present in __all__.
+# Names that must be importable from the top-level package and present
+# in __all__.
 CORE_RINGS_EXPORTS = [
     "StreamId",
     "Position",
     "EventEnvelope",
     "AppendResult",
+    "ExpectedVersion",
+    "ReadDirection",
     "StreamReadOptions",
     "FeedReadOptions",
     "CategoryReadOptions",
@@ -25,9 +29,16 @@ CORE_RINGS_EXPORTS = [
     "GlobalEventFeed",
     "CategoryQuery",
     "FullEventStore",
+    "AggregateStore",
+    "EventPublisher",
     "collect",
-    "MemoryEventStore",
-    "LegacyStoreAdapter",
+    "InMemoryEventStore",
+    "PostgreSQLEventStore",
+    "SQLiteEventStore",
+    "ASYNCPG_AVAILABLE",
+    "AIOSQLITE_AVAILABLE",
+    "SQLITE_AVAILABLE",
+    "SyncEventStoreAdapter",
     "DuplicateEventError",
     "PositionDecodeError",
     "PositionForeignError",
@@ -39,6 +50,28 @@ CORE_RINGS_EXPORTS = [
     "SnapshotDeserializationError",
     "SnapshotSchemaVersionError",
     "SnapshotNotFoundError",
+    "OutboxRepository",
+    "OutboxEntry",
+    "OutboxStats",
+    "outbox_event_data",
+    "InMemoryOutboxRepository",
+    "PostgreSQLOutboxRepository",
+]
+
+# Spec section 4.2: names retired with the legacy store surface. None of
+# them may be reachable from the top-level package any more.
+DEAD_NAMES = [
+    "EventStore",
+    "EventStream",
+    "StoredEvent",
+    "ReadOptions",
+    "LegacyStoreAdapter",
+    "TypeConverter",
+    "DefaultTypeConverter",
+    "DEFAULT_UUID_FIELDS",
+    "DEFAULT_STRING_ID_FIELDS",
+    "MemoryEventStore",
+    "OutboxRepositoryProtocol",
 ]
 
 
@@ -61,65 +94,85 @@ def test_every_dunder_all_name_is_importable() -> None:
         assert hasattr(eventsource, name), f"eventsource.{name} is listed in __all__ but missing"
 
 
-class TestCollisionDecisions:
-    """Task 14: colliding new names stay path-only, existing exports untouched.
+class TestBlessedStoreSurface:
+    """Spec section 4.1: one referent per name. The ports and adapters own them all."""
 
-    `eventsource.AppendResult`, `eventsource.ExpectedVersion`, and
-    `eventsource.ReadDirection` remain bound to the legacy
-    `stores.interface` classes. The new port-layer VOs of the same name
-    are available only via `eventsource.ports`.
-    """
+    def test_top_level_expected_version_is_the_port_vo(self) -> None:
+        from eventsource.ports import ExpectedVersion
 
-    def test_top_level_append_result_is_legacy_class(self) -> None:
-        from eventsource.stores.interface import AppendResult as LegacyAppendResult
+        assert eventsource.ExpectedVersion is ExpectedVersion
 
-        assert eventsource.AppendResult is LegacyAppendResult
+    def test_top_level_read_direction_is_the_port_enum(self) -> None:
+        from eventsource.ports import ReadDirection
 
-    def test_top_level_expected_version_is_legacy_class(self) -> None:
-        from eventsource.stores.interface import ExpectedVersion as LegacyExpectedVersion
+        assert eventsource.ReadDirection is ReadDirection
 
-        assert eventsource.ExpectedVersion is LegacyExpectedVersion
+    def test_top_level_append_result_is_the_port_vo(self) -> None:
+        from eventsource.ports import AppendResult
 
-    def test_top_level_read_direction_is_legacy_enum(self) -> None:
-        from eventsource.stores.interface import ReadDirection as LegacyReadDirection
+        assert eventsource.AppendResult is AppendResult
 
-        assert eventsource.ReadDirection is LegacyReadDirection
+    def test_top_level_event_publisher_is_the_port_protocol(self) -> None:
+        from eventsource.ports import EventPublisher
 
-    def test_ports_append_result_is_a_distinct_class(self) -> None:
-        from eventsource.ports import AppendResult as PortAppendResult
+        assert eventsource.EventPublisher is EventPublisher
 
-        assert PortAppendResult is not eventsource.AppendResult
+    def test_top_level_in_memory_event_store_is_the_memory_adapter(self) -> None:
+        from eventsource.adapters.memory.store import InMemoryEventStore
 
-    def test_ports_expected_version_is_a_distinct_class(self) -> None:
-        from eventsource.ports import ExpectedVersion as PortExpectedVersion
+        assert eventsource.InMemoryEventStore is InMemoryEventStore
 
-        assert PortExpectedVersion is not eventsource.ExpectedVersion
+    def test_top_level_sqlite_event_store_is_the_sqlite_adapter(self) -> None:
+        from eventsource.adapters.sqlite import SQLiteEventStore
 
-    def test_ports_read_direction_is_a_distinct_class(self) -> None:
-        from eventsource.ports import ReadDirection as PortReadDirection
+        assert eventsource.SQLiteEventStore is SQLiteEventStore
 
-        assert PortReadDirection is not eventsource.ReadDirection
+    def test_top_level_postgresql_event_store_is_the_postgresql_adapter(self) -> None:
+        from eventsource.adapters.postgresql import PostgreSQLEventStore
 
-    def test_top_level_sqlite_event_store_is_legacy_class(self) -> None:
-        from eventsource.stores.sqlite import SQLiteEventStore as LegacySQLiteEventStore
+        assert eventsource.PostgreSQLEventStore is PostgreSQLEventStore
 
-        assert eventsource.SQLiteEventStore is LegacySQLiteEventStore
+    def test_top_level_outbox_repository_is_the_port_protocol(self) -> None:
+        from eventsource.ports import OutboxRepository
 
-    def test_top_level_postgresql_event_store_is_legacy_class(self) -> None:
-        from eventsource.stores.postgresql import (
-            PostgreSQLEventStore as LegacyPostgreSQLEventStore,
-        )
+        assert eventsource.OutboxRepository is OutboxRepository
 
-        assert eventsource.PostgreSQLEventStore is LegacyPostgreSQLEventStore
+    def test_top_level_outbox_entry_is_the_port_vo(self) -> None:
+        from eventsource.ports import OutboxEntry
 
-    def test_adapter_sqlite_event_store_is_a_distinct_class(self) -> None:
-        from eventsource.adapters.sqlite import SQLiteEventStore as AdapterSQLiteEventStore
+        assert eventsource.OutboxEntry is OutboxEntry
 
-        assert AdapterSQLiteEventStore is not eventsource.SQLiteEventStore
+    def test_top_level_outbox_stats_is_the_port_vo(self) -> None:
+        from eventsource.ports import OutboxStats
 
-    def test_adapter_postgresql_event_store_is_a_distinct_class(self) -> None:
-        from eventsource.adapters.postgresql import (
-            PostgreSQLEventStore as AdapterPostgreSQLEventStore,
-        )
+        assert eventsource.OutboxStats is OutboxStats
 
-        assert AdapterPostgreSQLEventStore is not eventsource.PostgreSQLEventStore
+    def test_top_level_in_memory_outbox_is_the_memory_adapter(self) -> None:
+        from eventsource.adapters.memory.outbox import InMemoryOutboxRepository
+
+        assert eventsource.InMemoryOutboxRepository is InMemoryOutboxRepository
+
+    def test_top_level_postgresql_outbox_is_the_postgresql_adapter(self) -> None:
+        from eventsource.adapters.postgresql import PostgreSQLOutboxRepository
+
+        assert eventsource.PostgreSQLOutboxRepository is PostgreSQLOutboxRepository
+
+
+class TestLegacyStoreSurfaceIsGone:
+    """Spec section 4.2: the legacy names and their import path are retired."""
+
+    def test_dead_names_are_gone_from_the_public_api(self) -> None:
+        for name in DEAD_NAMES:
+            assert not hasattr(eventsource, name), f"eventsource.{name} should not exist"
+            assert name not in eventsource.__all__
+
+    def test_legacy_stores_package_is_not_importable(self) -> None:
+        with pytest.raises(ModuleNotFoundError):
+            import eventsource.stores  # noqa: F401
+
+    def test_legacy_repositories_package_is_not_importable(self) -> None:
+        with pytest.raises(ModuleNotFoundError):
+            import eventsource.repositories  # noqa: F401
+
+    def test_outbox_repository_protocol_has_no_list_pending_events(self) -> None:
+        assert not hasattr(eventsource.ports.OutboxRepository, "list_pending_events")

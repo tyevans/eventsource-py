@@ -17,10 +17,12 @@ from uuid import uuid4
 
 import pytest
 
+from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
+from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.bus.memory import InMemoryEventBus
+from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
-from eventsource.repositories.checkpoint import InMemoryCheckpointRepository
-from eventsource.stores.in_memory import InMemoryEventStore
+from eventsource.ports.positions import ExpectedVersion, Position
 from eventsource.subscriptions import (
     CheckpointStrategy,
     Subscription,
@@ -80,8 +82,8 @@ class MockTransitionSubscriber:
 
 @pytest.fixture
 def event_store() -> InMemoryEventStore:
-    """Create a fresh InMemoryEventStore."""
-    return InMemoryEventStore(enable_tracing=False)
+    """Create a fresh InMemoryEventStore (a real GlobalEventFeed)."""
+    return InMemoryEventStore()
 
 
 @pytest.fixture
@@ -146,14 +148,20 @@ async def add_events_to_store(
     for i in range(count):
         aggregate_id = uuid4()
         event = TransitionTestEvent(aggregate_id=aggregate_id, data=f"event_{i}")
-        await store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="TransitionAggregate",
-            events=[event],
-            expected_version=0,
+        await store.append(
+            StreamId(aggregate_id=aggregate_id, category="TransitionAggregate"),
+            [event],
+            ExpectedVersion.no_stream(),
         )
         events.append(event)
     return events
+
+
+async def current(store: InMemoryEventStore) -> Position:
+    """The feed's current position, asserted present (the store is non-empty)."""
+    position = await store.current_position()
+    assert position is not None
+    return position
 
 
 # --- TransitionResult Tests ---
@@ -169,14 +177,14 @@ class TestTransitionResult:
             catchup_events_processed=100,
             buffer_events_processed=10,
             buffer_events_skipped=5,
-            final_position=110,
+            final_position=Position(store_id="test", key=(110,)),
             phase_reached=TransitionPhase.LIVE,
         )
         assert result.success is True
         assert result.catchup_events_processed == 100
         assert result.buffer_events_processed == 10
         assert result.buffer_events_skipped == 5
-        assert result.final_position == 110
+        assert result.final_position == Position(store_id="test", key=(110,))
         assert result.phase_reached == TransitionPhase.LIVE
         assert result.error is None
 
@@ -188,7 +196,7 @@ class TestTransitionResult:
             catchup_events_processed=50,
             buffer_events_processed=0,
             buffer_events_skipped=0,
-            final_position=50,
+            final_position=Position(store_id="test", key=(50,)),
             phase_reached=TransitionPhase.FAILED,
             error=error,
         )
@@ -236,7 +244,7 @@ class TestTransitionCoordinatorBasic:
         assert coordinator.checkpoint_repo is checkpoint_repo
         assert coordinator.subscription is subscription
         assert coordinator.phase == TransitionPhase.NOT_STARTED
-        assert coordinator.watermark == 0
+        assert coordinator.watermark is None
         assert coordinator.live_runner is None
         assert coordinator.catchup_runner is None
 
@@ -252,7 +260,7 @@ class TestTransitionCoordinatorBasic:
         assert result.catchup_events_processed == 0
         assert result.buffer_events_processed == 0
         assert result.buffer_events_skipped == 0
-        assert result.final_position == 0
+        assert result.final_position is None
         assert result.phase_reached == TransitionPhase.LIVE
         assert coordinator.phase == TransitionPhase.LIVE
 
@@ -271,7 +279,7 @@ class TestTransitionCoordinatorBasic:
 
         assert result.success is True
         assert result.catchup_events_processed == 10
-        assert result.final_position == 10
+        assert result.final_position == await current(event_store)
         assert result.phase_reached == TransitionPhase.LIVE
         assert len(subscriber.handled_events) == 10
 
@@ -309,14 +317,15 @@ class TestTransitionAlreadyCaughtUp:
         """Test transition skips catch-up when position equals watermark."""
         # Add events and set subscription position to end
         await add_events_to_store(event_store, 10)
-        subscription.last_processed_position = 10
+        watermark = await current(event_store)
+        subscription.last_processed_position = watermark
 
         result = await coordinator.execute()
 
         assert result.success is True
         assert result.catchup_events_processed == 0
         assert result.buffer_events_processed == 0
-        assert result.final_position == 10
+        assert result.final_position == watermark
         assert result.phase_reached == TransitionPhase.LIVE
 
     @pytest.mark.asyncio
@@ -329,13 +338,14 @@ class TestTransitionAlreadyCaughtUp:
         """Test transition skips catch-up when position past watermark."""
         # Add events but set subscription position beyond
         await add_events_to_store(event_store, 5)
-        subscription.last_processed_position = 100  # Way past watermark
+        beyond = Position(store_id="memory", key=(100,))  # Way past watermark
+        subscription.last_processed_position = beyond
 
         result = await coordinator.execute()
 
         assert result.success is True
         assert result.catchup_events_processed == 0
-        assert result.final_position == 100
+        assert result.final_position == beyond
 
 
 # --- Buffer Mode Tests ---
@@ -573,12 +583,13 @@ class TestTransitionPhaseTracking:
         """Test watermark is captured correctly."""
         await add_events_to_store(event_store, 10)
 
-        assert coordinator.watermark == 0  # Not yet captured
+        assert coordinator.watermark is None  # Not yet captured
 
+        expected = await current(event_store)
         result = await coordinator.execute()
 
         assert result.success is True
-        assert coordinator.watermark == 10  # Should be max position at start
+        assert coordinator.watermark == expected  # Feed position at start
 
 
 # --- StartFromResolver Tests ---
@@ -594,7 +605,7 @@ class TestStartFromResolver:
         checkpoint_repo: InMemoryCheckpointRepository,
         subscriber: MockTransitionSubscriber,
     ):
-        """Test resolve('beginning') returns 0."""
+        """Test resolve('beginning') returns None -- read from the feed start."""
         config = SubscriptionConfig(start_from="beginning")
         subscription = Subscription(
             name="BeginningTest",
@@ -605,7 +616,7 @@ class TestStartFromResolver:
         resolver = StartFromResolver(event_store, checkpoint_repo)
         position = await resolver.resolve(subscription)
 
-        assert position == 0
+        assert position is None
 
     @pytest.mark.asyncio
     async def test_resolve_end(
@@ -628,7 +639,7 @@ class TestStartFromResolver:
         resolver = StartFromResolver(event_store, checkpoint_repo)
         position = await resolver.resolve(subscription)
 
-        assert position == 10
+        assert position == await current(event_store)
 
     @pytest.mark.asyncio
     async def test_resolve_checkpoint_with_existing(
@@ -639,9 +650,10 @@ class TestStartFromResolver:
     ):
         """Test resolve('checkpoint') returns existing checkpoint position."""
         # Save a checkpoint
+        checkpointed = Position(store_id="memory", key=(42,))
         await checkpoint_repo.save_position(
             subscription_id="CheckpointTest",
-            position=42,
+            position=checkpointed,
             event_id=uuid4(),
             event_type="TestEvent",
         )
@@ -656,7 +668,7 @@ class TestStartFromResolver:
         resolver = StartFromResolver(event_store, checkpoint_repo)
         position = await resolver.resolve(subscription)
 
-        assert position == 42
+        assert position == checkpointed
 
     @pytest.mark.asyncio
     async def test_resolve_checkpoint_without_existing(
@@ -665,7 +677,7 @@ class TestStartFromResolver:
         checkpoint_repo: InMemoryCheckpointRepository,
         subscriber: MockTransitionSubscriber,
     ):
-        """Test resolve('checkpoint') returns 0 when no checkpoint exists."""
+        """Test resolve('checkpoint') returns None when no checkpoint exists."""
         config = SubscriptionConfig(start_from="checkpoint")
         subscription = Subscription(
             name="NoCheckpointTest",
@@ -676,7 +688,7 @@ class TestStartFromResolver:
         resolver = StartFromResolver(event_store, checkpoint_repo)
         position = await resolver.resolve(subscription)
 
-        assert position == 0
+        assert position is None
 
     @pytest.mark.asyncio
     async def test_resolve_explicit_position(
@@ -685,8 +697,9 @@ class TestStartFromResolver:
         checkpoint_repo: InMemoryCheckpointRepository,
         subscriber: MockTransitionSubscriber,
     ):
-        """Test resolve(int) returns the explicit position."""
-        config = SubscriptionConfig(start_from=100)
+        """Test resolve(Position) returns the explicit position."""
+        explicit = Position(store_id="memory", key=(100,))
+        config = SubscriptionConfig(start_from=explicit)
         subscription = Subscription(
             name="ExplicitTest",
             config=config,
@@ -696,7 +709,7 @@ class TestStartFromResolver:
         resolver = StartFromResolver(event_store, checkpoint_repo)
         position = await resolver.resolve(subscription)
 
-        assert position == 100
+        assert position == explicit
 
     @pytest.mark.asyncio
     async def test_resolve_unknown_start_from(
@@ -880,14 +893,15 @@ class TestTransitionEdgeCases:
     ):
         """Test subscription position is correctly tracked during transition."""
         await add_events_to_store(event_store, 10)
+        watermark = await current(event_store)
 
-        assert subscription.last_processed_position == 0
+        assert subscription.last_processed_position is None
 
         result = await coordinator.execute()
 
         assert result.success is True
-        assert subscription.last_processed_position == 10
-        assert result.final_position == 10
+        assert subscription.last_processed_position == watermark
+        assert result.final_position == watermark
 
     @pytest.mark.asyncio
     async def test_checkpoint_saved_during_transition(
@@ -917,7 +931,7 @@ class TestTransitionEdgeCases:
 
         # Check checkpoint was saved
         position = await checkpoint_repo.get_position("CheckpointSaveTest")
-        assert position == 10
+        assert position == await current(event_store)
 
     @pytest.mark.asyncio
     async def test_continue_on_error_during_catchup(

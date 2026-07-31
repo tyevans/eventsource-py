@@ -31,6 +31,8 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from eventsource.adapters.memory import InMemoryEventStore
+from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.migration.coordinator import MigrationCoordinator
 from eventsource.migration.cutover import CutoverManager
@@ -50,13 +52,14 @@ from eventsource.migration.models import (
 from eventsource.migration.router import TenantStoreRouter
 from eventsource.migration.sync_lag_tracker import SyncLagTracker
 from eventsource.migration.write_pause import WritePausedError, WritePauseManager
-from eventsource.stores.in_memory import InMemoryEventStore
-from eventsource.stores.interface import (
+from eventsource.ports import (
     AppendResult,
-    EventStore,
-    EventStream,
-    ReadOptions,
-    StoredEvent,
+    CategoryReadOptions,
+    EventEnvelope,
+    ExpectedVersion,
+    FeedReadOptions,
+    Position,
+    StreamReadOptions,
 )
 
 # =============================================================================
@@ -82,7 +85,7 @@ class FailureMode(Enum):
     """Types of failures that can be injected."""
 
     NONE = auto()
-    FAIL_APPEND = auto()  # Fail on append_events
+    FAIL_APPEND = auto()  # Fail on append
     FAIL_READ = auto()  # Fail on read operations
     FAIL_ALL = auto()  # Fail all operations
     DELAY_APPEND = auto()  # Delay append operations
@@ -116,27 +119,29 @@ class InjectedFailureError(Exception):
         self.failure_mode = failure_mode
 
 
-class FailureInjectableStore(EventStore):
+class FailureInjectableStore:
     """
-    Wrapper around InMemoryEventStore that can inject failures.
+    `FullEventStore`-shaped wrapper around `InMemoryEventStore` that can
+    inject failures.
 
-    This class wraps an InMemoryEventStore and can be configured to
-    inject various types of failures for chaos testing.
+    Structural conformance only -- delegates all eight `FullEventStore`
+    members to an inner `InMemoryEventStore` and injects failures only on
+    the operations under test.
 
     Example:
         >>> store = FailureInjectableStore()
         >>> store.set_failure(FailureConfig(mode=FailureMode.FAIL_APPEND))
-        >>> await store.append_events(...)  # Raises InjectedFailureError
+        >>> await store.append(stream, events, expected)  # Raises InjectedFailureError
     """
+
+    max_append_batch: int | None = None
 
     def __init__(
         self,
         inner_store: InMemoryEventStore | None = None,
-        *,
-        enable_tracing: bool = False,
     ) -> None:
         """Initialize with optional inner store."""
-        self._inner = inner_store or InMemoryEventStore(enable_tracing=enable_tracing)
+        self._inner = inner_store or InMemoryEventStore()
         self._failure_config = FailureConfig()
         self._is_available = True
         self._available_event = asyncio.Event()
@@ -196,14 +201,14 @@ class FailureInjectableStore(EventStore):
             or config.mode == FailureMode.FAIL_APPEND
             and operation == "append"
             or config.mode == FailureMode.FAIL_READ
-            and operation in ("read", "get_events")
+            and operation == "read"
         ):
             should_fail = True
         elif (
             config.mode == FailureMode.DELAY_APPEND
             and operation == "append"
             or config.mode == FailureMode.DELAY_READ
-            and operation in ("read", "get_events")
+            and operation == "read"
         ):
             delay = config.delay_seconds
         elif config.mode == FailureMode.INTERMITTENT:
@@ -228,85 +233,84 @@ class FailureInjectableStore(EventStore):
             )
 
     # =========================================================================
-    # EventStore Interface Implementation
+    # FullEventStore Port Implementation
     # =========================================================================
 
-    async def append_events(
+    async def append(
         self,
-        aggregate_id: UUID,
-        aggregate_type: str,
+        stream: StreamId,
         events: list[DomainEvent],
-        expected_version: int,
+        expected: ExpectedVersion,
     ) -> AppendResult:
         """Append events with potential failure injection."""
         await self._maybe_fail("append")
-        return await self._inner.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type=aggregate_type,
-            events=events,
-            expected_version=expected_version,
-        )
+        return await self._inner.append(stream, events, expected)
 
-    async def get_events(
+    def read_stream(
         self,
-        aggregate_id: UUID,
-        aggregate_type: str | None = None,
-        from_version: int = 0,
-        from_timestamp: datetime | None = None,
-        to_timestamp: datetime | None = None,
-    ) -> EventStream:
-        """Get events with potential failure injection."""
-        await self._maybe_fail("get_events")
-        return await self._inner.get_events(
-            aggregate_id=aggregate_id,
-            aggregate_type=aggregate_type,
-            from_version=from_version,
-            from_timestamp=from_timestamp,
-            to_timestamp=to_timestamp,
-        )
+        stream: StreamId,
+        options: StreamReadOptions | None = None,
+    ) -> AsyncIterator[EventEnvelope]:
+        """Read a stream with potential failure injection."""
+        return self._do_read_stream(stream, options)
 
-    async def read_all(
+    async def _do_read_stream(
         self,
-        options: ReadOptions | None = None,
-    ) -> AsyncIterator[StoredEvent]:
-        """Read all events with potential failure injection."""
+        stream: StreamId,
+        options: StreamReadOptions | None,
+    ) -> AsyncIterator[EventEnvelope]:
         await self._maybe_fail("read")
-        async for event in self._inner.read_all(options):
-            yield event
+        async for envelope in self._inner.read_stream(stream, options):
+            yield envelope
 
-    async def get_global_position(self) -> int:
-        """Get global position with potential failure injection."""
+    async def get_stream_version(self, stream: StreamId) -> int:
+        """Get stream version with potential failure injection."""
         await self._maybe_fail("read")
-        return await self._inner.get_global_position()
-
-    async def get_event_count(self) -> int:
-        """Get event count with potential failure injection."""
-        await self._maybe_fail("read")
-        return await self._inner.get_event_count()
-
-    async def stream_exists(self, aggregate_id: UUID, aggregate_type: str) -> bool:
-        """Check if stream exists."""
-        await self._maybe_fail("read")
-        return await self._inner.stream_exists(aggregate_id, aggregate_type)
+        return await self._inner.get_stream_version(stream)
 
     async def event_exists(self, event_id: UUID) -> bool:
         """Check if an event exists with potential failure injection."""
         await self._maybe_fail("read")
         return await self._inner.event_exists(event_id)
 
-    async def get_events_by_type(
+    def read_all(
         self,
-        aggregate_type: str,
-        tenant_id: UUID | None = None,
-        from_timestamp: datetime | None = None,
-    ) -> list[DomainEvent]:
-        """Get events by type with potential failure injection."""
+        from_position: Position | None = None,
+        options: FeedReadOptions | None = None,
+    ) -> AsyncIterator[EventEnvelope]:
+        """Read all events with potential failure injection."""
+        return self._do_read_all(from_position, options)
+
+    async def _do_read_all(
+        self,
+        from_position: Position | None,
+        options: FeedReadOptions | None,
+    ) -> AsyncIterator[EventEnvelope]:
         await self._maybe_fail("read")
-        return await self._inner.get_events_by_type(
-            aggregate_type=aggregate_type,
-            tenant_id=tenant_id,
-            from_timestamp=from_timestamp,
-        )
+        async for envelope in self._inner.read_all(from_position, options):
+            yield envelope
+
+    async def current_position(self) -> Position | None:
+        """Get current position with potential failure injection."""
+        await self._maybe_fail("read")
+        return await self._inner.current_position()
+
+    def read_category(
+        self,
+        category: str,
+        options: CategoryReadOptions | None = None,
+    ) -> AsyncIterator[EventEnvelope]:
+        """Read a category with potential failure injection."""
+        return self._do_read_category(category, options)
+
+    async def _do_read_category(
+        self,
+        category: str,
+        options: CategoryReadOptions | None,
+    ) -> AsyncIterator[EventEnvelope]:
+        await self._maybe_fail("read")
+        async for envelope in self._inner.read_category(category, options):
+            yield envelope
 
 
 # =============================================================================
@@ -390,8 +394,8 @@ class InMemoryMigrationRepository:
         self,
         migration_id: UUID,
         events_copied: int,
-        last_source_position: int,
-        last_target_position: int | None = None,
+        last_source_position: Position | None,
+        last_target_position: Position | None = None,
     ) -> None:
         """Update bulk copy progress."""
         migration = await self.get(migration_id)
@@ -576,12 +580,12 @@ class MockLockManager:
         self._acquire_count += 1
 
         if self._should_fail:
-            from eventsource.locks import LockAcquisitionError
+            from eventsource.exceptions import LockAcquisitionError
 
             raise LockAcquisitionError(key, timeout or 0.0, "Mock failure")
 
         if self._fail_after is not None and self._acquire_count > self._fail_after:
-            from eventsource.locks import LockAcquisitionError
+            from eventsource.exceptions import LockAcquisitionError
 
             raise LockAcquisitionError(key, timeout or 0.0, "Mock failure after threshold")
 
@@ -591,7 +595,7 @@ class MockLockManager:
 
         async with self._lock:
             if key in self._held_locks:
-                from eventsource.locks import LockAcquisitionError
+                from eventsource.exceptions import LockAcquisitionError
 
                 raise LockAcquisitionError(key, timeout or 0.0, "Lock already held")
 
@@ -635,13 +639,13 @@ class MockLockManager:
 @pytest.fixture
 def source_store() -> FailureInjectableStore:
     """Create failure-injectable source store."""
-    return FailureInjectableStore(enable_tracing=False)
+    return FailureInjectableStore()
 
 
 @pytest.fixture
 def target_store() -> FailureInjectableStore:
     """Create failure-injectable target store."""
-    return FailureInjectableStore(enable_tracing=False)
+    return FailureInjectableStore()
 
 
 @pytest.fixture
@@ -718,11 +722,10 @@ async def create_test_events(
             sequence=i,
         )
 
-        await actual_store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="ChaosAggregate",
-            events=[event],
-            expected_version=0,
+        await actual_store.append(
+            StreamId(aggregate_id=aggregate_id, category="ChaosAggregate"),
+            [event],
+            ExpectedVersion.no_stream(),
         )
 
     return aggregate_ids
@@ -736,8 +739,8 @@ async def count_tenant_events(
     actual_store = store.inner_store if isinstance(store, FailureInjectableStore) else store
 
     count = 0
-    async for stored_event in actual_store.read_all():
-        if stored_event.event.tenant_id == tenant_id:
+    async for envelope in actual_store.read_all():
+        if envelope.event.tenant_id == tenant_id:
             count += 1
     return count
 
@@ -767,11 +770,10 @@ class TestNetworkPartitionSimulation:
         )
 
         with pytest.raises(InjectedFailureError) as exc_info:
-            await target_store.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="ChaosAggregate",
-                events=[event],
-                expected_version=0,
+            await target_store.append(
+                StreamId(aggregate_id=aggregate_id, category="ChaosAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
             )
 
         assert "Network partition" in str(exc_info.value)
@@ -790,7 +792,7 @@ class TestNetworkPartitionSimulation:
         source_store.simulate_network_partition()
 
         with pytest.raises(InjectedFailureError) as exc_info:
-            await source_store.get_global_position()
+            await source_store.current_position()
 
         assert "Network partition" in str(exc_info.value)
 
@@ -809,14 +811,16 @@ class TestNetworkPartitionSimulation:
 
         # Verify failure during partition
         with pytest.raises(InjectedFailureError):
-            await source_store.get_global_position()
+            await source_store.current_position()
 
         # Heal partition
         source_store.heal_network_partition()
 
         # Operations should work now
-        position = await source_store.get_global_position()
-        assert position == 5
+        count = 0
+        async for _ in source_store.read_all():
+            count += 1
+        assert count == 5
 
     @pytest.mark.asyncio
     async def test_dual_write_handles_target_partition(
@@ -825,8 +829,8 @@ class TestNetworkPartitionSimulation:
     ) -> None:
         """Test dual-write continues to source when target is partitioned."""
         # Use regular InMemoryEventStore for source (no failure injection)
-        source_store = InMemoryEventStore(enable_tracing=False)
-        target_store = FailureInjectableStore(enable_tracing=False)
+        source_store = InMemoryEventStore()
+        target_store = FailureInjectableStore()
 
         interceptor = DualWriteInterceptor(
             source_store=source_store,
@@ -843,20 +847,14 @@ class TestNetworkPartitionSimulation:
             aggregate_id=aggregate_id,
             tenant_id=tenant_id,
         )
+        stream = StreamId(aggregate_id=aggregate_id, category="ChaosAggregate")
 
         # Write should succeed (source is authoritative)
-        result = await interceptor.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="ChaosAggregate",
-            events=[event],
-            expected_version=0,
-        )
-
-        assert result.success
+        await interceptor.append(stream, [event], ExpectedVersion.no_stream())
 
         # Verify event in source
-        source_stream = await source_store.get_events(aggregate_id, "ChaosAggregate")
-        assert len(source_stream.events) == 1
+        source_events = [envelope async for envelope in source_store.read_stream(stream)]
+        assert len(source_events) == 1
 
         # Verify failure was recorded
         stats = interceptor.get_failure_stats()
@@ -878,8 +876,8 @@ class TestProcessCrashDuringDualWrite:
     ) -> None:
         """Test that dual-write ensures no data loss on source during failures."""
         # Use regular store for source, failing store for target
-        source_store = InMemoryEventStore(enable_tracing=False)
-        target_store = FailureInjectableStore(enable_tracing=False)
+        source_store = InMemoryEventStore()
+        target_store = FailureInjectableStore()
 
         interceptor = DualWriteInterceptor(
             source_store=source_store,
@@ -897,10 +895,9 @@ class TestProcessCrashDuringDualWrite:
             )
         )
 
-        aggregate_ids = []
+        events_written = 0
         for i in range(20):
             aggregate_id = uuid4()
-            aggregate_ids.append(aggregate_id)
 
             event = ChaosTestEvent(
                 aggregate_id=aggregate_id,
@@ -908,19 +905,21 @@ class TestProcessCrashDuringDualWrite:
                 sequence=i,
             )
 
-            # All writes should succeed (source is authoritative)
-            result = await interceptor.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="ChaosAggregate",
-                events=[event],
-                expected_version=0,
+            # All writes should succeed (source is authoritative); a
+            # source-store failure would raise and fail the test.
+            await interceptor.append(
+                StreamId(aggregate_id=aggregate_id, category="ChaosAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
             )
-            assert result.success
+            events_written += 1
+
+        assert events_written == 20
 
         # Verify ALL events in source (no data loss)
         source_count = 0
-        async for event in source_store.read_all():
-            if event.event.tenant_id == tenant_id:
+        async for envelope in source_store.read_all():
+            if envelope.event.tenant_id == tenant_id:
                 source_count += 1
         assert source_count == 20
 
@@ -935,7 +934,7 @@ class TestProcessCrashDuringDualWrite:
         tenant_id: UUID,
     ) -> None:
         """Test that source store failure propagates to caller."""
-        source_store = FailureInjectableStore(enable_tracing=False)
+        source_store = FailureInjectableStore()
 
         interceptor = DualWriteInterceptor(
             source_store=source_store,
@@ -960,11 +959,10 @@ class TestProcessCrashDuringDualWrite:
 
         # Source failure should propagate
         with pytest.raises(InjectedFailureError) as exc_info:
-            await interceptor.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="ChaosAggregate",
-                events=[event],
-                expected_version=0,
+            await interceptor.append(
+                StreamId(aggregate_id=aggregate_id, category="ChaosAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
             )
 
         assert "Source store failure" in str(exc_info.value)
@@ -1158,8 +1156,8 @@ class TestTargetStoreFailures:
         tenant_id: UUID,
     ) -> None:
         """Test that source writes succeed even when target completely fails."""
-        source_store = InMemoryEventStore(enable_tracing=False)
-        target_store = FailureInjectableStore(enable_tracing=False)
+        source_store = InMemoryEventStore()
+        target_store = FailureInjectableStore()
 
         interceptor = DualWriteInterceptor(
             source_store=source_store,
@@ -1185,23 +1183,22 @@ class TestTargetStoreFailures:
                 sequence=i,
             )
 
-            result = await interceptor.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="ChaosAggregate",
-                events=[event],
-                expected_version=0,
+            # A source-store failure would raise and fail the test; the
+            # target's FAIL_ALL is absorbed internally by the interceptor.
+            await interceptor.append(
+                StreamId(aggregate_id=aggregate_id, category="ChaosAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
             )
-
-            if result.success:
-                success_count += 1
+            success_count += 1
 
         # All writes should succeed
         assert success_count == 10
 
         # All events should be in source
         source_count = 0
-        async for event in source_store.read_all():
-            if event.event.tenant_id == tenant_id:
+        async for envelope in source_store.read_all():
+            if envelope.event.tenant_id == tenant_id:
                 source_count += 1
         assert source_count == 10
 
@@ -1215,8 +1212,8 @@ class TestTargetStoreFailures:
         tenant_id: UUID,
     ) -> None:
         """Test that target failure rate is tracked for monitoring."""
-        source_store = InMemoryEventStore(enable_tracing=False)
-        target_store = FailureInjectableStore(enable_tracing=False)
+        source_store = InMemoryEventStore()
+        target_store = FailureInjectableStore()
 
         interceptor = DualWriteInterceptor(
             source_store=source_store,
@@ -1241,11 +1238,10 @@ class TestTargetStoreFailures:
                 sequence=i,
             )
 
-            await interceptor.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="ChaosAggregate",
-                events=[event],
-                expected_version=0,
+            await interceptor.append(
+                StreamId(aggregate_id=aggregate_id, category="ChaosAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
             )
 
         stats = interceptor.get_failure_stats()
@@ -1260,8 +1256,8 @@ class TestTargetStoreFailures:
         tenant_id: UUID,
     ) -> None:
         """Test that writes to target resume after recovery."""
-        source_store = InMemoryEventStore(enable_tracing=False)
-        target_store = FailureInjectableStore(enable_tracing=False)
+        source_store = InMemoryEventStore()
+        target_store = FailureInjectableStore()
 
         interceptor = DualWriteInterceptor(
             source_store=source_store,
@@ -1286,11 +1282,10 @@ class TestTargetStoreFailures:
                 tenant_id=tenant_id,
                 sequence=i,
             )
-            await interceptor.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="ChaosAggregate",
-                events=[event],
-                expected_version=0,
+            await interceptor.append(
+                StreamId(aggregate_id=aggregate_id, category="ChaosAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
             )
 
         # Target should have no events
@@ -1308,11 +1303,10 @@ class TestTargetStoreFailures:
                 tenant_id=tenant_id,
                 sequence=i,
             )
-            await interceptor.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="ChaosAggregate",
-                events=[event],
-                expected_version=0,
+            await interceptor.append(
+                StreamId(aggregate_id=aggregate_id, category="ChaosAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
             )
 
         # Target should now have the newer events
@@ -1409,8 +1403,8 @@ class TestTimeoutScenarios:
         tenant_id: UUID,
     ) -> None:
         """Test that slow target causes sync lag to accumulate."""
-        source_store = InMemoryEventStore(enable_tracing=False)
-        target_store = FailureInjectableStore(enable_tracing=False)
+        source_store = InMemoryEventStore()
+        target_store = FailureInjectableStore()
 
         # Target with delays
         target_store.set_failure(
@@ -1435,17 +1429,16 @@ class TestTimeoutScenarios:
                 tenant_id=tenant_id,
                 sequence=i,
             )
-            await interceptor.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="ChaosAggregate",
-                events=[event],
-                expected_version=0,
+            await interceptor.append(
+                StreamId(aggregate_id=aggregate_id, category="ChaosAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
             )
 
         # Both stores should have all events (dual-write is synchronous)
         source_count = 0
-        async for event in source_store.read_all():
-            if event.event.tenant_id == tenant_id:
+        async for envelope in source_store.read_all():
+            if envelope.event.tenant_id == tenant_id:
                 source_count += 1
 
         target_count = await count_tenant_events(target_store, tenant_id)
@@ -1580,8 +1573,8 @@ class TestComprehensiveFailureScenarios:
         tenant_id: UUID,
     ) -> None:
         """Test handling of multiple failure types during dual-write."""
-        source_store = InMemoryEventStore(enable_tracing=False)
-        target_store = FailureInjectableStore(enable_tracing=False)
+        source_store = InMemoryEventStore()
+        target_store = FailureInjectableStore()
 
         interceptor = DualWriteInterceptor(
             source_store=source_store,
@@ -1596,14 +1589,12 @@ class TestComprehensiveFailureScenarios:
         for i in range(5):
             aggregate_id = uuid4()
             event = ChaosTestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id, sequence=i)
-            result = await interceptor.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="ChaosAggregate",
-                events=[event],
-                expected_version=0,
+            await interceptor.append(
+                StreamId(aggregate_id=aggregate_id, category="ChaosAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
             )
-            if result.success:
-                events_written += 1
+            events_written += 1
 
         assert events_written == 5
 
@@ -1613,14 +1604,12 @@ class TestComprehensiveFailureScenarios:
         for i in range(5, 10):
             aggregate_id = uuid4()
             event = ChaosTestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id, sequence=i)
-            result = await interceptor.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="ChaosAggregate",
-                events=[event],
-                expected_version=0,
+            await interceptor.append(
+                StreamId(aggregate_id=aggregate_id, category="ChaosAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
             )
-            if result.success:
-                events_written += 1
+            events_written += 1
 
         assert events_written == 10  # Source writes succeed
 
@@ -1630,21 +1619,19 @@ class TestComprehensiveFailureScenarios:
         for i in range(10, 15):
             aggregate_id = uuid4()
             event = ChaosTestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id, sequence=i)
-            result = await interceptor.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="ChaosAggregate",
-                events=[event],
-                expected_version=0,
+            await interceptor.append(
+                StreamId(aggregate_id=aggregate_id, category="ChaosAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
             )
-            if result.success:
-                events_written += 1
+            events_written += 1
 
         assert events_written == 15
 
         # Verify source has all events
         source_count = 0
-        async for event in source_store.read_all():
-            if event.event.tenant_id == tenant_id:
+        async for envelope in source_store.read_all():
+            if envelope.event.tenant_id == tenant_id:
                 source_count += 1
         assert source_count == 15
 
@@ -1712,14 +1699,13 @@ class TestFailureInjectionInfrastructure:
         aggregate_id = uuid4()
         event = ChaosTestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)
 
-        result = await target_store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="ChaosAggregate",
-            events=[event],
-            expected_version=0,
+        result = await target_store.append(
+            StreamId(aggregate_id=aggregate_id, category="ChaosAggregate"),
+            [event],
+            ExpectedVersion.no_stream(),
         )
 
-        assert result.success
+        assert result.new_version == 1
 
     @pytest.mark.asyncio
     async def test_failure_config_fail_after_n_works(
@@ -1740,14 +1726,12 @@ class TestFailureInjectionInfrastructure:
             aggregate_id = uuid4()
             event = ChaosTestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id, sequence=i)
             try:
-                result = await target_store.append_events(
-                    aggregate_id=aggregate_id,
-                    aggregate_type="ChaosAggregate",
-                    events=[event],
-                    expected_version=0,
+                await target_store.append(
+                    StreamId(aggregate_id=aggregate_id, category="ChaosAggregate"),
+                    [event],
+                    ExpectedVersion.no_stream(),
                 )
-                if result.success:
-                    success_count += 1
+                success_count += 1
             except InjectedFailureError:
                 pass
 
@@ -1766,28 +1750,19 @@ class TestFailureInjectionInfrastructure:
 
         aggregate_id = uuid4()
         event = ChaosTestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)
+        stream = StreamId(aggregate_id=aggregate_id, category="ChaosAggregate")
 
         # Should fail
         with pytest.raises(InjectedFailureError):
-            await target_store.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="ChaosAggregate",
-                events=[event],
-                expected_version=0,
-            )
+            await target_store.append(stream, [event], ExpectedVersion.no_stream())
 
         # Clear failure
         target_store.clear_failure()
 
         # Should succeed now
-        result = await target_store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="ChaosAggregate",
-            events=[event],
-            expected_version=0,
-        )
+        result = await target_store.append(stream, [event], ExpectedVersion.no_stream())
 
-        assert result.success
+        assert result.new_version == 1
 
     @pytest.mark.asyncio
     async def test_operation_count_tracking(
@@ -1802,11 +1777,10 @@ class TestFailureInjectionInfrastructure:
         for i in range(5):
             aggregate_id = uuid4()
             event = ChaosTestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id, sequence=i)
-            await target_store.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="ChaosAggregate",
-                events=[event],
-                expected_version=0,
+            await target_store.append(
+                StreamId(aggregate_id=aggregate_id, category="ChaosAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
             )
 
         assert config.operation_count == 5

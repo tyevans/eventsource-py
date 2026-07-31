@@ -124,7 +124,7 @@ Check your install before you begin:
 
 ```bash
 python -c "import eventsource; print(eventsource.__version__)"
-python -c "from eventsource.readmodels import ReadModelProjection, generate_full_schema; print('ok')"
+python -c "from eventsource import ReadModelProjection; from eventsource.adapters.sql.readmodel_schema import generate_full_schema; print('ok')"
 ```
 
 If both print, you are ready.
@@ -137,10 +137,10 @@ is clear.
 
 ### The event store answers one question well
 
-An event store is an append-only log. Look at what `EventStore` actually offers and the
-bias is obvious -- its primary read is `get_events(aggregate_id, ...)`, which returns the
-ordered stream for *one* aggregate, plus `read_stream()` and `read_all()` for walking the
-log itself.
+An event store is an append-only log. Look at what an event store actually offers and the
+bias is obvious -- its primary read is `read_stream(stream, ...)`, which returns the
+ordered stream for *one* aggregate, plus `read_all()` for walking the whole log and
+`read_category()` for walking every stream of one type.
 
 That is exactly what an aggregate needs. To decide whether an order may ship, you load
 that order's events, fold them into current state, and check an invariant. One stream,
@@ -167,7 +167,7 @@ So you keep two models of the same facts:
 | Source of truth | yes | no -- derived |
 | Optimized for | correct decisions, one aggregate at a time | fast reads, across many aggregates |
 | Rebuildable | no, it *is* the data | yes, from the events |
-| Written by | aggregates, via `append_events()` | projections |
+| Written by | aggregates, via `append()` | projections |
 
 A **projection** is the thing in the middle: it consumes `DomainEvent` instances and
 writes rows. A **read model** is what it writes -- an ordinary table you can `SELECT`
@@ -266,8 +266,7 @@ are filled in for you.
 Create `order_projection.py`:
 
 ```python
-from eventsource import handles
-from eventsource.projections import DeclarativeProjection
+from eventsource import DeclarativeProjection, handles
 
 from order_events import OrderCreated, OrderShipped
 
@@ -724,8 +723,7 @@ Now the projection itself:
 ```python
 from sqlalchemy import text
 
-from eventsource import handles
-from eventsource.projections import DatabaseProjection
+from eventsource import DatabaseProjection, handles
 
 from order_events import OrderCreated, OrderShipped
 
@@ -966,8 +964,8 @@ events = [
 ]
 ```
 
-In production you would not hand-build these -- they come out of the `EventStore` as
-`StoredEvent` wrappers carrying `stream_position` and `global_position` alongside the
+In production you would not hand-build these -- they come out of the event store as
+`EventEnvelope` wrappers carrying `stream_version` and `position` alongside the
 event, and the subscription machinery in Step 4 feeds them to the projection in global
 order. Constructing them directly keeps the next few steps runnable in a single file, and
 the handler code is identical either way: a handler only ever sees the `DomainEvent`.
@@ -1012,7 +1010,7 @@ support tickets.
 ```python
 from sqlalchemy import text
 
-from eventsource.projections import DatabaseProjection, handles
+from eventsource import DatabaseProjection, handles
 
 
 class OrderSummaryProjection(DatabaseProjection):
@@ -1052,8 +1050,8 @@ class OrderSummaryProjection(DatabaseProjection):
 
 Four things are worth pausing on.
 
-**`handles` comes from `eventsource.projections`** (re-exported from
-`eventsource.handlers`, and also available from the top-level `eventsource` package). It
+**`handles` comes from `eventsource.handlers`** (re-exported from the top-level
+`eventsource` package, and also from `eventsource.application.projections`). It
 is the same decorator `DeclarativeAggregate` uses.
 
 **The handler signature is `(self, conn, event)`.** `DatabaseProjection` inspects each
@@ -1396,8 +1394,10 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from eventsource.bus.memory import InMemoryEventBus
-from eventsource.repositories.checkpoint import InMemoryCheckpointRepository
-from eventsource.stores.in_memory import InMemoryEventStore
+from eventsource import InMemoryCheckpointRepository
+from eventsource.adapters.memory import InMemoryEventStore
+from eventsource.domain import StreamId
+from eventsource.ports import ExpectedVersion
 from eventsource.subscriptions import SubscriptionConfig, SubscriptionManager
 
 
@@ -1412,11 +1412,11 @@ async def main() -> None:
     checkpoints = InMemoryCheckpointRepository()
 
     # A backlog for the projection to catch up on.
-    await store.append_events(
-        aggregate_id=order_id,
-        aggregate_type="Order",
-        events=events,          # the OrderCreated + OrderShipped pair from Step 1
-        expected_version=0,
+    order_stream = StreamId(aggregate_id=order_id, category="Order")
+    await store.append(
+        order_stream,
+        events,          # the OrderCreated + OrderShipped pair from Step 1
+        ExpectedVersion.no_stream(),
     )
 
     projection = OrderSummaryProjection(
@@ -1449,9 +1449,9 @@ runner in the background and returns immediately, which is why the snippet sleep
 | Value | Meaning |
 | --- | --- |
 | `"checkpoint"` (default) | Resume from the stored position for this subscription name. |
-| `"beginning"` | Global position 0 -- a full replay. |
+| `"beginning"` | Start of the feed -- a full replay. |
 | `"end"` | Live only; ignore everything already in the store. |
-| an `int` | Start from that specific global position. |
+| a `Position` | Start from that specific opaque position token. |
 
 The rest of the config is throughput and safety knobs -- `batch_size` (100),
 `max_in_flight` (1000), `processing_timeout` (30s), `continue_on_error` (True), plus
@@ -1471,16 +1471,17 @@ recording progress, and they record different things.**
    you read with `await projection.get_checkpoint()`.
 2. **The subscription's position** -- written by the catch-up and live runners via
    `checkpoint_repo.save_position(subscription_id, position, event_id, event_type)`,
-   keyed by the *subscription name* and storing a global **position** (an integer). This
-   is what `start_from="checkpoint"` reads on the next boot.
+   keyed by the *subscription name* and storing an opaque **`Position`** token (rendered
+   into the `position_token` column). This is what `start_from="checkpoint"` reads on the
+   next boot.
 
 Both live in the same `projection_checkpoints` table, in a row keyed by name -- so if the
 subscription name equals the projection class name, they collide on one row. That is the
 default, because `subscribe()` falls back to `subscriber.__class__.__name__`. The
 collision is not harmless: `update_checkpoint` rewrites the row without a
-`global_position`, so the projection's own write erases the position the subscription
+`position_token`, so the projection's own write erases the position the subscription
 saved, `events_processed` counts both writers, and the next `start_from="checkpoint"`
-boot finds nothing and replays the entire stream.
+boot reads that row as no-position and replays the entire stream.
 
 Pass an explicit `name=` -- as the snippet above does with `"order-summary"` -- and the
 two live in separate rows. (Giving the projection its own `CheckpointRepository` instance
@@ -1556,7 +1557,7 @@ list -- `EventBus.publish` takes a batch, not a single event:
         aggregate_version=3,
         reason="customer request",
     )
-    await store.append_events(order_id, "Order", [cancelled], expected_version=2)
+    await store.append(order_stream, [cancelled], ExpectedVersion.exact(2))
     await bus.publish([cancelled])
     await asyncio.sleep(0.3)
 ```
@@ -1628,21 +1629,18 @@ from eventsource.migrations import get_schema
 ddl = get_schema("checkpoints", backend="sqlite")  # or backend="postgresql"
 ```
 
-Mind the constructor arguments, which differ by backend:
+`SQLCheckpointRepository` (`eventsource.adapters.sql`) is dialect-parameterized -- the
+same class serves both backends -- and always takes a SQLAlchemy `AsyncConnection` or
+`AsyncEngine`, never a raw driver connection:
 
 ```python
-import aiosqlite
-from eventsource.repositories.checkpoint import (
-    PostgreSQLCheckpointRepository,
-    SQLiteCheckpointRepository,
-)
+from eventsource import SQLCheckpointRepository
 
-# SQLite: an aiosqlite connection -- NOT a SQLAlchemy engine or session factory.
-db = await aiosqlite.connect("checkpoints.db")
-checkpoints = SQLiteCheckpointRepository(db)
+# SQLite: a SQLAlchemy AsyncEngine created against sqlite+aiosqlite://...
+checkpoints = SQLCheckpointRepository(sqlite_engine)
 
 # PostgreSQL: a SQLAlchemy AsyncConnection or AsyncEngine.
-checkpoints = PostgreSQLCheckpointRepository(engine)
+checkpoints = SQLCheckpointRepository(engine)
 ```
 
 Nothing else changes. The projection and the manager both take `checkpoint_repo` as a

@@ -3,7 +3,7 @@
 Reference for the error types raised by `eventsource`.
 
 The core hierarchy lives in `eventsource.exceptions` and is rooted at a single
-base class, `EventSourceError`. It contains eleven types:
+base class, `EventSourceError`. It contains thirteen types:
 
 | Exception | Structured attributes |
 | --- | --- |
@@ -19,6 +19,8 @@ base class, `EventSourceError`. It contains eleven types:
 | `EventVersionError` | `expected_version`, `actual_version`, `event_id`, `aggregate_id` |
 | `UnhandledEventError` | `event_type`, `event_id`, `handler_class`, `available_handlers` |
 | `AggregateNotCreatedError` | `aggregate_class`, `suggestion` |
+| `LockAcquisitionError` | `key`, `reason`, `timeout` (ADR 0029: rebased onto `EventSourceError`) |
+| `LockNotHeldError` | `key` (ADR 0029: rebased onto `EventSourceError`) |
 
 Every one of these accepts its attributes as constructor arguments and builds a
 human-readable message from them, so the attributes are always populated when
@@ -35,8 +37,8 @@ Other subsystems — multi-tenancy, snapshots, subscriptions, migration, the
 read-model layer, and the optional bus backends — define their own error types
 in their own modules. Those are catalogued under
 [Related exceptions outside the core hierarchy](#related-exceptions-outside-the-core-hierarchy);
-note in particular that `eventsource.readmodels.exceptions` defines a *second*,
-unrelated `OptimisticLockError`.
+note in particular that `eventsource.ports.readmodels.exceptions` defines a
+*second*, unrelated `OptimisticLockError`.
 
 ## Overview
 
@@ -53,9 +55,12 @@ group.
 `SnapshotError`, alongside the core hierarchy in `eventsource.exceptions`
 despite not deriving from it) — `eventsource.subscriptions`,
 `eventsource.migration`, `eventsource.multitenancy`,
-`eventsource.readmodels.exceptions`, and the optional bus backends each
+`eventsource.ports.readmodels.exceptions`, and the optional bus backends each
 define their own families. These are *not* subclasses of `EventSourceError`;
-catching the core base class will not catch them.
+catching the core base class will not catch them. (`LockAcquisitionError` and
+`LockNotHeldError` moved onto `EventSourceError` under ADR 0029 -- they used
+to be a fourth bare-`Exception` family and are now part of the core
+hierarchy; see the diagram below.)
 
 Three properties of the core hierarchy are worth knowing before you write
 handling code:
@@ -87,9 +92,11 @@ raise it, then catalogue the subsystem families and their import paths.
 
 ## Exception hierarchy
 
-`eventsource.exceptions` defines twelve classes: `EventSourceError` and eleven
-direct subclasses. There are no intermediate base classes inside the module —
-every error is exactly one level below the root.
+`eventsource.exceptions` defines fourteen classes: `EventSourceError` and
+thirteen direct subclasses (including `LockAcquisitionError` and
+`LockNotHeldError`, moved here from a standalone `Exception` base under ADR
+0029). There are no intermediate base classes inside the module — every error
+is exactly one level below the root.
 
 Two classes defined elsewhere also derive from `EventSourceError`:
 `TenantContextNotSetError` and `TenantMismatchError`, both in
@@ -134,7 +141,9 @@ Exception
 │   ├── UnhandledEventError
 │   ├── AggregateNotCreatedError
 │   ├── TenantContextNotSetError               eventsource.multitenancy.exceptions
-│   └── TenantMismatchError                    eventsource.multitenancy.exceptions
+│   ├── TenantMismatchError                    eventsource.multitenancy.exceptions
+│   ├── LockAcquisitionError                   (ADR 0029: rebased here, was a bare Exception)
+│   └── LockNotHeldError                       (ADR 0029: rebased here, was a bare Exception)
 │
 ├── SnapshotError                             eventsource.exceptions
 │   │                                          (not a subclass of EventSourceError)
@@ -142,7 +151,7 @@ Exception
 │   ├── SnapshotSchemaVersionError
 │   └── SnapshotNotFoundError
 │
-├── ReadModelError                            eventsource.readmodels.exceptions
+├── ReadModelError                            eventsource.ports.readmodels.exceptions
 │   ├── OptimisticLockError                    (distinct from the core one)
 │   └── ReadModelNotFoundError
 │
@@ -172,8 +181,6 @@ Exception
 │   └── SubscriptionMigrationError             eventsource.migration.subscription_migrator
 │
 ├── (standalone, direct Exception subclasses)
-│   ├── LockAcquisitionError                  eventsource.locks.postgresql
-│   ├── LockNotHeldError                      eventsource.locks.postgresql
 │   ├── RetryError                            eventsource.subscriptions.retry
 │   ├── CircuitBreakerOpenError               eventsource.subscriptions.retry
 │   │                                          (distinct from the migration one)
@@ -201,8 +208,9 @@ rather than from its position in the tree.
 
 Two names appear twice in the tree. `OptimisticLockError` is defined both in
 `eventsource.exceptions` (aggregate append conflicts) and in
-`eventsource.readmodels.exceptions` (read-model row conflicts), and the two are
-unrelated classes — catching one will not catch the other. `CircuitBreakerOpenError`
+`eventsource.ports.readmodels.exceptions` (read-model row conflicts), and the
+two are unrelated classes — catching one will not catch the other. (This
+collision predates ADR 0029 and is tracked in `BACKLOG.md`.) `CircuitBreakerOpenError`
 is likewise defined twice, in `eventsource.migration.exceptions` (a
 `MigrationError`) and in `eventsource.subscriptions.retry` (a bare `Exception`).
 Import these by module rather than pulling both into one namespace.
@@ -317,26 +325,28 @@ Optimistic lock error for aggregate <aggregate_id>: expected version
 <expected_version>, but current version is <actual_version>
 ```
 
-Note that `eventsource.readmodels.exceptions` defines an unrelated class with
+Note that `eventsource.ports.readmodels.exceptions` defines an unrelated class with
 the same name. See
-[Name collision: eventsource.readmodels.exceptions.OptimisticLockError](#name-collision-eventsourcereadmodelsexceptionsoptimisticlockerror).
+[Name collision: eventsource.ports.readmodels.exceptions.OptimisticLockError](#name-collision-eventsourceportsreadmodelsexceptionsoptimisticlockerror).
 
 ### Attributes: aggregate_id, expected_version, actual_version
 
 | Attribute | Type | Meaning |
 | --- | --- | --- |
 | `aggregate_id` | `UUID` | The aggregate whose stream the append targeted. |
-| `expected_version` | `int` | The version the caller asserted, exactly as passed to `append_events`. |
+| `expected_version` | `int` | The version the caller asserted, derived from the `ExpectedVersion` passed to `append`. |
 | `actual_version` | `int` | The stream's current version at conflict-detection time. |
 
 All three are always populated: the constructor requires them, and every raise
-site in the library (`stores/in_memory.py`, `stores/postgresql.py`,
-`stores/sqlite.py`) passes all three positionally. Branching on them is safe
-without `getattr` guards.
+site in the library (`adapters/memory/store.py`, `adapters/postgresql/store.py`,
+`adapters/sqlite/store.py`) passes all three positionally. Branching on them is
+safe without `getattr` guards.
 
 ```python
+from eventsource.ports.positions import ExpectedVersion
+
 try:
-    await store.append_events(aggregate_id, "Order", events, expected_version=4)
+    await store.append(stream, events, ExpectedVersion.exact(4))
 except OptimisticLockError as exc:
     exc.aggregate_id      # UUID('...')
     exc.expected_version  # 4
@@ -350,23 +360,23 @@ The attributes are assigned before `super().__init__` formats the message, so
 the message is always consistent with them — never parse `str(exc)` to recover
 the numbers.
 
-One subtlety: `expected_version` is the *raw* argument, and `append_events`
-accepts the `ExpectedVersion` sentinels as well as real version numbers
-(`ExpectedVersion.ANY = -1`, `ExpectedVersion.NO_STREAM = 0`,
-`ExpectedVersion.STREAM_EXISTS = -2`, defined in `eventsource.stores.interface`).
-When a sentinel append conflicts, `expected_version` holds the sentinel value,
-so `exc.expected_version == -2` means "the caller required an existing stream",
-not "version negative two". Negative values are always sentinels; `0` is
-ambiguous between `NO_STREAM` and a genuine empty-stream expectation, which
-resolve to the same check anyway. `ExpectedVersion.ANY` disables the check and
-therefore never produces this error.
+One subtlety: `expected_version` is a plain `int` sentinel derived from the
+`ExpectedVersion` dataclass the caller passed to `append` (defined in
+`eventsource.ports.positions`), not the `ExpectedVersion` object itself. Each
+backend module keeps a small internal `_NO_STREAM_SENTINEL` /
+`_STREAM_EXISTS_SENTINEL` mapping to preserve this field's historical int
+shape: `ExpectedVersion.no_stream()` reports as `0`, `ExpectedVersion.stream_exists()`
+reports as `-2`, and `ExpectedVersion.exact(n)` reports as `n`. When a
+`no_stream`/`stream_exists` append conflicts, `expected_version` holds the
+sentinel value, so `exc.expected_version == -2` means "the caller required an
+existing stream", not "version negative two". `ExpectedVersion.any_()` disables
+the check and therefore never produces this error.
 
 `actual_version` is a real version number in every case: the count of events
-already in the stream for that `(aggregate_id, aggregate_type)` pair, `0` for a
-stream that does not exist.
+already in the stream, `0` for a stream that does not exist.
 
 `aggregate_id` is annotated `UUID` but not validated at runtime — it is stored
-verbatim from whatever the caller passed to `append_events`.
+verbatim from the `StreamId` passed to `append`.
 
 One attribute is *not* on the class but is worth knowing about: `__cause__`. On
 the PostgreSQL and SQLite unique-constraint path the error is raised with
@@ -378,22 +388,21 @@ we read it".
 
 ### Raised by
 
-Every raise site in the library is inside an event store's `append_events`.
+Every raise site in the library is inside an event store's `append`.
 Everything else in this list is a caller that lets the store's error propagate
 unchanged — no layer wraps, re-raises, or translates it.
 
-**`EventStore.append_events`** — the version check itself, and the only origin.
+**`EventAppender.append`** — the version check itself, and the only origin.
 All three shipped backends (`InMemoryEventStore`, `PostgreSQLEventStore`,
 `SQLiteEventStore`) implement the same four-branch logic against
-`current_version`, the number of events already stored for the
-`(aggregate_id, aggregate_type)` pair:
+`current_version`, the number of events already stored for the stream:
 
-| `expected_version` | Conflict condition |
+| `expected.kind` | Conflict condition |
 | --- | --- |
-| `ExpectedVersion.ANY` | never — check skipped |
-| `ExpectedVersion.STREAM_EXISTS` | `current_version == 0` |
-| `ExpectedVersion.NO_STREAM` | `current_version != 0` |
-| any other `int` | `current_version != expected_version` |
+| `"any"` | never — check skipped |
+| `"stream_exists"` | `current_version == 0` |
+| `"no_stream"` | `current_version != 0` |
+| `"exact"` | `current_version != expected.version` |
 
 `InMemoryEventStore` performs the check under an `asyncio.Lock`, so the
 pre-check is authoritative there.
@@ -410,9 +419,10 @@ two, as described above.
 
 **`AggregateRepository.save`** — propagates the store's error; it never
 constructs one. The repository derives
-`expected_version = aggregate.version - len(uncommitted_events)` and passes that
-straight to `append_events`, so a conflict here means another writer advanced
-the stream between your `load` and your `save`. Two consequences worth knowing:
+`expected_version = aggregate.version - len(uncommitted_events)`, wraps it in
+`ExpectedVersion.exact(expected_version)`, and passes that straight to
+`append`, so a conflict here means another writer advanced the stream between
+your `load` and your `save`. Two consequences worth knowing:
 
 - A `save` on an aggregate with no uncommitted events returns early and cannot
   raise.
@@ -424,11 +434,11 @@ the stream between your `load` and your `save`. Two consequences worth knowing:
 `AggregateRepository.load` and `load_or_create` never raise this error; they
 only read.
 
-**`SyncEventStoreAdapter.append_events_sync`** — runs the wrapped async store's
-`append_events` on the shared executor and re-raises whatever it produced, so
+**`SyncEventStoreAdapter.append`** — runs the wrapped async store's
+`append` on the shared executor and re-raises whatever it produced, so
 the same conflict surfaces identically to synchronous callers.
 
-**`DualWriteEventStore.append_events`** — writes to the source store first and
+**`DualWriteEventStore.append`** — writes to the source store first and
 lets its failures propagate, so a conflict on the *source* store reaches the
 caller unchanged. The target write is best-effort and wrapped in
 `except Exception`: a conflict against the migration target is logged and
@@ -436,7 +446,7 @@ recorded as a sync failure, never raised.
 
 Note that the read-model backends (`readmodels/postgresql.py`,
 `readmodels/sqlite.py`, `readmodels/in_memory.py`) also raise an
-`OptimisticLockError` — but the one from `eventsource.readmodels.exceptions`,
+`OptimisticLockError` — but the one from `eventsource.ports.readmodels.exceptions`,
 which is a different class. See
 [Name collision](#name-collision-eventsourcereadmodelsexceptionsoptimisticlockerror).
 
@@ -537,9 +547,9 @@ Note the differences from the hand-written loop: you must pass
 `retryable_exceptions` explicitly (the default `TRANSIENT_EXCEPTIONS` does not
 include `OptimisticLockError`), and exhausting the retries raises `RetryError`
 wrapping the last failure rather than the `OptimisticLockError` itself. The
-retry policies in `eventsource.projections.retry` are for projection delivery
-and do not apply to the command side at all.
+retry policies in `eventsource.application.projections.retry` are for
+projection delivery and do not apply to the command side at all.
 
 If you deliberately do not want the version check — bulk import, replay into a
-fresh store — pass `ExpectedVersion.ANY` to `append_events` rather than catching
+fresh store — pass `ExpectedVersion.any_()` to `append` rather than catching
 and ignoring the error.

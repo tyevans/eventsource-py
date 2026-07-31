@@ -44,7 +44,7 @@ method below is described as it behaves in the current implementation.
 ## Overview
 
 Live migration moves one tenant at a time. A migration is created against a
-`tenant_id` (a `UUID`) and a target `EventStore`, and the coordinator refuses to
+`tenant_id` (a `UUID`) and a target `FullEventStore`, and the coordinator refuses to
 create a second migration for a tenant that already has an active one
 (`MigrationAlreadyExistsError`). The unit of work is therefore
 "this tenant, from its current store to that store" -- not a whole-database
@@ -52,7 +52,7 @@ copy.
 
 Three objects have to be in place before anything can run:
 
-- A `TenantStoreRouter`, which is itself an `EventStore`. The application uses
+- A `TenantStoreRouter`, which is itself a `FullEventStore`. The application uses
   the router as its store, and the router decides per operation whether to hit
   the source store, the target store, or both, based on the tenant's
   `TenantMigrationState`.
@@ -100,9 +100,9 @@ shared PostgreSQL event store to a dedicated one. It is designed so that:
 - writes are only blocked during the cutover pause itself, bounded by
   `MigrationConfig.cutover_timeout_ms` (default 500 ms, minimum 100), and
   cutover only proceeds when sync lag is within `cutover_max_lag_events`
-  (default 100) -- otherwise `CutoverManager` raises rather than switching;
+  (default 0 -- strict) -- otherwise `CutoverManager` raises rather than switching;
 - application code is unchanged, because routing is hidden behind
-  `TenantStoreRouter`, which is itself an `EventStore`;
+  `TenantStoreRouter`, which is itself a `FullEventStore`;
 - subscription checkpoints are translated to target-store positions by
   `SubscriptionMigrator` via `PositionMapper`, so consumers resume from the
   equivalent position rather than replaying from zero.

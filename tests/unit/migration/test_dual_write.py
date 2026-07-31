@@ -7,7 +7,7 @@ Tests cover:
 - Source failure propagation
 - Target failure handling (logged but operation succeeds)
 - Failure tracking and statistics
-- EventStore protocol implementation (read operations)
+- FullEventStore port (structural) implementation (read operations)
 - Tracing integration
 """
 
@@ -18,6 +18,7 @@ from uuid import uuid4
 
 import pytest
 
+from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.exceptions import OptimisticLockError
 from eventsource.migration.dual_write import (
@@ -25,10 +26,7 @@ from eventsource.migration.dual_write import (
     FailedWrite,
     FailureStats,
 )
-from eventsource.stores.interface import (
-    AppendResult,
-    EventStream,
-)
+from eventsource.ports import AppendResult, ExpectedVersion, FullEventStore, Position
 
 # =============================================================================
 # Test Events
@@ -43,55 +41,64 @@ class TestEvent(DomainEvent):
     data: str = "test"
 
 
+def sid(aggregate_id=None, category: str = "TestAggregate") -> StreamId:
+    """Build a StreamId for tests."""
+    return StreamId(aggregate_id=aggregate_id or uuid4(), category=category)
+
+
 # =============================================================================
 # Test Fixtures
 # =============================================================================
 
 
-def create_mock_store(global_position: int = 100) -> MagicMock:
-    """Create a mock event store with proper async support."""
+def create_mock_store(store_id: str = "store", position_key: tuple = (100,)) -> MagicMock:
+    """Create a mock FullEventStore with proper async support."""
     store = MagicMock()
-    store.append_events = AsyncMock(
-        return_value=AppendResult.successful(new_version=1, global_position=global_position)
-    )
-    store.get_events = AsyncMock(
-        return_value=EventStream(
-            aggregate_id=uuid4(),
-            aggregate_type="TestAggregate",
-            events=[],
-            version=0,
+    store.max_append_batch = None
+    store.append = AsyncMock(
+        side_effect=lambda stream, events, expected: AppendResult(
+            stream=stream,
+            new_version=len(events),
+            position=Position(store_id=store_id, key=(1,)),
         )
     )
-    store.get_events_by_type = AsyncMock(return_value=[])
     store.event_exists = AsyncMock(return_value=False)
     store.get_stream_version = AsyncMock(return_value=0)
-    store.get_global_position = AsyncMock(return_value=global_position)
+    store.current_position = AsyncMock(return_value=Position(store_id=store_id, key=position_key))
 
-    # For async generators
-    async def mock_read_stream(*args, **kwargs):
-        return
-        yield
+    # For async generators, we need to return the generator itself, not a coroutine
+    def mock_read_stream(*args, **kwargs):
+        return async_generator_mock([])
 
-    async def mock_read_all(*args, **kwargs):
-        return
-        yield
+    def mock_read_all(*args, **kwargs):
+        return async_generator_mock([])
+
+    def mock_read_category(*args, **kwargs):
+        return async_generator_mock([])
 
     store.read_stream = mock_read_stream
     store.read_all = mock_read_all
+    store.read_category = mock_read_category
 
     return store
+
+
+async def async_generator_mock(items: list):
+    """Helper to create async generators for mocking."""
+    for item in items:
+        yield item
 
 
 @pytest.fixture
 def source_store() -> MagicMock:
     """Create a mock source event store."""
-    return create_mock_store(global_position=100)
+    return create_mock_store(store_id="source", position_key=(100,))
 
 
 @pytest.fixture
 def target_store() -> MagicMock:
     """Create a mock target event store."""
-    return create_mock_store(global_position=50)
+    return create_mock_store(store_id="target", position_key=(50,))
 
 
 @pytest.fixture
@@ -128,6 +135,7 @@ class TestFailedWrite:
         aggregate_id = uuid4()
         event_ids = [uuid4(), uuid4()]
         timestamp = datetime.now(UTC)
+        position = Position(store_id="source", key=(100,))
 
         failed_write = FailedWrite(
             timestamp=timestamp,
@@ -135,7 +143,7 @@ class TestFailedWrite:
             aggregate_type="Order",
             event_ids=event_ids,
             error_message="Connection refused",
-            source_position=100,
+            source_position=position,
         )
 
         assert failed_write.timestamp == timestamp
@@ -143,7 +151,20 @@ class TestFailedWrite:
         assert failed_write.aggregate_type == "Order"
         assert failed_write.event_ids == event_ids
         assert failed_write.error_message == "Connection refused"
-        assert failed_write.source_position == 100
+        assert failed_write.source_position == position
+
+    def test_failed_write_with_no_position(self) -> None:
+        """Test creating a FailedWrite for a feedless source store."""
+        failed_write = FailedWrite(
+            timestamp=datetime.now(UTC),
+            aggregate_id=uuid4(),
+            aggregate_type="Order",
+            event_ids=[uuid4()],
+            error_message="Connection refused",
+            source_position=None,
+        )
+
+        assert failed_write.source_position is None
 
 
 # =============================================================================
@@ -265,15 +286,14 @@ class TestDualWriteInterceptorInit:
 
 
 # =============================================================================
-# Test Append Events - Success Cases
+# Test Append - Success Cases
 # =============================================================================
 
 
-class TestAppendEventsSuccess:
-    """Tests for successful append_events operations."""
+class TestAppendSuccess:
+    """Tests for successful append operations."""
 
-    @pytest.mark.asyncio
-    async def test_append_events_writes_to_both_stores(
+    async def test_append_writes_to_both_stores(
         self,
         interceptor: DualWriteInterceptor,
         source_store: MagicMock,
@@ -282,55 +302,59 @@ class TestAppendEventsSuccess:
         """Test that events are written to both stores."""
         aggregate_id = uuid4()
         event = TestEvent(aggregate_id=aggregate_id)
+        stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
 
-        result = await interceptor.append_events(aggregate_id, "TestAggregate", [event], 0)
+        result = await interceptor.append(stream, [event], ExpectedVersion.no_stream())
 
-        assert result.success is True
-        source_store.append_events.assert_called_once_with(
-            aggregate_id, "TestAggregate", [event], 0
-        )
-        target_store.append_events.assert_called_once_with(
-            aggregate_id, "TestAggregate", [event], 0
-        )
+        assert result.stream == stream
+        source_store.append.assert_called_once_with(stream, [event], ExpectedVersion.no_stream())
+        # The mirror does not forward the caller's expectation: it appends
+        # at the exact pre-append source version, so it only ever extends
+        # a converged target stream.
+        target_store.append.assert_called_once_with(stream, [event], ExpectedVersion.exact(0))
 
-    @pytest.mark.asyncio
-    async def test_append_events_returns_source_result(
+    async def test_append_returns_source_result(
         self,
         interceptor: DualWriteInterceptor,
         source_store: MagicMock,
     ) -> None:
-        """Test that source result is returned."""
+        """Test that source result is returned, identity-checked (no arithmetic)."""
         aggregate_id = uuid4()
         event = TestEvent(aggregate_id=aggregate_id)
+        stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
 
-        expected_result = AppendResult.successful(new_version=5, global_position=200)
-        source_store.append_events.return_value = expected_result
+        expected_result = AppendResult(
+            stream=stream,
+            new_version=5,
+            position=Position(store_id="source", key=(200,)),
+        )
+        source_store.append.side_effect = None
+        source_store.append.return_value = expected_result
 
-        result = await interceptor.append_events(aggregate_id, "TestAggregate", [event], 4)
+        result = await interceptor.append(stream, [event], ExpectedVersion.exact(4))
 
-        assert result.success is True
+        assert result is expected_result
         assert result.new_version == 5
-        assert result.global_position == 200
+        assert result.position == Position(store_id="source", key=(200,))
 
-    @pytest.mark.asyncio
-    async def test_append_events_empty_list_raises(
+    async def test_append_empty_list_raises(
         self,
         interceptor: DualWriteInterceptor,
     ) -> None:
         """Test that empty event list raises ValueError."""
         with pytest.raises(ValueError, match="Cannot append empty event list"):
-            await interceptor.append_events(uuid4(), "TestAggregate", [], 0)
+            await interceptor.append(sid(), [], ExpectedVersion.any_())
 
-    @pytest.mark.asyncio
-    async def test_append_events_no_failures_tracked(
+    async def test_append_no_failures_tracked(
         self,
         interceptor: DualWriteInterceptor,
     ) -> None:
         """Test that successful writes don't track failures."""
         aggregate_id = uuid4()
         event = TestEvent(aggregate_id=aggregate_id)
+        stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
 
-        await interceptor.append_events(aggregate_id, "TestAggregate", [event], 0)
+        await interceptor.append(stream, [event], ExpectedVersion.no_stream())
 
         assert len(interceptor.get_failed_writes()) == 0
         stats = interceptor.get_failure_stats()
@@ -338,61 +362,41 @@ class TestAppendEventsSuccess:
 
 
 # =============================================================================
-# Test Append Events - Source Failure
+# Test Append - Source Failure
 # =============================================================================
 
 
-class TestAppendEventsSourceFailure:
+class TestAppendSourceFailure:
     """Tests for source failure scenarios."""
 
-    @pytest.mark.asyncio
     async def test_source_failure_propagates(
         self,
         interceptor: DualWriteInterceptor,
         source_store: MagicMock,
         target_store: MagicMock,
     ) -> None:
-        """Test that source failures propagate to caller."""
+        """Test that source failures (a version conflict) propagate to the caller."""
         aggregate_id = uuid4()
         event = TestEvent(aggregate_id=aggregate_id)
+        stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
 
-        source_store.append_events.side_effect = OptimisticLockError(aggregate_id, 0, 5)
+        source_store.append.side_effect = OptimisticLockError(aggregate_id, 0, 5)
 
         with pytest.raises(OptimisticLockError):
-            await interceptor.append_events(aggregate_id, "TestAggregate", [event], 0)
+            await interceptor.append(stream, [event], ExpectedVersion.no_stream())
 
         # Target should not be called if source fails
-        target_store.append_events.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_source_conflict_returns_immediately(
-        self,
-        interceptor: DualWriteInterceptor,
-        source_store: MagicMock,
-        target_store: MagicMock,
-    ) -> None:
-        """Test that source conflict result returns without target write."""
-        aggregate_id = uuid4()
-        event = TestEvent(aggregate_id=aggregate_id)
-
-        source_store.append_events.return_value = AppendResult.conflicted(5)
-
-        result = await interceptor.append_events(aggregate_id, "TestAggregate", [event], 0)
-
-        assert result.success is False
-        assert result.conflict is True
-        target_store.append_events.assert_not_called()
+        target_store.append.assert_not_called()
 
 
 # =============================================================================
-# Test Append Events - Target Failure
+# Test Append - Target Failure
 # =============================================================================
 
 
-class TestAppendEventsTargetFailure:
+class TestAppendTargetFailure:
     """Tests for target failure scenarios."""
 
-    @pytest.mark.asyncio
     async def test_target_failure_operation_succeeds(
         self,
         interceptor: DualWriteInterceptor,
@@ -402,15 +406,23 @@ class TestAppendEventsTargetFailure:
         """Test that target failures don't fail the operation."""
         aggregate_id = uuid4()
         event = TestEvent(aggregate_id=aggregate_id)
+        stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
 
-        target_store.append_events.side_effect = Exception("Connection refused")
+        expected_result = AppendResult(
+            stream=stream,
+            new_version=1,
+            position=Position(store_id="source", key=(1,)),
+        )
+        source_store.append.side_effect = None
+        source_store.append.return_value = expected_result
+        target_store.append.side_effect = Exception("Connection refused")
 
-        result = await interceptor.append_events(aggregate_id, "TestAggregate", [event], 0)
+        result = await interceptor.append(stream, [event], ExpectedVersion.no_stream())
 
-        # Operation should succeed (source wrote successfully)
-        assert result.success is True
+        # Operation should succeed (source wrote successfully) -- the source
+        # result is returned unchanged despite the target failure.
+        assert result is expected_result
 
-    @pytest.mark.asyncio
     async def test_target_failure_tracked(
         self,
         interceptor: DualWriteInterceptor,
@@ -420,10 +432,11 @@ class TestAppendEventsTargetFailure:
         """Test that target failures are tracked."""
         aggregate_id = uuid4()
         event = TestEvent(aggregate_id=aggregate_id)
+        stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
 
-        target_store.append_events.side_effect = Exception("Connection refused")
+        target_store.append.side_effect = Exception("Connection refused")
 
-        await interceptor.append_events(aggregate_id, "TestAggregate", [event], 0)
+        await interceptor.append(stream, [event], ExpectedVersion.no_stream())
 
         failed_writes = interceptor.get_failed_writes()
         assert len(failed_writes) == 1
@@ -432,7 +445,6 @@ class TestAppendEventsTargetFailure:
         assert event.event_id in failed_writes[0].event_ids
         assert "Connection refused" in failed_writes[0].error_message
 
-    @pytest.mark.asyncio
     async def test_target_failure_logs_warning(
         self,
         interceptor: DualWriteInterceptor,
@@ -441,11 +453,12 @@ class TestAppendEventsTargetFailure:
         """Test that target failures are logged as warnings."""
         aggregate_id = uuid4()
         event = TestEvent(aggregate_id=aggregate_id)
+        stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
 
-        target_store.append_events.side_effect = Exception("Target unavailable")
+        target_store.append.side_effect = Exception("Target unavailable")
 
         with patch("eventsource.migration.dual_write.logger") as mock_logger:
-            await interceptor.append_events(aggregate_id, "TestAggregate", [event], 0)
+            await interceptor.append(stream, [event], ExpectedVersion.no_stream())
 
             # Check warning was logged
             mock_logger.warning.assert_called_once()
@@ -453,20 +466,20 @@ class TestAppendEventsTargetFailure:
             assert "Target write failed" in warning_msg
             assert str(aggregate_id) in warning_msg
 
-    @pytest.mark.asyncio
     async def test_multiple_target_failures_tracked(
         self,
         interceptor: DualWriteInterceptor,
         target_store: MagicMock,
     ) -> None:
         """Test that multiple target failures are tracked."""
-        target_store.append_events.side_effect = Exception("Connection refused")
+        target_store.append.side_effect = Exception("Connection refused")
 
         # Perform multiple writes
         for _ in range(3):
             aggregate_id = uuid4()
             event = TestEvent(aggregate_id=aggregate_id)
-            await interceptor.append_events(aggregate_id, "TestAggregate", [event], 0)
+            stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
+            await interceptor.append(stream, [event], ExpectedVersion.no_stream())
 
         failed_writes = interceptor.get_failed_writes()
         assert len(failed_writes) == 3
@@ -484,39 +497,40 @@ class TestAppendEventsTargetFailure:
 class TestFailureTracking:
     """Tests for failure tracking functionality."""
 
-    @pytest.mark.asyncio
     async def test_failure_stats_aggregation(
         self,
         interceptor: DualWriteInterceptor,
         target_store: MagicMock,
     ) -> None:
         """Test that failure statistics are correctly aggregated."""
-        target_store.append_events.side_effect = Exception("Error")
+        target_store.append.side_effect = Exception("Error")
 
         aggregate_id = uuid4()
+        stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
 
         # Write 3 events to the same aggregate
         for i in range(3):
             event = TestEvent(aggregate_id=aggregate_id)
-            await interceptor.append_events(aggregate_id, "TestAggregate", [event], i)
+            expected = ExpectedVersion.no_stream() if i == 0 else ExpectedVersion.exact(i)
+            await interceptor.append(stream, [event], expected)
 
         stats = interceptor.get_failure_stats()
         assert stats.total_failures == 3
         assert stats.total_events_failed == 3
         assert stats.unique_aggregates_affected == 1  # Same aggregate
 
-    @pytest.mark.asyncio
     async def test_failure_timestamps_tracked(
         self,
         interceptor: DualWriteInterceptor,
         target_store: MagicMock,
     ) -> None:
         """Test that first and last failure timestamps are tracked."""
-        target_store.append_events.side_effect = Exception("Error")
+        target_store.append.side_effect = Exception("Error")
 
         aggregate_id = uuid4()
         event = TestEvent(aggregate_id=aggregate_id)
-        await interceptor.append_events(aggregate_id, "TestAggregate", [event], 0)
+        stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
+        await interceptor.append(stream, [event], ExpectedVersion.no_stream())
 
         stats = interceptor.get_failure_stats()
         assert stats.first_failure_at is not None
@@ -545,7 +559,7 @@ class TestFailureTracking:
                 aggregate_type="Test",
                 event_ids=[uuid4()],
                 error_message="Error",
-                source_position=1,
+                source_position=Position(store_id="source", key=(1,)),
             )
         )
         interceptor._affected_aggregates.add(uuid4())
@@ -556,7 +570,6 @@ class TestFailureTracking:
         assert len(interceptor.get_failed_writes()) == 0
         assert len(interceptor._affected_aggregates) == 0
 
-    @pytest.mark.asyncio
     async def test_failure_history_trimming(
         self,
         source_store: MagicMock,
@@ -573,13 +586,14 @@ class TestFailureTracking:
             max_failure_history=max_history,
         )
 
-        target_store.append_events.side_effect = Exception("Error")
+        target_store.append.side_effect = Exception("Error")
 
         # Write more than max_history events
         for _i in range(max_history + 3):
             aggregate_id = uuid4()
             event = TestEvent(aggregate_id=aggregate_id)
-            await interceptor.append_events(aggregate_id, "TestAggregate", [event], 0)
+            stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
+            await interceptor.append(stream, [event], ExpectedVersion.no_stream())
 
         # Should be trimmed to max_history
         assert len(interceptor.get_failed_writes()) == max_history
@@ -593,35 +607,35 @@ class TestFailureTracking:
 class TestReadOperations:
     """Tests for read operations (should delegate to source store)."""
 
-    @pytest.mark.asyncio
-    async def test_get_events_delegates_to_source(
+    async def test_read_category_delegates_to_source(
         self,
         interceptor: DualWriteInterceptor,
         source_store: MagicMock,
         target_store: MagicMock,
     ) -> None:
-        """Test that get_events delegates to source store."""
-        aggregate_id = uuid4()
+        """Test that read_category delegates to source store."""
+        source_called = False
+        target_called = False
 
-        await interceptor.get_events(aggregate_id, "TestAggregate")
+        def source_read_category(*args, **kwargs):
+            nonlocal source_called
+            source_called = True
+            return async_generator_mock([])
 
-        source_store.get_events.assert_called_once()
-        target_store.get_events.assert_not_called()
+        def target_read_category(*args, **kwargs):
+            nonlocal target_called
+            target_called = True
+            return async_generator_mock([])
 
-    @pytest.mark.asyncio
-    async def test_get_events_by_type_delegates_to_source(
-        self,
-        interceptor: DualWriteInterceptor,
-        source_store: MagicMock,
-        target_store: MagicMock,
-    ) -> None:
-        """Test that get_events_by_type delegates to source store."""
-        await interceptor.get_events_by_type("TestAggregate")
+        source_store.read_category = source_read_category
+        target_store.read_category = target_read_category
 
-        source_store.get_events_by_type.assert_called_once()
-        target_store.get_events_by_type.assert_not_called()
+        async for _ in interceptor.read_category("TestAggregate"):
+            pass
 
-    @pytest.mark.asyncio
+        assert source_called is True
+        assert target_called is False
+
     async def test_event_exists_delegates_to_source(
         self,
         interceptor: DualWriteInterceptor,
@@ -636,7 +650,6 @@ class TestReadOperations:
         source_store.event_exists.assert_called_once_with(event_id)
         target_store.event_exists.assert_not_called()
 
-    @pytest.mark.asyncio
     async def test_get_stream_version_delegates_to_source(
         self,
         interceptor: DualWriteInterceptor,
@@ -644,44 +657,41 @@ class TestReadOperations:
         target_store: MagicMock,
     ) -> None:
         """Test that get_stream_version delegates to source store."""
-        aggregate_id = uuid4()
+        stream = sid()
 
-        await interceptor.get_stream_version(aggregate_id, "TestAggregate")
+        await interceptor.get_stream_version(stream)
 
-        source_store.get_stream_version.assert_called_once_with(aggregate_id, "TestAggregate")
+        source_store.get_stream_version.assert_called_once_with(stream)
         target_store.get_stream_version.assert_not_called()
 
-    @pytest.mark.asyncio
-    async def test_get_global_position_delegates_to_source(
+    async def test_current_position_delegates_to_source(
         self,
         interceptor: DualWriteInterceptor,
         source_store: MagicMock,
         target_store: MagicMock,
     ) -> None:
-        """Test that get_global_position delegates to source store."""
-        result = await interceptor.get_global_position()
+        """Test that current_position delegates to source store."""
+        result = await interceptor.current_position()
 
-        assert result == 100
-        source_store.get_global_position.assert_called_once()
-        target_store.get_global_position.assert_not_called()
+        assert result == Position(store_id="source", key=(100,))
+        source_store.current_position.assert_called_once()
+        target_store.current_position.assert_not_called()
 
-    @pytest.mark.asyncio
     async def test_read_stream_delegates_to_source(
         self,
         interceptor: DualWriteInterceptor,
         source_store: MagicMock,
     ) -> None:
         """Test that read_stream delegates to source store."""
-        stream_id = f"{uuid4()}:TestAggregate"
+        stream = sid()
         events_read = []
 
-        async for event in interceptor.read_stream(stream_id):
+        async for event in interceptor.read_stream(stream):
             events_read.append(event)
 
         # Verify we iterated through source's generator
         assert events_read == []
 
-    @pytest.mark.asyncio
     async def test_read_all_delegates_to_source(
         self,
         interceptor: DualWriteInterceptor,
@@ -697,21 +707,26 @@ class TestReadOperations:
 
 
 # =============================================================================
-# Test Integration with TenantStoreRouter Pattern
+# Test Structural Conformance / Router Integration
 # =============================================================================
 
 
 class TestRouterIntegration:
-    """Tests for integration patterns with TenantStoreRouter."""
+    """Tests for the interceptor as a `FullEventStore` structural replacement."""
 
-    @pytest.mark.asyncio
-    async def test_interceptor_works_as_eventstore_replacement(
+    async def test_interceptor_stands_in_for_full_event_store(
         self,
         source_store: MagicMock,
         target_store: MagicMock,
         tenant_id: uuid4,
     ) -> None:
-        """Test that interceptor can be used as EventStore replacement."""
+        """The interceptor is a drop-in wherever a `FullEventStore` is expected.
+
+        This deliberately uses a concrete category throughout -- the old
+        EventStore capability of looking a stream up by aggregate_id alone
+        (omitting aggregate_type/category) is dropped under the ports shape
+        and is not replaced by a cross-type port.
+        """
         interceptor = DualWriteInterceptor(
             source_store=source_store,
             target_store=target_store,
@@ -719,27 +734,27 @@ class TestRouterIntegration:
             enable_tracing=False,
         )
 
-        # Verify all EventStore methods are available
+        _: FullEventStore = interceptor  # mypy-checked structural conformance
+
+        assert interceptor.max_append_batch is None
+
         aggregate_id = uuid4()
+        stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
         event = TestEvent(aggregate_id=aggregate_id)
 
-        # Write operations
-        result = await interceptor.append_events(aggregate_id, "TestAggregate", [event], 0)
-        assert result.success is True
+        # Write operation
+        await interceptor.append(stream, [event], ExpectedVersion.no_stream())
 
-        # Read operations
-        await interceptor.get_events(aggregate_id)
-        await interceptor.get_events_by_type("TestAggregate")
-        await interceptor.event_exists(uuid4())
-        await interceptor.get_stream_version(aggregate_id, "TestAggregate")
-        await interceptor.get_global_position()
-
-        # Streaming operations
-        async for _ in interceptor.read_stream(f"{aggregate_id}:TestAggregate"):
+        # Read operations -- one call through each remaining member
+        async for _ in interceptor.read_stream(stream):
             pass
-
+        async for _ in interceptor.read_category("TestAggregate"):
+            pass
+        await interceptor.event_exists(event.event_id)
+        await interceptor.get_stream_version(stream)
         async for _ in interceptor.read_all():
             pass
+        await interceptor.current_position()
 
 
 # =============================================================================
@@ -750,7 +765,6 @@ class TestRouterIntegration:
 class TestConcurrentOperations:
     """Tests for concurrent operation handling."""
 
-    @pytest.mark.asyncio
     async def test_concurrent_writes(
         self,
         source_store: MagicMock,
@@ -768,18 +782,19 @@ class TestConcurrentOperations:
         async def do_write(index: int):
             aggregate_id = uuid4()
             event = TestEvent(aggregate_id=aggregate_id, data=f"data-{index}")
-            return await interceptor.append_events(aggregate_id, "TestAggregate", [event], 0)
+            stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
+            return await interceptor.append(stream, [event], ExpectedVersion.no_stream())
 
         # Run multiple concurrent writes
         tasks = [asyncio.create_task(do_write(i)) for i in range(10)]
         results = await asyncio.gather(*tasks)
 
-        # All writes should succeed
-        assert all(r.success for r in results)
-        assert source_store.append_events.call_count == 10
-        assert target_store.append_events.call_count == 10
+        # All writes should succeed (no exception raised, sensible results)
+        assert len(results) == 10
+        assert all(isinstance(r, AppendResult) for r in results)
+        assert source_store.append.call_count == 10
+        assert target_store.append.call_count == 10
 
-    @pytest.mark.asyncio
     async def test_concurrent_writes_with_target_failures(
         self,
         source_store: MagicMock,
@@ -797,25 +812,31 @@ class TestConcurrentOperations:
         # Make target fail every other call
         call_count = [0]
 
-        async def intermittent_failure(*args, **kwargs):
+        async def intermittent_failure(stream, events, expected):
             call_count[0] += 1
             if call_count[0] % 2 == 0:
                 raise Exception("Intermittent failure")
-            return AppendResult.successful(1, 1)
+            return AppendResult(
+                stream=stream,
+                new_version=1,
+                position=Position(store_id="target", key=(1,)),
+            )
 
-        target_store.append_events = intermittent_failure
+        target_store.append = intermittent_failure
 
         async def do_write(index: int):
             aggregate_id = uuid4()
             event = TestEvent(aggregate_id=aggregate_id)
-            return await interceptor.append_events(aggregate_id, "TestAggregate", [event], 0)
+            stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
+            return await interceptor.append(stream, [event], ExpectedVersion.no_stream())
 
         # Run concurrent writes
         tasks = [asyncio.create_task(do_write(i)) for i in range(10)]
         results = await asyncio.gather(*tasks)
 
         # All source writes should succeed
-        assert all(r.success for r in results)
+        assert len(results) == 10
+        assert all(isinstance(r, AppendResult) for r in results)
 
         # Some target writes should have failed
         stats = interceptor.get_failure_stats()
@@ -830,7 +851,6 @@ class TestConcurrentOperations:
 class TestEdgeCases:
     """Tests for edge cases and boundary conditions."""
 
-    @pytest.mark.asyncio
     async def test_multiple_events_single_write(
         self,
         interceptor: DualWriteInterceptor,
@@ -840,14 +860,15 @@ class TestEdgeCases:
         """Test writing multiple events in single append."""
         aggregate_id = uuid4()
         events = [TestEvent(aggregate_id=aggregate_id, data=f"event-{i}") for i in range(5)]
+        stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
 
-        result = await interceptor.append_events(aggregate_id, "TestAggregate", events, 0)
+        result = await interceptor.append(stream, events, ExpectedVersion.no_stream())
 
-        assert result.success is True
-        source_store.append_events.assert_called_once_with(aggregate_id, "TestAggregate", events, 0)
-        target_store.append_events.assert_called_once_with(aggregate_id, "TestAggregate", events, 0)
+        assert result.stream == stream
+        source_store.append.assert_called_once_with(stream, events, ExpectedVersion.no_stream())
+        # Derived mirror expectation: new_version (5) minus the batch (5).
+        target_store.append.assert_called_once_with(stream, events, ExpectedVersion.exact(0))
 
-    @pytest.mark.asyncio
     async def test_failure_tracking_multiple_events(
         self,
         interceptor: DualWriteInterceptor,
@@ -856,10 +877,11 @@ class TestEdgeCases:
         """Test that multiple events in failed write are all tracked."""
         aggregate_id = uuid4()
         events = [TestEvent(aggregate_id=aggregate_id, data=f"event-{i}") for i in range(3)]
+        stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
 
-        target_store.append_events.side_effect = Exception("Error")
+        target_store.append.side_effect = Exception("Error")
 
-        await interceptor.append_events(aggregate_id, "TestAggregate", events, 0)
+        await interceptor.append(stream, events, ExpectedVersion.no_stream())
 
         failed_writes = interceptor.get_failed_writes()
         assert len(failed_writes) == 1
@@ -868,21 +890,31 @@ class TestEdgeCases:
         stats = interceptor.get_failure_stats()
         assert stats.total_events_failed == 3
 
-    @pytest.mark.asyncio
     async def test_source_position_tracked_in_failure(
         self,
         interceptor: DualWriteInterceptor,
         source_store: MagicMock,
         target_store: MagicMock,
     ) -> None:
-        """Test that source position is tracked when target fails."""
+        """Test that the FIRST event's source position is tracked when target fails.
+
+        `AppendResult.position` is the position of the first appended event,
+        not the last -- this asserts identity, not arithmetic.
+        """
         aggregate_id = uuid4()
         event = TestEvent(aggregate_id=aggregate_id)
+        stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
 
-        source_store.append_events.return_value = AppendResult.successful(1, 500)
-        target_store.append_events.side_effect = Exception("Error")
+        expected_position = Position(store_id="source", key=(500,))
+        source_store.append.side_effect = None
+        source_store.append.return_value = AppendResult(
+            stream=stream,
+            new_version=1,
+            position=expected_position,
+        )
+        target_store.append.side_effect = Exception("Error")
 
-        await interceptor.append_events(aggregate_id, "TestAggregate", [event], 0)
+        await interceptor.append(stream, [event], ExpectedVersion.no_stream())
 
         failed_writes = interceptor.get_failed_writes()
-        assert failed_writes[0].source_position == 500
+        assert failed_writes[0].source_position == expected_position

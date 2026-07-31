@@ -308,8 +308,7 @@ class OrderAggregate(DeclarativeAggregate[OrderState]):
 Projection — async, two parameters, writes through the supplied connection:
 
 ```python
-from eventsource import handles
-from eventsource.projections import DeclarativeProjection
+from eventsource import DeclarativeProjection, handles
 
 
 class OrderProjection(DeclarativeProjection):

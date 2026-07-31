@@ -1,13 +1,13 @@
 from hypothesis import settings
 
-from eventsource.adapters.memory import MemoryEventStore
+from eventsource.adapters.memory import InMemoryEventStore
 from eventsource.testing.conformance_ports.stateful import StoreStateMachine
 from eventsource.testing.sync_facade import SyncStoreFacade
 
 
 class MemoryStateMachine(StoreStateMachine):
     def make_store(self) -> SyncStoreFacade:
-        return SyncStoreFacade(MemoryEventStore())
+        return SyncStoreFacade(InMemoryEventStore())
 
 
 TestMemoryStateful = MemoryStateMachine.TestCase

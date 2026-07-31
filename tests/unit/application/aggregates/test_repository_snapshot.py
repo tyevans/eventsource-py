@@ -23,12 +23,14 @@ import pytest
 from pydantic import BaseModel, Field
 
 from eventsource.adapters.memory.snapshots import InMemorySnapshotStore
+from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.application.aggregates.repository import AggregateRepository
+from eventsource.domain import StreamId
 from eventsource.domain.aggregate import AggregateRoot
 from eventsource.events.base import DomainEvent
 from eventsource.exceptions import AggregateNotFoundError
+from eventsource.ports import ExpectedVersion
 from eventsource.ports.snapshots import Snapshot
-from eventsource.stores.in_memory import InMemoryEventStore
 
 # =============================================================================
 # Test Fixtures
@@ -251,11 +253,10 @@ class TestRepositorySnapshotLoad:
             )
             for i in range(5)
         ]
-        await event_store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="Test",
-            events=initial_events,
-            expected_version=0,
+        await event_store.append(
+            StreamId(aggregate_id=aggregate_id, category="Test"),
+            initial_events,
+            ExpectedVersion.exact(0),
         )
 
         # Pre-populate snapshot at version 5
@@ -276,11 +277,10 @@ class TestRepositorySnapshotLoad:
             aggregate_version=6,
             value="after_snapshot",
         )
-        await event_store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="Test",
-            events=[event],
-            expected_version=5,
+        await event_store.append(
+            StreamId(aggregate_id=aggregate_id, category="Test"),
+            [event],
+            ExpectedVersion.exact(5),
         )
 
         repo = AggregateRepository(
@@ -325,11 +325,10 @@ class TestRepositorySnapshotLoad:
             )
             for i in range(3)
         ]
-        await event_store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="Test",
-            events=events,
-            expected_version=0,
+        await event_store.append(
+            StreamId(aggregate_id=aggregate_id, category="Test"),
+            events,
+            ExpectedVersion.exact(0),
         )
 
         repo = AggregateRepository(
@@ -361,11 +360,10 @@ class TestRepositorySnapshotLoad:
             aggregate_version=1,
             value="test",
         )
-        await event_store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="Test",
-            events=[event],
-            expected_version=0,
+        await event_store.append(
+            StreamId(aggregate_id=aggregate_id, category="Test"),
+            [event],
+            ExpectedVersion.exact(0),
         )
 
         repo = AggregateRepository(
@@ -407,11 +405,10 @@ class TestRepositorySnapshotLoad:
             )
             for i in range(2)
         ]
-        await event_store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="Test",
-            events=events,
-            expected_version=0,
+        await event_store.append(
+            StreamId(aggregate_id=aggregate_id, category="Test"),
+            events,
+            ExpectedVersion.exact(0),
         )
 
         repo = AggregateRepository(

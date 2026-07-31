@@ -196,7 +196,7 @@ python -c "from eventsource import DomainEvent, InMemoryEventStore, InMemoryEven
 ```
 
 Every public name comes from the top-level `eventsource` package. You will not import
-from submodules such as `eventsource.stores.in_memory` in this series -- the tutorials
+from submodules such as `eventsource.adapters.memory` in this series -- the tutorials
 always use the re-exported top-level path.
 
 The core install is all you need for **Tutorials 1 through 10** -- the whole of Phase 1

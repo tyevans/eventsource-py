@@ -13,6 +13,8 @@ from uuid import uuid4
 
 import pytest
 
+from eventsource.domain import StreamId
+from eventsource.ports.positions import ExpectedVersion
 from eventsource.subscriptions import SubscriptionConfig
 
 from .conftest import (
@@ -24,6 +26,14 @@ from .conftest import (
 )
 
 pytestmark = pytest.mark.asyncio
+
+
+async def position_after(store, n: int):
+    """The token of the nth (1-based) event in the feed."""
+    envelopes = [e async for e in store.read_all()]
+    position = envelopes[n - 1].position
+    assert position is not None
+    return position
 
 
 class TestLiveEventDelivery:
@@ -127,11 +137,10 @@ class TestLiveEventDelivery:
             order_number="ORD-001",
             amount=100.0,
         )
-        await in_memory_event_store.append_events(
-            aggregate_id=order_id,
-            aggregate_type="SubTestOrder",
-            events=[created],
-            expected_version=0,
+        await in_memory_event_store.append(
+            StreamId(aggregate_id=order_id, category="SubTestOrder"),
+            [created],
+            ExpectedVersion.no_stream(),
         )
         await in_memory_event_bus.publish([created])
 
@@ -140,11 +149,10 @@ class TestLiveEventDelivery:
             aggregate_id=order_id,
             tracking_number="TRK-001",
         )
-        await in_memory_event_store.append_events(
-            aggregate_id=order_id,
-            aggregate_type="SubTestOrder",
-            events=[shipped],
-            expected_version=1,
+        await in_memory_event_store.append(
+            StreamId(aggregate_id=order_id, category="SubTestOrder"),
+            [shipped],
+            ExpectedVersion.exact(1),
         )
         await in_memory_event_bus.publish([shipped])
 
@@ -180,11 +188,10 @@ class TestLiveEventOrdering:
                 order_number=f"ORD-{i:03d}",
                 amount=100.0 + i,
             )
-            await in_memory_event_store.append_events(
-                aggregate_id=event.aggregate_id,
-                aggregate_type="SubTestOrder",
-                events=[event],
-                expected_version=0,
+            await in_memory_event_store.append(
+                StreamId(aggregate_id=event.aggregate_id, category="SubTestOrder"),
+                [event],
+                ExpectedVersion.no_stream(),
             )
             await in_memory_event_bus.publish([event])
 
@@ -217,11 +224,10 @@ class TestLiveEventOrdering:
                 order_number=f"ORD-{i:03d}",
                 amount=100.0 + i,
             )
-            await in_memory_event_store.append_events(
-                aggregate_id=event.aggregate_id,
-                aggregate_type="SubTestOrder",
-                events=[event],
-                expected_version=0,
+            await in_memory_event_store.append(
+                StreamId(aggregate_id=event.aggregate_id, category="SubTestOrder"),
+                [event],
+                ExpectedVersion.no_stream(),
             )
             await in_memory_event_bus.publish([event])
             events_published.append(event)
@@ -329,11 +335,10 @@ class TestLiveSubscriptionRecovery:
                 order_number=f"ORD-{i:03d}",
                 amount=100.0 + i,
             )
-            await in_memory_event_store.append_events(
-                aggregate_id=event.aggregate_id,
-                aggregate_type="SubTestOrder",
-                events=[event],
-                expected_version=0,
+            await in_memory_event_store.append(
+                StreamId(aggregate_id=event.aggregate_id, category="SubTestOrder"),
+                [event],
+                ExpectedVersion.no_stream(),
             )
 
         # First manager instance - catches up from beginning
@@ -355,7 +360,7 @@ class TestLiveSubscriptionRecovery:
         # Verify checkpoint was saved (catch-up saves checkpoints)
         checkpoint_pos = await in_memory_checkpoint_repo.get_position("TestProjection")
         assert checkpoint_pos is not None, "Checkpoint should be saved after catch-up"
-        assert checkpoint_pos >= 20
+        assert checkpoint_pos >= await position_after(in_memory_event_store, 20)
 
         # Add more events while stopped
         for i in range(20, 30):
@@ -364,11 +369,10 @@ class TestLiveSubscriptionRecovery:
                 order_number=f"ORD-{i:03d}",
                 amount=100.0 + i,
             )
-            await in_memory_event_store.append_events(
-                aggregate_id=event.aggregate_id,
-                aggregate_type="SubTestOrder",
-                events=[event],
-                expected_version=0,
+            await in_memory_event_store.append(
+                StreamId(aggregate_id=event.aggregate_id, category="SubTestOrder"),
+                [event],
+                ExpectedVersion.no_stream(),
             )
 
         # Second manager instance

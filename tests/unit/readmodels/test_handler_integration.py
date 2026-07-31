@@ -13,9 +13,10 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import Field
 
+from eventsource.adapters.sql.readmodel_projection import ReadModelProjection
+from eventsource.application.projections import handles
 from eventsource.events import DomainEvent
-from eventsource.projections import handles
-from eventsource.readmodels import ReadModel, ReadModelProjection
+from eventsource.ports.readmodels import ReadModel
 
 # =============================================================================
 # Test Events
@@ -235,8 +236,8 @@ class TestExports:
     """Tests for module exports."""
 
     def test_readmodels_package_exports_projection(self) -> None:
-        """Test that ReadModelProjection is exported from readmodels."""
-        from eventsource.readmodels import ReadModelProjection
+        """Test that ReadModelProjection is exported from its adapter module."""
+        from eventsource.adapters.sql.readmodel_projection import ReadModelProjection
 
         assert ReadModelProjection is not None
 
@@ -255,7 +256,7 @@ class TestExports:
 
     def test_handles_decorator_importable_from_projections(self) -> None:
         """Test @handles decorator can be imported from projections module."""
-        from eventsource.projections import handles
+        from eventsource.application.projections import handles
 
         assert handles is not None
         assert callable(handles)
@@ -423,12 +424,9 @@ class TestNoCircularImports:
         assert handles is not None
 
     def test_import_from_readmodels(self) -> None:
-        """Test imports from eventsource.readmodels without circular import errors."""
-        from eventsource.readmodels import (
-            ReadModel,
-            ReadModelProjection,
-            ReadModelRepository,
-        )
+        """Test imports from the read-model ports/adapters without circular import errors."""
+        from eventsource.adapters.sql.readmodel_projection import ReadModelProjection
+        from eventsource.ports.readmodels import ReadModel, ReadModelRepository
 
         assert ReadModel is not None
         assert ReadModelProjection is not None
@@ -436,11 +434,11 @@ class TestNoCircularImports:
 
     def test_import_handles_from_projections(self) -> None:
         """Test importing handles from projections module."""
+        from eventsource.application.projections import handles
         from eventsource.handlers import (
             get_handled_event_type,
             is_event_handler,
         )
-        from eventsource.projections import handles
 
         assert handles is not None
         assert get_handled_event_type is not None

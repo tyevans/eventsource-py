@@ -423,8 +423,8 @@ subscription = await manager.subscribe(
 )
 ```
 
-`start_from` accepts `"beginning"`, `"end"`, `"checkpoint"`, or an integer
-global position. The default is `"checkpoint"`, which resumes from stored
+`start_from` accepts `"beginning"`, `"end"`, `"checkpoint"`, or an opaque
+`Position` token. The default is `"checkpoint"`, which resumes from stored
 progress; the example passes `"beginning"` explicitly so the run replays the
 whole log every time regardless of what a previous run recorded. `batch_size`
 is how many events each catch-up read pulls at once — 100 is the default.

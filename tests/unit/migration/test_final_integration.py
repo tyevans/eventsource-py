@@ -29,6 +29,8 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from eventsource.adapters.memory import InMemoryEventStore
+from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.migration.consistency import (
     ConsistencyVerifier,
@@ -74,7 +76,21 @@ from eventsource.migration.router import TenantStoreRouter
 from eventsource.migration.status_streamer import StatusStreamer, StatusStreamManager
 from eventsource.migration.sync_lag_tracker import SyncLagTracker
 from eventsource.migration.write_pause import WritePauseManager
-from eventsource.stores.in_memory import InMemoryEventStore
+from eventsource.ports.positions import ExpectedVersion, Position
+
+SOURCE_STORE_ID = "source-store"
+TARGET_STORE_ID = "target-store"
+
+
+def src_pos(n: int) -> Position:
+    """A source-store position token for the int the mapper is keyed on."""
+    return Position(store_id=SOURCE_STORE_ID, key=(n,))
+
+
+def tgt_pos(n: int) -> Position:
+    """A target-store position token, as the migrator writes back."""
+    return Position(store_id=TARGET_STORE_ID, key=(n,))
+
 
 # =============================================================================
 # Test Event Classes
@@ -468,7 +484,7 @@ class InMemoryPositionMappingRepository:
     async def find_by_source_position(
         self,
         migration_id: UUID,
-        source_position: int,
+        source_position: Position,
     ) -> PositionMapping | None:
         """Find mapping by exact source position."""
         for mapping in self._mappings:
@@ -479,7 +495,7 @@ class InMemoryPositionMappingRepository:
     async def find_nearest_source_position(
         self,
         migration_id: UUID,
-        source_position: int,
+        source_position: Position,
     ) -> PositionMapping | None:
         """Find nearest mapping with source_position <= given position."""
         nearest: PositionMapping | None = None
@@ -510,13 +526,12 @@ class InMemoryPositionMappingRepository:
     async def get_position_bounds(
         self,
         migration_id: UUID,
-    ) -> tuple[int, int] | None:
-        """Get min and max source positions."""
+    ) -> tuple[Position, Position] | None:
+        """Get first and last source positions by insertion (id) order."""
         filtered = [m for m in self._mappings if m.migration_id == migration_id]
         if not filtered:
             return None
-        positions = [m.source_position for m in filtered]
-        return (min(positions), max(positions))
+        return (filtered[0].source_position, filtered[-1].source_position)
 
     async def delete_by_migration(self, migration_id: UUID) -> int:
         """Delete all mappings for a migration."""
@@ -618,12 +633,12 @@ class MockLockManager:
         self._acquire_count += 1
 
         if self._should_fail:
-            from eventsource.locks import LockAcquisitionError
+            from eventsource.exceptions import LockAcquisitionError
 
             raise LockAcquisitionError(key, timeout or 0.0, "Mock failure")
 
         if self._fail_after is not None and self._acquire_count > self._fail_after:
-            from eventsource.locks import LockAcquisitionError
+            from eventsource.exceptions import LockAcquisitionError
 
             raise LockAcquisitionError(key, timeout or 0.0, "Mock failure after threshold")
 
@@ -660,13 +675,13 @@ class MockLockManager:
 @pytest.fixture
 def source_store() -> InMemoryEventStore:
     """Create source (shared) event store."""
-    return InMemoryEventStore(enable_tracing=False)
+    return InMemoryEventStore("source")
 
 
 @pytest.fixture
 def target_store() -> InMemoryEventStore:
     """Create target (dedicated) event store."""
-    return InMemoryEventStore(enable_tracing=False)
+    return InMemoryEventStore("target")
 
 
 @pytest.fixture
@@ -781,11 +796,10 @@ async def create_test_events(
             amount=100.0 + i,
         )
 
-        await store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type=aggregate_type,
-            events=[event],
-            expected_version=0,
+        await store.append(
+            StreamId(aggregate_id=aggregate_id, category=aggregate_type),
+            [event],
+            ExpectedVersion.no_stream(),
         )
 
     return aggregate_ids
@@ -798,14 +812,13 @@ async def copy_events_between_stores(
 ) -> int:
     """Copy events from source to target store."""
     count = 0
-    async for stored_event in source_store.read_all():
-        if stored_event.event.tenant_id == tenant_id:
-            event = stored_event.event
-            await target_store.append_events(
-                aggregate_id=event.aggregate_id,
-                aggregate_type=event.aggregate_type,
-                events=[event],
-                expected_version=-1,  # ANY
+    async for envelope in source_store.read_all():
+        if envelope.event.tenant_id == tenant_id:
+            event = envelope.event
+            await target_store.append(
+                StreamId(aggregate_id=event.aggregate_id, category=event.aggregate_type),
+                [event],
+                ExpectedVersion.any_(),
             )
             count += 1
     return count
@@ -1620,7 +1633,7 @@ class TestErrorHandlingAndClassification:
 
         error = BulkCopyError(
             migration_id=migration_id,
-            last_position=5000,
+            last_position=src_pos(5000),
             error="Connection lost",
         )
 
@@ -1854,11 +1867,10 @@ class TestRecoveryAfterSimulatedFailures:
                 tenant_id=tenant_id,
                 value=f"extra-{i}",
             )
-            await source_store.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="TestAggregate",
-                events=[event],
-                expected_version=0,
+            await source_store.append(
+                StreamId(aggregate_id=aggregate_id, category="TestAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
             )
 
         # Setup routing state for dual-write
@@ -2166,18 +2178,18 @@ class TestIntegrationOfAllPhase4Components:
             metrics.record_events_copied(copied, rate_events_per_sec=100.0)
 
             # Record position mappings
-            source_pos = 1
-            target_pos = 1
-            async for stored_event in source_store.read_all():
-                if stored_event.event.tenant_id == tenant_id:
+            source_counter = 1
+            target_counter = 1
+            async for envelope in source_store.read_all():
+                if envelope.event.tenant_id == tenant_id:
                     await position_mapper.record_mapping(
                         migration_id=migration.id,
-                        source_position=source_pos,
-                        target_position=target_pos,
-                        event_id=stored_event.event.event_id,
+                        source_position=src_pos(source_counter),
+                        target_position=tgt_pos(target_counter),
+                        event_id=envelope.event.event_id,
                     )
-                    source_pos += 1
-                    target_pos += 1
+                    source_counter += 1
+                    target_counter += 1
 
         # 5. Record phase transition
         await audit_log_repo.record(

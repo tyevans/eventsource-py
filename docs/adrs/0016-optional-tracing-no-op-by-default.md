@@ -35,6 +35,11 @@ retired, if metrics (currently guarded separately in
 `subscriptions/metrics.py`) are folded into the same protocol, or if
 `enable_tracing` defaults are ever unified across subsystems.
 
+**Amended by ADR 0025.** Per-operation store spans (`inmemory_event_store.*`,
+`postgresql_event_store.*`, `sqlite_event_store.*`) were removed along with the
+legacy stores; the ports adapters that replaced them carry no spans of their
+own, and a ports-level tracing decorator is backlogged rather than promised.
+
 ## Context
 
 ### OpenTelemetry is a heavy dependency for a library with a two-package core

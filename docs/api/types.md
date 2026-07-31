@@ -77,10 +77,10 @@ the bound for `TState`.
 #### `AggregateId` — `UUID`
 
 Identifies the aggregate an event belongs to, and therefore the stream it is
-appended to. It appears as `DomainEvent.aggregate_id` and as the `aggregate_id`
-argument on `EventStore` methods such as `append_events()` and `get_events()`,
-which pair it with `aggregate_type` to form the stream key
-(`"aggregate_id:aggregate_type"`).
+appended to. It appears as `DomainEvent.aggregate_id` and as a component of
+the `StreamId` passed to store methods such as `append()` and
+`read_stream()`, which pair it with the aggregate/category type to form the
+stream identity.
 
 #### `EventId` — `UUID`
 
@@ -93,9 +93,9 @@ It is the value another event's `causation_id` points at:
 event's `causation_id`, and `is_caused_by(other)` compares
 `self.causation_id == other.event_id`.
 
-On the store side, `StoredEvent.event_id` is a read-only property delegating to
-`self.event.event_id`, and `EventStore.event_exists(event_id: UUID) -> bool`
-looks an event up by this identity — the basis for idempotent appends.
+On the store side, an `EventEnvelope`'s identity is accessed via
+`envelope.event.event_id`, and `EventLookup.event_exists(event_id: UUID) ->
+bool` looks an event up by this identity — the basis for idempotent appends.
 
 #### `TenantId` — `UUID | None`
 
@@ -117,9 +117,9 @@ Two ways to make the tenant non-optional in practice:
 
 Downstream, the optionality survives into storage and querying: the PostgreSQL
 store writes `str(event.tenant_id) if event.tenant_id else None`, and
-`ReadOptions(tenant_id=...)` filters a read to one tenant when set, leaving
-results unfiltered when `None`. So `None` consistently means "no tenant
-scoping", never "unknown tenant".
+`FeedReadOptions(tenant_id=...)` / `CategoryReadOptions(tenant_id=...)` filter
+a read to one tenant when set, leaving results unfiltered when `None`. So
+`None` consistently means "no tenant scoping", never "unknown tenant".
 
 #### `CorrelationId` — `UUID`
 
@@ -162,27 +162,31 @@ All three are `int`. They are distinguished only by what the number counts.
 #### `Version` — `int` (optimistic locking)
 
 The aggregate's version: the number of events applied to it. `DomainEvent`
-carries the post-event value as `aggregate_version`, and `EventStream.version`
-reports the current version of a loaded stream (`0` for an empty one).
+carries the post-event value as `aggregate_version`, and
+`StreamReader.get_stream_version()` reports the current version of a stream
+(`0` for an empty one).
 
-`EventStore.append_events()` takes an `expected_version` argument and raises
-`OptimisticLockError` when it does not match the aggregate's current version.
-On the store's `AppendResult`, `new_version` is the version after a successful
-append; for a conflict, `AppendResult.conflicted(current_version)` reports the
-actual current version instead.
+`EventAppender.append()` takes an `expected: ExpectedVersion` argument (built
+via `ExpectedVersion.any_()`, `.no_stream()`, `.stream_exists()`, or
+`.exact(version)`) and raises `OptimisticLockError` when the actual version
+does not match. On the store's `AppendResult`, `new_version` is the stream
+version after a successful append.
 
 #### `StreamPosition` — `int`
 
 The 1-based position of an event within its own aggregate's stream, exposed as
-`StoredEvent.stream_position`.
+`EventEnvelope.stream_version`.
 
 #### `GlobalPosition` — `int`
 
-The 1-based position of an event across all events in the store, exposed as
-`StoredEvent.global_position` and as `AppendResult.global_position` (the
-position of the last appended event). This is the ordering projections and
-subscriptions checkpoint against, since it is total across streams while
-`StreamPosition` is only meaningful within one aggregate.
+The ordered position of an event across all events in the store. Unlike the
+integer `StreamPosition`, the global feed position is the opaque,
+adapter-defined `Position` value object (see `eventsource.ports.positions`),
+exposed as `EventEnvelope.position` and as `AppendResult.position` (the
+position of the append). Consumers may compare and persist a `Position` but
+must not do arithmetic on it. This is what projections and subscriptions
+checkpoint against, since it is total across streams while `StreamPosition`
+is only meaningful within one aggregate.
 
 ### Type variables
 

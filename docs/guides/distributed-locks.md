@@ -22,20 +22,17 @@ This guide shows you how to:
 - Pass the manager into `MigrationCoordinator` and cutover, and diagnose the
   errors these APIs raise.
 
-Everything here comes from `eventsource.locks`:
+The five names split across three modules by ring (ADR 0029):
 
 ```python
-from eventsource.locks import (
-    LockAcquisitionError,
-    LockInfo,
-    LockNotHeldError,
-    PostgreSQLLockManager,
-    migration_lock_key,
-)
+from eventsource.ports.locks import LockInfo, migration_lock_key
+from eventsource.exceptions import LockAcquisitionError, LockNotHeldError
+from eventsource.adapters.postgresql.locks import PostgreSQLLockManager
 ```
 
-Note that these names are exported from `eventsource.locks`, not from the
-top-level `eventsource` package.
+Note that none of these are exported from the top-level `eventsource`
+package. `eventsource.locks` still resolves all five, lazily, each with a
+`DeprecationWarning` naming the module above — removed in 0.8.0.
 
 ## Before you start: PostgreSQL only
 
@@ -55,13 +52,18 @@ the database, surfacing as a `LockAcquisitionError` whose `reason` carries the
 underlying driver error — not as a clean "unsupported backend" message at
 construction time.
 
-There is also no `LockManager` protocol or abstract base class to implement.
-`eventsource.locks` exports exactly one manager class, and
-`MigrationCoordinator` and `CutoverManager` both annotate their `lock_manager`
-parameter as `PostgreSQLLockManager`. A substitute of your own will work at
-runtime if it exposes the same `acquire()` / `try_acquire()` / `release()`
-surface, but you are relying on structural compatibility, not a supported
-extension point — nothing in the library type-checks or conformance-tests it.
+`eventsource.ports.locks` defines `DistributedLock` and `LockRegistry` --
+small Protocols describing the shape of the dependency (ADR 0029), used by
+`eventsource.testing.conformance_ports.DistributedLockConformance`. They do
+**not** promise a backend-agnostic distributed-locking guarantee: nothing in
+the Protocols says anything about cross-process exclusion, release on crash,
+or fairness, because `PostgreSQLLockManager` is the only implementation that
+offers those properties. `MigrationCoordinator` and `CutoverManager` both
+annotate their `lock_manager` parameter as `PostgreSQLLockManager`
+specifically, not as the Protocol, because they need its PostgreSQL
+guarantees. `eventsource.adapters.memory.locks.InMemoryLockManager` also
+conforms to the Protocols, but only for single-process testing -- see
+[Testing without PostgreSQL](#testing-without-postgresql) below.
 
 ### What to do on SQLite or other backends
 
@@ -94,6 +96,27 @@ caveats above.
 
 Everything else in this guide assumes PostgreSQL.
 
+## Testing without PostgreSQL
+
+For unit tests that need a `DistributedLock` and nothing more,
+`eventsource.adapters.memory.locks.InMemoryLockManager` conforms to the same
+Protocols as `PostgreSQLLockManager` -- same `acquire()` / `try_acquire()` /
+`release()` / `is_held()` signatures, same exceptions, same key-to-lock-id
+hashing:
+
+```python
+from eventsource.adapters.memory.locks import InMemoryLockManager
+
+lock_manager = InMemoryLockManager(holder_id="test-worker")
+
+async with lock_manager.acquire("cutover:tenant-123"):
+    ...  # exercise code that needs a DistributedLock
+```
+
+It is a test double, not a distributed lock: no cross-process exclusion, no
+release on crash, no fairness; single event loop, single process. Do not use
+it for anything but tests.
+
 ## Construct a PostgreSQLLockManager from an async_sessionmaker
 
 `PostgreSQLLockManager` takes one positional argument: a SQLAlchemy
@@ -107,7 +130,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from eventsource.locks import PostgreSQLLockManager
+from eventsource.adapters.postgresql.locks import PostgreSQLLockManager
 
 engine = create_async_engine(
     "postgresql+asyncpg://user:pass@localhost/app",
@@ -266,7 +289,7 @@ treat keys as canonical identifiers rather than free text.
 For anything migration-related, don't invent a convention — use the helper:
 
 ```python
-from eventsource.locks import migration_lock_key
+from eventsource.ports.locks import migration_lock_key
 
 key = migration_lock_key(tenant_id)             # "migration:<uuid>"
 key = migration_lock_key(tenant_id, "cutover")  # "cutover:<uuid>"

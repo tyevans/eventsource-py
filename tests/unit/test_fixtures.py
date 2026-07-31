@@ -10,10 +10,10 @@ from uuid import UUID
 
 import pytest
 
+from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
+from eventsource.adapters.memory.dlq import InMemoryDLQRepository
+from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.events.base import DomainEvent
-from eventsource.repositories.checkpoint import InMemoryCheckpointRepository
-from eventsource.repositories.dlq import InMemoryDLQRepository
-from eventsource.stores.in_memory import InMemoryEventStore
 from tests.conftest import MockEventPublisher
 from tests.fixtures import (
     CounterAggregate,
@@ -397,8 +397,8 @@ class TestFixtureIntegration:
     @pytest.mark.asyncio
     async def test_populated_store_fixture(self, populated_store: InMemoryEventStore) -> None:
         """populated_store fixture has events pre-loaded."""
-        count = await populated_store.get_event_count()
-        assert count == 3
+        envelopes = [e async for e in populated_store.read_all()]
+        assert len(envelopes) == 3
 
     def test_checkpoint_repo_fixture(self, checkpoint_repo: InMemoryCheckpointRepository) -> None:
         """checkpoint_repo fixture provides a fresh repository."""

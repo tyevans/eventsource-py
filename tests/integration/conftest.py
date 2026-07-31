@@ -268,41 +268,13 @@ class TestOrderAggregate(DeclarativeAggregate[TestOrderState]):
 # PostgreSQL Fixtures
 # ============================================================================
 
-# SQL Schema for tests - split into individual statements for asyncpg compatibility
-EVENTS_SCHEMA_STATEMENTS = [
-    """
-    CREATE TABLE IF NOT EXISTS events (
-        global_position BIGSERIAL PRIMARY KEY,
-        event_id UUID NOT NULL UNIQUE,
-        event_type VARCHAR(255) NOT NULL,
-        aggregate_type VARCHAR(255) NOT NULL,
-        aggregate_id UUID NOT NULL,
-        tenant_id VARCHAR(255),
-        actor_id VARCHAR(255),
-        version INTEGER NOT NULL,
-        timestamp TIMESTAMPTZ NOT NULL,
-        payload JSONB NOT NULL,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-    """,
-    """
-    CREATE UNIQUE INDEX IF NOT EXISTS uq_events_aggregate_version
-    ON events (aggregate_id, aggregate_type, version)
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS idx_events_aggregate
-    ON events (aggregate_id, aggregate_type)
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS idx_events_type
-    ON events (event_type)
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS idx_events_timestamp
-    ON events (timestamp)
-    """,
-]
-
+# `get_schema("checkpoints"/"dlq"/"outbox")` each ship PL/pgSQL helper
+# functions whose dollar-quoted bodies asyncpg's simple-query path
+# mis-splits (`PostgresSyntaxError: unrecognized GET DIAGNOSTICS item`),
+# so these three are provisioned as bare DDL, one statement at a time.
+# `events` carries no functions and is provisioned from the canonical
+# schema below -- it is the table whose type (`tenant_id UUID`) the
+# adapters and the whole type system depend on.
 CHECKPOINTS_SCHEMA_STATEMENTS = [
     """
     CREATE TABLE IF NOT EXISTS projection_checkpoints (
@@ -312,6 +284,7 @@ CHECKPOINTS_SCHEMA_STATEMENTS = [
         last_processed_at TIMESTAMPTZ,
         events_processed BIGINT DEFAULT 0,
         global_position BIGINT,
+        position_token TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
@@ -414,6 +387,8 @@ async def postgres_engine(
     from sqlalchemy import text
     from sqlalchemy.ext.asyncio import create_async_engine
 
+    from eventsource.migrations import get_schema
+
     engine = create_async_engine(
         postgres_connection_url,
         echo=False,
@@ -423,8 +398,15 @@ async def postgres_engine(
 
     # Create schema - execute each statement individually for asyncpg compatibility
     async with engine.begin() as conn:
-        for statement in EVENTS_SCHEMA_STATEMENTS:
-            await conn.execute(text(statement))
+        # get_schema returns a multi-statement script; asyncpg's
+        # prepared-statement path rejects those, so run it via the raw
+        # driver connection (simple query protocol), same as
+        # PostgreSQLEventStore._ensure_schema.
+        raw = await conn.get_raw_connection()
+        driver_connection = raw.driver_connection
+        assert driver_connection is not None
+        await driver_connection.execute(get_schema("events"))
+
         for statement in CHECKPOINTS_SCHEMA_STATEMENTS:
             await conn.execute(text(statement))
         for statement in DLQ_SCHEMA_STATEMENTS:
@@ -565,11 +547,12 @@ async def clean_redis(redis_connection_url: str) -> AsyncGenerator[None, None]:
 
 @pytest.fixture
 async def postgres_event_store(
-    postgres_session_factory: async_sessionmaker[AsyncSession],
+    postgres_engine: AsyncEngine,
     clean_postgres_tables: None,
 ) -> AsyncGenerator[Any, None]:
     """Provide PostgreSQL event store for integration tests."""
-    from eventsource import EventRegistry, PostgreSQLEventStore
+    from eventsource.adapters.postgresql import PostgreSQLEventStore
+    from eventsource.events.registry import EventRegistry
 
     # Create fresh registry for tests
     registry = EventRegistry()
@@ -581,21 +564,25 @@ async def postgres_event_store(
     registry.register(TestOrderCompleted)
 
     store = PostgreSQLEventStore(
-        postgres_session_factory,
+        postgres_engine,
         event_registry=registry,
         outbox_enabled=False,
     )
 
+    # postgres_engine is session-scoped; this adapter's close() disposes the
+    # engine, so it must NOT be called here -- that would break every later
+    # test in the session.
     yield store
 
 
 @pytest.fixture
 async def postgres_event_store_with_outbox(
-    postgres_session_factory: async_sessionmaker[AsyncSession],
+    postgres_engine: AsyncEngine,
     clean_postgres_tables: None,
 ) -> AsyncGenerator[Any, None]:
     """Provide PostgreSQL event store with outbox enabled."""
-    from eventsource import EventRegistry, PostgreSQLEventStore
+    from eventsource.adapters.postgresql import PostgreSQLEventStore
+    from eventsource.events.registry import EventRegistry
 
     registry = EventRegistry()
     registry.register(TestItemCreated)
@@ -606,11 +593,12 @@ async def postgres_event_store_with_outbox(
     registry.register(TestOrderCompleted)
 
     store = PostgreSQLEventStore(
-        postgres_session_factory,
+        postgres_engine,
         event_registry=registry,
         outbox_enabled=True,
     )
 
+    # postgres_engine is session-scoped -- do not call store.close() here.
     yield store
 
 

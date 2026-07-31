@@ -22,7 +22,9 @@ import pytest
 from pydantic import BaseModel, Field
 
 from eventsource.adapters.memory.snapshots import InMemorySnapshotStore
+from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.application.aggregates.repository import AggregateRepository
+from eventsource.domain import StreamId
 from eventsource.domain.aggregate import AggregateRoot
 from eventsource.events.base import DomainEvent
 from eventsource.observability import (
@@ -33,8 +35,8 @@ from eventsource.observability import (
     MockTracer,
     NullTracer,
 )
+from eventsource.ports import ExpectedVersion
 from eventsource.ports.snapshots import Snapshot
-from eventsource.stores.in_memory import InMemoryEventStore
 
 # ============================================================================
 # Test Fixtures
@@ -252,11 +254,10 @@ class TestAggregateRepositorySpanCreation:
             aggregate_version=1,
             value="test",
         )
-        await event_store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="TracingTest",
-            events=[event],
-            expected_version=0,
+        await event_store.append(
+            StreamId(aggregate_id=aggregate_id, category="TracingTest"),
+            [event],
+            ExpectedVersion.exact(0),
         )
 
         await traced_repo.load(aggregate_id)
@@ -274,11 +275,10 @@ class TestAggregateRepositorySpanCreation:
             aggregate_version=1,
             value="test",
         )
-        await event_store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="TracingTest",
-            events=[event],
-            expected_version=0,
+        await event_store.append(
+            StreamId(aggregate_id=aggregate_id, category="TracingTest"),
+            [event],
+            ExpectedVersion.exact(0),
         )
 
         await traced_repo.load(aggregate_id)
@@ -512,11 +512,10 @@ class TestAggregateRepositorySpanDynamicAttributes:
             )
             for i in range(3)
         ]
-        await event_store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="TracingTest",
-            events=events,
-            expected_version=0,
+        await event_store.append(
+            StreamId(aggregate_id=aggregate_id, category="TracingTest"),
+            events,
+            ExpectedVersion.exact(0),
         )
 
         await repo.load(aggregate_id)

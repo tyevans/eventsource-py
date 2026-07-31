@@ -8,30 +8,30 @@ from uuid import UUID, uuid4
 from bench.adapters.base import BenchAdapter
 from bench.core.domain import make_events
 from bench.core.runner import Measurement, Scenario
+from eventsource.domain.stream_id import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.exceptions import OptimisticLockError
-from eventsource.stores.interface import EventStore
+from eventsource.ports import ExpectedVersion, FullEventStore, collect
 
 
 async def populate_stream(
-    store: EventStore,
+    store: FullEventStore,
     aggregate_id: UUID,
     count: int,
     payload: str = "small",
     chunk: int = 500,
 ) -> None:
+    stream = StreamId(aggregate_id=aggregate_id, category="Bench")
     version = 0
     while version < count:
         n = min(chunk, count - version)
         events = make_events(aggregate_id, n, start_version=version + 1, payload=payload)
-        await store.append_events(
-            aggregate_id, "Bench", cast(list[DomainEvent], events), expected_version=version
-        )
+        await store.append(stream, cast(list[DomainEvent], events), ExpectedVersion.exact(version))
         version += n
 
 
 async def _append_batch(
-    store: EventStore, params: dict[str, Any], iterations: int, prepared: Any
+    store: FullEventStore, params: dict[str, Any], iterations: int, prepared: Any
 ) -> Measurement:
     batch_size: int = params["batch_size"]
     payload: str = params["payload"]
@@ -39,11 +39,10 @@ async def _append_batch(
     start = time.perf_counter()
     for _ in range(iterations):
         aggregate_id = uuid4()
+        stream = StreamId(aggregate_id=aggregate_id, category="Bench")
         events = make_events(aggregate_id, batch_size, payload=payload)
         t0 = time.perf_counter()
-        await store.append_events(
-            aggregate_id, "Bench", cast(list[DomainEvent], events), expected_version=0
-        )
+        await store.append(stream, cast(list[DomainEvent], events), ExpectedVersion.no_stream())
         durations.append(time.perf_counter() - t0)
     return Measurement(
         elapsed_s=time.perf_counter() - start,
@@ -53,7 +52,7 @@ async def _append_batch(
 
 
 async def _prepare_read_stream(
-    adapter: BenchAdapter[Any], store: EventStore, params: dict[str, Any]
+    adapter: BenchAdapter[Any], store: FullEventStore, params: dict[str, Any]
 ) -> UUID:
     aggregate_id = uuid4()
     await populate_stream(store, aggregate_id, params["stream_length"])
@@ -61,18 +60,19 @@ async def _prepare_read_stream(
 
 
 async def _read_stream(
-    store: EventStore, params: dict[str, Any], iterations: int, prepared: Any
+    store: FullEventStore, params: dict[str, Any], iterations: int, prepared: Any
 ) -> Measurement:
     aggregate_id: UUID = prepared
+    stream = StreamId(aggregate_id=aggregate_id, category="Bench")
     stream_length: int = params["stream_length"]
     durations: list[float] = []
     start = time.perf_counter()
     for _ in range(iterations):
         t0 = time.perf_counter()
-        stream = await store.get_events(aggregate_id, "Bench")
+        envelopes = await collect(store.read_stream(stream))
         durations.append(time.perf_counter() - t0)
-        if stream.version != stream_length:
-            raise RuntimeError(f"expected {stream_length} events, read {stream.version}")
+        if len(envelopes) != stream_length:
+            raise RuntimeError(f"expected {stream_length} events, read {len(envelopes)}")
     return Measurement(
         elapsed_s=time.perf_counter() - start,
         operations=iterations * stream_length,
@@ -81,17 +81,18 @@ async def _read_stream(
 
 
 async def _concurrent_append(
-    store: EventStore, params: dict[str, Any], iterations: int, prepared: Any
+    store: FullEventStore, params: dict[str, Any], iterations: int, prepared: Any
 ) -> Measurement:
     writers: int = params["writers"]
     ops_per_writer = max(1, iterations // writers)
 
     async def writer() -> None:
         aggregate_id = uuid4()
+        stream = StreamId(aggregate_id=aggregate_id, category="Bench")
         for version in range(ops_per_writer):
             events = make_events(aggregate_id, 1, start_version=version + 1)
-            await store.append_events(
-                aggregate_id, "Bench", cast(list[DomainEvent], events), expected_version=version
+            await store.append(
+                stream, cast(list[DomainEvent], events), ExpectedVersion.exact(version)
             )
 
     start = time.perf_counter()
@@ -105,11 +106,12 @@ async def _concurrent_append(
 
 
 async def _contended_append(
-    store: EventStore, params: dict[str, Any], iterations: int, prepared: Any
+    store: FullEventStore, params: dict[str, Any], iterations: int, prepared: Any
 ) -> Measurement:
     writers: int = params["writers"]
     ops_per_writer = max(1, iterations // writers)
     aggregate_id = uuid4()
+    stream = StreamId(aggregate_id=aggregate_id, category="Bench")
     conflicts = 0
     lock = asyncio.Lock()
 
@@ -117,16 +119,13 @@ async def _contended_append(
         nonlocal conflicts
         done = 0
         while done < ops_per_writer:
-            version = await store.get_stream_version(aggregate_id, "Bench")
+            version = await store.get_stream_version(stream)
             events = make_events(aggregate_id, 1, start_version=version + 1)
             try:
-                result = await store.append_events(
-                    aggregate_id, "Bench", cast(list[DomainEvent], events), expected_version=version
+                await store.append(
+                    stream, cast(list[DomainEvent], events), ExpectedVersion.exact(version)
                 )
-                conflicted = result.conflict
             except OptimisticLockError:
-                conflicted = True
-            if conflicted:
                 async with lock:
                     conflicts += 1
                 continue

@@ -112,9 +112,7 @@ class TestPostgreSQLTenantRoutingRepositoryGetRouting:
         repo: PostgreSQLTenantRoutingRepository,
     ) -> None:
         """Test get_routing returns None when tenant not found."""
-        with patch(
-            "eventsource.migration.repositories.routing.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.routing.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.fetchone.return_value = None
@@ -145,9 +143,7 @@ class TestPostgreSQLTenantRoutingRepositoryGetRouting:
             now,  # updated_at
         )
 
-        with patch(
-            "eventsource.migration.repositories.routing.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.routing.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.fetchone.return_value = row
@@ -196,9 +192,7 @@ class TestPostgreSQLTenantRoutingRepositoryGetOrDefault:
             now,
         )
 
-        with patch(
-            "eventsource.migration.repositories.routing.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.routing.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.fetchone.return_value = row
@@ -238,9 +232,7 @@ class TestPostgreSQLTenantRoutingRepositoryGetOrDefault:
                 return None  # get_routing returns None
             return inserted_row  # INSERT RETURNING returns the row
 
-        with patch(
-            "eventsource.migration.repositories.routing.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.routing.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.fetchone.side_effect = mock_fetchone
@@ -277,9 +269,7 @@ class TestPostgreSQLTenantRoutingRepositorySetRouting:
         """Test set_routing executes UPSERT query."""
         tenant_id = uuid4()
 
-        with patch(
-            "eventsource.migration.repositories.routing.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.routing.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_ctx.return_value.__aenter__.return_value = mock_conn
 
@@ -317,9 +307,7 @@ class TestPostgreSQLTenantRoutingRepositorySetMigrationState:
         tenant_id = uuid4()
         migration_id = uuid4()
 
-        with patch(
-            "eventsource.migration.repositories.routing.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.routing.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_ctx.return_value.__aenter__.return_value = mock_conn
 
@@ -344,9 +332,7 @@ class TestPostgreSQLTenantRoutingRepositorySetMigrationState:
         """Test set_migration_state without migration ID."""
         tenant_id = uuid4()
 
-        with patch(
-            "eventsource.migration.repositories.routing.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.routing.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_ctx.return_value.__aenter__.return_value = mock_conn
 
@@ -379,9 +365,7 @@ class TestPostgreSQLTenantRoutingRepositorySetMigrationState:
         """Test set_migration_state for all possible states."""
         tenant_id = uuid4()
 
-        with patch(
-            "eventsource.migration.repositories.routing.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.routing.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_ctx.return_value.__aenter__.return_value = mock_conn
 
@@ -416,9 +400,7 @@ class TestPostgreSQLTenantRoutingRepositoryClearMigrationState:
         """Test clear_migration_state resets to NORMAL state."""
         tenant_id = uuid4()
 
-        with patch(
-            "eventsource.migration.repositories.routing.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.routing.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_ctx.return_value.__aenter__.return_value = mock_conn
 
@@ -452,9 +434,7 @@ class TestPostgreSQLTenantRoutingRepositoryListByState:
         repo: PostgreSQLTenantRoutingRepository,
     ) -> None:
         """Test list_by_state returns empty list when no matches."""
-        with patch(
-            "eventsource.migration.repositories.routing.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.routing.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.fetchall.return_value = []
@@ -481,9 +461,7 @@ class TestPostgreSQLTenantRoutingRepositoryListByState:
             (tenant2_id, "shared", "dual_write", migration_id, now, now),
         ]
 
-        with patch(
-            "eventsource.migration.repositories.routing.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.routing.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.fetchall.return_value = rows
@@ -519,9 +497,7 @@ class TestPostgreSQLTenantRoutingRepositoryListByStore:
         repo: PostgreSQLTenantRoutingRepository,
     ) -> None:
         """Test list_by_store returns empty list when no matches."""
-        with patch(
-            "eventsource.migration.repositories.routing.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.routing.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.fetchall.return_value = []
@@ -547,9 +523,7 @@ class TestPostgreSQLTenantRoutingRepositoryListByStore:
             (tenant2_id, "shared", "bulk_copy", uuid4(), now, now),
         ]
 
-        with patch(
-            "eventsource.migration.repositories.routing.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.routing.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.fetchall.return_value = rows
@@ -587,9 +561,7 @@ class TestPostgreSQLTenantRoutingRepositoryDeleteRouting:
         """Test delete_routing returns True when a row is deleted."""
         tenant_id = uuid4()
 
-        with patch(
-            "eventsource.migration.repositories.routing.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.routing.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.rowcount = 1
@@ -608,9 +580,7 @@ class TestPostgreSQLTenantRoutingRepositoryDeleteRouting:
         """Test delete_routing returns False when no row exists."""
         tenant_id = uuid4()
 
-        with patch(
-            "eventsource.migration.repositories.routing.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.routing.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.rowcount = 0
@@ -650,9 +620,7 @@ class TestPostgreSQLTenantRoutingRepositoryCaching:
         now = datetime.now(UTC)
         row = (tenant_id, "shared", "normal", None, now, now)
 
-        with patch(
-            "eventsource.migration.repositories.routing.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.routing.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.fetchone.return_value = row
@@ -680,9 +648,7 @@ class TestPostgreSQLTenantRoutingRepositoryCaching:
         now = datetime.now(UTC)
         row = (tenant_id, "shared", "normal", None, now, now)
 
-        with patch(
-            "eventsource.migration.repositories.routing.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.routing.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.fetchone.return_value = row
@@ -716,9 +682,7 @@ class TestPostgreSQLTenantRoutingRepositoryCaching:
         now = datetime.now(UTC)
         row = (tenant_id, "shared", "normal", None, now, now)
 
-        with patch(
-            "eventsource.migration.repositories.routing.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.routing.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.fetchone.return_value = row
@@ -747,9 +711,7 @@ class TestPostgreSQLTenantRoutingRepositoryCaching:
         now = datetime.now(UTC)
         row = (tenant_id, "shared", "normal", None, now, now)
 
-        with patch(
-            "eventsource.migration.repositories.routing.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.routing.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.fetchone.return_value = row
@@ -778,9 +740,7 @@ class TestPostgreSQLTenantRoutingRepositoryCaching:
         now = datetime.now(UTC)
         row = (tenant_id, "shared", "normal", None, now, now)
 
-        with patch(
-            "eventsource.migration.repositories.routing.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.routing.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.fetchone.return_value = row
@@ -808,9 +768,7 @@ class TestPostgreSQLTenantRoutingRepositoryCaching:
         tenant2_id = uuid4()
         now = datetime.now(UTC)
 
-        with patch(
-            "eventsource.migration.repositories.routing.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.routing.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.fetchone.side_effect = [
@@ -943,9 +901,7 @@ class TestMigrationStateTransitionWorkflow:
         tenant_id = uuid4()
         migration_id = uuid4()
 
-        with patch(
-            "eventsource.migration.repositories.routing.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.routing.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_ctx.return_value.__aenter__.return_value = mock_conn
 
@@ -1002,9 +958,7 @@ class TestMigrationStateTransitionWorkflow:
         tenant_id = uuid4()
         migration_id = uuid4()
 
-        with patch(
-            "eventsource.migration.repositories.routing.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.routing.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_ctx.return_value.__aenter__.return_value = mock_conn
 

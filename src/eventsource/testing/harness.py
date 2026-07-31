@@ -25,11 +25,10 @@ from __future__ import annotations
 import threading
 from typing import TYPE_CHECKING
 
+from eventsource.adapters.memory import InMemoryCheckpointRepository, InMemoryDLQRepository
+from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.bus.memory import InMemoryEventBus
 from eventsource.events.base import DomainEvent
-from eventsource.repositories.checkpoint import InMemoryCheckpointRepository
-from eventsource.repositories.dlq import InMemoryDLQRepository
-from eventsource.stores.in_memory import InMemoryEventStore
 
 if TYPE_CHECKING:
     pass
@@ -44,7 +43,7 @@ class InMemoryTestHarness:
     in tests and ensures consistent configuration.
 
     Components provided:
-    - event_store: InMemoryEventStore for persisting events
+    - event_store: InMemoryEventStore (the ports adapter) for persisting events
     - event_bus: InMemoryEventBus for publishing/subscribing to events
     - checkpoint_repo: InMemoryCheckpointRepository for projection checkpoints
     - dlq_repo: InMemoryDLQRepository for dead letter queue
@@ -58,7 +57,7 @@ class InMemoryTestHarness:
         >>>
         >>> async def test_order_creation(harness):
         ...     # Use harness.event_store, harness.event_bus, etc.
-        ...     await harness.event_store.append_events(...)
+        ...     await harness.event_store.append(...)
         ...     assert len(harness.published_events) == 1
 
     Thread Safety:
@@ -75,7 +74,7 @@ class InMemoryTestHarness:
         Tracing is disabled by default for test performance and
         to avoid polluting traces.
         """
-        self._event_store = InMemoryEventStore(enable_tracing=False)
+        self._event_store = InMemoryEventStore()
         self._event_bus = InMemoryEventBus(enable_tracing=False)
         self._checkpoint_repo = InMemoryCheckpointRepository(enable_tracing=False)
         self._dlq_repo = InMemoryDLQRepository(enable_tracing=False)
@@ -98,11 +97,10 @@ class InMemoryTestHarness:
             InMemoryEventStore instance for persisting and retrieving events
 
         Example:
-            >>> await harness.event_store.append_events(
-            ...     aggregate_id=order_id,
-            ...     aggregate_type="Order",
-            ...     events=[order_created],
-            ...     expected_version=0,
+            >>> await harness.event_store.append(
+            ...     StreamId(aggregate_id=order_id, category="Order"),
+            ...     [order_created],
+            ...     ExpectedVersion.no_stream(),
             ... )
         """
         return self._event_store
@@ -130,7 +128,7 @@ class InMemoryTestHarness:
             InMemoryCheckpointRepository instance for projection checkpoints
 
         Example:
-            >>> await harness.checkpoint_repo.save_position("my-projection", 42, event_id, "EventType")
+            >>> await harness.checkpoint_repo.save_position("my-projection", position, event_id, "EventType")
             >>> position = await harness.checkpoint_repo.get_position("my-projection")
         """
         return self._checkpoint_repo
@@ -187,7 +185,7 @@ class InMemoryTestHarness:
             ...     yield h
             ...     h.reset()  # Clean up after test
         """
-        self._event_store = InMemoryEventStore(enable_tracing=False)
+        self._event_store = InMemoryEventStore()
         self._event_bus = InMemoryEventBus(enable_tracing=False)
         self._checkpoint_repo = InMemoryCheckpointRepository(enable_tracing=False)
         self._dlq_repo = InMemoryDLQRepository(enable_tracing=False)

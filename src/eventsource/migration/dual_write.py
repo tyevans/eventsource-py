@@ -1,10 +1,13 @@
 """
 DualWriteInterceptor - Transparent dual-write during migration sync.
 
-The DualWriteInterceptor intercepts write operations during the dual-write
-phase of migration, ensuring new events are written to both source and
-target stores. This maintains data consistency while allowing the target
-store to catch up with the source.
+The DualWriteInterceptor intercepts write operations for a migrating
+tenant, ensuring new events are written to both source and target stores.
+It is installed before the bulk-copy pass starts and stays installed
+through the DUAL_WRITE phase, so its mirror coverage overlaps the copy
+with no gap: every event is either in the copier's feed snapshot or
+mirrored by the interceptor. This maintains data consistency while
+allowing the target store to catch up with the source.
 
 Responsibilities:
     - Intercept write operations for migrating tenants
@@ -12,7 +15,7 @@ Responsibilities:
     - Write to target store second (best-effort)
     - Handle target write failures gracefully without failing the operation
     - Track failed target writes for monitoring and background recovery
-    - Implement EventStore protocol for transparent integration
+    - Satisfy the `FullEventStore` port for transparent integration
 
 Consistency Guarantees:
     - Source write always succeeds or operation fails
@@ -29,10 +32,8 @@ Usage:
     ...     tenant_id=tenant_uuid,
     ... )
     >>>
-    >>> # Use like any EventStore - writes go to both stores
-    >>> result = await interceptor.append_events(
-    ...     aggregate_id, "Order", events, expected_version
-    ... )
+    >>> # Use like any FullEventStore - writes go to both stores
+    >>> result = await interceptor.append(stream, events, expected)
     >>>
     >>> # Check failure statistics
     >>> stats = interceptor.get_failure_stats()
@@ -46,12 +47,13 @@ See Also:
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import UUID
 
+from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.observability import (
     ATTR_AGGREGATE_ID,
@@ -62,16 +64,16 @@ from eventsource.observability import (
     Tracer,
     create_tracer,
 )
-from eventsource.stores.interface import (
+from eventsource.ports import (
     AppendResult,
-    EventStore,
-    EventStream,
-    ReadOptions,
-    StoredEvent,
+    CategoryReadOptions,
+    EventEnvelope,
+    ExpectedVersion,
+    FeedReadOptions,
+    FullEventStore,
+    Position,
+    StreamReadOptions,
 )
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +92,9 @@ class FailedWrite:
         aggregate_type: Type of the aggregate.
         event_ids: IDs of events that failed to write.
         error_message: The error message from the failed write.
-        source_position: Global position in source store after successful write.
+        source_position: Position of the FIRST event of the source append
+            (`AppendResult.position`), not the position after the write.
+            None when the source store has no global feed.
     """
 
     timestamp: datetime
@@ -98,7 +102,7 @@ class FailedWrite:
     aggregate_type: str
     event_ids: list[UUID]
     error_message: str
-    source_position: int
+    source_position: Position | None
 
 
 @dataclass
@@ -135,9 +139,13 @@ class FailureStats:
         }
 
 
-class DualWriteInterceptor(EventStore):
+class DualWriteInterceptor:
     """
     Intercepts writes to duplicate to both stores during migration.
+
+    Structural conformance only -- the interceptor satisfies
+    `FullEventStore` by having its eight members, not by inheriting
+    from any base class.
 
     Ensures new events are written to both source and target stores
     during the dual-write phase, maintaining consistency while the
@@ -148,7 +156,7 @@ class DualWriteInterceptor(EventStore):
         - Target write is best-effort; failures are logged but don't fail the operation
         - Failed target writes are tracked for background sync recovery
 
-    The interceptor implements the EventStore protocol, making it a
+    The interceptor satisfies the `FullEventStore` port, making it a
     drop-in replacement that the TenantStoreRouter can use transparently.
 
     Example:
@@ -162,20 +170,31 @@ class DualWriteInterceptor(EventStore):
         >>> router.set_dual_write_interceptor(tenant_id, interceptor)
         >>>
         >>> # Now writes automatically go to both stores
-        >>> await router.append_events(agg_id, "Order", events, 0)
+        >>> await router.append(stream, events, ExpectedVersion.exact(0))
 
     Attributes:
+        max_append_batch: The interceptor imposes no batch-size limit of
+            its own; the source store enforces whatever limit it has.
         _source: The authoritative source event store.
         _target: The target event store being migrated to.
         _tenant_id: The tenant this interceptor handles.
         _failed_writes: List of failed target writes for recovery.
         _affected_aggregates: Set of aggregate IDs with failed writes.
+        _dual_write_success_count: Events successfully mirrored to the target.
+        _first_seen_source_position: Where this interceptor's coverage starts.
+        _last_synced_source_position: Watermark of the latest successful mirror.
+        _unabsorbed_failure_positions: Mirror failures not yet proven
+            re-copied by a completed bulk-copy pass.
+        _coverage_complete: A copy pass starting after installation has
+            completed, so the install window is provably empty.
     """
+
+    max_append_batch: int | None = None
 
     def __init__(
         self,
-        source_store: EventStore,
-        target_store: EventStore,
+        source_store: FullEventStore,
+        target_store: FullEventStore,
         tenant_id: UUID,
         *,
         tracer: Tracer | None = None,
@@ -206,17 +225,41 @@ class DualWriteInterceptor(EventStore):
         self._failed_writes: list[FailedWrite] = []
         self._affected_aggregates: set[UUID] = set()
 
+        # Count of EVENTS (not appends) successfully mirrored to the target.
+        # Statistics only -- it does NOT feed the lag calculation, because a
+        # count cannot distinguish "five mirrored" from "five mirrored after
+        # three were dropped".
+        self._dual_write_success_count = 0
+
+        # Sync watermarks. Source positions throughout, so they are always
+        # mutually comparable.
+        self._first_seen_source_position: Position | None = None
+        self._last_synced_source_position: Position | None = None
+
+        # Source positions of mirror failures not yet proven re-copied by
+        # a bulk-copy checkpoint. min() of this list is the first-failed
+        # watermark; `mark_copy_pass_complete` absorbs entries a completed
+        # pass has provably re-delivered. Capped fail-closed: once
+        # saturated, the anchor never advances again (see safe_lag_anchor).
+        self._unabsorbed_failure_positions: list[Position] = []
+        self._failure_positions_saturated = False
+
+        # Set by `mark_copy_pass_complete`: a copy pass that STARTED AFTER
+        # this interceptor was installed has completed, so no event was
+        # ever mirrored by nobody and the install-window clamp releases.
+        self._coverage_complete = False
+
     # =========================================================================
     # Public Properties
     # =========================================================================
 
     @property
-    def source_store(self) -> EventStore:
+    def source_store(self) -> FullEventStore:
         """Get the source (authoritative) event store."""
         return self._source
 
     @property
-    def target_store(self) -> EventStore:
+    def target_store(self) -> FullEventStore:
         """Get the target event store."""
         return self._target
 
@@ -224,6 +267,182 @@ class DualWriteInterceptor(EventStore):
     def tenant_id(self) -> UUID:
         """Get the tenant ID this interceptor handles."""
         return self._tenant_id
+
+    @property
+    def dual_write_success_count(self) -> int:
+        """Events successfully mirrored to the target since construction.
+
+        Counts EVENTS, not append calls. STATISTICS ONLY -- it must never
+        be subtracted from a lag count. A bare success count cannot tell
+        "five mirrored" from "five mirrored after three were dropped", so
+        subtracting it can report zero lag over a hole. Use
+        `safe_lag_anchor` instead, which stops at the first failure.
+        """
+        return self._dual_write_success_count
+
+    @property
+    def first_seen_source_position(self) -> Position | None:
+        """Source position of the FIRST append this interceptor handled.
+
+        Set once, on the first append, whether or not the mirror
+        succeeded -- it marks where this interceptor's coverage starts,
+        not where it worked. Writes that landed before it were mirrored
+        by nobody.
+        """
+        return self._first_seen_source_position
+
+    @property
+    def last_synced_source_position(self) -> Position | None:
+        """Source position of the most recent successful mirror.
+
+        The first-of-batch position, which is a CONSERVATIVE (never
+        optimistic) watermark -- not a monotone one: concurrent mirrors
+        can complete out of order, so this can move backward. That is
+        safe because every clamp errs toward counting more lag, so a
+        watermark that lags reality only ever refuses a cutover that
+        would have been allowed, never the reverse. For a multi-event
+        append the batch's remaining events sit after this position and
+        keep counting as lag until the next successful mirror moves past
+        them.
+        """
+        return self._last_synced_source_position
+
+    @property
+    def first_failed_source_position(self) -> Position | None:
+        """Earliest source position of an unabsorbed mirror failure.
+
+        A later mirror SUCCESS never clears or advances this -- it does
+        not retroactively deliver the event that was dropped. The only
+        release is `mark_copy_pass_complete`: a completed bulk-copy pass
+        whose checkpoint reaches the failure proves the copier
+        re-delivered the event, which absorbs it. This is what stops
+        `safe_lag_anchor` from advancing over a hole.
+        """
+        if not self._unabsorbed_failure_positions:
+            return None
+        # Ordering over same-store positions, not arithmetic.
+        return min(self._unabsorbed_failure_positions)
+
+    def safe_lag_anchor(self, checkpoint: Position | None) -> Position | None:
+        """The furthest source position provably present in the target.
+
+        Counting lag from here is safe: every source event at or before
+        the returned position is known to be in the target.
+
+        Starts from `checkpoint` (the migration's `last_source_position`,
+        i.e. what the bulk copy proved) and advances to the synced
+        watermark only when BOTH clamps pass. The anchor never moves
+        backward.
+
+        Clamp 1 -- the install window. The copier stops at `checkpoint`
+        and this interceptor's coverage starts at
+        `first_seen_source_position`; anything in between was mirrored by
+        nobody. The anchor may advance only when the checkpoint has
+        reached the start of coverage, which is the only way the
+        interceptor ALONE can know no such gap exists. The clamp is
+        released for good by `mark_copy_pass_complete`, the coordinator's
+        attestation that a copy pass beginning after installation
+        completed -- installed-before-copy means the window is empty by
+        construction. Fail-closed: without that attestation, when the two
+        watermarks cannot be shown to meet the anchor stays put even if
+        there happened to be no events in the window.
+
+        Clamp 2 -- the failure. If mirroring has failed and no completed
+        copy pass has absorbed the failure (see
+        `mark_copy_pass_complete`), the anchor advances only when the
+        whole synced run precedes that first unabsorbed failure.
+
+        CONSEQUENCE: events stranded behind an unabsorbed failure block
+        cutover until a copy pass absorbs them, advancing the checkpoint
+        past them. Re-copying is safe -- the copier treats an event
+        already in the target as already-copied and continues -- so the
+        accepted failure mode here is stuck-until-recopied, never a
+        cutover over missing data.
+
+        Args:
+            checkpoint: Last source position the bulk copy proved copied.
+
+        Returns:
+            The anchor to pass as `SyncLagTracker.calculate_lag(since=...)`.
+        """
+        candidate = self._last_synced_source_position
+        if candidate is None:
+            return checkpoint
+
+        # Fail-closed under saturation: failure positions were dropped,
+        # so no advancement can ever be shown safe again.
+        if self._failure_positions_saturated:
+            return checkpoint
+
+        # Clamp 1: the checkpoint must have reached this interceptor's
+        # coverage, or events between them were mirrored by nobody.
+        # A completed covered copy pass proves the window empty instead.
+        if not self._coverage_complete:
+            first_seen = self._first_seen_source_position
+            if first_seen is None:
+                return checkpoint
+            if checkpoint is None:
+                # Nothing was copied, so everything before coverage is a gap.
+                return None
+            # Same store (source positions), so these orderings are always
+            # defined -- PositionForeignError is impossible here.
+            assert checkpoint.store_id == first_seen.store_id
+            if checkpoint < first_seen:
+                return checkpoint
+
+        # Clamp 2: successes after a failure prove nothing about the hole.
+        first_failed = self.first_failed_source_position
+        if first_failed is not None:
+            assert candidate.store_id == first_failed.store_id
+            if candidate >= first_failed:
+                return checkpoint
+
+        if checkpoint is not None:
+            assert candidate.store_id == checkpoint.store_id
+            if candidate <= checkpoint:
+                return checkpoint
+
+        return candidate
+
+    def mark_copy_pass_complete(self, checkpoint: Position | None) -> int:
+        """Record that a covered bulk-copy pass completed at `checkpoint`.
+
+        MUST only be called by the migration coordinator, and only for a
+        copy pass that BEGAN AFTER this interceptor was installed and ran
+        to completion -- both are ordering facts the interceptor cannot
+        observe on its own. Two proofs follow from them:
+
+        - The install window is empty. The pass's feed snapshot contains
+          every event predating this interceptor's coverage, so no event
+          was mirrored by nobody: the install-window clamp in
+          `safe_lag_anchor` is released permanently.
+        - Failures at or before `checkpoint` are absorbed. The copier
+          verified every feed event through its checkpoint (appended, or
+          confirmed already present), so a mirror that dropped one of
+          those events was re-delivered by the copy. Later failures stay:
+          the checkpoint proves nothing about them.
+
+        Args:
+            checkpoint: The completed pass's final source checkpoint
+                (`Migration.last_source_position`); None when the tenant
+                had no events to copy, which still proves the window
+                empty but absorbs nothing.
+
+        Returns:
+            The number of unabsorbed mirror failures remaining. Non-zero
+            means `safe_lag_anchor` stays clamped at the checkpoint until
+            another completed pass absorbs them.
+        """
+        self._coverage_complete = True
+        if checkpoint is not None:
+            self._unabsorbed_failure_positions = [
+                p for p in self._unabsorbed_failure_positions if p > checkpoint
+            ]
+        remaining = len(self._unabsorbed_failure_positions)
+        if self._failure_positions_saturated:
+            # Dropped positions are unknowable: never report clean.
+            return remaining + 1
+        return remaining
 
     # =========================================================================
     # Failure Tracking
@@ -276,9 +495,9 @@ class DualWriteInterceptor(EventStore):
         self,
         aggregate_id: UUID,
         aggregate_type: str,
-        events: list[DomainEvent],
+        events: Sequence[DomainEvent],
         error: Exception,
-        source_position: int,
+        source_position: Position | None,
     ) -> None:
         """
         Record a failed target write for monitoring and recovery.
@@ -288,7 +507,8 @@ class DualWriteInterceptor(EventStore):
             aggregate_type: Type of the aggregate.
             events: The events that failed to write.
             error: The exception that caused the failure.
-            source_position: Global position in source after successful write.
+            source_position: Position of the first event of the successful
+                source append; None for a feedless source store.
         """
         failed_write = FailedWrite(
             timestamp=datetime.now(UTC),
@@ -314,148 +534,128 @@ class DualWriteInterceptor(EventStore):
             logger.debug(f"Trimmed {len(removed)} old failure records for tenant {self._tenant_id}")
 
     # =========================================================================
-    # EventStore Protocol Implementation - Write Operations
+    # FullEventStore Port Implementation - Write Operations
     # =========================================================================
 
-    async def append_events(
+    async def append(
         self,
-        aggregate_id: UUID,
-        aggregate_type: str,
-        events: list[DomainEvent],
-        expected_version: int,
+        stream: StreamId,
+        events: Sequence[DomainEvent],
+        expected: ExpectedVersion,
     ) -> AppendResult:
         """
         Append events to both source and target stores.
 
         Writes to source store first (authoritative), then attempts to write
-        to target store. Source failures propagate as operation failures.
-        Target failures are logged but don't fail the operation.
+        to target store. Source failures propagate to the caller. Target
+        failures are recorded but don't fail the operation.
+
+        The mirror does NOT forward the caller's `expected`: it appends to
+        the target with the exact stream version the source held before
+        this append (derived from the source result). The mirror therefore
+        lands only when the target stream has fully converged with the
+        source, which is what keeps the overlap with a running bulk-copy
+        pass safe: a mirror can never leapfrog events the copier has not
+        yet delivered, so the target's stream order always matches the
+        source's -- even for callers appending with `any`. A mirror
+        refused for non-convergence is recorded as a failure and the
+        event reaches the target through the copy pass instead.
 
         Args:
-            aggregate_id: ID of the aggregate.
-            aggregate_type: Type of aggregate (e.g., 'Order').
+            stream: Identity of the stream to append to.
             events: Events to append.
-            expected_version: Expected current version (for optimistic locking).
+            expected: Optimistic-concurrency expectation.
 
         Returns:
             AppendResult from the source store write.
 
         Raises:
-            OptimisticLockError: If source store version check fails.
+            OptimisticLockError: If the source store's version check fails.
             ValueError: If events list is empty.
         """
         if not events:
             raise ValueError("Cannot append empty event list")
 
         with self._tracer.span(
-            "eventsource.dual_write.append_events",
+            "eventsource.dual_write.append",
             {
-                ATTR_AGGREGATE_ID: str(aggregate_id),
-                ATTR_AGGREGATE_TYPE: aggregate_type,
+                ATTR_AGGREGATE_ID: str(stream.aggregate_id),
+                ATTR_AGGREGATE_TYPE: stream.category,
                 ATTR_TENANT_ID: str(self._tenant_id),
                 ATTR_EVENT_COUNT: len(events),
-                ATTR_EXPECTED_VERSION: expected_version,
+                ATTR_EXPECTED_VERSION: expected.kind,
             },
         ):
-            # Step 1: Write to source (authoritative)
-            # If this fails, the entire operation fails
-            source_result = await self._source.append_events(
-                aggregate_id,
-                aggregate_type,
-                events,
-                expected_version,
-            )
+            # Step 1: Write to source (authoritative). A concurrency
+            # failure raises out of here, which is the honest propagation.
+            source_result = await self._source.append(stream, events, expected)
 
-            # If source write failed (conflict), return immediately
-            if not source_result.success:
-                return source_result
+            # Coverage starts at the first append handled, successful
+            # mirror or not.
+            if self._first_seen_source_position is None and source_result.position is not None:
+                self._first_seen_source_position = source_result.position
 
             # Step 2: Write to target (best-effort)
             # Target failures are logged but don't fail the operation
             try:
-                await self._target.append_events(
-                    aggregate_id,
-                    aggregate_type,
-                    events,
-                    expected_version,
-                )
+                # Mirror at the exact pre-append source version so the
+                # mirror only ever extends a converged target stream --
+                # see the method docstring for why this is what makes
+                # overlap with a bulk-copy pass safe.
+                mirror_expected = ExpectedVersion.exact(source_result.new_version - len(events))
+                await self._target.append(stream, events, mirror_expected)
+                self._dual_write_success_count += len(events)
+                if source_result.position is not None:
+                    self._last_synced_source_position = source_result.position
                 logger.debug(
-                    f"Dual-write success for tenant {self._tenant_id}, aggregate {aggregate_id}"
+                    f"Dual-write success for tenant {self._tenant_id}, stream {stream.render()}"
                 )
             except Exception as e:
                 # Log the failure but don't fail the operation
                 logger.warning(
                     f"Target write failed for tenant {self._tenant_id}, "
-                    f"aggregate {aggregate_id}: {e}"
+                    f"stream {stream.render()}: {e}"
                 )
+                if source_result.position is not None:
+                    if len(self._unabsorbed_failure_positions) >= self._max_failure_history:
+                        # Fail-closed: dropping a position would make a
+                        # future absorption unsound, so pin the anchor
+                        # instead (see safe_lag_anchor).
+                        self._failure_positions_saturated = True
+                    else:
+                        self._unabsorbed_failure_positions.append(source_result.position)
                 self._record_sync_failure(
-                    aggregate_id=aggregate_id,
-                    aggregate_type=aggregate_type,
+                    aggregate_id=stream.aggregate_id,
+                    aggregate_type=stream.category,
                     events=events,
                     error=e,
-                    source_position=source_result.global_position,
+                    source_position=source_result.position,
                 )
 
             # Return the source result (operation succeeded)
             return source_result
 
     # =========================================================================
-    # EventStore Protocol Implementation - Read Operations
+    # FullEventStore Port Implementation - Read Operations
     # =========================================================================
 
-    async def get_events(
+    async def read_category(
         self,
-        aggregate_id: UUID,
-        aggregate_type: str | None = None,
-        from_version: int = 0,
-        from_timestamp: datetime | None = None,
-        to_timestamp: datetime | None = None,
-    ) -> EventStream:
+        category: str,
+        options: CategoryReadOptions | None = None,
+    ) -> AsyncIterator[EventEnvelope]:
         """
-        Get events from the source store.
-
-        During dual-write, reads always come from the authoritative source.
+        Read a category from the source store.
 
         Args:
-            aggregate_id: ID of the aggregate.
-            aggregate_type: Type of aggregate (optional).
-            from_version: Start from this version (default: 0).
-            from_timestamp: Only get events after this timestamp.
-            to_timestamp: Only get events before this timestamp.
+            category: The stream category (e.g. 'Order').
+            options: Options for reading.
 
-        Returns:
-            EventStream containing the aggregate's events.
+        Yields:
+            EventEnvelope instances from the source store.
         """
-        return await self._source.get_events(
-            aggregate_id,
-            aggregate_type,
-            from_version,
-            from_timestamp,
-            to_timestamp,
-        )
-
-    async def get_events_by_type(
-        self,
-        aggregate_type: str,
-        tenant_id: UUID | None = None,
-        from_timestamp: datetime | None = None,
-    ) -> list[DomainEvent]:
-        """
-        Get all events for a specific aggregate type from source store.
-
-        Args:
-            aggregate_type: Type of aggregate (e.g., 'Order').
-            tenant_id: Filter by tenant ID (optional).
-            from_timestamp: Only get events after this timestamp.
-
-        Returns:
-            List of events in chronological order.
-        """
-        return await self._source.get_events_by_type(
-            aggregate_type,
-            tenant_id,
-            from_timestamp,
-        )
+        async for envelope in self._source.read_category(category, options):
+            yield envelope
 
     async def event_exists(self, event_id: UUID) -> bool:
         """
@@ -469,65 +669,65 @@ class DualWriteInterceptor(EventStore):
         """
         return await self._source.event_exists(event_id)
 
-    async def get_stream_version(
-        self,
-        aggregate_id: UUID,
-        aggregate_type: str,
-    ) -> int:
+    async def get_stream_version(self, stream: StreamId) -> int:
         """
-        Get the current version of an aggregate from source store.
+        Get the current version of a stream from the source store.
 
         Args:
-            aggregate_id: ID of the aggregate.
-            aggregate_type: Type of aggregate.
+            stream: Identity of the stream.
 
         Returns:
-            Current version (0 if aggregate doesn't exist).
+            Current version (0 if the stream doesn't exist).
         """
-        return await self._source.get_stream_version(aggregate_id, aggregate_type)
+        return await self._source.get_stream_version(stream)
 
     async def read_stream(
         self,
-        stream_id: str,
-        options: ReadOptions | None = None,
-    ) -> AsyncIterator[StoredEvent]:
+        stream: StreamId,
+        options: StreamReadOptions | None = None,
+    ) -> AsyncIterator[EventEnvelope]:
         """
         Read events from a stream in the source store.
 
         Args:
-            stream_id: The stream identifier.
+            stream: Identity of the stream.
             options: Options for reading.
 
         Yields:
-            StoredEvent instances from source store.
+            EventEnvelope instances from the source store.
         """
-        async for event in self._source.read_stream(stream_id, options):
-            yield event
+        async for envelope in self._source.read_stream(stream, options):
+            yield envelope
 
     async def read_all(
         self,
-        options: ReadOptions | None = None,
-    ) -> AsyncIterator[StoredEvent]:
+        from_position: Position | None = None,
+        options: FeedReadOptions | None = None,
+    ) -> AsyncIterator[EventEnvelope]:
         """
-        Read all events from the source store.
+        Read the global feed from the source store.
 
         Args:
+            from_position: Read strictly after this source-store position.
             options: Options for reading.
 
         Yields:
-            StoredEvent instances from source store.
+            EventEnvelope instances from the source store.
         """
-        async for event in self._source.read_all(options):
-            yield event
+        async for envelope in self._source.read_all(from_position, options):
+            yield envelope
 
-    async def get_global_position(self) -> int:
+    async def current_position(self) -> Position | None:
         """
-        Get the global position from the source store.
+        Get the current global-feed position of the SOURCE store.
+
+        The returned position belongs to the source store and is not
+        comparable with the target store's positions.
 
         Returns:
-            The maximum global position in the source store.
+            The source store's latest position, or None if it is empty.
         """
-        return await self._source.get_global_position()
+        return await self._source.current_position()
 
 
 __all__ = [

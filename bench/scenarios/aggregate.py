@@ -8,14 +8,14 @@ from bench.adapters.base import BenchAdapter
 from bench.core.domain import BenchCounter, BenchDeciderCounter, BenchIncrement
 from bench.core.runner import Measurement, Scenario
 from eventsource.application.aggregates.repository import AggregateRepository
+from eventsource.ports import FullEventStore
 from eventsource.ports.snapshots import SnapshotStore
-from eventsource.stores.interface import EventStore
 
 SNAPSHOT_THRESHOLD = 100
 
 
 def _make_repo(
-    store: EventStore, snapshot_store: SnapshotStore | None, snapshots: str
+    store: FullEventStore, snapshot_store: SnapshotStore | None, snapshots: str
 ) -> AggregateRepository[BenchCounter]:
     if snapshots == "threshold":
         return AggregateRepository(
@@ -34,7 +34,7 @@ def _make_repo(
 
 
 def _make_decider_repo(
-    store: EventStore, snapshot_store: SnapshotStore | None, snapshots: str
+    store: FullEventStore, snapshot_store: SnapshotStore | None, snapshots: str
 ) -> AggregateRepository[BenchDeciderCounter]:
     if snapshots == "threshold":
         return AggregateRepository(
@@ -54,7 +54,7 @@ def _make_decider_repo(
 
 async def _prepare_e2e(
     adapter: BenchAdapter[Any],
-    resource: tuple[EventStore, SnapshotStore],
+    resource: tuple[FullEventStore, SnapshotStore],
     params: dict[str, Any],
 ) -> UUID:
     store, snapshot_store = resource
@@ -72,7 +72,7 @@ async def _prepare_e2e(
 
 
 async def _load_mutate_save(
-    resource: tuple[EventStore, SnapshotStore],
+    resource: tuple[FullEventStore, SnapshotStore],
     params: dict[str, Any],
     iterations: int,
     prepared: Any,
@@ -97,7 +97,7 @@ async def _load_mutate_save(
 
 async def _prepare_e2e_decider(
     adapter: BenchAdapter[Any],
-    resource: tuple[EventStore, SnapshotStore],
+    resource: tuple[FullEventStore, SnapshotStore],
     params: dict[str, Any],
 ) -> UUID:
     store, snapshot_store = resource
@@ -115,7 +115,7 @@ async def _prepare_e2e_decider(
 
 
 async def _load_mutate_save_decider(
-    resource: tuple[EventStore, SnapshotStore],
+    resource: tuple[FullEventStore, SnapshotStore],
     params: dict[str, Any],
     iterations: int,
     prepared: Any,

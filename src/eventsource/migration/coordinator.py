@@ -97,16 +97,16 @@ from eventsource.migration.subscription_migrator import (
 )
 from eventsource.migration.sync_lag_tracker import SyncLagTracker
 from eventsource.observability import Tracer, create_tracer
-from eventsource.stores.interface import EventStore
+from eventsource.ports import FullEventStore, Position
 
 if TYPE_CHECKING:
-    from eventsource.locks import PostgreSQLLockManager
     from eventsource.migration.position_mapper import PositionMapper
     from eventsource.migration.repositories.migration import MigrationRepository
     from eventsource.migration.repositories.routing import TenantRoutingRepository
     from eventsource.migration.router import TenantStoreRouter
     from eventsource.migration.status_streamer import StatusStreamer
-    from eventsource.repositories.checkpoint import CheckpointRepository
+    from eventsource.ports.checkpoints import CheckpointRepository
+    from eventsource.ports.locks import DistributedLock
 
 logger = logging.getLogger(__name__)
 
@@ -119,8 +119,10 @@ class MigrationCoordinator:
     CutoverManager to perform zero-downtime tenant migrations.
 
     The coordinator manages migrations through phases:
-    1. PENDING -> BULK_COPY: Start copying historical events
-    2. BULK_COPY -> DUAL_WRITE: Enable dual-write for new events
+    1. PENDING -> BULK_COPY: Install the dual-write interceptor, then copy
+       historical events (new writes are mirrored while the copy runs, so
+       no write is ever mirrored by nobody)
+    2. BULK_COPY -> DUAL_WRITE: Copy complete; only the mirror remains
     3. DUAL_WRITE -> CUTOVER: Perform atomic switch when sync lag is acceptable
     4. CUTOVER -> COMPLETED: Migration finished successfully
 
@@ -171,17 +173,17 @@ class MigrationCoordinator:
         ...     print(f"Cutover: {'success' if result.success else 'failed'}")
 
     Attributes:
-        _source_store: Source EventStore (where tenant currently resides).
+        _source_store: Source FullEventStore (where tenant currently resides).
         _migration_repo: Repository for migration state persistence.
         _routing_repo: Repository for tenant routing configuration.
         _router: TenantStoreRouter for routing management.
         _source_store_id: Identifier for the source store.
-        _lock_manager: PostgreSQL advisory lock manager for cutover coordination.
+        _lock_manager: Distributed lock manager for cutover coordination.
         _active_copiers: Dictionary of active BulkCopier instances by migration ID.
         _active_tasks: Dictionary of active background tasks by migration ID.
         _status_queues: Status observer queues for streaming updates.
         _lag_trackers: Dictionary of SyncLagTracker instances by migration ID.
-        _target_stores: Dictionary of target EventStore instances by migration ID.
+        _target_stores: Dictionary of target FullEventStore instances by migration ID.
         _cutover_manager: Shared CutoverManager instance for cutover operations.
         _position_mapper: PositionMapper for subscription checkpoint translation (P3-005).
         _checkpoint_repo: CheckpointRepository for subscription checkpoints (P3-005).
@@ -191,13 +193,13 @@ class MigrationCoordinator:
 
     def __init__(
         self,
-        source_store: EventStore,
+        source_store: FullEventStore,
         migration_repo: MigrationRepository,
         routing_repo: TenantRoutingRepository,
         router: TenantStoreRouter,
         *,
         source_store_id: str = "default",
-        lock_manager: PostgreSQLLockManager | None = None,
+        lock_manager: DistributedLock | None = None,
         position_mapper: PositionMapper | None = None,
         checkpoint_repo: CheckpointRepository | None = None,
         tracer: Tracer | None = None,
@@ -207,12 +209,12 @@ class MigrationCoordinator:
         Initialize the coordinator.
 
         Args:
-            source_store: Source EventStore (where tenant currently is)
+            source_store: Source FullEventStore (where tenant currently is)
             migration_repo: Repository for migration state
             routing_repo: Repository for tenant routing
             router: TenantStoreRouter for routing management
-            source_store_id: Identifier for the source store
-            lock_manager: PostgreSQL advisory lock manager for cutover coordination.
+            source_store_id: Routing identifier for the source store.
+            lock_manager: Distributed lock manager for cutover coordination.
                 Required for cutover operations in dual-write phase.
             position_mapper: PositionMapper for subscription checkpoint translation.
                 Required for subscription migration in P3-005.
@@ -245,7 +247,12 @@ class MigrationCoordinator:
         self._lag_trackers: dict[UUID, SyncLagTracker] = {}
 
         # Target stores by migration_id (needed for dual-write interceptor creation)
-        self._target_stores: dict[UUID, EventStore] = {}
+        self._target_stores: dict[UUID, FullEventStore] = {}
+
+        # Live dual-write interceptors by migration_id. Installed at
+        # bulk-copy start; the lag calls anchor on their watermarks via
+        # `safe_lag_anchor`.
+        self._interceptors: dict[UUID, DualWriteInterceptor] = {}
 
         # CutoverManager instance (created lazily when needed)
         self._cutover_manager: CutoverManager | None = None
@@ -263,7 +270,7 @@ class MigrationCoordinator:
     async def start_migration(
         self,
         tenant_id: UUID,
-        target_store: EventStore,
+        target_store: FullEventStore,
         target_store_id: str,
         config: MigrationConfig | None = None,
         *,
@@ -278,7 +285,7 @@ class MigrationCoordinator:
 
         Args:
             tenant_id: Tenant UUID to migrate
-            target_store: Target EventStore instance
+            target_store: Target FullEventStore instance
             target_store_id: Identifier for target store
             config: Migration configuration (uses defaults if None)
             created_by: Operator identifier for audit
@@ -437,8 +444,13 @@ class MigrationCoordinator:
         """
         Resume a paused migration.
 
-        Continues processing from the last checkpoint. If the background
-        task has completed or failed, starts a new one.
+        Un-pauses the routing state and, if an in-process copier for this
+        migration is still tracked in this coordinator instance, resumes
+        it. This does NOT restart a background task that has already
+        completed, failed, or been lost to a process restart -- there is
+        nothing in `_active_copiers` to resume in that case. To recover
+        a migration whose copier is gone, re-run the migration from its
+        last checkpoint or abort and restart it (see the migration guide).
 
         Args:
             migration_id: UUID of the migration
@@ -750,23 +762,43 @@ class MigrationCoordinator:
     # Private methods
     # =========================================================================
 
+    # Bounded catch-up rounds after the main copy pass. Each round absorbs
+    # the mirror failures the previous round left behind; a round with none
+    # left ends the loop. The cap only exists for pathological write
+    # patterns -- hitting it leaves the lag anchor clamped (fail-closed)
+    # until another pass absorbs the remainder.
+    _MAX_CATCHUP_ROUNDS = 10
+
     async def _run_bulk_copy(
         self,
         migration: Migration,
-        target_store: EventStore,
+        target_store: FullEventStore,
     ) -> None:
         """
         Run the bulk copy phase.
 
-        Streams historical events from source to target store.
-        Updates migration progress as batches complete.
+        Installs the DualWriteInterceptor FIRST, then streams historical
+        events from source to target store. Installing before the copy
+        means dual-write coverage overlaps the copy and there is no window
+        in which a write is mirrored by nobody: every event is either in
+        the pass's feed snapshot (copied) or appended through the
+        interceptor (mirrored, or recorded as a failure for the next
+        catch-up round to absorb). The overlap is safe because the copier
+        treats an event the mirror already landed as already-copied, and
+        the mirror only ever extends a fully converged target stream (see
+        `DualWriteInterceptor.append`).
 
-        After bulk copy completes, transitions to dual-write phase
-        where new events are written to both stores.
+        The migration reads as BULK_COPY while the copy runs, even though
+        the mirror is already active; DUAL_WRITE means the copy is
+        complete and only the mirror remains.
+
+        After the main pass, bounded catch-up rounds re-run the copier
+        until every recorded mirror failure is absorbed, then the phase
+        transitions to DUAL_WRITE.
 
         Args:
             migration: Migration instance
-            target_store: Target EventStore to copy to
+            target_store: Target FullEventStore to copy to
         """
         with self._tracer.span(
             "eventsource.coordinator.run_bulk_copy",
@@ -775,30 +807,50 @@ class MigrationCoordinator:
                 "tenant_id": str(migration.tenant_id),
             },
         ):
-            copier = BulkCopier(
-                self._source_store,
-                target_store,
-                self._migration_repo,
-                enable_tracing=self._enable_tracing,
-            )
+            # Install the interceptor BEFORE the copy pass starts, so its
+            # coverage overlaps the pass and the install window is empty
+            # by construction.
+            interceptor = self._install_interceptor(migration, target_store)
+
+            copier = self._build_copier(migration, target_store)
 
             self._active_copiers[migration.id] = copier
 
             try:
-                last_progress: BulkCopyProgress | None = None
+                completed = await self._run_copy_pass(copier, migration)
 
-                async for progress in copier.run(migration):
-                    last_progress = progress
-                    await self._notify_status_update(migration.id)
+                rounds = 0
+                while completed:
+                    current = await self._migration_repo.get(migration.id)
+                    if current is None:
+                        raise MigrationNotFoundError(migration.id)
 
-                # Bulk copy complete
-                if last_progress and last_progress.is_complete:
+                    # The pass began after installation and completed:
+                    # attest it, absorbing failures the checkpoint covers.
+                    remaining = interceptor.mark_copy_pass_complete(current.last_source_position)
+                    if remaining == 0:
+                        break
+                    if rounds >= self._MAX_CATCHUP_ROUNDS:
+                        logger.warning(
+                            "Migration %s: %d mirror failures remain unabsorbed "
+                            "after %d catch-up rounds; the lag anchor stays "
+                            "clamped at the checkpoint until another copy pass "
+                            "absorbs them",
+                            migration.id,
+                            remaining,
+                            rounds,
+                        )
+                        break
+                    rounds += 1
                     logger.info(
-                        "Bulk copy complete for migration %s: %d events",
+                        "Migration %s: catch-up round %d to absorb %d mirror failure(s)",
                         migration.id,
-                        last_progress.events_copied,
+                        rounds,
+                        remaining,
                     )
+                    completed = await self._run_copy_pass(copier, current)
 
+                if completed:
                     # Transition to dual-write phase (P2-005)
                     await self._transition_to_dual_write(migration, target_store)
 
@@ -818,6 +870,212 @@ class MigrationCoordinator:
                 self._active_copiers.pop(migration.id, None)
                 self._active_tasks.pop(migration.id, None)
 
+    def _build_copier(
+        self,
+        migration: Migration,
+        target_store: FullEventStore | None = None,
+    ) -> BulkCopier:
+        """Construct the migration's BulkCopier -- the only place that does.
+
+        Both copy entry points go through here: the automated bulk-copy
+        phase and the operator-triggered `run_resync_pass`. One
+        construction site means the two can never diverge on wiring, which
+        matters most for the position mapper: a resync pass that recorded
+        no mappings would leave subscription checkpoint translation with
+        holes the bulk pass had filled.
+
+        The mapper is attached only when the coordinator was given one AND
+        `config.position_mapping_enabled` is True (the documented default).
+        With a mapper attached the copier appends one event at a time so
+        each target position can be recorded; without one it batches. That
+        is the cost `position_mapping_enabled=False` buys back.
+
+        Args:
+            migration: Migration to build a copier for.
+            target_store: Target store to copy into. Resolved from the
+                coordinator's registry when omitted -- which is how
+                `run_resync_pass` calls it, since it has only an id.
+
+        Returns:
+            A BulkCopier that resumes from the migration's persisted
+            checkpoint.
+
+        Raises:
+            MigrationError: If no target store was passed and none is
+                registered for this migration (the shape a coordinator
+                restart leaves behind -- the registry is in-memory).
+        """
+        store = target_store or self._target_stores.get(migration.id)
+        if store is None:
+            raise MigrationError(
+                "No target store registered for migration; the coordinator "
+                "that started it holds that registry in memory, so a "
+                "restarted coordinator must re-register before copying.",
+                migration_id=migration.id,
+            )
+
+        mapper = self._position_mapper if migration.config.position_mapping_enabled else None
+
+        return BulkCopier(
+            self._source_store,
+            store,
+            self._migration_repo,
+            position_mapper=mapper,
+            enable_tracing=self._enable_tracing,
+        )
+
+    async def run_resync_pass(self, migration_id: UUID) -> int:
+        """Run one bounded catch-up copy pass while in DUAL_WRITE.
+
+        The remedy for a clamped lag anchor. `safe_lag_anchor` refuses to
+        advance past a mirror failure, and only a completed copy pass
+        attested by `mark_copy_pass_complete` releases that clamp -- which
+        until now only the bulk-copy loop could do, so a transient mirror
+        failure after the copy finished was a dead end whose only exit was
+        abort-and-restart.
+
+        The migration's phase is never touched: `BulkCopier.run` writes
+        progress and errors only, so the migration reads as DUAL_WRITE
+        throughout and the VALID_TRANSITIONS state machine is untouched.
+        Re-copying is safe by construction -- the copier treats
+        already-present events as copied.
+
+        One pass per call. The return value is the caller's bounding
+        policy: call again while it is nonzero, and stop when the
+        underlying mirror problem is not transient.
+
+        Args:
+            migration_id: UUID of the migration to resync.
+
+        Returns:
+            The number of unabsorbed mirror failures remaining. 0 means
+            the lag anchor is unclamped and cutover can proceed once lag
+            drains to the configured threshold.
+
+        Raises:
+            MigrationNotFoundError: If migration not found.
+            MigrationStateError: If migration is not in DUAL_WRITE phase.
+            MigrationError: If a copier is already active for this
+                migration, if no target store is registered, or if the
+                pass did not run to completion.
+            BulkCopyError: Propagated unchanged from the copy itself.
+        """
+        with self._tracer.span(
+            "eventsource.coordinator.run_resync_pass",
+            {"migration.id": str(migration_id)},
+        ):
+            migration = await self._migration_repo.get(migration_id)
+            if migration is None:
+                raise MigrationNotFoundError(migration_id)
+
+            if migration.phase != MigrationPhase.DUAL_WRITE:
+                raise MigrationStateError(
+                    message=(
+                        f"Cannot run a resync pass: migration is in {migration.phase.value} phase"
+                    ),
+                    migration_id=migration_id,
+                    current_phase=migration.phase,
+                    expected_phases=[MigrationPhase.DUAL_WRITE],
+                    operation="run_resync_pass",
+                )
+
+            if migration_id in self._active_copiers:
+                raise MigrationError(
+                    "A copy pass is already running for this migration",
+                    migration_id=migration_id,
+                )
+
+            copier = self._build_copier(migration)
+            self._active_copiers[migration_id] = copier
+            try:
+                completed = await self._run_copy_pass(copier, migration)
+            finally:
+                self._active_copiers.pop(migration_id, None)
+
+            if not completed:
+                raise MigrationError(
+                    "Resync pass did not run to completion; the lag anchor "
+                    "stays clamped (an incomplete pass attests nothing)",
+                    migration_id=migration_id,
+                )
+
+            current = await self._migration_repo.get(migration_id)
+            if current is None:
+                raise MigrationNotFoundError(migration_id)
+
+            interceptor = self._interceptors.get(migration_id)
+            if interceptor is None:
+                # Coordinator restart: interceptor state is in-memory, so
+                # there is no failure list left to absorb. The pass still
+                # advanced the persisted checkpoint, which is what
+                # `_lag_anchor` falls back to without an interceptor.
+                return 0
+
+            # The pass began after installation (the interceptor has been
+            # installed since bulk-copy start, and DUAL_WRITE postdates
+            # that) and ran to completion -- the two ordering facts only
+            # the coordinator can attest. See
+            # `DualWriteInterceptor.mark_copy_pass_complete`.
+            return interceptor.mark_copy_pass_complete(current.last_source_position)
+
+    async def _run_copy_pass(self, copier: BulkCopier, migration: Migration) -> bool:
+        """Run one copier pass, streaming progress to status observers.
+
+        Args:
+            copier: The BulkCopier to run (resumes from the migration's
+                persisted checkpoint).
+            migration: Migration snapshot to run against.
+
+        Returns:
+            True if the pass ran to completion (not cancelled).
+        """
+        last_progress: BulkCopyProgress | None = None
+
+        async for progress in copier.run(migration):
+            last_progress = progress
+            await self._notify_status_update(migration.id)
+
+        if last_progress and last_progress.is_complete:
+            logger.info(
+                "Bulk copy pass complete for migration %s: %d events",
+                migration.id,
+                last_progress.events_copied,
+            )
+            return True
+        return False
+
+    def _install_interceptor(
+        self,
+        migration: Migration,
+        target_store: FullEventStore,
+    ) -> DualWriteInterceptor:
+        """Create and register the dual-write interceptor for a migration.
+
+        Idempotent: returns the already-installed interceptor if present,
+        so the bulk-copy path and `_transition_to_dual_write` can share
+        one instance.
+
+        Args:
+            migration: Migration instance
+            target_store: Target FullEventStore to mirror writes to
+
+        Returns:
+            The installed DualWriteInterceptor.
+        """
+        interceptor = self._interceptors.get(migration.id)
+        if interceptor is not None:
+            return interceptor
+
+        interceptor = DualWriteInterceptor(
+            source_store=self._source_store,
+            target_store=target_store,
+            tenant_id=migration.tenant_id,
+            enable_tracing=self._enable_tracing,
+        )
+        self._router.set_dual_write_interceptor(migration.tenant_id, interceptor)
+        self._interceptors[migration.id] = interceptor
+        return interceptor
+
     # =========================================================================
     # Phase 2 (P2-005): Dual-Write and Cutover Methods
     # =========================================================================
@@ -825,17 +1083,20 @@ class MigrationCoordinator:
     async def _transition_to_dual_write(
         self,
         migration: Migration,
-        target_store: EventStore,
+        target_store: FullEventStore,
     ) -> None:
         """
         Transition from bulk copy to dual-write phase.
 
-        Sets up DualWriteInterceptor and SyncLagTracker for the migration.
-        The interceptor ensures new events are written to both stores.
+        The DualWriteInterceptor is normally installed already -- at the
+        start of the bulk-copy pass, so its coverage overlaps the copy --
+        and is reused here; it is only created now when this method is
+        driven directly (tests, manual orchestration). Sets up the
+        SyncLagTracker and moves phase and routing state to DUAL_WRITE.
 
         Args:
             migration: Migration instance
-            target_store: Target EventStore to write to
+            target_store: Target FullEventStore to write to
         """
         with self._tracer.span(
             "eventsource.coordinator.transition_to_dual_write",
@@ -844,16 +1105,9 @@ class MigrationCoordinator:
                 "tenant_id": str(migration.tenant_id),
             },
         ):
-            # Create dual-write interceptor
-            interceptor = DualWriteInterceptor(
-                source_store=self._source_store,
-                target_store=target_store,
-                tenant_id=migration.tenant_id,
-                enable_tracing=self._enable_tracing,
-            )
-
-            # Register interceptor with router
-            self._router.set_dual_write_interceptor(migration.tenant_id, interceptor)
+            # Reuse the interceptor installed at bulk-copy start (created
+            # here only if this method is driven directly).
+            self._install_interceptor(migration, target_store)
 
             # Create sync lag tracker
             lag_tracker = SyncLagTracker(
@@ -965,6 +1219,7 @@ class MigrationCoordinator:
                 target_store_id=migration.target_store_id,
                 config=migration.config,
                 timeout_ms=timeout_ms,
+                since=self._lag_anchor(migration),
             )
 
             # Handle result
@@ -1127,8 +1382,8 @@ class MigrationCoordinator:
         if self._lock_manager is None:
             raise MigrationError(
                 "Cannot perform cutover: lock_manager not provided to coordinator. "
-                "Provide a PostgreSQLLockManager when creating the coordinator to "
-                "enable cutover operations.",
+                "Provide a lock manager (e.g. PostgreSQLLockManager) when creating "
+                "the coordinator to enable cutover operations.",
             )
 
         self._cutover_manager = CutoverManager(
@@ -1156,9 +1411,28 @@ class MigrationCoordinator:
         # Remove target store reference
         self._target_stores.pop(migration_id, None)
 
+        # Remove the dual-write interceptor reference
+        self._interceptors.pop(migration_id, None)
+
         # Phase 3 (P3-005) cleanup: consistency reports and subscription summaries
         self._consistency_reports.pop(migration_id, None)
         self._subscription_summaries.pop(migration_id, None)
+
+    def _lag_anchor(self, migration: Migration) -> Position | None:
+        """The position to count lag from for this migration.
+
+        The bulk-copy checkpoint, advanced over whatever the live
+        dual-write interceptor has provably mirrored -- but never past a
+        mirroring failure. With no interceptor installed (before
+        dual-write, or after a coordinator restart) this is just the
+        checkpoint, which is conservative: already-mirrored events count
+        as lag and cutover refuses until a fresh copy pass advances the
+        checkpoint. See `DualWriteInterceptor.safe_lag_anchor`.
+        """
+        interceptor = self._interceptors.get(migration.id)
+        if interceptor is None:
+            return migration.last_source_position
+        return interceptor.safe_lag_anchor(migration.last_source_position)
 
     async def get_sync_lag(self, migration_id: UUID) -> SyncLag | None:
         """
@@ -1185,7 +1459,7 @@ class MigrationCoordinator:
         if lag_tracker is None:
             return None
 
-        return await lag_tracker.calculate_lag()
+        return await lag_tracker.calculate_lag(since=self._lag_anchor(migration))
 
     async def is_cutover_ready(self, migration_id: UUID) -> tuple[bool, str | None]:
         """
@@ -1220,7 +1494,7 @@ class MigrationCoordinator:
             return False, "No sync lag tracker found for migration"
 
         # Calculate current lag
-        await lag_tracker.calculate_lag()
+        await lag_tracker.calculate_lag(since=self._lag_anchor(migration))
 
         if lag_tracker.is_sync_ready():
             return True, None

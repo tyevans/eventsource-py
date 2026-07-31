@@ -4,13 +4,14 @@
 `FullEventStore`-shaped adapter synchronously. It exists for test code
 (notably the hypothesis stateful conformance machine in
 `conformance_ports/stateful.py`) that wants a plain, blocking call
-surface without pulling in the older `sync/adapter.py` ABC-oriented
-adapter.
+surface.
 
-Mirrors the loop-management approach of `eventsource.sync.adapter`
-(one dedicated loop, `run_until_complete` per call) but targets the
-`ports` protocols instead of the legacy `EventStore` ABC, and drains
-async iterators internally rather than exposing them.
+Both this facade and `eventsource.sync.adapter.SyncEventStoreAdapter` drive
+a port-shaped `FullEventStore` synchronously. The split is lifecycle: this
+facade owns one private loop for its lifetime and has no timeouts, which
+suits test machinery; the adapter runs `asyncio.run` per call, falls back to
+a threadpool when a loop is already running, and enforces a timeout, which
+suits production sync callers.
 
 Kept sqlalchemy-free: only `ports`, stdlib `asyncio`, and typing.
 """

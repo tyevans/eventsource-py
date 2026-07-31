@@ -54,6 +54,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from eventsource.adapters._sql.connection import sql_connection
 from eventsource.migration.models import (
     AuditEventType,
     MigrationAuditEntry,
@@ -61,7 +62,6 @@ from eventsource.migration.models import (
 )
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import ATTR_DB_SYSTEM
-from eventsource.repositories._connection import execute_with_connection
 
 
 @runtime_checkable
@@ -246,7 +246,7 @@ class PostgreSQLMigrationAuditLogRepository:
                 "occurred_at": entry.occurred_at,
             }
 
-            async with execute_with_connection(self._conn, transactional=True) as conn:
+            async with sql_connection(self._conn, write=True) as conn:
                 result = await conn.execute(query, params)
                 row = result.fetchone()
 
@@ -315,7 +315,7 @@ class PostgreSQLMigrationAuditLogRepository:
                 {limit_clause}
             """)  # nosec B608 - no user input in SQL construction
 
-            async with execute_with_connection(self._conn, transactional=False) as conn:
+            async with sql_connection(self._conn, write=False) as conn:
                 result = await conn.execute(query, params)
                 rows = result.fetchall()
 
@@ -346,7 +346,7 @@ class PostgreSQLMigrationAuditLogRepository:
                 WHERE id = :id
             """)
 
-            async with execute_with_connection(self._conn, transactional=False) as conn:
+            async with sql_connection(self._conn, write=False) as conn:
                 result = await conn.execute(query, {"id": entry_id})
                 row = result.fetchone()
 
@@ -406,7 +406,7 @@ class PostgreSQLMigrationAuditLogRepository:
                 """)
                 params = {"migration_id": migration_id}
 
-            async with execute_with_connection(self._conn, transactional=False) as conn:
+            async with sql_connection(self._conn, write=False) as conn:
                 result = await conn.execute(query, params)
                 row = result.fetchone()
 
@@ -458,7 +458,7 @@ class PostgreSQLMigrationAuditLogRepository:
                 """)
                 params = {"migration_id": migration_id}
 
-            async with execute_with_connection(self._conn, transactional=False) as conn:
+            async with sql_connection(self._conn, write=False) as conn:
                 result = await conn.execute(query, params)
                 row = result.fetchone()
 

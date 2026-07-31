@@ -159,8 +159,9 @@ All three distributed buses provide **at-least-once** delivery, so handlers must
 be idempotent. None of them coordinates transactionally with the event store —
 the Kafka module states explicitly that exactly-once semantics are not
 supported and that a write to the store succeeding while the publish fails (or
-the reverse) is possible. Use the transactional outbox in
-`eventsource.repositories` when publishing must be atomic with the state change.
+the reverse) is possible. Use the transactional outbox
+(`eventsource.ports.outbox.OutboxRepository` and its adapters) when
+publishing must be atomic with the state change.
 
 Tracing is available on every implementation: `InMemoryEventBus` takes `tracer`
 and `enable_tracing` constructor keyword arguments directly, while the

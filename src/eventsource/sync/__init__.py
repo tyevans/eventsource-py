@@ -6,16 +6,19 @@ enabling their use in synchronous contexts like Celery tasks,
 Django management commands, or RQ workers.
 
 Example:
-    >>> from eventsource.stores import PostgreSQLEventStore
+    >>> from sqlalchemy.ext.asyncio import create_async_engine
+    >>> from eventsource.adapters.postgresql import PostgreSQLEventStore
+    >>> from eventsource.domain import StreamId
     >>> from eventsource.sync import SyncEventStoreAdapter
     >>>
-    >>> async_store = PostgreSQLEventStore(database_url)
-    >>> sync_store = SyncEventStoreAdapter(async_store, timeout=30.0)
+    >>> engine = create_async_engine(database_url)
+    >>> sync_store = SyncEventStoreAdapter(PostgreSQLEventStore(engine), timeout=30.0)
     >>>
     >>> # In a Celery task
     >>> @celery.task
     >>> def process_order(order_id: str):
-    ...     events = sync_store.get_events_sync(UUID(order_id), "Order")
+    ...     stream = StreamId(aggregate_id=UUID(order_id), category="Order")
+    ...     envelopes = sync_store.read_stream(stream)
     ...     # Process events...
 """
 

@@ -67,7 +67,7 @@ Around those events you will write:
   catch-up-then-live pattern this library recommends for production.
 
 Then you will look behind the repository at the raw stream with
-`await event_store.get_events(account_id, "BankAccount")`, and finish by trying two
+`await store.read_stream(stream)` (a `StreamId(account_id, "BankAccount")`), and finish by trying two
 commands that should fail — withdrawing more than the balance, and depositing a
 non-positive amount — to confirm the aggregate refuses them with a `ValueError`
 rather than silently recording a bad event.
@@ -272,8 +272,8 @@ something that is *not* the class name — a versioned wire name like
 
 **`aggregate_type`.** Which kind of thing this event happened to. All three events use
 `"BankAccount"`, which is what groups them into one stream. The aggregate you write in
-Step 3 declares the same string, and so does the `get_events(account_id, "BankAccount")`
-call in Step 6 — they have to match.
+Step 3 declares the same string, and so does the `StreamId(account_id, "BankAccount")`
+you read back in Step 6 — they have to match.
 
 **`@register_event`.** Adds the class to the library's event registry, keyed by
 `event_type`. When the store loads a stream it finds rows containing a type name and a

@@ -1,43 +1,26 @@
-"""
-Distributed lock utilities for eventsource.
+"""Deprecated import path for the distributed-lock subsystem.
 
-Provides PostgreSQL advisory lock support for coordinating
-operations across multiple application instances.
+Every name below still resolves, each with a `DeprecationWarning` naming its
+new home. This package is removed in 0.8.0.
 
-Advisory locks are useful for:
-- Coordinating cutover operations during tenant migration
-- Preventing concurrent migrations for the same tenant
-- Ensuring exclusive access to critical operations
+- `LockInfo`, `migration_lock_key` -> `eventsource.ports.locks`
+- `LockAcquisitionError`, `LockNotHeldError` -> `eventsource.exceptions`
+- `PostgreSQLLockManager` -> `eventsource.adapters.postgresql.locks`
 
-Example:
-    >>> from eventsource.locks import PostgreSQLLockManager, migration_lock_key
-    >>>
-    >>> lock_manager = PostgreSQLLockManager(session_factory)
-    >>>
-    >>> # Blocking acquisition
-    >>> async with lock_manager.acquire("cutover:tenant-123"):
-    ...     await perform_cutover()
-    >>>
-    >>> # Non-blocking with timeout
-    >>> try:
-    ...     async with lock_manager.acquire("cutover:tenant-123", timeout=5.0):
-    ...         await perform_cutover()
-    ... except LockAcquisitionError:
-    ...     print("Another instance is performing cutover")
-    >>>
-    >>> # Using migration_lock_key helper
-    >>> key = migration_lock_key(tenant_id, "cutover")
-    >>> async with lock_manager.acquire(key):
-    ...     await perform_cutover()
+Resolution is lazy: importing this module pulls in neither sqlalchemy nor
+the PostgreSQL adapter until a name that needs them is actually read.
 """
 
-from eventsource.locks.postgresql import (
-    LockAcquisitionError,
-    LockInfo,
-    LockNotHeldError,
-    PostgreSQLLockManager,
-    migration_lock_key,
-)
+import importlib
+import warnings
+
+_MOVED = {
+    "LockInfo": "eventsource.ports.locks",
+    "migration_lock_key": "eventsource.ports.locks",
+    "LockAcquisitionError": "eventsource.exceptions",
+    "LockNotHeldError": "eventsource.exceptions",
+    "PostgreSQLLockManager": "eventsource.adapters.postgresql.locks",
+}
 
 __all__ = [
     "LockAcquisitionError",
@@ -46,3 +29,22 @@ __all__ = [
     "PostgreSQLLockManager",
     "migration_lock_key",
 ]
+
+
+def __getattr__(name: str) -> object:
+    try:
+        module_name = _MOVED[name]
+    except KeyError:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from None
+    warnings.warn(
+        f"eventsource.locks.{name} is deprecated; "
+        f"import it from {module_name} instead. "
+        f"eventsource.locks is removed in 0.8.0.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return getattr(importlib.import_module(module_name), name)
+
+
+def __dir__() -> list[str]:
+    return sorted(__all__)

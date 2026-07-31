@@ -102,9 +102,8 @@ pulls in `asyncpg` and `aiosqlite` together.
 That gives you the two pieces the store actually talks to:
 
 - **SQLAlchemy 2.x** — a core dependency. `PostgreSQLEventStore` does not
-  open its own connections; you hand it an
-  `async_sessionmaker[AsyncSession]`, which you build from a SQLAlchemy async
-  engine in Step 5.
+  open its own connections; you hand it an `AsyncEngine`, the same one you
+  build with `create_async_engine()` in Step 5.
 - **asyncpg** — the driver SQLAlchemy uses behind that engine. It is selected
   by the URL scheme `postgresql+asyncpg://`, not `postgresql://`. Getting
   this wrong is the single most common first error, and it surfaces as

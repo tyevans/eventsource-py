@@ -1,13 +1,13 @@
 """
 SyncLagTracker - Monitor synchronization lag between source and target stores.
 
-The SyncLagTracker monitors the difference between source and target store
-positions during the dual-write phase of migration. It calculates lag metrics,
+The SyncLagTracker counts how many source events the target has not yet
+copied during the dual-write phase of migration. It calculates lag metrics,
 tracks lag history, and determines when synchronization is close enough for
 cutover.
 
 Responsibilities:
-    - Calculate current lag between source and target positions
+    - Count source events not yet copied to the target
     - Track lag metrics over time (current, average, max)
     - Provide convergence detection for cutover eligibility
     - Integrate with DualWriteInterceptor for real-time updates
@@ -19,11 +19,11 @@ Usage:
     >>> tracker = SyncLagTracker(
     ...     source_store=source,
     ...     target_store=target,
-    ...     config=MigrationConfig(cutover_max_lag_events=100),
+    ...     config=MigrationConfig(),  # cutover_max_lag_events defaults to 0 (strict)
     ... )
     >>>
-    >>> # Calculate current lag
-    >>> lag = await tracker.calculate_lag()
+    >>> # Calculate current lag (since = last copied source position)
+    >>> lag = await tracker.calculate_lag(since=migration.last_source_position)
     >>> print(f"Lag: {lag.events} events")
     >>>
     >>> # Check if ready for cutover
@@ -45,7 +45,7 @@ import logging
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import UUID
 
 from eventsource.migration.models import MigrationConfig, SyncLag
@@ -54,16 +54,12 @@ from eventsource.observability import (
     Tracer,
     create_tracer,
 )
-
-if TYPE_CHECKING:
-    from eventsource.stores.interface import EventStore
+from eventsource.ports import FeedReadOptions, FullEventStore, Position
 
 logger = logging.getLogger(__name__)
 
 
 # Custom attribute keys for sync lag tracing
-ATTR_SOURCE_POSITION = "eventsource.sync_lag.source_position"
-ATTR_TARGET_POSITION = "eventsource.sync_lag.target_position"
 ATTR_LAG_EVENTS = "eventsource.sync_lag.lag_events"
 ATTR_IS_CONVERGED = "eventsource.sync_lag.is_converged"
 ATTR_IS_SYNC_READY = "eventsource.sync_lag.is_sync_ready"
@@ -129,9 +125,9 @@ class SyncLagTracker:
     """
     Tracks synchronization lag between source and target stores.
 
-    Monitors the difference between source and target store positions
-    during the dual-write phase of migration. Provides lag metrics,
-    convergence detection, and cutover eligibility checks.
+    Counts the source events the target has not yet copied during the
+    dual-write phase of migration. Provides lag metrics, convergence
+    detection, and cutover eligibility checks.
 
     The tracker maintains a sliding window of lag samples to calculate
     statistics like average and max lag. It also detects convergence
@@ -141,13 +137,12 @@ class SyncLagTracker:
         >>> tracker = SyncLagTracker(
         ...     source_store=shared_store,
         ...     target_store=dedicated_store,
-        ...     config=MigrationConfig(cutover_max_lag_events=50),
+        ...     config=MigrationConfig(cutover_max_lag_events=50),  # nonzero: accepts up to 50 events lost at the switch
         ...     tenant_id=tenant_uuid,
         ... )
         >>>
         >>> # Take a lag measurement
-        >>> lag = await tracker.calculate_lag()
-        >>> print(f"Source: {lag.source_position}, Target: {lag.target_position}")
+        >>> lag = await tracker.calculate_lag(since=last_copied_position)
         >>> print(f"Lag: {lag.events} events")
         >>>
         >>> # Check readiness for cutover
@@ -165,8 +160,8 @@ class SyncLagTracker:
 
     def __init__(
         self,
-        source_store: EventStore,
-        target_store: EventStore,
+        source_store: FullEventStore,
+        target_store: FullEventStore,
         config: MigrationConfig | None = None,
         tenant_id: UUID | None = None,
         *,
@@ -205,12 +200,12 @@ class SyncLagTracker:
     # =========================================================================
 
     @property
-    def source_store(self) -> EventStore:
+    def source_store(self) -> FullEventStore:
         """Get the source (authoritative) event store."""
         return self._source
 
     @property
-    def target_store(self) -> EventStore:
+    def target_store(self) -> FullEventStore:
         """Get the target event store."""
         return self._target
 
@@ -238,22 +233,38 @@ class SyncLagTracker:
     # Lag Calculation
     # =========================================================================
 
-    async def calculate_lag(self) -> SyncLag:
-        """
-        Calculate the current lag between source and target stores.
+    async def calculate_lag(self, *, since: Position | None = None) -> SyncLag:
+        """Count source events not yet copied, bounded by the sync threshold.
 
-        Queries both stores for their current global position and
-        calculates the difference. The result is stored and added
-        to the sample history for statistics.
+        `since` is the last source position the target has copied (the
+        migration's `last_source_position`); None means nothing has been
+        copied and the count starts at the head of the source feed. The
+        count is exact up to `cutover_max_lag_events + 1`; beyond that it
+        reports the bound and stops reading, which is all a convergence
+        decision needs.
+
+        The reported `source_position` and `target_position` are each
+        store's own current position, carried for reporting only -- they
+        come from different stores and are never compared with each other.
+
+        Args:
+            since: The anchor to count from -- the furthest source
+                position provably present in the target. During
+                dual-write this is `DualWriteInterceptor.safe_lag_anchor`
+                applied to the migration's `last_source_position`, which
+                advances over mirrored writes but never past a mirroring
+                failure. None counts from the head of the source feed.
+
+                The interceptor's watermarks are in memory and are not
+                persisted, so after an orchestrator restart the anchor
+                falls back to the bulk-copy checkpoint and CUTOVER WILL
+                REFUSE until a fresh copy pass advances that checkpoint.
+                That trade is accepted deliberately -- persisting a
+                watermark per event would cost more than the failure mode
+                it avoids.
 
         Returns:
-            SyncLag with current positions and event lag.
-
-        Example:
-            >>> lag = await tracker.calculate_lag()
-            >>> print(f"Source at {lag.source_position}")
-            >>> print(f"Target at {lag.target_position}")
-            >>> print(f"Lag: {lag.events} events")
+            SyncLag with the count behind and both stores' positions.
         """
         with self._tracer.span(
             "eventsource.sync_lag.calculate_lag",
@@ -262,19 +273,29 @@ class SyncLagTracker:
                 ATTR_SYNC_THRESHOLD: self._config.cutover_max_lag_events,
             },
         ):
-            # Get current positions from both stores
-            source_position = await self._source.get_global_position()
-            target_position = await self._target.get_global_position()
+            threshold = self._config.cutover_max_lag_events
 
-            # Calculate lag (can be negative if target is somehow ahead)
-            lag_events = max(0, source_position - target_position)
+            # Read one past the bound so "at the bound" and "over the
+            # bound" are distinguishable, then stop.
+            lag_events = 0
+            async for _ in self._source.read_all(
+                since,
+                FeedReadOptions(tenant_id=self._tenant_id, limit=threshold + 1),
+            ):
+                lag_events += 1
 
-            # Create lag measurement
+            count_is_bounded = lag_events > threshold
+
+            # Reporting only: each store's own head position.
+            source_position = await self._source.current_position()
+            target_position = await self._target.current_position()
+
             lag = SyncLag(
                 events=lag_events,
                 source_position=source_position,
                 target_position=target_position,
                 timestamp=datetime.now(UTC),
+                count_is_bounded=count_is_bounded,
             )
 
             # Store and sample
@@ -283,8 +304,8 @@ class SyncLagTracker:
 
             # Log the measurement
             logger.debug(
-                f"Sync lag calculated: {lag_events} events "
-                f"(source={source_position}, target={target_position})"
+                f"Sync lag calculated: {lag_events} events behind"
+                + (" (bounded)" if count_is_bounded else "")
                 + (f" for tenant {self._tenant_id}" if self._tenant_id else "")
             )
 
@@ -308,6 +329,14 @@ class SyncLagTracker:
         """
         Check if stores are synchronized within the specified threshold.
 
+        A bounded count NEVER converges: it is a lower bound standing for
+        an unknown larger backlog, and a lower bound cannot satisfy a
+        threshold.
+
+        `max_lag` may only TIGHTEN the configured threshold, for the same
+        reason -- a looser override could otherwise be satisfied by a
+        bounded count.
+
         Args:
             max_lag: Maximum acceptable lag in events. If None, uses
                 the configured cutover_max_lag_events threshold.
@@ -315,19 +344,32 @@ class SyncLagTracker:
         Returns:
             True if current lag is within the threshold.
 
+        Raises:
+            ValueError: If max_lag exceeds the configured threshold.
+
         Example:
             >>> if tracker.is_converged():
             ...     print("Stores are synchronized!")
             >>>
-            >>> # Use custom threshold
+            >>> # Use a tighter threshold
             >>> if tracker.is_converged(max_lag=10):
             ...     print("Within 10 events!")
         """
+        threshold = self._config.cutover_max_lag_events
+        if max_lag is not None:
+            if max_lag > threshold:
+                raise ValueError(
+                    f"max_lag={max_lag} exceeds the configured "
+                    f"cutover_max_lag_events={threshold}; the count behind is "
+                    f"bounded at {threshold + 1}, so a looser threshold cannot "
+                    f"be evaluated honestly"
+                )
+            threshold = max_lag
+
         if self._current_lag is None:
             return False
 
-        threshold = max_lag if max_lag is not None else self._config.cutover_max_lag_events
-        return self._current_lag.events <= threshold
+        return self._current_lag.is_within_threshold(threshold)
 
     def is_sync_ready(self) -> bool:
         """
@@ -508,8 +550,8 @@ class SyncLagTracker:
             >>> # DualWriteInterceptor can update lag after writes
             >>> lag = SyncLag(
             ...     events=5,
-            ...     source_position=1000,
-            ...     target_position=995,
+            ...     source_position=source_pos,
+            ...     target_position=target_pos,
             ...     timestamp=datetime.now(UTC),
             ... )
             >>> tracker.record_lag(lag)
@@ -518,8 +560,7 @@ class SyncLagTracker:
         self._add_sample(lag)
 
         logger.debug(
-            f"Lag recorded: {lag.events} events "
-            f"(source={lag.source_position}, target={lag.target_position})"
+            f"Lag recorded: {lag.events} events behind"
             + (f" for tenant {self._tenant_id}" if self._tenant_id else "")
         )
 

@@ -34,6 +34,7 @@ from eventsource.migration.models import (
     TenantMigrationState,
     TenantRouting,
 )
+from eventsource.ports.positions import Position
 
 
 class TestMigrationPhase:
@@ -221,7 +222,7 @@ class TestMigrationConfig:
         assert config.batch_size == 1000
         assert config.max_bulk_copy_rate == 10000
         assert config.dual_write_timeout_minutes == 30
-        assert config.cutover_max_lag_events == 100
+        assert config.cutover_max_lag_events == 0
         assert config.cutover_timeout_ms == 500
         assert config.position_mapping_enabled is True
         assert config.verify_consistency is True
@@ -315,6 +316,9 @@ class TestMigrationConfig:
         config = MigrationConfig.from_dict({})
         assert config.batch_size == 1000
         assert config.max_bulk_copy_rate == 10000
+
+    def test_from_dict_defaults_to_strict_zero_lag(self) -> None:
+        assert MigrationConfig.from_dict({}).cutover_max_lag_events == 0
 
     def test_to_dict_from_dict_roundtrip(self) -> None:
         """Test to_dict/from_dict roundtrip."""
@@ -594,16 +598,18 @@ class TestPositionMapping:
         migration_id = uuid4()
         event_id = uuid4()
         mapped_at = datetime.now()
+        source_position = Position(store_id="src", key=(100,))
+        target_position = Position(store_id="tgt", key=(50,))
         mapping = PositionMapping(
             migration_id=migration_id,
-            source_position=100,
-            target_position=50,
+            source_position=source_position,
+            target_position=target_position,
             event_id=event_id,
             mapped_at=mapped_at,
         )
         assert mapping.migration_id == migration_id
-        assert mapping.source_position == 100
-        assert mapping.target_position == 50
+        assert mapping.source_position == source_position
+        assert mapping.target_position == target_position
         assert mapping.event_id == event_id
         assert mapping.mapped_at == mapped_at
 
@@ -611,13 +617,13 @@ class TestPositionMapping:
         """Test that PositionMapping is frozen (immutable)."""
         mapping = PositionMapping(
             migration_id=uuid4(),
-            source_position=100,
-            target_position=50,
+            source_position=Position(store_id="src", key=(100,)),
+            target_position=Position(store_id="tgt", key=(50,)),
             event_id=uuid4(),
             mapped_at=datetime.now(),
         )
         with pytest.raises(AttributeError):
-            mapping.source_position = 200  # type: ignore[misc]
+            mapping.source_position = Position(store_id="src", key=(200,))  # type: ignore[misc]
 
 
 class TestSyncLag:
@@ -688,6 +694,23 @@ class TestSyncLag:
         )
         assert lag.is_within_threshold(50) is False
         assert lag.is_within_threshold(99) is False
+
+    def test_bounded_count_never_within_threshold(self) -> None:
+        """A bounded count is a lower bound, so it satisfies no threshold.
+
+        `events` here would pass on its face; the flag says the real
+        backlog is unknown and larger, so answering True would be
+        answering on no evidence.
+        """
+        lag = SyncLag(
+            events=5,
+            source_position=None,
+            target_position=None,
+            timestamp=datetime.now(),
+            count_is_bounded=True,
+        )
+        assert lag.is_within_threshold(100) is False
+        assert lag.is_within_threshold(5) is False
 
     def test_is_frozen(self) -> None:
         """Test that SyncLag is frozen (immutable)."""

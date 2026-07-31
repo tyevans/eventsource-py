@@ -201,8 +201,8 @@ source_paths = [
     "src",
 ]
 only_mutate = [
-    "src/eventsource/engine.py",
-    "src/eventsource/repositories/_dialect.py",
+    "src/eventsource/adapters/_sql/engine.py",
+    "src/eventsource/adapters/_sql/dialect.py",
     "src/eventsource/serialization/json.py",
     "src/eventsource/bus/registry.py",
     "src/eventsource/bus/retry.py",
@@ -218,6 +218,11 @@ only_mutate = [
     "src/eventsource/ports",
     "src/eventsource/adapters",
     "src/eventsource/application",
+    # Store retirement slice (b): opaque positions in subscriptions
+    "src/eventsource/subscriptions",
+    # Store retirement slice (c): resume/duplicate-skip and binary-search surfaces
+    "src/eventsource/migration/bulk_copier.py",
+    "src/eventsource/migration/position_mapper.py",
 ]
 pytest_add_cli_args_test_selection = [
     "tests/unit/test_engine.py",
@@ -234,6 +239,13 @@ pytest_add_cli_args_test_selection = [
     "tests/unit/domain/",
     "tests/unit/ports/",
     "tests/unit/test_public_api.py",
+    # Store retirement slice (b): opaque positions in subscriptions
+    "tests/unit/test_catchup_runner.py",
+    "tests/unit/test_transition.py",
+    "tests/unit/subscriptions/",
+    # Store retirement slice (c)
+    "tests/unit/migration/test_bulk_copier.py",
+    "tests/unit/migration/test_position_mapper.py",
 ]
 pytest_add_cli_args = ["--no-cov", "-x", "-q", "-p", "no:randomly"]
 
@@ -245,9 +257,9 @@ include_external_packages = true
 name = "Infrastructure backends must not import each other"
 type = "independence"
 modules = [
-    "eventsource.stores.postgresql",
-    "eventsource.stores.sqlite",
-    "eventsource.stores.in_memory",
+    "eventsource.adapters.postgresql",
+    "eventsource.adapters.sqlite",
+    "eventsource.adapters.memory",
     "eventsource.bus.redis",
     "eventsource.bus.kafka",
     "eventsource.bus.rabbitmq",
@@ -264,32 +276,29 @@ source_modules = [
     "eventsource.domain.decider",
     "eventsource.commands",
     "eventsource.protocols",
-    "eventsource.stores.interface",
     "eventsource.bus.interface",
     "eventsource.ports",
-    "eventsource.application.aggregates.snapshotting",
+    "eventsource.application",
     "eventsource.handlers.decorators",
     "eventsource.handlers.registry",
     "eventsource.handlers.adapter",
     "eventsource.exceptions",
     "eventsource.types",
-    "eventsource.stores.in_memory",
     "eventsource.bus.memory",
     "eventsource.adapters.memory.snapshots",
-    "eventsource.projections.protocols",
+    "eventsource.adapters.memory.checkpoints",
+    "eventsource.adapters.memory.dlq",
+    "eventsource.adapters.memory.outbox",
+    "eventsource.adapters.memory.locks",
+    "eventsource.adapters.memory.readmodels",
     "eventsource.testing.builder",
     "eventsource.testing.assertions",
     "eventsource.testing.conformance",
+    "eventsource.testing.sync_facade",
+    "eventsource.sync.adapter",
     "eventsource.multitenancy.context",
     "eventsource.multitenancy.events",
     "eventsource.multitenancy.exceptions",
-    "eventsource.readmodels.base",
-    "eventsource.readmodels.query",
-    "eventsource.readmodels.schema",
-    "eventsource.readmodels.repository",
-    "eventsource.readmodels.in_memory",
-    "eventsource.readmodels.exceptions",
-    "eventsource.application.aggregates.repository",
     "eventsource.multitenancy.repository",
 ]
 forbidden_modules = ["sqlalchemy"]
@@ -298,23 +307,51 @@ forbidden_modules = ["sqlalchemy"]
 name = "Application ring must not import adapters"
 type = "forbidden"
 source_modules = ["eventsource.application"]
-forbidden_modules = ["eventsource.adapters", "eventsource.bus", "eventsource.repositories", "eventsource.locks"]
+forbidden_modules = ["eventsource.adapters", "eventsource.bus", "eventsource.locks"]
 
-# KNOWN VIOLATIONS (not enforced -- see task-2e-report.md for detail):
-#
-# docs/core-surface.md documents projections/ as the one remaining Tier-0
-# blocker. In practice:
-#   - projections/base.py imports eventsource.repositories.checkpoint and
-#     eventsource.repositories.dlq (both sqlalchemy-backed)
-#   - projections/checkpoint_manager.py imports eventsource.repositories.checkpoint
-#   - projections/dlq_manager.py imports eventsource.repositories.dlq
-# repositories/checkpoint.py and repositories/dlq.py mix Protocol definitions
-# with sqlalchemy implementations in the same module, so there is no way to
-# import the protocol without importing sqlalchemy.
-#
-# (eventsource.application.aggregates.repository and
-# eventsource.multitenancy.repository were re-verified clean after the
-# snapshots-package dissolution and are now enforced in source_modules above.)
-#
-# Per task instructions: report the drift, do not weaken the contract to hide
-# it, and do not fix the violations here.
+# The eventsource.locks entry above stays correct while the eventsource.locks
+# deprecation shim exists -- the shim's lazy __getattr__ resolves to
+# eventsource.adapters.postgresql.locks, so "eventsource.locks" is still, transitively,
+# an adapters import. It is deleted (not merely made redundant) when the shim itself is
+# removed in 0.8.0; see the BACKLOG.md entry for that removal.
+
+[[tool.importlinter.contracts]]
+name = "Ports must not import adapters, application, or bus"
+type = "forbidden"
+source_modules = ["eventsource.ports"]
+forbidden_modules = [
+    "eventsource.adapters",
+    "eventsource.application",
+    "eventsource.bus",
+    "eventsource.migration",
+]
+
+# Slice A (ADR 0029) created the first port with a sibling that moved to adapters/:
+# eventsource.ports.readmodels (the ReadModel/Query/Filter/ReadModelRepository contract)
+# beside eventsource.adapters.sql.readmodel_schema (DDL generation, dialect-specific).
+# An accidental "from eventsource.adapters.sql.readmodel_schema import generate_schema"
+# inside ports/readmodels/model.py would be a real regression the existing Tier 0
+# sqlalchemy-only contract cannot catch -- readmodel_schema.py imports no sqlalchemy, so
+# nothing there trips "must not import sqlalchemy." This contract closes that gap
+# directly: the ports ring may not name an adapter, an application-ring module, the bus,
+# or migration/, regardless of what those modules do or do not import themselves.
+
+# The projections/ Tier-0 blocker documented in docs/core-surface.md (projections/base.py
+# and the checkpoint/dlq managers pulling in sqlalchemy-backed repositories.checkpoint and
+# repositories.dlq) is resolved: projections/ and repositories/{checkpoint,dlq}.py were
+# deleted in favor of eventsource.ports.{checkpoints,dlq} (pure) and
+# eventsource.adapters.{sql,memory}.{checkpoints,dlq} (sqlalchemy-backed). See the
+# projections-ring slice report for detail. The outbox slice went further and deleted
+# eventsource.repositories/ outright: its sole remaining member (the transactional outbox)
+# moved to eventsource.ports.outbox (pure) and eventsource.adapters.{memory,postgresql,
+# sqlite}.outbox (backend-specific), so "eventsource.repositories" no longer exists to
+# forbid above.
+
+# eventsource.readmodels.schema (now eventsource.adapters.sql.readmodel_schema) lost its
+# "must not import sqlalchemy" Tier 0 guard by design when it moved (ADR 0029 SS2.3): the
+# guard asserted the wrong property. The module has never imported sqlalchemy -- it
+# hardcodes POSTGRESQL_TYPE_MAP/SQLITE_TYPE_MAP and emits dialect-specific DDL text as
+# plain strings -- but dialect knowledge is an adapter concern regardless of whether the
+# code happens to avoid the sqlalchemy import to express it. The guard was not silently
+# dropped; the property it should have been asserting (does this module encode
+# backend-specific knowledge) was never "imports sqlalchemy" to begin with.

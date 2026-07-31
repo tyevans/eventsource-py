@@ -105,9 +105,7 @@ class TestPostgreSQLMigrationAuditLogRepositoryRecord:
         """Test successful audit entry recording."""
         expected_id = 42
 
-        with patch(
-            "eventsource.migration.repositories.audit_log.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.audit_log.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.fetchone.return_value = (expected_id,)
@@ -136,9 +134,7 @@ class TestPostgreSQLMigrationAuditLogRepositoryRecord:
             occurred_at=datetime.now(UTC),
         )
 
-        with patch(
-            "eventsource.migration.repositories.audit_log.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.audit_log.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.fetchone.return_value = (1,)
@@ -166,9 +162,7 @@ class TestPostgreSQLMigrationAuditLogRepositoryRecord:
             error_type="NetworkError",
         )
 
-        with patch(
-            "eventsource.migration.repositories.audit_log.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.audit_log.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.fetchone.return_value = (1,)
@@ -204,9 +198,7 @@ class TestPostgreSQLMigrationAuditLogRepositoryGetByMigration:
         repo: PostgreSQLMigrationAuditLogRepository,
     ) -> None:
         """Test get_by_migration returns empty list when no entries."""
-        with patch(
-            "eventsource.migration.repositories.audit_log.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.audit_log.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.fetchall.return_value = []
@@ -249,9 +241,7 @@ class TestPostgreSQLMigrationAuditLogRepositoryGetByMigration:
             ),
         ]
 
-        with patch(
-            "eventsource.migration.repositories.audit_log.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.audit_log.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.fetchall.return_value = rows
@@ -277,9 +267,7 @@ class TestPostgreSQLMigrationAuditLogRepositoryGetByMigration:
         """Test get_by_migration with event type filter."""
         migration_id = uuid4()
 
-        with patch(
-            "eventsource.migration.repositories.audit_log.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.audit_log.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.fetchall.return_value = []
@@ -307,9 +295,7 @@ class TestPostgreSQLMigrationAuditLogRepositoryGetByMigration:
         since = datetime.now(UTC) - timedelta(hours=1)
         until = datetime.now(UTC)
 
-        with patch(
-            "eventsource.migration.repositories.audit_log.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.audit_log.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.fetchall.return_value = []
@@ -336,9 +322,7 @@ class TestPostgreSQLMigrationAuditLogRepositoryGetByMigration:
         """Test get_by_migration with limit."""
         migration_id = uuid4()
 
-        with patch(
-            "eventsource.migration.repositories.audit_log.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.audit_log.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.fetchall.return_value = []
@@ -372,9 +356,7 @@ class TestPostgreSQLMigrationAuditLogRepositoryGetById:
         repo: PostgreSQLMigrationAuditLogRepository,
     ) -> None:
         """Test get_by_id returns None when entry not found."""
-        with patch(
-            "eventsource.migration.repositories.audit_log.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.audit_log.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.fetchone.return_value = None
@@ -405,9 +387,7 @@ class TestPostgreSQLMigrationAuditLogRepositoryGetById:
             now,  # occurred_at
         )
 
-        with patch(
-            "eventsource.migration.repositories.audit_log.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.audit_log.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.fetchone.return_value = row
@@ -444,9 +424,7 @@ class TestPostgreSQLMigrationAuditLogRepositoryGetLatest:
         repo: PostgreSQLMigrationAuditLogRepository,
     ) -> None:
         """Test get_latest returns None when no entries exist."""
-        with patch(
-            "eventsource.migration.repositories.audit_log.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.audit_log.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.fetchone.return_value = None
@@ -477,9 +455,7 @@ class TestPostgreSQLMigrationAuditLogRepositoryGetLatest:
             now,  # occurred_at
         )
 
-        with patch(
-            "eventsource.migration.repositories.audit_log.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.audit_log.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.fetchone.return_value = row
@@ -500,9 +476,7 @@ class TestPostgreSQLMigrationAuditLogRepositoryGetLatest:
         """Test get_latest with event type filter."""
         migration_id = uuid4()
 
-        with patch(
-            "eventsource.migration.repositories.audit_log.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.audit_log.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.fetchone.return_value = None
@@ -539,9 +513,7 @@ class TestPostgreSQLMigrationAuditLogRepositoryCountByMigration:
         repo: PostgreSQLMigrationAuditLogRepository,
     ) -> None:
         """Test count_by_migration returns 0 when no entries."""
-        with patch(
-            "eventsource.migration.repositories.audit_log.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.audit_log.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.fetchone.return_value = (0,)
@@ -560,9 +532,7 @@ class TestPostgreSQLMigrationAuditLogRepositoryCountByMigration:
         """Test count_by_migration returns correct count."""
         migration_id = uuid4()
 
-        with patch(
-            "eventsource.migration.repositories.audit_log.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.audit_log.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.fetchone.return_value = (15,)
@@ -581,9 +551,7 @@ class TestPostgreSQLMigrationAuditLogRepositoryCountByMigration:
         """Test count_by_migration with event type filter."""
         migration_id = uuid4()
 
-        with patch(
-            "eventsource.migration.repositories.audit_log.execute_with_connection"
-        ) as mock_ctx:
+        with patch("eventsource.migration.repositories.audit_log.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
             mock_result.fetchone.return_value = (3,)

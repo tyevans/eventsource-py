@@ -176,7 +176,7 @@ The everyday entry point. Creates a span that is entered and exited with the
 
 | Parameter | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `name` | `str` | required | Span name, e.g. `"event_store.append_events"` |
+| `name` | `str` | required | Span name, e.g. `"eventsource.repository.save"` |
 | `attributes` | `dict[str, Any] \| None` | `None` | Attributes set at span creation |
 
 Returns a context manager yielding `Span | None`. The yielded value is an
@@ -186,7 +186,7 @@ guarded:
 
 ```python
 with self._tracer.span(
-    "event_store.append_events",
+    "eventsource.repository.save",
     {ATTR_AGGREGATE_ID: str(aggregate_id), ATTR_EVENT_COUNT: len(events)},
 ) as span:
     position = await self._append(events)

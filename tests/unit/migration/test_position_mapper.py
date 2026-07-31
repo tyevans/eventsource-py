@@ -26,6 +26,12 @@ from eventsource.migration.position_mapper import (
     ReverseTranslationResult,
     TranslationResult,
 )
+from eventsource.ports.positions import Position
+
+
+def pos(n: int, store: str = "src") -> Position:
+    """Build a Position for a given store, keyed by a single int."""
+    return Position(store_id=store, key=(n,))
 
 
 class TestPositionMapperInit:
@@ -74,11 +80,13 @@ class TestPositionMapperRecordMapping:
         """Test record_mapping creates a mapping in the repository."""
         migration_id = uuid4()
         event_id = uuid4()
+        source_position = pos(1000, "src")
+        target_position = pos(500, "tgt")
 
         await mapper.record_mapping(
             migration_id=migration_id,
-            source_position=1000,
-            target_position=500,
+            source_position=source_position,
+            target_position=target_position,
             event_id=event_id,
         )
 
@@ -86,8 +94,8 @@ class TestPositionMapperRecordMapping:
         call_arg = mock_repo.create.call_args[0][0]
         assert isinstance(call_arg, PositionMapping)
         assert call_arg.migration_id == migration_id
-        assert call_arg.source_position == 1000
-        assert call_arg.target_position == 500
+        assert call_arg.source_position == source_position
+        assert call_arg.target_position == target_position
         assert call_arg.event_id == event_id
 
     @pytest.mark.asyncio
@@ -103,8 +111,8 @@ class TestPositionMapperRecordMapping:
 
         await mapper.record_mapping(
             migration_id=migration_id,
-            source_position=1000,
-            target_position=500,
+            source_position=pos(1000, "src"),
+            target_position=pos(500, "tgt"),
             event_id=event_id,
             mapped_at=custom_time,
         )
@@ -121,17 +129,18 @@ class TestPositionMapperRecordMapping:
         """Test record_mapping raises PositionMappingError on failure."""
         migration_id = uuid4()
         mock_repo.create.side_effect = Exception("Database error")
+        source_position = pos(1000, "src")
 
         with pytest.raises(PositionMappingError) as exc_info:
             await mapper.record_mapping(
                 migration_id=migration_id,
-                source_position=1000,
-                target_position=500,
+                source_position=source_position,
+                target_position=pos(500, "tgt"),
                 event_id=uuid4(),
             )
 
         assert exc_info.value.migration_id == migration_id
-        assert exc_info.value.source_position == 1000
+        assert exc_info.value.source_position == source_position
         assert "Database error" in str(exc_info.value)
 
 
@@ -162,17 +171,17 @@ class TestPositionMapperRecordMappingsBatch:
         mock_repo.create_batch.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_record_batch_creates_mappings(
+    async def test_record_batch_creates_mappings_in_ascending_order(
         self,
         mapper: PositionMapper,
         mock_repo: MagicMock,
     ) -> None:
-        """Test record_mappings_batch creates all mappings."""
+        """Test record_mappings_batch creates all mappings, preserving caller order."""
         migration_id = uuid4()
         mappings = [
-            (100, 50, uuid4()),
-            (200, 100, uuid4()),
-            (300, 150, uuid4()),
+            (pos(100, "src"), pos(50, "tgt"), uuid4()),
+            (pos(200, "src"), pos(100, "tgt"), uuid4()),
+            (pos(300, "src"), pos(150, "tgt"), uuid4()),
         ]
 
         mock_repo.create_batch.return_value = 3
@@ -182,6 +191,13 @@ class TestPositionMapperRecordMappingsBatch:
         mock_repo.create_batch.assert_called_once()
         call_arg = mock_repo.create_batch.call_args[0][0]
         assert len(call_arg) == 3
+        # The monotonicity precondition requires ascending source-position
+        # order to be preserved by the batch writer, not reordered.
+        assert [m.source_position for m in call_arg] == [
+            pos(100, "src"),
+            pos(200, "src"),
+            pos(300, "src"),
+        ]
 
     @pytest.mark.asyncio
     async def test_record_batch_raises_on_error(
@@ -196,7 +212,7 @@ class TestPositionMapperRecordMappingsBatch:
         with pytest.raises(PositionMappingError) as exc_info:
             await mapper.record_mappings_batch(
                 migration_id,
-                [(100, 50, uuid4())],
+                [(pos(100, "src"), pos(50, "tgt"), uuid4())],
             )
 
         assert exc_info.value.migration_id == migration_id
@@ -225,22 +241,24 @@ class TestPositionMapperTranslatePosition:
         """Test translate_position returns exact match when available."""
         migration_id = uuid4()
         event_id = uuid4()
+        source_position = pos(1000, "src")
+        target_position = pos(500, "tgt")
 
         mock_repo.find_by_source_position = AsyncMock(
             return_value=PositionMapping(
                 migration_id=migration_id,
-                source_position=1000,
-                target_position=500,
+                source_position=source_position,
+                target_position=target_position,
                 event_id=event_id,
                 mapped_at=datetime.now(UTC),
             )
         )
 
-        result = await mapper.translate_position(migration_id, 1000)
+        result = await mapper.translate_position(migration_id, source_position)
 
         assert isinstance(result, TranslationResult)
-        assert result.source_position == 1000
-        assert result.target_position == 500
+        assert result.source_position == source_position
+        assert result.target_position == target_position
         assert result.is_exact is True
         assert result.nearest_source_position is None
 
@@ -258,19 +276,19 @@ class TestPositionMapperTranslatePosition:
         mock_repo.find_nearest_source_position = AsyncMock(
             return_value=PositionMapping(
                 migration_id=migration_id,
-                source_position=900,
-                target_position=450,
+                source_position=pos(900, "src"),
+                target_position=pos(450, "tgt"),
                 event_id=event_id,
                 mapped_at=datetime.now(UTC),
             )
         )
 
-        result = await mapper.translate_position(migration_id, 950)
+        result = await mapper.translate_position(migration_id, pos(950, "src"))
 
-        assert result.source_position == 950
-        assert result.target_position == 450
+        assert result.source_position == pos(950, "src")
+        assert result.target_position == pos(450, "tgt")
         assert result.is_exact is False
-        assert result.nearest_source_position == 900
+        assert result.nearest_source_position == pos(900, "src")
 
     @pytest.mark.asyncio
     async def test_translate_raises_when_no_mapping(
@@ -280,15 +298,16 @@ class TestPositionMapperTranslatePosition:
     ) -> None:
         """Test translate_position raises when no mapping found."""
         migration_id = uuid4()
+        source_position = pos(1000, "src")
 
         mock_repo.find_by_source_position = AsyncMock(return_value=None)
         mock_repo.find_nearest_source_position = AsyncMock(return_value=None)
 
         with pytest.raises(PositionMappingError) as exc_info:
-            await mapper.translate_position(migration_id, 1000)
+            await mapper.translate_position(migration_id, source_position)
 
         assert exc_info.value.migration_id == migration_id
-        assert exc_info.value.source_position == 1000
+        assert exc_info.value.source_position == source_position
         assert exc_info.value.reason == "no_mapping"
 
     @pytest.mark.asyncio
@@ -305,7 +324,7 @@ class TestPositionMapperTranslatePosition:
         with pytest.raises(PositionMappingError):
             await mapper.translate_position(
                 migration_id,
-                1000,
+                pos(1000, "src"),
                 use_nearest=False,
             )
 
@@ -336,22 +355,24 @@ class TestPositionMapperTranslatePositionReverse:
         """Test translate_position_reverse returns mapping when found."""
         migration_id = uuid4()
         event_id = uuid4()
+        source_position = pos(1000, "src")
+        target_position = pos(500, "tgt")
 
         mock_repo.find_by_target_position = AsyncMock(
             return_value=PositionMapping(
                 migration_id=migration_id,
-                source_position=1000,
-                target_position=500,
+                source_position=source_position,
+                target_position=target_position,
                 event_id=event_id,
                 mapped_at=datetime.now(UTC),
             )
         )
 
-        result = await mapper.translate_position_reverse(migration_id, 500)
+        result = await mapper.translate_position_reverse(migration_id, target_position)
 
         assert isinstance(result, ReverseTranslationResult)
-        assert result.target_position == 500
-        assert result.source_position == 1000
+        assert result.target_position == target_position
+        assert result.source_position == source_position
         assert result.is_exact is True
 
     @pytest.mark.asyncio
@@ -365,7 +386,7 @@ class TestPositionMapperTranslatePositionReverse:
         mock_repo.find_by_target_position = AsyncMock(return_value=None)
 
         with pytest.raises(PositionMappingError) as exc_info:
-            await mapper.translate_position_reverse(migration_id, 500)
+            await mapper.translate_position_reverse(migration_id, pos(500, "tgt"))
 
         assert exc_info.value.migration_id == migration_id
         assert exc_info.value.reason == "no_mapping"
@@ -400,44 +421,49 @@ class TestPositionMapperTranslatePositionsBatch:
         mapper: PositionMapper,
         mock_repo: MagicMock,
     ) -> None:
-        """Test batch translation finds exact matches."""
+        """Test batch translation finds exact matches by delegating per position."""
         migration_id = uuid4()
         now = datetime.now(UTC)
 
-        mappings = [
-            PositionMapping(
+        by_source = {
+            pos(100, "src"): PositionMapping(
                 migration_id=migration_id,
-                source_position=100,
-                target_position=50,
+                source_position=pos(100, "src"),
+                target_position=pos(50, "tgt"),
                 event_id=uuid4(),
                 mapped_at=now,
             ),
-            PositionMapping(
+            pos(200, "src"): PositionMapping(
                 migration_id=migration_id,
-                source_position=200,
-                target_position=100,
+                source_position=pos(200, "src"),
+                target_position=pos(100, "tgt"),
                 event_id=uuid4(),
                 mapped_at=now,
             ),
-            PositionMapping(
+            pos(300, "src"): PositionMapping(
                 migration_id=migration_id,
-                source_position=300,
-                target_position=150,
+                source_position=pos(300, "src"),
+                target_position=pos(150, "tgt"),
                 event_id=uuid4(),
                 mapped_at=now,
             ),
-        ]
+        }
 
-        mock_repo.list_in_source_range = AsyncMock(return_value=mappings)
+        async def find_by_source_position(
+            mig_id: object, source_pos: Position
+        ) -> PositionMapping | None:
+            return by_source.get(source_pos)
+
+        mock_repo.find_by_source_position = find_by_source_position
 
         results = await mapper.translate_positions_batch(
             migration_id,
-            [100, 200, 300],
+            [pos(100, "src"), pos(200, "src"), pos(300, "src")],
         )
 
         assert len(results) == 3
-        assert results[0].source_position == 100
-        assert results[0].target_position == 50
+        assert results[0].source_position == pos(100, "src")
+        assert results[0].target_position == pos(50, "tgt")
         assert results[0].is_exact is True
 
     @pytest.mark.asyncio
@@ -450,36 +476,28 @@ class TestPositionMapperTranslatePositionsBatch:
         migration_id = uuid4()
         now = datetime.now(UTC)
 
-        mappings = [
-            PositionMapping(
+        mock_repo.find_by_source_position = AsyncMock(return_value=None)
+        mock_repo.find_nearest_source_position = AsyncMock(
+            return_value=PositionMapping(
                 migration_id=migration_id,
-                source_position=100,
-                target_position=50,
+                source_position=pos(100, "src"),
+                target_position=pos(50, "tgt"),
                 event_id=uuid4(),
                 mapped_at=now,
-            ),
-            PositionMapping(
-                migration_id=migration_id,
-                source_position=200,
-                target_position=100,
-                event_id=uuid4(),
-                mapped_at=now,
-            ),
-        ]
-
-        mock_repo.list_in_source_range = AsyncMock(return_value=mappings)
+            )
+        )
 
         # Position 150 should find nearest at 100
         results = await mapper.translate_positions_batch(
             migration_id,
-            [150],
+            [pos(150, "src")],
         )
 
         assert len(results) == 1
-        assert results[0].source_position == 150
-        assert results[0].target_position == 50  # From position 100
+        assert results[0].source_position == pos(150, "src")
+        assert results[0].target_position == pos(50, "tgt")  # From position 100
         assert results[0].is_exact is False
-        assert results[0].nearest_source_position == 100
+        assert results[0].nearest_source_position == pos(100, "src")
 
     @pytest.mark.asyncio
     async def test_batch_translate_raises_when_no_mapping(
@@ -489,16 +507,18 @@ class TestPositionMapperTranslatePositionsBatch:
     ) -> None:
         """Test batch translation raises when no mapping found."""
         migration_id = uuid4()
-        mock_repo.list_in_source_range = AsyncMock(return_value=[])
+        source_position = pos(1000, "src")
+        mock_repo.find_by_source_position = AsyncMock(return_value=None)
+        mock_repo.find_nearest_source_position = AsyncMock(return_value=None)
 
         with pytest.raises(PositionMappingError) as exc_info:
             await mapper.translate_positions_batch(
                 migration_id,
-                [1000],
+                [source_position],
             )
 
         assert exc_info.value.migration_id == migration_id
-        assert exc_info.value.source_position == 1000
+        assert exc_info.value.source_position == source_position
 
 
 class TestPositionMapperHelperMethods:
@@ -527,8 +547,8 @@ class TestPositionMapperHelperMethods:
 
         expected_mapping = PositionMapping(
             migration_id=migration_id,
-            source_position=1000,
-            target_position=500,
+            source_position=pos(1000, "src"),
+            target_position=pos(500, "tgt"),
             event_id=event_id,
             mapped_at=now,
         )
@@ -547,11 +567,12 @@ class TestPositionMapperHelperMethods:
     ) -> None:
         """Test get_position_bounds delegates to repository."""
         migration_id = uuid4()
-        mock_repo.get_position_bounds = AsyncMock(return_value=(100, 10000))
+        bounds = (pos(100, "src"), pos(10000, "src"))
+        mock_repo.get_position_bounds = AsyncMock(return_value=bounds)
 
         result = await mapper.get_position_bounds(migration_id)
 
-        assert result == (100, 10000)
+        assert result == bounds
         mock_repo.get_position_bounds.assert_called_once_with(migration_id)
 
     @pytest.mark.asyncio
@@ -607,19 +628,19 @@ class TestPositionMapperFindNearest:
         """Create a mapper for testing."""
         return PositionMapper(MagicMock(), enable_tracing=False)
 
-    def _create_mapping(self, source_pos: int, target_pos: int) -> PositionMapping:
+    def _create_mapping(self, source_n: int, target_n: int) -> PositionMapping:
         """Helper to create a position mapping."""
         return PositionMapping(
             migration_id=uuid4(),
-            source_position=source_pos,
-            target_position=target_pos,
+            source_position=pos(source_n, "src"),
+            target_position=pos(target_n, "tgt"),
             event_id=uuid4(),
             mapped_at=datetime.now(UTC),
         )
 
     def test_find_nearest_empty_list(self, mapper: PositionMapper) -> None:
         """Test _find_nearest returns None for empty list."""
-        result = mapper._find_nearest([], 100)
+        result = mapper._find_nearest([], pos(100, "src"))
         assert result is None
 
     def test_find_nearest_exact_match(self, mapper: PositionMapper) -> None:
@@ -630,11 +651,11 @@ class TestPositionMapperFindNearest:
             self._create_mapping(300, 150),
         ]
 
-        result = mapper._find_nearest(mappings, 200)
+        result = mapper._find_nearest(mappings, pos(200, "src"))
 
         assert result is not None
-        assert result.source_position == 200
-        assert result.target_position == 100
+        assert result.source_position == pos(200, "src")
+        assert result.target_position == pos(100, "tgt")
 
     def test_find_nearest_returns_lower(self, mapper: PositionMapper) -> None:
         """Test _find_nearest returns nearest lower position."""
@@ -645,10 +666,10 @@ class TestPositionMapperFindNearest:
         ]
 
         # Query for 250, should get mapping at 200
-        result = mapper._find_nearest(mappings, 250)
+        result = mapper._find_nearest(mappings, pos(250, "src"))
 
         assert result is not None
-        assert result.source_position == 200
+        assert result.source_position == pos(200, "src")
 
     def test_find_nearest_returns_none_when_all_higher(
         self,
@@ -662,7 +683,7 @@ class TestPositionMapperFindNearest:
         ]
 
         # Query for 50, no mapping <= 50 exists
-        result = mapper._find_nearest(mappings, 50)
+        result = mapper._find_nearest(mappings, pos(50, "src"))
 
         assert result is None
 
@@ -673,10 +694,10 @@ class TestPositionMapperFindNearest:
         """Test _find_nearest with single element that matches."""
         mappings = [self._create_mapping(100, 50)]
 
-        result = mapper._find_nearest(mappings, 100)
+        result = mapper._find_nearest(mappings, pos(100, "src"))
 
         assert result is not None
-        assert result.source_position == 100
+        assert result.source_position == pos(100, "src")
 
     def test_find_nearest_single_element_higher(
         self,
@@ -685,10 +706,10 @@ class TestPositionMapperFindNearest:
         """Test _find_nearest with single element higher than query."""
         mappings = [self._create_mapping(100, 50)]
 
-        result = mapper._find_nearest(mappings, 150)
+        result = mapper._find_nearest(mappings, pos(150, "src"))
 
         assert result is not None
-        assert result.source_position == 100
+        assert result.source_position == pos(100, "src")
 
     def test_find_nearest_single_element_lower(
         self,
@@ -697,7 +718,7 @@ class TestPositionMapperFindNearest:
         """Test _find_nearest with single element lower than query."""
         mappings = [self._create_mapping(100, 50)]
 
-        result = mapper._find_nearest(mappings, 50)
+        result = mapper._find_nearest(mappings, pos(50, "src"))
 
         assert result is None
 
@@ -709,14 +730,14 @@ class TestPositionMapperFindNearest:
         ]
 
         # Query at exact first position
-        result = mapper._find_nearest(mappings, 100)
+        result = mapper._find_nearest(mappings, pos(100, "src"))
         assert result is not None
-        assert result.source_position == 100
+        assert result.source_position == pos(100, "src")
 
         # Query at exact last position
-        result = mapper._find_nearest(mappings, 200)
+        result = mapper._find_nearest(mappings, pos(200, "src"))
         assert result is not None
-        assert result.source_position == 200
+        assert result.source_position == pos(200, "src")
 
     def test_find_nearest_large_gap(self, mapper: PositionMapper) -> None:
         """Test _find_nearest with large gaps between positions."""
@@ -726,10 +747,10 @@ class TestPositionMapperFindNearest:
         ]
 
         # Query in the middle of large gap
-        result = mapper._find_nearest(mappings, 5000)
+        result = mapper._find_nearest(mappings, pos(5000, "src"))
 
         assert result is not None
-        assert result.source_position == 100
+        assert result.source_position == pos(100, "src")
 
 
 class TestTranslationResultDataclass:
@@ -738,13 +759,13 @@ class TestTranslationResultDataclass:
     def test_translation_result_exact(self) -> None:
         """Test TranslationResult for exact match."""
         result = TranslationResult(
-            source_position=1000,
-            target_position=500,
+            source_position=pos(1000, "src"),
+            target_position=pos(500, "tgt"),
             is_exact=True,
         )
 
-        assert result.source_position == 1000
-        assert result.target_position == 500
+        assert result.source_position == pos(1000, "src")
+        assert result.target_position == pos(500, "tgt")
         assert result.is_exact is True
         assert result.nearest_source_position is None
         assert result.interpolated is False
@@ -752,27 +773,27 @@ class TestTranslationResultDataclass:
     def test_translation_result_nearest(self) -> None:
         """Test TranslationResult for nearest match."""
         result = TranslationResult(
-            source_position=1050,
-            target_position=500,
+            source_position=pos(1050, "src"),
+            target_position=pos(500, "tgt"),
             is_exact=False,
-            nearest_source_position=1000,
+            nearest_source_position=pos(1000, "src"),
         )
 
-        assert result.source_position == 1050
-        assert result.target_position == 500
+        assert result.source_position == pos(1050, "src")
+        assert result.target_position == pos(500, "tgt")
         assert result.is_exact is False
-        assert result.nearest_source_position == 1000
+        assert result.nearest_source_position == pos(1000, "src")
 
     def test_translation_result_frozen(self) -> None:
         """Test TranslationResult is immutable."""
         result = TranslationResult(
-            source_position=1000,
-            target_position=500,
+            source_position=pos(1000, "src"),
+            target_position=pos(500, "tgt"),
             is_exact=True,
         )
 
         with pytest.raises(AttributeError):
-            result.source_position = 2000  # type: ignore[misc]
+            result.source_position = pos(2000, "src")  # type: ignore[misc]
 
 
 class TestReverseTranslationResultDataclass:
@@ -781,26 +802,26 @@ class TestReverseTranslationResultDataclass:
     def test_reverse_result_exact(self) -> None:
         """Test ReverseTranslationResult for exact match."""
         result = ReverseTranslationResult(
-            target_position=500,
-            source_position=1000,
+            target_position=pos(500, "tgt"),
+            source_position=pos(1000, "src"),
             is_exact=True,
         )
 
-        assert result.target_position == 500
-        assert result.source_position == 1000
+        assert result.target_position == pos(500, "tgt")
+        assert result.source_position == pos(1000, "src")
         assert result.is_exact is True
         assert result.nearest_target_position is None
 
     def test_reverse_result_frozen(self) -> None:
         """Test ReverseTranslationResult is immutable."""
         result = ReverseTranslationResult(
-            target_position=500,
-            source_position=1000,
+            target_position=pos(500, "tgt"),
+            source_position=pos(1000, "src"),
             is_exact=True,
         )
 
         with pytest.raises(AttributeError):
-            result.target_position = 600  # type: ignore[misc]
+            result.target_position = pos(600, "tgt")  # type: ignore[misc]
 
 
 class TestPositionMapperWorkflows:
@@ -829,9 +850,9 @@ class TestPositionMapperWorkflows:
         # Simulate bulk copy recording
         mock_repo.create_batch = AsyncMock(return_value=3)
         mappings = [
-            (100, 50, uuid4()),
-            (200, 100, uuid4()),
-            (300, 150, uuid4()),
+            (pos(100, "src"), pos(50, "tgt"), uuid4()),
+            (pos(200, "src"), pos(100, "tgt"), uuid4()),
+            (pos(300, "src"), pos(150, "tgt"), uuid4()),
         ]
         await mapper.record_mappings_batch(migration_id, mappings)
 
@@ -839,16 +860,16 @@ class TestPositionMapperWorkflows:
         mock_repo.find_by_source_position = AsyncMock(
             return_value=PositionMapping(
                 migration_id=migration_id,
-                source_position=200,
-                target_position=100,
+                source_position=pos(200, "src"),
+                target_position=pos(100, "tgt"),
                 event_id=uuid4(),
                 mapped_at=now,
             )
         )
 
-        result = await mapper.translate_position(migration_id, 200)
+        result = await mapper.translate_position(migration_id, pos(200, "src"))
 
-        assert result.target_position == 100
+        assert result.target_position == pos(100, "tgt")
         assert result.is_exact is True
 
     @pytest.mark.asyncio
@@ -867,21 +888,21 @@ class TestPositionMapperWorkflows:
         mock_repo.find_nearest_source_position = AsyncMock(
             return_value=PositionMapping(
                 migration_id=migration_id,
-                source_position=900,
-                target_position=450,
+                source_position=pos(900, "src"),
+                target_position=pos(450, "tgt"),
                 event_id=uuid4(),
                 mapped_at=now,
             )
         )
 
         # Translate checkpoint for subscription migration
-        result = await mapper.translate_position(migration_id, 950)
+        result = await mapper.translate_position(migration_id, pos(950, "src"))
 
         # Subscriber will resume at target position 450
         # This is conservative - they may replay a few events
-        assert result.target_position == 450
+        assert result.target_position == pos(450, "tgt")
         assert result.is_exact is False
-        assert result.nearest_source_position == 900
+        assert result.nearest_source_position == pos(900, "src")
 
     @pytest.mark.asyncio
     async def test_migration_cleanup_workflow(

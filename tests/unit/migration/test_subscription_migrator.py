@@ -27,7 +27,24 @@ from eventsource.migration.subscription_migrator import (
     SubscriptionMigrationResult,
     SubscriptionMigrator,
 )
-from eventsource.repositories.checkpoint import CheckpointData
+from eventsource.ports.checkpoints import CheckpointData
+from eventsource.ports.positions import Position
+
+SOURCE_STORE_ID = "source-store"
+
+
+def source_pos(n: int) -> Position:
+    """A source-store position token.
+
+    The migrator is token-native end to end: checkpoints, translations, and
+    results all carry Position objects, never ints.
+    """
+    return Position(store_id=SOURCE_STORE_ID, key=(n,))
+
+
+def target_pos(n: int) -> Position:
+    """A target-store position token, symmetric to source_pos."""
+    return Position(store_id="target-store", key=(n,))
 
 
 class TestSubscriptionMigratorInit:
@@ -110,11 +127,11 @@ class TestSubscriptionMigratorPlanMigration:
         migration_id = uuid4()
         tenant_id = uuid4()
 
-        mock_checkpoint_repo.get_position = AsyncMock(return_value=1000)
+        mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
         mock_position_mapper.translate_position = AsyncMock(
             return_value=TranslationResult(
-                source_position=1000,
-                target_position=500,
+                source_position=source_pos(1000),
+                target_position=target_pos(500),
                 is_exact=True,
             )
         )
@@ -165,12 +182,12 @@ class TestSubscriptionMigratorPlanMigration:
         migration_id = uuid4()
         tenant_id = uuid4()
 
-        mock_checkpoint_repo.get_position = AsyncMock(return_value=1000)
+        mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
         mock_position_mapper.translate_position = AsyncMock(
             side_effect=PositionMappingError(
                 "No mapping found",
                 migration_id=migration_id,
-                source_position=1000,
+                source_position=source_pos(1000),
                 reason="no_mapping",
             )
         )
@@ -198,13 +215,13 @@ class TestSubscriptionMigratorPlanMigration:
         migration_id = uuid4()
         tenant_id = uuid4()
 
-        mock_checkpoint_repo.get_position = AsyncMock(return_value=1050)
+        mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1050))
         mock_position_mapper.translate_position = AsyncMock(
             return_value=TranslationResult(
-                source_position=1050,
-                target_position=500,
+                source_position=source_pos(1050),
+                target_position=target_pos(500),
                 is_exact=False,
-                nearest_source_position=1000,
+                nearest_source_position=source_pos(1000),
             )
         )
 
@@ -217,7 +234,7 @@ class TestSubscriptionMigratorPlanMigration:
         assert plan.migratable_count == 1
         pm = plan.planned_migrations[0]
         assert pm.is_exact_translation is False
-        assert pm.nearest_source_position == 1000
+        assert pm.nearest_source_position == source_pos(1000)
         assert pm.warning is not None
         assert "nearest" in pm.warning.lower()
 
@@ -234,15 +251,15 @@ class TestSubscriptionMigratorPlanMigration:
 
         # Return different positions for each subscription
         positions = {
-            "OrderProjection": 1000,
-            "InventoryProjection": 2000,
+            "OrderProjection": source_pos(1000),
+            "InventoryProjection": source_pos(2000),
             "NoCheckpoint": None,
         }
         mock_checkpoint_repo.get_position = AsyncMock(side_effect=lambda name: positions.get(name))
         mock_position_mapper.translate_position = AsyncMock(
             return_value=TranslationResult(
-                source_position=1000,
-                target_position=500,
+                source_position=source_pos(1000),
+                target_position=target_pos(500),
                 is_exact=True,
             )
         )
@@ -295,11 +312,11 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         migration_id = uuid4()
         tenant_id = uuid4()
 
-        mock_checkpoint_repo.get_position = AsyncMock(return_value=1000)
+        mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
         mock_position_mapper.translate_position = AsyncMock(
             return_value=TranslationResult(
-                source_position=1000,
-                target_position=500,
+                source_position=source_pos(1000),
+                target_position=target_pos(500),
                 is_exact=True,
             )
         )
@@ -330,22 +347,22 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         tenant_id = uuid4()
         event_id = uuid4()
 
-        mock_checkpoint_repo.get_position = AsyncMock(return_value=1000)
+        mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
         mock_checkpoint_repo.get_all_checkpoints = AsyncMock(
             return_value=[
                 CheckpointData(
                     projection_name="OrderProjection",
                     last_event_id=event_id,
                     last_event_type="OrderCreated",
-                    global_position=1000,
+                    position=source_pos(1000),
                 )
             ]
         )
         mock_checkpoint_repo.save_position = AsyncMock()
         mock_position_mapper.translate_position = AsyncMock(
             return_value=TranslationResult(
-                source_position=1000,
-                target_position=500,
+                source_position=source_pos(1000),
+                target_position=target_pos(500),
                 is_exact=True,
             )
         )
@@ -360,7 +377,7 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         # Should call save_position
         mock_checkpoint_repo.save_position.assert_called_once_with(
             subscription_id="OrderProjection",
-            position=500,
+            position=target_pos(500),
             event_id=event_id,
             event_type="OrderCreated",
         )
@@ -368,6 +385,17 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         assert summary.successful_count == 1
         assert summary.failed_count == 0
         assert summary.all_successful
+
+        # The checkpoint position and its translated target both round-trip
+        # through save_position as Position tokens -- no int appears anywhere
+        # on the path from checkpoint read to checkpoint write.
+        saved_position = mock_checkpoint_repo.save_position.call_args.kwargs["position"]
+        assert isinstance(saved_position, Position)
+        assert not isinstance(saved_position, int)
+        assert summary.results[0].source_position == source_pos(1000)
+        assert isinstance(summary.results[0].source_position, Position)
+        assert summary.results[0].target_position == target_pos(500)
+        assert isinstance(summary.results[0].target_position, Position)
 
     @pytest.mark.asyncio
     async def test_migrate_subscriptions_handles_missing_checkpoint_data(
@@ -380,14 +408,14 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         migration_id = uuid4()
         tenant_id = uuid4()
 
-        mock_checkpoint_repo.get_position = AsyncMock(return_value=1000)
+        mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
         mock_checkpoint_repo.get_all_checkpoints = AsyncMock(
             return_value=[
                 CheckpointData(
                     projection_name="OrderProjection",
                     last_event_id=None,  # Missing event_id
                     last_event_type=None,
-                    global_position=1000,
+                    position=source_pos(1000),
                 )
             ]
         )
@@ -415,14 +443,14 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         tenant_id = uuid4()
         event_id = uuid4()
 
-        mock_checkpoint_repo.get_position = AsyncMock(return_value=1000)
+        mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
         mock_checkpoint_repo.get_all_checkpoints = AsyncMock(
             return_value=[
                 CheckpointData(
                     projection_name="OrderProjection",
                     last_event_id=event_id,
                     last_event_type="OrderCreated",
-                    global_position=1000,
+                    position=source_pos(1000),
                 )
             ]
         )
@@ -430,7 +458,7 @@ class TestSubscriptionMigratorMigrateSubscriptions:
             side_effect=PositionMappingError(
                 "No mapping found",
                 migration_id=migration_id,
-                source_position=1000,
+                source_position=source_pos(1000),
                 reason="no_mapping",
             )
         )
@@ -459,22 +487,22 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         tenant_id = uuid4()
         event_id = uuid4()
 
-        mock_checkpoint_repo.get_position = AsyncMock(return_value=1000)
+        mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
         mock_checkpoint_repo.get_all_checkpoints = AsyncMock(
             return_value=[
                 CheckpointData(
                     projection_name="OrderProjection",
                     last_event_id=event_id,
                     last_event_type="OrderCreated",
-                    global_position=1000,
+                    position=source_pos(1000),
                 )
             ]
         )
         mock_checkpoint_repo.save_position = AsyncMock(side_effect=Exception("Database error"))
         mock_position_mapper.translate_position = AsyncMock(
             return_value=TranslationResult(
-                source_position=1000,
-                target_position=500,
+                source_position=source_pos(1000),
+                target_position=target_pos(500),
                 is_exact=True,
             )
         )
@@ -529,22 +557,22 @@ class TestSubscriptionMigratorMigrateTenantSubscriptions:
         tenant_id = uuid4()
         event_id = uuid4()
 
-        mock_checkpoint_repo.get_position = AsyncMock(return_value=1000)
+        mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
         mock_checkpoint_repo.get_all_checkpoints = AsyncMock(
             return_value=[
                 CheckpointData(
                     projection_name="OrderProjection",
                     last_event_id=event_id,
                     last_event_type="OrderCreated",
-                    global_position=1000,
+                    position=source_pos(1000),
                 )
             ]
         )
         mock_checkpoint_repo.save_position = AsyncMock()
         mock_position_mapper.translate_position = AsyncMock(
             return_value=TranslationResult(
-                source_position=1000,
-                target_position=500,
+                source_position=source_pos(1000),
+                target_position=target_pos(500),
                 is_exact=True,
             )
         )
@@ -575,22 +603,22 @@ class TestSubscriptionMigratorMigrateTenantSubscriptions:
                     projection_name="OrderProjection",
                     last_event_id=event_id,
                     last_event_type="OrderCreated",
-                    global_position=1000,
+                    position=source_pos(1000),
                 ),
                 CheckpointData(
                     projection_name="InventoryProjection",
                     last_event_id=event_id,
                     last_event_type="InventoryUpdated",
-                    global_position=2000,
+                    position=source_pos(2000),
                 ),
             ]
         )
-        mock_checkpoint_repo.get_position = AsyncMock(return_value=1000)
+        mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
         mock_checkpoint_repo.save_position = AsyncMock()
         mock_position_mapper.translate_position = AsyncMock(
             return_value=TranslationResult(
-                source_position=1000,
-                target_position=500,
+                source_position=source_pos(1000),
+                target_position=target_pos(500),
                 is_exact=True,
             )
         )
@@ -640,7 +668,7 @@ class TestSubscriptionMigratorVerifyMigration:
         """Test verify_migration returns True for all present checkpoints."""
         migration_id = uuid4()
 
-        mock_checkpoint_repo.get_position = AsyncMock(return_value=500)
+        mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(500))
 
         results = await migrator.verify_migration(
             migration_id=migration_id,
@@ -660,7 +688,7 @@ class TestSubscriptionMigratorVerifyMigration:
         migration_id = uuid4()
 
         positions = {
-            "OrderProjection": 500,
+            "OrderProjection": source_pos(500),
             "InventoryProjection": None,
         }
         mock_checkpoint_repo.get_position = AsyncMock(side_effect=lambda name: positions.get(name))
@@ -683,16 +711,16 @@ class TestSubscriptionMigrationResultDataclass:
         result = SubscriptionMigrationResult(
             subscription_name="OrderProjection",
             success=True,
-            source_position=1000,
-            target_position=500,
+            source_position=source_pos(1000),
+            target_position=target_pos(500),
             is_exact_translation=True,
             migrated_at=now,
         )
 
         assert result.subscription_name == "OrderProjection"
         assert result.success is True
-        assert result.source_position == 1000
-        assert result.target_position == 500
+        assert result.source_position == source_pos(1000)
+        assert result.target_position == target_pos(500)
         assert result.is_exact_translation is True
         assert result.error_message is None
 
@@ -701,7 +729,7 @@ class TestSubscriptionMigrationResultDataclass:
         result = SubscriptionMigrationResult(
             subscription_name="OrderProjection",
             success=False,
-            source_position=1000,
+            source_position=source_pos(1000),
             error_message="Translation failed",
         )
 
@@ -715,8 +743,8 @@ class TestSubscriptionMigrationResultDataclass:
         result = SubscriptionMigrationResult(
             subscription_name="OrderProjection",
             success=True,
-            source_position=1000,
-            target_position=500,
+            source_position=source_pos(1000),
+            target_position=target_pos(500),
             migrated_at=now,
         )
 
@@ -724,8 +752,8 @@ class TestSubscriptionMigrationResultDataclass:
 
         assert d["subscription_name"] == "OrderProjection"
         assert d["success"] is True
-        assert d["source_position"] == 1000
-        assert d["target_position"] == 500
+        assert d["source_position"] == source_pos(1000).to_str()
+        assert d["target_position"] == target_pos(500).to_str()
         assert d["migrated_at"] == now.isoformat()
 
     def test_result_frozen(self) -> None:
@@ -733,7 +761,7 @@ class TestSubscriptionMigrationResultDataclass:
         result = SubscriptionMigrationResult(
             subscription_name="OrderProjection",
             success=True,
-            source_position=1000,
+            source_position=source_pos(1000),
         )
 
         with pytest.raises(AttributeError):
@@ -747,14 +775,14 @@ class TestPlannedMigrationDataclass:
         """Test PlannedMigration for exact translation."""
         planned = PlannedMigration(
             subscription_name="OrderProjection",
-            current_position=1000,
-            planned_target_position=500,
+            current_position=source_pos(1000),
+            planned_target_position=target_pos(500),
             is_exact_translation=True,
         )
 
         assert planned.subscription_name == "OrderProjection"
-        assert planned.current_position == 1000
-        assert planned.planned_target_position == 500
+        assert planned.current_position == source_pos(1000)
+        assert planned.planned_target_position == target_pos(500)
         assert planned.is_exact_translation is True
         assert planned.warning is None
 
@@ -762,30 +790,30 @@ class TestPlannedMigrationDataclass:
         """Test PlannedMigration with warning."""
         planned = PlannedMigration(
             subscription_name="OrderProjection",
-            current_position=1050,
-            planned_target_position=500,
+            current_position=source_pos(1050),
+            planned_target_position=target_pos(500),
             is_exact_translation=False,
-            nearest_source_position=1000,
+            nearest_source_position=source_pos(1000),
             warning="Using nearest position mapping",
         )
 
         assert planned.is_exact_translation is False
-        assert planned.nearest_source_position == 1000
+        assert planned.nearest_source_position == source_pos(1000)
         assert planned.warning is not None
 
     def test_planned_migration_to_dict(self) -> None:
         """Test PlannedMigration.to_dict serialization."""
         planned = PlannedMigration(
             subscription_name="OrderProjection",
-            current_position=1000,
-            planned_target_position=500,
+            current_position=source_pos(1000),
+            planned_target_position=target_pos(500),
         )
 
         d = planned.to_dict()
 
         assert d["subscription_name"] == "OrderProjection"
-        assert d["current_position"] == 1000
-        assert d["planned_target_position"] == 500
+        assert d["current_position"] == source_pos(1000).to_str()
+        assert d["planned_target_position"] == target_pos(500).to_str()
 
 
 class TestMigrationPlanDataclass:
@@ -798,8 +826,8 @@ class TestMigrationPlanDataclass:
 
         planned = PlannedMigration(
             subscription_name="OrderProjection",
-            current_position=1000,
-            planned_target_position=500,
+            current_position=source_pos(1000),
+            planned_target_position=target_pos(500),
         )
 
         plan = MigrationPlan(
@@ -847,8 +875,8 @@ class TestMigrationSummaryDataclass:
         result = SubscriptionMigrationResult(
             subscription_name="OrderProjection",
             success=True,
-            source_position=1000,
-            target_position=500,
+            source_position=source_pos(1000),
+            target_position=target_pos(500),
         )
 
         summary = MigrationSummary(
@@ -989,22 +1017,22 @@ class TestSubscriptionMigratorWorkflows:
         event_id = uuid4()
 
         # Setup mocks
-        mock_checkpoint_repo.get_position = AsyncMock(return_value=1000)
+        mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
         mock_checkpoint_repo.get_all_checkpoints = AsyncMock(
             return_value=[
                 CheckpointData(
                     projection_name="OrderProjection",
                     last_event_id=event_id,
                     last_event_type="OrderCreated",
-                    global_position=1000,
+                    position=source_pos(1000),
                 )
             ]
         )
         mock_checkpoint_repo.save_position = AsyncMock()
         mock_position_mapper.translate_position = AsyncMock(
             return_value=TranslationResult(
-                source_position=1000,
-                target_position=500,
+                source_position=source_pos(1000),
+                target_position=target_pos(500),
                 is_exact=True,
             )
         )
@@ -1017,7 +1045,7 @@ class TestSubscriptionMigratorWorkflows:
         )
 
         assert plan.migratable_count == 1
-        assert plan.planned_migrations[0].planned_target_position == 500
+        assert plan.planned_migrations[0].planned_target_position == target_pos(500)
 
         # Step 2: Execute migration
         summary = await migrator.migrate_subscriptions(
@@ -1031,7 +1059,7 @@ class TestSubscriptionMigratorWorkflows:
 
         # Step 3: Verify migration
         # Update mock to return new position
-        mock_checkpoint_repo.get_position = AsyncMock(return_value=500)
+        mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(500))
 
         verification = await migrator.verify_migration(
             migration_id=migration_id,
@@ -1054,8 +1082,8 @@ class TestSubscriptionMigratorWorkflows:
 
         # Setup mocks - one succeeds, one fails
         positions = {
-            "OrderProjection": 1000,
-            "FailingProjection": 2000,
+            "OrderProjection": source_pos(1000),
+            "FailingProjection": source_pos(2000),
         }
         mock_checkpoint_repo.get_position = AsyncMock(side_effect=lambda name: positions.get(name))
         mock_checkpoint_repo.get_all_checkpoints = AsyncMock(
@@ -1064,23 +1092,23 @@ class TestSubscriptionMigratorWorkflows:
                     projection_name="OrderProjection",
                     last_event_id=event_id,
                     last_event_type="OrderCreated",
-                    global_position=1000,
+                    position=source_pos(1000),
                 ),
                 CheckpointData(
                     projection_name="FailingProjection",
                     last_event_id=event_id,
                     last_event_type="OrderCreated",
-                    global_position=2000,
+                    position=source_pos(2000),
                 ),
             ]
         )
         mock_checkpoint_repo.save_position = AsyncMock()
 
         def translate_position_effect(migration_id, source_position, use_nearest=True):
-            if source_position == 1000:
+            if source_position == source_pos(1000):
                 return TranslationResult(
-                    source_position=1000,
-                    target_position=500,
+                    source_position=source_pos(1000),
+                    target_position=target_pos(500),
                     is_exact=True,
                 )
             else:

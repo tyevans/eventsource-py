@@ -171,9 +171,9 @@ The upper bound `<3.0` is a deliberate major-version guard, and the lower bound 
 
 SQLAlchemy is the shared SQL layer, not a database driver. The library uses its 2.0 **async** API -- `AsyncEngine`, `AsyncConnection`, `AsyncSession`, `async_sessionmaker`, and `text()` -- as the common abstraction that every SQL-backed component is written against:
 
-- `stores/postgresql.py` and `snapshots/postgresql.py` -- the PostgreSQL event and snapshot stores.
-- `repositories/checkpoint.py`, `repositories/dlq.py`, `repositories/outbox.py`, and the shared `repositories/_connection.py` helper.
-- `projections/base.py` and `readmodels/` -- database-backed projections and read models, which accept an engine or sessionmaker.
+- `adapters/postgresql/store.py` and `adapters/postgresql/snapshots.py` -- the PostgreSQL event and snapshot stores.
+- `adapters/sql/checkpoints.py`, `adapters/sql/dlq.py`, `adapters/postgresql/outbox.py`, and the shared `adapters/_sql/connection.py` helper. (`adapters/sqlite/outbox.py` is not on this list -- it is written against `aiosqlite`, not sqlalchemy.)
+- `adapters/sql/projection.py` and `readmodels/` -- database-backed projections and read models, which accept an engine or sessionmaker. `application/projections/base.py`, by contrast, is sqlalchemy-free: it defines the checkpoint/DLQ/retry orchestration against pure ports and only the `adapters/sql/` implementations pull in the driver.
 - `locks/postgresql.py` -- advisory locks.
 - `migration/repositories/` -- the live-migration bookkeeping tables.
 
@@ -181,7 +181,7 @@ Because the async API is used throughout, SQLAlchemy 1.4 and the 2.0 legacy sync
 
 Two consequences are worth stating plainly:
 
-1. **SQLAlchemy is installed even if you never touch a database.** It is a core dependency because it is imported by modules reachable from the top-level package (the checkpoint/DLQ/outbox repositories, projection bases). An in-memory-only application still carries it.
+1. **SQLAlchemy is installed even if you never touch a database.** It is a core dependency because it is imported by modules reachable from the top-level package (the SQL-backed checkpoint/DLQ/outbox adapters, the PostgreSQL/SQLite projection and read model bases). An in-memory-only application still carries it.
 2. **SQLAlchemy alone cannot connect to anything.** A DBAPI driver is supplied by the extras: `asyncpg` via `postgresql`, `aiosqlite` via `sqlite`. Without one, creating an engine against `postgresql+asyncpg://...` raises a driver-not-found error from SQLAlchemy, not from `eventsource-py`.
 
 ### What is deliberately not a core dependency
@@ -244,21 +244,21 @@ store = PostgreSQLEventStore(engine)
 
 Because the driver is resolved by the dialect name in the URL, a missing `asyncpg` surfaces as a SQLAlchemy `ModuleNotFoundError` at `create_async_engine` time, not as an `eventsource` error. Everything importable from `eventsource` for PostgreSQL is available on a core install; only the connection fails.
 
-`sqlite` installs `aiosqlite`, and here the import guard is visible in the package surface. `src/eventsource/stores/sqlite.py` imports `aiosqlite` at module top level, so the top-level `__init__.py` wraps the SQLite exports:
+`sqlite` installs `aiosqlite`, and here the import guard is visible in the package surface. `src/eventsource/adapters/sqlite/store.py` imports `aiosqlite` at module top level, so `eventsource.adapters.sqlite` (and the top-level `__init__.py`, which re-exports from it) wraps the SQLite exports:
 
 ```python
 try:
-    from eventsource.repositories.checkpoint import SQLiteCheckpointRepository
-    from eventsource.repositories.dlq import SQLiteDLQRepository
-    from eventsource.repositories.outbox import SQLiteOutboxRepository
-    from eventsource.stores.sqlite import SQLiteEventStore
+    import aiosqlite
 
-    SQLITE_AVAILABLE = True
+    AIOSQLITE_AVAILABLE = True
 except ImportError:
-    SQLITE_AVAILABLE = False
+    AIOSQLITE_AVAILABLE = False
+    aiosqlite = None
 ```
 
-The practical consequence: without the `sqlite` extra, `from eventsource import SQLiteEventStore` raises `ImportError` -- the name is simply not bound. Check `SQLITE_AVAILABLE` if you need to branch. `SQLiteSnapshotStore` is the exception; it guards `aiosqlite` internally and raises `SQLiteNotAvailableError` (a subclass of `ImportError`) from its constructor instead.
+`SQLCheckpointRepository` and `SQLDLQRepository` (`eventsource.adapters.sql`) are not behind this guard: they are dialect-parameterized over the same SQLAlchemy async API PostgreSQL and SQLite both already require through the core `sqlalchemy` dependency, so they're unconditional exports regardless of which optional driver extra is installed.
+
+The practical consequence: without the `sqlite` extra, `from eventsource import SQLiteEventStore` raises `ImportError` -- the name is simply not bound. Check `SQLITE_AVAILABLE` (or `AIOSQLITE_AVAILABLE`) if you need to branch. `SQLiteSnapshotStore` is the exception; it guards `aiosqlite` internally and raises `SQLiteNotAvailableError` (a subclass of `ImportError`) from its constructor instead.
 
 The two backends are not interchangeable in storage representation. PostgreSQL uses `JSONB` columns and the `uuid-ossp` extension; SQLite has no `JSONB` type, so payloads are stored as `TEXT`. Choose PostgreSQL for production, SQLite for embedded deployments and fast local integration tests without Docker.
 
@@ -322,7 +322,7 @@ except ImportError:
     trace = None
 ```
 
-`get_tracer(name)` returns `None` when OTel is absent, `should_trace(enable_tracing)` is `enable_tracing and OTEL_AVAILABLE`, and `create_tracer(...)` / the `@traced(...)` decorator degrade to no-ops. Instrumented code paths -- event stores, buses, subscriptions, the migration tooling -- therefore run identically with or without the extra. Components expose an `enable_tracing: bool = True` constructor argument (for example `PostgreSQLEventStore`), which is the *component-level* switch; the extra being installed is the *global* one, and both must be true for spans to be emitted.
+`get_tracer(name)` returns `None` when OTel is absent, `should_trace(enable_tracing)` is `enable_tracing and OTEL_AVAILABLE`, and `create_tracer(...)` / the `@traced(...)` decorator degrade to no-ops. Instrumented code paths -- event stores, buses, subscriptions, the migration tooling -- therefore run identically with or without the extra. The event store adapters (`InMemoryEventStore`, `SQLiteEventStore`, `PostgreSQLEventStore`) no longer take a `tracer`/`enable_tracing` constructor argument; check the current signature in `src/eventsource/adapters/*/store.py` before assuming tracing is component-configurable at construction time.
 
 Metrics use a parallel flag, `OTEL_METRICS_AVAILABLE`, guarding `from opentelemetry import metrics` independently in `subscriptions/metrics.py`, `subscriptions/shutdown.py`, and `migration/metrics.py`; the Kafka and RabbitMQ buses add `PROPAGATION_AVAILABLE` for injecting and extracting trace context in message headers.
 

@@ -8,7 +8,7 @@ This module provides comprehensive test fixtures including:
 - Aggregate fixtures (test_aggregate, populated_aggregate)
 - Projection fixtures (test_projection)
 - Sample data fixtures (aggregate_id, tenant_id)
-- SQLite fixtures (sqlite_connection, sqlite_event_store, etc.)
+- SQLite fixtures (sqlite_connection, sqlite_checkpoint_repo, etc.)
 - OpenTelemetry metrics fixtures (metric_reader, reset_kafka_meter)
 
 All fixtures are properly scoped and documented for easy reuse.
@@ -24,11 +24,13 @@ import pytest
 import pytest_asyncio
 from hypothesis import HealthCheck, settings
 
+from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
+from eventsource.adapters.memory.dlq import InMemoryDLQRepository
+from eventsource.adapters.memory.outbox import InMemoryOutboxRepository
+from eventsource.adapters.memory.store import InMemoryEventStore
+from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
-from eventsource.repositories.checkpoint import InMemoryCheckpointRepository
-from eventsource.repositories.dlq import InMemoryDLQRepository
-from eventsource.repositories.outbox import InMemoryOutboxRepository
-from eventsource.stores.in_memory import InMemoryEventStore
+from eventsource.ports import ExpectedVersion
 
 # Import shared fixtures from fixtures module
 from tests.fixtures import (
@@ -318,7 +320,7 @@ async def populated_store(
     event_stream: list[DomainEvent],
 ) -> AsyncGenerator[InMemoryEventStore, None]:
     """
-    Provide an InMemoryEventStore pre-populated with sample events.
+    Provide a InMemoryEventStore pre-populated with sample events.
 
     Contains 3 counter events for a single aggregate (final value = 12).
 
@@ -330,11 +332,10 @@ async def populated_store(
         The event store populated with events.
     """
     aggregate_id = event_stream[0].aggregate_id
-    await in_memory_store.append_events(
-        aggregate_id=aggregate_id,
-        aggregate_type="Counter",
-        events=event_stream,
-        expected_version=0,
+    await in_memory_store.append(
+        StreamId(aggregate_id=aggregate_id, category="Counter"),
+        event_stream,
+        ExpectedVersion.no_stream(),
     )
     yield in_memory_store
 
@@ -603,39 +604,6 @@ async def sqlite_connection() -> AsyncGenerator[Any, None]:
 
 
 @pytest_asyncio.fixture
-async def sqlite_event_store() -> AsyncGenerator[Any, None]:
-    """
-    Provide an initialized SQLiteEventStore with in-memory database.
-
-    Creates a fresh in-memory SQLite event store for each test.
-    The store is automatically initialized with the schema and
-    cleaned up after the test.
-
-    Yields:
-        SQLiteEventStore: Initialized event store ready for use
-    """
-    if not AIOSQLITE_AVAILABLE:
-        pytest.skip("aiosqlite not installed")
-
-    from eventsource import EventRegistry
-    from eventsource.stores.sqlite import SQLiteEventStore
-
-    # Create fresh registry for tests
-    registry = EventRegistry()
-
-    store = SQLiteEventStore(
-        database=":memory:",
-        event_registry=registry,
-        wal_mode=False,  # WAL mode not supported in-memory
-        busy_timeout=5000,
-    )
-
-    async with store:
-        await store.initialize()
-        yield store
-
-
-@pytest_asyncio.fixture
 async def sqlite_checkpoint_repo(tmp_path: Any) -> AsyncGenerator[Any, None]:
     """
     Provide a SQLCheckpointRepository backed by a SQLite engine, schema initialized.
@@ -649,9 +617,9 @@ async def sqlite_checkpoint_repo(tmp_path: Any) -> AsyncGenerator[Any, None]:
     if not AIOSQLITE_AVAILABLE:
         pytest.skip("aiosqlite not installed")
 
-    from eventsource.engine import create_async_engine
+    from eventsource import create_async_engine
+    from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository
     from eventsource.migrations import get_schema
-    from eventsource.repositories.checkpoint import SQLCheckpointRepository
 
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/checkpoint_repo.db")
     async with engine.begin() as conn:
@@ -671,7 +639,8 @@ async def sqlite_outbox_repo(
     """
     Provide a SQLiteOutboxRepository with schema initialized.
 
-    Creates the event_outbox table in the in-memory database
+    Provisions the event_outbox table from
+    `get_schema("outbox", backend="sqlite")` in the in-memory database
     for outbox testing.
 
     Args:
@@ -683,26 +652,10 @@ async def sqlite_outbox_repo(
     if not AIOSQLITE_AVAILABLE:
         pytest.skip("aiosqlite not installed")
 
-    from eventsource.repositories.outbox import SQLiteOutboxRepository
+    from eventsource.adapters.sqlite.outbox import SQLiteOutboxRepository
+    from eventsource.migrations import get_schema
 
-    # Create the event_outbox table
-    await sqlite_connection.execute("""
-        CREATE TABLE IF NOT EXISTS event_outbox (
-            id TEXT PRIMARY KEY,
-            event_id TEXT NOT NULL,
-            event_type TEXT NOT NULL,
-            aggregate_id TEXT NOT NULL,
-            aggregate_type TEXT NOT NULL,
-            tenant_id TEXT,
-            event_data TEXT NOT NULL,
-            created_at TEXT NOT NULL DEFAULT (datetime('now')),
-            published_at TEXT,
-            retry_count INTEGER NOT NULL DEFAULT 0,
-            last_error TEXT,
-            status TEXT NOT NULL DEFAULT 'pending',
-            CHECK (status IN ('pending', 'published', 'failed'))
-        )
-    """)
+    await sqlite_connection.executescript(get_schema("outbox", backend="sqlite"))
     await sqlite_connection.commit()
 
     repo = SQLiteOutboxRepository(sqlite_connection)
@@ -723,9 +676,9 @@ async def sqlite_dlq_repo(tmp_path: Any) -> AsyncGenerator[Any, None]:
     if not AIOSQLITE_AVAILABLE:
         pytest.skip("aiosqlite not installed")
 
-    from eventsource.engine import create_async_engine
+    from eventsource import create_async_engine
+    from eventsource.adapters.sql.dlq import SQLDLQRepository
     from eventsource.migrations import get_schema
-    from eventsource.repositories.dlq import SQLDLQRepository
 
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/dlq_repo.db")
     async with engine.begin() as conn:

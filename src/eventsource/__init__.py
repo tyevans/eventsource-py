@@ -2,7 +2,7 @@
 eventsource - Production-ready event sourcing library for Python.
 
 This library provides:
-- Event Store with PostgreSQL and In-Memory backends
+- Event store ports with PostgreSQL, SQLite, and in-memory adapters
 - Domain Event base class with Pydantic models
 - Aggregate pattern with optimistic locking
 - Projection system with checkpoint tracking and DLQ
@@ -10,6 +10,7 @@ This library provides:
 - Transactional Outbox pattern
 """
 
+import contextlib
 from importlib.metadata import PackageNotFoundError, version
 
 try:
@@ -21,27 +22,44 @@ except PackageNotFoundError:
 # Multi-tenancy support (DX-010)
 # Exceptions - available immediately
 # Aggregates (Task 07, Task 08)
-# Core-rings surface (Task 14): domain value objects, boundary ports, the
-# memory adapter, and the legacy-surface compatibility wrapper.
-#
-# Several new names collide with existing top-level exports of the same
-# name but a DIFFERENT class -- these are intentionally NOT rebound at top
-# level (doing so would silently change what the existing export name
-# means, which the "never remove or change an existing export" rule
-# forbids). They remain available path-only from `eventsource.ports`:
-#   - `ExpectedVersion` (new VO) vs. `stores.interface.ExpectedVersion`
-#   - `ReadDirection` (new enum) vs. `stores.interface.ReadDirection`
-#   - `AppendResult` (new VO) vs. `stores.interface.AppendResult`
-# `SQLiteEventStore`/`PostgreSQLEventStore` (adapter classes) collide with
-# the legacy store classes the same way; use
-# `eventsource.adapters.sqlite.SQLiteEventStore` /
-# `eventsource.adapters.postgresql.PostgreSQLEventStore` path-only.
+# Core-rings surface: domain value objects, boundary ports, and the adapters.
+# Shared async engine factory
+from eventsource.adapters._sql.engine import create_async_engine
 from eventsource.adapters._sql.positions import IntPositionCodec
-from eventsource.adapters.memory import MemoryEventStore
+
+# Repository infrastructure (Task 12)
+from eventsource.adapters.memory import (
+    InMemoryCheckpointRepository,
+    InMemoryDLQRepository,
+    InMemoryEventStore,
+    InMemoryOutboxRepository,
+)
 
 # Snapshots
 from eventsource.adapters.memory.snapshots import InMemorySnapshotStore
+from eventsource.adapters.postgresql import (
+    ASYNCPG_AVAILABLE,
+    PostgreSQLEventStore,
+    PostgreSQLOutboxRepository,
+)
+from eventsource.adapters.sql import SQLCheckpointRepository, SQLDLQRepository
+
+# Projections (Task 09)
+from eventsource.adapters.sql.projection import DatabaseProjection
+
+# ReadModel Projections (Phase 3)
+from eventsource.adapters.sql.readmodel_projection import ReadModelProjection
+from eventsource.adapters.sqlite import (
+    AIOSQLITE_AVAILABLE,
+    SQLITE_AVAILABLE,
+    SQLiteEventStore,
+)
 from eventsource.application.aggregates.repository import AggregateRepository
+from eventsource.application.projections.base import (
+    CheckpointTrackingProjection,
+    DeclarativeProjection,
+    Projection,
+)
 
 # Event bus (Task 10)
 from eventsource.bus.base import BaseEventBus
@@ -85,9 +103,6 @@ from eventsource.commands import DomainCommand
 from eventsource.domain import StreamId
 from eventsource.domain.aggregate import AggregateRoot, DeclarativeAggregate
 from eventsource.domain.decider import DeciderAggregate
-
-# Shared async engine factory
-from eventsource.engine import create_async_engine
 
 # Core event primitives (Task 02)
 from eventsource.events.base import DomainEvent
@@ -141,28 +156,36 @@ from eventsource.multitenancy import (
     tenant_scope_sync,
 )
 from eventsource.ports import (
+    AggregateStore,
+    AppendResult,
     CategoryQuery,
     CategoryReadOptions,
     EventAppender,
     EventEnvelope,
     EventLookup,
+    EventPublisher,
+    ExpectedVersion,
     FeedReadOptions,
     FullEventStore,
     GlobalEventFeed,
+    OutboxEntry,
+    OutboxRepository,
+    OutboxStats,
     Position,
+    ReadDirection,
     StreamReader,
     StreamReadOptions,
     collect,
+    outbox_event_data,
+)
+from eventsource.ports.checkpoints import CheckpointData, CheckpointRepository, LagMetrics
+from eventsource.ports.dlq import (
+    DLQEntry,
+    DLQRepository,
+    DLQStats,
+    ProjectionFailureCount,
 )
 from eventsource.ports.snapshots import Snapshot, SnapshotStore
-
-# Projections (Task 09)
-from eventsource.projections.base import (
-    CheckpointTrackingProjection,
-    DatabaseProjection,
-    DeclarativeProjection,
-    Projection,
-)
 
 # Protocols - canonical location (TD-007)
 from eventsource.protocols import (
@@ -174,60 +197,16 @@ from eventsource.protocols import (
     SyncEventHandler,
 )
 
-# ReadModel Projections (Phase 3)
-from eventsource.readmodels import ReadModelProjection
-
-# Repository infrastructure (Task 12)
-from eventsource.repositories import (
-    CheckpointData,
-    CheckpointRepository,
-    DLQEntry,
-    DLQRepository,
-    DLQStats,
-    InMemoryCheckpointRepository,
-    InMemoryDLQRepository,
-    InMemoryOutboxRepository,
-    LagMetrics,
-    OutboxEntry,
-    OutboxRepository,
-    OutboxStats,
-    PostgreSQLOutboxRepository,
-    ProjectionFailureCount,
-    SQLCheckpointRepository,
-    SQLDLQRepository,
-)
-
 # Serialization utilities
 from eventsource.serialization import EventSourceJSONEncoder
-
-# Event store implementations (Task 05, Task 06)
-from eventsource.stores.in_memory import InMemoryEventStore
-
-# Event store interface and data structures (Task 04)
-from eventsource.stores.interface import (
-    AppendResult,
-    EventPublisher,
-    EventStore,
-    EventStream,
-    ExpectedVersion,
-    ReadDirection,
-    ReadOptions,
-    StoredEvent,
-)
-from eventsource.stores.legacy import LegacyStoreAdapter
-from eventsource.stores.postgresql import PostgreSQLEventStore
 
 # Sync adapters (DX-005)
 from eventsource.sync import SyncEventStoreAdapter
 
-# SQLite Event Store and Repositories (optional - requires aiosqlite)
-try:
-    from eventsource.repositories.outbox import SQLiteOutboxRepository  # noqa: F401
-    from eventsource.stores.sqlite import SQLiteEventStore  # noqa: F401
-
-    SQLITE_AVAILABLE = True
-except ImportError:
-    SQLITE_AVAILABLE = False
+# SQLite outbox repository (optional - requires aiosqlite at import time,
+# unlike the SQLite store adapter, which imports cleanly without it).
+with contextlib.suppress(ImportError):
+    from eventsource.adapters.sqlite import SQLiteOutboxRepository  # noqa: F401
 
 # Types - available immediately
 from eventsource.testing.recording import RecordingEventBus
@@ -266,18 +245,10 @@ __all__ = [
     "list_registered_events",
     "EventTypeNotFoundError",
     "DuplicateEventTypeError",
-    # Event Store Interface and Data Structures (Task 04)
-    "EventStore",
-    "EventPublisher",
-    "EventStream",
-    "AppendResult",
-    "StoredEvent",
-    "ReadOptions",
-    "ReadDirection",
-    "ExpectedVersion",
-    # Event Store Implementations (Task 05, Task 06)
+    # Store adapters
     "InMemoryEventStore",
     "PostgreSQLEventStore",
+    "ASYNCPG_AVAILABLE",
     # Aggregates (Task 07, Task 08)
     "AggregateRoot",
     "AggregateRepository",
@@ -344,6 +315,7 @@ __all__ = [
     "InMemoryOutboxRepository",
     "OutboxEntry",
     "OutboxStats",
+    "outbox_event_data",
     "EventSourceJSONEncoder",
     # Projections (Task 09)
     "Projection",
@@ -382,9 +354,14 @@ __all__ = [
     # Core-rings surface: boundary ports
     "Position",
     "EventEnvelope",
+    "EventPublisher",
+    "AppendResult",
+    "ExpectedVersion",
+    "ReadDirection",
     "StreamReadOptions",
     "FeedReadOptions",
     "CategoryReadOptions",
+    "AggregateStore",
     "EventAppender",
     "StreamReader",
     "EventLookup",
@@ -393,22 +370,18 @@ __all__ = [
     "FullEventStore",
     "collect",
     # Core-rings surface: adapters
-    "MemoryEventStore",
     "IntPositionCodec",
-    # Core-rings surface: legacy-surface compatibility wrapper
-    "LegacyStoreAdapter",
     # Core-rings surface: exceptions
     "DuplicateEventError",
     "PositionDecodeError",
     "PositionForeignError",
+    # Optional-driver availability flags
+    "AIOSQLITE_AVAILABLE",
+    "SQLITE_AVAILABLE",
+    "SQLiteEventStore",
 ]
 
-# Conditionally add SQLite exports when aiosqlite is available
+# The SQLite outbox repository needs aiosqlite at import time; the store
+# adapter does not (its constructor raises with an install hint instead).
 if SQLITE_AVAILABLE:
-    __all__.extend(
-        [
-            "SQLITE_AVAILABLE",
-            "SQLiteEventStore",
-            "SQLiteOutboxRepository",
-        ]
-    )
+    __all__.append("SQLiteOutboxRepository")

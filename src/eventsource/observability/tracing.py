@@ -100,7 +100,7 @@ def traced(
     If tracing is disabled or tracer is None, the decorator is a no-op.
 
     Args:
-        name: Span name (e.g., "event_store.append_events")
+        name: Span name (e.g., "eventsource.checkpoint_manager.update")
         attributes: Static attributes to include in span (optional)
 
     Returns:

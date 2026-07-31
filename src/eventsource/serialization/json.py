@@ -81,12 +81,13 @@ class EventSourceJSONEncoder(json.JSONEncoder):
     `json_dumps`/`json_loads` no longer use this class -- orjson (a core
     dependency) serializes UUID and datetime natively, so there is no
     stdlib-backed path left that needs it. It is kept because
-    `eventsource.repositories.outbox` still calls stdlib
-    `json.dumps(event_data, cls=EventSourceJSONEncoder)` directly at two
-    call sites (bypassing `json_dumps` entirely) -- migrating those call
-    sites is out of scope for this change. It is also public API,
-    re-exported from `eventsource.serialization`, `eventsource.repositories`,
-    and the top-level `eventsource` package.
+    `eventsource.adapters.postgresql.outbox` and
+    `eventsource.adapters.sqlite.outbox` still call stdlib
+    `json.dumps(event_data, cls=EventSourceJSONEncoder)` directly at their
+    `add_event` call sites (bypassing `json_dumps` entirely) -- migrating
+    those call sites is out of scope for this change. It is also public
+    API, re-exported from `eventsource.serialization` and the top-level
+    `eventsource` package.
 
     Example:
         >>> import json

@@ -332,8 +332,7 @@ class TestSubscriptionHealthChecker:
     ):
         """Test lag indicator when degraded."""
         # Set lag above warning threshold
-        await subscription.update_max_position(2000)
-        subscription.last_processed_position = 0
+        await subscription.record_events_seen(2000)
 
         result = checker.check()
 
@@ -352,8 +351,7 @@ class TestSubscriptionHealthChecker:
     ):
         """Test lag indicator when critical."""
         # Set lag above critical threshold
-        await subscription.update_max_position(15000)
-        subscription.last_processed_position = 0
+        await subscription.record_events_seen(15000)
 
         result = checker.check()
 

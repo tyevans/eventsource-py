@@ -26,15 +26,16 @@ from eventsource.observability.attributes import (
     ATTR_SUBSCRIPTION_PHASE,
     ATTR_WATERMARK,
 )
+from eventsource.ports.positions import Position
 from eventsource.subscriptions.exceptions import TransitionError
 from eventsource.subscriptions.runners.catchup import CatchUpRunner
 from eventsource.subscriptions.runners.live import LiveRunner
-from eventsource.subscriptions.subscription import Subscription
+from eventsource.subscriptions.subscription import Subscription, render_position
 
 if TYPE_CHECKING:
     from eventsource.bus.interface import EventBus
-    from eventsource.repositories.checkpoint import CheckpointRepository
-    from eventsource.stores.interface import EventStore
+    from eventsource.ports.checkpoints import SubscriptionPositions
+    from eventsource.ports.store import GlobalEventFeed
     from eventsource.subscriptions.flow_control import FlowController
 
 logger = logging.getLogger(__name__)
@@ -76,7 +77,8 @@ class TransitionResult:
         catchup_events_processed: Number of events processed during catch-up
         buffer_events_processed: Number of events processed from buffer
         buffer_events_skipped: Number of duplicate events skipped from buffer
-        final_position: Last processed global position
+        final_position: Last processed global-feed position, None if nothing
+            has been processed
         phase_reached: The phase reached when transition ended
         error: Exception if transition failed, None otherwise
     """
@@ -85,7 +87,7 @@ class TransitionResult:
     catchup_events_processed: int
     buffer_events_processed: int
     buffer_events_skipped: int
-    final_position: int
+    final_position: Position | None
     phase_reached: TransitionPhase
     error: Exception | None = None
 
@@ -133,9 +135,9 @@ class TransitionCoordinator:
 
     def __init__(
         self,
-        event_store: "EventStore",
+        event_store: "GlobalEventFeed",
         event_bus: "EventBus",
-        checkpoint_repo: "CheckpointRepository",
+        checkpoint_repo: "SubscriptionPositions",
         subscription: Subscription,
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
@@ -163,7 +165,7 @@ class TransitionCoordinator:
         self.subscription = subscription
 
         self._phase = TransitionPhase.NOT_STARTED
-        self._watermark: int = 0
+        self._watermark: Position | None = None
         self._catchup_runner: CatchUpRunner | None = None
         self._live_runner: LiveRunner | None = None
 
@@ -189,7 +191,7 @@ class TransitionCoordinator:
             "eventsource.transition_coordinator.execute",
             {
                 ATTR_SUBSCRIPTION_NAME: self.subscription.name,
-                ATTR_POSITION: self.subscription.last_processed_position,
+                ATTR_POSITION: render_position(self.subscription.last_processed_position),
             },
         ) as span:
             catchup_processed = 0
@@ -199,29 +201,36 @@ class TransitionCoordinator:
             try:
                 # Phase 1: Initial setup and watermark
                 self._phase = TransitionPhase.INITIAL_CATCHUP
-                self._watermark = await self.event_store.get_global_position()
+                self._watermark = watermark = await self.event_store.current_position()
 
                 if span:
-                    span.set_attribute(ATTR_WATERMARK, self._watermark)
+                    if (token := render_position(self._watermark)) is not None:
+                        span.set_attribute(ATTR_WATERMARK, token)
                     span.set_attribute(ATTR_SUBSCRIPTION_PHASE, self._phase.value)
 
                 logger.info(
                     "Transition starting",
                     extra={
                         "subscription": self.subscription.name,
-                        "watermark": self._watermark,
-                        "current_position": self.subscription.last_processed_position,
+                        "watermark": render_position(self._watermark),
+                        "current_position": render_position(
+                            self.subscription.last_processed_position
+                        ),
                     },
                 )
 
-                # Check if already caught up (at or past watermark)
-                if self.subscription.last_processed_position >= self._watermark:
+                # Already caught up: an empty feed (watermark None) has
+                # nothing to catch up to. Order matters -- a None position
+                # means nothing has been processed, which is behind any
+                # watermark, not ahead of it.
+                current = self.subscription.last_processed_position
+                if watermark is None or (current is not None and current >= watermark):
                     logger.info(
                         "Already caught up, skipping to live",
                         extra={
                             "subscription": self.subscription.name,
-                            "position": self.subscription.last_processed_position,
-                            "watermark": self._watermark,
+                            "position": render_position(current),
+                            "watermark": render_position(self._watermark),
                         },
                     )
                     await self._start_live_directly()
@@ -265,7 +274,7 @@ class TransitionCoordinator:
                 )
 
                 catchup_result = await self._catchup_runner.run_until_position(
-                    target_position=self._watermark
+                    target_position=watermark
                 )
                 catchup_processed = catchup_result.events_processed
 
@@ -283,7 +292,7 @@ class TransitionCoordinator:
                     extra={
                         "subscription": self.subscription.name,
                         "events_processed": catchup_processed,
-                        "position": self.subscription.last_processed_position,
+                        "position": render_position(self.subscription.last_processed_position),
                         "buffer_size": self._live_runner.buffer_size,
                     },
                 )
@@ -319,7 +328,9 @@ class TransitionCoordinator:
                     "Transition complete, now live",
                     extra={
                         "subscription": self.subscription.name,
-                        "final_position": self.subscription.last_processed_position,
+                        "final_position": render_position(
+                            self.subscription.last_processed_position
+                        ),
                         "total_catchup": catchup_processed,
                         "total_buffer": buffer_processed,
                     },
@@ -425,15 +436,15 @@ class TransitionCoordinator:
         return self._phase
 
     @property
-    def watermark(self) -> int:
+    def watermark(self) -> Position | None:
         """
         Get the watermark position.
 
-        The watermark is the max global position captured at the start
-        of the transition. The catch-up phase targets this position.
+        The watermark is the current global-feed position captured at the
+        start of the transition. The catch-up phase targets this position.
 
         Returns:
-            Watermark position (0 if not yet captured)
+            Watermark position, None if not yet captured or the feed is empty
         """
         return self._watermark
 
@@ -481,10 +492,10 @@ class StartFromResolver:
     Resolves the start position based on configuration.
 
     Handles different start_from values:
-    - "beginning": Start from position 0
-    - "end": Start from current max position (live-only)
+    - "beginning": Start from the start of the feed (None)
+    - "end": Start from the current feed position (live-only)
     - "checkpoint": Resume from last checkpoint
-    - int: Start from explicit position
+    - Position: Start from an explicit position
 
     Example:
         >>> resolver = StartFromResolver(event_store, checkpoint_repo)
@@ -494,8 +505,8 @@ class StartFromResolver:
 
     def __init__(
         self,
-        event_store: "EventStore",
-        checkpoint_repo: "CheckpointRepository",
+        event_store: "GlobalEventFeed",
+        checkpoint_repo: "SubscriptionPositions",
     ) -> None:
         """
         Initialize the start position resolver.
@@ -510,7 +521,7 @@ class StartFromResolver:
     async def resolve(
         self,
         subscription: Subscription,
-    ) -> int:
+    ) -> Position | None:
         """
         Resolve the starting position for a subscription.
 
@@ -521,23 +532,23 @@ class StartFromResolver:
             subscription: The subscription to resolve position for
 
         Returns:
-            Starting position (0 for beginning, current max for end,
-            checkpoint position for checkpoint, or explicit position)
+            Starting position, or None to read from the start of the feed
+            (which is also the result when "checkpoint" finds none)
 
         Raises:
             ValueError: If start_from has an unknown value
         """
         start_from = subscription.config.start_from
 
-        if isinstance(start_from, int):
+        if isinstance(start_from, Position):
             # Explicit position
             return start_from
 
         if start_from == "beginning":
-            return 0
+            return None
 
         if start_from == "end":
-            return await self.event_store.get_global_position()
+            return await self.event_store.current_position()
 
         if start_from == "checkpoint":
             position = await self.checkpoint_repo.get_position(subscription.name)
@@ -548,7 +559,7 @@ class StartFromResolver:
                 "No checkpoint found, starting from beginning",
                 extra={"subscription": subscription.name},
             )
-            return 0
+            return None
 
         raise ValueError(f"Unknown start_from value: {start_from}")
 

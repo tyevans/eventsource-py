@@ -21,8 +21,10 @@ from uuid import uuid4
 
 import pytest
 
+from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.events.registry import register_event
+from eventsource.ports.positions import ExpectedVersion
 from eventsource.subscriptions import (
     PauseReason,
     SubscriptionConfig,
@@ -60,6 +62,14 @@ pytestmark = pytest.mark.asyncio
 
 
 @register_event
+async def position_after(store, n: int):
+    """The token of the nth (1-based) event in the feed."""
+    envelopes = [e async for e in store.read_all()]
+    position = envelopes[n - 1].position
+    assert position is not None
+    return position
+
+
 class AdvTestUserRegistered(DomainEvent):
     """Test event for user registration in advanced tests."""
 
@@ -325,11 +335,10 @@ class TestEventTypeFiltering:
                 aggregate_id=uuid4(),
                 tracking_number=f"TRK-{i:03d}",
             )
-            await in_memory_event_store.append_events(
-                aggregate_id=event.aggregate_id,
-                aggregate_type="SubTestOrder",
-                events=[event],
-                expected_version=0,
+            await in_memory_event_store.append(
+                StreamId(aggregate_id=event.aggregate_id, category="SubTestOrder"),
+                [event],
+                ExpectedVersion.no_stream(),
             )
             await in_memory_event_bus.publish([event])
 
@@ -438,13 +447,13 @@ class TestMultipleSubscriptions:
         # Set different starting positions for different subscriptions
         await in_memory_checkpoint_repo.save_position(
             subscription_id="ProjectionA",
-            position=25,
+            position=await position_after(in_memory_event_store, 25),
             event_id=events[24].event_id,
             event_type="SubTestOrderCreated",
         )
         await in_memory_checkpoint_repo.save_position(
             subscription_id="ProjectionB",
-            position=50,
+            position=await position_after(in_memory_event_store, 50),
             event_id=events[49].event_id,
             event_type="SubTestOrderCreated",
         )

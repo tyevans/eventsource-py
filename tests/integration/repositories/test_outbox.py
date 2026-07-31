@@ -18,6 +18,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from eventsource import PostgreSQLOutboxRepository
+from eventsource.testing.conformance_ports import OutboxRepositoryConformance
 
 from ..conftest import (
     TestItemCreated,
@@ -36,8 +37,14 @@ pytestmark = [
 ]
 
 
-class TestPostgreSQLOutboxRepositoryBasics:
+class TestPostgreSQLOutboxRepositoryBasics(OutboxRepositoryConformance):
     """Basic outbox repository operations."""
+
+    @pytest.fixture
+    async def store(
+        self, postgres_outbox_repo: PostgreSQLOutboxRepository
+    ) -> PostgreSQLOutboxRepository:
+        return postgres_outbox_repo
 
     async def test_add_event_to_outbox(
         self,

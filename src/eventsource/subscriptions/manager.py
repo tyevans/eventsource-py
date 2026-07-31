@@ -68,14 +68,15 @@ from eventsource.subscriptions.subscription import (
     PauseReason,
     Subscription,
     SubscriptionStatus,
+    render_position,
 )
 
 if TYPE_CHECKING:
     from eventsource.bus.interface import EventBus
+    from eventsource.ports.checkpoints import SubscriptionPositions
+    from eventsource.ports.dlq import DLQRepository
+    from eventsource.ports.store import GlobalEventFeed
     from eventsource.protocols import EventSubscriber
-    from eventsource.repositories.checkpoint import CheckpointRepository
-    from eventsource.repositories.dlq import DLQRepository
-    from eventsource.stores.interface import EventStore
 
 logger = logging.getLogger(__name__)
 
@@ -112,9 +113,9 @@ class SubscriptionManager:
 
     def __init__(
         self,
-        event_store: "EventStore",
+        event_store: "GlobalEventFeed",
         event_bus: "EventBus",
-        checkpoint_repo: "CheckpointRepository",
+        checkpoint_repo: "SubscriptionPositions",
         shutdown_timeout: float = 30.0,
         drain_timeout: float = 10.0,
         dlq_repo: "DLQRepository | None" = None,
@@ -746,10 +747,18 @@ class SubscriptionManager:
                 )
                 continue
 
+            position = subscription.last_processed_position
+            if position is None:
+                logger.debug(
+                    "Skipping checkpoint save - no position to checkpoint",
+                    extra={"subscription": name},
+                )
+                continue
+
             try:
                 await self.checkpoint_repo.save_position(
                     subscription_id=name,
-                    position=subscription.last_processed_position,
+                    position=position,
                     event_id=subscription.last_event_id,
                     event_type=subscription.last_event_type,
                 )
@@ -758,7 +767,7 @@ class SubscriptionManager:
                     "Checkpoint saved",
                     extra={
                         "subscription": name,
-                        "position": subscription.last_processed_position,
+                        "position": render_position(position),
                     },
                 )
             except Exception as e:

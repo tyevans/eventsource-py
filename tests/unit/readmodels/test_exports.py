@@ -1,66 +1,52 @@
-"""Unit tests for readmodels module exports."""
+"""Read-model public surface: new port/adapter paths, plus shim completeness."""
+
+import pytest
 
 
-def test_readmodels_package_exports() -> None:
-    """Test that all expected classes are exported from readmodels package."""
-    from eventsource.readmodels import (
+def test_port_and_adapter_paths_export_the_public_names() -> None:
+    from eventsource.adapters.memory.readmodels import InMemoryReadModelRepository
+    from eventsource.ports.readmodels import (
         Filter,
-        InMemoryReadModelRepository,
         Query,
         ReadModel,
         ReadModelRepository,
     )
 
-    # Verify types are correct
     assert hasattr(ReadModel, "table_name")
     assert hasattr(ReadModel, "field_names")
     assert hasattr(ReadModel, "custom_field_names")
     assert hasattr(ReadModel, "is_deleted")
 
-    # Verify ReadModelRepository has protocol methods
     assert hasattr(ReadModelRepository, "get")
     assert hasattr(ReadModelRepository, "save")
     assert hasattr(ReadModelRepository, "find")
 
-    # Verify Query can be instantiated and has expected fields
     q = Query()
     assert hasattr(q, "filters")
     assert hasattr(q, "order_by")
     assert hasattr(q, "limit")
 
-    # Verify Filter has factory methods
     assert hasattr(Filter, "eq")
     assert hasattr(Filter, "ne")
     assert hasattr(Filter, "gt")
     assert hasattr(Filter, "in_")
 
-    # Verify InMemoryReadModelRepository exists
     assert hasattr(InMemoryReadModelRepository, "model_class")
+
+
+def test_legacy_package_still_covers_all_sixteen_names() -> None:
+    import eventsource.readmodels
+
+    assert len(eventsource.readmodels.__all__) == 16
+    for name in eventsource.readmodels.__all__:
+        with pytest.warns(DeprecationWarning):
+            assert getattr(eventsource.readmodels, name) is not None
 
 
 def test_no_circular_imports() -> None:
     """Test that importing readmodels doesn't cause circular imports."""
-    # This test verifies the import order is correct
-
     # If we get here without ImportError, circular imports are avoided
     assert True
-
-
-def test_all_exports_defined() -> None:
-    """Test that __all__ is properly defined."""
-    import eventsource.readmodels
-
-    expected_exports = [
-        "ReadModel",
-        "ReadModelRepository",
-        "Query",
-        "Filter",
-        "InMemoryReadModelRepository",
-    ]
-
-    for name in expected_exports:
-        assert name in eventsource.readmodels.__all__
-        assert hasattr(eventsource.readmodels, name)
 
 
 def test_observability_attributes_exported() -> None:

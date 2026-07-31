@@ -12,17 +12,21 @@ import logging
 import threading
 from collections.abc import Coroutine, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
 from typing import Any, TypeVar
 from uuid import UUID
 
+from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
-from eventsource.stores.interface import (
+from eventsource.ports import (
     AppendResult,
-    EventStore,
-    EventStream,
-    ReadOptions,
-    StoredEvent,
+    CategoryReadOptions,
+    EventEnvelope,
+    ExpectedVersion,
+    FeedReadOptions,
+    FullEventStore,
+    Position,
+    StreamReadOptions,
+    collect,
 )
 
 logger = logging.getLogger(__name__)
@@ -38,32 +42,34 @@ class SyncEventStoreAdapter:
     synchronous contexts like Celery tasks, Django management commands,
     or RQ workers.
 
-    Handles three event loop scenarios:
-    1. No event loop exists -> uses asyncio.run()
-    2. Event loop exists but not running -> uses loop.run_until_complete()
-    3. Event loop is running -> uses run_coroutine_threadsafe() with thread pool
+    Handles two event loop scenarios:
+    1. No running event loop -> uses asyncio.run() (a fresh loop per call)
+    2. A running event loop is detected on the calling thread ->
+       uses run_coroutine_threadsafe() against that loop directly
 
     Thread Safety:
         The adapter is thread-safe for concurrent calls from multiple threads.
         Each sync call is independent and uses appropriate synchronization.
 
     Example:
-        >>> from eventsource.stores import PostgreSQLEventStore
+        >>> from sqlalchemy.ext.asyncio import create_async_engine
+        >>> from eventsource.adapters.postgresql import PostgreSQLEventStore
+        >>> from eventsource.domain import StreamId
+        >>> from eventsource.ports import ExpectedVersion
         >>> from eventsource.sync import SyncEventStoreAdapter
         >>>
-        >>> async_store = PostgreSQLEventStore(database_url)
-        >>> sync_store = SyncEventStoreAdapter(async_store, timeout=30.0)
+        >>> engine = create_async_engine(database_url)
+        >>> sync_store = SyncEventStoreAdapter(PostgreSQLEventStore(engine), timeout=30.0)
         >>>
         >>> # In a Celery task
         >>> @celery.task
         >>> def process_order(order_id: str):
-        ...     events = sync_store.get_events_sync(UUID(order_id), "Order")
-        ...     # Process events...
-        ...     sync_store.append_events_sync(
-        ...         aggregate_id=UUID(order_id),
-        ...         aggregate_type="Order",
-        ...         events=[new_event],
-        ...         expected_version=events.version,
+        ...     stream = StreamId(aggregate_id=UUID(order_id), category="Order")
+        ...     envelopes = sync_store.read_stream(stream)
+        ...     sync_store.append(
+        ...         stream,
+        ...         [new_event],
+        ...         ExpectedVersion.exact(len(envelopes)),
         ...     )
 
     Warning:
@@ -71,37 +77,43 @@ class SyncEventStoreAdapter:
         async view that calls a sync library) will log a warning and use
         run_coroutine_threadsafe(), which has additional overhead. Consider
         using the async EventStore directly in async contexts.
+
+    Related:
+        `eventsource.testing.sync_facade.SyncStoreFacade` is the test-machinery
+        counterpart: it owns one private event loop for its lifetime and has no
+        timeouts. This adapter is for production sync callers (Celery, Django
+        management commands, RQ): per-call `asyncio.run`, a running-loop
+        `run_coroutine_threadsafe` fallback, and a timeout on every operation.
     """
 
-    # Class-level executor for running loop case
+    # Retained for API compatibility only: `_run_sync` never dispatches work
+    # to this executor. It is not used by the running-loop path either --
+    # that path runs the coroutine on the caller's own loop via
+    # `run_coroutine_threadsafe`, not on a worker thread from this pool.
     _executor: ThreadPoolExecutor | None = None
     _executor_lock: threading.Lock = threading.Lock()
 
     def __init__(
         self,
-        event_store: EventStore,
+        store: FullEventStore,
         timeout: float = 30.0,
     ) -> None:
-        """
-        Initialize the sync adapter.
+        """Initialize the sync adapter.
 
         Args:
-            event_store: The async EventStore to wrap
+            store: The async, port-shaped event store to wrap
             timeout: Default timeout in seconds for all operations (default: 30.0)
-
-        Raises:
-            TypeError: If event_store doesn't implement EventStore protocol
         """
-        if not isinstance(event_store, EventStore):
-            raise TypeError(
-                f"event_store must be an EventStore instance, got {type(event_store).__name__}"
-            )
-        self._store = event_store
+        self._store = store
         self._timeout = timeout
 
     @classmethod
     def _get_executor(cls) -> ThreadPoolExecutor:
-        """Get or create the shared thread pool executor."""
+        """Get or create the shared thread pool executor.
+
+        Retained for API compatibility; `_run_sync` does not use this
+        executor for either event loop scenario it handles.
+        """
         with cls._executor_lock:
             if cls._executor is None:
                 cls._executor = ThreadPoolExecutor(
@@ -115,8 +127,13 @@ class SyncEventStoreAdapter:
         """
         Shutdown the shared thread pool executor.
 
-        Call this during application shutdown to clean up resources.
-        After calling this, the executor will be recreated on next use.
+        Retained for API compatibility. This executor is not used by
+        `_run_sync` -- the running-loop path runs coroutines on the caller's
+        own loop via `run_coroutine_threadsafe`, not on a worker thread here.
+        Calling this is safe (a no-op beyond releasing the pool, if one was
+        ever created via `_get_executor`) but has no effect on adapter
+        behavior. After calling this, the executor will be recreated on next
+        use of `_get_executor`.
         """
         with cls._executor_lock:
             if cls._executor is not None:
@@ -143,7 +160,10 @@ class SyncEventStoreAdapter:
         try:
             # Check if there's a running event loop
             loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
 
+        if loop is not None:
             # We're in a running loop - use thread pool
             logger.warning(
                 "SyncEventStoreAdapter called from running event loop. "
@@ -161,10 +181,6 @@ class SyncEventStoreAdapter:
                     "(called from running event loop)"
                 ) from None
 
-        except RuntimeError:
-            # No running event loop - this is the common case for sync contexts
-            pass
-
         # Create a new event loop with asyncio.run()
         # This is the recommended approach for Python 3.10+
         try:
@@ -172,127 +188,67 @@ class SyncEventStoreAdapter:
         except TimeoutError as e:
             raise TimeoutError(f"Sync operation timed out after {effective_timeout}s") from e
 
-    def append_events_sync(
+    def append(
         self,
-        aggregate_id: UUID,
-        aggregate_type: str,
+        stream: StreamId,
         events: Sequence[DomainEvent],
-        expected_version: int,
+        expected: ExpectedVersion,
         *,
         timeout: float | None = None,
     ) -> AppendResult:
         """
-        Synchronously append events to an aggregate stream.
+        Synchronously append events to a stream.
 
         Args:
-            aggregate_id: The aggregate's unique identifier
-            aggregate_type: The type name of the aggregate
+            stream: Identity of the stream to append to
             events: Sequence of events to append
-            expected_version: Expected current version for optimistic locking
+            expected: Expected version for optimistic concurrency control
             timeout: Override default timeout for this operation
 
         Returns:
             AppendResult with new version and global position
 
         Raises:
-            OptimisticLockError: If expected_version doesn't match current
+            OptimisticLockError: If expected doesn't match current version
             TimeoutError: If operation exceeds timeout
             EventStoreError: If storage operation fails
         """
-        return self._run_sync(
-            self._store.append_events(aggregate_id, aggregate_type, list(events), expected_version),
-            timeout=timeout,
-        )
+        return self._run_sync(self._store.append(stream, events, expected), timeout=timeout)
 
-    def get_events_sync(
+    def read_stream(
         self,
-        aggregate_id: UUID,
-        aggregate_type: str | None = None,
-        from_version: int = 0,
-        from_timestamp: datetime | None = None,
-        to_timestamp: datetime | None = None,
+        stream: StreamId,
+        options: StreamReadOptions | None = None,
         *,
         timeout: float | None = None,
-    ) -> EventStream:
+    ) -> list[EventEnvelope]:
         """
-        Synchronously get events for an aggregate.
+        Synchronously read events from a stream.
 
         Args:
-            aggregate_id: The aggregate's unique identifier
-            aggregate_type: Optional type filter
-            from_version: Start from this version (0 = all events)
-            from_timestamp: Only get events after this timestamp
-            to_timestamp: Only get events before this timestamp
+            stream: Identity of the stream to read
+            options: Read options for direction, version range, and limit
             timeout: Override default timeout for this operation
 
         Returns:
-            EventStream with events and metadata
+            List of EventEnvelope for the matching events
         """
-        return self._run_sync(
-            self._store.get_events(
-                aggregate_id,
-                aggregate_type,
-                from_version,
-                from_timestamp,
-                to_timestamp,
-            ),
-            timeout=timeout,
-        )
+        return self._run_sync(collect(self._store.read_stream(stream, options)), timeout=timeout)
 
-    def get_events_by_type_sync(
-        self,
-        aggregate_type: str,
-        tenant_id: UUID | None = None,
-        from_timestamp: datetime | None = None,
-        *,
-        timeout: float | None = None,
-    ) -> list[DomainEvent]:
+    def get_stream_version(self, stream: StreamId, *, timeout: float | None = None) -> int:
         """
-        Synchronously get all events for a specific aggregate type.
+        Synchronously get the current version of a stream.
 
         Args:
-            aggregate_type: Type of aggregate (e.g., 'Order')
-            tenant_id: Filter by tenant (optional, for multi-tenant systems)
-            from_timestamp: Only get events after this datetime (optional)
-            timeout: Override default timeout for this operation
-
-        Returns:
-            List of events in chronological order
-        """
-        return self._run_sync(
-            self._store.get_events_by_type(aggregate_type, tenant_id, from_timestamp),
-            timeout=timeout,
-        )
-
-    def get_stream_version_sync(
-        self,
-        aggregate_id: UUID,
-        aggregate_type: str,
-        *,
-        timeout: float | None = None,
-    ) -> int:
-        """
-        Synchronously get the current version of an aggregate stream.
-
-        Args:
-            aggregate_id: The aggregate's unique identifier
-            aggregate_type: Type of aggregate
+            stream: Identity of the stream
             timeout: Override default timeout for this operation
 
         Returns:
             Current stream version (0 if no events)
         """
-        return self._run_sync(
-            self._store.get_stream_version(aggregate_id, aggregate_type),
-            timeout=timeout,
-        )
+        return self._run_sync(self._store.get_stream_version(stream), timeout=timeout)
 
-    def event_exists_sync(
-        self,
-        event_id: UUID,
-        *,
-        timeout: float | None = None,
-    ) -> bool:
+    def event_exists(self, event_id: UUID, *, timeout: float | None = None) -> bool:
         """
         Synchronously check if an event exists.
 
@@ -303,61 +259,70 @@ class SyncEventStoreAdapter:
         Returns:
             True if event exists, False otherwise
         """
-        return self._run_sync(
-            self._store.event_exists(event_id),
-            timeout=timeout,
-        )
+        return self._run_sync(self._store.event_exists(event_id), timeout=timeout)
 
-    def read_all_sync(
+    def read_all(
         self,
-        options: ReadOptions | None = None,
+        from_position: Position | None = None,
+        options: FeedReadOptions | None = None,
         *,
         timeout: float | None = None,
-    ) -> list[StoredEvent]:
+    ) -> list[EventEnvelope]:
         """
-        Synchronously read events across all aggregates.
+        Synchronously read events across the global feed.
 
         Note: This method collects all events from the async iterator into a list.
-        For large event stores, consider using pagination via ReadOptions.limit.
+        For large event stores, consider using pagination via FeedReadOptions.limit.
 
         Args:
-            options: Read options for filtering and pagination
+            from_position: Position to read from (exclusive); None for the start
+            options: Read options for tenant filtering and limit
             timeout: Override default timeout for this operation
 
         Returns:
-            List of StoredEvent with matching events
-        """
-
-        async def collect_events() -> list[StoredEvent]:
-            events: list[StoredEvent] = []
-            async for stored_event in self._store.read_all(options):
-                events.append(stored_event)
-            return events
-
-        return self._run_sync(collect_events(), timeout=timeout)
-
-    def get_global_position_sync(
-        self,
-        *,
-        timeout: float | None = None,
-    ) -> int:
-        """
-        Synchronously get the current maximum global position.
-
-        Args:
-            timeout: Override default timeout for this operation
-
-        Returns:
-            The maximum global position, or 0 if the store is empty.
+            List of EventEnvelope for the matching events
         """
         return self._run_sync(
-            self._store.get_global_position(),
-            timeout=timeout,
+            collect(self._store.read_all(from_position, options)), timeout=timeout
         )
 
+    def read_category(
+        self,
+        category: str,
+        options: CategoryReadOptions | None = None,
+        *,
+        timeout: float | None = None,
+    ) -> list[EventEnvelope]:
+        """
+        Synchronously read events for a category (all aggregates of a type).
+
+        Args:
+            category: The category to read
+            options: Read options for tenant filtering, timestamp, and limit
+            timeout: Override default timeout for this operation
+
+        Returns:
+            List of EventEnvelope for the matching events
+        """
+        return self._run_sync(
+            collect(self._store.read_category(category, options)), timeout=timeout
+        )
+
+    def current_position(self, *, timeout: float | None = None) -> Position | None:
+        """
+        Synchronously get the current maximum position in the global feed.
+
+        Args:
+            timeout: Override default timeout for this operation
+
+        Returns:
+            The maximum position, or None if the store is empty.
+        """
+        return self._run_sync(self._store.current_position(), timeout=timeout)
+
     @property
-    def wrapped_store(self) -> EventStore:
-        """Get the underlying async EventStore."""
+    def wrapped_store(self) -> FullEventStore:
+        """Get the underlying async event store."""
         return self._store
 
     @property

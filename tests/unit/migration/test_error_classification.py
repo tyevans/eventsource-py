@@ -51,6 +51,7 @@ from eventsource.migration.exceptions import (
     classify_exception,
 )
 from eventsource.migration.models import MigrationPhase
+from eventsource.ports.positions import Position
 
 
 class TestErrorSeverity:
@@ -385,7 +386,9 @@ class TestExceptionClassification:
 
     def test_bulk_copy_error_classification(self) -> None:
         """Test BulkCopyError classification."""
-        error = BulkCopyError(uuid4(), last_position=1000, error="Connection lost")
+        error = BulkCopyError(
+            uuid4(), last_position=Position(store_id="source", key=(1000,)), error="Connection lost"
+        )
         assert error.severity == ErrorSeverity.ERROR
         assert error.recoverability_type == ErrorRecoverability.TRANSIENT
         assert error.error_code == "BULK_COPY_ERROR"
@@ -429,7 +432,7 @@ class TestClassifyException:
 
     def test_classify_migration_error(self) -> None:
         """Test classifying a MigrationError."""
-        error = BulkCopyError(uuid4(), last_position=0, error="test")
+        error = BulkCopyError(uuid4(), last_position=None, error="test")
         classification = classify_exception(error)
 
         assert classification.error_code == "BULK_COPY_ERROR"
@@ -842,7 +845,7 @@ class TestErrorIntegration:
             CutoverTimeoutError(uuid4(), 150.0, 100.0),
             CutoverLagError(uuid4(), 500, 100),
             ConsistencyError("test", uuid4()),
-            BulkCopyError(uuid4(), 0, "error"),
+            BulkCopyError(uuid4(), None, "error"),
             DualWriteError(uuid4(), "error"),
             PositionMappingError("test", uuid4()),
             RoutingError("test", uuid4()),
@@ -862,7 +865,7 @@ class TestErrorIntegration:
         transient_errors = [
             CutoverTimeoutError(uuid4(), 150.0, 100.0),
             CutoverLagError(uuid4(), 500, 100),
-            BulkCopyError(uuid4(), 0, "error"),
+            BulkCopyError(uuid4(), None, "error"),
             DualWriteError(uuid4(), "error"),
             CircuitBreakerOpenError("op", 10.0),
         ]

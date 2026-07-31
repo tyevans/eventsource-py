@@ -26,7 +26,8 @@ from eventsource.observability.attributes import (
     ATTR_SUBSCRIPTION_NAME,
     ATTR_TO_POSITION,
 )
-from eventsource.stores.interface import ReadDirection, ReadOptions, StoredEvent
+from eventsource.ports.envelopes import EventEnvelope, FeedReadOptions
+from eventsource.ports.positions import Position
 from eventsource.subscriptions.config import CheckpointStrategy
 from eventsource.subscriptions.filtering import EventFilter, FilterStats
 from eventsource.subscriptions.flow_control import FlowController, FlowControlStats
@@ -36,13 +37,31 @@ from eventsource.subscriptions.retry import (
     CircuitBreaker,
     RetryableOperation,
 )
-from eventsource.subscriptions.subscription import Subscription, SubscriptionState
+from eventsource.subscriptions.subscription import (
+    Subscription,
+    SubscriptionState,
+    render_position,
+)
 
 if TYPE_CHECKING:
-    from eventsource.repositories.checkpoint import CheckpointRepository
-    from eventsource.stores.interface import EventStore
+    from eventsource.ports.checkpoints import SubscriptionPositions
+    from eventsource.ports.store import GlobalEventFeed
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _BatchOutcome:
+    """What one `_process_batch` call did.
+
+    Two numbers, because they answer different questions and the public
+    `CatchUpResult.events_processed` is defined by the second: how many
+    envelopes the batch read (whether or not the filter passed them), and
+    how many events reached the subscriber.
+    """
+
+    envelopes_read: int
+    events_delivered: int
 
 
 @dataclass
@@ -54,13 +73,14 @@ class CatchUpResult:
 
     Attributes:
         events_processed: Number of events successfully processed
-        final_position: Last processed global position
+        final_position: Last processed global-feed position, None if nothing
+            has been processed
         completed: True if caught up to target position
         error: Exception if catch-up failed, None otherwise
     """
 
     events_processed: int
-    final_position: int
+    final_position: Position | None
     completed: bool
     error: Exception | None = None
 
@@ -81,19 +101,19 @@ class CatchUpRunner:
     - Progress tracking and logging
 
     The runner processes events from the current subscription position up to
-    a target position (typically obtained from EventStore.get_global_position()).
+    a target position (typically obtained from GlobalEventFeed.current_position()).
 
     Example:
         >>> runner = CatchUpRunner(event_store, checkpoint_repo, subscription)
-        >>> result = await runner.run_until_position(target_position=10000)
+        >>> result = await runner.run_until_position(target_position=watermark)
         >>> if result.completed:
         ...     print(f"Processed {result.events_processed} events")
     """
 
     def __init__(
         self,
-        event_store: "EventStore",
-        checkpoint_repo: "CheckpointRepository",
+        event_store: "GlobalEventFeed",
+        checkpoint_repo: "SubscriptionPositions",
         subscription: Subscription,
         event_filter: EventFilter | None = None,
         tracer: Tracer | None = None,
@@ -127,6 +147,10 @@ class CatchUpRunner:
         self._running = False
         self._stop_requested = False
         self._last_checkpoint_time: float = 0.0
+        # Set once the feed is exhausted or an envelope past the target is
+        # seen -- the loop's stop condition, since positions are opaque and
+        # cannot be compared arithmetically against a remaining count.
+        self._reached_target = False
 
         # Event filtering - create from config/subscriber if not provided
         if event_filter is not None:
@@ -161,13 +185,15 @@ class CatchUpRunner:
 
     async def run_until_position(
         self,
-        target_position: int,
+        target_position: Position,
     ) -> CatchUpResult:
         """
         Run catch-up until reaching the target position.
 
-        Reads events in batches from the current position until
-        reaching the target position or encountering an error.
+        Reads events in batches from the current position until reaching the
+        target position, a stop request, or an error. A batch that delivers
+        nothing (every envelope filtered out) does not stop the loop -- only
+        reaching the target position (or a stop request) does.
 
         Args:
             target_position: Position to catch up to
@@ -181,20 +207,21 @@ class CatchUpRunner:
             "eventsource.catchup_runner.run_until_position",
             {
                 ATTR_SUBSCRIPTION_NAME: self.subscription.name,
-                ATTR_FROM_POSITION: start_position,
-                ATTR_TO_POSITION: target_position,
+                ATTR_FROM_POSITION: render_position(start_position),
+                ATTR_TO_POSITION: render_position(target_position),
                 ATTR_BATCH_SIZE: self.config.batch_size,
             },
         ) as span:
             self._running = True
             self._stop_requested = False
+            self._reached_target = False
             self._last_checkpoint_time = time.monotonic()
             total_processed = 0
 
             log_extra: dict[str, object] = {
                 "subscription": self.subscription.name,
-                "from_position": start_position,
-                "to_position": target_position,
+                "from_position": render_position(start_position),
+                "to_position": render_position(target_position),
                 "batch_size": self.config.batch_size,
                 "checkpoint_strategy": self.config.checkpoint_strategy.value,
             }
@@ -207,16 +234,18 @@ class CatchUpRunner:
                 await self.subscription.transition_to(SubscriptionState.CATCHING_UP)
                 self._metrics.record_state("catching_up")
 
-                # Update max position for lag calculation
-                await self.subscription.update_max_position(target_position)
                 self._metrics.record_lag(self.subscription.lag)
 
-                # Process batches until we reach the target or are stopped
-                while (
-                    self._running
-                    and not self._stop_requested
-                    and self.subscription.last_processed_position < target_position
-                ):
+                # Process batches until we reach the target or are stopped.
+                # Termination is `_reached_target` and the stop flags, not a
+                # zero delivery: a batch can deliver nothing (every envelope
+                # filtered) and still have advanced position with more feed
+                # behind it. Progress is guaranteed regardless -- every
+                # counted envelope, delivered or filtered, calls
+                # `record_event_processed`, so the next read starts strictly
+                # after it, and the position-None guard below converts the
+                # only no-progress pathology into `_reached_target`.
+                while self._running and not self._stop_requested and not self._reached_target:
                     # Check for pause and wait if paused
                     was_paused = await self.subscription.wait_if_paused()
                     if was_paused:
@@ -228,26 +257,23 @@ class CatchUpRunner:
                             extra={"subscription": self.subscription.name},
                         )
 
-                    batch_result = await self._process_batch(target_position)
-                    total_processed += batch_result
+                    outcome = await self._process_batch(target_position)
+                    total_processed += outcome.events_delivered
 
-                    if batch_result == 0:
-                        # No more events to process
-                        break
-
-                completed = self.subscription.last_processed_position >= target_position
+                completed = self._reached_target
                 final_position = self.subscription.last_processed_position
 
                 if span:
                     span.set_attribute(ATTR_EVENTS_PROCESSED, total_processed)
-                    span.set_attribute(ATTR_POSITION, final_position)
+                    if (token := render_position(final_position)) is not None:
+                        span.set_attribute(ATTR_POSITION, token)
 
                 logger.info(
                     "Catch-up completed",
                     extra={
                         "subscription": self.subscription.name,
                         "events_processed": total_processed,
-                        "final_position": final_position,
+                        "final_position": render_position(final_position),
                         "completed": completed,
                     },
                 )
@@ -264,7 +290,7 @@ class CatchUpRunner:
                     extra={
                         "subscription": self.subscription.name,
                         "error": str(e),
-                        "position": self.subscription.last_processed_position,
+                        "position": render_position(self.subscription.last_processed_position),
                         "events_processed": total_processed,
                     },
                     exc_info=True,
@@ -278,7 +304,7 @@ class CatchUpRunner:
             finally:
                 self._running = False
 
-    async def _process_batch(self, target_position: int) -> int:
+    async def _process_batch(self, target_position: Position) -> _BatchOutcome:
         """
         Process a single batch of events.
 
@@ -286,76 +312,98 @@ class CatchUpRunner:
             target_position: Position to stop at
 
         Returns:
-            Number of events processed in this batch
+            A `_BatchOutcome` with the number of envelopes read (whether or
+            not the filter passed them) and the number of events delivered
+            to the subscriber.
 
         Raises:
             RetryError: If event store read fails after all retries
         """
         current_position = self.subscription.last_processed_position
 
-        # Calculate batch limit - don't read past target
-        remaining = target_position - current_position
-        batch_limit = min(self.config.batch_size, remaining)
-
-        if batch_limit <= 0:
-            return 0
-
-        # Read batch from event store with retry
-        events = await self._read_batch_with_retry(current_position, batch_limit)
+        # Read a full batch: overshoot is prevented by the per-envelope
+        # comparison below, not by sizing the read, because the distance
+        # to the target cannot be computed from opaque positions.
+        envelopes = await self._read_batch_with_retry(current_position, self.config.batch_size)
+        if not envelopes:
+            self._reached_target = True
+            return _BatchOutcome(envelopes_read=0, events_delivered=0)
+        await self.subscription.record_events_seen(len(envelopes))
 
         events_in_batch = 0
         events_filtered = 0
-        last_stored_event: StoredEvent | None = None
+        delivered_this_batch = 0
+        last_envelope: EventEnvelope | None = None
 
-        for stored_event in events:
-            if self._stop_requested:
-                break
+        try:
+            for envelope in envelopes:
+                if self._stop_requested:
+                    break
 
-            # Check for pause within batch processing
-            await self.subscription.wait_if_paused()
-            if self._stop_requested:
-                break
+                # An envelope with no position cannot be ordered against
+                # the target; stop rather than deliver it blind. In-tree
+                # adapters always stamp one on feed reads, so this is a
+                # guard, not a path.
+                if envelope.position is None or envelope.position > target_position:
+                    self._reached_target = True
+                    break
 
-            # Apply event type filtering early before delivery
-            if not self._filter.matches(stored_event.event):
-                events_filtered += 1
-                # Still update position to track progress through the stream
-                await self.subscription.record_event_processed(
-                    position=stored_event.global_position,
-                    event_id=stored_event.event_id,
-                    event_type=stored_event.event_type,
-                )
-                last_stored_event = stored_event
-                continue
+                # Check for pause within batch processing
+                await self.subscription.wait_if_paused()
+                if self._stop_requested:
+                    break
 
-            # Acquire flow control slot (may block if at capacity)
-            async with await self._flow_controller.acquire():
-                # Deliver event to subscriber
-                await self._deliver_event(stored_event)
+                # Apply event type filtering early before delivery
+                if not self._filter.matches(envelope.event):
+                    events_filtered += 1
+                    # Still update position to track progress through the stream
+                    await self.subscription.record_event_processed(
+                        position=envelope.position,
+                        event_id=envelope.event.event_id,
+                        event_type=envelope.event.event_type,
+                    )
+                    delivered_this_batch += 1
+                    last_envelope = envelope
+                    continue
 
-                # Update subscription position
-                await self.subscription.record_event_processed(
-                    position=stored_event.global_position,
-                    event_id=stored_event.event_id,
-                    event_type=stored_event.event_type,
-                )
+                # Acquire flow control slot (may block if at capacity)
+                async with await self._flow_controller.acquire():
+                    # Deliver event to subscriber
+                    await self._deliver_event(envelope)
 
-            last_stored_event = stored_event
-            events_in_batch += 1
+                    # Update subscription position
+                    await self.subscription.record_event_processed(
+                        position=envelope.position,
+                        event_id=envelope.event.event_id,
+                        event_type=envelope.event.event_type,
+                    )
 
-            # Handle checkpoint strategies
-            if self.config.checkpoint_strategy == CheckpointStrategy.EVERY_EVENT:
-                await self._save_checkpoint_with_retry(stored_event)
-            elif self.config.checkpoint_strategy == CheckpointStrategy.PERIODIC:
-                await self._maybe_save_periodic_checkpoint(stored_event)
+                last_envelope = envelope
+                events_in_batch += 1
+                delivered_this_batch += 1
+
+                # Handle checkpoint strategies
+                if self.config.checkpoint_strategy == CheckpointStrategy.EVERY_EVENT:
+                    await self._save_checkpoint_with_retry(envelope)
+                elif self.config.checkpoint_strategy == CheckpointStrategy.PERIODIC:
+                    await self._maybe_save_periodic_checkpoint(envelope)
+        finally:
+            # On any exit (normal completion, stop request, or exception),
+            # reconcile events read-but-not-delivered so the seen-counter
+            # doesn't outlive this batch. Without this, a re-read of the
+            # abandoned tail on resume would double-count it and inflate
+            # lag permanently (it never decreases on its own).
+            undelivered = len(envelopes) - delivered_this_batch
+            if undelivered > 0:
+                await self.subscription.record_events_unseen(undelivered)
 
         # Checkpoint after batch if configured
         if (
             (events_in_batch > 0 or events_filtered > 0)
-            and last_stored_event is not None
+            and last_envelope is not None
             and self.config.checkpoint_strategy == CheckpointStrategy.EVERY_BATCH
         ):
-            await self._save_checkpoint_with_retry(last_stored_event)
+            await self._save_checkpoint_with_retry(last_envelope)
 
         logger.debug(
             "Batch processed",
@@ -363,42 +411,40 @@ class CatchUpRunner:
                 "subscription": self.subscription.name,
                 "batch_size": events_in_batch,
                 "events_filtered": events_filtered,
-                "position": self.subscription.last_processed_position,
+                "position": render_position(self.subscription.last_processed_position),
             },
         )
 
-        return events_in_batch
+        return _BatchOutcome(envelopes_read=len(envelopes), events_delivered=events_in_batch)
 
     async def _read_batch_with_retry(
         self,
-        from_position: int,
+        from_position: Position | None,
         limit: int,
-    ) -> list[StoredEvent]:
+    ) -> list[EventEnvelope]:
         """
-        Read a batch of events from the event store with retry.
+        Read a batch of events from the global feed with retry.
 
         Args:
-            from_position: Position to read from
+            from_position: Position to read from, None for the feed start
             limit: Maximum events to read
 
         Returns:
-            List of stored events
+            List of event envelopes
 
         Raises:
             RetryError: If all retries are exhausted
         """
-        options = ReadOptions(
-            direction=ReadDirection.FORWARD,
-            from_position=from_position,
-            limit=limit,
+        options = FeedReadOptions(
             tenant_id=self.config.tenant_id,
+            limit=limit,
         )
 
-        async def read_batch() -> list[StoredEvent]:
-            events = []
-            async for stored_event in self.event_store.read_all(options):
-                events.append(stored_event)
-            return events
+        async def read_batch() -> list[EventEnvelope]:
+            envelopes = []
+            async for envelope in self.event_store.read_all(from_position, options):
+                envelopes.append(envelope)
+            return envelopes
 
         return await self._retry.execute(
             operation=read_batch,
@@ -406,32 +452,33 @@ class CatchUpRunner:
             retryable_exceptions=TRANSIENT_EXCEPTIONS,
         )
 
-    async def _deliver_event(self, stored_event: StoredEvent) -> None:
+    async def _deliver_event(self, envelope: EventEnvelope) -> None:
         """
         Deliver an event to the subscriber.
 
         Args:
-            stored_event: The event to deliver
+            envelope: The envelope to deliver
 
         Raises:
             Exception: If continue_on_error is False and handler fails
         """
+        event = envelope.event
         with self._tracer.span(
             "eventsource.catchup_runner.deliver_event",
             {
                 ATTR_SUBSCRIPTION_NAME: self.subscription.name,
-                ATTR_EVENT_ID: str(stored_event.event_id),
-                ATTR_EVENT_TYPE: stored_event.event_type,
-                ATTR_POSITION: stored_event.global_position,
+                ATTR_EVENT_ID: str(event.event_id),
+                ATTR_EVENT_TYPE: event.event_type,
+                ATTR_POSITION: render_position(envelope.position),
             },
         ):
             start_time = time.perf_counter()
             try:
-                await self.subscription.subscriber.handle(stored_event.event)
+                await self.subscription.subscriber.handle(event)
                 # Record success metrics
                 duration_ms = (time.perf_counter() - start_time) * 1000
                 self._metrics.record_event_processed(
-                    event_type=stored_event.event_type,
+                    event_type=event.event_type,
                     duration_ms=duration_ms,
                 )
                 # Update lag after each event
@@ -440,7 +487,7 @@ class CatchUpRunner:
                 # Record failure metrics
                 duration_ms = (time.perf_counter() - start_time) * 1000
                 self._metrics.record_event_failed(
-                    event_type=stored_event.event_type,
+                    event_type=event.event_type,
                     error_type=type(e).__name__,
                     duration_ms=duration_ms,
                 )
@@ -453,25 +500,31 @@ class CatchUpRunner:
                     "Event processing failed, continuing",
                     extra={
                         "subscription": self.subscription.name,
-                        "event_id": str(stored_event.event_id),
-                        "event_type": stored_event.event_type,
-                        "global_position": stored_event.global_position,
+                        "event_id": str(event.event_id),
+                        "event_type": event.event_type,
+                        "position": render_position(envelope.position),
                         "error": str(e),
                     },
                 )
 
-    async def _save_checkpoint(self, stored_event: StoredEvent) -> None:
+    async def _save_checkpoint(self, envelope: EventEnvelope) -> None:
         """
         Save checkpoint for the processed event (no retry).
 
+        An envelope with no position is not checkpointable: there is no
+        token to persist and inventing one is not an option.
+
         Args:
-            stored_event: The event to checkpoint
+            envelope: The envelope to checkpoint
         """
+        if envelope.position is None:
+            return
+
         await self.checkpoint_repo.save_position(
             subscription_id=self.subscription.name,
-            position=stored_event.global_position,
-            event_id=stored_event.event_id,
-            event_type=stored_event.event_type,
+            position=envelope.position,
+            event_id=envelope.event.event_id,
+            event_type=envelope.event.event_type,
         )
 
         # Update time for periodic checkpointing
@@ -481,27 +534,32 @@ class CatchUpRunner:
             "Checkpoint saved",
             extra={
                 "subscription": self.subscription.name,
-                "position": stored_event.global_position,
+                "position": render_position(envelope.position),
             },
         )
 
-    async def _save_checkpoint_with_retry(self, stored_event: StoredEvent) -> None:
+    async def _save_checkpoint_with_retry(self, envelope: EventEnvelope) -> None:
         """
         Save checkpoint for the processed event with retry.
 
+        An envelope with no position is not checkpointable and is skipped.
+
         Args:
-            stored_event: The event to checkpoint
+            envelope: The envelope to checkpoint
 
         Raises:
             RetryError: If all retries are exhausted
         """
+        position = envelope.position
+        if position is None:
+            return
 
         async def save_checkpoint() -> None:
             await self.checkpoint_repo.save_position(
                 subscription_id=self.subscription.name,
-                position=stored_event.global_position,
-                event_id=stored_event.event_id,
-                event_type=stored_event.event_type,
+                position=position,
+                event_id=envelope.event.event_id,
+                event_type=envelope.event.event_type,
             )
 
         await self._retry.execute(
@@ -517,22 +575,22 @@ class CatchUpRunner:
             "Checkpoint saved",
             extra={
                 "subscription": self.subscription.name,
-                "position": stored_event.global_position,
+                "position": render_position(position),
             },
         )
 
-    async def _maybe_save_periodic_checkpoint(self, stored_event: StoredEvent) -> None:
+    async def _maybe_save_periodic_checkpoint(self, envelope: EventEnvelope) -> None:
         """
         Save checkpoint if enough time has passed (for PERIODIC strategy).
 
         Args:
-            stored_event: The event to potentially checkpoint
+            envelope: The envelope to potentially checkpoint
         """
         current_time = time.monotonic()
         elapsed = current_time - self._last_checkpoint_time
 
         if elapsed >= self.config.checkpoint_interval_seconds:
-            await self._save_checkpoint_with_retry(stored_event)
+            await self._save_checkpoint_with_retry(envelope)
 
     async def stop(self) -> None:
         """

@@ -18,11 +18,13 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import BaseModel, Field
 
+from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.application.aggregates.repository import AggregateRepository
+from eventsource.domain import StreamId
 from eventsource.domain.aggregate import AggregateRoot
 from eventsource.events.base import DomainEvent
 from eventsource.exceptions import AggregateNotFoundError, OptimisticLockError
-from eventsource.stores.in_memory import InMemoryEventStore
+from eventsource.ports import ExpectedVersion, collect
 
 # =============================================================================
 # Test fixtures: State models and Events
@@ -346,11 +348,10 @@ class TestLoadAggregate:
                 decrement=3,
             ),
         ]
-        await event_store.append_events(
-            aggregate_id=agg_id,
-            aggregate_type="Counter",
-            events=events,
-            expected_version=0,
+        await event_store.append(
+            StreamId(aggregate_id=agg_id, category="Counter"),
+            events,
+            ExpectedVersion.exact(0),
         )
 
         # Load through repository
@@ -389,11 +390,10 @@ class TestLoadAggregate:
             aggregate_version=1,
             increment=5,
         )
-        await event_store.append_events(
-            aggregate_id=agg_id,
-            aggregate_type="Counter",
-            events=[event],
-            expected_version=0,
+        await event_store.append(
+            StreamId(aggregate_id=agg_id, category="Counter"),
+            [event],
+            ExpectedVersion.exact(0),
         )
 
         aggregate = await counter_repository.load(agg_id)
@@ -420,11 +420,10 @@ class TestLoadOrCreate:
             aggregate_version=1,
             increment=10,
         )
-        await event_store.append_events(
-            aggregate_id=agg_id,
-            aggregate_type="Counter",
-            events=[event],
-            expected_version=0,
+        await event_store.append(
+            StreamId(aggregate_id=agg_id, category="Counter"),
+            [event],
+            ExpectedVersion.exact(0),
         )
 
         aggregate = await counter_repository.load_or_create(agg_id)
@@ -481,11 +480,10 @@ class TestGetOrRaise:
             aggregate_version=1,
             increment=7,
         )
-        await event_store.append_events(
-            aggregate_id=agg_id,
-            aggregate_type="Counter",
-            events=[event],
-            expected_version=0,
+        await event_store.append(
+            StreamId(aggregate_id=agg_id, category="Counter"),
+            [event],
+            ExpectedVersion.exact(0),
         )
 
         aggregate = await counter_repository.get_or_raise(agg_id)
@@ -522,9 +520,10 @@ class TestSaveAggregate:
         await counter_repository.save(aggregate)
 
         # Verify events were persisted
-        stream = await event_store.get_events(agg_id, "Counter")
-        assert len(stream.events) == 2
-        assert stream.version == 2
+        stream_id = StreamId(aggregate_id=agg_id, category="Counter")
+        events = await collect(event_store.read_stream(stream_id))
+        assert len(events) == 2
+        assert await event_store.get_stream_version(stream_id) == 2
 
     @pytest.mark.asyncio
     async def test_save_clears_uncommitted_events(
@@ -571,8 +570,9 @@ class TestSaveAggregate:
         await counter_repository.save(aggregate)
 
         # Event store should have no events
-        stream = await event_store.get_events(agg_id, "Counter")
-        assert len(stream.events) == 0
+        stream_id = StreamId(aggregate_id=agg_id, category="Counter")
+        events = await collect(event_store.read_stream(stream_id))
+        assert len(events) == 0
 
     @pytest.mark.asyncio
     async def test_save_existing_aggregate_with_new_events(
@@ -594,9 +594,10 @@ class TestSaveAggregate:
         await counter_repository.save(loaded)
 
         # Verify all events are persisted
-        stream = await event_store.get_events(agg_id, "Counter")
-        assert len(stream.events) == 2
-        assert stream.version == 2
+        stream_id = StreamId(aggregate_id=agg_id, category="Counter")
+        events = await collect(event_store.read_stream(stream_id))
+        assert len(events) == 2
+        assert await event_store.get_stream_version(stream_id) == 2
 
 
 class TestOptimisticConcurrency:

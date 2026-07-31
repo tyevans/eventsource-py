@@ -16,6 +16,8 @@ from uuid import uuid4
 import pytest
 
 from eventsource import SQLCheckpointRepository
+from eventsource.domain import StreamId
+from eventsource.ports import ExpectedVersion
 
 from ..conftest import (
     TestItemCreated,
@@ -273,11 +275,10 @@ class TestSQLCheckpointRepositoryLagMetrics:
             name="Test Item",
             quantity=10,
         )
-        await postgres_event_store.append_events(
-            aggregate_id=sample_aggregate_id,
-            aggregate_type="TestItem",
-            events=[event],
-            expected_version=0,
+        await postgres_event_store.append(
+            StreamId(aggregate_id=sample_aggregate_id, category="TestItem"),
+            [event],
+            ExpectedVersion.no_stream(),
         )
 
         # Update checkpoint
@@ -321,11 +322,10 @@ class TestSQLCheckpointRepositoryLagMetrics:
             name="Test Item",
             quantity=10,
         )
-        await postgres_event_store.append_events(
-            aggregate_id=sample_aggregate_id,
-            aggregate_type="TestItem",
-            events=[event],
-            expected_version=0,
+        await postgres_event_store.append(
+            StreamId(aggregate_id=sample_aggregate_id, category="TestItem"),
+            [event],
+            ExpectedVersion.no_stream(),
         )
 
         await postgres_checkpoint_repo.update_checkpoint(
@@ -361,11 +361,10 @@ class TestSQLCheckpointRepositoryLagMetrics:
             name="Stale Item",
             quantity=1,
         )
-        await postgres_event_store.append_events(
-            aggregate_id=sample_aggregate_id,
-            aggregate_type="TestItem",
-            events=[stale_event],
-            expected_version=0,
+        await postgres_event_store.append(
+            StreamId(aggregate_id=sample_aggregate_id, category="TestItem"),
+            [stale_event],
+            ExpectedVersion.no_stream(),
         )
         await postgres_checkpoint_repo.update_checkpoint(
             projection_name=projection_name,
@@ -383,11 +382,10 @@ class TestSQLCheckpointRepositoryLagMetrics:
             name="Newer Item",
             quantity=2,
         )
-        await postgres_event_store.append_events(
-            aggregate_id=sample_aggregate_id,
-            aggregate_type="TestItem",
-            events=[newer_event],
-            expected_version=1,
+        await postgres_event_store.append(
+            StreamId(aggregate_id=sample_aggregate_id, category="TestItem"),
+            [newer_event],
+            ExpectedVersion.exact(1),
         )
 
         result = await postgres_checkpoint_repo.get_lag_metrics(

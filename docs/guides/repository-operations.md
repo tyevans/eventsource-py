@@ -1,34 +1,40 @@
 # Repository Operations
 
-This guide shows you how to operate the three infrastructure repositories that
-`eventsource` ships in `eventsource.repositories`:
+This guide shows you how to operate the three infrastructure repositories
+`eventsource` ships ports and adapters for:
 
-- **Outbox** (`OutboxRepository`) -- the transactional outbox: events are written
-  alongside your business data, then drained to the bus by a separate loop.
-- **Dead letter queue** (`DLQRepository`) -- events a projection failed to
-  process, held for inspection, replay, and resolution.
-- **Checkpoints** (`CheckpointRepository`) -- per-projection positions and
-  per-subscription cursors, so consumers resume where they left off.
+- **Outbox** (`OutboxRepository`, `eventsource.ports.outbox`) -- the
+  transactional outbox: events are written alongside your business data,
+  then drained to the bus by a separate loop.
+- **Dead letter queue** (`DLQRepository`, `eventsource.ports.dlq`) --
+  events a projection failed to process, held for inspection, replay, and
+  resolution.
+- **Checkpoints** (`CheckpointRepository`, `eventsource.ports.checkpoints`)
+  -- per-projection positions and per-subscription cursors, so consumers
+  resume where they left off.
 
 Each of the three is defined as a `runtime_checkable` Protocol with three
-interchangeable implementations -- `PostgreSQL*`, `SQLite*`, and `InMemory*` --
-so the recipes below work the same whichever backend you wire up. All methods
-are `async`; every call in this guide must be awaited.
+interchangeable implementations -- a PostgreSQL/SQLite adapter (dialect-
+parameterized for checkpoints and DLQ, one module per technology for the
+outbox), and an `InMemory*` adapter -- so the recipes below work the same
+whichever backend you wire up. All methods are `async`; every call in this
+guide must be awaited.
 
 ```python
-from eventsource.repositories import (
+from eventsource import (
     CheckpointRepository,
     DLQRepository,
     OutboxRepository,
-    PostgreSQLCheckpointRepository,
-    PostgreSQLDLQRepository,
+    SQLCheckpointRepository,
+    SQLDLQRepository,
     PostgreSQLOutboxRepository,
 )
 ```
 
-The `*RepositoryProtocol` names exported alongside them (for example
-`OutboxRepositoryProtocol`) are aliases of the same Protocols, kept for
-backward compatibility.
+`CheckpointRepository`, `DLQRepository`, and `OutboxRepository` are the only
+names for their respective contracts -- there is no `*RepositoryProtocol`
+alias for any of them. `eventsource.repositories` no longer exists; every
+name above is re-exported from the top-level `eventsource` package.
 
 Use this guide when you are running the library in production and need to drain
 the outbox, keep the DLQ from growing without bound, watch projection lag, or
@@ -117,18 +123,18 @@ decides who owns the transaction:
 ```python
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from eventsource.repositories import (
-    PostgreSQLCheckpointRepository,
-    PostgreSQLDLQRepository,
+from eventsource import (
     PostgreSQLOutboxRepository,
+    SQLCheckpointRepository,
+    SQLDLQRepository,
 )
 
 engine = create_async_engine("postgresql+asyncpg://localhost/app")
 
 # Engine-backed: for the background drain, sweeps, and metrics.
 outbox = PostgreSQLOutboxRepository(engine)
-dlq = PostgreSQLDLQRepository(engine)
-checkpoints = PostgreSQLCheckpointRepository(engine)
+dlq = SQLDLQRepository(engine)
+checkpoints = SQLCheckpointRepository(engine)
 
 # Connection-backed: for enqueuing inside your own write transaction.
 async with engine.begin() as conn:
@@ -152,10 +158,8 @@ in-memory ones take no connection at all:
 ```python
 import aiosqlite
 
-from eventsource.repositories import (
-    InMemoryOutboxRepository,
-    SQLiteOutboxRepository,
-)
+from eventsource.adapters.memory import InMemoryOutboxRepository
+from eventsource.adapters.sqlite import SQLiteOutboxRepository
 
 async with aiosqlite.connect("events.db") as db:
     outbox = SQLiteOutboxRepository(db)
@@ -218,7 +222,7 @@ publishes nothing.
 
 ```python
 async with engine.begin() as conn:
-    await store.append_events(...)            # on the same connection
+    await store.append(stream, [event], expected)   # on the same connection
     outbox_id = await PostgreSQLOutboxRepository(conn).add_event(event)
 ```
 
@@ -251,7 +255,7 @@ means a loop:
 ```python
 async with engine.begin() as conn:
     outbox = PostgreSQLOutboxRepository(conn)
-    await store.append_events(aggregate_id, events, expected_version)
+    await store.append(stream, events, expected)
     for event in events:
         await outbox.add_event(event)
 ```
@@ -268,8 +272,7 @@ entries = await outbox.get_pending_events(limit=100)
 
 Returns up to `limit` (default 100) `OutboxEntry` dataclasses whose `status` is
 `'pending'`, oldest first by `created_at`, and an empty list when there is
-nothing to do. `list_pending_events(limit=...)` is an alias that calls the same
-method, so use whichever name reads better.
+nothing to do.
 
 "Claim" overstates what happens. On every backend the read is a plain
 `SELECT ... WHERE status = 'pending' ORDER BY created_at ASC LIMIT ...` (the

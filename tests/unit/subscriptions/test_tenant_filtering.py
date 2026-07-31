@@ -4,7 +4,7 @@ Unit tests for tenant filtering functionality in subscriptions.
 Tests cover:
 - SubscriptionConfig tenant_id field
 - EventFilter tenant_id filtering
-- Integration with CatchUpRunner ReadOptions
+- Integration with CatchUpRunner FeedReadOptions
 - Combined filter criteria with tenant_id
 - Backward compatibility when tenant_id is None
 """

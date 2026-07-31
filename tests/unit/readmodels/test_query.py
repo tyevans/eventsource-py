@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import pytest
 
-from eventsource.readmodels.query import Filter, Query
+from eventsource.ports.readmodels.query import Filter, Query
 
 
 class TestFilter:

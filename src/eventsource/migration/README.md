@@ -54,8 +54,8 @@ PENDING ──► BULK_COPY ──► DUAL_WRITE ──► CUTOVER ──► COM
 | Phase | Description |
 |-------|-------------|
 | `PENDING` | Migration created but not started |
-| `BULK_COPY` | Historical events being copied to target store |
-| `DUAL_WRITE` | New events written to both stores simultaneously |
+| `BULK_COPY` | Historical events being copied to target store; the dual-write interceptor is already installed, so new writes are mirrored while the copy runs |
+| `DUAL_WRITE` | Copy complete; new events keep being written to both stores |
 | `CUTOVER` | Brief pause (~100ms) while routing switches to target |
 | `COMPLETED` | Migration finished successfully |
 | `ABORTED` | Migration cancelled by operator |
@@ -127,7 +127,7 @@ config = MigrationConfig(
     dual_write_timeout_minutes=30,  # Max time in dual-write
 
     # Cutover settings
-    cutover_max_lag_events=100,   # Max lag before cutover allowed
+    cutover_max_lag_events=0,     # strict (the default): no cutover over missing events
     cutover_timeout_ms=500,       # Hard timeout for cutover
 
     # Post-cutover options
@@ -188,10 +188,11 @@ router = TenantStoreRouter(
     routing_repo=routing_repo,
 )
 
-# The router implements the EventStore protocol
+# The router satisfies the FullEventStore port
 # Use it exactly like a regular event store
-events = await router.read_events(stream_id, tenant_id="tenant-123")
-await router.append_events(stream_id, events, tenant_id="tenant-123")
+async for envelope in router.read_stream(stream):
+    ...
+await router.append(stream, events, ExpectedVersion.exact(0))
 ```
 
 ### BulkCopier
@@ -205,11 +206,16 @@ Streams historical events from source to target store during the `BULK_COPY` pha
 
 ### DualWriteInterceptor
 
-Handles transparent dual-write during the `DUAL_WRITE` phase.
+Handles transparent dual-write. Installed at the start of the bulk-copy
+phase -- before the copy pass -- so there is never a window in which a
+write is mirrored by nobody.
 
 - **Source-first semantics**: Source write must succeed; target is best-effort
-- **Async target writes**: Minimal latency impact on application
-- **Failure tracking**: Failed target writes logged for recovery
+- **Converged-only mirroring**: The mirror appends at the exact pre-append
+  source version, so it only ever extends a target stream that has fully
+  caught up -- it can never put events out of order while the copy runs
+- **Failure tracking**: Failed target writes logged for recovery; the
+  coordinator's catch-up rounds re-copy and absorb them
 
 ### CutoverManager
 

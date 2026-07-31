@@ -21,6 +21,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.migration.consistency import (
     ConsistencyVerifier,
@@ -30,7 +31,7 @@ from eventsource.migration.consistency import (
     VerificationReport,
 )
 from eventsource.migration.exceptions import ConsistencyError
-from eventsource.stores.interface import StoredEvent
+from eventsource.ports import EventEnvelope
 
 
 # Test event class for testing
@@ -138,7 +139,7 @@ class TestConsistencyViolation:
         assert "target=8" in violation_str
 
     def test_violation_with_position(self) -> None:
-        """Test violation with position."""
+        """Test violation with position (stream_version, not global position)."""
         violation = ConsistencyViolation(
             violation_type="hash_mismatch",
             stream_id="stream-123:TestAggregate",
@@ -299,30 +300,31 @@ class TestConsistencyVerifierVerifyTenant:
         """Create a mock target store."""
         return AsyncMock()
 
-    def _create_stored_events(
+    def _create_events(
         self,
         count: int,
         tenant_id: UUID,
         aggregate_id: UUID | None = None,
         value_prefix: str = "test",
-    ) -> list[StoredEvent]:
-        """Create a list of stored events for testing."""
+    ) -> list[EventEnvelope]:
+        """Create a list of EventEnvelope instances for testing."""
         events = []
         agg_id = aggregate_id or uuid4()
+        stream_id = StreamId(aggregate_id=agg_id, category="TestAggregate")
         for i in range(count):
             event = TestEvent(
                 aggregate_id=agg_id,
                 tenant_id=tenant_id,
                 value=f"{value_prefix}_{i}",
             )
-            stored = StoredEvent(
+            envelope = EventEnvelope(
                 event=event,
-                stream_id=f"{agg_id}:TestAggregate",
-                stream_position=i + 1,
-                global_position=i + 1,
+                stream_id=stream_id,
+                stream_version=i + 1,
+                position=None,
                 stored_at=datetime.now(UTC),
             )
-            events.append(stored)
+            events.append(envelope)
         return events
 
     @pytest.mark.asyncio
@@ -334,13 +336,13 @@ class TestConsistencyVerifierVerifyTenant:
     ) -> None:
         """Test verifying a consistent tenant."""
         agg_id = uuid4()
-        events = self._create_stored_events(5, tenant_id, agg_id)
+        events = self._create_events(5, tenant_id, agg_id)
 
-        async def source_generator(options):
+        async def source_generator(from_position, options):
             for event in events:
                 yield event
 
-        async def target_generator(options):
+        async def target_generator(from_position, options):
             for event in events:
                 yield event
 
@@ -374,14 +376,14 @@ class TestConsistencyVerifierVerifyTenant:
     ) -> None:
         """Test detecting count mismatch."""
         agg_id = uuid4()
-        source_events = self._create_stored_events(10, tenant_id, agg_id)
-        target_events = self._create_stored_events(8, tenant_id, agg_id)
+        source_events = self._create_events(10, tenant_id, agg_id)
+        target_events = self._create_events(8, tenant_id, agg_id)
 
-        async def source_generator(options):
+        async def source_generator(from_position, options):
             for event in source_events:
                 yield event
 
-        async def target_generator(options):
+        async def target_generator(from_position, options):
             for event in target_events:
                 yield event
 
@@ -413,7 +415,7 @@ class TestConsistencyVerifierVerifyTenant:
     ) -> None:
         """Test verifying empty stores."""
 
-        async def empty_generator(options):
+        async def empty_generator(from_position, options):
             return
             yield
 
@@ -442,13 +444,13 @@ class TestConsistencyVerifierVerifyTenant:
     ) -> None:
         """Test detecting stream missing in target."""
         agg_id = uuid4()
-        source_events = self._create_stored_events(5, tenant_id, agg_id)
+        source_events = self._create_events(5, tenant_id, agg_id)
 
-        async def source_generator(options):
+        async def source_generator(from_position, options):
             for event in source_events:
                 yield event
 
-        async def target_generator(options):
+        async def target_generator(from_position, options):
             return
             yield
 
@@ -476,15 +478,15 @@ class TestConsistencyVerifierVerifyTenant:
         """Test verifying multiple streams."""
         agg1_id = uuid4()
         agg2_id = uuid4()
-        source_events1 = self._create_stored_events(3, tenant_id, agg1_id)
-        source_events2 = self._create_stored_events(4, tenant_id, agg2_id)
+        source_events1 = self._create_events(3, tenant_id, agg1_id)
+        source_events2 = self._create_events(4, tenant_id, agg2_id)
         all_source = source_events1 + source_events2
 
-        async def source_generator(options):
+        async def source_generator(from_position, options):
             for event in all_source:
                 yield event
 
-        async def target_generator(options):
+        async def target_generator(from_position, options):
             for event in all_source:
                 yield event
 
@@ -548,24 +550,24 @@ class TestConsistencyVerifierHashVerification:
         """Create a mock target store."""
         return AsyncMock()
 
-    def _create_stored_event(
+    def _create_event(
         self,
         tenant_id: UUID,
         aggregate_id: UUID,
-        position: int,
+        stream_version: int,
         value: str = "test",
-    ) -> StoredEvent:
-        """Create a single stored event."""
+    ) -> EventEnvelope:
+        """Create a single EventEnvelope."""
         event = TestEvent(
             aggregate_id=aggregate_id,
             tenant_id=tenant_id,
             value=value,
         )
-        return StoredEvent(
+        return EventEnvelope(
             event=event,
-            stream_id=f"{aggregate_id}:TestAggregate",
-            stream_position=position,
-            global_position=position,
+            stream_id=StreamId(aggregate_id=aggregate_id, category="TestAggregate"),
+            stream_version=stream_version,
+            position=None,
             stored_at=datetime.now(UTC),
         )
 
@@ -578,13 +580,13 @@ class TestConsistencyVerifierHashVerification:
     ) -> None:
         """Test detecting hash mismatch when event content differs."""
         agg_id = uuid4()
-        source_event = self._create_stored_event(tenant_id, agg_id, 1, "source_value")
-        target_event = self._create_stored_event(tenant_id, agg_id, 1, "different_value")
+        source_event = self._create_event(tenant_id, agg_id, 1, "source_value")
+        target_event = self._create_event(tenant_id, agg_id, 1, "different_value")
 
-        async def source_generator(options):
+        async def source_generator(from_position, options):
             yield source_event
 
-        async def target_generator(options):
+        async def target_generator(from_position, options):
             yield target_event
 
         source_store.read_all = source_generator
@@ -624,24 +626,24 @@ class TestConsistencyVerifierFullVerification:
         """Create a mock target store."""
         return AsyncMock()
 
-    def _create_stored_event(
+    def _create_event(
         self,
         tenant_id: UUID,
         aggregate_id: UUID,
-        position: int,
+        stream_version: int,
         value: str = "test",
-    ) -> StoredEvent:
-        """Create a single stored event."""
+    ) -> EventEnvelope:
+        """Create a single EventEnvelope."""
         event = TestEvent(
             aggregate_id=aggregate_id,
             tenant_id=tenant_id,
             value=value,
         )
-        return StoredEvent(
+        return EventEnvelope(
             event=event,
-            stream_id=f"{aggregate_id}:TestAggregate",
-            stream_position=position,
-            global_position=position,
+            stream_id=StreamId(aggregate_id=aggregate_id, category="TestAggregate"),
+            stream_version=stream_version,
+            position=None,
             stored_at=datetime.now(UTC),
         )
 
@@ -654,15 +656,15 @@ class TestConsistencyVerifierFullVerification:
     ) -> None:
         """Test full verification with matching events."""
         agg_id = uuid4()
-        # Use the SAME stored event for both source and target
+        # Use the SAME envelope for both source and target
         # This simulates correctly migrated data
-        stored_event = self._create_stored_event(tenant_id, agg_id, 1, "value")
+        envelope = self._create_event(tenant_id, agg_id, 1, "value")
 
-        async def source_generator(options):
-            yield stored_event
+        async def source_generator(from_position, options):
+            yield envelope
 
-        async def target_generator(options):
-            yield stored_event
+        async def target_generator(from_position, options):
+            yield envelope
 
         source_store.read_all = source_generator
         target_store.read_all = target_generator
@@ -699,28 +701,29 @@ class TestConsistencyVerifierSampling:
         """Create a mock target store."""
         return AsyncMock()
 
-    def _create_stored_events(
+    def _create_events(
         self,
         count: int,
         tenant_id: UUID,
         aggregate_id: UUID,
-    ) -> list[StoredEvent]:
-        """Create a list of stored events."""
+    ) -> list[EventEnvelope]:
+        """Create a list of EventEnvelope instances."""
         events = []
+        stream_id = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
         for i in range(count):
             event = TestEvent(
                 aggregate_id=aggregate_id,
                 tenant_id=tenant_id,
                 value=f"test_{i}",
             )
-            stored = StoredEvent(
+            envelope = EventEnvelope(
                 event=event,
-                stream_id=f"{aggregate_id}:TestAggregate",
-                stream_position=i + 1,
-                global_position=i + 1,
+                stream_id=stream_id,
+                stream_version=i + 1,
+                position=None,
                 stored_at=datetime.now(UTC),
             )
-            events.append(stored)
+            events.append(envelope)
         return events
 
     @pytest.mark.asyncio
@@ -732,9 +735,9 @@ class TestConsistencyVerifierSampling:
     ) -> None:
         """Test that sampling verifies only a subset of events."""
         agg_id = uuid4()
-        events = self._create_stored_events(100, tenant_id, agg_id)
+        events = self._create_events(100, tenant_id, agg_id)
 
-        async def generator(options):
+        async def generator(from_position, options):
             for event in events:
                 yield event
 
@@ -790,16 +793,16 @@ class TestConsistencyVerifierChecksums:
             tenant_id=tenant_id,
             value="test",
         )
-        stored = StoredEvent(
+        envelope = EventEnvelope(
             event=event,
-            stream_id=f"{agg_id}:TestAggregate",
-            stream_position=1,
-            global_position=1,
+            stream_id=StreamId(aggregate_id=agg_id, category="TestAggregate"),
+            stream_version=1,
+            position=None,
             stored_at=datetime.now(UTC),
         )
 
-        async def generator(options):
-            yield stored
+        async def generator(from_position, options):
+            yield envelope
 
         source_store.read_all = generator
         target_store.read_all = generator
@@ -834,28 +837,29 @@ class TestConsistencyVerifierAggregateVersions:
         """Create a mock target store."""
         return AsyncMock()
 
-    def _create_stored_events(
+    def _create_events(
         self,
         count: int,
         tenant_id: UUID,
         aggregate_id: UUID,
-    ) -> list[StoredEvent]:
-        """Create a list of stored events."""
+    ) -> list[EventEnvelope]:
+        """Create a list of EventEnvelope instances."""
         events = []
+        stream_id = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
         for i in range(count):
             event = TestEvent(
                 aggregate_id=aggregate_id,
                 tenant_id=tenant_id,
                 value=f"test_{i}",
             )
-            stored = StoredEvent(
+            envelope = EventEnvelope(
                 event=event,
-                stream_id=f"{aggregate_id}:TestAggregate",
-                stream_position=i + 1,
-                global_position=i + 1,
+                stream_id=stream_id,
+                stream_version=i + 1,
+                position=None,
                 stored_at=datetime.now(UTC),
             )
-            events.append(stored)
+            events.append(envelope)
         return events
 
     @pytest.mark.asyncio
@@ -867,9 +871,9 @@ class TestConsistencyVerifierAggregateVersions:
     ) -> None:
         """Test verify_aggregate_versions when all match."""
         agg_id = uuid4()
-        events = self._create_stored_events(5, tenant_id, agg_id)
+        events = self._create_events(5, tenant_id, agg_id)
 
-        async def generator(options):
+        async def generator(from_position, options):
             for event in events:
                 yield event
 
@@ -896,14 +900,14 @@ class TestConsistencyVerifierAggregateVersions:
     ) -> None:
         """Test verify_aggregate_versions with version mismatch."""
         agg_id = uuid4()
-        source_events = self._create_stored_events(10, tenant_id, agg_id)
-        target_events = self._create_stored_events(8, tenant_id, agg_id)
+        source_events = self._create_events(10, tenant_id, agg_id)
+        target_events = self._create_events(8, tenant_id, agg_id)
 
-        async def source_generator(options):
+        async def source_generator(from_position, options):
             for event in source_events:
                 yield event
 
-        async def target_generator(options):
+        async def target_generator(from_position, options):
             for event in target_events:
                 yield event
 
@@ -934,11 +938,11 @@ class TestConsistencyVerifierHelperMethods:
             tenant_id=tenant_id,
             value="test",
         )
-        stored = StoredEvent(
+        envelope = EventEnvelope(
             event=event,
-            stream_id=f"{agg_id}:TestAggregate",
-            stream_position=1,
-            global_position=1,
+            stream_id=StreamId(aggregate_id=agg_id, category="TestAggregate"),
+            stream_version=1,
+            position=None,
             stored_at=datetime.now(UTC),
         )
 
@@ -948,8 +952,8 @@ class TestConsistencyVerifierHelperMethods:
             enable_tracing=False,
         )
 
-        hash1 = verifier._compute_event_hash(stored)
-        hash2 = verifier._compute_event_hash(stored)
+        hash1 = verifier._compute_event_hash(envelope)
+        hash2 = verifier._compute_event_hash(envelope)
 
         # Same event should produce same hash
         assert hash1 == hash2
@@ -957,27 +961,32 @@ class TestConsistencyVerifierHelperMethods:
         assert len(hash1) == 64
 
     def test_group_events_by_stream(self) -> None:
-        """Test _group_events_by_stream groups correctly."""
+        """Test _group_events_by_stream groups correctly.
+
+        Grouping key is `envelope.stream_id.render()` -- same wire format
+        as the legacy `stream_id` string.
+        """
         tenant_id = uuid4()
         agg1_id = uuid4()
         agg2_id = uuid4()
 
         events = []
         for agg_id in [agg1_id, agg2_id]:
+            stream_id = StreamId(aggregate_id=agg_id, category="TestAggregate")
             for i in range(3):
                 event = TestEvent(
                     aggregate_id=agg_id,
                     tenant_id=tenant_id,
                     value=f"test_{i}",
                 )
-                stored = StoredEvent(
+                envelope = EventEnvelope(
                     event=event,
-                    stream_id=f"{agg_id}:TestAggregate",
-                    stream_position=i + 1,
-                    global_position=i + 1,
+                    stream_id=stream_id,
+                    stream_version=i + 1,
+                    position=None,
                     stored_at=datetime.now(UTC),
                 )
-                events.append(stored)
+                events.append(envelope)
 
         verifier = ConsistencyVerifier(
             source_store=MagicMock(),
@@ -1058,7 +1067,7 @@ class TestConsistencyVerifierErrorHandling:
         source_store = AsyncMock()
         target_store = AsyncMock()
 
-        async def error_generator(options):
+        async def error_generator(from_position, options):
             raise Exception("Store connection failed")
             yield
 

@@ -55,7 +55,7 @@ from eventsource import (
     InMemorySnapshotStore,
     handles,
 )
-from eventsource.stores.in_memory import InMemoryEventStore
+from eventsource.adapters.memory import InMemoryEventStore
 
 
 class CounterState(BaseModel):

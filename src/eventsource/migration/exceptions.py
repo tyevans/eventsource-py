@@ -45,6 +45,7 @@ from uuid import UUID
 
 if TYPE_CHECKING:
     from eventsource.migration.models import MigrationPhase
+    from eventsource.ports.positions import Position
 
 logger = logging.getLogger(__name__)
 
@@ -732,8 +733,9 @@ class CutoverLagError(CutoverError):
         error_code="CUTOVER_LAG_TOO_HIGH",
         category="cutover",
         suggested_action=(
-            "Sync lag is too high for cutover. "
-            "Wait for lag to decrease below threshold, then retry."
+            "Sync lag is too high for cutover. Run MigrationCoordinator.run_resync_pass "
+            "to recover a clamped lag anchor and retry, or explicitly accept a bounded "
+            "loss window by passing a nonzero MigrationConfig.cutover_max_lag_events."
         ),
         retry_config=RetryConfig(
             max_attempts=10,
@@ -757,6 +759,15 @@ class CutoverLagError(CutoverError):
             migration_id=migration_id,
             rollback_performed=False,
             reason="lag_too_high",
+        )
+        # Override CutoverError's generic "reduce sync lag" text: under the
+        # strict-zero default, waiting for lag to drain is not always
+        # possible (a clamped anchor never drains on its own), so point
+        # operators at the actual remedies.
+        self.suggested_action = (
+            "Run MigrationCoordinator.run_resync_pass to recover a clamped lag "
+            "anchor and retry, or explicitly accept a bounded loss window by "
+            "passing a nonzero MigrationConfig.cutover_max_lag_events."
         )
 
 
@@ -817,7 +828,8 @@ class BulkCopyError(MigrationError):
     process, which is typically recoverable by resuming.
 
     Attributes:
-        last_position: The last successfully copied position.
+        last_position: The last successfully copied source position
+            (None when nothing had been copied yet).
         original_error: The underlying error message.
     """
 
@@ -836,13 +848,14 @@ class BulkCopyError(MigrationError):
     def __init__(
         self,
         migration_id: UUID,
-        last_position: int,
+        last_position: Position | None,
         error: str,
     ) -> None:
         self.last_position = last_position
         self.original_error = error
+        rendered = last_position.to_str() if last_position is not None else "start"
         super().__init__(
-            message=f"Bulk copy failed at position {last_position}: {error}",
+            message=f"Bulk copy failed at position {rendered}: {error}",
             migration_id=migration_id,
             recoverable=True,
             suggested_action="Resume migration to continue from last checkpoint",
@@ -917,11 +930,13 @@ class PositionMappingError(MigrationError):
         self,
         message: str,
         migration_id: UUID,
-        source_position: int | None = None,
+        source_position: Position | None = None,
         reason: str | None = None,
     ) -> None:
         self.source_position = source_position
         self.reason = reason
+        if source_position is not None:
+            message = f"{message} (source_position={source_position.to_str()})"
         super().__init__(
             message=message,
             migration_id=migration_id,

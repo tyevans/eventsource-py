@@ -25,9 +25,3 @@ class TestIntPositionCodec:
     def test_garbage_raises_decode_error(self) -> None:
         with pytest.raises(PositionDecodeError):
             IntPositionCodec(store_id="pg:main").decode("not-a-position")
-
-    def test_dialect_reexport_intact(self) -> None:
-        from eventsource.adapters._sql.dialect import Dialect as NewDialect
-        from eventsource.repositories._dialect import Dialect  # old path
-
-        assert Dialect is NewDialect

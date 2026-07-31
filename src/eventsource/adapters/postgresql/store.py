@@ -1,11 +1,8 @@
-"""PostgreSQL adapter implementing the five new store ports.
+"""PostgreSQL adapter implementing the five store ports.
 
-Ported from `eventsource.stores.postgresql.PostgreSQLEventStore` (untouched
--- that module remains the legacy `EventStore` ABC implementation). This
-adapter targets the `eventsource.ports.store` protocols instead: it reuses
-the old store's SQL and session patterns, but maps rows to `EventEnvelope`
-/ `AppendResult` / `Position` value objects and dispatches on
-`ExpectedVersion.kind` rather than integer sentinels.
+Targets the `eventsource.ports.store` protocols: rows map to
+`EventEnvelope` / `AppendResult` / `Position` value objects, and append
+dispatches on `ExpectedVersion.kind` rather than integer sentinels.
 
 Positions are minted from the `events.global_position` BIGSERIAL column via
 `IntPositionCodec`.
@@ -14,17 +11,22 @@ Safe-horizon global feed: unlike SQLite (a single serialized writer),
 PostgreSQL commits can become visible out of order under concurrent
 transactions -- a `global_position` allocated first is not guaranteed to
 commit first. `read_all` and `current_position` both apply the horizon
-predicate documented on `_HORIZON_PREDICATE` below to avoid skipping a
-lower position that is still in flight.
+predicate documented on `_HORIZON_PREDICATE` below, filtering on the
+`events.txid` column against a per-read horizon, to avoid skipping a
+lower position that is still in flight. Operators must have applied
+`migrations/updates/004_add_events_txid.sql` before upgrading -- the
+predicate fails loudly with an undefined-column error otherwise.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import AsyncIterator, Sequence
+from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -45,6 +47,7 @@ from eventsource.ports import (
     Position,
     ReadDirection,
     StreamReadOptions,
+    outbox_event_data,
 )
 from eventsource.serialization import json_dumps, json_loads
 
@@ -69,15 +72,43 @@ _SELECT_COLUMNS = """
     tenant_id, actor_id, version, timestamp, payload, created_at
 """
 
-# Rows whose inserting transaction is not yet definitely-committed
-# (xmin >= snapshot xmin) are deferred to a later poll -- the global_position
-# sequence commits out of order under concurrent writers, and reading past a
-# still-uncommitted lower position would skip it forever once the reader
-# resumes from higher up. Uses the `xmin` system column: no DDL, schema
-# untouched. Caveat: epoch comparison is not wraparound-proof in the
-# ancient-xid regime; acceptable for now, revisit if a `xid8` column is ever
-# added.
-_HORIZON_PREDICATE = "xmin::text::bigint < pg_snapshot_xmin(pg_current_snapshot())::text::bigint"
+# Rows whose inserting transaction is not yet definitely-committed are
+# deferred to a later poll -- the global_position sequence commits out of
+# order under concurrent writers, and reading past a still-uncommitted
+# lower position would skip it forever once the reader resumes from
+# higher up.
+#
+# The horizon is fetched once per read (a scalar query on the same
+# session) and bound as a parameter, rather than inlined as a volatile
+# expression. Two reasons: `xid8` comparison is native 64-bit and does not
+# wrap on any human timescale (the prior 32-bit system-column cast form
+# compared against an epoch-extended 64-bit value, and went universally
+# true -- fail-open -- once a cluster crossed its first xid epoch); and a
+# bound parameter is a plain filter the planner can reason about, where
+# the inline volatile expression was not.
+#
+# `txid IS NULL` rows predate `migrations/updates/004_add_events_txid.sql`.
+# `ALTER TABLE` takes ACCESS EXCLUSIVE, so every transaction that inserted
+# one finished before any post-migration snapshot: NULL is always
+# definitely-committed and always safe to read.
+#
+# Databases that have not applied 004 fail loudly here with an undefined
+# column, by design -- a silent fallback to the old predicate would keep
+# the wraparound-unsafe path alive forever.
+#
+# The parameter is cast to text before the xid8 cast: asyncpg has no
+# native xid8 codec, and binding straight to `CAST(:txid_horizon AS xid8)`
+# lets postgres describe the parameter's wire type as xid8 itself, which
+# asyncpg then can't encode. Routing through `::text` first pins the
+# parameter's wire type to text, which asyncpg encodes natively.
+_HORIZON_PREDICATE = "(txid IS NULL OR txid < CAST(:txid_horizon AS text)::xid8)"
+
+# Rendered to text so the value crosses the driver as a plain string and
+# is cast back server-side; asyncpg has no native xid8 codec.
+# `eventsource_feed_horizon()` is a stable SQL function installed by the
+# events_txid migration fragment / updates/004 -- see there for the
+# underlying snapshot lookup this wraps.
+_HORIZON_QUERY = "SELECT eventsource_feed_horizon()"
 
 # Constraint names from the canonical `migrations/schemas/events.sql` (verified
 # against a live PostgreSQL 15 by introspecting `asyncpg.exceptions
@@ -117,6 +148,7 @@ class PostgreSQLEventStore:
         *,
         store_id: str | None = None,
         create_schema: bool = False,
+        outbox_enabled: bool = False,
     ) -> None:
         if not ASYNCPG_AVAILABLE:
             raise ImportError(
@@ -134,18 +166,28 @@ class PostgreSQLEventStore:
         self._create_schema = create_schema
         self._schema_ready = False
         self._schema_lock = asyncio.Lock()
+        self._outbox_enabled = outbox_enabled
 
     @property
     def store_id(self) -> str:
         return self._store_id
+
+    @property
+    def outbox_enabled(self) -> bool:
+        """Whether `append` also writes to `event_outbox` in the same transaction.
+
+        When `True`, the outbox row and the event row commit (or roll back)
+        together -- the entire point of the transactional outbox pattern.
+        The outbox *reader* implements `eventsource.ports.outbox.OutboxRepository`.
+        """
+        return self._outbox_enabled
 
     async def _ensure_schema(self) -> None:
         """Lazily create the `events` table, only when `create_schema=True`.
 
         No-op otherwise (the default): production deployments manage schema
         via `migrations/`, and queries against a missing table fail
-        naturally -- same behavior as the legacy `EventStore` ABC
-        implementation.
+        naturally.
 
         Runs the canonical `migrations/schemas/events.sql` (the same file
         `get_schema("events")` serves to Alembic/manual setup) as a single
@@ -309,6 +351,9 @@ class PostgreSQLEventStore:
                     if first_position is None and global_position is not None:
                         first_position = self._codec.encode(global_position)
 
+                    if self._outbox_enabled:
+                        await self._write_to_outbox(session, event, category)
+
                 await session.commit()
                 return AppendResult(stream=stream, new_version=version, position=first_position)
 
@@ -335,6 +380,58 @@ class PostgreSQLEventStore:
                         stream.aggregate_id, self._expected_sentinel(expected), actual_version
                     ) from e
                 raise
+
+    async def _write_to_outbox(
+        self,
+        session: AsyncSession,
+        event: DomainEvent,
+        aggregate_type: str,
+    ) -> None:
+        """Write one outbox row for `event`, on `session`, before commit.
+
+        Must run on the same `AsyncSession` as the
+        event `INSERT`, before `append`'s single `await session.commit()`
+        -- that is the atomicity guarantee the transactional outbox
+        pattern exists to provide. The outbox *reader* implements
+        `eventsource.ports.outbox.OutboxRepository`; the payload
+        shape (six keys, `payload` = `model_dump(mode="json")`) must
+        match what it expects exactly.
+
+        Uses stdlib `json.dumps` rather than this module's `json_dumps`
+        (orjson-backed): the payload returned from `ports.outbox.outbox_event_data`
+        is already reduced to JSON-safe primitives (`str`/`dict`/`None`),
+        so the two would serialize identically, but stdlib is used to mirror the
+        legacy store byte-for-byte and avoid any doubt.
+        """
+        outbox_id = uuid4()
+        now = datetime.now(UTC)
+
+        event_data = outbox_event_data(event)
+
+        await session.execute(
+            text(
+                """
+                INSERT INTO event_outbox (
+                    id, event_id, event_type, aggregate_id, aggregate_type,
+                    tenant_id, event_data, created_at, status
+                )
+                VALUES (
+                    :id, :event_id, :event_type, :aggregate_id, :aggregate_type,
+                    :tenant_id, :event_data, :created_at, 'pending'
+                )
+                """
+            ),
+            {
+                "id": outbox_id,
+                "event_id": event.event_id,
+                "event_type": event.event_type,
+                "aggregate_id": event.aggregate_id,
+                "aggregate_type": aggregate_type,
+                "tenant_id": str(event.tenant_id) if event.tenant_id else None,
+                "event_data": json.dumps(event_data),
+                "created_at": now,
+            },
+        )
 
     def read_stream(
         self,
@@ -443,6 +540,8 @@ class PostgreSQLEventStore:
             params["limit"] = options.limit
 
         async with self._session_factory() as session:
+            horizon = (await session.execute(text(_HORIZON_QUERY))).scalar_one()
+            params["txid_horizon"] = horizon
             result = await session.execute(text("\n".join(query_parts)), params)
             rows = result.mappings().all()
 
@@ -452,11 +551,13 @@ class PostgreSQLEventStore:
     async def current_position(self) -> Position | None:
         await self._ensure_schema()
         async with self._session_factory() as session:
+            horizon = (await session.execute(text(_HORIZON_QUERY))).scalar_one()
             result = await session.execute(
                 text(
                     "SELECT MAX(global_position) FROM events"  # nosec B608 -- constant predicate
                     f" WHERE {_HORIZON_PREDICATE}"
-                )
+                ),
+                {"txid_horizon": horizon},
             )
             value = result.scalar()
         if value is None:

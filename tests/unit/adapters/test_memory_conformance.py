@@ -1,10 +1,10 @@
-"""Conformance tests for MemoryEventStore against the port suites."""
+"""Conformance tests for InMemoryEventStore against the port suites."""
 
 from collections.abc import AsyncIterator
 
 import pytest
 
-from eventsource.adapters.memory import InMemorySnapshotStore, MemoryEventStore
+from eventsource.adapters.memory import InMemoryEventStore, InMemorySnapshotStore
 from eventsource.testing.conformance_ports import (
     AppenderConformance,
     CategoryQueryConformance,
@@ -17,32 +17,32 @@ from eventsource.testing.conformance_ports import (
 
 class TestMemoryAppender(AppenderConformance):
     @pytest.fixture
-    async def store(self) -> AsyncIterator[MemoryEventStore]:
-        yield MemoryEventStore()
+    async def store(self) -> AsyncIterator[InMemoryEventStore]:
+        yield InMemoryEventStore()
 
 
 class TestMemoryStreamReader(StreamReaderConformance):
     @pytest.fixture
-    async def store(self) -> AsyncIterator[MemoryEventStore]:
-        yield MemoryEventStore()
+    async def store(self) -> AsyncIterator[InMemoryEventStore]:
+        yield InMemoryEventStore()
 
 
 class TestMemoryEventLookup(EventLookupConformance):
     @pytest.fixture
-    async def store(self) -> AsyncIterator[MemoryEventStore]:
-        yield MemoryEventStore()
+    async def store(self) -> AsyncIterator[InMemoryEventStore]:
+        yield InMemoryEventStore()
 
 
 class TestMemoryGlobalFeed(GlobalFeedConformance):
     @pytest.fixture
-    async def store(self) -> AsyncIterator[MemoryEventStore]:
-        yield MemoryEventStore()
+    async def store(self) -> AsyncIterator[InMemoryEventStore]:
+        yield InMemoryEventStore()
 
 
 class TestMemoryCategoryQuery(CategoryQueryConformance):
     @pytest.fixture
-    async def store(self) -> AsyncIterator[MemoryEventStore]:
-        yield MemoryEventStore()
+    async def store(self) -> AsyncIterator[InMemoryEventStore]:
+        yield InMemoryEventStore()
 
 
 class TestMemorySnapshotStore(SnapshotConformance):

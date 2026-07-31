@@ -28,13 +28,17 @@ from eventsource.observability.attributes import (
     ATTR_SUBSCRIPTION_NAME,
 )
 from eventsource.subscriptions.exceptions import SubscriptionError
-from eventsource.subscriptions.subscription import Subscription, SubscriptionState
+from eventsource.subscriptions.subscription import (
+    Subscription,
+    SubscriptionState,
+    render_position,
+)
 from eventsource.subscriptions.transition import StartFromResolver, TransitionCoordinator
 
 if TYPE_CHECKING:
     from eventsource.bus.interface import EventBus
-    from eventsource.repositories.checkpoint import CheckpointRepository
-    from eventsource.stores.interface import EventStore
+    from eventsource.ports.checkpoints import SubscriptionPositions
+    from eventsource.ports.store import GlobalEventFeed
 
 logger = logging.getLogger(__name__)
 
@@ -59,9 +63,9 @@ class SubscriptionLifecycleManager:
 
     def __init__(
         self,
-        event_store: "EventStore",
+        event_store: "GlobalEventFeed",
         event_bus: "EventBus",
-        checkpoint_repo: "CheckpointRepository",
+        checkpoint_repo: "SubscriptionPositions",
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ) -> None:
@@ -112,14 +116,14 @@ class SubscriptionLifecycleManager:
                 start_position = await self._start_resolver.resolve(subscription)
                 subscription.last_processed_position = start_position
 
-                if span:
-                    span.set_attribute(ATTR_POSITION, start_position)
+                if span and (token := render_position(start_position)) is not None:
+                    span.set_attribute(ATTR_POSITION, token)
 
                 logger.info(
                     "Starting subscription",
                     extra={
                         "subscription": name,
-                        "start_position": start_position,
+                        "start_position": render_position(start_position),
                     },
                 )
 
@@ -152,7 +156,7 @@ class SubscriptionLifecycleManager:
                         "subscription": name,
                         "catchup_events": result.catchup_events_processed,
                         "buffer_events": result.buffer_events_processed,
-                        "final_position": result.final_position,
+                        "final_position": render_position(result.final_position),
                     },
                 )
 

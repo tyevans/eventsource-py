@@ -17,9 +17,11 @@ from uuid import uuid4
 
 import pytest
 
+from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
+from eventsource.adapters.memory.store import InMemoryEventStore
+from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
-from eventsource.repositories.checkpoint import InMemoryCheckpointRepository
-from eventsource.stores.in_memory import InMemoryEventStore
+from eventsource.ports.positions import ExpectedVersion, Position
 from eventsource.subscriptions import (
     CheckpointStrategy,
     Subscription,
@@ -71,8 +73,8 @@ class MockSubscriber:
 
 @pytest.fixture
 def event_store() -> InMemoryEventStore:
-    """Create a fresh InMemoryEventStore."""
-    return InMemoryEventStore(enable_tracing=False)
+    """Create a fresh InMemoryEventStore (a real GlobalEventFeed)."""
+    return InMemoryEventStore()
 
 
 @pytest.fixture
@@ -125,14 +127,28 @@ async def add_events_to_store(
     for i in range(count):
         aggregate_id = uuid4()
         event = SampleTestEvent(aggregate_id=aggregate_id, data=f"event_{i}")
-        await store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="SampleAggregate",
-            events=[event],
-            expected_version=0,
+        await store.append(
+            StreamId(aggregate_id=aggregate_id, category="SampleAggregate"),
+            [event],
+            ExpectedVersion.no_stream(),
         )
         events.append(event)
     return events
+
+
+async def current(store: InMemoryEventStore) -> Position:
+    """The feed's current position, asserted present (the store is non-empty)."""
+    position = await store.current_position()
+    assert position is not None
+    return position
+
+
+async def position_after(store: InMemoryEventStore, n: int) -> Position:
+    """The token of the nth (1-based) event in the feed."""
+    envelopes = [e async for e in store.read_all()]
+    position = envelopes[n - 1].position
+    assert position is not None
+    return position
 
 
 # --- CatchUpResult Tests ---
@@ -145,7 +161,7 @@ class TestCatchUpResult:
         """Test success returns True when completed without error."""
         result = CatchUpResult(
             events_processed=100,
-            final_position=100,
+            final_position=Position(store_id="test", key=(100,)),
             completed=True,
             error=None,
         )
@@ -155,7 +171,7 @@ class TestCatchUpResult:
         """Test success returns False when not completed."""
         result = CatchUpResult(
             events_processed=50,
-            final_position=50,
+            final_position=Position(store_id="test", key=(50,)),
             completed=False,
             error=None,
         )
@@ -165,7 +181,7 @@ class TestCatchUpResult:
         """Test success returns False when error occurred."""
         result = CatchUpResult(
             events_processed=50,
-            final_position=50,
+            final_position=Position(store_id="test", key=(50,)),
             completed=True,
             error=ValueError("Test error"),
         )
@@ -176,12 +192,12 @@ class TestCatchUpResult:
         error = RuntimeError("test")
         result = CatchUpResult(
             events_processed=42,
-            final_position=100,
+            final_position=Position(store_id="test", key=(100,)),
             completed=True,
             error=error,
         )
         assert result.events_processed == 42
-        assert result.final_position == 100
+        assert result.final_position == Position(store_id="test", key=(100,))
         assert result.completed is True
         assert result.error is error
 
@@ -213,13 +229,23 @@ class TestCatchUpRunnerBasic:
     async def test_empty_event_store_returns_completed(
         self,
         runner: CatchUpRunner,
+        event_store: InMemoryEventStore,
     ):
-        """Test catch-up on empty store returns completed with 0 events."""
-        result = await runner.run_until_position(target_position=0)
+        """Test catch-up on empty store returns completed with 0 events.
+
+        An empty feed has no current position, so the coordinator would
+        skip catch-up entirely; a runner pointed at any target still
+        completes on the first empty read.
+        """
+        assert await event_store.current_position() is None
+
+        result = await runner.run_until_position(
+            target_position=Position(store_id="memory", key=(1,))
+        )
 
         assert result.completed is True
         assert result.events_processed == 0
-        assert result.final_position == 0
+        assert result.final_position is None
         assert result.error is None
 
     @pytest.mark.asyncio
@@ -230,13 +256,14 @@ class TestCatchUpRunnerBasic:
     ):
         """Test catch-up returns immediately if already at target position."""
         # Set subscription position to target
-        subscription.last_processed_position = 100
+        position = Position(store_id="memory", key=(100,))
+        subscription.last_processed_position = position
 
-        result = await runner.run_until_position(target_position=100)
+        result = await runner.run_until_position(target_position=position)
 
         assert result.completed is True
         assert result.events_processed == 0
-        assert result.final_position == 100
+        assert result.final_position == position
 
     @pytest.mark.asyncio
     async def test_processes_all_events(
@@ -248,13 +275,13 @@ class TestCatchUpRunnerBasic:
         """Test runner processes all events up to target position."""
         # Add 5 events
         await add_events_to_store(event_store, 5)
-        target = await event_store.get_global_position()
+        target = await current(event_store)
 
         result = await runner.run_until_position(target_position=target)
 
         assert result.completed is True
         assert result.events_processed == 5
-        assert result.final_position == 5
+        assert result.final_position == target
         assert len(subscriber.handled_events) == 5
 
     @pytest.mark.asyncio
@@ -266,7 +293,7 @@ class TestCatchUpRunnerBasic:
     ):
         """Test subscription transitions to CATCHING_UP state."""
         await add_events_to_store(event_store, 3)
-        target = await event_store.get_global_position()
+        target = await current(event_store)
 
         assert subscription.state == SubscriptionState.STARTING
 
@@ -282,7 +309,7 @@ class TestCatchUpRunnerBasic:
     ):
         """Test is_running is True during processing."""
         await add_events_to_store(event_store, 5)
-        target = await event_store.get_global_position()
+        target = await current(event_store)
 
         # Runner should not be running before start
         assert runner.is_running is False
@@ -311,7 +338,7 @@ class TestCatchUpRunnerBatching:
         """Test runner processes events in batches of configured size."""
         # Add 25 events
         await add_events_to_store(event_store, 25)
-        target = await event_store.get_global_position()
+        target = await current(event_store)
 
         # Create config with small batch size
         config = SubscriptionConfig(
@@ -331,7 +358,7 @@ class TestCatchUpRunnerBatching:
         assert result.events_processed == 25
         # With batch_size=5 and EVERY_BATCH strategy, we expect 5 checkpoints
         checkpoint = await checkpoint_repo.get_position("BatchTest")
-        assert checkpoint == 25
+        assert checkpoint == target
 
     @pytest.mark.asyncio
     async def test_batch_smaller_than_remaining(
@@ -343,7 +370,7 @@ class TestCatchUpRunnerBatching:
         """Test batch size is limited to remaining events to target."""
         # Add 3 events
         await add_events_to_store(event_store, 3)
-        target = await event_store.get_global_position()
+        target = await current(event_store)
 
         # Config with large batch size
         config = SubscriptionConfig(batch_size=100)
@@ -376,7 +403,7 @@ class TestCatchUpRunnerCheckpointStrategies:
         """Test EVERY_EVENT strategy saves checkpoint after each event."""
         # Add 5 events
         await add_events_to_store(event_store, 5)
-        target = await event_store.get_global_position()
+        target = await current(event_store)
 
         config = SubscriptionConfig(
             batch_size=10,
@@ -395,7 +422,7 @@ class TestCatchUpRunnerCheckpointStrategies:
         assert result.events_processed == 5
         # Check final checkpoint
         checkpoint = await checkpoint_repo.get_position("EveryEventTest")
-        assert checkpoint == 5
+        assert checkpoint == target
 
     @pytest.mark.asyncio
     async def test_every_batch_strategy(
@@ -407,7 +434,7 @@ class TestCatchUpRunnerCheckpointStrategies:
         """Test EVERY_BATCH strategy saves checkpoint after each batch."""
         # Add 15 events
         await add_events_to_store(event_store, 15)
-        target = await event_store.get_global_position()
+        target = await current(event_store)
 
         config = SubscriptionConfig(
             batch_size=5,
@@ -425,7 +452,7 @@ class TestCatchUpRunnerCheckpointStrategies:
         assert result.completed is True
         assert result.events_processed == 15
         checkpoint = await checkpoint_repo.get_position("EveryBatchTest")
-        assert checkpoint == 15
+        assert checkpoint == target
 
     @pytest.mark.asyncio
     async def test_periodic_strategy(
@@ -441,7 +468,7 @@ class TestCatchUpRunnerCheckpointStrategies:
         """
         # Add events
         await add_events_to_store(event_store, 10)
-        target = await event_store.get_global_position()
+        target = await current(event_store)
 
         # Create a slow subscriber that delays slightly
         class SlowSubscriber:
@@ -478,7 +505,7 @@ class TestCatchUpRunnerCheckpointStrategies:
         # The exact number depends on timing, but should have at least one
         checkpoint = await checkpoint_repo.get_position("PeriodicTest")
         assert checkpoint is not None
-        assert checkpoint > 0
+        assert checkpoint <= target
 
 
 # --- Error Handling Tests ---
@@ -496,7 +523,7 @@ class TestCatchUpRunnerErrorHandling:
         """Test continue_on_error=True continues after handler failure."""
         # Add events - all will fail since they're SampleTestEvent
         await add_events_to_store(event_store, 3)
-        target = await event_store.get_global_position()
+        target = await current(event_store)
 
         # Subscriber that fails on SampleTestEvent
         subscriber = MockSubscriber()
@@ -529,7 +556,7 @@ class TestCatchUpRunnerErrorHandling:
     ):
         """Test continue_on_error=False propagates handler failure."""
         await add_events_to_store(event_store, 3)
-        target = await event_store.get_global_position()
+        target = await current(event_store)
 
         # Subscriber that fails
         subscriber = MockSubscriber()
@@ -562,7 +589,7 @@ class TestCatchUpRunnerErrorHandling:
     ):
         """Test that errors are recorded in subscription statistics."""
         await add_events_to_store(event_store, 5)
-        target = await event_store.get_global_position()
+        target = await current(event_store)
 
         subscriber = MockSubscriber()
         subscriber.fail_on_event_types.add("SampleTestEvent")
@@ -609,7 +636,7 @@ class TestCatchUpRunnerStop:
         """Test stop() causes runner to halt processing."""
         # Add many events
         await add_events_to_store(event_store, 100)
-        target = await event_store.get_global_position()
+        target = await current(event_store)
 
         config = SubscriptionConfig(batch_size=10)
         subscription = Subscription(
@@ -636,6 +663,60 @@ class TestCatchUpRunnerStop:
         assert result.events_processed < 100
         assert result.error is None
 
+    @pytest.mark.asyncio
+    async def test_lag_clears_after_stop_mid_batch_and_resume(
+        self,
+        event_store: InMemoryEventStore,
+        checkpoint_repo: InMemoryCheckpointRepository,
+        subscriber: MockSubscriber,
+    ):
+        """Test lag doesn't accumulate phantom counts when a batch is
+        abandoned mid-delivery and its tail is re-read on resume.
+
+        Reproduces: record_events_seen(len(events)) fires before the
+        delivery loop; if the loop stops early, the undelivered tail stays
+        counted as seen. The next run re-reads and re-counts that tail,
+        permanently inflating events_seen relative to events_delivered.
+        """
+        # All 10 events land in a single batch (batch_size == 10).
+        await add_events_to_store(event_store, 10)
+        target = await current(event_store)
+
+        config = SubscriptionConfig(batch_size=10)
+        subscription = Subscription(
+            name="StopResumeTest",
+            config=config,
+            subscriber=subscriber,
+        )
+        first_runner = CatchUpRunner(event_store, checkpoint_repo, subscription)
+
+        # Stop after 4 of 10 events have been delivered, mid-batch.
+        original_handle = subscriber.handle
+
+        async def stopping_handle(event: DomainEvent) -> None:
+            await original_handle(event)
+            if len(subscriber.handled_events) == 4:
+                await first_runner.stop()
+
+        subscriber.handle = stopping_handle  # type: ignore[method-assign]
+
+        first_result = await first_runner.run_until_position(target_position=target)
+        assert first_result.completed is False
+        assert first_result.events_processed == 4
+
+        # Simulate a quiescent state between runs (a real stop/resume cycle
+        # would pause or restart the subscription rather than leave it
+        # mid-CATCHING_UP), then resume with a fresh runner over the same
+        # subscription and deliver the rest.
+        await subscription.transition_to(SubscriptionState.PAUSED)
+        subscriber.handle = original_handle  # type: ignore[method-assign]
+        second_runner = CatchUpRunner(event_store, checkpoint_repo, subscription)
+        second_result = await second_runner.run_until_position(target_position=target)
+
+        assert second_result.completed is True
+        assert len(subscriber.handled_events) == 10
+        assert subscription.lag == 0
+
 
 # --- Position Tracking Tests ---
 
@@ -652,13 +733,13 @@ class TestCatchUpRunnerPositionTracking:
     ):
         """Test subscription.last_processed_position is updated correctly."""
         await add_events_to_store(event_store, 10)
-        target = await event_store.get_global_position()
+        target = await current(event_store)
 
-        assert subscription.last_processed_position == 0
+        assert subscription.last_processed_position is None
 
         await runner.run_until_position(target_position=target)
 
-        assert subscription.last_processed_position == 10
+        assert subscription.last_processed_position == target
 
     @pytest.mark.asyncio
     async def test_subscription_event_metadata_updated(
@@ -669,7 +750,7 @@ class TestCatchUpRunnerPositionTracking:
     ):
         """Test subscription tracks last event ID and type."""
         await add_events_to_store(event_store, 3)
-        target = await event_store.get_global_position()
+        target = await current(event_store)
 
         await runner.run_until_position(target_position=target)
 
@@ -678,22 +759,22 @@ class TestCatchUpRunnerPositionTracking:
         assert subscription.events_processed == 3
 
     @pytest.mark.asyncio
-    async def test_max_position_updated_for_lag(
+    async def test_events_seen_tracked_for_lag(
         self,
         runner: CatchUpRunner,
         event_store: InMemoryEventStore,
         subscription: Subscription,
     ):
-        """Test subscription max_position is updated for lag calculation."""
+        """Test subscription lag is tracked by counting events seen vs delivered."""
         await add_events_to_store(event_store, 5)
-        target = await event_store.get_global_position()
+        target = await current(event_store)
 
-        # Initial lag should be 0 (no max position set)
+        # Initial lag should be 0 (nothing seen yet)
         assert subscription.lag == 0
 
         await runner.run_until_position(target_position=target)
 
-        # After catching up, lag should be 0
+        # After catching up, all seen events have been delivered
         assert subscription.lag == 0
 
     @pytest.mark.asyncio
@@ -705,12 +786,12 @@ class TestCatchUpRunnerPositionTracking:
     ):
         """Test checkpoint is persisted with correct data."""
         await add_events_to_store(event_store, 5)
-        target = await event_store.get_global_position()
+        target = await current(event_store)
 
         await runner.run_until_position(target_position=target)
 
         checkpoint = await checkpoint_repo.get_position("TestSubscription")
-        assert checkpoint == 5
+        assert checkpoint == target
 
 
 # --- Module Imports Tests ---
@@ -747,16 +828,27 @@ class TestCatchUpRunnerEdgeCases:
             SubscriptionConfig(batch_size=0)
 
     @pytest.mark.asyncio
-    async def test_negative_target_position(
+    async def test_target_behind_the_feed_delivers_nothing(
         self,
         runner: CatchUpRunner,
+        event_store: InMemoryEventStore,
+        subscriber: MockSubscriber,
     ):
-        """Test negative target position behaves correctly."""
-        # Negative target means we're already past it
-        result = await runner.run_until_position(target_position=-1)
+        """A target behind every stored event stops before the first one.
+
+        This replaces the old negative-target case: positions are opaque
+        tokens, so "before the beginning" is expressed as a token that
+        orders below the feed's first event, not as -1.
+        """
+        await add_events_to_store(event_store, 3)
+
+        result = await runner.run_until_position(
+            target_position=Position(store_id="memory", key=(0,))
+        )
 
         assert result.completed is True
         assert result.events_processed == 0
+        assert subscriber.handled_events == []
 
     @pytest.mark.asyncio
     async def test_resume_from_checkpoint(
@@ -768,7 +860,7 @@ class TestCatchUpRunnerEdgeCases:
         """Test catch-up resumes from existing checkpoint position."""
         # Add 10 events
         await add_events_to_store(event_store, 10)
-        target = await event_store.get_global_position()
+        target = await current(event_store)
 
         # Set subscription to start from position 5
         config = SubscriptionConfig(batch_size=100)
@@ -777,7 +869,7 @@ class TestCatchUpRunnerEdgeCases:
             config=config,
             subscriber=subscriber,
         )
-        subscription.last_processed_position = 5
+        subscription.last_processed_position = await position_after(event_store, 5)
 
         runner = CatchUpRunner(event_store, checkpoint_repo, subscription)
         result = await runner.run_until_position(target_position=target)
@@ -796,7 +888,7 @@ class TestCatchUpRunnerEdgeCases:
     ):
         """Test catch-up with exactly one event."""
         await add_events_to_store(event_store, 1)
-        target = await event_store.get_global_position()
+        target = await current(event_store)
 
         config = SubscriptionConfig()
         subscription = Subscription(
@@ -821,7 +913,7 @@ class TestCatchUpRunnerEdgeCases:
     ):
         """Test last_processed_at timestamp is updated."""
         await add_events_to_store(event_store, 3)
-        target = await event_store.get_global_position()
+        target = await current(event_store)
 
         assert subscription.last_processed_at is None
 

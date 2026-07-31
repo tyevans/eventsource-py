@@ -12,9 +12,9 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.readmodels import ReadModel
-from eventsource.readmodels.query import Filter, Query
-from eventsource.readmodels.sqlite import SQLiteReadModelRepository
+from eventsource.adapters.sqlite.readmodels import SQLiteReadModelRepository
+from eventsource.ports.readmodels.model import ReadModel
+from eventsource.ports.readmodels.query import Filter, Query
 
 
 class OrderSummary(ReadModel):
@@ -686,13 +686,15 @@ class TestExportFromModule:
     """Tests that SQLiteReadModelRepository is properly exported."""
 
     def test_import_from_readmodels(self) -> None:
-        """Test SQLiteReadModelRepository can be imported from eventsource.readmodels."""
-        from eventsource.readmodels import SQLiteReadModelRepository as ImportedRepo
+        """Test SQLiteReadModelRepository can be imported from its adapter module."""
+        from eventsource.adapters.sqlite.readmodels import (
+            SQLiteReadModelRepository as ImportedRepo,
+        )
 
         assert ImportedRepo is SQLiteReadModelRepository
 
     def test_in_all_exports(self) -> None:
-        """Test SQLiteReadModelRepository is in __all__."""
-        from eventsource import readmodels
+        """Test SQLiteReadModelRepository is in the sqlite adapter's __all__."""
+        from eventsource.adapters import sqlite
 
-        assert "SQLiteReadModelRepository" in readmodels.__all__
+        assert "SQLiteReadModelRepository" in sqlite.__all__

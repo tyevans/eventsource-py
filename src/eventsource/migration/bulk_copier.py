@@ -41,10 +41,18 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from eventsource.domain import StreamId
+from eventsource.exceptions import DuplicateEventError, OptimisticLockError
 from eventsource.migration.exceptions import BulkCopyError
 from eventsource.migration.models import Migration
 from eventsource.observability import Tracer, create_tracer
-from eventsource.stores.interface import EventStore, ReadOptions, StoredEvent
+from eventsource.ports import (
+    EventEnvelope,
+    ExpectedVersion,
+    FeedReadOptions,
+    FullEventStore,
+    Position,
+)
 
 if TYPE_CHECKING:
     from eventsource.migration.position_mapper import PositionMapper
@@ -75,8 +83,8 @@ class BulkCopyProgress:
     migration_id: UUID
     events_copied: int
     events_total: int
-    last_source_position: int
-    last_target_position: int
+    last_source_position: Position | None
+    last_target_position: Position | None
     events_per_second: float
     estimated_remaining_seconds: float | None
     is_complete: bool
@@ -110,8 +118,8 @@ class BulkCopyResult:
 
     success: bool
     events_copied: int
-    last_source_position: int
-    last_target_position: int
+    last_source_position: Position | None
+    last_target_position: Position | None
     duration_seconds: float
     error_message: str | None = None
 
@@ -211,8 +219,8 @@ class BulkCopier:
 
     def __init__(
         self,
-        source_store: EventStore,
-        target_store: EventStore,
+        source_store: FullEventStore,
+        target_store: FullEventStore,
         migration_repo: MigrationRepository,
         *,
         position_mapper: PositionMapper | None = None,
@@ -223,10 +231,12 @@ class BulkCopier:
         Initialize the bulk copier.
 
         Args:
-            source_store: EventStore to read from.
-            target_store: EventStore to write to.
+            source_store: FullEventStore to read from.
+            target_store: FullEventStore to write to.
             migration_repo: Repository for progress persistence.
             position_mapper: Optional mapper for tracking position translations.
+                When configured, events are appended one at a time so each
+                event's exact target position can be recorded.
             tracer: Optional custom Tracer instance. If not provided, one is
                    created based on enable_tracing setting.
             enable_tracing: Whether to enable OpenTelemetry tracing.
@@ -298,17 +308,17 @@ class BulkCopier:
                 events_total = migration.events_total
 
             logger.info(
-                "Starting bulk copy for tenant %s: %d events from position %d",
+                "Starting bulk copy for tenant %s: %d events from position %s",
                 tenant_id,
                 events_total,
-                from_position,
+                from_position.to_str() if from_position else "start",
             )
 
             # Rate limiting setup
             rate_limiter = RateLimiter(config.max_bulk_copy_rate)
 
             # Process batches
-            batch: list[StoredEvent] = []
+            batch: list[EventEnvelope] = []
             batch_start_position = from_position
 
             try:
@@ -325,14 +335,16 @@ class BulkCopier:
 
                     # Process batch when full
                     if len(batch) >= config.batch_size:
-                        last_target_position = await self._write_batch(
-                            migration.id,
-                            tenant_id,
-                            batch,
+                        # An all-duplicate batch appends nothing and
+                        # returns None; keep the last real position rather
+                        # than nulling progress that was genuinely made.
+                        last_target_position = (
+                            await self._write_batch(migration.id, tenant_id, batch)
+                            or last_target_position
                         )
 
                         events_copied += len(batch)
-                        last_source_position = batch[-1].global_position
+                        last_source_position = batch[-1].position
 
                         # Update checkpoint
                         await self._migration_repo.update_progress(
@@ -371,14 +383,13 @@ class BulkCopier:
 
                 # Process remaining events
                 if batch and not self._is_cancelled:
-                    last_target_position = await self._write_batch(
-                        migration.id,
-                        tenant_id,
-                        batch,
+                    last_target_position = (
+                        await self._write_batch(migration.id, tenant_id, batch)
+                        or last_target_position
                     )
 
                     events_copied += len(batch)
-                    last_source_position = batch[-1].global_position
+                    last_source_position = batch[-1].position
 
                     await self._migration_repo.update_progress(
                         migration.id,
@@ -483,9 +494,8 @@ class BulkCopier:
             {"tenant_id": str(tenant_id)},
         ):
             count = 0
-            options = ReadOptions(tenant_id=tenant_id)
 
-            async for _ in self._source.read_all(options):
+            async for _ in self._source.read_all(None, FeedReadOptions(tenant_id=tenant_id)):
                 count += 1
 
             logger.debug("Counted %d events for tenant %s", count, tenant_id)
@@ -494,45 +504,58 @@ class BulkCopier:
     async def _stream_tenant_events(
         self,
         tenant_id: UUID,
-        from_position: int,
-    ) -> AsyncIterator[StoredEvent]:
+        from_position: Position | None,
+    ) -> AsyncIterator[EventEnvelope]:
         """
         Stream events for tenant from source store.
 
         Args:
             tenant_id: Tenant UUID.
-            from_position: Position to start from (exclusive).
+            from_position: Position to start strictly after; None starts at
+                the head of the feed. `Position` reads are strictly-after,
+                which matches the legacy exclusive predicate exactly, so
+                resume semantics are preserved.
 
         Yields:
-            StoredEvent instances in global position order.
+            EventEnvelope instances in global position order.
         """
-        options = ReadOptions(
-            from_position=from_position,
-            tenant_id=tenant_id,
-        )
-
-        async for event in self._source.read_all(options):
-            yield event
+        async for envelope in self._source.read_all(
+            from_position,
+            FeedReadOptions(tenant_id=tenant_id),
+        ):
+            yield envelope
 
     async def _write_batch(
         self,
         migration_id: UUID,
         tenant_id: UUID,
-        events: list[StoredEvent],
-    ) -> int:
+        events: list[EventEnvelope],
+    ) -> Position | None:
         """
         Write a batch of events to target store.
 
-        Groups events by aggregate and writes them in order to
-        maintain proper versioning in the target store.
+        Groups events by stream and writes them in order to maintain
+        proper versioning in the target store.
+
+        With a `position_mapper` configured, events are appended one at a
+        time so that each append's `AppendResult.position` -- the exact
+        target position of that single event -- can be recorded. Without
+        one, each stream's events are appended as a single batch, falling
+        back to per-event appends when the batch straddles events that
+        are already present (see `_copy_stream_events_individually`).
+
+        An event already present in the target (`DuplicateEventError`)
+        counts as already-copied and the copy continues; this is what
+        makes a resumed copy converge.
 
         Args:
             migration_id: ID of the migration.
             tenant_id: Tenant UUID.
-            events: List of StoredEvent instances to write.
+            events: List of EventEnvelope instances to write.
 
         Returns:
-            The last target position written.
+            The last target position written, or None if nothing was
+            appended (every event was already present).
         """
         with self._tracer.span(
             "eventsource.bulk_copier.write_batch",
@@ -542,52 +565,62 @@ class BulkCopier:
                 "batch_size": len(events),
             },
         ):
-            # Group events by aggregate for proper versioning
-            # Events may come from different aggregates
-            aggregates: dict[tuple[UUID, str], list[StoredEvent]] = {}
+            # Group events by stream for proper versioning
+            # Events may come from different streams
+            streams: dict[tuple[UUID, str], list[EventEnvelope]] = {}
 
-            for event in events:
-                key = (event.aggregate_id, event.aggregate_type)
-                if key not in aggregates:
-                    aggregates[key] = []
-                aggregates[key].append(event)
+            for envelope in events:
+                key = (envelope.stream_id.aggregate_id, envelope.stream_id.category)
+                if key not in streams:
+                    streams[key] = []
+                streams[key].append(envelope)
 
-            last_target_position = 0
+            last_target_position: Position | None = None
 
-            # Write each aggregate's events
-            for (aggregate_id, aggregate_type), agg_events in aggregates.items():
-                # Get current version in target
-                try:
-                    current_version = await self._target.get_stream_version(
-                        aggregate_id,
-                        aggregate_type,
-                    )
-                except Exception:
-                    current_version = 0
+            # Write each stream's events. A group is never empty -- it only
+            # exists because an event was added to it -- so the adapters'
+            # empty-batch ValueError cannot fire here.
+            for (aggregate_id, aggregate_type), agg_events in streams.items():
+                stream = StreamId(aggregate_id=aggregate_id, category=aggregate_type)
 
-                # Convert StoredEvent back to DomainEvent for append
-                domain_events = [e.event for e in agg_events]
-
-                result = await self._target.append_events(
-                    aggregate_id,
-                    aggregate_type,
-                    domain_events,
-                    current_version,
-                )
-
-                last_target_position = max(last_target_position, result.global_position)
-
-                # Record position mappings if mapper available
-                if self._position_mapper:
-                    for i, stored_event in enumerate(agg_events):
-                        # Target position is estimated; actual may vary
-                        target_pos = result.global_position - len(agg_events) + i + 1
-                        await self._position_mapper.record_mapping(
-                            migration_id,
-                            stored_event.global_position,
-                            target_pos,
-                            stored_event.event_id,
+                if self._position_mapper is None:
+                    try:
+                        current_version = await self._target.get_stream_version(stream)
+                    except Exception:
+                        current_version = 0
+                    try:
+                        result = await self._target.append(
+                            stream,
+                            [e.event for e in agg_events],
+                            ExpectedVersion.exact(current_version),
                         )
+                        last_target_position = result.position
+                        continue
+                    except DuplicateEventError:
+                        # At least one event of the group is already in
+                        # the target (a dual-write mirror landed it, or a
+                        # previous run copied it). The group may still
+                        # contain events that are NOT there -- skipping it
+                        # wholesale would advance the checkpoint over
+                        # events that never reached the target -- so fall
+                        # through to per-event appends.
+                        logger.debug(
+                            "Stream %s batch straddles already-present events; retrying per event",
+                            stream.render(),
+                        )
+                    except OptimisticLockError:
+                        # A dual-write mirror advanced the stream between
+                        # the version read and this append; re-read and
+                        # append per event.
+                        logger.debug(
+                            "Stream %s advanced concurrently during batch append; "
+                            "retrying per event",
+                            stream.render(),
+                        )
+
+                pos = await self._copy_stream_events_individually(migration_id, stream, agg_events)
+                if pos is not None:
+                    last_target_position = pos
 
             logger.debug(
                 "Wrote batch of %d events for migration %s",
@@ -595,3 +628,94 @@ class BulkCopier:
                 migration_id,
             )
             return last_target_position
+
+    # Bounded retries for the copier-vs-mirror append race. With the
+    # interceptor mirroring at exact pre-append source versions, a mirror
+    # can only land on a fully converged stream, so a conflict here
+    # resolves within a re-read or two; sustained conflict means something
+    # other than the mirror is writing the target and the copy must fail
+    # honestly rather than spin.
+    _MAX_APPEND_CONFLICT_RETRIES = 3
+
+    async def _copy_stream_events_individually(
+        self,
+        migration_id: UUID,
+        stream: StreamId,
+        agg_events: list[EventEnvelope],
+    ) -> Position | None:
+        """Append one stream's events one at a time, tolerating a live mirror.
+
+        Used for the per-event (position-mapping) path and as the fallback
+        when a batched append collides with events a dual-write mirror has
+        already delivered. Per event:
+
+        - `DuplicateEventError`: already in the target; counts as copied.
+          No position mapping is recorded -- the duplicate sits at a
+          target position this run never observed, so a mapping would be
+          invented. The stream version did not move (nothing appended),
+          so the local version bookkeeping stands.
+        - `OptimisticLockError`: a mirror advanced the stream between the
+          version read and this append. Re-read the version and retry;
+          the retry raises `DuplicateEventError` if the mirror landed
+          this very event. Bounded by `_MAX_APPEND_CONFLICT_RETRIES`.
+
+        Returns:
+            The last target position written, or None if every event was
+            already present.
+
+        Raises:
+            BulkCopyError: If a conflict persists past the retry bound.
+        """
+        try:
+            current_version = await self._target.get_stream_version(stream)
+        except Exception:
+            current_version = 0
+        last_target_position: Position | None = None
+
+        for envelope in agg_events:
+            result = None
+            for _attempt in range(self._MAX_APPEND_CONFLICT_RETRIES + 1):
+                try:
+                    result = await self._target.append(
+                        stream,
+                        [envelope.event],
+                        ExpectedVersion.exact(current_version),
+                    )
+                    break
+                except DuplicateEventError:
+                    logger.debug(
+                        "Event %s already present in target; counting as copied",
+                        envelope.event.event_id,
+                    )
+                    break
+                except OptimisticLockError:
+                    current_version = await self._target.get_stream_version(stream)
+            else:
+                raise BulkCopyError(
+                    migration_id,
+                    envelope.position,
+                    f"stream {stream.render()} kept moving under the copier: "
+                    f"append conflicted {self._MAX_APPEND_CONFLICT_RETRIES + 1} times",
+                )
+
+            if result is None:
+                continue
+
+            current_version += 1
+            # Appends within a run are already in ascending target order,
+            # so the last one wins.
+            last_target_position = result.position
+
+            if (
+                self._position_mapper is not None
+                and envelope.position is not None
+                and result.position is not None
+            ):
+                await self._position_mapper.record_mapping(
+                    migration_id,
+                    envelope.position,
+                    result.position,
+                    envelope.event.event_id,
+                )
+
+        return last_target_position

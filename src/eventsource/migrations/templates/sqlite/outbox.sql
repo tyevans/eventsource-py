@@ -23,8 +23,12 @@
 -- =============================================================================
 
 CREATE TABLE IF NOT EXISTS event_outbox (
-    -- Auto-incrementing ID for ordering
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- Outbox entry identity (UUID as TEXT, 36 characters, hyphenated).
+    -- No DEFAULT: SQLite has no native UUID generator to mirror
+    -- PostgreSQL's `gen_random_uuid()`, and the adapter always supplies
+    -- the id. Ordering comes from `created_at`, which
+    -- `get_pending_events` already orders by -- not from a rowid.
+    id TEXT PRIMARY KEY,
 
     -- Reference to the original event (UUID as TEXT)
     -- Note: No FK constraint because events table may be partitioned

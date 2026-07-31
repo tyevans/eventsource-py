@@ -22,11 +22,14 @@ from uuid import uuid4
 import pytest
 import pytest_asyncio
 
+from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
+from eventsource.adapters.memory.dlq import InMemoryDLQRepository
+from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.bus.memory import InMemoryEventBus
+from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
-from eventsource.repositories.checkpoint import InMemoryCheckpointRepository
-from eventsource.repositories.dlq import InMemoryDLQRepository
-from eventsource.stores.in_memory import InMemoryEventStore
+from eventsource.ports.envelopes import EventEnvelope
+from eventsource.ports.positions import Position
 from eventsource.subscriptions import SubscriptionConfig, SubscriptionManager
 from eventsource.subscriptions.error_handling import (
     ErrorCategory,
@@ -65,6 +68,14 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.slow]
 # =============================================================================
 # Additional Test Projections for Resilience Testing
 # =============================================================================
+
+
+async def position_after(store, n: int):
+    """The token of the nth (1-based) event in the feed."""
+    envelopes = [e async for e in store.read_all()]
+    position = envelopes[n - 1].position
+    assert position is not None
+    return position
 
 
 class ConcurrencyTrackingProjection:
@@ -497,7 +508,7 @@ class TestGracefulShutdown:
         # Checkpoint should be saved
         position = await in_memory_checkpoint_repo.get_position("CollectingProjection")
         assert position is not None
-        assert position >= 50
+        assert position >= await position_after(in_memory_event_store, 50)
 
     async def test_forced_shutdown_after_timeout(
         self,
@@ -941,7 +952,6 @@ class TestErrorHandlingIntegration:
         )
 
         # Simulate error handling
-        from eventsource.stores.interface import StoredEvent
 
         test_event = SubTestOrderCreated(
             aggregate_id=uuid4(),
@@ -949,18 +959,17 @@ class TestErrorHandlingIntegration:
             amount=100.0,
         )
 
-        # Create a minimal stored event using correct constructor
-        stored_event = StoredEvent(
+        envelope = EventEnvelope(
             event=test_event,
-            stream_id=f"{test_event.aggregate_id}:TestOrder",
-            stream_position=1,
-            global_position=1,
+            stream_id=StreamId(aggregate_id=test_event.aggregate_id, category="TestOrder"),
+            stream_version=1,
+            position=Position(store_id="memory", key=(1,)),
             stored_at=datetime.now(UTC),
         )
 
         await error_handler.handle_error(
             error=ValueError("Test error"),
-            stored_event=stored_event,
+            envelope=envelope,
             event=test_event,
         )
 

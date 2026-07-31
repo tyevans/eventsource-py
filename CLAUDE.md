@@ -63,9 +63,17 @@ pre-commit run --all-files
 ```
 src/eventsource/
   domain/           # Entities ring: AggregateRoot, DeclarativeAggregate, StreamId (pure: stdlib + pydantic only)
-  application/      # Use-case ring: AggregateRepository, snapshot policy/scheduler collaborators
-  ports/            # Boundary interfaces: Snapshot/SnapshotStore, store/bus/envelope/position ports
-  adapters/         # Interface adapters: memory/postgresql/sqlite snapshot + event store implementations
+  application/      # Use-case ring: AggregateRepository, snapshot policy/scheduler collaborators;
+                    #   application/projections/: Projection, DeclarativeProjection, coordinator,
+                    #   checkpoint/DLQ functions, retry policies (DatabaseProjection is an adapter, not here)
+  ports/            # Boundary interfaces: Snapshot/SnapshotStore, ProjectionCheckpoints/SubscriptionPositions/
+                    #   CheckpointRepository, DLQRepository, OutboxRepository/outbox_event_data,
+                    #   store/bus/envelope/position ports
+  adapters/         # Interface adapters: memory/postgresql/sqlite snapshot + event store implementations;
+                    #   adapters/sql/: dialect-parameterized checkpoint, DLQ, and DatabaseProjection (both
+                    #   PostgreSQL and SQLite); adapters/memory/: in-memory checkpoint, DLQ, and outbox
+                    #   repositories; adapters/postgresql/ and adapters/sqlite/: per-technology outbox
+                    #   repositories (not dialect-parameterized -- SQLite takes a raw aiosqlite.Connection)
   bus/              # EventBus interface + InMemory, Redis, RabbitMQ, Kafka backends (implementations colocated)
   events/           # DomainEvent (pydantic BaseModel), EventRegistry
   handlers/         # @handles decorator for declarative event routing
@@ -74,14 +82,13 @@ src/eventsource/
   migrations/       # SQL schema files (append-only)
   multitenancy/     # Tenant context (contextvars), scopes, TenantDomainEvent
   observability/    # OpenTelemetry tracing integration (optional dep)
-  projections/      # Projection, DeclarativeProjection, DatabaseProjection
   readmodels/       # ReadModelProjection
-  repositories/     # Checkpoint, DLQ, Outbox repos (postgres, sqlite, memory backends)
   serialization/    # JSON encoding (EventSourceJSONEncoder)
-  stores/           # EventStore interface + PostgreSQL, SQLite, InMemory implementations
   subscriptions/    # Subscription lifecycle: manager, runners, retry, health, flow control
-  sync/             # SyncEventStoreAdapter (wraps async store for sync callers)
-  testing/          # Test helpers: assertions, BDD, builder, harness
+  sync/             # SyncEventStoreAdapter (wraps a FullEventStore for sync callers)
+  testing/          # Test helpers: assertions, BDD, builder, harness;
+                    #   testing/conformance_ports/: backend conformance suites for the store/snapshot/
+                    #   checkpoint/DLQ ports (EventStoreConformanceSuite's replacement)
   gdpr/             # GDPR compliance utilities
   _internal/        # Internal helpers (not public API)
   config.py         # Configuration utilities
@@ -95,7 +102,7 @@ src/eventsource/
 - **Async-first**: All store/bus/projection interfaces are async. `SyncEventStoreAdapter` wraps async for sync callers.
 - **Pydantic v2**: DomainEvent is a Pydantic BaseModel. Event data validated/serialized via pydantic. `model_config = ConfigDict(frozen=True)`.
 - **Mixed Protocols + ABCs**: `protocols.py` has both Python Protocols (EventHandler, SyncEventHandler, FlexibleEventHandler) and ABCs (EventSubscriber, AsyncEventHandler). Protocols enable structural subtyping; ABCs are used where additional methods are needed.
-- **Backend-agnostic**: EventStore, EventBus, repositories all have multiple backend implementations behind shared interfaces defined in `interface.py` or `base.py` files.
+- **Backend-agnostic**: EventStore, EventBus, repositories all have multiple backend implementations behind shared interfaces defined in `ports/`.
 - **Optimistic locking**: Aggregates use `expected_version` for concurrency control via `OptimisticLockError`.
 
 ## Key Patterns

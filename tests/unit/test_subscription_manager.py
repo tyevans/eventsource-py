@@ -19,10 +19,12 @@ from uuid import uuid4
 
 import pytest
 
+from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
+from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.bus.memory import InMemoryEventBus
+from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
-from eventsource.repositories.checkpoint import InMemoryCheckpointRepository
-from eventsource.stores.in_memory import InMemoryEventStore
+from eventsource.ports.positions import ExpectedVersion
 from eventsource.subscriptions import (
     CheckpointStrategy,
     SubscriptionAlreadyExistsError,
@@ -90,8 +92,8 @@ class CustomerProjection(MockSubscriber):
 
 @pytest.fixture
 def event_store() -> InMemoryEventStore:
-    """Create a fresh InMemoryEventStore."""
-    return InMemoryEventStore(enable_tracing=False)
+    """Create a fresh InMemoryEventStore (a real GlobalEventFeed)."""
+    return InMemoryEventStore()
 
 
 @pytest.fixture
@@ -140,11 +142,10 @@ async def add_events_to_store(
     for i in range(count):
         aggregate_id = uuid4()
         event = ManagerTestEvent(aggregate_id=aggregate_id, data=f"event_{i}")
-        await store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="ManagerAggregate",
-            events=[event],
-            expected_version=0,
+        await store.append(
+            StreamId(aggregate_id=aggregate_id, category="ManagerAggregate"),
+            [event],
+            ExpectedVersion.no_stream(),
         )
         events.append(event)
     return events
@@ -1240,7 +1241,7 @@ class TestGetAllStatuses:
         status = statuses["MockSubscriber"]
 
         assert status.events_processed == 10
-        assert status.position > 0
+        assert status.position is not None
         assert status.uptime_seconds >= 0
 
         await manager.stop()
@@ -1417,8 +1418,6 @@ class TestMultipleSubscriptionsLifecycle:
 
         assert order_checkpoint is not None
         assert customer_checkpoint is not None
-        assert order_checkpoint > 0
-        assert customer_checkpoint > 0
 
         await manager.stop()
 

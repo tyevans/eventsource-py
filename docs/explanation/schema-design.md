@@ -182,8 +182,10 @@ guarantee, and the design decision worth noticing is that the guarantee is
 delegated to the database. The unique constraint on
 `(aggregate_id, aggregate_type, version)` means two concurrent writers who both
 believe an aggregate is at version 7 cannot both write version 8; one of them
-gets a constraint violation. `PostgreSQLEventStore.append_events` catches the
-`IntegrityError`, matches `uq_events_aggregate_version` in the message,
+gets a constraint violation. `PostgreSQLEventStore.append` catches the
+`IntegrityError`, classifies it via `_classify_integrity_error` (which reads
+`constraint_name` off the underlying `asyncpg.exceptions.UniqueViolationError`,
+falling back to a substring match only if that attribute is unavailable),
 re-reads `MAX(version)` for the aggregate and raises `OptimisticLockError` with
 the actual version. The SQLite store does the same against
 `aiosqlite.IntegrityError`. The application never has to hold a lock or
@@ -287,9 +289,10 @@ event_id        UUID NOT NULL UNIQUE,
 sequence, in insertion order. It answers "where am I in the stream of everything?" — it is a
 monotonic cursor over the whole store, and it is the primary key because that
 is also the order the table is most usefully clustered and scanned in.
-Subscriptions resume from it, `get_global_position()` reports the current high
-water mark, and `append_events` returns the last one it wrote so a caller knows
-where its own writes landed.
+Subscriptions resume from it, `current_position()` reports the current high
+water mark as an opaque `Position`, and `append` returns an `AppendResult`
+whose `position` field is the position of the first event it wrote so a caller
+knows where its own writes landed.
 
 `event_id` is **assigned by the client, before the write** — it is
 `uuid4()` by default on `DomainEvent`. It answers "which event is this?" and it
@@ -298,13 +301,16 @@ into `event_outbox`, into `dead_letter_queue`, and into whatever deduplication
 table a downstream consumer keeps. It is `UNIQUE` but not the primary key,
 because a UUID makes a poor ordering key and no ordering at all.
 
-That separation is what lets the store be idempotent on append without being
-lossy on order. `PostgreSQLEventStore._do_append_events` checks
-`SELECT 1 FROM events WHERE event_id = :event_id` before each insert and skips
-events that are already stored, so a retried append does not duplicate or
-error. The `UNIQUE` constraint on `event_id` is the backstop for the race that
-check cannot cover — two processes appending the same event concurrently — and
-means the invariant holds even when the pre-check loses.
+That separation is what lets the store detect a duplicate append without being
+lossy on order. There is no pre-check `SELECT` for `event_id` on the write
+path — `PostgreSQLEventStore.append` inserts unconditionally and relies
+entirely on the `UNIQUE` constraint to catch a repeat. When the insert
+violates it, `_classify_integrity_error` recognizes the `events_event_id_key`
+constraint and the store raises `DuplicateEventError` rather than silently
+skipping the row. A retried append with the same `event_id` is therefore
+rejected, not absorbed — callers that want at-least-once retry semantics on
+top of this need to catch `DuplicateEventError` themselves and treat it as
+"already applied."
 
 A single identifier cannot do both jobs. A UUID primary key gives identity but
 no replay order. A bare sequence gives order but no identity that means
@@ -315,7 +321,7 @@ positions change, while the `event_id` values do not.
 
 The obvious alternative to a sequence is `timestamp`, and it does not work.
 
-`timestamp` in this schema is **domain time**: `append_events` writes
+`timestamp` in this schema is **domain time**: `append` writes
 `event.occurred_at` into it, which is a value the application supplies. It can
 be backdated deliberately when importing history. It can go backwards under
 clock skew between two writers. Two events can share it exactly. None of that
@@ -341,12 +347,17 @@ forward is `WHERE global_position > :from_position ... ORDER BY global_position
 ASC`. Nothing in that loop consults a clock.
 
 The distinction is not that timestamps are useless — it is that they are a
-*query* facility rather than a *resume* facility. `get_events_by_type()` takes
-a `from_timestamp` and orders by `timestamp ASC`, which is the right shape for
-"show me what happened to Orders since Tuesday" and the wrong shape for a
-cursor, precisely because a later-arriving backdated event would never be
-returned to a caller that had already advanced past it. Timestamp filters are
-also what enable partition pruning on `events_partitioned`, so they earn their
+*query* facility rather than a *resume* facility. There is no per-event-type
+query on the current port at all (the old `get_events_by_type()` has no
+replacement); the closest surviving facility is `read_category()`, which reads
+every stream for one `aggregate_type` and takes a `CategoryReadOptions` with a
+`from_timestamp` bound. Even there the bound is filtered and ordered against
+`created_at` (storage time — `EventEnvelope.stored_at`), not the domain
+`timestamp` column, which is the right shape for "show me everything recorded
+for Orders since this point" and still the wrong shape for a resume cursor,
+for the same reason as above: it orders on insertion time as a convenience,
+not as a total order the way `global_position` is. Timestamp filters are also
+what enable partition pruning on `events_partitioned`, so they earn their
 place — just not as the thing a consumer stores.
 
 The `events` table does also keep `created_at TIMESTAMPTZ NOT NULL DEFAULT
@@ -375,28 +386,31 @@ This is the single most important line in the schema. It is not a data-quality
 check; it is the concurrency control mechanism for the entire library. The
 database — not the application — arbitrates concurrent appends to an aggregate.
 
-The append path *starts* in Python. `_do_append_events` reads
+The append path *starts* in Python. `append` reads
 `SELECT COALESCE(MAX(version), 0)` for the `(aggregate_id, aggregate_type)`
-pair, compares the result against the caller's `expected_version`, and raises
-`OptimisticLockError(aggregate_id, expected_version, current_version)` on
-mismatch. The sentinels in `ExpectedVersion` shape that comparison:
-`NO_STREAM` requires the current version to be 0, `STREAM_EXISTS` requires it
-not to be, and `ANY` skips the check entirely. It is a useful check — it fails
-fast, before any insert, with a clear error — but on its own it is a textbook
-read-then-write race. Nothing between the `SELECT` and the `INSERT` locks the
-aggregate: no `SELECT ... FOR UPDATE`, no advisory lock, no serializable
-isolation requirement. Two processes can both read version 7, both conclude
-they may write version 8, and both proceed. Under `ExpectedVersion.ANY` there
-is no application-side check at all.
+pair, then passes the result and the caller's `expected` (an `ExpectedVersion`)
+to `_check_expected`, which raises `OptimisticLockError(aggregate_id,
+expected_version, current_version)` on mismatch. `ExpectedVersion.kind` shapes
+that comparison: `"no_stream"` requires the current version to be 0,
+`"stream_exists"` requires it not to be, `"exact"` requires it to equal
+`expected.version`, and `"any"` skips the check entirely. It is a useful
+check — it fails fast, before any insert, with a clear error — but on its own
+it is a textbook read-then-write race. Nothing between the `SELECT` and the
+`INSERT` locks the aggregate: no `SELECT ... FOR UPDATE`, no advisory lock, no
+serializable isolation requirement. Two processes can both read version 7,
+both conclude they may write version 8, and both proceed. Under
+`ExpectedVersion.any()` there is no application-side check at all.
 
 The constraint is what makes that safe. One insert of version 8 commits; the
 other violates `uq_events_aggregate_version` and the driver raises
-`IntegrityError`. `_do_append_events` catches it, rolls the transaction back,
-confirms the failure was this constraint by matching
-`"uq_events_aggregate_version"` against the lowercased exception text, re-reads
-the actual `MAX(version)`, and raises `OptimisticLockError` with the true
-current version. An `IntegrityError` from anything else — a duplicate
-`event_id`, say — is re-raised untouched.
+`IntegrityError`. `append` catches it, rolls the transaction back, and hands
+the exception to `_classify_integrity_error`, which confirms the failure was
+this constraint by reading `constraint_name` off the underlying
+`asyncpg.exceptions.UniqueViolationError` (falling back to a substring match
+on the stringified exception only if that attribute is missing), re-reads the
+actual `MAX(version)`, and raises `OptimisticLockError` with the true current
+version. An `IntegrityError` from anything else — a duplicate `event_id`,
+say — is re-raised untouched.
 
 The result is that both paths converge on the same exception. A caller cannot
 tell whether its conflict was caught by the pre-check or by the constraint, and
@@ -404,27 +418,32 @@ does not need to: it reloads the aggregate and retries either way. The
 pre-check is an optimisation that avoids a doomed insert in the common
 uncontended case; the constraint is the guarantee.
 
-`SQLiteEventStore.append_events` follows the same structure against
-`aiosqlite.IntegrityError`, with one difference worth knowing: the SQLite
-schema declares the constraint inline and unnamed —
-`UNIQUE (aggregate_id, aggregate_type, version)` — so there is no name to match
-on. The store instead checks that the lowercased message contains `"unique"`
-along with `"aggregate_id"` or `"version"`, which is what SQLite's
-`UNIQUE constraint failed: events.aggregate_id, events.aggregate_type,
-events.version` produces. It is a string heuristic over an error message, and
-it is broader than the PostgreSQL match — a unique violation on some *other*
-column named `version` in a future table would be misclassified. Nothing today
-triggers that, but it is a reason to prefer PostgreSQL where concurrency
-actually matters.
+`SQLiteEventStore.append` follows the same structure against
+`aiosqlite.IntegrityError`, with one difference worth knowing: SQLite gives no
+`constraint_name`-style attribute to introspect the way `asyncpg` does, so the
+store always classifies by matching the lowercased exception text — checking
+for `"event_id"` for the identity conflict, and `"unique"` together with
+`"aggregate_id"` or `"version"` for the version conflict, which is what
+SQLite's `UNIQUE constraint failed: events.aggregate_id, events.aggregate_type,
+events.version` produces. It is a string heuristic over an error message
+across the board on this backend (PostgreSQL only falls back to one when no
+`constraint_name` is available), and it is broader than the primary
+PostgreSQL match — a unique violation on some *other* column named `version`
+in a future table would be misclassified. Nothing today triggers that, but it
+is a reason to prefer PostgreSQL where concurrency actually matters. Any
+non-`IntegrityError` failure mid-batch is also rolled back explicitly on
+SQLite, since the store holds one long-lived connection across calls and a
+dirty open transaction would otherwise leak into the next `append`'s commit.
 
 The consequence of pushing the check into the database is that **correctness
 does not depend on the application's deployment topology**. There is no lock to
 acquire, no leader to elect, no requirement that writers for a given aggregate
 be routed to the same process. Deploy twenty replicas across three machines and
 the guarantee holds, because the arbiter is the one component all of them
-already share. This is why the PostgreSQL advisory locks in `eventsource.locks`
-exist for coordinating *operations* — tenant cutover, migration exclusivity —
-and not for guarding aggregate writes. Aggregate writes need no lock.
+already share. This is why the PostgreSQL advisory locks in
+`eventsource.adapters.postgresql.locks` exist for coordinating *operations* —
+tenant cutover, migration exclusivity — and not for guarding aggregate writes.
+Aggregate writes need no lock.
 
 The costs are real and worth stating:
 

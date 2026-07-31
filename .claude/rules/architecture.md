@@ -20,21 +20,33 @@ The rings, innermost first:
    domain value objects, domain exceptions. Pure: stdlib + pydantic only. No I/O.
    `domain/aggregate.py` (`AggregateRoot`, `DeclarativeAggregate`) lives here now;
    `aggregates/` is no longer a transitional location for it.
-2. **Use cases** (`application/` — during transition `projections/`,
-   `subscriptions/`, `migration/`, `handlers/`): Application business rules —
+2. **Use cases** (`application/` — during transition `subscriptions/`,
+   `migration/`, `handlers/`): Application business rules —
    aggregate repositories, projection engines, subscription lifecycle, migration
    orchestration. Depends on entities and on the boundary ports it owns. Never on a
    concrete adapter, driver, or framework. `application/aggregates/`
    (`AggregateRepository` plus the `SnapshotPolicy`/`SnapshotScheduler`
-   collaborators) is settled, not transitional.
+   collaborators) is settled, not transitional; so is `application/projections/`
+   (`Projection`/`CheckpointTrackingProjection`/`DeclarativeProjection`, the
+   `ProjectionCoordinator`/`ProjectionRegistry`/`SubscriberRegistry` collaborators,
+   the checkpoint and DLQ functions, and the retry policies) — `projections/` is no
+   longer a transitional location for any of it.
 3. **Interface adapters** (`adapters/` — during transition `stores/`,
-   `repositories/`, `bus/`, `locks/` backend modules): Gateways that
+   `bus/`, `locks/` backend modules): Gateways that
    implement the ports for a specific technology, converting between the use-case
    format (value objects, domain events) and the storage/wire format (rows, JSON,
    frames). Snapshot store backends (`InMemorySnapshotStore`,
    `PostgreSQLSnapshotStore`, `SQLiteSnapshotStore`) live under `adapters/memory/`,
    `adapters/postgresql/`, `adapters/sqlite/`; `snapshots/` is no longer a
-   transitional adapter location.
+   transitional adapter location. Checkpoint and DLQ adapters (dialect-parameterized
+   for PostgreSQL and SQLite, plus `DatabaseProjection`) live under `adapters/sql/`;
+   the in-memory checkpoint and DLQ adapters live under `adapters/memory/`.
+   Outbox adapters are per-technology rather than dialect-parameterized — one
+   module each under `adapters/memory/`, `adapters/postgresql/`, and
+   `adapters/sqlite/`, since the SQLite implementation takes a raw
+   `aiosqlite.Connection` rather than a sqlalchemy engine or session. The
+   `repositories/` package no longer exists — it is not a transitional
+   location for anything.
 4. **Frameworks & drivers**: sqlalchemy, asyncpg, aiosqlite, redis, aiokafka,
    aio-pika. Imported only inside the adapter that needs them, always guarded
    (see below). Driver types never appear in port signatures.

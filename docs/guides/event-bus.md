@@ -444,10 +444,10 @@ recorded.
 async def place_order(order: Order) -> None:
     events = order.get_uncommitted_events()
 
-    await store.append_events(
-        aggregate_id=order.aggregate_id,
-        events=events,
-        expected_version=order.version,
+    await store.append(
+        StreamId(category="Order", aggregate_id=order.aggregate_id),
+        events,
+        ExpectedVersion.exact(order.version),
     )
     await bus.publish(events)          # only after the append succeeded
 
@@ -761,14 +761,13 @@ reference to the subscriber instance if you intend to detach it later. On
 
 Writing `subscribed_to()` by hand reintroduces the duplication you were trying
 to remove — the list has to stay in sync with the handler methods.
-`DeclarativeProjection` (from `eventsource.projections`) closes that loop: it
+`DeclarativeProjection` (from `eventsource`) closes that loop: it
 discovers methods decorated with `@handles(EventType)` at construction time and
 auto-generates `subscribed_to()` from them, so the decorators are the single
 source of truth.
 
 ```python
-from eventsource import handles
-from eventsource.projections import DeclarativeProjection
+from eventsource import DeclarativeProjection, handles
 
 
 class OrderProjection(DeclarativeProjection):

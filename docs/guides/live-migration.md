@@ -64,18 +64,19 @@ uv add "eventsource-py[postgresql]"   # pulls in asyncpg
 
 The control plane is PostgreSQL-only. `get_schema("migration")` ships a
 PostgreSQL template only (there is no SQLite equivalent), and cutover
-coordination goes through `PostgreSQLLockManager` from `eventsource.locks`.
-The stores you migrate between can be anything implementing `EventStore`; the
-database that holds migration state cannot.
+coordination goes through `PostgreSQLLockManager` from `eventsource.adapters.postgresql.locks`.
+The stores you migrate between can be anything implementing `FullEventStore`
+(the combined ports surface: append, stream read, event lookup, global feed,
+and category query); the database that holds migration state cannot.
 
 ### Required components
 
-**Source store** -- the `EventStore` the tenant lives on today. It is the first
-positional argument to `MigrationCoordinator(source_store=...)`, alongside the
-keyword-only `source_store_id` string (default `"default"`) used as its key in
-routing records.
+**Source store** -- the `FullEventStore` the tenant lives on today. It is the
+first positional argument to `MigrationCoordinator(source_store=...)`,
+alongside the keyword-only `source_store_id` string (default `"default"`) used
+as its key in routing records.
 
-**Target store** -- a second `EventStore` instance, already provisioned with the
+**Target store** -- a second `FullEventStore` instance, already provisioned with the
 events schema and reachable from the coordinator process. You pass it to
 `start_migration(tenant_id, target_store, target_store_id, ...)`. It does not
 need to be the same backend as the source, but it should hold none of this
@@ -83,7 +84,7 @@ tenant's events: nothing validates emptiness, and pre-existing events will skew
 the bulk-copy position mappings and the consistency check.
 
 **PostgreSQL advisory lock manager** -- `PostgreSQLLockManager(session_factory)`
-from `eventsource.locks`, built from a SQLAlchemy
+from `eventsource.adapters.postgresql.locks`, built from a SQLAlchemy
 `async_sessionmaker[AsyncSession]`. It is a keyword-only, optional constructor
 argument, but the coordinator raises `MigrationError` when it needs to build its
 `CutoverManager` without one, so treat it as required for any migration you
@@ -98,6 +99,15 @@ repository implementations each take an `AsyncConnection` or `AsyncEngine`. The
 fourth control-plane repository, `MigrationAuditLogRepository`, is not passed to
 the coordinator -- you construct it separately and query it directly (see
 Observability). Steps 1-3 wire all of these up.
+
+Passing a `PositionMapper` is not by itself enough to get position mappings
+recorded: mappings are only written when the coordinator was constructed with
+one **and** `MigrationConfig.position_mapping_enabled` is `True`, which is
+the default. That gate has a cost -- with a mapper attached, the bulk copier
+appends one event at a time so each target position can be recorded, where
+it otherwise batches. Set `position_mapping_enabled=False` to keep the
+batched path if you do not need checkpoint translation (`migrate_subscriptions`
+will then have nothing to translate against).
 
 Two application-side assumptions carry through the whole guide. Tenant context
 must be propagated on every store operation, since routing decisions are keyed
@@ -130,11 +140,37 @@ The forward transitions the coordinator drives are:
 
 - `PENDING -> BULK_COPY` on `start_migration()`
 - `BULK_COPY -> DUAL_WRITE` once the historical copy is done
-- `DUAL_WRITE -> CUTOVER` once sync lag is under `cutover_max_lag_events`
+- `DUAL_WRITE -> CUTOVER` once sync lag is within `cutover_max_lag_events` (0 by default -- exactly zero)
 - `CUTOVER -> COMPLETED` once routing has flipped
 
 `MigrationRepository` enforces this with a `VALID_TRANSITIONS` table, so an
 out-of-order phase update is rejected rather than corrupting state.
+
+Sync lag is anchored to the last source position the target has actually
+copied; once `BULK_COPY` completes, that anchor only advances through the
+dual-write mirror, and a mirror failure during `DUAL_WRITE` clamps it in
+place rather than letting the reported lag drift wrong.
+
+When that happens, run an in-phase resync rather than aborting:
+
+    remaining = await coordinator.run_resync_pass(migration.id)
+    while remaining:
+        remaining = await coordinator.run_resync_pass(migration.id)
+
+Each call runs one bounded catch-up copy pass while the migration stays in
+`DUAL_WRITE`, and returns the number of unabsorbed mirror failures left. A
+return of 0 means the lag anchor is unclamped and cutover can proceed once
+lag drains. Bounding the retries is your policy, not the library's: a count
+that stops falling is a mirror problem to investigate, not a pass to repeat.
+
+> **Warning — a nonzero `cutover_max_lag_events` accepts event loss.** The lag
+> it tolerates is not optimistic slack: `safe_lag_anchor` guarantees every
+> counted event is provably absent from the target. Writes are paused for the
+> whole cutover and nothing in the sequence copies the residue, so any lag
+> remaining at the routing switch is events the target never receives while it
+> becomes authoritative. The default is 0. If a cutover refuses because lag
+> will not drain, the remedy is `run_resync_pass` (above), not a higher
+> threshold.
 
 `ABORTED` and `FAILED` are the two off-ramps. `abort_migration()` is available
 from `PENDING`, `BULK_COPY`, and `DUAL_WRITE`; `FAILED` is reachable from

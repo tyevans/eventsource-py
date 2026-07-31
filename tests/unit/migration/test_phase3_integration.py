@@ -25,6 +25,8 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from eventsource.adapters.memory import InMemoryEventStore
+from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.migration.consistency import (
     ConsistencyVerifier,
@@ -52,11 +54,25 @@ from eventsource.migration.subscription_migrator import (
     SubscriptionMigrator,
 )
 from eventsource.migration.write_pause import WritePauseManager
-from eventsource.stores.in_memory import InMemoryEventStore
+from eventsource.ports.positions import ExpectedVersion, Position
 
 # =============================================================================
 # Test Event Classes
 # =============================================================================
+
+
+SOURCE_STORE_ID = "source-store"
+TARGET_STORE_ID = "target-store"
+
+
+def source_pos(n: int) -> Position:
+    """A source-store position token for the int the mapper is keyed on."""
+    return Position(store_id=SOURCE_STORE_ID, key=(n,))
+
+
+def target_pos(n: int) -> Position:
+    """A target-store position token, as the migrator writes back."""
+    return Position(store_id=TARGET_STORE_ID, key=(n,))
 
 
 class SampleTestEvent(DomainEvent):
@@ -121,7 +137,7 @@ class InMemoryPositionMappingRepository:
     async def find_by_source_position(
         self,
         migration_id: UUID,
-        source_position: int,
+        source_position: Position,
     ) -> PositionMapping | None:
         """Find mapping by exact source position."""
         for mapping in self._mappings:
@@ -132,7 +148,7 @@ class InMemoryPositionMappingRepository:
     async def find_by_target_position(
         self,
         migration_id: UUID,
-        target_position: int,
+        target_position: Position,
     ) -> PositionMapping | None:
         """Find mapping by exact target position."""
         for mapping in self._mappings:
@@ -143,7 +159,7 @@ class InMemoryPositionMappingRepository:
     async def find_nearest_source_position(
         self,
         migration_id: UUID,
-        source_position: int,
+        source_position: Position,
     ) -> PositionMapping | None:
         """Find nearest mapping with source_position <= given position."""
         nearest: PositionMapping | None = None
@@ -181,8 +197,8 @@ class InMemoryPositionMappingRepository:
     async def list_in_source_range(
         self,
         migration_id: UUID,
-        start_position: int,
-        end_position: int,
+        start_position: Position,
+        end_position: Position,
     ) -> list[PositionMapping]:
         """List mappings within a source position range."""
         filtered = [
@@ -200,13 +216,12 @@ class InMemoryPositionMappingRepository:
     async def get_position_bounds(
         self,
         migration_id: UUID,
-    ) -> tuple[int, int] | None:
-        """Get min and max source positions."""
+    ) -> tuple[Position, Position] | None:
+        """Get first and last source positions by insertion (id) order."""
         filtered = [m for m in self._mappings if m.migration_id == migration_id]
         if not filtered:
             return None
-        positions = [m.source_position for m in filtered]
-        return (min(positions), max(positions))
+        return (filtered[0].source_position, filtered[-1].source_position)
 
     async def delete_by_migration(self, migration_id: UUID) -> int:
         """Delete all mappings for a migration."""
@@ -225,7 +240,7 @@ class InMemoryCheckpointRepository:
     def __init__(self) -> None:
         self._checkpoints: dict[str, dict] = {}
 
-    async def get_position(self, subscription_id: str) -> int | None:
+    async def get_position(self, subscription_id: str) -> Position | None:
         """Get checkpoint position for subscription."""
         checkpoint = self._checkpoints.get(subscription_id)
         if checkpoint:
@@ -235,7 +250,7 @@ class InMemoryCheckpointRepository:
     async def save_position(
         self,
         subscription_id: str,
-        position: int,
+        position: Position,
         event_id: UUID | None = None,
         event_type: str | None = None,
     ) -> None:
@@ -254,7 +269,7 @@ class InMemoryCheckpointRepository:
         @dataclass
         class CheckpointData:
             projection_name: str
-            position: int
+            position: Position
             last_event_id: UUID | None
             last_event_type: str | None
 
@@ -562,12 +577,12 @@ class MockLockManager:
         self._acquire_count += 1
 
         if self._should_fail:
-            from eventsource.locks import LockAcquisitionError
+            from eventsource.exceptions import LockAcquisitionError
 
             raise LockAcquisitionError(key, timeout or 0.0, "Mock failure")
 
         if self._fail_after is not None and self._acquire_count > self._fail_after:
-            from eventsource.locks import LockAcquisitionError
+            from eventsource.exceptions import LockAcquisitionError
 
             raise LockAcquisitionError(key, timeout or 0.0, "Mock failure after threshold")
 
@@ -604,13 +619,13 @@ class MockLockManager:
 @pytest.fixture
 def source_store() -> InMemoryEventStore:
     """Create source (shared) event store."""
-    return InMemoryEventStore(enable_tracing=False)
+    return InMemoryEventStore("source")
 
 
 @pytest.fixture
 def target_store() -> InMemoryEventStore:
     """Create target (dedicated) event store."""
-    return InMemoryEventStore(enable_tracing=False)
+    return InMemoryEventStore("target")
 
 
 @pytest.fixture
@@ -711,11 +726,10 @@ async def create_test_events(
             amount=100.0 + i,
         )
 
-        await store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type=aggregate_type,
-            events=[event],
-            expected_version=0,
+        await store.append(
+            StreamId(aggregate_id=aggregate_id, category=aggregate_type),
+            [event],
+            ExpectedVersion.no_stream(),
         )
 
     return aggregate_ids
@@ -727,9 +741,9 @@ async def get_all_tenant_events(
 ) -> list[DomainEvent]:
     """Get all events for a tenant from a store."""
     events = []
-    async for stored_event in store.read_all():
-        if stored_event.event.tenant_id == tenant_id:
-            events.append(stored_event.event)
+    async for envelope in store.read_all():
+        if envelope.event.tenant_id == tenant_id:
+            events.append(envelope.event)
     return events
 
 
@@ -741,29 +755,27 @@ async def copy_events_with_position_mapping(
     position_mapper: PositionMapper,
 ) -> int:
     """Copy events from source to target and record position mappings."""
-    events = []
-    async for stored_event in source_store.read_all():
-        if stored_event.event.tenant_id == tenant_id:
-            events.append(stored_event)
+    envelopes = []
+    async for envelope in source_store.read_all():
+        if envelope.event.tenant_id == tenant_id:
+            envelopes.append(envelope)
 
-    for stored_event in events:
-        event = stored_event.event
-        result = await target_store.append_events(
-            aggregate_id=event.aggregate_id,
-            aggregate_type=event.aggregate_type,
-            events=[event],
-            expected_version=-1,  # ANY
-        )
+    for envelope in envelopes:
+        event = envelope.event
+        stream = StreamId(aggregate_id=event.aggregate_id, category=event.aggregate_type)
+        result = await target_store.append(stream, [event], ExpectedVersion.any_())
 
-        # Record position mapping
+        # Record position mapping (real positions from each store's feed)
+        assert envelope.position is not None
+        assert result.position is not None
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=stored_event.global_position,
-            target_position=result.new_version,  # Use new version as position
+            source_position=envelope.position,
+            target_position=result.position,
             event_id=event.event_id,
         )
 
-    return len(events)
+    return len(envelopes)
 
 
 # =============================================================================
@@ -785,20 +797,20 @@ class TestPositionMappingRecording:
 
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=100,
-            target_position=50,
+            source_position=source_pos(100),
+            target_position=target_pos(50),
             event_id=event_id,
         )
 
         # Verify mapping was recorded
         result = await position_mapper.translate_position(
             migration_id=migration_id,
-            source_position=100,
+            source_position=source_pos(100),
         )
 
-        assert result.target_position == 50
+        assert result.target_position == target_pos(50)
         assert result.is_exact is True
-        assert result.source_position == 100
+        assert result.source_position == source_pos(100)
 
     @pytest.mark.asyncio
     async def test_record_batch_mappings(
@@ -808,9 +820,9 @@ class TestPositionMappingRecording:
     ) -> None:
         """Test recording multiple position mappings in batch."""
         mappings = [
-            (100, 50, uuid4()),
-            (200, 100, uuid4()),
-            (300, 150, uuid4()),
+            (source_pos(100), target_pos(50), uuid4()),
+            (source_pos(200), target_pos(100), uuid4()),
+            (source_pos(300), target_pos(150), uuid4()),
         ]
 
         count = await position_mapper.record_mappings_batch(
@@ -821,12 +833,12 @@ class TestPositionMappingRecording:
         assert count == 3
 
         # Verify all mappings were recorded
-        for source_pos, target_pos, _ in mappings:
+        for sp, tp, _ in mappings:
             result = await position_mapper.translate_position(
                 migration_id=migration_id,
-                source_position=source_pos,
+                source_position=sp,
             )
-            assert result.target_position == target_pos
+            assert result.target_position == tp
             assert result.is_exact is True
 
     @pytest.mark.asyncio
@@ -871,17 +883,17 @@ class TestPositionTranslation:
         # Record mappings
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=100,
-            target_position=50,
+            source_position=source_pos(100),
+            target_position=target_pos(50),
             event_id=uuid4(),
         )
 
         result = await position_mapper.translate_position(
             migration_id=migration_id,
-            source_position=100,
+            source_position=source_pos(100),
         )
 
-        assert result.target_position == 50
+        assert result.target_position == target_pos(50)
         assert result.is_exact is True
         assert result.nearest_source_position is None
 
@@ -895,26 +907,26 @@ class TestPositionTranslation:
         # Record mappings
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=100,
-            target_position=50,
+            source_position=source_pos(100),
+            target_position=target_pos(50),
             event_id=uuid4(),
         )
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=200,
-            target_position=100,
+            source_position=source_pos(200),
+            target_position=target_pos(100),
             event_id=uuid4(),
         )
 
         # Query position between recorded mappings
         result = await position_mapper.translate_position(
             migration_id=migration_id,
-            source_position=150,
+            source_position=source_pos(150),
         )
 
-        assert result.target_position == 50  # Nearest lower position
+        assert result.target_position == target_pos(50)  # Nearest lower position
         assert result.is_exact is False
-        assert result.nearest_source_position == 100
+        assert result.nearest_source_position == source_pos(100)
 
     @pytest.mark.asyncio
     async def test_translation_without_nearest_fails(
@@ -925,8 +937,8 @@ class TestPositionTranslation:
         """Test that translation fails when no mapping exists and use_nearest=False."""
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=100,
-            target_position=50,
+            source_position=source_pos(100),
+            target_position=target_pos(50),
             event_id=uuid4(),
         )
 
@@ -934,7 +946,7 @@ class TestPositionTranslation:
         with pytest.raises(PositionMappingError):
             await position_mapper.translate_position(
                 migration_id=migration_id,
-                source_position=150,
+                source_position=source_pos(150),
                 use_nearest=False,
             )
 
@@ -947,22 +959,22 @@ class TestPositionTranslation:
         """Test batch position translation."""
         # Record mappings
         mappings = [
-            (100, 50, uuid4()),
-            (200, 100, uuid4()),
-            (300, 150, uuid4()),
+            (source_pos(100), target_pos(50), uuid4()),
+            (source_pos(200), target_pos(100), uuid4()),
+            (source_pos(300), target_pos(150), uuid4()),
         ]
         await position_mapper.record_mappings_batch(migration_id, mappings)
 
         # Batch translate
         results = await position_mapper.translate_positions_batch(
             migration_id=migration_id,
-            source_positions=[100, 200, 300],
+            source_positions=[source_pos(100), source_pos(200), source_pos(300)],
         )
 
         assert len(results) == 3
-        assert results[0].target_position == 50
-        assert results[1].target_position == 100
-        assert results[2].target_position == 150
+        assert results[0].target_position == target_pos(50)
+        assert results[1].target_position == target_pos(100)
+        assert results[2].target_position == target_pos(150)
         assert all(r.is_exact for r in results)
 
 
@@ -986,14 +998,13 @@ class TestConsistencyVerificationLevels:
         await create_test_events(source_store, tenant_id, count=5)
 
         # Copy to target (same events)
-        async for stored_event in source_store.read_all():
-            if stored_event.event.tenant_id == tenant_id:
-                event = stored_event.event
-                await target_store.append_events(
-                    aggregate_id=event.aggregate_id,
-                    aggregate_type=event.aggregate_type,
-                    events=[event],
-                    expected_version=-1,
+        async for envelope in source_store.read_all():
+            if envelope.event.tenant_id == tenant_id:
+                event = envelope.event
+                await target_store.append(
+                    StreamId(aggregate_id=event.aggregate_id, category=event.aggregate_type),
+                    [event],
+                    ExpectedVersion.any_(),
                 )
 
         verifier = ConsistencyVerifier(source_store, target_store, enable_tracing=False)
@@ -1020,15 +1031,16 @@ class TestConsistencyVerificationLevels:
         await create_test_events(source_store, tenant_id, count=5)
 
         # Create fewer events in target (only 3)
-        async for stored_event in source_store.read_all():
-            if stored_event.event.tenant_id == tenant_id and stored_event.global_position <= 3:
-                event = stored_event.event
-                await target_store.append_events(
-                    aggregate_id=event.aggregate_id,
-                    aggregate_type=event.aggregate_type,
-                    events=[event],
-                    expected_version=-1,
+        copied = 0
+        async for envelope in source_store.read_all():
+            if envelope.event.tenant_id == tenant_id and copied < 3:
+                event = envelope.event
+                await target_store.append(
+                    StreamId(aggregate_id=event.aggregate_id, category=event.aggregate_type),
+                    [event],
+                    ExpectedVersion.any_(),
                 )
+                copied += 1
 
         verifier = ConsistencyVerifier(source_store, target_store, enable_tracing=False)
 
@@ -1053,14 +1065,13 @@ class TestConsistencyVerificationLevels:
         await create_test_events(source_store, tenant_id, count=5)
 
         # Copy to target
-        async for stored_event in source_store.read_all():
-            if stored_event.event.tenant_id == tenant_id:
-                event = stored_event.event
-                await target_store.append_events(
-                    aggregate_id=event.aggregate_id,
-                    aggregate_type=event.aggregate_type,
-                    events=[event],
-                    expected_version=-1,
+        async for envelope in source_store.read_all():
+            if envelope.event.tenant_id == tenant_id:
+                event = envelope.event
+                await target_store.append(
+                    StreamId(aggregate_id=event.aggregate_id, category=event.aggregate_type),
+                    [event],
+                    ExpectedVersion.any_(),
                 )
 
         verifier = ConsistencyVerifier(source_store, target_store, enable_tracing=False)
@@ -1083,14 +1094,13 @@ class TestConsistencyVerificationLevels:
         """Test FULL level verification passes with identical data."""
         await create_test_events(source_store, tenant_id, count=3)
 
-        async for stored_event in source_store.read_all():
-            if stored_event.event.tenant_id == tenant_id:
-                event = stored_event.event
-                await target_store.append_events(
-                    aggregate_id=event.aggregate_id,
-                    aggregate_type=event.aggregate_type,
-                    events=[event],
-                    expected_version=-1,
+        async for envelope in source_store.read_all():
+            if envelope.event.tenant_id == tenant_id:
+                event = envelope.event
+                await target_store.append(
+                    StreamId(aggregate_id=event.aggregate_id, category=event.aggregate_type),
+                    [event],
+                    ExpectedVersion.any_(),
                 )
 
         verifier = ConsistencyVerifier(source_store, target_store, enable_tracing=False)
@@ -1118,14 +1128,13 @@ class TestConsistencyVerificationWithSampling:
         # Create events in both stores
         await create_test_events(source_store, tenant_id, count=10)
 
-        async for stored_event in source_store.read_all():
-            if stored_event.event.tenant_id == tenant_id:
-                event = stored_event.event
-                await target_store.append_events(
-                    aggregate_id=event.aggregate_id,
-                    aggregate_type=event.aggregate_type,
-                    events=[event],
-                    expected_version=-1,
+        async for envelope in source_store.read_all():
+            if envelope.event.tenant_id == tenant_id:
+                event = envelope.event
+                await target_store.append(
+                    StreamId(aggregate_id=event.aggregate_id, category=event.aggregate_type),
+                    [event],
+                    ExpectedVersion.any_(),
                 )
 
         verifier = ConsistencyVerifier(source_store, target_store, enable_tracing=False)
@@ -1184,15 +1193,15 @@ class TestSubscriptionCheckpointMigration:
         # Setup position mappings
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=100,
-            target_position=50,
+            source_position=source_pos(100),
+            target_position=target_pos(50),
             event_id=uuid4(),
         )
 
         # Setup checkpoint at source position 100
         await checkpoint_repo.save_position(
             subscription_id="OrderProjection",
-            position=100,
+            position=source_pos(100),
             event_id=uuid4(),
             event_type="OrderCreated",
         )
@@ -1215,7 +1224,7 @@ class TestSubscriptionCheckpointMigration:
 
         # Verify checkpoint was updated
         new_position = await checkpoint_repo.get_position("OrderProjection")
-        assert new_position == 50
+        assert new_position == target_pos(50)
 
     @pytest.mark.asyncio
     async def test_migrate_subscription_with_nearest_mapping(
@@ -1229,21 +1238,21 @@ class TestSubscriptionCheckpointMigration:
         # Setup position mappings
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=100,
-            target_position=50,
+            source_position=source_pos(100),
+            target_position=target_pos(50),
             event_id=uuid4(),
         )
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=200,
-            target_position=100,
+            source_position=source_pos(200),
+            target_position=target_pos(100),
             event_id=uuid4(),
         )
 
         # Setup checkpoint at position between mappings
         await checkpoint_repo.save_position(
             subscription_id="OrderProjection",
-            position=150,
+            position=source_pos(150),
             event_id=uuid4(),
             event_type="OrderCreated",
         )
@@ -1263,7 +1272,7 @@ class TestSubscriptionCheckpointMigration:
         assert summary.all_successful is True
         assert len(summary.results) == 1
         assert summary.results[0].is_exact_translation is False
-        assert summary.results[0].target_position == 50  # Nearest lower
+        assert summary.results[0].target_position == target_pos(50)  # Nearest lower
 
     @pytest.mark.asyncio
     async def test_migrate_multiple_subscriptions(
@@ -1277,27 +1286,27 @@ class TestSubscriptionCheckpointMigration:
         # Setup position mappings
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=100,
-            target_position=50,
+            source_position=source_pos(100),
+            target_position=target_pos(50),
             event_id=uuid4(),
         )
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=200,
-            target_position=100,
+            source_position=source_pos(200),
+            target_position=target_pos(100),
             event_id=uuid4(),
         )
 
         # Setup checkpoints
         await checkpoint_repo.save_position(
             subscription_id="OrderProjection",
-            position=100,
+            position=source_pos(100),
             event_id=uuid4(),
             event_type="OrderCreated",
         )
         await checkpoint_repo.save_position(
             subscription_id="InventoryProjection",
-            position=200,
+            position=source_pos(200),
             event_id=uuid4(),
             event_type="InventoryUpdated",
         )
@@ -1358,13 +1367,13 @@ class TestDryRunSubscriptionMigration:
         # Setup mappings
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=100,
-            target_position=50,
+            source_position=source_pos(100),
+            target_position=target_pos(50),
             event_id=uuid4(),
         )
 
         # Setup checkpoint
-        original_position = 100
+        original_position = source_pos(100)
         await checkpoint_repo.save_position(
             subscription_id="OrderProjection",
             position=original_position,
@@ -1387,8 +1396,8 @@ class TestDryRunSubscriptionMigration:
 
         assert plan.migratable_count == 1
         assert len(plan.planned_migrations) == 1
-        assert plan.planned_migrations[0].current_position == 100
-        assert plan.planned_migrations[0].planned_target_position == 50
+        assert plan.planned_migrations[0].current_position == source_pos(100)
+        assert plan.planned_migrations[0].planned_target_position == target_pos(50)
 
         # Verify checkpoint was NOT changed
         current_position = await checkpoint_repo.get_position("OrderProjection")
@@ -1406,15 +1415,15 @@ class TestDryRunSubscriptionMigration:
         # Setup mapping (no exact match for checkpoint position)
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=100,
-            target_position=50,
+            source_position=source_pos(100),
+            target_position=target_pos(50),
             event_id=uuid4(),
         )
 
         # Setup checkpoint at position without exact mapping
         await checkpoint_repo.save_position(
             subscription_id="OrderProjection",
-            position=150,  # No exact mapping exists
+            position=source_pos(150),  # No exact mapping exists
             event_id=uuid4(),
             event_type="OrderCreated",
         )
@@ -1519,14 +1528,13 @@ class TestFullMigrationWithVerificationAndSubscriptions:
         # Create events in both stores (simulating completed bulk copy)
         await create_test_events(source_store, tenant_id, count=5)
 
-        async for stored_event in source_store.read_all():
-            if stored_event.event.tenant_id == tenant_id:
-                event = stored_event.event
-                await target_store.append_events(
-                    aggregate_id=event.aggregate_id,
-                    aggregate_type=event.aggregate_type,
-                    events=[event],
-                    expected_version=-1,
+        async for envelope in source_store.read_all():
+            if envelope.event.tenant_id == tenant_id:
+                event = envelope.event
+                await target_store.append(
+                    StreamId(aggregate_id=event.aggregate_id, category=event.aggregate_type),
+                    [event],
+                    ExpectedVersion.any_(),
                 )
 
         position_mapper = PositionMapper(position_mapping_repo, enable_tracing=False)
@@ -1588,15 +1596,15 @@ class TestFullMigrationWithVerificationAndSubscriptions:
         migration_id = uuid4()
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=100,
-            target_position=50,
+            source_position=source_pos(100),
+            target_position=target_pos(50),
             event_id=uuid4(),
         )
 
         # Setup checkpoint
         await checkpoint_repo.save_position(
             subscription_id="OrderProjection",
-            position=100,
+            position=source_pos(100),
             event_id=uuid4(),
             event_type="OrderCreated",
         )
@@ -1657,7 +1665,7 @@ class TestMissingMappingErrors:
         with pytest.raises(PositionMappingError):
             await position_mapper.translate_position(
                 migration_id=migration_id,
-                source_position=100,
+                source_position=source_pos(100),
             )
 
     @pytest.mark.asyncio
@@ -1670,8 +1678,8 @@ class TestMissingMappingErrors:
         # Record mapping at position 100
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=100,
-            target_position=50,
+            source_position=source_pos(100),
+            target_position=target_pos(50),
             event_id=uuid4(),
         )
 
@@ -1679,7 +1687,7 @@ class TestMissingMappingErrors:
         with pytest.raises(PositionMappingError):
             await position_mapper.translate_position(
                 migration_id=migration_id,
-                source_position=50,  # Before position 100
+                source_position=source_pos(50),  # Before position 100
             )
 
     @pytest.mark.asyncio
@@ -1694,7 +1702,7 @@ class TestMissingMappingErrors:
         # Setup checkpoint without any position mappings
         await checkpoint_repo.save_position(
             subscription_id="OrderProjection",
-            position=100,
+            position=source_pos(100),
             event_id=uuid4(),
             event_type="OrderCreated",
         )
@@ -1943,19 +1951,19 @@ class TestPositionMapperEdgeCases:
         """Test get_position_bounds returns correct bounds."""
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=100,
-            target_position=50,
+            source_position=source_pos(100),
+            target_position=target_pos(50),
             event_id=uuid4(),
         )
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=500,
-            target_position=250,
+            source_position=source_pos(500),
+            target_position=target_pos(250),
             event_id=uuid4(),
         )
 
         bounds = await position_mapper.get_position_bounds(migration_id)
-        assert bounds == (100, 500)
+        assert bounds == (source_pos(100), source_pos(500))
 
     @pytest.mark.asyncio
     async def test_clear_mappings(
@@ -1966,14 +1974,14 @@ class TestPositionMapperEdgeCases:
         """Test clearing all mappings for a migration."""
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=100,
-            target_position=50,
+            source_position=source_pos(100),
+            target_position=target_pos(50),
             event_id=uuid4(),
         )
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=200,
-            target_position=100,
+            source_position=source_pos(200),
+            target_position=target_pos(100),
             event_id=uuid4(),
         )
 
@@ -1994,15 +2002,15 @@ class TestPositionMapperEdgeCases:
         event_id = uuid4()
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=100,
-            target_position=50,
+            source_position=source_pos(100),
+            target_position=target_pos(50),
             event_id=event_id,
         )
 
         mapping = await position_mapper.get_mapping_by_event_id(migration_id, event_id)
         assert mapping is not None
-        assert mapping.source_position == 100
-        assert mapping.target_position == 50
+        assert mapping.source_position == source_pos(100)
+        assert mapping.target_position == target_pos(50)
         assert mapping.event_id == event_id
 
     @pytest.mark.asyncio
@@ -2036,14 +2044,13 @@ class TestVerificationReport:
     ) -> None:
         """Test report can be serialized to dictionary."""
         await create_test_events(source_store, tenant_id, count=3)
-        async for stored_event in source_store.read_all():
-            if stored_event.event.tenant_id == tenant_id:
-                event = stored_event.event
-                await target_store.append_events(
-                    aggregate_id=event.aggregate_id,
-                    aggregate_type=event.aggregate_type,
-                    events=[event],
-                    expected_version=-1,
+        async for envelope in source_store.read_all():
+            if envelope.event.tenant_id == tenant_id:
+                event = envelope.event
+                await target_store.append(
+                    StreamId(aggregate_id=event.aggregate_id, category=event.aggregate_type),
+                    [event],
+                    ExpectedVersion.any_(),
                 )
 
         verifier = ConsistencyVerifier(source_store, target_store, enable_tracing=False)
@@ -2072,14 +2079,13 @@ class TestVerificationReport:
         """Test consistency percentage calculation."""
         # Create events that will pass verification
         await create_test_events(source_store, tenant_id, count=3)
-        async for stored_event in source_store.read_all():
-            if stored_event.event.tenant_id == tenant_id:
-                event = stored_event.event
-                await target_store.append_events(
-                    aggregate_id=event.aggregate_id,
-                    aggregate_type=event.aggregate_type,
-                    events=[event],
-                    expected_version=-1,
+        async for envelope in source_store.read_all():
+            if envelope.event.tenant_id == tenant_id:
+                event = envelope.event
+                await target_store.append(
+                    StreamId(aggregate_id=event.aggregate_id, category=event.aggregate_type),
+                    [event],
+                    ExpectedVersion.any_(),
                 )
 
         verifier = ConsistencyVerifier(source_store, target_store, enable_tracing=False)
@@ -2112,13 +2118,13 @@ class TestMigrationSummary:
         # Setup
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=100,
-            target_position=50,
+            source_position=source_pos(100),
+            target_position=target_pos(50),
             event_id=uuid4(),
         )
         await checkpoint_repo.save_position(
             subscription_id="TestProjection",
-            position=100,
+            position=source_pos(100),
             event_id=uuid4(),
             event_type="TestEvent",
         )
@@ -2156,21 +2162,21 @@ class TestMigrationSummary:
         # Setup mappings - only mapping at position 100
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=100,
-            target_position=50,
+            source_position=source_pos(100),
+            target_position=target_pos(50),
             event_id=uuid4(),
         )
 
         await checkpoint_repo.save_position(
             subscription_id="Projection1",
-            position=100,
+            position=source_pos(100),
             event_id=uuid4(),
             event_type="TestEvent",
         )
         # Position 50 is BEFORE the first mapping (100), so no nearest mapping exists
         await checkpoint_repo.save_position(
             subscription_id="Projection2",
-            position=50,  # Before any mapping, will fail
+            position=source_pos(50),  # Before any mapping, will fail
             event_id=uuid4(),
             event_type="TestEvent",
         )

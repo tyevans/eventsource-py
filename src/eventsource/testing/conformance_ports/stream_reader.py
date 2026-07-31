@@ -7,12 +7,17 @@ only way to get events into the store to read back).
 
 from abc import ABC, abstractmethod
 from typing import Protocol
+from uuid import uuid4
 
 import pytest
 
 from eventsource.ports import ExpectedVersion, ReadDirection, StreamReadOptions
 from eventsource.ports.store import EventAppender, StreamReader, collect
-from eventsource.testing.conformance_ports._fixtures import make_event, make_stream
+from eventsource.testing.conformance_ports._fixtures import (
+    ConformanceEvent,
+    make_event,
+    make_stream,
+)
 
 
 class _AppenderReader(EventAppender, StreamReader, Protocol):
@@ -100,3 +105,43 @@ class StreamReaderConformance(ABC):
     ) -> None:
         stream = make_stream()
         assert await store.get_stream_version(stream) == 0
+
+    async def test_read_of_absent_stream_returns_no_envelopes(self, store: _AppenderReader) -> None:
+        stream = make_stream()
+        envelopes = await collect(store.read_stream(stream))
+        assert envelopes == []
+
+    async def test_stream_isolation(self, store: _AppenderReader) -> None:
+        stream_a = make_stream(aggregate_id=uuid4())
+        stream_b = make_stream(aggregate_id=uuid4())
+        event_a = make_event(stream_a.aggregate_id)
+        event_b = make_event(stream_b.aggregate_id)
+        await store.append(stream_a, [event_a], ExpectedVersion.no_stream())
+        await store.append(stream_b, [event_b], ExpectedVersion.no_stream())
+
+        envelopes_a = await collect(store.read_stream(stream_a))
+        envelopes_b = await collect(store.read_stream(stream_b))
+
+        assert [e.event.event_id for e in envelopes_a] == [event_a.event_id]
+        assert [e.event.event_id for e in envelopes_b] == [event_b.event_id]
+
+    async def test_envelope_metadata_preserved_through_round_trip(
+        self, store: _AppenderReader
+    ) -> None:
+        stream = make_stream()
+        tenant_id = uuid4()
+        event = ConformanceEvent(aggregate_id=stream.aggregate_id, tenant_id=tenant_id)
+        await store.append(stream, [event], ExpectedVersion.no_stream())
+
+        envelopes = await collect(store.read_stream(stream))
+        envelope = envelopes[0]
+        retrieved = envelope.event
+
+        assert retrieved.event_id == event.event_id
+        assert retrieved.event_type == event.event_type
+        assert retrieved.aggregate_id == event.aggregate_id
+        assert retrieved.aggregate_version == event.aggregate_version
+        assert retrieved.occurred_at == event.occurred_at
+        assert retrieved.tenant_id == tenant_id
+        assert envelope.stream_version == 1
+        assert envelope.stream_id == stream

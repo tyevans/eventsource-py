@@ -27,6 +27,7 @@ from eventsource.observability.attributes import (
     ATTR_POSITION,
     ATTR_SUBSCRIPTION_NAME,
 )
+from eventsource.ports.positions import Position
 from eventsource.subscriptions.config import CheckpointStrategy
 from eventsource.subscriptions.filtering import EventFilter, FilterStats
 from eventsource.subscriptions.flow_control import FlowController, FlowControlStats
@@ -36,11 +37,15 @@ from eventsource.subscriptions.retry import (
     CircuitBreaker,
     RetryableOperation,
 )
-from eventsource.subscriptions.subscription import Subscription, SubscriptionState
+from eventsource.subscriptions.subscription import (
+    Subscription,
+    SubscriptionState,
+    render_position,
+)
 
 if TYPE_CHECKING:
     from eventsource.bus.interface import EventBus
-    from eventsource.repositories.checkpoint import CheckpointRepository
+    from eventsource.ports.checkpoints import SubscriptionPositions
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +97,7 @@ class LiveRunner:
     """
 
     event_bus: "EventBus"
-    checkpoint_repo: "CheckpointRepository"
+    checkpoint_repo: "SubscriptionPositions"
     subscription: Subscription
     tracer: Tracer | None = None
     enable_metrics: bool = True
@@ -216,10 +221,17 @@ class LiveRunner:
         """
         Handle a live event from the event bus.
 
+        The bus delivery receipt is the live phase's seen-point: every
+        received event is counted here, before branching, so live lag
+        equals queue depth plus in-flight count. Every terminal path in
+        `_process_live_event` that does not deliver compensates with
+        `record_events_unseen(1)` -- see `Subscription.lag`'s invariant.
+
         Args:
             event: The event received from the bus
         """
         self._stats.events_received += 1
+        await self.subscription.record_events_seen(1)
 
         if self._buffer_enabled:
             # During transition, buffer events for later processing
@@ -251,7 +263,7 @@ class LiveRunner:
     async def _process_live_event(
         self,
         event: DomainEvent,
-        position: int | None = None,
+        position: Position | None = None,
     ) -> None:
         """
         Process a live event, checking for duplicates and applying filters.
@@ -270,21 +282,25 @@ class LiveRunner:
                 ATTR_SUBSCRIPTION_NAME: self.subscription.name,
                 ATTR_EVENT_ID: str(event.event_id),
                 ATTR_EVENT_TYPE: event.event_type,
-                ATTR_POSITION: position if position is not None else -1,
+                ATTR_POSITION: render_position(position),
             },
         ):
-            # Check for duplicate (already processed during catch-up)
-            if position is not None and position <= self.subscription.last_processed_position:
+            # Check for duplicate (already processed during catch-up).
+            # A subscription with no processed position has nothing to
+            # dedup against, so the guard needs both sides present.
+            last_processed = self.subscription.last_processed_position
+            if position is not None and last_processed is not None and position <= last_processed:
                 self._stats.events_skipped_duplicate += 1
                 logger.debug(
                     "Skipping duplicate event",
                     extra={
                         "subscription": self.subscription.name,
                         "event_id": str(event.event_id),
-                        "position": position,
-                        "last_processed": self.subscription.last_processed_position,
+                        "position": render_position(position),
+                        "last_processed": render_position(last_processed),
                     },
                 )
+                await self.subscription.record_events_unseen(1)
                 return
 
             # Apply event type filtering
@@ -305,6 +321,11 @@ class LiveRunner:
                         event_id=event.event_id,
                         event_type=event.event_type,
                     )
+                else:
+                    # No position to record against, so nothing increments
+                    # `_events_delivered` -- release the receipt instead of
+                    # leaving it outstanding forever.
+                    await self.subscription.record_events_unseen(1)
                 return
 
             # Acquire flow control slot (may block if at capacity)
@@ -361,6 +382,11 @@ class LiveRunner:
                     if not self.config.continue_on_error:
                         raise
 
+                    # Terminally disposed (possibly DLQ'd): the failure
+                    # counters carry that signal, and lag must not report
+                    # it as outstanding work forever.
+                    await self.subscription.record_events_unseen(1)
+
                     logger.warning(
                         "Live event processing failed, continuing",
                         extra={
@@ -370,34 +396,34 @@ class LiveRunner:
                         },
                     )
 
-    def _get_event_position(self, event: DomainEvent) -> int | None:
+    def _get_event_position(self, event: DomainEvent) -> Position | None:
         """
-        Get the global position for a live event.
+        Get the global-feed position for a live event.
 
-        Live events from the bus may include position metadata.
-        If not, we cannot track position for this event.
+        Live events from the bus may carry a position token. If not, we
+        cannot track position for this event -- in every in-tree
+        configuration today no bus attaches one, so this returns None and
+        callers handle that.
 
         Args:
             event: The event to look up
 
         Returns:
-            Global position, or None if not available
+            Position, or None if not available
         """
-        # Check if position is attached to event (some buses may include it)
-        if hasattr(event, "_global_position"):
-            pos: int = event._global_position
-            return pos
+        # Check if a position is attached to the event (some buses may include one)
+        position = getattr(event, "_position", None)
+        if isinstance(position, Position):
+            return position
 
-        # For now, return None - position lookup will be enhanced later
-        # This is acceptable for Phase 1 as we handle None gracefully
         return None
 
-    async def _maybe_checkpoint(self, position: int, event: DomainEvent) -> None:
+    async def _maybe_checkpoint(self, position: Position, event: DomainEvent) -> None:
         """
         Handle checkpointing based on configured strategy.
 
         Args:
-            position: Global position of the event
+            position: Global-feed position of the event
             event: The event that was processed
         """
         if self.config.checkpoint_strategy == CheckpointStrategy.EVERY_EVENT:
@@ -409,12 +435,12 @@ class LiveRunner:
         elif self.config.checkpoint_strategy == CheckpointStrategy.EVERY_BATCH:
             await self._save_checkpoint_with_retry(position, event)
 
-    async def _save_checkpoint(self, position: int, event: DomainEvent) -> None:
+    async def _save_checkpoint(self, position: Position, event: DomainEvent) -> None:
         """
         Save checkpoint for the processed event (no retry).
 
         Args:
-            position: Global position of the event
+            position: Global-feed position of the event
             event: The event that was processed
         """
         await self.checkpoint_repo.save_position(
@@ -430,20 +456,20 @@ class LiveRunner:
             "Checkpoint saved",
             extra={
                 "subscription": self.subscription.name,
-                "position": position,
+                "position": render_position(position),
             },
         )
 
     async def _save_checkpoint_with_retry(
         self,
-        position: int,
+        position: Position,
         event: DomainEvent,
     ) -> None:
         """
         Save checkpoint for the processed event with retry.
 
         Args:
-            position: Global position of the event
+            position: Global-feed position of the event
             event: The event that was processed
 
         Raises:
@@ -471,20 +497,20 @@ class LiveRunner:
             "Checkpoint saved",
             extra={
                 "subscription": self.subscription.name,
-                "position": position,
+                "position": render_position(position),
             },
         )
 
     async def _maybe_save_periodic_checkpoint(
         self,
-        position: int,
+        position: Position,
         event: DomainEvent,
     ) -> None:
         """
         Save checkpoint if enough time has passed (for PERIODIC strategy).
 
         Args:
-            position: Global position of the event
+            position: Global-feed position of the event
             event: The event to potentially checkpoint
         """
         current_time = time.monotonic()

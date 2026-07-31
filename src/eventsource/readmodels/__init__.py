@@ -1,88 +1,60 @@
-"""
-Read model persistence tooling for event-sourced projections.
+"""Deprecated import path for read-model persistence.
 
-This module provides infrastructure for persisting and querying read models,
-which are denormalized views of aggregate state optimized for query performance.
+Every name below still resolves, each with a `DeprecationWarning` naming its
+new home. This package is removed in 0.8.0.
 
-Key Components:
-    ReadModel: Pydantic base class for read model definitions
-    ReadModelRepository: Protocol for read model persistence
-    Query: Query specification with filters, ordering, pagination
-    Filter: Single filter condition (eq, ne, gt, etc.)
-    InMemoryReadModelRepository: In-memory implementation for testing
+- `ReadModel`, `Query`, `Filter`, `ReadModelRepository`, `ReadModelError`,
+  `OptimisticLockError`, `ReadModelNotFoundError`
+  -> `eventsource.ports.readmodels`
+- `InMemoryReadModelRepository` -> `eventsource.adapters.memory.readmodels`
+- `PostgreSQLReadModelRepository` -> `eventsource.adapters.postgresql.readmodels`
+- `SQLiteReadModelRepository` -> `eventsource.adapters.sqlite.readmodels`
+- `ReadModelProjection` -> `eventsource.adapters.sql.readmodel_projection`
+- `generate_schema`, `generate_indexes`, `generate_full_schema`,
+  `POSTGRESQL_TYPE_MAP`, `SQLITE_TYPE_MAP`
+  -> `eventsource.adapters.sql.readmodel_schema`
 
-SQL Backends (available after importing):
-    PostgreSQLReadModelRepository: Production-ready PostgreSQL implementation
-    SQLiteReadModelRepository: Embedded/development SQLite implementation
-
-Exceptions:
-    ReadModelError: Base exception for read model operations
-    OptimisticLockError: Raised when version conflicts during save
-    ReadModelNotFoundError: Raised when a model is not found
+Resolution is lazy: importing this module pulls in no sqlalchemy and no
+aiosqlite until a name that needs them is actually read.
 
 Example:
     >>> from uuid import uuid4
     >>> from decimal import Decimal
-    >>> from eventsource.readmodels import (
-    ...     ReadModel,
+    >>> from eventsource.ports.readmodels import ReadModel, Query, Filter
+    >>> from eventsource.adapters.memory.readmodels import (
     ...     InMemoryReadModelRepository,
-    ...     Query,
-    ...     Filter,
-    ...     OptimisticLockError,
     ... )
     >>>
-    >>> # Define a read model
     >>> class OrderSummary(ReadModel):
     ...     order_number: str
-    ...     customer_name: str
     ...     status: str
     ...     total_amount: Decimal
     ...
-    >>> # Create repository and save models
     >>> repo = InMemoryReadModelRepository(OrderSummary)
-    >>> await repo.save(OrderSummary(
-    ...     id=uuid4(),
-    ...     order_number="ORD-001",
-    ...     customer_name="Alice",
-    ...     status="shipped",
-    ...     total_amount=Decimal("99.99"),
-    ... ))
-    >>>
-    >>> # Query with filters
-    >>> shipped = await repo.find(Query(
-    ...     filters=[Filter.eq("status", "shipped")],
-    ...     order_by="created_at",
-    ...     order_direction="desc",
-    ... ))
-    >>>
-    >>> # Optimistic locking for concurrent updates
-    >>> summary = await repo.get(order_id)
-    >>> summary.status = "shipped"
-    >>> try:
-    ...     await repo.save_with_version_check(summary)
-    ... except OptimisticLockError as e:
-    ...     print(f"Conflict: {e}")
+    >>> shipped = await repo.find(Query(filters=[Filter.eq("status", "shipped")]))
 """
 
-from eventsource.readmodels.base import ReadModel
-from eventsource.readmodels.exceptions import (
-    OptimisticLockError,
-    ReadModelError,
-    ReadModelNotFoundError,
-)
-from eventsource.readmodels.in_memory import InMemoryReadModelRepository
-from eventsource.readmodels.postgresql import PostgreSQLReadModelRepository
-from eventsource.readmodels.projection import ReadModelProjection
-from eventsource.readmodels.query import Filter, Query
-from eventsource.readmodels.repository import ReadModelRepository
-from eventsource.readmodels.schema import (
-    POSTGRESQL_TYPE_MAP,
-    SQLITE_TYPE_MAP,
-    generate_full_schema,
-    generate_indexes,
-    generate_schema,
-)
-from eventsource.readmodels.sqlite import SQLiteReadModelRepository
+import importlib
+import warnings
+
+_MOVED = {
+    "ReadModel": "eventsource.ports.readmodels.model",
+    "ReadModelRepository": "eventsource.ports.readmodels.repository",
+    "Query": "eventsource.ports.readmodels.query",
+    "Filter": "eventsource.ports.readmodels.query",
+    "ReadModelError": "eventsource.ports.readmodels.exceptions",
+    "OptimisticLockError": "eventsource.ports.readmodels.exceptions",
+    "ReadModelNotFoundError": "eventsource.ports.readmodels.exceptions",
+    "InMemoryReadModelRepository": "eventsource.adapters.memory.readmodels",
+    "PostgreSQLReadModelRepository": "eventsource.adapters.postgresql.readmodels",
+    "SQLiteReadModelRepository": "eventsource.adapters.sqlite.readmodels",
+    "ReadModelProjection": "eventsource.adapters.sql.readmodel_projection",
+    "generate_schema": "eventsource.adapters.sql.readmodel_schema",
+    "generate_indexes": "eventsource.adapters.sql.readmodel_schema",
+    "generate_full_schema": "eventsource.adapters.sql.readmodel_schema",
+    "POSTGRESQL_TYPE_MAP": "eventsource.adapters.sql.readmodel_schema",
+    "SQLITE_TYPE_MAP": "eventsource.adapters.sql.readmodel_schema",
+}
 
 __all__ = [
     # Base class
@@ -111,3 +83,22 @@ __all__ = [
     "POSTGRESQL_TYPE_MAP",
     "SQLITE_TYPE_MAP",
 ]
+
+
+def __getattr__(name: str) -> object:
+    try:
+        module_name = _MOVED[name]
+    except KeyError:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from None
+    warnings.warn(
+        f"eventsource.readmodels.{name} is deprecated; "
+        f"import it from {module_name} instead. "
+        f"eventsource.readmodels is removed in 0.8.0.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return getattr(importlib.import_module(module_name), name)
+
+
+def __dir__() -> list[str]:
+    return sorted(__all__)

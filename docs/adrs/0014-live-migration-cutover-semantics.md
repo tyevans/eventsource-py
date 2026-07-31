@@ -31,6 +31,10 @@ The implementation lives in `src/eventsource/migration/` — chiefly
 
 **Accepted** — implemented and shipped in `eventsource` 0.5.0.
 
+Amended by ADR 0028: `cutover_max_lag_events` now defaults to `0` (strict),
+not the `100` this record's body describes below; the body is an immutable
+record of the semantics as originally shipped.
+
 The semantics described here are those of the code as it stands: the phase
 model in `migration/models.py`, the source-first interceptor in
 `dual_write.py`, the advisory-lock-guarded, timeout-bounded pause in

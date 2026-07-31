@@ -20,7 +20,7 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.locks import LockAcquisitionError, LockInfo
+from eventsource.exceptions import LockAcquisitionError
 from eventsource.migration.cutover import CutoverManager
 from eventsource.migration.models import (
     CutoverResult,
@@ -29,6 +29,8 @@ from eventsource.migration.models import (
     TenantMigrationState,
     TenantRouting,
 )
+from eventsource.ports import Position
+from eventsource.ports.locks import LockInfo
 
 # =============================================================================
 # Test Fixtures
@@ -83,7 +85,7 @@ def mock_router():
 
     # Mock target store
     mock_store = MagicMock()
-    mock_store.get_global_position = AsyncMock(return_value=100)
+    mock_store.current_position = AsyncMock(return_value=Position(store_id="target", key=(100,)))
     router.get_store.return_value = mock_store
 
     return router
@@ -117,8 +119,8 @@ def mock_lag_tracker():
     # Default: synced (zero lag)
     lag = SyncLag(
         events=0,
-        source_position=100,
-        target_position=100,
+        source_position=Position(store_id="source", key=(100,)),
+        target_position=Position(store_id="target", key=(100,)),
         timestamp=datetime.now(UTC),
     )
     tracker.current_lag = lag
@@ -317,8 +319,8 @@ class TestSuccessfulCutover:
         # Set small lag (within threshold)
         lag = SyncLag(
             events=50,  # Below threshold of 100
-            source_position=100,
-            target_position=50,
+            source_position=Position(store_id="source", key=(100,)),
+            target_position=Position(store_id="target", key=(50,)),
             timestamp=datetime.now(UTC),
         )
         mock_lag_tracker.current_lag = lag
@@ -361,27 +363,28 @@ class TestSuccessfulCutover:
         migration_id,
         target_store_id,
         mock_lag_tracker,
+        config,
     ):
         """Test that cutover tracks events synced during pause."""
         # Initial lag
         initial_lag = SyncLag(
             events=10,
-            source_position=100,
-            target_position=90,
+            source_position=Position(store_id="source", key=(100,)),
+            target_position=Position(store_id="target", key=(90,)),
             timestamp=datetime.now(UTC),
         )
         # Final lag (improved during pause)
         final_lag = SyncLag(
             events=2,
-            source_position=100,
-            target_position=98,
+            source_position=Position(store_id="source", key=(100,)),
+            target_position=Position(store_id="target", key=(98,)),
             timestamp=datetime.now(UTC),
         )
 
         # Set up mock to return different lags on successive calls
         call_count = 0
 
-        async def update_lag():
+        async def update_lag(*, since=None):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
@@ -397,10 +400,74 @@ class TestSuccessfulCutover:
             tenant_id=tenant_id,
             lag_tracker=mock_lag_tracker,
             target_store_id=target_store_id,
+            config=config,  # tolerance is incidental; the subject is events_synced tracking
         )
 
         assert result.success is True
         assert result.events_synced == 8  # 10 - 2
+
+
+class TestStrictZeroLagDefault:
+    """`cutover_max_lag_events` defaults to 0: no cutover over missing data."""
+
+    @pytest.mark.asyncio
+    async def test_default_config_refuses_cutover_on_a_single_missing_event(
+        self,
+        cutover_manager,
+        tenant_id,
+        migration_id,
+        target_store_id,
+        mock_lag_tracker,
+        mock_router,
+        mock_routing_repo,
+    ):
+        mock_lag_tracker.current_lag = SyncLag(
+            events=1,
+            source_position=Position(store_id="source", key=(101,)),
+            target_position=Position(store_id="target", key=(100,)),
+            timestamp=datetime.now(UTC),
+        )
+
+        result = await cutover_manager.execute_cutover(
+            migration_id=migration_id,
+            tenant_id=tenant_id,
+            lag_tracker=mock_lag_tracker,
+            target_store_id=target_store_id,
+        )
+
+        assert result.success is False
+        assert result.rolled_back is True
+        # Routing never switched: the source stays authoritative.
+        mock_routing_repo.set_routing.assert_not_called()
+        mock_router.resume_writes.assert_called_once_with(tenant_id)
+
+    @pytest.mark.asyncio
+    async def test_an_explicit_threshold_still_tolerates_lag(
+        self,
+        cutover_manager,
+        tenant_id,
+        migration_id,
+        target_store_id,
+        mock_lag_tracker,
+        config,
+    ):
+        """The knob survives -- it just stops being the default."""
+        mock_lag_tracker.current_lag = SyncLag(
+            events=1,
+            source_position=Position(store_id="source", key=(101,)),
+            target_position=Position(store_id="target", key=(100,)),
+            timestamp=datetime.now(UTC),
+        )
+
+        result = await cutover_manager.execute_cutover(
+            migration_id=migration_id,
+            tenant_id=tenant_id,
+            lag_tracker=mock_lag_tracker,
+            target_store_id=target_store_id,
+            config=config,  # cutover_max_lag_events=100
+        )
+
+        assert result.success is True
 
 
 # =============================================================================
@@ -534,8 +601,8 @@ class TestSyncLagValidation:
         # Set high lag
         lag = SyncLag(
             events=50,  # Exceeds strict threshold of 10
-            source_position=100,
-            target_position=50,
+            source_position=Position(store_id="source", key=(100,)),
+            target_position=Position(store_id="target", key=(50,)),
             timestamp=datetime.now(UTC),
         )
         mock_lag_tracker.current_lag = lag
@@ -601,8 +668,8 @@ class TestSyncLagValidation:
         # Set lag exactly at threshold
         lag = SyncLag(
             events=100,  # Exactly at threshold
-            source_position=200,
-            target_position=100,
+            source_position=Position(store_id="source", key=(200,)),
+            target_position=Position(store_id="target", key=(100,)),
             timestamp=datetime.now(UTC),
         )
         mock_lag_tracker.current_lag = lag
@@ -651,8 +718,8 @@ class TestTimeoutEnforcement:
         # Zero lag so lag check passes
         mock_lag_tracker.current_lag = SyncLag(
             events=0,
-            source_position=100,
-            target_position=100,
+            source_position=Position(store_id="source", key=(100,)),
+            target_position=Position(store_id="target", key=(100,)),
             timestamp=datetime.now(UTC),
         )
 
@@ -723,8 +790,8 @@ class TestAutomaticRollback:
         """Test rollback when lag check fails."""
         mock_lag_tracker.current_lag = SyncLag(
             events=100,  # Exceeds strict threshold
-            source_position=200,
-            target_position=100,
+            source_position=Position(store_id="source", key=(200,)),
+            target_position=Position(store_id="target", key=(100,)),
             timestamp=datetime.now(UTC),
         )
 
@@ -760,7 +827,7 @@ class TestAutomaticRollback:
         """Test rollback when target store health check fails."""
         # Make target store health check fail
         mock_store = MagicMock()
-        mock_store.get_global_position = AsyncMock(side_effect=Exception("Connection failed"))
+        mock_store.current_position = AsyncMock(side_effect=Exception("Connection failed"))
         mock_router.get_store.return_value = mock_store
 
         result = await cutover_manager.execute_cutover(
@@ -815,14 +882,14 @@ class TestAutomaticRollback:
         # Set low lag so lag check passes
         mock_lag_tracker.current_lag = SyncLag(
             events=0,
-            source_position=100,
-            target_position=100,
+            source_position=Position(store_id="source", key=(100,)),
+            target_position=Position(store_id="target", key=(100,)),
             timestamp=datetime.now(UTC),
         )
 
         # Make target store health check fail to trigger rollback
         mock_store = MagicMock()
-        mock_store.get_global_position = AsyncMock(side_effect=Exception("Connection failed"))
+        mock_store.current_position = AsyncMock(side_effect=Exception("Connection failed"))
         mock_router.get_store.return_value = mock_store
 
         # Make rollback fail
@@ -922,8 +989,8 @@ class TestWritePauseResume:
         # Set high lag to trigger failure
         mock_lag_tracker.current_lag = SyncLag(
             events=100,
-            source_position=200,
-            target_position=100,
+            source_position=Position(store_id="source", key=(200,)),
+            target_position=Position(store_id="target", key=(100,)),
             timestamp=datetime.now(UTC),
         )
 
@@ -1115,8 +1182,8 @@ class TestCutoverReadinessValidation:
         """Test readiness validation fails on high lag."""
         mock_lag_tracker.current_lag = SyncLag(
             events=100,
-            source_position=200,
-            target_position=100,
+            source_position=Position(store_id="source", key=(200,)),
+            target_position=Position(store_id="target", key=(100,)),
             timestamp=datetime.now(UTC),
         )
 

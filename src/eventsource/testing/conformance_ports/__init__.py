@@ -7,14 +7,30 @@ contract. Suites are sqlalchemy-free: they import only from
 `eventsource.ports`, `eventsource.domain`, `eventsource.events`,
 `eventsource.exceptions`, and pytest/stdlib.
 
+Suites: `AppenderConformance`, `StreamReaderConformance`,
+`EventLookupConformance`, `GlobalFeedConformance`, `CategoryQueryConformance`,
+`SnapshotConformance`, `ProjectionCheckpointsConformance`,
+`SubscriptionPositionsConformance`, `CheckpointRepositoryConformance`,
+`DLQRepositoryConformance`, `DistributedLockConformance`, `OutboxRepositoryConformance`,
+`ReadModelRepositoryConformance`.
+
 This package sits beside the legacy `eventsource.testing.conformance`
 module and will replace it once all adapters migrate to the port suites.
 """
 
 from eventsource.testing.conformance_ports.appender import AppenderConformance
 from eventsource.testing.conformance_ports.category import CategoryQueryConformance
+from eventsource.testing.conformance_ports.checkpoints import (
+    CheckpointRepositoryConformance,
+    ProjectionCheckpointsConformance,
+    SubscriptionPositionsConformance,
+)
+from eventsource.testing.conformance_ports.dlq import DLQRepositoryConformance
 from eventsource.testing.conformance_ports.event_lookup import EventLookupConformance
 from eventsource.testing.conformance_ports.feed import GlobalFeedConformance
+from eventsource.testing.conformance_ports.locks import DistributedLockConformance
+from eventsource.testing.conformance_ports.outbox import OutboxRepositoryConformance
+from eventsource.testing.conformance_ports.readmodels import ReadModelRepositoryConformance
 from eventsource.testing.conformance_ports.snapshots import SnapshotConformance
 from eventsource.testing.conformance_ports.stream_reader import StreamReaderConformance
 
@@ -25,4 +41,11 @@ __all__ = [
     "GlobalFeedConformance",
     "CategoryQueryConformance",
     "SnapshotConformance",
+    "ProjectionCheckpointsConformance",
+    "SubscriptionPositionsConformance",
+    "CheckpointRepositoryConformance",
+    "DLQRepositoryConformance",
+    "DistributedLockConformance",
+    "OutboxRepositoryConformance",
+    "ReadModelRepositoryConformance",
 ]

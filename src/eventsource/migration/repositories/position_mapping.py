@@ -17,8 +17,9 @@ Database Table:
     Uses the `migration_position_mappings` table defined in PREREQ-002.
 
 Position Types:
-    - Source positions: Position in the source event store
-    - Target positions: Corresponding position in the target store
+    - Source positions: opaque `Position` tokens from the source event store
+    - Target positions: opaque `Position` tokens from the target event store,
+      persisted as their `Position.to_str()` encoding, never as an integer
 
 Usage:
     >>> from eventsource.migration.repositories import (
@@ -31,19 +32,21 @@ Usage:
     >>> # Record mapping
     >>> await repo.create(PositionMapping(
     ...     migration_id=migration.id,
-    ...     source_position=1000,
-    ...     target_position=500,
+    ...     source_position=source_position,  # Position
+    ...     target_position=target_position,  # Position
     ...     event_id=event.id,
     ...     mapped_at=datetime.now(UTC),
     ... ))
     >>>
     >>> # Find target position
-    >>> mapping = await repo.find_by_source_position(migration.id, 1000)
+    >>> mapping = await repo.find_by_source_position(migration.id, source_position)
     >>> print(f"Target position: {mapping.target_position}")
     >>>
-    >>> # Find nearest mapping (for checkpoint translation)
-    >>> mapping = await repo.find_nearest_source_position(migration.id, 1050)
-    >>> # Returns mapping with source_position <= 1050
+    >>> # Find nearest mapping (for checkpoint translation): a binary search
+    >>> # over rows ordered by surrogate id, comparing decoded Position values,
+    >>> # relying on mappings having been recorded in ascending source order
+    >>> mapping = await repo.find_nearest_source_position(migration.id, checkpoint_position)
+    >>> # Returns the mapping with the greatest source_position <= checkpoint_position
 
 See Also:
     - Task: P3-001-position-mapping-repository.md
@@ -59,10 +62,12 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from eventsource.adapters._sql.connection import sql_connection
+from eventsource.exceptions import PositionDecodeError
 from eventsource.migration.models import PositionMapping
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import ATTR_DB_SYSTEM
-from eventsource.repositories._connection import execute_with_connection
+from eventsource.ports.positions import Position
 
 
 @runtime_checkable
@@ -121,7 +126,7 @@ class PositionMappingRepository(Protocol):
     async def find_by_source_position(
         self,
         migration_id: UUID,
-        source_position: int,
+        source_position: Position,
     ) -> PositionMapping | None:
         """
         Find mapping by exact source position.
@@ -138,7 +143,7 @@ class PositionMappingRepository(Protocol):
     async def find_by_target_position(
         self,
         migration_id: UUID,
-        target_position: int,
+        target_position: Position,
     ) -> PositionMapping | None:
         """
         Find mapping by exact target position.
@@ -155,7 +160,7 @@ class PositionMappingRepository(Protocol):
     async def find_nearest_source_position(
         self,
         migration_id: UUID,
-        source_position: int,
+        source_position: Position,
     ) -> PositionMapping | None:
         """
         Find the nearest mapping with source_position <= given position.
@@ -217,8 +222,8 @@ class PositionMappingRepository(Protocol):
     async def list_in_source_range(
         self,
         migration_id: UUID,
-        start_position: int,
-        end_position: int,
+        start_position: Position,
+        end_position: Position,
     ) -> list[PositionMapping]:
         """
         List mappings within a source position range.
@@ -251,7 +256,7 @@ class PositionMappingRepository(Protocol):
     async def get_position_bounds(
         self,
         migration_id: UUID,
-    ) -> tuple[int, int] | None:
+    ) -> tuple[Position, Position] | None:
         """
         Get min and max source positions for a migration.
 
@@ -284,13 +289,22 @@ class PostgreSQLPositionMappingRepository:
     """
     PostgreSQL implementation of PositionMappingRepository.
 
-    Persists position mappings to the `migration_position_mappings` table.
-    Provides CRUD operations and efficient range queries for checkpoint
-    translation during migration.
+    Persists position mappings to the `migration_position_mappings` table,
+    keyed by opaque position tokens (`Position.to_str()`). Provides CRUD
+    operations and efficient range queries for checkpoint translation
+    during migration.
+
+    Monotonicity precondition: mappings for a migration must be recorded in
+    ascending source-position order; ordering and nearest-match lookups rely
+    on it, because opaque position tokens cannot be ordered in SQL. The
+    single writer for a migration (`BulkCopier` streaming the source feed,
+    or `DualWriteInterceptor` appending in write order) satisfies this by
+    construction; a second concurrent writer for the same migration would
+    violate it.
 
     The implementation uses indexed queries optimized for:
-    - Exact position lookups (O(log n))
-    - Nearest position queries (O(log n))
+    - Exact position lookups (O(log n) via the token index)
+    - Nearest position queries (O(log n) binary search over row ordinal)
     - Range queries for batch processing
 
     Example:
@@ -302,7 +316,7 @@ class PostgreSQLPositionMappingRepository:
         >>> await repo.create_batch(mappings)
         >>>
         >>> # Checkpoint translation
-        >>> mapping = await repo.find_nearest_source_position(migration_id, 1000)
+        >>> mapping = await repo.find_nearest_source_position(migration_id, position)
     """
 
     def __init__(
@@ -341,17 +355,20 @@ class PostgreSQLPositionMappingRepository:
             "eventsource.position_mapping_repo.create",
             {
                 "migration.id": str(mapping.migration_id),
-                "source_position": mapping.source_position,
-                "target_position": mapping.target_position,
+                "source_position": mapping.source_position.to_str(),
+                "target_position": mapping.target_position.to_str(),
                 ATTR_DB_SYSTEM: "postgresql",
             },
         ):
+            # Only the opaque token columns are written; the legacy BIGINT
+            # columns are left NULL (Task 1 dropped their NOT NULL) rather
+            # than fabricate an int position from an opaque token.
             query = text("""
                 INSERT INTO migration_position_mappings (
-                    migration_id, source_position, target_position,
+                    migration_id, source_position_token, target_position_token,
                     event_id, mapped_at
                 ) VALUES (
-                    :migration_id, :source_position, :target_position,
+                    :migration_id, :source_position_token, :target_position_token,
                     :event_id, :mapped_at
                 )
                 RETURNING id
@@ -359,13 +376,13 @@ class PostgreSQLPositionMappingRepository:
 
             params = {
                 "migration_id": mapping.migration_id,
-                "source_position": mapping.source_position,
-                "target_position": mapping.target_position,
+                "source_position_token": mapping.source_position.to_str(),
+                "target_position_token": mapping.target_position.to_str(),
                 "event_id": mapping.event_id,
                 "mapped_at": mapping.mapped_at,
             }
 
-            async with execute_with_connection(self._conn, transactional=True) as conn:
+            async with sql_connection(self._conn, write=True) as conn:
                 result = await conn.execute(query, params)
                 row = result.fetchone()
 
@@ -398,18 +415,20 @@ class PostgreSQLPositionMappingRepository:
                 ATTR_DB_SYSTEM: "postgresql",
             },
         ):
-            # Build values for multi-row insert
+            # Build values for multi-row insert. Only the opaque token
+            # columns are written -- see create() for why the legacy BIGINT
+            # columns are left unwritten.
             values_list: list[str] = []
             params: dict[str, Any] = {}
 
             for i, mapping in enumerate(mappings):
                 values_list.append(
-                    f"(:migration_id_{i}, :source_position_{i}, :target_position_{i}, "
-                    f":event_id_{i}, :mapped_at_{i})"
+                    f"(:migration_id_{i}, :source_position_token_{i}, "
+                    f":target_position_token_{i}, :event_id_{i}, :mapped_at_{i})"
                 )
                 params[f"migration_id_{i}"] = mapping.migration_id
-                params[f"source_position_{i}"] = mapping.source_position
-                params[f"target_position_{i}"] = mapping.target_position
+                params[f"source_position_token_{i}"] = mapping.source_position.to_str()
+                params[f"target_position_token_{i}"] = mapping.target_position.to_str()
                 params[f"event_id_{i}"] = mapping.event_id
                 params[f"mapped_at_{i}"] = mapping.mapped_at
 
@@ -418,13 +437,13 @@ class PostgreSQLPositionMappingRepository:
             # values_sql contains only parameterized placeholders; all values are in params dict
             query = text(f"""
                 INSERT INTO migration_position_mappings (
-                    migration_id, source_position, target_position,
+                    migration_id, source_position_token, target_position_token,
                     event_id, mapped_at
                 ) VALUES {values_sql}
-                ON CONFLICT (migration_id, source_position) DO NOTHING
+                ON CONFLICT (migration_id, source_position_token) DO NOTHING
             """)  # nosec B608 - parameterized query construction
 
-            async with execute_with_connection(self._conn, transactional=True) as conn:
+            async with sql_connection(self._conn, write=True) as conn:
                 result = await conn.execute(query, params)
 
             return result.rowcount
@@ -448,13 +467,13 @@ class PostgreSQLPositionMappingRepository:
         ):
             query = text("""
                 SELECT
-                    id, migration_id, source_position, target_position,
+                    id, migration_id, source_position_token, target_position_token,
                     event_id, mapped_at
                 FROM migration_position_mappings
                 WHERE id = :id
             """)
 
-            async with execute_with_connection(self._conn, transactional=False) as conn:
+            async with sql_connection(self._conn, write=False) as conn:
                 result = await conn.execute(query, {"id": mapping_id})
                 row = result.fetchone()
 
@@ -466,13 +485,15 @@ class PostgreSQLPositionMappingRepository:
     async def find_by_source_position(
         self,
         migration_id: UUID,
-        source_position: int,
+        source_position: Position,
     ) -> PositionMapping | None:
         """
         Find mapping by exact source position.
 
-        Uses the unique index on (migration_id, source_position) for
-        efficient O(log n) lookup.
+        Uses the unique index on (migration_id, source_position_token) for
+        efficient O(log n) lookup. `Position.to_str()` is deterministic
+        (fixed separators, fixed key order), so string equality on the
+        canonical token is position equality within a store.
 
         Args:
             migration_id: UUID of the migration
@@ -485,25 +506,25 @@ class PostgreSQLPositionMappingRepository:
             "eventsource.position_mapping_repo.find_by_source_position",
             {
                 "migration.id": str(migration_id),
-                "source_position": source_position,
+                "source_position": source_position.to_str(),
                 ATTR_DB_SYSTEM: "postgresql",
             },
         ):
             query = text("""
                 SELECT
-                    id, migration_id, source_position, target_position,
+                    id, migration_id, source_position_token, target_position_token,
                     event_id, mapped_at
                 FROM migration_position_mappings
                 WHERE migration_id = :migration_id
-                  AND source_position = :source_position
+                  AND source_position_token = :source_position_token
             """)
 
-            async with execute_with_connection(self._conn, transactional=False) as conn:
+            async with sql_connection(self._conn, write=False) as conn:
                 result = await conn.execute(
                     query,
                     {
                         "migration_id": migration_id,
-                        "source_position": source_position,
+                        "source_position_token": source_position.to_str(),
                     },
                 )
                 row = result.fetchone()
@@ -516,14 +537,14 @@ class PostgreSQLPositionMappingRepository:
     async def find_by_target_position(
         self,
         migration_id: UUID,
-        target_position: int,
+        target_position: Position,
     ) -> PositionMapping | None:
         """
         Find mapping by exact target position.
 
         Note: This query is less efficient than find_by_source_position
-        as there is no unique index on target_position. Consider adding
-        an index if this is called frequently.
+        as there is no unique index on target_position_token. Consider
+        adding one if this is called frequently.
 
         Args:
             migration_id: UUID of the migration
@@ -536,26 +557,26 @@ class PostgreSQLPositionMappingRepository:
             "eventsource.position_mapping_repo.find_by_target_position",
             {
                 "migration.id": str(migration_id),
-                "target_position": target_position,
+                "target_position": target_position.to_str(),
                 ATTR_DB_SYSTEM: "postgresql",
             },
         ):
             query = text("""
                 SELECT
-                    id, migration_id, source_position, target_position,
+                    id, migration_id, source_position_token, target_position_token,
                     event_id, mapped_at
                 FROM migration_position_mappings
                 WHERE migration_id = :migration_id
-                  AND target_position = :target_position
+                  AND target_position_token = :target_position_token
                 LIMIT 1
             """)
 
-            async with execute_with_connection(self._conn, transactional=False) as conn:
+            async with sql_connection(self._conn, write=False) as conn:
                 result = await conn.execute(
                     query,
                     {
                         "migration_id": migration_id,
-                        "target_position": target_position,
+                        "target_position_token": target_position.to_str(),
                     },
                 )
                 row = result.fetchone()
@@ -565,17 +586,143 @@ class PostgreSQLPositionMappingRepository:
 
             return self._row_to_mapping(row)
 
+    async def _get_by_ordinal(self, migration_id: UUID, ordinal: int) -> PositionMapping | None:
+        """
+        Fetch the mapping at the given zero-based row ordinal, ordered by `id`.
+
+        Private helper shared by the binary-search nearest-match lookups.
+        Relies on the monotonicity precondition documented on the class:
+        `id` order is source-position order because a single writer records
+        mappings in ascending source-position order.
+
+        Args:
+            migration_id: UUID of the migration.
+            ordinal: Zero-based position in `id` order.
+
+        Returns:
+            PositionMapping at that ordinal, or None if out of range.
+        """
+        query = text("""
+            SELECT
+                id, migration_id, source_position_token, target_position_token,
+                event_id, mapped_at
+            FROM migration_position_mappings
+            WHERE migration_id = :migration_id
+            ORDER BY id ASC
+            LIMIT 1 OFFSET :offset
+        """)
+
+        async with sql_connection(self._conn, write=False) as conn:
+            result = await conn.execute(
+                query,
+                {"migration_id": migration_id, "offset": ordinal},
+            )
+            row = result.fetchone()
+
+        if row is None:
+            return None
+
+        return self._row_to_mapping(row)
+
+    async def _find_last_ordinal_lte(
+        self,
+        migration_id: UUID,
+        source_position: Position,
+        total: int,
+    ) -> int | None:
+        """
+        Binary search over the row ordinal for the last mapping <= a position.
+
+        Positions are opaque tokens: they cannot be ordered in SQL, so the
+        nearest match is a binary search over `ORDER BY id` (which is
+        source-position order under the monotonicity precondition), with
+        the `<=` comparison performed in Python on decoded `Position`
+        values. Each step is a single-row `LIMIT 1 OFFSET k` read, giving
+        O(log n) round trips instead of loading every mapping.
+
+        Args:
+            migration_id: UUID of the migration.
+            source_position: Source position to find the nearest ordinal for.
+            total: Total mapping count for this migration (avoids a
+                redundant COUNT when the caller already has it).
+
+        Returns:
+            The greatest zero-based ordinal whose source_position <= the
+            given position, or None if no such mapping exists.
+
+        Raises:
+            PositionForeignError: If source_position is from a different
+                store than the recorded mappings; this is not caught here,
+                it is the correct failure.
+        """
+        if total == 0:
+            return None
+
+        lo, hi = 0, total - 1
+        best: int | None = None
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            candidate = await self._get_by_ordinal(migration_id, mid)
+            if candidate is None:
+                break
+            if candidate.source_position <= source_position:
+                best = mid
+                lo = mid + 1
+            else:
+                hi = mid - 1
+        return best
+
+    async def _find_first_ordinal_gte(
+        self,
+        migration_id: UUID,
+        source_position: Position,
+        total: int,
+    ) -> int | None:
+        """
+        Binary search over the row ordinal for the first mapping >= a position.
+
+        Symmetric counterpart to `_find_last_ordinal_lte`, used to resolve
+        the lower bound of a source-position range to an ordinal.
+
+        Args:
+            migration_id: UUID of the migration.
+            source_position: Source position to find the nearest ordinal for.
+            total: Total mapping count for this migration.
+
+        Returns:
+            The smallest zero-based ordinal whose source_position >= the
+            given position, or None if no such mapping exists.
+        """
+        if total == 0:
+            return None
+
+        lo, hi = 0, total - 1
+        best: int | None = None
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            candidate = await self._get_by_ordinal(migration_id, mid)
+            if candidate is None:
+                break
+            if candidate.source_position >= source_position:
+                best = mid
+                hi = mid - 1
+            else:
+                lo = mid + 1
+        return best
+
     async def find_nearest_source_position(
         self,
         migration_id: UUID,
-        source_position: int,
+        source_position: Position,
     ) -> PositionMapping | None:
         """
         Find the nearest mapping with source_position <= given position.
 
-        Uses the DESC index on (migration_id, source_position DESC) for
-        efficient O(log n) nearest-neighbor lookup. This is the key query
-        for checkpoint translation during subscription migration.
+        Mappings for a migration are recorded in ascending source-position
+        order by a single writer, so `id` order is source-position order.
+        Positions are opaque tokens and cannot be ordered in SQL, so the
+        nearest match is a binary search over the row ordinal with the
+        comparison performed in Python -- see `_find_last_ordinal_lte`.
 
         Args:
             migration_id: UUID of the migration
@@ -589,35 +736,15 @@ class PostgreSQLPositionMappingRepository:
             "eventsource.position_mapping_repo.find_nearest_source_position",
             {
                 "migration.id": str(migration_id),
-                "source_position": source_position,
+                "source_position": source_position.to_str(),
                 ATTR_DB_SYSTEM: "postgresql",
             },
         ):
-            query = text("""
-                SELECT
-                    id, migration_id, source_position, target_position,
-                    event_id, mapped_at
-                FROM migration_position_mappings
-                WHERE migration_id = :migration_id
-                  AND source_position <= :source_position
-                ORDER BY source_position DESC
-                LIMIT 1
-            """)
-
-            async with execute_with_connection(self._conn, transactional=False) as conn:
-                result = await conn.execute(
-                    query,
-                    {
-                        "migration_id": migration_id,
-                        "source_position": source_position,
-                    },
-                )
-                row = result.fetchone()
-
-            if row is None:
+            total = await self.count_by_migration(migration_id)
+            ordinal = await self._find_last_ordinal_lte(migration_id, source_position, total)
+            if ordinal is None:
                 return None
-
-            return self._row_to_mapping(row)
+            return await self._get_by_ordinal(migration_id, ordinal)
 
     async def find_by_event_id(
         self,
@@ -647,14 +774,14 @@ class PostgreSQLPositionMappingRepository:
         ):
             query = text("""
                 SELECT
-                    id, migration_id, source_position, target_position,
+                    id, migration_id, source_position_token, target_position_token,
                     event_id, mapped_at
                 FROM migration_position_mappings
                 WHERE migration_id = :migration_id
                   AND event_id = :event_id
             """)
 
-            async with execute_with_connection(self._conn, transactional=False) as conn:
+            async with sql_connection(self._conn, write=False) as conn:
                 result = await conn.execute(
                     query,
                     {
@@ -678,8 +805,8 @@ class PostgreSQLPositionMappingRepository:
         """
         List mappings for a migration with pagination.
 
-        Results are ordered by source_position ascending for consistent
-        iteration through the mapping set.
+        Results are ordered by `id` ascending, which is source-position
+        order under the class's monotonicity precondition.
 
         Args:
             migration_id: UUID of the migration
@@ -700,15 +827,15 @@ class PostgreSQLPositionMappingRepository:
         ):
             query = text("""
                 SELECT
-                    id, migration_id, source_position, target_position,
+                    id, migration_id, source_position_token, target_position_token,
                     event_id, mapped_at
                 FROM migration_position_mappings
                 WHERE migration_id = :migration_id
-                ORDER BY source_position ASC
+                ORDER BY id ASC
                 LIMIT :limit OFFSET :offset
             """)
 
-            async with execute_with_connection(self._conn, transactional=False) as conn:
+            async with sql_connection(self._conn, write=False) as conn:
                 result = await conn.execute(
                     query,
                     {
@@ -724,14 +851,19 @@ class PostgreSQLPositionMappingRepository:
     async def list_in_source_range(
         self,
         migration_id: UUID,
-        start_position: int,
-        end_position: int,
+        start_position: Position,
+        end_position: Position,
     ) -> list[PositionMapping]:
         """
         List mappings within a source position range.
 
         Returns all mappings where start_position <= source_position <= end_position.
-        Uses the index on (migration_id, source_position) for efficient range scan.
+        Positions are opaque tokens and cannot be range-filtered in SQL
+        (no `BETWEEN` on tokens), so both endpoints are resolved to row
+        ordinals via binary search (same technique as
+        `find_nearest_source_position`), and the ordinal range between them
+        is selected by a single bounded `id`-ordered query -- never a full
+        table scan of the migration's mappings.
 
         Args:
             migration_id: UUID of the migration
@@ -745,34 +877,20 @@ class PostgreSQLPositionMappingRepository:
             "eventsource.position_mapping_repo.list_in_source_range",
             {
                 "migration.id": str(migration_id),
-                "start_position": start_position,
-                "end_position": end_position,
+                "start_position": start_position.to_str(),
+                "end_position": end_position.to_str(),
                 ATTR_DB_SYSTEM: "postgresql",
             },
         ):
-            query = text("""
-                SELECT
-                    id, migration_id, source_position, target_position,
-                    event_id, mapped_at
-                FROM migration_position_mappings
-                WHERE migration_id = :migration_id
-                  AND source_position >= :start_position
-                  AND source_position <= :end_position
-                ORDER BY source_position ASC
-            """)
+            total = await self.count_by_migration(migration_id)
+            lower_ordinal = await self._find_first_ordinal_gte(migration_id, start_position, total)
+            upper_ordinal = await self._find_last_ordinal_lte(migration_id, end_position, total)
 
-            async with execute_with_connection(self._conn, transactional=False) as conn:
-                result = await conn.execute(
-                    query,
-                    {
-                        "migration_id": migration_id,
-                        "start_position": start_position,
-                        "end_position": end_position,
-                    },
-                )
-                rows = result.fetchall()
+            if lower_ordinal is None or upper_ordinal is None or lower_ordinal > upper_ordinal:
+                return []
 
-            return [self._row_to_mapping(row) for row in rows]
+            count = upper_ordinal - lower_ordinal + 1
+            return await self.list_by_migration(migration_id, limit=count, offset=lower_ordinal)
 
     async def count_by_migration(self, migration_id: UUID) -> int:
         """
@@ -797,7 +915,7 @@ class PostgreSQLPositionMappingRepository:
                 WHERE migration_id = :migration_id
             """)
 
-            async with execute_with_connection(self._conn, transactional=False) as conn:
+            async with sql_connection(self._conn, write=False) as conn:
                 result = await conn.execute(query, {"migration_id": migration_id})
                 row = result.fetchone()
 
@@ -806,17 +924,21 @@ class PostgreSQLPositionMappingRepository:
     async def get_position_bounds(
         self,
         migration_id: UUID,
-    ) -> tuple[int, int] | None:
+    ) -> tuple[Position, Position] | None:
         """
-        Get min and max source positions for a migration.
+        Get the first and last mapping's source positions for a migration.
 
-        Uses aggregate functions with the index for efficient computation.
+        `MIN`/`MAX` cannot be used on opaque tokens (lexicographic string
+        ordering is not position ordering), so the bounds are the first and
+        last mapping by `id` -- source-position order under the class's
+        monotonicity precondition.
 
         Args:
             migration_id: UUID of the migration
 
         Returns:
-            Tuple of (min_source_position, max_source_position) or None if no mappings
+            Tuple of (first_source_position, last_source_position) or None
+            if no mappings exist
         """
         with self._tracer.span(
             "eventsource.position_mapping_repo.get_position_bounds",
@@ -825,20 +947,17 @@ class PostgreSQLPositionMappingRepository:
                 ATTR_DB_SYSTEM: "postgresql",
             },
         ):
-            query = text("""
-                SELECT MIN(source_position), MAX(source_position)
-                FROM migration_position_mappings
-                WHERE migration_id = :migration_id
-            """)
-
-            async with execute_with_connection(self._conn, transactional=False) as conn:
-                result = await conn.execute(query, {"migration_id": migration_id})
-                row = result.fetchone()
-
-            if row is None or row[0] is None:
+            total = await self.count_by_migration(migration_id)
+            if total == 0:
                 return None
 
-            return (row[0], row[1])
+            first = await self._get_by_ordinal(migration_id, 0)
+            last = await self._get_by_ordinal(migration_id, total - 1)
+
+            if first is None or last is None:
+                return None
+
+            return (first.source_position, last.source_position)
 
     async def delete_by_migration(self, migration_id: UUID) -> int:
         """
@@ -865,7 +984,7 @@ class PostgreSQLPositionMappingRepository:
                 WHERE migration_id = :migration_id
             """)
 
-            async with execute_with_connection(self._conn, transactional=True) as conn:
+            async with sql_connection(self._conn, write=True) as conn:
                 result = await conn.execute(query, {"migration_id": migration_id})
 
             return result.rowcount
@@ -879,7 +998,8 @@ class PostgreSQLPositionMappingRepository:
         Convert database row to PositionMapping instance.
 
         The row order matches the SELECT queries:
-        (id, migration_id, source_position, target_position, event_id, mapped_at)
+        (id, migration_id, source_position_token, target_position_token,
+        event_id, mapped_at)
 
         Note: The id field is not part of PositionMapping as it's a dataclass
         frozen model. The database ID is only used for internal lookups.
@@ -889,11 +1009,22 @@ class PostgreSQLPositionMappingRepository:
 
         Returns:
             PositionMapping instance
+
+        Raises:
+            PositionDecodeError: If either token column is missing (a row
+                carrying only the legacy int position, which this library
+                never writes and unreleased software cannot have produced).
         """
+        source_token, target_token = row[2], row[3]
+        if source_token is None or target_token is None:
+            raise PositionDecodeError(
+                f"position mapping row {row[0]!r} has no position token "
+                "(legacy int-only row is not decodable)"
+            )
         return PositionMapping(
             migration_id=row[1],
-            source_position=row[2],
-            target_position=row[3],
+            source_position=Position.from_str(source_token),
+            target_position=Position.from_str(target_token),
             event_id=row[4],
             mapped_at=row[5],
         )

@@ -19,15 +19,20 @@ without requiring PostgreSQL.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from unittest.mock import MagicMock
 from uuid import UUID, uuid4
 
 import pytest
 
+from eventsource.adapters.memory import InMemoryEventStore
+from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
+from eventsource.migration.bulk_copier import BulkCopier
 from eventsource.migration.coordinator import MigrationCoordinator
 from eventsource.migration.cutover import CutoverManager
 from eventsource.migration.dual_write import DualWriteInterceptor
@@ -47,7 +52,7 @@ from eventsource.migration.models import (
 from eventsource.migration.router import TenantStoreRouter
 from eventsource.migration.sync_lag_tracker import SyncLagTracker
 from eventsource.migration.write_pause import WritePauseManager
-from eventsource.stores.in_memory import InMemoryEventStore
+from eventsource.ports import ExpectedVersion, FeedReadOptions, Position
 
 # =============================================================================
 # Test Event Classes
@@ -173,8 +178,8 @@ class InMemoryMigrationRepository:
         self,
         migration_id: UUID,
         events_copied: int,
-        last_source_position: int,
-        last_target_position: int | None = None,
+        last_source_position: Position | None,
+        last_target_position: Position | None = None,
     ) -> None:
         """Update bulk copy progress."""
         migration = await self.get(migration_id)
@@ -379,12 +384,12 @@ class MockLockManager:
         self._acquire_count += 1
 
         if self._should_fail:
-            from eventsource.locks import LockAcquisitionError
+            from eventsource.exceptions import LockAcquisitionError
 
             raise LockAcquisitionError(key, timeout or 0.0, "Mock failure")
 
         if self._fail_after is not None and self._acquire_count > self._fail_after:
-            from eventsource.locks import LockAcquisitionError
+            from eventsource.exceptions import LockAcquisitionError
 
             raise LockAcquisitionError(key, timeout or 0.0, "Mock failure after threshold")
 
@@ -421,13 +426,13 @@ class MockLockManager:
 @pytest.fixture
 def source_store() -> InMemoryEventStore:
     """Create source (shared) event store."""
-    return InMemoryEventStore(enable_tracing=False)
+    return InMemoryEventStore("source")
 
 
 @pytest.fixture
 def target_store() -> InMemoryEventStore:
     """Create target (dedicated) event store."""
-    return InMemoryEventStore(enable_tracing=False)
+    return InMemoryEventStore("target")
 
 
 @pytest.fixture
@@ -522,11 +527,10 @@ async def create_test_events(
             amount=100.0 + i,
         )
 
-        await store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type=aggregate_type,
-            events=[event],
-            expected_version=0,
+        await store.append(
+            StreamId(aggregate_id=aggregate_id, category=aggregate_type),
+            [event],
+            ExpectedVersion.no_stream(),
         )
 
     return aggregate_ids
@@ -538,9 +542,9 @@ async def get_all_tenant_events(
 ) -> list[DomainEvent]:
     """Get all events for a tenant from a store."""
     events = []
-    async for stored_event in store.read_all():
-        if stored_event.event.tenant_id == tenant_id:
-            events.append(stored_event.event)
+    async for envelope in store.read_all():
+        if envelope.event.tenant_id == tenant_id:
+            events.append(envelope.event)
     return events
 
 
@@ -688,26 +692,22 @@ class TestDualWriteBehavior:
             aggregate_id=aggregate_id,
             tenant_id=tenant_id,
         )
+        stream = StreamId(aggregate_id=aggregate_id, category="Order")
 
         # Write through interceptor
-        result = await interceptor.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="Order",
-            events=[event],
-            expected_version=0,
-        )
+        result = await interceptor.append(stream, [event], ExpectedVersion.no_stream())
 
-        assert result.success
+        assert result.new_version == 1
 
         # Verify event in source
-        source_stream = await source_store.get_events(aggregate_id, "Order")
-        assert len(source_stream.events) == 1
-        assert source_stream.events[0].event_id == event.event_id
+        source_events = [e async for e in source_store.read_stream(stream)]
+        assert len(source_events) == 1
+        assert source_events[0].event.event_id == event.event_id
 
         # Verify event in target
-        target_stream = await target_store.get_events(aggregate_id, "Order")
-        assert len(target_stream.events) == 1
-        assert target_stream.events[0].event_id == event.event_id
+        target_events = [e async for e in target_store.read_stream(stream)]
+        assert len(target_events) == 1
+        assert target_events[0].event.event_id == event.event_id
 
     @pytest.mark.asyncio
     async def test_dual_write_reads_from_source(
@@ -723,13 +723,9 @@ class TestDualWriteBehavior:
             aggregate_id=aggregate_id,
             tenant_id=tenant_id,
         )
+        stream = StreamId(aggregate_id=aggregate_id, category="Order")
 
-        await source_store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="Order",
-            events=[event],
-            expected_version=0,
-        )
+        await source_store.append(stream, [event], ExpectedVersion.no_stream())
 
         # Target is empty
 
@@ -741,11 +737,11 @@ class TestDualWriteBehavior:
         )
 
         # Read through interceptor
-        stream = await interceptor.get_events(aggregate_id, "Order")
+        events = [e async for e in interceptor.read_stream(stream)]
 
         # Should get event from source
-        assert len(stream.events) == 1
-        assert stream.events[0].event_id == event.event_id
+        assert len(events) == 1
+        assert events[0].event.event_id == event.event_id
 
     @pytest.mark.asyncio
     async def test_dual_write_handles_target_failure(
@@ -757,10 +753,10 @@ class TestDualWriteBehavior:
 
         # Create a target store that will fail on append
         class FailingStore(InMemoryEventStore):
-            async def append_events(self, *args, **kwargs):
+            async def append(self, *args, **kwargs):
                 raise RuntimeError("Target store failure")
 
-        failing_target = FailingStore(enable_tracing=False)
+        failing_target = FailingStore("failing-target")
 
         interceptor = DualWriteInterceptor(
             source_store=source_store,
@@ -774,20 +770,16 @@ class TestDualWriteBehavior:
             aggregate_id=aggregate_id,
             tenant_id=tenant_id,
         )
+        stream = StreamId(aggregate_id=aggregate_id, category="Order")
 
         # Write should succeed (source is authoritative)
-        result = await interceptor.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="Order",
-            events=[event],
-            expected_version=0,
-        )
+        result = await interceptor.append(stream, [event], ExpectedVersion.no_stream())
 
-        assert result.success
+        assert result.new_version == 1
 
         # Verify event in source
-        source_stream = await source_store.get_events(aggregate_id, "Order")
-        assert len(source_stream.events) == 1
+        source_events = [e async for e in source_store.read_stream(stream)]
+        assert len(source_events) == 1
 
         # Verify failure was recorded
         stats = interceptor.get_failure_stats()
@@ -809,37 +801,28 @@ class TestDualWriteBehavior:
         )
 
         aggregate_id = uuid4()
+        stream = StreamId(aggregate_id=aggregate_id, category="Order")
 
         # Write first event
         event1 = OrderCreated(
             aggregate_id=aggregate_id,
             tenant_id=tenant_id,
         )
-        await interceptor.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="Order",
-            events=[event1],
-            expected_version=0,
-        )
+        await interceptor.append(stream, [event1], ExpectedVersion.no_stream())
 
         # Write second event
         event2 = OrderConfirmed(
             aggregate_id=aggregate_id,
             tenant_id=tenant_id,
         )
-        await interceptor.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="Order",
-            events=[event2],
-            expected_version=1,
-        )
+        await interceptor.append(stream, [event2], ExpectedVersion.exact(1))
 
         # Verify both events in both stores
-        source_stream = await source_store.get_events(aggregate_id, "Order")
-        assert len(source_stream.events) == 2
+        source_events = [e async for e in source_store.read_stream(stream)]
+        assert len(source_events) == 2
 
-        target_stream = await target_store.get_events(aggregate_id, "Order")
-        assert len(target_stream.events) == 2
+        target_events = [e async for e in target_store.read_stream(stream)]
+        assert len(target_events) == 2
 
 
 # =============================================================================
@@ -865,11 +848,10 @@ class TestSyncLagTracking:
                 aggregate_id=aggregate_id,
                 tenant_id=tenant_id,
             )
-            await source_store.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="SampleAggregate",
-                events=[event],
-                expected_version=0,
+            await source_store.append(
+                StreamId(aggregate_id=aggregate_id, category="SampleAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
             )
 
         # Target has only 5 events
@@ -879,26 +861,28 @@ class TestSyncLagTracking:
                 aggregate_id=aggregate_id,
                 tenant_id=tenant_id,
             )
-            await target_store.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="SampleAggregate",
-                events=[event],
-                expected_version=0,
+            await target_store.append(
+                StreamId(aggregate_id=aggregate_id, category="SampleAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
             )
 
         tracker = SyncLagTracker(
             source_store=source_store,
             target_store=target_store,
+            config=MigrationConfig(cutover_max_lag_events=100),  # exact count, not clamped
             tenant_id=tenant_id,
             enable_tracing=False,
         )
 
+        # No copying has happened yet (since=None): every source event is
+        # behind, regardless of how many events the target happens to hold.
         lag = await tracker.calculate_lag()
 
         assert lag is not None
-        assert lag.source_position == 10
-        assert lag.target_position == 5
-        assert lag.events == 5  # 10 - 5 = 5 events behind
+        assert lag.source_position is not None
+        assert lag.target_position is not None
+        assert lag.events == 10  # nothing copied yet -> all 10 source events are behind
 
     @pytest.mark.asyncio
     async def test_sync_lag_converged_when_equal(
@@ -907,7 +891,9 @@ class TestSyncLagTracking:
         target_store: InMemoryEventStore,
         tenant_id: UUID,
     ) -> None:
-        """Test sync lag shows converged when stores are in sync."""
+        """Test sync lag shows converged when the target has caught up."""
+        last_source_position: Position | None = None
+
         # Same events in both stores
         for _i in range(5):
             aggregate_id = uuid4()
@@ -915,18 +901,10 @@ class TestSyncLagTracking:
                 aggregate_id=aggregate_id,
                 tenant_id=tenant_id,
             )
-            await source_store.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="SampleAggregate",
-                events=[event],
-                expected_version=0,
-            )
-            await target_store.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="SampleAggregate",
-                events=[event],
-                expected_version=0,
-            )
+            stream = StreamId(aggregate_id=aggregate_id, category="SampleAggregate")
+            result = await source_store.append(stream, [event], ExpectedVersion.no_stream())
+            last_source_position = result.position
+            await target_store.append(stream, [event], ExpectedVersion.no_stream())
 
         tracker = SyncLagTracker(
             source_store=source_store,
@@ -935,7 +913,9 @@ class TestSyncLagTracking:
             enable_tracing=False,
         )
 
-        lag = await tracker.calculate_lag()
+        # `since` is the last position the target has copied; passing the
+        # final source position means nothing is behind.
+        lag = await tracker.calculate_lag(since=last_source_position)
 
         assert lag is not None
         assert lag.events == 0
@@ -951,32 +931,23 @@ class TestSyncLagTracking:
         """Test is_sync_ready returns True when lag is within threshold."""
         config = MigrationConfig(cutover_max_lag_events=100)
 
-        # Create small lag (10 events)
-        for _i in range(20):
-            aggregate_id = uuid4()
-            event = SampleTestEvent(
-                aggregate_id=aggregate_id,
-                tenant_id=tenant_id,
-            )
-            await source_store.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="SampleAggregate",
-                events=[event],
-                expected_version=0,
-            )
+        last_source_position: Position | None = None
 
-        for _i in range(10):
+        # Copy the first 10 events' worth of position, leave the rest (10
+        # more) as lag -- 10 events behind, well within the 100 threshold.
+        for i in range(20):
             aggregate_id = uuid4()
             event = SampleTestEvent(
                 aggregate_id=aggregate_id,
                 tenant_id=tenant_id,
             )
-            await target_store.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="SampleAggregate",
-                events=[event],
-                expected_version=0,
+            result = await source_store.append(
+                StreamId(aggregate_id=aggregate_id, category="SampleAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
             )
+            if i == 9:
+                last_source_position = result.position
 
         tracker = SyncLagTracker(
             source_store=source_store,
@@ -986,7 +957,7 @@ class TestSyncLagTracking:
             enable_tracing=False,
         )
 
-        await tracker.calculate_lag()
+        await tracker.calculate_lag(since=last_source_position)
 
         # 10 events lag is within 100 event threshold
         assert tracker.is_sync_ready()
@@ -1002,23 +973,23 @@ class TestSyncLagTracking:
         tracker = SyncLagTracker(
             source_store=source_store,
             target_store=target_store,
+            config=MigrationConfig(cutover_max_lag_events=100),  # exact count, not clamped
             tenant_id=tenant_id,
             enable_tracing=False,
         )
 
-        # Take multiple lag samples
+        # Take multiple lag samples, always measured from the start
+        # (since=None) -- each new event increases the count behind by one.
         for _i in range(5):
-            # Add event to source to increase lag
             aggregate_id = uuid4()
             event = SampleTestEvent(
                 aggregate_id=aggregate_id,
                 tenant_id=tenant_id,
             )
-            await source_store.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="SampleAggregate",
-                events=[event],
-                expected_version=0,
+            await source_store.append(
+                StreamId(aggregate_id=aggregate_id, category="SampleAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
             )
 
             await tracker.calculate_lag()
@@ -1028,6 +999,856 @@ class TestSyncLagTracking:
         assert stats.sample_count == 5
         assert stats.max_lag == 5  # Final lag after 5 events
         assert stats.min_lag == 1  # First lag was 1
+
+
+class FlakyTarget:
+    """`FullEventStore` wrapper that rejects the first `reject_first` appends.
+
+    Composition, not inheritance -- it stands in wherever a
+    `FullEventStore` is expected and lets the wrapped store see only the
+    appends it does not reject.
+    """
+
+    max_append_batch: int | None = None
+
+    def __init__(self, inner: InMemoryEventStore, *, reject_first: int = 0) -> None:
+        self._inner = inner
+        self._reject_first = reject_first
+        self.append_calls = 0
+
+    async def append(self, stream, events, expected):  # type: ignore[no-untyped-def]
+        self.append_calls += 1
+        if self.append_calls <= self._reject_first:
+            raise RuntimeError("target unavailable")
+        return await self._inner.append(stream, events, expected)
+
+    def read_stream(self, stream, options=None):  # type: ignore[no-untyped-def]
+        return self._inner.read_stream(stream, options)
+
+    async def get_stream_version(self, stream):  # type: ignore[no-untyped-def]
+        return await self._inner.get_stream_version(stream)
+
+    async def event_exists(self, event_id):  # type: ignore[no-untyped-def]
+        return await self._inner.event_exists(event_id)
+
+    def read_all(self, from_position=None, options=None):  # type: ignore[no-untyped-def]
+        return self._inner.read_all(from_position, options)
+
+    async def current_position(self):  # type: ignore[no-untyped-def]
+        return await self._inner.current_position()
+
+    def read_category(self, category, options=None):  # type: ignore[no-untyped-def]
+        return self._inner.read_category(category, options)
+
+
+async def drive_dual_writes(
+    interceptor: DualWriteInterceptor,
+    tenant_id: UUID,
+    count: int,
+) -> None:
+    """Push `count` single-event appends through the interceptor."""
+    for _i in range(count):
+        aggregate_id = uuid4()
+        event = SampleTestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)
+        await interceptor.append(
+            StreamId(aggregate_id=aggregate_id, category="SampleAggregate"),
+            [event],
+            ExpectedVersion.no_stream(),
+        )
+
+
+async def seed_copied_prefix(
+    source_store: InMemoryEventStore,
+    target_store: InMemoryEventStore,
+    tenant_id: UUID,
+    count: int,
+) -> Position | None:
+    """Write `count` events to BOTH stores; return the last source position.
+
+    Stands in for a completed bulk-copy pass.
+    """
+    last_source_position: Position | None = None
+    for _i in range(count):
+        aggregate_id = uuid4()
+        event = SampleTestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)
+        stream = StreamId(aggregate_id=aggregate_id, category="SampleAggregate")
+        result = await source_store.append(stream, [event], ExpectedVersion.no_stream())
+        last_source_position = result.position
+        await target_store.append(stream, [event], ExpectedVersion.no_stream())
+    return last_source_position
+
+
+class TestSyncLagAnchorOnWriteActiveTenant:
+    """Lag must converge on a live tenant WITHOUT ever hiding missing events.
+
+    The count-behind reads the source feed after its anchor, which
+    includes everything the `DualWriteInterceptor` has already mirrored.
+    The anchor therefore advances to the interceptor's synced watermark --
+    but never past its first failure, because events at or after that
+    point may be missing from the target.
+    """
+
+    @pytest.mark.asyncio
+    async def test_healthy_tenant_converges_unbounded(
+        self,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
+        tenant_id: UUID,
+    ) -> None:
+        """All writes mirrored and the checkpoint covers the install window:
+        lag 0, and not a bounded guess.
+
+        Without the coordinator's completed-pass attestation the checkpoint
+        must have reached the interceptor's coverage for the anchor to
+        advance at all -- see `test_install_window_gap_blocks_cutover` for
+        why. `copied_through` stands for the checkpoint of a copy pass that
+        ran with the interceptor installed, which since the phase reorder
+        is every coordinator-run pass.
+        """
+        interceptor = DualWriteInterceptor(
+            source_store=source_store,
+            target_store=target_store,
+            tenant_id=tenant_id,
+            enable_tracing=False,
+        )
+        await drive_dual_writes(interceptor, tenant_id, 3)
+
+        # A copy pass ran with the interceptor installed, so the
+        # checkpoint now covers everything up to here.
+        copied_through = await source_store.current_position()
+        assert copied_through is not None
+        assert interceptor.first_seen_source_position is not None
+        assert copied_through >= interceptor.first_seen_source_position
+
+        await drive_dual_writes(interceptor, tenant_id, 2)
+
+        assert interceptor.first_failed_source_position is None
+        assert interceptor.last_synced_source_position is not None
+
+        tracker = SyncLagTracker(
+            source_store=source_store,
+            target_store=target_store,
+            config=MigrationConfig(cutover_max_lag_events=3),
+            tenant_id=tenant_id,
+            enable_tracing=False,
+        )
+
+        anchor = interceptor.safe_lag_anchor(copied_through)
+        assert anchor == interceptor.last_synced_source_position
+
+        lag = await tracker.calculate_lag(since=anchor)
+
+        assert lag.events == 0
+        assert lag.count_is_bounded is False
+        assert tracker.is_sync_ready() is True
+
+    @pytest.mark.asyncio
+    async def test_failed_prefix_never_reads_as_converged(
+        self,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
+        tenant_id: UUID,
+        routing_repo: InMemoryRoutingRepository,
+        router: TenantStoreRouter,
+        lock_manager: MockLockManager,
+    ) -> None:
+        """Failures followed by successes must not hide the missing events.
+
+        This is the data-loss case: the target was down for the first
+        three writes and recovered for the next five. The successes must
+        NOT advance the anchor past the failure, or the missing three
+        vanish from the count and cutover proceeds over a hole.
+        """
+        migration_id = uuid4()
+        copied_through = await seed_copied_prefix(source_store, target_store, tenant_id, 4)
+
+        flaky = FlakyTarget(target_store, reject_first=3)
+        interceptor = DualWriteInterceptor(
+            source_store=source_store,
+            target_store=flaky,
+            tenant_id=tenant_id,
+            enable_tracing=False,
+        )
+        await drive_dual_writes(interceptor, tenant_id, 8)
+
+        # Three events never reached the target.
+        assert interceptor.first_failed_source_position is not None
+
+        config = MigrationConfig(cutover_max_lag_events=3)
+        tracker = SyncLagTracker(
+            source_store=source_store,
+            target_store=target_store,
+            config=config,
+            tenant_id=tenant_id,
+            enable_tracing=False,
+        )
+
+        anchor = interceptor.safe_lag_anchor(copied_through)
+        lag = await tracker.calculate_lag(since=anchor)
+
+        # At least the three missing events are still counted.
+        assert lag.events >= 3
+        assert tracker.is_sync_ready() is False
+
+        # And cutover refuses.
+        await routing_repo.set_migration_state(
+            tenant_id, TenantMigrationState.DUAL_WRITE, migration_id
+        )
+        router.register_store("dedicated", target_store)
+        cutover_manager = CutoverManager(
+            lock_manager=lock_manager,
+            router=router,
+            routing_repo=routing_repo,
+            enable_tracing=False,
+        )
+        result = await cutover_manager.execute_cutover(
+            migration_id=migration_id,
+            tenant_id=tenant_id,
+            lag_tracker=tracker,
+            target_store_id="dedicated",
+            config=config,
+            timeout_ms=500.0,
+            since=anchor,
+        )
+
+        assert result.success is False
+        routing = await routing_repo.get_routing(tenant_id)
+        assert routing is not None
+        assert routing.store_id != "dedicated"
+
+    @pytest.mark.asyncio
+    async def test_first_failure_watermark_does_not_move_on_recovery(
+        self,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
+        tenant_id: UUID,
+    ) -> None:
+        """Later successes never clear or advance the first-failure mark."""
+        flaky = FlakyTarget(target_store, reject_first=1)
+        interceptor = DualWriteInterceptor(
+            source_store=source_store,
+            target_store=flaky,
+            tenant_id=tenant_id,
+            enable_tracing=False,
+        )
+
+        await drive_dual_writes(interceptor, tenant_id, 1)
+        first_failed = interceptor.first_failed_source_position
+        assert first_failed is not None
+
+        await drive_dual_writes(interceptor, tenant_id, 5)
+
+        assert interceptor.first_failed_source_position == first_failed
+        # Successes after the failure DO advance the synced watermark...
+        assert interceptor.last_synced_source_position is not None
+        assert interceptor.last_synced_source_position > first_failed
+        # ...but the anchor refuses to move past the failure.
+        assert interceptor.safe_lag_anchor(None) is None
+
+    @pytest.mark.asyncio
+    async def test_install_window_gap_blocks_cutover(
+        self,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
+        tenant_id: UUID,
+        routing_repo: InMemoryRoutingRepository,
+        router: TenantStoreRouter,
+        lock_manager: MockLockManager,
+    ) -> None:
+        """The install-window clamp is dead-man defense: writes mirrored by
+        nobody never let a later successful mirror advance the anchor past
+        them.
+
+        The coordinator now installs the interceptor BEFORE the copy pass,
+        so this window is unreachable-by-construction in the in-tree flow
+        (see TestWriteActiveTenantFirstPassCutover). The clamp stays for
+        every path WITHOUT the coordinator's completed-pass attestation
+        (`mark_copy_pass_complete`): a restarted orchestrator's fresh
+        interceptor, hand-driven components as here, or a pass that never
+        completed. In those, writes may predate the interceptor, go to the
+        source alone, and must keep counting as lag.
+        """
+        migration_id = uuid4()
+        copied_through = await seed_copied_prefix(source_store, target_store, tenant_id, 4)
+
+        # The install window: source-only writes, mirrored by nobody.
+        for _i in range(3):
+            aggregate_id = uuid4()
+            await source_store.append(
+                StreamId(aggregate_id=aggregate_id, category="SampleAggregate"),
+                [SampleTestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)],
+                ExpectedVersion.no_stream(),
+            )
+
+        # Interceptor installed only now, and mirroring cleanly.
+        interceptor = DualWriteInterceptor(
+            source_store=source_store,
+            target_store=target_store,
+            tenant_id=tenant_id,
+            enable_tracing=False,
+        )
+        await drive_dual_writes(interceptor, tenant_id, 2)
+
+        assert interceptor.first_failed_source_position is None
+        assert interceptor.last_synced_source_position is not None
+        assert interceptor.first_seen_source_position is not None
+
+        # The anchor must not advance over the gap.
+        anchor = interceptor.safe_lag_anchor(copied_through)
+        assert anchor == copied_through
+
+        # NOTE: the threshold has to be tighter than the backlog for
+        # cutover to refuse. Gap events counted but sitting UNDER a
+        # generous threshold would still permit cutover, because the
+        # threshold assumes the remainder drains during the pause -- and
+        # gap events never drain, since nobody is mirroring them.
+        config = MigrationConfig(cutover_max_lag_events=3)
+        tracker = SyncLagTracker(
+            source_store=source_store,
+            target_store=target_store,
+            config=config,
+            tenant_id=tenant_id,
+            enable_tracing=False,
+        )
+        lag = await tracker.calculate_lag(since=anchor)
+
+        # The 3 gap events are genuinely missing from the target.
+        assert lag.events >= 3
+        assert tracker.is_sync_ready() is False
+
+        await routing_repo.set_migration_state(
+            tenant_id, TenantMigrationState.DUAL_WRITE, migration_id
+        )
+        router.register_store("dedicated", target_store)
+        cutover_manager = CutoverManager(
+            lock_manager=lock_manager,
+            router=router,
+            routing_repo=routing_repo,
+            enable_tracing=False,
+        )
+        result = await cutover_manager.execute_cutover(
+            migration_id=migration_id,
+            tenant_id=tenant_id,
+            lag_tracker=tracker,
+            target_store_id="dedicated",
+            config=config,
+            timeout_ms=500.0,
+            since=anchor,
+        )
+
+        assert result.success is False
+        routing = await routing_repo.get_routing(tenant_id)
+        assert routing is not None
+        assert routing.store_id != "dedicated"
+
+    @pytest.mark.asyncio
+    async def test_anchor_advances_when_interceptor_covers_the_checkpoint(
+        self,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
+        tenant_id: UUID,
+    ) -> None:
+        """The install-window clamp is a gate, not a veto.
+
+        Once the checkpoint reaches the interceptor's coverage the anchor
+        advances normally -- otherwise the clamp would pin every
+        migration at its checkpoint forever.
+        """
+        interceptor = DualWriteInterceptor(
+            source_store=source_store,
+            target_store=target_store,
+            tenant_id=tenant_id,
+            enable_tracing=False,
+        )
+        await drive_dual_writes(interceptor, tenant_id, 1)
+
+        # Checkpoint exactly at the start of coverage: the boundary case.
+        checkpoint = interceptor.first_seen_source_position
+        assert checkpoint is not None
+
+        await drive_dual_writes(interceptor, tenant_id, 3)
+
+        anchor = interceptor.safe_lag_anchor(checkpoint)
+        assert anchor == interceptor.last_synced_source_position
+        assert anchor != checkpoint
+
+    @pytest.mark.asyncio
+    async def test_restart_refuses_until_a_fresh_copy_pass(
+        self,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
+        tenant_id: UUID,
+    ) -> None:
+        """A restarted orchestrator has no watermarks, so it refuses cutover.
+
+        The watermarks live in the interceptor's memory. After a restart
+        the anchor falls back to the bulk-copy checkpoint, so already
+        mirrored events count as lag and cutover refuses until a fresh
+        copy pass advances the checkpoint.
+        """
+        copied_through = await seed_copied_prefix(source_store, target_store, tenant_id, 4)
+
+        pre_restart = DualWriteInterceptor(
+            source_store=source_store,
+            target_store=target_store,
+            tenant_id=tenant_id,
+            enable_tracing=False,
+        )
+        await drive_dual_writes(pre_restart, tenant_id, 5)
+
+        # The process restarts: a brand-new interceptor, no watermarks.
+        restarted = DualWriteInterceptor(
+            source_store=source_store,
+            target_store=target_store,
+            tenant_id=tenant_id,
+            enable_tracing=False,
+        )
+        assert restarted.last_synced_source_position is None
+        assert restarted.safe_lag_anchor(copied_through) == copied_through
+
+        tracker = SyncLagTracker(
+            source_store=source_store,
+            target_store=target_store,
+            config=MigrationConfig(cutover_max_lag_events=3),
+            tenant_id=tenant_id,
+            enable_tracing=False,
+        )
+        lag = await tracker.calculate_lag(since=restarted.safe_lag_anchor(copied_through))
+
+        # The five already-mirrored events read as lag -- conservative,
+        # and the documented consequence of not persisting the watermark.
+        assert lag.events > 0
+        assert tracker.is_sync_ready() is False
+
+    @pytest.mark.asyncio
+    async def test_overlap_mirror_conflict_is_absorbed_by_the_copy_pass(
+        self,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
+        tenant_id: UUID,
+    ) -> None:
+        """A mirror refused on a behind stream never leapfrogs the copier.
+
+        The mirror appends at the exact pre-append source version, so on a
+        stream the copier has not caught up it fails -- even for an `any`
+        writer that would previously have landed out of order. The refusal
+        is recorded, the copy pass delivers the event in source order, and
+        the completed pass absorbs the recorded failure so the anchor can
+        advance again.
+        """
+        aggregate_id = uuid4()
+        stream = StreamId(aggregate_id=aggregate_id, category="SampleAggregate")
+        await source_store.append(
+            stream,
+            [SampleTestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)],
+            ExpectedVersion.no_stream(),
+        )
+        await source_store.append(
+            stream,
+            [SampleTestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)],
+            ExpectedVersion.exact(1),
+        )
+
+        interceptor = DualWriteInterceptor(
+            source_store=source_store,
+            target_store=target_store,
+            tenant_id=tenant_id,
+            enable_tracing=False,
+        )
+
+        # A live `any` writer appends while the target holds none of the
+        # stream yet: the source takes it, the mirror must refuse.
+        live = SampleTestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)
+        result = await interceptor.append(stream, [live], ExpectedVersion.any_())
+        assert result.new_version == 3
+        assert await target_store.get_stream_version(stream) == 0
+        assert interceptor.first_failed_source_position == result.position
+
+        # The copy pass (which runs with the interceptor installed) then
+        # delivers everything, in source stream order.
+        copier = BulkCopier(
+            source_store=source_store,
+            target_store=target_store,
+            migration_repo=MagicMock(),
+            enable_tracing=False,
+        )
+        envelopes = [
+            env async for env in source_store.read_all(None, FeedReadOptions(tenant_id=tenant_id))
+        ]
+        await copier._write_batch(uuid4(), tenant_id, envelopes)
+        checkpoint = envelopes[-1].position
+        assert checkpoint is not None
+
+        source_ids = [env.event.event_id async for env in source_store.read_stream(stream)]
+        target_ids = [env.event.event_id async for env in target_store.read_stream(stream)]
+        assert target_ids == source_ids
+
+        # The completed covered pass absorbs the failure...
+        assert interceptor.mark_copy_pass_complete(checkpoint) == 0
+        assert interceptor.first_failed_source_position is None
+
+        # ...so the next mirrored write advances the anchor again.
+        follow_up = await interceptor.append(
+            stream,
+            [SampleTestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)],
+            ExpectedVersion.exact(3),
+        )
+        assert interceptor.safe_lag_anchor(checkpoint) == follow_up.position
+
+    @pytest.mark.asyncio
+    async def test_failures_beyond_the_checkpoint_stay_unabsorbed(
+        self,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
+        tenant_id: UUID,
+    ) -> None:
+        """`mark_copy_pass_complete` only absorbs what the checkpoint covers.
+
+        A failure past the pass's checkpoint was not re-copied by that
+        pass, so it keeps clamping the anchor until a later pass reaches
+        it.
+        """
+        flaky = FlakyTarget(target_store, reject_first=2)
+        interceptor = DualWriteInterceptor(
+            source_store=source_store,
+            target_store=flaky,
+            tenant_id=tenant_id,
+            enable_tracing=False,
+        )
+        await drive_dual_writes(interceptor, tenant_id, 2)
+        failures = [fw.source_position for fw in interceptor.get_failed_writes()]
+        assert len(failures) == 2
+        first_failure, second_failure = failures
+        assert first_failure is not None and second_failure is not None
+
+        # A pass that only reached the first failure absorbs only it.
+        assert interceptor.mark_copy_pass_complete(first_failure) == 1
+        assert interceptor.first_failed_source_position == second_failure
+
+        # A later mirror success cannot advance past the remaining hole.
+        await drive_dual_writes(interceptor, tenant_id, 1)
+        assert interceptor.safe_lag_anchor(first_failure) == first_failure
+
+        # The next pass's checkpoint covers it and the anchor is free.
+        assert interceptor.mark_copy_pass_complete(second_failure) == 0
+        await drive_dual_writes(interceptor, tenant_id, 1)
+        anchor = interceptor.safe_lag_anchor(second_failure)
+        assert anchor == interceptor.last_synced_source_position
+        assert anchor is not None and anchor > second_failure
+
+    @pytest.mark.asyncio
+    async def test_attested_pass_releases_the_install_window_clamp(
+        self,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
+        tenant_id: UUID,
+    ) -> None:
+        """The coordinator's completed-pass attestation replaces the
+        first_seen proxy: mirrored writes beyond the checkpoint advance the
+        anchor even though the checkpoint never reached first_seen."""
+        copied_through = await seed_copied_prefix(source_store, target_store, tenant_id, 2)
+
+        interceptor = DualWriteInterceptor(
+            source_store=source_store,
+            target_store=target_store,
+            tenant_id=tenant_id,
+            enable_tracing=False,
+        )
+        await drive_dual_writes(interceptor, tenant_id, 2)
+
+        # Without attestation the proxy clamp holds (checkpoint < first_seen).
+        assert interceptor.safe_lag_anchor(copied_through) == copied_through
+
+        # With it, the window is provably empty and the anchor advances.
+        assert interceptor.mark_copy_pass_complete(copied_through) == 0
+        anchor = interceptor.safe_lag_anchor(copied_through)
+        assert anchor == interceptor.last_synced_source_position
+        assert anchor is not None and copied_through is not None
+        assert anchor > copied_through
+
+    @pytest.mark.asyncio
+    async def test_saturated_failure_history_never_reports_clean(
+        self,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
+        tenant_id: UUID,
+    ) -> None:
+        """Once tracked failures exceed `max_failure_history`, the fail-closed
+        guard must pin, not just slow, recovery.
+
+        Dropping the oldest unabsorbed failure position to bound memory
+        makes a future "fully absorbed" claim unsound -- there is no way
+        to prove the dropped position was re-copied. So once saturated,
+        `safe_lag_anchor` must clamp to the checkpoint forever, and
+        `mark_copy_pass_complete` must never again report zero remaining
+        failures, even when its checkpoint covers every position still on
+        record.
+        """
+        always_fails = FlakyTarget(target_store, reject_first=1_000_000)
+        interceptor = DualWriteInterceptor(
+            source_store=source_store,
+            target_store=always_fails,
+            tenant_id=tenant_id,
+            enable_tracing=False,
+            max_failure_history=2,
+        )
+
+        # Drive more failing mirrors than the cap so the guard saturates.
+        await drive_dual_writes(interceptor, tenant_id, 5)
+        checkpoint = await source_store.current_position()
+        assert checkpoint is not None
+
+        # A checkpoint that covers every recorded failure would normally
+        # absorb them all and report clean -- saturation must override that.
+        remaining = interceptor.mark_copy_pass_complete(checkpoint)
+        assert remaining >= 1
+
+        # Calling it again (another completed pass at the same checkpoint)
+        # must still refuse to report clean.
+        assert interceptor.mark_copy_pass_complete(checkpoint) >= 1
+
+        # The anchor stays pinned at the checkpoint regardless of how far
+        # writes have otherwise synced.
+        assert interceptor.safe_lag_anchor(checkpoint) == checkpoint
+
+
+class GatedFeedStore:
+    """`FullEventStore` wrapper whose second `read_all` call blocks mid-stream.
+
+    The bulk copier's first `read_all` is the counting pass and its second
+    is the copy pass; gating the second lets a test write live events while
+    the copy pass is provably mid-flight, then release it. Every other
+    operation passes straight through.
+    """
+
+    max_append_batch: int | None = None
+
+    def __init__(self, inner: InMemoryEventStore, *, gate_after: int = 3) -> None:
+        self._inner = inner
+        self._gate_after = gate_after
+        self._read_all_calls = 0
+        self.mid_pass = asyncio.Event()
+        self.resume_gate = asyncio.Event()
+
+    async def append(self, stream, events, expected):  # type: ignore[no-untyped-def]
+        return await self._inner.append(stream, events, expected)
+
+    def read_stream(self, stream, options=None):  # type: ignore[no-untyped-def]
+        return self._inner.read_stream(stream, options)
+
+    async def get_stream_version(self, stream):  # type: ignore[no-untyped-def]
+        return await self._inner.get_stream_version(stream)
+
+    async def event_exists(self, event_id):  # type: ignore[no-untyped-def]
+        return await self._inner.event_exists(event_id)
+
+    def read_all(self, from_position=None, options=None):  # type: ignore[no-untyped-def]
+        self._read_all_calls += 1
+        if self._read_all_calls == 2:
+            return self._gated_read(from_position, options)
+        return self._inner.read_all(from_position, options)
+
+    async def _gated_read(self, from_position, options):  # type: ignore[no-untyped-def]
+        yielded = 0
+        async for envelope in self._inner.read_all(from_position, options):
+            yield envelope
+            yielded += 1
+            if yielded == self._gate_after:
+                self.mid_pass.set()
+                await self.resume_gate.wait()
+
+    async def current_position(self):  # type: ignore[no-untyped-def]
+        return await self._inner.current_position()
+
+    def read_category(self, category, options=None):  # type: ignore[no-untyped-def]
+        return self._inner.read_category(category, options)
+
+
+class TestWriteActiveTenantFirstPassCutover:
+    """The dual-write interceptor must be installed BEFORE the copy pass.
+
+    With the interceptor installed only after the copy completes, writes
+    landing during the copy are mirrored by nobody and never drain: the
+    lag anchor stays clamped at the checkpoint, the gap events count as
+    lag forever, and a write-active tenant can never cut over on its
+    first pass. Installing the interceptor before the pass means every
+    event is either in the pass's snapshot (copied) or mirrored
+    (dual-written) -- the window never exists.
+    """
+
+    @pytest.mark.asyncio
+    async def test_write_active_tenant_cuts_over_on_first_pass(
+        self,
+        tenant_id: UUID,
+        migration_repo: InMemoryMigrationRepository,
+        routing_repo: InMemoryRoutingRepository,
+        lock_manager: MockLockManager,
+        write_pause_manager: WritePauseManager,
+    ) -> None:
+        """Writes landing mid-copy are mirrored, and cutover fires first pass."""
+        inner_source = InMemoryEventStore("source")
+        target_store = InMemoryEventStore("target")
+        source = GatedFeedStore(inner_source, gate_after=3)
+
+        router = TenantStoreRouter(
+            default_store=source,
+            routing_repo=routing_repo,
+            stores={"default": source},
+            default_store_id="default",
+            enable_tracing=False,
+            write_pause_manager=write_pause_manager,
+        )
+        coordinator = MigrationCoordinator(
+            source_store=source,
+            migration_repo=migration_repo,
+            routing_repo=routing_repo,
+            router=router,
+            lock_manager=lock_manager,
+            source_store_id="default",
+            enable_tracing=False,
+        )
+
+        await create_test_events(inner_source, tenant_id, count=6)
+
+        migration = await coordinator.start_migration(
+            tenant_id=tenant_id,
+            target_store=target_store,
+            target_store_id="dedicated",
+            config=MigrationConfig(
+                cutover_max_lag_events=3,
+                batch_size=2,
+                verify_consistency=False,
+                migrate_subscriptions=False,
+            ),
+        )
+
+        # The copy pass is provably mid-flight: blocked inside its feed read.
+        await asyncio.wait_for(source.mid_pass.wait(), timeout=5.0)
+
+        # Live tenant writes while the copy runs -- more of them than the
+        # cutover threshold, so un-mirrored gap events could never drain.
+        for _i in range(5):
+            aggregate_id = uuid4()
+            await router.append(
+                StreamId(aggregate_id=aggregate_id, category="Order"),
+                [OrderCreated(aggregate_id=aggregate_id, tenant_id=tenant_id)],
+                ExpectedVersion.no_stream(),
+            )
+
+        source.resume_gate.set()
+        await coordinator.wait_for_phase(
+            migration.id, MigrationPhase.DUAL_WRITE, timeout=5.0, poll_interval=0.01
+        )
+
+        result = await coordinator.trigger_cutover(migration.id)
+
+        assert result.success is True
+        routing = await routing_repo.get_routing(tenant_id)
+        assert routing is not None
+        assert routing.store_id == "dedicated"
+        assert routing.migration_state == TenantMigrationState.MIGRATED
+
+        # Nothing was left behind: every source event reached the target.
+        source_ids = {e.event_id for e in await get_all_tenant_events(inner_source, tenant_id)}
+        target_ids = {e.event_id for e in await get_all_tenant_events(target_store, tenant_id)}
+        assert source_ids == target_ids
+
+
+class TestCatchUpRoundsCap:
+    """The post-copy catch-up loop must be bounded, not spin forever.
+
+    A mirror that never drains (every mirrored write keeps failing) would
+    otherwise make the `while completed` loop in `_run_bulk_copy` run
+    forever waiting for `remaining == 0`. `_MAX_CATCHUP_ROUNDS` caps that:
+    once hit, the migration still completes its copy and transitions to
+    DUAL_WRITE (fail-open on progress), but the lag anchor -- driven by
+    the same unabsorbed-failure bookkeeping exercised in
+    `TestSyncLagAnchorOnWriteActiveTenant` -- stays clamped at the
+    checkpoint, so cutover keeps refusing until a later pass absorbs the
+    remainder.
+    """
+
+    @pytest.mark.asyncio
+    async def test_cap_hit_still_transitions_with_anchor_clamped(
+        self,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
+        migration_repo: InMemoryMigrationRepository,
+        routing_repo: InMemoryRoutingRepository,
+        router: TenantStoreRouter,
+        lock_manager: MockLockManager,
+        tenant_id: UUID,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Force every catch-up round to report failures still outstanding.
+
+        Rather than fighting the copier into a genuine sustained mirror
+        failure (which the retry/duplicate handling in `BulkCopier` is
+        specifically designed to resolve), fake the always-failing mirror
+        at the interceptor's public attestation boundary:
+        `mark_copy_pass_complete` never reports zero remaining, and
+        `safe_lag_anchor` never advances past the checkpoint -- exactly
+        the observable contract a permanently-saturated interceptor
+        already has (see `test_saturated_failure_history_never_reports_clean`).
+        This isolates the coordinator's bounded-loop control flow from the
+        interceptor's own bookkeeping, which is covered elsewhere.
+        """
+        monkeypatch.setattr(
+            DualWriteInterceptor,
+            "mark_copy_pass_complete",
+            lambda self, checkpoint: 1,
+        )
+        monkeypatch.setattr(
+            DualWriteInterceptor,
+            "safe_lag_anchor",
+            lambda self, checkpoint: checkpoint,
+        )
+
+        await create_test_events(source_store, tenant_id, count=3)
+
+        coordinator = MigrationCoordinator(
+            source_store=source_store,
+            migration_repo=migration_repo,
+            routing_repo=routing_repo,
+            router=router,
+            lock_manager=lock_manager,
+            source_store_id="default",
+            enable_tracing=False,
+        )
+        router.register_store("dedicated", target_store)
+
+        with caplog.at_level(logging.WARNING, logger="eventsource.migration.coordinator"):
+            migration = await coordinator.start_migration(
+                tenant_id=tenant_id,
+                target_store=target_store,
+                target_store_id="dedicated",
+                config=MigrationConfig(
+                    cutover_max_lag_events=2,
+                    verify_consistency=False,
+                    migrate_subscriptions=False,
+                ),
+            )
+
+            # The loop terminates (does not hang) and still reaches DUAL_WRITE.
+            migration = await coordinator.wait_for_phase(
+                migration.id, MigrationPhase.DUAL_WRITE, timeout=5.0, poll_interval=0.01
+            )
+
+        assert migration.phase == MigrationPhase.DUAL_WRITE
+        assert any(
+            "mirror failures remain unabsorbed" in record.message for record in caplog.records
+        )
+
+        # More source events land after the checkpoint. A working anchor
+        # would still be safe to advance on a healthy mirror, but with the
+        # cap hit and the mirror faked as permanently saturated, the
+        # anchor is pinned at the checkpoint -- these count as lag.
+        await create_test_events(source_store, tenant_id, count=5)
+
+        # The anchor never advanced past the checkpoint, so cutover refuses.
+        result = await coordinator.trigger_cutover(migration.id)
+        assert result.success is False
 
 
 # =============================================================================
@@ -1050,6 +1871,7 @@ class TestCutoverSuccess:
     ) -> None:
         """Test successful cutover when stores are synchronized."""
         migration_id = uuid4()
+        last_source_position: Position | None = None
 
         # Setup: Same events in both stores (fully synced)
         for _i in range(5):
@@ -1058,18 +1880,10 @@ class TestCutoverSuccess:
                 aggregate_id=aggregate_id,
                 tenant_id=tenant_id,
             )
-            await source_store.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="SampleAggregate",
-                events=[event],
-                expected_version=0,
-            )
-            await target_store.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="SampleAggregate",
-                events=[event],
-                expected_version=0,
-            )
+            stream = StreamId(aggregate_id=aggregate_id, category="SampleAggregate")
+            result = await source_store.append(stream, [event], ExpectedVersion.no_stream())
+            last_source_position = result.position
+            await target_store.append(stream, [event], ExpectedVersion.no_stream())
 
         # Setup routing state
         await routing_repo.set_migration_state(
@@ -1098,13 +1912,15 @@ class TestCutoverSuccess:
             enable_tracing=False,
         )
 
-        # Execute cutover
+        # Execute cutover -- `since` the last position already copied, so
+        # the lag tracker sees zero events behind.
         result = await cutover_manager.execute_cutover(
             migration_id=migration_id,
             tenant_id=tenant_id,
             lag_tracker=lag_tracker,
             target_store_id="dedicated",
             timeout_ms=500.0,
+            since=last_source_position,
         )
 
         assert result.success
@@ -1133,18 +1949,18 @@ class TestCutoverFailureAndRollback:
         """Test cutover fails when sync lag exceeds threshold."""
         migration_id = uuid4()
 
-        # Setup: Source has many more events than target
+        # Setup: Source has many more events than target, and nothing has
+        # been copied yet (since=None), so every source event counts as lag.
         for _i in range(200):
             aggregate_id = uuid4()
             event = SampleTestEvent(
                 aggregate_id=aggregate_id,
                 tenant_id=tenant_id,
             )
-            await source_store.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="SampleAggregate",
-                events=[event],
-                expected_version=0,
+            await source_store.append(
+                StreamId(aggregate_id=aggregate_id, category="SampleAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
             )
 
         # Target has only 10 events
@@ -1154,11 +1970,10 @@ class TestCutoverFailureAndRollback:
                 aggregate_id=aggregate_id,
                 tenant_id=tenant_id,
             )
-            await target_store.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="SampleAggregate",
-                events=[event],
-                expected_version=0,
+            await target_store.append(
+                StreamId(aggregate_id=aggregate_id, category="SampleAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
             )
 
         # Setup routing state
@@ -1584,11 +2399,10 @@ class TestConcurrentOperations:
                     value=f"{prefix}-{i}",
                 )
 
-                await interceptor.append_events(
-                    aggregate_id=aggregate_id,
-                    aggregate_type="SampleAggregate",
-                    events=[event],
-                    expected_version=0,
+                await interceptor.append(
+                    StreamId(aggregate_id=aggregate_id, category="SampleAggregate"),
+                    [event],
+                    ExpectedVersion.no_stream(),
                 )
 
             return ids
@@ -1604,12 +2418,12 @@ class TestConcurrentOperations:
         assert total_ids == 15
 
         # Verify all events in source
-        source_count = await source_store.get_event_count()
-        assert source_count == 15
+        source_events = [e async for e in source_store.read_all()]
+        assert len(source_events) == 15
 
         # Verify all events in target
-        target_count = await target_store.get_event_count()
-        assert target_count == 15
+        target_events = [e async for e in target_store.read_all()]
+        assert len(target_events) == 15
 
     @pytest.mark.asyncio
     async def test_write_pause_blocks_concurrent_writers(
@@ -1679,31 +2493,23 @@ class TestConcurrentOperations:
         # Write events for tenant1
         agg1 = uuid4()
         event1 = SampleTestEvent(aggregate_id=agg1, tenant_id=tenant1, value="tenant1")
-        await interceptor1.append_events(
-            aggregate_id=agg1,
-            aggregate_type="SampleAggregate",
-            events=[event1],
-            expected_version=0,
-        )
+        stream1 = StreamId(aggregate_id=agg1, category="SampleAggregate")
+        await interceptor1.append(stream1, [event1], ExpectedVersion.no_stream())
 
         # Write events for tenant2
         agg2 = uuid4()
         event2 = SampleTestEvent(aggregate_id=agg2, tenant_id=tenant2, value="tenant2")
-        await interceptor2.append_events(
-            aggregate_id=agg2,
-            aggregate_type="SampleAggregate",
-            events=[event2],
-            expected_version=0,
-        )
+        stream2 = StreamId(aggregate_id=agg2, category="SampleAggregate")
+        await interceptor2.append(stream2, [event2], ExpectedVersion.no_stream())
 
         # Verify both tenants have their events
-        stream1 = await source_store.get_events(agg1, "SampleAggregate")
-        assert len(stream1.events) == 1
-        assert stream1.events[0].tenant_id == tenant1
+        events1 = [e async for e in source_store.read_stream(stream1)]
+        assert len(events1) == 1
+        assert events1[0].event.tenant_id == tenant1
 
-        stream2 = await source_store.get_events(agg2, "SampleAggregate")
-        assert len(stream2.events) == 1
-        assert stream2.events[0].tenant_id == tenant2
+        events2 = [e async for e in source_store.read_stream(stream2)]
+        assert len(events2) == 1
+        assert events2[0].event.tenant_id == tenant2
 
 
 # =============================================================================

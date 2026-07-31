@@ -5,9 +5,9 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.readmodels import ReadModel
-from eventsource.readmodels.in_memory import InMemoryReadModelRepository
-from eventsource.readmodels.query import Filter, Query
+from eventsource.adapters.memory.readmodels import InMemoryReadModelRepository
+from eventsource.ports.readmodels.model import ReadModel
+from eventsource.ports.readmodels.query import Filter, Query
 
 
 class OrderSummary(ReadModel):
@@ -26,32 +26,6 @@ def repo() -> InMemoryReadModelRepository[OrderSummary]:
 
 class TestInMemoryReadModelRepository:
     """Tests for InMemoryReadModelRepository."""
-
-    @pytest.mark.asyncio
-    async def test_save_and_get(self, repo: InMemoryReadModelRepository[OrderSummary]) -> None:
-        """Test basic save and get operations."""
-        model_id = uuid4()
-        model = OrderSummary(
-            id=model_id,
-            order_number="ORD-001",
-            status="pending",
-            total_amount=Decimal("99.99"),
-        )
-
-        await repo.save(model)
-        result = await repo.get(model_id)
-
-        assert result is not None
-        assert result.id == model_id
-        assert result.order_number == "ORD-001"
-        assert result.status == "pending"
-        assert result.total_amount == Decimal("99.99")
-
-    @pytest.mark.asyncio
-    async def test_get_nonexistent(self, repo: InMemoryReadModelRepository[OrderSummary]) -> None:
-        """Test get returns None for missing ID."""
-        result = await repo.get(uuid4())
-        assert result is None
 
     @pytest.mark.asyncio
     async def test_save_increments_version(
@@ -223,50 +197,6 @@ class TestInMemoryReadModelRepository:
         assert result.status == "shipped"
 
     @pytest.mark.asyncio
-    async def test_delete(self, repo: InMemoryReadModelRepository[OrderSummary]) -> None:
-        """Test hard delete."""
-        model_id = uuid4()
-        model = OrderSummary(
-            id=model_id,
-            order_number="ORD-001",
-            status="pending",
-            total_amount=Decimal("10"),
-        )
-
-        await repo.save(model)
-        deleted = await repo.delete(model_id)
-
-        assert deleted is True
-        assert await repo.get(model_id) is None
-        assert len(repo) == 0
-
-    @pytest.mark.asyncio
-    async def test_delete_nonexistent(
-        self, repo: InMemoryReadModelRepository[OrderSummary]
-    ) -> None:
-        """Test delete returns False for missing ID."""
-        deleted = await repo.delete(uuid4())
-        assert deleted is False
-
-    @pytest.mark.asyncio
-    async def test_soft_delete(self, repo: InMemoryReadModelRepository[OrderSummary]) -> None:
-        """Test soft delete sets deleted_at."""
-        model_id = uuid4()
-        model = OrderSummary(
-            id=model_id,
-            order_number="ORD-001",
-            status="pending",
-            total_amount=Decimal("10"),
-        )
-
-        await repo.save(model)
-        result = await repo.soft_delete(model_id)
-
-        assert result is True
-        assert await repo.get(model_id) is None  # Hidden from normal get
-        assert len(repo) == 1  # Still exists in storage
-
-    @pytest.mark.asyncio
     async def test_soft_delete_nonexistent(
         self, repo: InMemoryReadModelRepository[OrderSummary]
     ) -> None:
@@ -292,26 +222,6 @@ class TestInMemoryReadModelRepository:
         result = await repo.soft_delete(model_id)
 
         assert result is False
-
-    @pytest.mark.asyncio
-    async def test_restore(self, repo: InMemoryReadModelRepository[OrderSummary]) -> None:
-        """Test restore clears deleted_at."""
-        model_id = uuid4()
-        model = OrderSummary(
-            id=model_id,
-            order_number="ORD-001",
-            status="pending",
-            total_amount=Decimal("10"),
-        )
-
-        await repo.save(model)
-        await repo.soft_delete(model_id)
-        result = await repo.restore(model_id)
-
-        assert result is True
-        restored = await repo.get(model_id)
-        assert restored is not None
-        assert restored.deleted_at is None
 
     @pytest.mark.asyncio
     async def test_restore_nonexistent(
@@ -340,8 +250,10 @@ class TestInMemoryReadModelRepository:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_exists(self, repo: InMemoryReadModelRepository[OrderSummary]) -> None:
-        """Test exists check."""
+    async def test_exists_reflects_soft_delete(
+        self, repo: InMemoryReadModelRepository[OrderSummary]
+    ) -> None:
+        """Test exists() returns False for a soft-deleted record (not covered by the suite)."""
         model_id = uuid4()
         model = OrderSummary(
             id=model_id,
@@ -350,11 +262,7 @@ class TestInMemoryReadModelRepository:
             total_amount=Decimal("10"),
         )
 
-        assert await repo.exists(model_id) is False
-
         await repo.save(model)
-        assert await repo.exists(model_id) is True
-
         await repo.soft_delete(model_id)
         assert await repo.exists(model_id) is False
 
@@ -373,33 +281,6 @@ class TestInMemoryReadModelRepository:
 
         results = await repo.find()
         assert len(results) == 5
-
-    @pytest.mark.asyncio
-    async def test_find_with_filter_eq(
-        self, repo: InMemoryReadModelRepository[OrderSummary]
-    ) -> None:
-        """Test find with equality filter."""
-        await repo.save(
-            OrderSummary(
-                id=uuid4(),
-                order_number="ORD-001",
-                status="pending",
-                total_amount=Decimal("10"),
-            )
-        )
-        await repo.save(
-            OrderSummary(
-                id=uuid4(),
-                order_number="ORD-002",
-                status="shipped",
-                total_amount=Decimal("20"),
-            )
-        )
-
-        results = await repo.find(Query(filters=[Filter.eq("status", "shipped")]))
-
-        assert len(results) == 1
-        assert results[0].status == "shipped"
 
     @pytest.mark.asyncio
     async def test_find_with_filter_ne(
@@ -756,25 +637,6 @@ class TestInMemoryReadModelRepository:
         assert results[0].order_number == "ORD-002"
 
     @pytest.mark.asyncio
-    async def test_find_excludes_soft_deleted(
-        self, repo: InMemoryReadModelRepository[OrderSummary]
-    ) -> None:
-        """Test find excludes soft-deleted by default."""
-        model_id = uuid4()
-        await repo.save(
-            OrderSummary(
-                id=model_id,
-                order_number="ORD-001",
-                status="pending",
-                total_amount=Decimal("10"),
-            )
-        )
-        await repo.soft_delete(model_id)
-
-        results = await repo.find(Query())
-        assert len(results) == 0
-
-    @pytest.mark.asyncio
     async def test_find_include_deleted(
         self, repo: InMemoryReadModelRepository[OrderSummary]
     ) -> None:
@@ -797,38 +659,6 @@ class TestInMemoryReadModelRepository:
         # With flag - should find deleted
         results = await repo.find(Query(include_deleted=True))
         assert len(results) == 1
-
-    @pytest.mark.asyncio
-    async def test_count(self, repo: InMemoryReadModelRepository[OrderSummary]) -> None:
-        """Test count operation."""
-        for i in range(5):
-            await repo.save(
-                OrderSummary(
-                    id=uuid4(),
-                    order_number=f"ORD-{i}",
-                    status="pending",
-                    total_amount=Decimal(str(i)),
-                )
-            )
-
-        count = await repo.count()
-        assert count == 5
-
-    @pytest.mark.asyncio
-    async def test_count_with_filter(self, repo: InMemoryReadModelRepository[OrderSummary]) -> None:
-        """Test count with filter."""
-        for i in range(5):
-            await repo.save(
-                OrderSummary(
-                    id=uuid4(),
-                    order_number=f"ORD-{i}",
-                    status="pending" if i % 2 == 0 else "shipped",
-                    total_amount=Decimal(str(i)),
-                )
-            )
-
-        count = await repo.count(Query(filters=[Filter.eq("status", "pending")]))
-        assert count == 3  # i=0,2,4
 
     @pytest.mark.asyncio
     async def test_count_excludes_soft_deleted(

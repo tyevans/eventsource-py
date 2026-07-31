@@ -38,6 +38,17 @@ from eventsource.migration.subscription_migrator import (
     MigrationSummary,
     SubscriptionMigrationResult,
 )
+from eventsource.ports.positions import Position
+
+
+def source_pos(n: int) -> Position:
+    """A source-store position token for test fixtures."""
+    return Position(store_id="source-store", key=(n,))
+
+
+def target_pos(n: int) -> Position:
+    """A target-store position token for test fixtures."""
+    return Position(store_id="target-store", key=(n,))
 
 
 def make_verification_report(
@@ -303,20 +314,20 @@ class TestMigrateSubscriptions:
             results=[
                 SubscriptionMigrationResult(
                     subscription_name="Projection1",
-                    source_position=100,
-                    target_position=50,
+                    source_position=source_pos(100),
+                    target_position=target_pos(50),
                     success=True,
                 ),
                 SubscriptionMigrationResult(
                     subscription_name="Projection2",
-                    source_position=200,
-                    target_position=100,
+                    source_position=source_pos(200),
+                    target_position=target_pos(100),
                     success=True,
                 ),
                 SubscriptionMigrationResult(
                     subscription_name="Projection3",
-                    source_position=300,
-                    target_position=150,
+                    source_position=source_pos(300),
+                    target_position=target_pos(150),
                     success=True,
                 ),
             ],
@@ -368,21 +379,21 @@ class TestMigrateSubscriptions:
             results=[
                 SubscriptionMigrationResult(
                     subscription_name="Projection1",
-                    source_position=100,
-                    target_position=50,
+                    source_position=source_pos(100),
+                    target_position=target_pos(50),
                     success=True,
                 ),
                 SubscriptionMigrationResult(
                     subscription_name="Projection2",
-                    source_position=200,
+                    source_position=source_pos(200),
                     target_position=None,
                     success=False,
                     error_message="No mapping found",
                 ),
                 SubscriptionMigrationResult(
                     subscription_name="Projection3",
-                    source_position=300,
-                    target_position=150,
+                    source_position=source_pos(300),
+                    target_position=target_pos(150),
                     success=True,
                 ),
             ],
@@ -501,8 +512,8 @@ class TestMigrateSubscriptions:
             results=[
                 SubscriptionMigrationResult(
                     subscription_name="Projection1",
-                    source_position=100,
-                    target_position=50,
+                    source_position=source_pos(100),
+                    target_position=target_pos(50),
                     success=True,
                 ),
             ],

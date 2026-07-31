@@ -16,7 +16,7 @@ version-checked append, and a bus that fans the same events out to consumers who
 were not part of the write transaction.
 
 Most of the structure you will meet -- why `DomainEvent` is frozen while read
-models are explicitly mutable, why `EventStore` and `EventBus` are separate
+models are explicitly mutable, why the store ports and `EventBus` are separate
 interfaces with separate backends, why projections carry checkpoints and dead
 letter queues, why almost every public method is a coroutine -- is that
 commitment working itself out. Facts must not be lost or contradicted, so the
@@ -25,14 +25,16 @@ cheap to serve and cheap to rebuild, so the read path tolerates duplicate
 delivery, at-least-once semantics, and truncate-and-replay.
 
 A second organising idea runs alongside it: contracts are separated from the
-things that implement them. `events/base.py`, `stores/interface.py`,
+things that implement them. `events/base.py`, the store ports in `ports/`
+(`ports/store.py`, `ports/positions.py`, `ports/envelopes.py`, ...),
 `bus/interface.py`, `protocols.py`, `exceptions.py`, and `types.py` depend on
 nothing heavier than pydantic; the PostgreSQL, SQLite, Redis, RabbitMQ, and
 Kafka implementations sit behind them and are swappable.
 `docs/core-surface.md` records that boundary module by module. It is also why
 the in-memory backends are not toys but first-class implementations of the same
-ABCs -- the ones your unit tests run against, and the ones the conformance
-suites in `eventsource.testing.conformance` hold to the same contract as their
+ports -- the ones your unit tests run against, and the ones the conformance
+suites in `eventsource.testing.conformance_ports` (stores) and
+`eventsource.testing.conformance` (the bus) hold to the same contract as their
 database-backed siblings.
 
 This document explains how those pieces fit and why they are divided where they
@@ -135,7 +137,7 @@ because nothing has left the process. `AggregateRepository.save()` is where the
 loop crosses into durability. It reads `aggregate.uncommitted_events`, returns
 immediately if the list is empty, derives `expected_version` by subtracting the
 number of new events from the aggregate's current version -- that is, the version
-the stream was at when the command began -- and calls `append_events()` on the
+the stream was at when the command began -- and calls `append()` on the
 store with it. If another writer appended in the meantime, the store's version
 check fails and you get an `OptimisticLockError` rather than a silent
 interleaving. This is the one place in the library that refuses work outright,
@@ -214,27 +216,29 @@ bites.
 
 Tier 0 is the set of modules that import nothing heavier than the standard
 library and pydantic. It holds the vocabulary the rest of the library is written
-in: `events/base.py` (`DomainEvent`), `events/registry.py`, `aggregates/base.py`
-(`AggregateRoot`, `DeclarativeAggregate`), `stores/interface.py` (`EventStore`,
-`StoredEvent`, `EventStream`), `bus/interface.py` (`EventBus`),
-`snapshots/interface.py`, the `@handles` decorator and handler registry,
-`protocols.py`, `exceptions.py`, `types.py`, and the multi-tenancy and read-model
-contract modules. `serialization/` is the extreme case and a useful yardstick:
-its entire import block is `json`, `datetime`, `typing`, and `uuid`, with no
-pydantic and no reach back into the rest of the library.
+in: `events/base.py` (`DomainEvent`), `events/registry.py`, `domain/aggregate.py`
+(`AggregateRoot`, `DeclarativeAggregate`), the store ports in `ports/`
+(`ports/store.py`'s `EventAppender`, `StreamReader`, `EventLookup`,
+`GlobalEventFeed`, `CategoryQuery` Protocols; `ports/positions.py`;
+`ports/envelopes.py`), `bus/interface.py` (`EventBus`), `ports/snapshots.py`,
+the `@handles` decorator and handler registry, `protocols.py`, `exceptions.py`,
+`types.py`, and the multi-tenancy and read-model contract modules.
+`exceptions.py` is the extreme case and a useful yardstick: its entire import
+block is `uuid`, with no pydantic and no reach back into the rest of the
+library.
 
 Two things about Tier 0 are easy to get wrong.
 
 The first is that **the in-memory implementations live here too** --
-`stores/in_memory.py`, `bus/memory.py`, `snapshots/in_memory.py`,
+`adapters/memory/store.py`, `bus/memory.py`, `adapters/memory/snapshots.py`,
 `readmodels/in_memory.py`. They are not stubs kept for demos. They implement the
-same ABCs the database-backed classes do, and
-`eventsource.testing.conformance` holds both to the same suites, so a behaviour
-your unit tests rely on from `InMemoryEventStore` is one the contract obliges
-`PostgreSQLEventStore` to provide as well. This is what makes it reasonable to
-run the bulk of a test suite with no Docker daemon: you are not testing a
-different thing, you are testing the same contract on a backend whose storage
-happens to be a dict.
+same ports the database-backed classes do, and
+`eventsource.testing.conformance_ports` holds both to the same suites, so a
+behaviour your unit tests rely on from `InMemoryEventStore` is one the contract
+obliges `PostgreSQLEventStore` to provide as well. This is what makes it
+reasonable to run the bulk of a test suite with no Docker daemon: you are not
+testing a different thing, you are testing the same contract on a backend whose
+storage happens to be a dict.
 
 The second is that **Tier 0 is not the same as standalone**. A module can be
 perfectly Tier 0 and still be impossible to ship alone, because it imports other
@@ -243,46 +247,60 @@ canonical contract module, but line 35 is a module-level
 `from eventsource.events.base import DomainEvent` -- not under `TYPE_CHECKING`,
 not deferred -- so importing it executes `events/base.py`, which imports
 pydantic. `events/base.py` is an *extraction floor*: nothing above it moves
-without it, and the same shape repeats for `stores/interface.py`,
-`bus/interface.py`, and `aggregates/base.py`, which sit on `events/base.py`,
-`exceptions.py`, and `types.py`. `snapshots/interface.py` is the odd one out,
-with no in-library imports at all.
+without it, and the same shape repeats for `bus/interface.py` and
+`domain/aggregate.py`, which sit on `events/base.py`, `exceptions.py`, and
+`types.py`. `ports/snapshots.py` is the odd one out, with no in-library imports
+at all.
 
-Tier 0 is also where the layering is currently leaky, and the leak is worth
-knowing before you plan around it. All three modules under `repositories/` --
-`checkpoint.py`, `dlq.py`, `outbox.py` -- pack four layers into one file: the
+Tier 0 used to be leaky here, and it's worth knowing what changed. All three
+modules that used to live under `repositories/` -- `checkpoint.py`, `dlq.py`,
+`outbox.py` -- used to pack four layers into one file each: the
 `runtime_checkable` Protocol, the data-transfer dataclasses, a stdlib-only
-in-memory implementation, and both SQL backends, under a module-level
-`from sqlalchemy import text`. Importing the Protocol therefore imports
-SQLAlchemy. That single decision propagates: `projections/base.py`,
+in-memory implementation, and the SQL backend(s), under a module-level
+`from sqlalchemy import text`. Importing the Protocol therefore imported
+SQLAlchemy, and that single decision propagated: `projections/base.py`,
 `projections/checkpoint_manager.py`, `projections/dlq_manager.py`,
-`testing/harness.py`, `testing/bdd.py`, and `readmodels/projection.py` are all
-outside Tier 0 for no reason of their own. Splitting the three repository
-modules is the pre-extraction cleanup `docs/core-surface.md` recommends, and it
-is the only structural work standing between the current package and an
-`eventsource-core` distribution.
+`testing/harness.py`, `testing/bdd.py`, and `readmodels/projection.py` were
+all outside Tier 0 for no reason of their own.
+[ADR 0024](adrs/0024-projection-persistence-ports.md) closed the checkpoint
+and DLQ half of that gap the same way ADR 0019 closed it for the event store:
+the Protocols and dataclasses moved to `ports/checkpoints.py` and
+`ports/dlq.py` (stdlib and typing only), the SQL implementations moved to
+`adapters/sql/`, and the in-memory ones to `adapters/memory/`.
+[ADR 0026](adrs/0026-outbox-ring-migration.md) closed the outbox half the
+same way, completing the set: the Protocol, dataclasses, and payload helper
+moved to `ports/outbox.py`, and the three backends moved to
+`adapters/memory/outbox.py`, `adapters/postgresql/outbox.py`, and
+`adapters/sqlite/outbox.py` -- one module per technology rather than one
+dialect-parameterized module, since the SQLite implementation is written
+against a raw `aiosqlite.Connection` rather than a sqlalchemy engine.
+`application/projections/*` -- the module `projections/` became -- is now
+Tier-0-clean as a whole ring, and `repositories/` no longer exists at all.
 
 ### Tier 1: backend implementations
 
-Tier 1 is where the contracts meet a driver. `stores/postgresql.py` and
-`stores/sqlite.py` subclass `EventStore`; `snapshots/postgresql.py` and
-`snapshots/sqlite.py` subclass `SnapshotStore`; `bus/redis.py`,
-`bus/rabbitmq.py`, and `bus/kafka.py` subclass `EventBus`;
-`readmodels/postgresql.py` and `readmodels/sqlite.py` satisfy the
+Tier 1 is where the contracts meet a driver. `adapters/postgresql/store.py` and
+`adapters/sqlite/store.py` satisfy the store ports (`EventAppender`,
+`StreamReader`, `EventLookup`, `GlobalEventFeed`, `CategoryQuery`);
+`adapters/postgresql/snapshots.py` and `adapters/sqlite/snapshots.py` subclass
+`SnapshotStore`; `bus/redis.py`, `bus/rabbitmq.py`, and `bus/kafka.py` subclass
+`EventBus`; `readmodels/postgresql.py` and `readmodels/sqlite.py` satisfy the
 `ReadModelRepository` protocol; the PostgreSQL and SQLite classes inside
-`repositories/checkpoint.py`, `repositories/dlq.py`, and
-`repositories/outbox.py` back checkpoints, the dead letter queue, and the
-outbox. `locks/` belongs here too, and has exactly one implementation:
+`adapters/sql/checkpoints.py` and `adapters/sql/dlq.py` back checkpoints and
+the dead letter queue, and `adapters/postgresql/outbox.py` and
+`adapters/sqlite/outbox.py` back the outbox. `locks/` belongs here too, and
+has exactly one implementation:
 `PostgreSQLLockManager`, built on advisory locks.
 
-Note the two different ways a backend joins its contract. Stores, snapshot
-stores, and buses inherit from ABCs, so the relationship is declared and the
-abstract methods are enforced at instantiation. The repository backends do not
-inherit from anything -- `PostgreSQLCheckpointRepository`,
-`SQLiteOutboxRepository`, `PostgreSQLReadModelRepository` and their siblings are
-plain classes that structurally satisfy a `runtime_checkable` Protocol defined
-in the same file. Both arrangements give you substitutability; only the first
-tells you at import time that you missed a method.
+Note the two different ways a backend joins its contract. Snapshot stores and
+buses inherit from ABCs, so the relationship is declared and the abstract
+methods are enforced at instantiation. The event store adapters and the
+repository backends do not inherit from anything -- `PostgreSQLEventStore`,
+`SQLiteEventStore`, `PostgreSQLCheckpointRepository`, `SQLiteOutboxRepository`,
+`PostgreSQLReadModelRepository`, and their siblings are plain classes that
+structurally satisfy a `runtime_checkable` Protocol defined in `ports/`. Both
+arrangements give you substitutability; only the ABC form tells you at import
+time that you missed a method.
 
 The defining property of the tier is that **nothing above it names a member of
 it**. Application code selects a backend once, at composition time, and passes
@@ -305,27 +323,39 @@ a missing driver surfaces at connect time, not import time. The buses guard
 their own imports and set a module-level flag: `bus/redis.py` sets
 `REDIS_AVAILABLE` and its constructor raises `RedisNotAvailableError`
 immediately if it is `False`, with `RABBITMQ_AVAILABLE` and `KAFKA_AVAILABLE`
-following the same pattern. SQLite splits the difference by tier:
-`snapshots/sqlite.py` guards its own `aiosqlite` import and exports
-`SQLITE_AVAILABLE`, while `stores/sqlite.py` imports `aiosqlite` unguarded and
-is instead wrapped in a `try/except ImportError` by the package barrel, which
-sets the top-level `SQLITE_AVAILABLE` and simply omits `SQLiteEventStore` and
-the SQLite repositories from `eventsource`'s namespace when the extra is absent.
-The invariant that holds across all of it is the one that matters: `import
-eventsource` succeeds on a machine with no drivers installed, and you learn
-about a missing extra when you reach for the backend you did not install.
+following the same pattern. SQLite guards each of its two adapter modules
+independently, and each sets its own flag: `adapters/sqlite/snapshots.py`
+guards its own `aiosqlite` import and exports `SQLITE_AVAILABLE`;
+`adapters/sqlite/store.py` guards its own `aiosqlite` import separately and
+exports `AIOSQLITE_AVAILABLE`. The `adapters/sqlite/__init__.py` package barrel
+re-exports both flags as-is, and the top-level `eventsource` package re-exports
+them again unchanged -- there is no `try/except ImportError` reconciling the
+two into one flag; `SQLITE_AVAILABLE` derives from `adapters/sqlite/snapshots.py`
+independently of whatever `adapters/sqlite/store.py` decides about
+`AIOSQLITE_AVAILABLE`. The invariant that holds across all of it is the one
+that matters: `import eventsource` succeeds on a machine with no drivers
+installed, and you learn about a missing extra when you reach for the backend
+you did not install.
 
 A backend is also not free to be interesting. It inherits a contract it did not
-write -- the `ExpectedVersion` semantics of `append_events`, the ordering
-promises of `EventStream`, the `OptimisticLockError` raised on conflict -- and
-`eventsource.testing.conformance` holds it to the same suites as the in-memory
-implementation. Where a backend genuinely cannot honour something, the pattern
-the package follows is to say so in that backend's own documentation
-(`stores/README.md`, `bus/README.md`) rather than to soften the shared
-interface. What varies underneath is real: PostgreSQL and SQLite both go through
-`stores/_type_converter.py` to reconcile how each database hands back JSON, and
-both call `stores/_compat.py` to normalise timestamps. The contract is stable;
-the accommodations are private.
+write -- the `ExpectedVersion` semantics of `append`, the ordering
+promises of the read/feed ports, the `OptimisticLockError` raised on conflict
+-- and `eventsource.testing.conformance_ports` holds it to the same suites as
+the in-memory implementation. Where a backend genuinely cannot honour
+something, the pattern the package follows is to say so in that backend's own
+documentation rather than to soften the shared interface. What varies
+underneath is real -- PostgreSQL and SQLite hand back JSON differently and
+need their timestamps normalised -- but the library no longer centralises that
+reconciliation behind a shared `TypeConverter` abstraction. The
+`stores/_type_converter.py` and `stores/_compat.py` modules that used to do
+this are gone along with the rest of `stores/`; each adapter instead decodes
+its raw JSON payload and hands it to `event_class.model_validate(data)`,
+leaning on pydantic's own field coercion to reconstruct the concrete event
+type rather than walking the payload with a bespoke converter first. See
+`docs/explanation/sql-backend-type-handling.md` for the mechanics of what a
+store adapter still has to reconcile at the boundary (that page has not yet
+been fully updated for this removal; treat its `TypeConverter` sections as
+historical). The contract is stable; the accommodations are private.
 
 ### Tier 2: orchestration and lifecycle
 
@@ -339,9 +369,10 @@ coordination, pause and resume, error classification, health and metrics, and a
 `shutdown.py` that is longer than any store implementation. `migration/` --
 live store-to-store migration through the phases `PENDING`, `BULK_COPY`,
 `DUAL_WRITE`, `CUTOVER`, `COMPLETED` -- belongs here too, as do the
-projection-side helpers extracted out of `CheckpointTrackingProjection`:
-`ProjectionCheckpointManager`, `ProjectionDLQManager`, the `RetryPolicy`
-protocol, and `ProjectionCoordinator`.
+projection-side collaborators `CheckpointTrackingProjection` calls into:
+the `record_checkpoint()` / `read_checkpoint()` / `lag_metrics_dict()` /
+`reset_checkpoint()` functions and the `send_to_dlq()` / `read_failed_events()`
+functions, the `RetryPolicy` protocol, and `ProjectionCoordinator`.
 
 What separates this tier from Tier 1 is not infrastructure but *time*. Tier 1
 answers "how is an event written down"; Tier 2 answers "what happens on the
@@ -366,11 +397,15 @@ projection can be driven by hand with no subscription runtime at all, and a
 `FlowController` or `CircuitBreaker` is usable on its own.
 
 Being Tier 2 is about needing the world -- clocks, background tasks, OS signals,
-other processes -- not about importing a driver. Most of `subscriptions/` names
-its repositories only under `TYPE_CHECKING` and would be dependency-light on its
-own; it lands above Tier 1 because `repositories/checkpoint.py` and
-`repositories/dlq.py` pull SQLAlchemy in transitively, as noted above.
-`migration/` is the exception that genuinely reaches for a driver: its own
+other processes -- not about importing a driver. `subscriptions/` names its
+checkpoint and DLQ types only under `TYPE_CHECKING`, and those types are the
+pure `SubscriptionPositions` and `DLQRepository` Protocols from
+`ports/checkpoints.py` and `ports/dlq.py` -- not the SQLAlchemy-backed
+implementations, which live in `adapters/sql/` and are supplied by the caller
+at composition time. `subscriptions/` is genuinely dependency-light on its own;
+it lands above Tier 1 for the reason stated at the top of this section --
+lifetime and orchestration across restarts, not driver imports. `migration/`
+is the exception that reaches for a driver directly: its own
 `migration/repositories/` package imports `sqlalchemy` at module level for
 migration state, routing, position mapping, and the audit log.
 
@@ -405,38 +440,49 @@ do.
 
 ### The store: an ordered, version-checked log
 
-`EventStore` (`stores/interface.py`) is an ABC, not a Protocol, and its abstract
-surface is deliberately small: `append_events`, `get_events`,
-`get_events_by_type`, `event_exists`, and `get_global_position`. Everything else
-on the class -- `get_stream_version`, `read_stream`, `read_all` -- is a concrete
-convenience built on those primitives, so a new backend has five methods to
-implement and inherits the rest.
+The event store surface is not one ABC any more -- it is five narrow, composable
+Protocols in `ports/store.py`: `EventAppender` (`append`), `StreamReader`
+(`read_stream`, `get_stream_version`), `EventLookup` (`event_exists`),
+`GlobalEventFeed` (`read_all`, `current_position`), and `CategoryQuery`
+(`read_category`). None is `@runtime_checkable` by default -- that is added only
+where a consumer actually needs an `isinstance` check. `FullEventStore` is the
+union of all five, and `AggregateStore` (`EventAppender` + `StreamReader`) is
+the narrower composition `AggregateRepository` actually depends on: a
+repository never reads the global feed, never queries a category, and never
+probes for an individual event id, so its declared dependency does not
+type-require those capabilities. That narrowing is deliberate interface
+segregation, not an oversight -- a backend adapter still typically implements
+`FullEventStore` in full, but callers ask for only the slice they use.
 
 Two details of that surface carry most of the architectural weight. The first is
-that `append_events` takes an `expected_version: int` and returns an
-`AppendResult`; the `ExpectedVersion` constants (`ANY = -1`, `NO_STREAM = 0`,
-`STREAM_EXISTS = -2`) let a caller say "this stream must not exist yet" or "I
-read version 7 and I am writing on that basis" rather than trusting a
+that `append` takes an `expected: ExpectedVersion` and returns an
+`AppendResult`; `ExpectedVersion` is a small frozen dataclass built through its
+classmethods (`ExpectedVersion.any_()`, `.no_stream()`, `.stream_exists()`,
+`.exact(version)`), and they let a caller say "this stream must not exist yet"
+or "I read version 7 and I am writing on that basis" rather than trusting a
 last-writer-wins append. Concurrency control is therefore a property of the log
 itself, not of a lock the caller remembers to take. The second is
-`get_global_position()`, which returns the highest position across *all* streams.
-Per-stream ordering is what an aggregate needs; a single monotonic ordering over
-the whole store is what a subscription needs, and the fact that the store can
-report its current maximum is precisely what makes the catch-up watermark
-described later in this document possible.
+`current_position()`, which returns the highest `Position` across *all*
+streams. Per-stream ordering is what an aggregate needs; a single monotonic
+ordering over the whole store is what a subscription needs, and the fact that
+the store can report its current maximum is precisely what makes the catch-up
+watermark described later in this document possible.
 
-Reads come back as `StoredEvent`, a frozen wrapper that pairs the `DomainEvent`
-with `stream_id`, `stream_position`, `global_position`, and `stored_at`. The
-domain event carries no position of its own -- position is a fact about
-persistence, not about the domain -- and keeping the two apart is why the same
-event object can be replayed, published, and buffered without any layer
-mutating it.
+Reads come back as `EventEnvelope` (`ports/envelopes.py`), a frozen wrapper
+that pairs the `DomainEvent` with `stream_id`, `stream_position`,
+`global_position`, and `stored_at`. The domain event carries no position of its
+own -- position is a fact about persistence, not about the domain -- and
+keeping the two apart is why the same event object can be replayed, published,
+and buffered without any layer mutating it.
 
-The backends behind this interface (`in_memory.py`, `sqlite.py`,
-`postgresql.py`) differ in durability and concurrency, not in contract; the
-conformance suite in `eventsource.testing.conformance` holds all three to the
-same behaviour, which is what makes the in-memory store usable as a real test
-double rather than an approximation.
+The adapters behind these ports (`adapters/memory/store.py`,
+`adapters/sqlite/store.py`, `adapters/postgresql/store.py`) differ in
+durability and concurrency, not in contract; the per-port conformance suites in
+`eventsource.testing.conformance_ports` (`AppenderConformance`,
+`StreamReaderConformance`, `EventLookupConformance`, `GlobalFeedConformance`,
+`CategoryQueryConformance`, `TypeQueryConformance`) hold all three to the same
+behaviour, which is what makes the in-memory store usable as a real test double
+rather than an approximation.
 
 ### The bus: fan-out with weaker promises
 
@@ -453,7 +499,7 @@ That asymmetry is the point. The store is the authority and pays for it in
 write-path narrowness; the bus is a delivery mechanism and pays for its speed in
 guarantees. A bus subscriber learns about events that arrive *after* it
 subscribed and nothing about events that came before -- there is no
-`get_global_position()` equivalent, because there is no retained ordering to
+`current_position()` equivalent, because there is no retained ordering to
 report. Everything in `subscriptions/` follows from taking that limitation
 seriously rather than papering over it.
 
@@ -567,12 +613,12 @@ that safely.
 The two interfaces are not merely different in convenience; they are different
 in kind, and the differences are all in the same direction.
 
-The store is addressable. `get_events` takes an aggregate id and a
-`from_version` (plus optional timestamp bounds), `read_all` walks the whole log
-from a `from_position`, and every read comes back as `StoredEvent` with
+The store is addressable. `read_stream` takes a `StreamId` and optional
+`StreamReadOptions`, `read_all` walks the whole log from a `from_position`
+(`FeedReadOptions`), and every read comes back as an `EventEnvelope` with
 a `global_position` attached -- a single monotonic ordering over all streams,
 whose current maximum the store will report on demand via
-`get_global_position()`. You can ask it "what came after 4,271?" and get a
+`current_position()`. You can ask it "what came after 4,271?" and get a
 complete, ordered, repeatable answer.
 
 The bus is none of those things. `EventBus.publish` takes a `list[DomainEvent]`
@@ -580,7 +626,7 @@ and a `background` flag and returns nothing; `subscribe` and
 `subscribe_to_all_events` register a handler for what arrives *next*. There is
 no position argument anywhere on the interface, no history, and -- crucially --
 no position on the delivered object either. A bus subscriber is handed a
-`DomainEvent`, not a `StoredEvent`, because position is a fact about
+`DomainEvent`, not an `EventEnvelope`, because position is a fact about
 persistence and the domain event never carried one. `LiveRunner._get_event_position()`
 reflects this honestly: it looks for a `_global_position` attribute that a
 backend *may* have attached and returns `None` when it finds nothing. Ordering
@@ -679,9 +725,10 @@ flow, and the moment that joins them belongs to neither.
 
 **The two halves pull events in opposite directions.** `CatchUpRunner` is a
 loop: it decides when to read, computes its own batch limit from
-`target_position - last_processed_position`, calls `read_all()` with
-`ReadOptions(direction=FORWARD, from_position=..., limit=...)`, walks the
-returned `StoredEvent`s, and stops when it reaches the target or a batch comes
+`target_position - last_processed_position`, calls `read_all()` with a
+`FeedReadOptions(tenant_id=..., limit=...)` -- feed reads are always forward,
+so there is no `direction` field to set -- walks the
+returned `EventEnvelope`s, and stops when it reaches the target or a batch comes
 back empty. It owns its clock, so it can be paused mid-batch
 (`wait_if_paused()` is checked both between batches and between events within a
 batch), stopped at a safe point (`_stop_requested`), and slowed by
@@ -707,14 +754,15 @@ completion, so it has no result. One class cannot honestly have both shapes.
 
 **The third collaborator exists because the handoff is a decision neither
 runner is positioned to make.** `TransitionCoordinator.execute()` is the only
-code that reads `event_store.get_global_position()` for the watermark, and it
+code that reads `event_store.current_position()` for the watermark, and it
 does so *before* constructing anything. It then constructs `LiveRunner` and
 starts it with `buffer_events=True`, constructs `CatchUpRunner` and calls
 `run_until_position(target_position=self._watermark)`, calls `process_buffer()`,
 and finally `disable_buffer()`. Every ordering constraint in the protocol lives
 in that one method body, in the order the phases have to happen. The runners
-know nothing of each other: `CatchUpRunner` takes an `EventStore` and no bus,
-`LiveRunner` takes an `EventBus` and no store, and neither imports the other.
+know nothing of each other: `CatchUpRunner` takes a `GlobalEventFeed` (the store
+port, not the concrete store) and no bus, `LiveRunner` takes an `EventBus` and
+no store, and neither imports the other.
 Both are handed the same `Subscription` and the same `CheckpointRepository`,
 and that shared `Subscription` -- specifically `last_processed_position`,
 advanced by `record_event_processed()` on the catch-up side and compared
@@ -781,9 +829,12 @@ is a duplicate. Neither runner has to be told about the other; they meet in one
 integer.
 
 **Reads go through `read_all()`, with retry, and with the tenant scope baked
-in.** `_read_batch_with_retry()` builds a `ReadOptions(direction=FORWARD,
-from_position=..., limit=..., tenant_id=self.config.tenant_id)`, drains the
-async iterator into a list, and submits that as an operation to
+in.** `_read_batch_with_retry()` builds a `FeedReadOptions(tenant_id=self.config.tenant_id,
+limit=...)` and passes `from_position` as a separate positional argument to
+`read_all(from_position, options)`; `FeedReadOptions` carries no `direction`
+(feed reads are always forward — BACKWARD feed reads have no ports
+equivalent, per ADR 0025). It drains the async iterator into a list, and
+submits that as an operation to
 `RetryableOperation` with `TRANSIENT_EXCEPTIONS` as the retryable set. A
 transient store failure therefore costs a retry, not a failed catch-up; a
 non-transient one propagates and is caught by `run_until_position`, which logs
@@ -812,7 +863,7 @@ strategies are honoured at three different places in the loop.
 `_maybe_save_periodic_checkpoint()`, which compares `time.monotonic()` against
 `_last_checkpoint_time` and writes only once
 `checkpoint_interval_seconds` (default 5.0) has elapsed. `EVERY_BATCH` writes
-once at the end of `_process_batch()`, using the last `StoredEvent` seen --
+once at the end of `_process_batch()`, using the last `EventEnvelope` seen --
 and note the condition is `events_in_batch > 0 or events_filtered > 0`, so a
 batch consisting entirely of filtered events still checkpoints its progress,
 for the same reason those events advanced the position in the first place. All
@@ -840,10 +891,10 @@ finishes the event in hand and stops at the next of those checks, which is what
 position that was really processed.
 
 **What the runner deliberately does not do** is as informative as what it does.
-It never touches the event bus -- its constructor takes an `EventStore`, a
+It never touches the event bus -- its constructor takes a `GlobalEventFeed`, a
 `CheckpointRepository`, and a `Subscription`, and no bus at all. It never
 decides what its target should be; `target_position` is a parameter, supplied
-by the coordinator from `get_global_position()`. It never announces that it is
+by the coordinator from `current_position()`. It never announces that it is
 finished to anyone; it returns. Those three absences are what allow the same
 object to serve both the initial catch-up over the whole history and the short
 final catch-up during the handoff -- the second call is the same code with a
@@ -866,7 +917,7 @@ raises. `AggregateRepository.save` then takes the uncommitted events and hands
 them to the store with a version it computed itself -- `aggregate.version -
 len(uncommitted_events)`, the version the aggregate was at before it decided --
 and the store appends only if reality still matches that number. If another
-writer got there first, `append_events` raises `OptimisticLockError` and
+writer got there first, `append` raises `OptimisticLockError` and
 nothing durable has changed. The caller reloads and decides again.
 
 That is the whole failure model, and it is cheap because it is *pre-commit*.
@@ -898,12 +949,12 @@ answer questions the write side never asks:
 - **Should this be tried again, and when?** A `RetryPolicy` decides, and
   `_handle_with_retry` runs the attempt loop for `max_retries + 1` tries,
   sleeping `get_backoff(attempt)` between them.
-- **What happens when trying again stops helping?** `ProjectionDLQManager`
-  parks the event, and only then -- after the policy has said `should_retry`
-  is false -- does the loop `raise`.
-- **Where is this projection up to?** `ProjectionCheckpointManager.update` runs
-  after `_process_event` returns cleanly, so the checkpoint records attempts
-  that succeeded rather than events that arrived.
+- **What happens when trying again stops helping?** `send_to_dlq()` parks the
+  event, and only then -- after the policy has said `should_retry` is false --
+  does the loop `raise`.
+- **Where is this projection up to?** `record_checkpoint()` runs after
+  `_process_event` returns cleanly, so the checkpoint records attempts that
+  succeeded rather than events that arrived.
 - **How does the next attempt get a clean database?** `DatabaseProjection`
   overrides the retry loop rather than the handler, so each attempt gets its
   own session -- a necessity, not a nicety, once PostgreSQL has aborted the
@@ -1019,8 +1070,8 @@ which fills in `aggregate_id`, `aggregate_type`, and `aggregate_version` from
 the instance so the version arithmetic is not retyped at every call site. The
 resulting events sit in `_uncommitted_events` until `repository.save(aggregate)`
 appends them; if there are none, `save` is a no-op and returns immediately.
-Buffering is what makes a multi-event command atomic: `append_events` takes the
-whole list with one `expected_version`, so either every event a command produced
+Buffering is what makes a multi-event command atomic: `append` takes the
+whole list with one `expected: ExpectedVersion`, so either every event a command produced
 lands or none does. Only after that append reports success does the repository
 call `mark_events_as_committed`, publish to the configured publisher, and
 consider a snapshot -- the in-memory aggregate is not treated as authoritative
@@ -1045,7 +1096,7 @@ document.
 ### Optimistic concurrency on the event stream (`expected_version`)
 
 Nothing on the write path takes a lock in the ordinary sense. The guard is a
-condition on the append. `EventStore.append_events` takes an `expected_version`,
+condition on the append. `EventAppender.append` takes an `expected: ExpectedVersion`,
 and the repository computes it rather than asking you to:
 `aggregate.version - len(uncommitted_events)`, the version the stream was at
 when this aggregate was loaded. If the stream has moved since, the append fails
@@ -1053,9 +1104,10 @@ and `OptimisticLockError` is raised carrying `aggregate_id`, `expected_version`,
 and `actual_version`. Nothing is written.
 
 That error is the write-side one, from `eventsource.exceptions`. Keep it
-separate in your head from `eventsource.readmodels.exceptions.OptimisticLockError`,
-which is keyed by `model_id` and belongs to a different problem; the section
-below on the two locks explains why they were never merged.
+separate in your head from
+`eventsource.ports.readmodels.exceptions.OptimisticLockError`, which is keyed
+by `model_id` and belongs to a different problem; the section below on the two
+locks explains why they were never merged.
 
 `ExpectedVersion` supplies three sentinels for the cases a plain integer cannot
 express: `NO_STREAM` (0) asserts the aggregate does not exist yet -- the right
@@ -1185,8 +1237,8 @@ domain controls; folding a stream on every page render is a cost paid at
 whatever rate your traffic happens to be.
 
 The second is shape, and it is the one that actually decides the matter. Look at
-what the store can be asked: `get_events` and `read_stream` take an
-`aggregate_id`; `get_events_by_type` takes an event type; `read_all` takes a
+what the store can be asked: `read_stream` takes a `StreamId`;
+`read_category` takes a category name; `read_all` takes a
 global position. There is no `where`. The log is indexed by stream and by
 position because that is what appending and replaying need, and nothing more.
 Meanwhile `Query` on the read side carries a list of `Filter`s (`eq`, `ne`,
@@ -1242,9 +1294,9 @@ freshness is not guaranteed.
 The read side is not one class doing five jobs; it is five small pieces, each
 answerable for one question, wired together by a single method. That shape is
 recent and deliberate -- the module docstrings in `retry.py`,
-`checkpoint_manager.py`, and `dlq_manager.py` all say the same thing, that the
-extraction exists to undo a Single Responsibility violation in which retry,
-checkpointing, and DLQ handling all lived inside
+`checkpoints.py`, and `dlq.py` (under `application/projections/`) all say the
+same thing, that the extraction exists to undo a Single Responsibility
+violation in which retry, checkpointing, and DLQ handling all lived inside
 `CheckpointTrackingProjection`. What is left in the projection is the ordering
 of those pieces, and only that.
 
@@ -1293,30 +1345,39 @@ with `max_retries=2` (three attempts total) and `jitter=0.1`. So the backoff a
 default projection actually experiences is jittered, not deterministic, and it
 gives you one fewer attempt than the policy class's own defaults suggest.
 
-**`ProjectionCheckpointManager` (`checkpoint_manager.py`)** answers *where is
-this projection up to?* It wraps a `CheckpointRepository` -- in-memory unless
-you supply one -- and exposes `update(event)`, `get_checkpoint()`,
-`get_lag_metrics(event_types)`, and `reset()`. `update` records
-`(projection_name, event_id, event_type)`; it is called from exactly one place,
-immediately after `_process_event` returns without raising, which is what makes
-the checkpoint mean "an attempt succeeded" rather than "an event arrived".
-`get_lag_metrics` is the operational window: last processed id, latest relevant
-id in the store, lag in seconds, count processed. `reset` deletes the
-checkpoint so the projection replays from the beginning -- the rebuild
-primitive.
+**Checkpoint functions (`application/projections/checkpoints.py`)** answer
+*where is this projection up to?* `record_checkpoint`, `read_checkpoint`,
+`lag_metrics_dict`, and `reset_checkpoint` each take a `ProjectionCheckpoints`
+repository and a `Tracer` as explicit parameters -- `CheckpointTrackingProjection`
+passes its own `checkpoint_repo` and `tracer` through, and either can be `None`
+(checkpoint tracking disabled) or omitted respectively.
+`record_checkpoint` records `(projection_name, event_id, event_type)`; it is
+called from exactly one place, immediately after `_process_event` returns
+without raising, which is what makes the checkpoint mean "an attempt
+succeeded" rather than "an event arrived". `lag_metrics_dict` is the
+operational window: last processed id, latest relevant id in the store, lag in
+seconds, count processed. `reset_checkpoint` deletes the checkpoint so the
+projection replays from the beginning -- the rebuild primitive. These four
+functions replace `ProjectionCheckpointManager`, which held no state beyond a
+repository reference and a tracer (see [ADR 0024](adrs/0024-projection-persistence-ports.md)); span names still read
+`eventsource.checkpoint_manager.*` deliberately, so existing dashboards keep
+working.
 
-**`ProjectionDLQManager` (`dlq_manager.py`)** answers *where does an event go
-when trying again has stopped helping?* `send_to_dlq(event, error,
-retry_count)` serialises the event with `model_dump(mode="json")` and stores it
-next to the error and the attempt count, so the entry is replayable rather than
-merely a log line. Its return type is the interesting part: `bool`, not `None`.
-A successful write logs a warning and returns `True`; a failed write is caught,
-logged with `logger.critical` and `exc_info=True`, and returns `False`. The DLQ
-manager never raises. That is a deliberate transfer of responsibility -- the
-pipeline's job at that moment is to re-raise the *original* handler error, and
-a secondary failure in the parking lot must not displace it. The cost is that
-the return value is currently ignored by `_handle_with_retry`, so a lost event
-is visible only in the logs.
+**DLQ functions (`application/projections/dlq.py`)** answer *where does an
+event go when trying again has stopped helping?* `send_to_dlq(repo,
+projection_name, event, error, retry_count, tracer)` serialises the event with
+`model_dump(mode="json")` and stores it next to the error and the attempt
+count, so the entry is replayable rather than merely a log line. Its return
+type is the interesting part: `bool`, not `None`. A successful write logs a
+warning and returns `True`; a failed write is caught, logged with
+`logger.critical` and `exc_info=True`, and returns `False`. It never raises.
+That is a deliberate transfer of responsibility -- the pipeline's job at that
+moment is to re-raise the *original* handler error, and a secondary failure in
+the parking lot must not displace it. The cost is that the return value is
+currently ignored by `_handle_with_retry`, so a lost event is visible only in
+the logs. `send_to_dlq` replaces `ProjectionDLQManager` for the same reason
+`record_checkpoint` replaces `ProjectionCheckpointManager`; its span names
+still read `eventsource.dlq_manager.*` deliberately.
 
 **`ProjectionCoordinator`, `ProjectionRegistry`, and `SubscriberRegistry`
 (`coordinator.py`)** answer *who gets this event?* The three are layered.
@@ -1360,7 +1421,7 @@ whether the event is interesting, typically with an `isinstance` check. `reset`
 is the rebuild primitive at this level: clear the read model so it can be
 refolded from the start of history. It is also the only one of the three
 exported from the top-level `eventsource` package; `SyncProjection` and
-`EventHandlerBase` must be imported from `eventsource.projections`.
+`EventHandlerBase` must be imported from `eventsource.application.projections`.
 
 `SyncProjection` is the same pair of methods without `await`. It exists for
 projections that do no I/O -- in-memory counters, test doubles, anything whose
@@ -1433,22 +1494,30 @@ happily "reset" by clearing its checkpoint and leaving stale rows in place.
 
 #### The constructor is where the defaults bite
 
-Four collaborators are injected, each with a fallback:
-`checkpoint_repo` defaults to `InMemoryCheckpointRepository`, `dlq_repo` to
-`InMemoryDLQRepository`, `tracer` to whatever `create_tracer(__name__,
-enable_tracing)` returns (a no-op unless you opt in), and `retry_policy` to a
-locally constructed `ExponentialBackoffRetryPolicy`. The repositories are then
-wrapped: a `ProjectionCheckpointManager` and a `ProjectionDLQManager`, both
-stamped with `self._projection_name`, which is simply
-`self.__class__.__name__`. That naming choice is quiet but consequential — the
-checkpoint key is your class name, so renaming a projection class orphans its
-checkpoint and the projection replays from the beginning.
+Four collaborators are injected: `checkpoint_repo`, `dlq_repo`, `tracer`, and
+`retry_policy`. `tracer` defaults to whatever `create_tracer(__name__,
+enable_tracing)` returns (a no-op unless you opt in), and `retry_policy`
+defaults to a locally constructed `ExponentialBackoffRetryPolicy`.
+`checkpoint_repo` and `dlq_repo` default to `None`, and `None` means the
+concern is disabled, not "construct an in-memory repository for me" ([ADR
+0024](adrs/0024-projection-persistence-ports.md)): with `checkpoint_repo=None`
+no checkpoint is written and `get_checkpoint()` / `get_lag_metrics()` return
+`None`; with `dlq_repo=None` a permanently failed event is logged at
+`critical` and re-raised, with no DLQ write attempted. Both are stored as
+plain attributes -- `self._checkpoint_repo`, `self._dlq_repo` -- alongside
+`self._projection_name`, which is simply `self.__class__.__name__`. That
+naming choice is quiet but consequential — the checkpoint key is your class
+name, so renaming a projection class orphans its checkpoint and the
+projection replays from the beginning.
 
-The in-memory defaults exist so a projection is constructible in a unit test
-with no database and no Docker. The cost is that they are not obviously wrong
-at construction time: a production projection that is never handed real
-repositories checkpoints into a dictionary that vanishes on restart, and parks
-its dead letters in the same dictionary.
+An in-memory default used to exist here, so a projection was constructible in
+a unit test with no database and no Docker, but it was a production footgun:
+a projection that never gets handed real repositories still *looks* durable
+from the outside -- `get_checkpoint()` returns a value, `get_lag_metrics()`
+returns real-looking numbers -- while silently checkpointing into a dictionary
+that vanishes on restart and reprocessing the entire event stream every time
+the process comes back up. Tests that want the old behavior pass
+`InMemoryCheckpointRepository()` / `InMemoryDLQRepository()` explicitly.
 
 The retry default deserves its own warning, because there are two of them and
 they disagree. `ExponentialBackoffRetryPolicy()` constructed with no argument —
@@ -1476,14 +1545,16 @@ each pass is the whole pipeline:
 ```python
 for attempt in range(max_attempts):
     try:
-        await self._process_event(event)          # 1. do the work
-        await self._checkpoint_manager.update(event)  # 2. only then advance
-        return                                     # 3. success ends the loop
+        await self._process_event(event)             # 1. do the work
+        if self._checkpoint_repo is not None:
+            await record_checkpoint(...)              # 2. only then advance
+        return                                        # 3. success ends the loop
     except Exception as e:
         if not self._retry_policy.should_retry(attempt, e):
-            await self._dlq_manager.send_to_dlq(event, e, attempt + 1)
+            if self._dlq_repo is not None:
+                await send_to_dlq(...)
             logger.critical(...)
-            raise                                  # 4. caller still sees the error
+            raise                                     # 4. caller still sees the error
         await asyncio.sleep(self._retry_policy.get_backoff(attempt))
 ```
 
@@ -1492,9 +1563,9 @@ Read that as five commitments rather than five statements.
 The checkpoint update sits *inside* the `try`, immediately after
 `_process_event` returns and before the `return`. That placement is the reason
 the checkpoint means "an attempt succeeded" and not "an event arrived" — and
-also the reason a failure in `_checkpoint_manager.update` itself is caught by
-the same handler and retried as though the projection work had failed, which
-will re-run `_process_event` on the next pass.
+also the reason a failure in `record_checkpoint()` itself is caught by the
+same handler and retried as though the projection work had failed, which will
+re-run `_process_event` on the next pass.
 
 The policy, not the loop, decides whether to continue. `should_retry(attempt,
 e)` receives both the attempt index and the exception, which is what makes
@@ -1653,58 +1724,74 @@ circuit the DLQ write — `send_to_dlq` runs whenever `should_retry` returns
 and "do not record" are different statements, and the protocol can only make
 the first.
 
-### ProjectionCheckpointManager (checkpoint_manager.py) — where the projection is
+### Checkpoint functions (application/projections/checkpoints.py) — where the projection is
 
 A checkpoint is the read side's answer to "if this process dies now, where does
-the next one start?" `ProjectionCheckpointManager` owns that answer, and — like
-`RetryPolicy` — it was extracted from `CheckpointTrackingProjection` for the
-reason its module docstring names outright: the projection was doing too many
-jobs. What is left here is small. The manager holds a projection name and a
-`CheckpointRepository`, wraps four calls in tracing spans and log lines, and
-forwards. It contains no policy of its own.
+the next one start?" Four module-level functions own that answer — like
+`RetryPolicy`, they were extracted from `CheckpointTrackingProjection` for the
+reason the module docstring names outright: the projection was doing too many
+jobs. Each function is small on purpose: it takes a `ProjectionCheckpoints`
+repository, a projection name, and a `Tracer` as explicit parameters, wraps one
+call in a tracing span and a log line, and forwards. None of the four hold
+state of their own, and none contain policy — that is what replaces
+`ProjectionCheckpointManager` (see [ADR 0024](adrs/0024-projection-persistence-ports.md)), which held the same
+repository reference and tracer as instance state but decided nothing either.
 
 #### Four operations, one key
 
-The name given at construction is the key for everything the manager does, and
-it comes from `self.__class__.__name__` when a projection builds its own. Every
-call below is scoped to that one string.
+The projection name passed to every call is the key for everything these
+functions do, and it comes from `self.__class__.__name__` when
+`CheckpointTrackingProjection` calls them. Every call below is scoped to that
+one string.
 
-`update(event)` is the write. It calls
-`update_checkpoint(projection_name, event_id, event_type)` and logs at `debug`.
-It is invoked from exactly one place in the whole library — the line
-immediately after `_process_event` returns without raising — and that single
-call site is what gives the checkpoint its meaning. It records *the last event
-an attempt succeeded on*, not the last event that arrived, and not the last
-event the store holds.
+`record_checkpoint(repo, projection_name, event, tracer)` is the write. It
+calls `update_checkpoint(projection_name, event_id, event_type)` on the
+repository and logs at `debug`. It is invoked from exactly one place in the
+whole library — the line immediately after `_process_event` returns without
+raising — and that single call site is what gives the checkpoint its meaning.
+It records *the last event an attempt succeeded on*, not the last event that
+arrived, and not the last event the store holds.
 
-`get_checkpoint()` is the read, returning `str(event_id)` or `None`. Note the
-type change: the repository deals in `UUID`, the manager hands back a string.
+`read_checkpoint(repo, projection_name, tracer)` is the read, returning
+`str(event_id)` or `None`. Note the type change: the repository deals in
+`UUID`, the function hands back a string.
 
-`get_lag_metrics(event_types)` is the operational window, returning a plain
-dict — `projection_name`, `last_event_id`, `latest_event_id`, `lag_seconds`,
-`events_processed`, `last_processed_at` — or `None` when no checkpoint exists
-yet. The `None` is worth internalising: a projection that has never
-successfully processed anything is indistinguishable, through this API, from
-one that does not exist. There is no "zero events, infinitely behind" reading.
+`lag_metrics_dict(repo, projection_name, event_types, tracer)` is the
+operational window, returning a plain dict — `projection_name`,
+`last_event_id`, `latest_event_id`, `lag_seconds`, `events_processed`,
+`last_processed_at` — or `None` when no checkpoint exists yet. The `None` is
+worth internalising: a projection that has never successfully processed
+anything is indistinguishable, through this API, from one that does not
+exist. There is no "zero events, infinitely behind" reading.
 
-`reset()` deletes the checkpoint and logs at `info`. That is the rebuild
-primitive: with no checkpoint, the projection starts from the beginning of
-history. It does not touch your read model — `CheckpointTrackingProjection.reset`
-calls `_truncate_read_models()` separately, and in that order.
+`reset_checkpoint(repo, projection_name, tracer)` deletes the checkpoint and
+logs at `info`. That is the rebuild primitive: with no checkpoint, the
+projection starts from the beginning of history. It does not touch your read
+model — `CheckpointTrackingProjection.reset` calls `_truncate_read_models()`
+separately, and in that order.
+
+All four are no-ops from the projection's point of view when
+`checkpoint_repo=None`: `CheckpointTrackingProjection` checks
+`self._checkpoint_repo is not None` before calling `record_checkpoint`, and
+`get_checkpoint()` / `get_lag_metrics()` short-circuit to `None` without
+calling `read_checkpoint()` / `lag_metrics_dict()` at all.
 
 #### An event id is a position only if something can order it
 
 The checkpoint stores a UUID, not an offset. On its own a UUID says nothing
 about *how far* along the stream you are — it is a bookmark that only the store
 can dereference. That is why lag is computed in the repository rather than in
-the manager, and why the two shipped repositories give such different answers.
+the calling function, and why the two shipped repositories give such different
+answers.
 
-`PostgreSQLCheckpointRepository.get_lag_metrics` runs a single query that finds
-the most recent event whose `event_type = ANY(:event_types)`, joins it against
-the checkpoint row, and takes `EXTRACT(EPOCH FROM (le.max_time -
-pc.last_processed_at))`. So the lag reported is **wall-clock distance between
-when the newest relevant event was written and when this projection last
-committed a checkpoint** — a staleness measure, not a count of unprocessed
+`SQLCheckpointRepository.get_lag_metrics` runs a single query that finds the
+most recent event whose type is one of `event_types`, joins it against the
+checkpoint row, and computes the elapsed time between that event and the
+checkpoint's `last_processed_at` (the PostgreSQL dialect via `EXTRACT(EPOCH
+FROM (le.max_time - pc.last_processed_at))`; SQLite via the equivalent
+dialect-resolved expression). So the lag reported is **wall-clock distance
+between when the newest relevant event was written and when this projection
+last committed a checkpoint** — a staleness measure, not a count of unprocessed
 events. Two guards flatten it to `0.0`: when `last_event_id` equals
 `latest_event_id` (caught up), and when the raw value is negative (the
 projection checkpointed after the newest event's timestamp, which clock skew
@@ -1713,10 +1800,11 @@ and out-of-order writes both produce).
 `InMemoryCheckpointRepository.get_lag_metrics` cannot do any of that. It has no
 event store to look at, so it returns `latest_event_id=None` and
 `lag_seconds=0.0` unconditionally, with a comment saying as much. The
-`event_types` argument is accepted and ignored. This matters because the
-in-memory repository is the *default* — a projection constructed with no
-arguments reports zero lag forever, and that zero is a placeholder rather than
-a measurement.
+`event_types` argument is accepted and ignored. Since `checkpoint_repo=None`
+is now the constructor default (not an in-memory repository), reaching this
+path requires deliberately passing `InMemoryCheckpointRepository()` — but if
+you do, the same caveat applies: that zero is a placeholder rather than a
+measurement.
 
 The `event_types` list itself comes from the projection:
 `get_lag_metrics()` on `CheckpointTrackingProjection` passes `[et.__name__ for
@@ -1730,27 +1818,32 @@ numbers.
 
 #### Counting, concurrency, and the other position API
 
-`events_processed` is incremented by the repository, not the manager — `+ 1` on
-every `update_checkpoint`, in the Postgres `ON CONFLICT` clause and in the
-in-memory dict alike. Because `update` is called once per *successful* attempt,
-the counter follows the same rule the checkpoint does: it counts successes, and
-a redelivered event that succeeds twice increments it twice. It is a throughput
-signal, not a distinct-event count.
+`events_processed` is incremented by the repository, not the calling function —
+`+ 1` on every `update_checkpoint`, in the SQL `ON CONFLICT` clause and in the
+in-memory dict alike. Because `record_checkpoint` is called once per
+*successful* attempt, the counter follows the same rule the checkpoint does:
+it counts successes, and a redelivered event that succeeds twice increments it
+twice. It is a throughput signal, not a distinct-event count.
 
 The in-memory repository guards its dict with an `asyncio.Lock`, so concurrent
-updates within one process are serialised. Nothing in the manager or either
-repository coordinates *across* processes: two instances of the same projection
-class share a checkpoint key and will overwrite each other's position. Running
-one projection in more than one place is a subscription-runtime concern, not
-something the checkpoint layer solves.
+updates within one process are serialised. Nothing in these functions or
+either repository coordinates *across* processes: two instances of the same
+projection class share a checkpoint key and will overwrite each other's
+position. Running one projection in more than one place is a
+subscription-runtime concern, not something the checkpoint layer solves.
 
-Finally, `CheckpointRepository` carries a second, parallel position API that
-the manager never touches: `get_position(subscription_id)` and
-`save_position(subscription_id, position, event_id, event_type)`, backed by a
-`global_position` column. That pair exists for the subscription runtime, which
-resumes from an integer offset rather than an event id. Be aware they share
-storage but not discipline — `update_checkpoint` on the in-memory repository
-rebuilds `CheckpointData` without carrying `global_position` forward, so a
-projection checkpointing through the manager will clear a position previously
-saved by a subscription under the same key. Keep the two names distinct unless
-you have checked the backend you are using.
+Finally, the composed `CheckpointRepository` protocol carries a second,
+parallel position API that these functions never touch:
+`get_position(subscription_id)` and `save_position(subscription_id, position,
+event_id, event_type)` from `SubscriptionPositions` — a segregated port in its
+own right (ADR 0024, amended by ADR 0025), backed by a `position_token` column
+holding the opaque `Position` value object. That pair exists for the
+subscription runtime, which resumes from a position token rather than an
+event id. Be aware they share storage but not discipline —
+`update_checkpoint` on the in-memory repository rebuilds `CheckpointData`
+without carrying `position_token` forward, so a projection checkpointing
+through `record_checkpoint` will clear a position previously saved by a
+subscription under the same key; a row that carries only the legacy
+`global_position` column reads back as no-position and restarts catch-up.
+Keep the two names distinct unless you have checked the backend you are
+using.
