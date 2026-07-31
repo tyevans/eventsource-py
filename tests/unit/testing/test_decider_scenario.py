@@ -74,3 +74,9 @@ class TestGivenWhenThen:
     def test_when_before_then_required(self) -> None:
         with pytest.raises(AssertionError, match="when"):
             DeciderScenario(Account).then_events(AccountOpened)
+
+    def test_when_clears_stale_error_from_prior_rejection(self) -> None:
+        scenario = DeciderScenario(Account).when(DepositMoney(amount=5.0))
+        scenario.then_rejected()  # sanity: first when() did reject
+        scenario.when(OpenAccount(owner="alice"))
+        scenario.then_events(AccountOpened)

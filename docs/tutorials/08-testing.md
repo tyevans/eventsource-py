@@ -661,9 +661,28 @@ infrastructure using `DeciderScenario`. No event store, no event bus, no async.
 
 ### The decider pattern: pure functions
 
-The decider pattern models the aggregate as three pure functions:
+The decider pattern models the aggregate as three pure functions. This state carries its
+own `order_id` (the shared `OrderState` from earlier steps does not, since the
+`DeclarativeAggregate` example above never needed it), and the command comes from
+`eventsource.DomainCommand`, exactly as introduced in
+[Your First Aggregate](03-first-aggregate.md):
 
 ```python
+from eventsource import CommandRejectedError, DomainCommand
+
+
+class ShipOrder(DomainCommand):
+    tracking_number: str
+
+
+class OrderState(BaseModel):
+    order_id: UUID
+    customer_id: UUID | None = None
+    total: Decimal = Decimal("0")
+    status: str = "new"
+    tracking_number: str | None = None
+
+
 def initial_state(order_id: UUID) -> OrderState:
     """Return the initial state for a new aggregate."""
     return OrderState(order_id=order_id, status="new")
@@ -673,19 +692,28 @@ def decide(command: object, state: OrderState) -> list[DomainEvent]:
     match command:
         case ShipOrder(tracking_number=tn):
             if state.status != "paid":
-                raise ValueError("Cannot ship unpaid order")
+                raise CommandRejectedError("Cannot ship unpaid order")
             return [OrderShipped(aggregate_id=state.order_id, tracking_number=tn)]
         case _:
-            raise ValueError(f"Unknown command: {command}")
+            raise CommandRejectedError(f"Unknown command: {command}")
 
 def evolve(state: OrderState, event: DomainEvent) -> OrderState:
     """Given the current state and an event, return the next state."""
     match event:
+        case OrderCreated(customer_id=cid, total=total):
+            return state.model_copy(update={"customer_id": cid, "total": total, "status": "created"})
+        case OrderPaid():
+            return state.model_copy(update={"status": "paid"})
         case OrderShipped(tracking_number=tn):
             return state.model_copy(update={"status": "shipped", "tracking_number": tn})
         case _:
             return state
 ```
+
+`evolve` must handle every event the aggregate emits, not just the one `decide` cares
+about here -- `given()` replays the whole history through it, so a missing case (as
+`OrderCreated`/`OrderPaid` would be if only `OrderShipped` were matched) silently leaves
+`state.status` at its default and the "paid" precondition can never be satisfied.
 
 These functions are wrapped in a `DeciderAggregate` subclass:
 
@@ -741,7 +769,9 @@ The three methods chain:
 
 ### Asserting on rejection
 
-When `decide` raises an exception, use `then_rejected`:
+When `decide` raises an exception, use `then_rejected`. `decide()` above raises
+`CommandRejectedError`, which is also `then_rejected`'s default `exc_type`, so the
+type argument can be omitted:
 
 ```python
 def test_unpaid_order_cannot_ship():
@@ -753,12 +783,18 @@ def test_unpaid_order_cannot_ship():
                     customer_id=uuid4(), total=Decimal("99.99")),
      )
      .when(ShipOrder(tracking_number="TRACK123"))
-     .then_rejected(ValueError, match="Cannot ship unpaid"))
+     .then_rejected(match="Cannot ship unpaid"))
 ```
 
 The `match` parameter is optional; if provided, the exception message must match
-the regex. The default exception type is `CommandRejectedError`, but any exception
-can be checked.
+the regex. `then_rejected` is not limited to `CommandRejectedError` -- if your
+`decide()` raises a different exception type (say, a plain `ValueError`), pass it
+explicitly and it is checked the same way:
+
+```python
+     .when(ShipOrder(tracking_number="TRACK123"))
+     .then_rejected(ValueError, match="Cannot ship unpaid"))
+```
 
 ### Accessing the produced events
 

@@ -416,6 +416,8 @@ class DeciderScenario:
 
     def when(self, command: object) -> DeciderScenario:
         """Run decide, capturing produced events or the raised exception."""
+        self._events = None
+        self._error = None
         try:
             self._events = list(self._decide(command, self._state))
         except Exception as exc:  # noqa: BLE001 - the exception IS the result

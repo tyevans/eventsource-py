@@ -10,18 +10,19 @@ Import them from `eventsource.testing` (or the individual submodules). The
 package is intended for test code only and should not be imported from
 production code paths.
 
-The package is organized into five source modules:
+The package is organized into six source modules:
 
 | Module | Contains |
 | --- | --- |
 | `eventsource.testing.builder` | `EventBuilder` |
 | `eventsource.testing.harness` | `InMemoryTestHarness` |
 | `eventsource.testing.assertions` | `EventAssertions` |
+| `eventsource.testing.recording` | `RecordingEventBus` |
 | `eventsource.testing.bdd` | `given_events`, `when_command`, `then_event_published`, `then_no_events_published`, `then_event_sequence`, `then_event_count`, `DeciderScenario` |
 | `eventsource.testing.conformance` | `EventStoreConformanceSuite`, `EventBusConformanceSuite` |
 
 Everything listed above is re-exported from `eventsource.testing` itself, and
-those twelve names are the whole of its `__all__`.
+those thirteen names are the whole of its `__all__`.
 
 The pieces are designed to compose but are independent: `EventBuilder` produces
 `DomainEvent` instances with no harness involved, `InMemoryTestHarness` wires
@@ -675,6 +676,11 @@ scenario = (
 )
 ```
 
+`given()` does not check that the events it is handed belong to the scenario's
+`aggregate_id` -- it folds whatever it is given through `evolve` unconditionally, so
+passing an event stamped with a different `aggregate_id` is folded in silently rather
+than rejected.
+
 #### `when(command: object) -> DeciderScenario`
 
 Runs `decide(command, state)`, capturing either the returned events or any raised
@@ -743,8 +749,12 @@ def test_unpaid_order_cannot_ship():
     (DeciderScenario(Order)
      .given(OrderCreated(aggregate_id=order_id, aggregate_version=1, ...))
      .when(ShipOrder(tracking_number="TRACK123"))
-     .then_rejected(ValueError, match="Cannot ship unpaid"))
+     .then_rejected(match="Cannot ship unpaid"))  # exc_type defaults to CommandRejectedError
 ```
+
+`then_rejected` is not limited to `CommandRejectedError` -- pass any exception type
+explicitly and it is checked the same way, e.g. `then_rejected(ValueError, match="...")`
+if your `decide()` raises a plain `ValueError` instead.
 
 ### When to use DeciderScenario vs. the async BDD helpers
 
