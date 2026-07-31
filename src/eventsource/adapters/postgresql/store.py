@@ -21,10 +21,12 @@ lower position that is still in flight.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import AsyncIterator, Sequence
+from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -117,6 +119,7 @@ class PostgreSQLEventStore:
         *,
         store_id: str | None = None,
         create_schema: bool = False,
+        outbox_enabled: bool = False,
     ) -> None:
         if not ASYNCPG_AVAILABLE:
             raise ImportError(
@@ -134,10 +137,21 @@ class PostgreSQLEventStore:
         self._create_schema = create_schema
         self._schema_ready = False
         self._schema_lock = asyncio.Lock()
+        self._outbox_enabled = outbox_enabled
 
     @property
     def store_id(self) -> str:
         return self._store_id
+
+    @property
+    def outbox_enabled(self) -> bool:
+        """Whether `append` also writes to `event_outbox` in the same transaction.
+
+        When `True`, the outbox row and the event row commit (or roll back)
+        together -- the entire point of the transactional outbox pattern.
+        The outbox *reader* lives in `eventsource.repositories.outbox`.
+        """
+        return self._outbox_enabled
 
     async def _ensure_schema(self) -> None:
         """Lazily create the `events` table, only when `create_schema=True`.
@@ -309,6 +323,9 @@ class PostgreSQLEventStore:
                     if first_position is None and global_position is not None:
                         first_position = self._codec.encode(global_position)
 
+                    if self._outbox_enabled:
+                        await self._write_to_outbox(session, event, category)
+
                 await session.commit()
                 return AppendResult(stream=stream, new_version=version, position=first_position)
 
@@ -335,6 +352,66 @@ class PostgreSQLEventStore:
                         stream.aggregate_id, self._expected_sentinel(expected), actual_version
                     ) from e
                 raise
+
+    async def _write_to_outbox(
+        self,
+        session: AsyncSession,
+        event: DomainEvent,
+        aggregate_type: str,
+    ) -> None:
+        """Write one outbox row for `event`, on `session`, before commit.
+
+        Ported from `eventsource.stores.postgresql.PostgreSQLEventStore
+        ._write_to_outbox`. Must run on the same `AsyncSession` as the
+        event `INSERT`, before `append`'s single `await session.commit()`
+        -- that is the atomicity guarantee the transactional outbox
+        pattern exists to provide. The outbox *reader* lives in
+        `eventsource.repositories.outbox` and is unchanged; the payload
+        shape below (six keys, `payload` = `model_dump(mode="json")`) must
+        match what it expects exactly.
+
+        Uses stdlib `json.dumps` rather than this module's `json_dumps`
+        (orjson-backed): the payload here is already reduced to JSON-safe
+        primitives (`str`/`dict`/`None`) by the time it is built, so the
+        two would serialize identically, but stdlib is used to mirror the
+        legacy store byte-for-byte and avoid any doubt.
+        """
+        outbox_id = uuid4()
+        now = datetime.now(UTC)
+
+        outbox_event_data = {
+            "event_id": str(event.event_id),
+            "aggregate_id": str(event.aggregate_id),
+            "aggregate_type": aggregate_type,
+            "tenant_id": str(event.tenant_id) if event.tenant_id else None,
+            "occurred_at": event.occurred_at.isoformat(),
+            "payload": event.model_dump(mode="json"),
+        }
+
+        await session.execute(
+            text(
+                """
+                INSERT INTO event_outbox (
+                    id, event_id, event_type, aggregate_id, aggregate_type,
+                    tenant_id, event_data, created_at, status
+                )
+                VALUES (
+                    :id, :event_id, :event_type, :aggregate_id, :aggregate_type,
+                    :tenant_id, :event_data, :created_at, 'pending'
+                )
+                """
+            ),
+            {
+                "id": outbox_id,
+                "event_id": event.event_id,
+                "event_type": event.event_type,
+                "aggregate_id": event.aggregate_id,
+                "aggregate_type": aggregate_type,
+                "tenant_id": str(event.tenant_id) if event.tenant_id else None,
+                "event_data": json.dumps(outbox_event_data),
+                "created_at": now,
+            },
+        )
 
     def read_stream(
         self,

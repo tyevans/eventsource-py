@@ -522,17 +522,6 @@ class TestProjectionRebuilding:
 class TestOutboxIntegration:
     """Tests for outbox pattern integration."""
 
-    @pytest.mark.skip(
-        reason=(
-            "eventsource.adapters.postgresql.store.PostgreSQLEventStore has no "
-            "outbox_enabled / _write_to_outbox support yet -- porting that write "
-            "path is tracked as backlog work in "
-            "docs/superpowers/specs/2026-07-31-legacy-store-retirement-design.md "
-            "(SS4.4, 'Port outbox_enabled + _write_to_outbox onto "
-            "adapters/postgresql/store.py'). Retarget this scenario once that "
-            "lands; do not delete it."
-        )
-    )
     async def test_outbox_enabled_stores_events(
         self,
         postgres_event_store_with_outbox: PostgreSQLEventStore,

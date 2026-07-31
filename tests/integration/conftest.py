@@ -566,11 +566,12 @@ async def clean_redis(redis_connection_url: str) -> AsyncGenerator[None, None]:
 
 @pytest.fixture
 async def postgres_event_store(
-    postgres_session_factory: async_sessionmaker[AsyncSession],
+    postgres_engine: AsyncEngine,
     clean_postgres_tables: None,
 ) -> AsyncGenerator[Any, None]:
     """Provide PostgreSQL event store for integration tests."""
-    from eventsource import EventRegistry, PostgreSQLEventStore
+    from eventsource.adapters.postgresql import PostgreSQLEventStore
+    from eventsource.events.registry import EventRegistry
 
     # Create fresh registry for tests
     registry = EventRegistry()
@@ -582,21 +583,25 @@ async def postgres_event_store(
     registry.register(TestOrderCompleted)
 
     store = PostgreSQLEventStore(
-        postgres_session_factory,
+        postgres_engine,
         event_registry=registry,
         outbox_enabled=False,
     )
 
+    # postgres_engine is session-scoped; this adapter's close() disposes the
+    # engine, so it must NOT be called here -- that would break every later
+    # test in the session.
     yield store
 
 
 @pytest.fixture
 async def postgres_event_store_with_outbox(
-    postgres_session_factory: async_sessionmaker[AsyncSession],
+    postgres_engine: AsyncEngine,
     clean_postgres_tables: None,
 ) -> AsyncGenerator[Any, None]:
     """Provide PostgreSQL event store with outbox enabled."""
-    from eventsource import EventRegistry, PostgreSQLEventStore
+    from eventsource.adapters.postgresql import PostgreSQLEventStore
+    from eventsource.events.registry import EventRegistry
 
     registry = EventRegistry()
     registry.register(TestItemCreated)
@@ -607,11 +612,12 @@ async def postgres_event_store_with_outbox(
     registry.register(TestOrderCompleted)
 
     store = PostgreSQLEventStore(
-        postgres_session_factory,
+        postgres_engine,
         event_registry=registry,
         outbox_enabled=True,
     )
 
+    # postgres_engine is session-scoped -- do not call store.close() here.
     yield store
 
 
