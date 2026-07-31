@@ -136,7 +136,7 @@ class InMemoryPositionMappingRepository:
     async def find_by_source_position(
         self,
         migration_id: UUID,
-        source_position: int,
+        source_position: Position,
     ) -> PositionMapping | None:
         """Find mapping by exact source position."""
         for mapping in self._mappings:
@@ -147,7 +147,7 @@ class InMemoryPositionMappingRepository:
     async def find_by_target_position(
         self,
         migration_id: UUID,
-        target_position: int,
+        target_position: Position,
     ) -> PositionMapping | None:
         """Find mapping by exact target position."""
         for mapping in self._mappings:
@@ -158,7 +158,7 @@ class InMemoryPositionMappingRepository:
     async def find_nearest_source_position(
         self,
         migration_id: UUID,
-        source_position: int,
+        source_position: Position,
     ) -> PositionMapping | None:
         """Find nearest mapping with source_position <= given position."""
         nearest: PositionMapping | None = None
@@ -196,8 +196,8 @@ class InMemoryPositionMappingRepository:
     async def list_in_source_range(
         self,
         migration_id: UUID,
-        start_position: int,
-        end_position: int,
+        start_position: Position,
+        end_position: Position,
     ) -> list[PositionMapping]:
         """List mappings within a source position range."""
         filtered = [
@@ -215,13 +215,12 @@ class InMemoryPositionMappingRepository:
     async def get_position_bounds(
         self,
         migration_id: UUID,
-    ) -> tuple[int, int] | None:
-        """Get min and max source positions."""
+    ) -> tuple[Position, Position] | None:
+        """Get first and last source positions by insertion (id) order."""
         filtered = [m for m in self._mappings if m.migration_id == migration_id]
         if not filtered:
             return None
-        positions = [m.source_position for m in filtered]
-        return (min(positions), max(positions))
+        return (filtered[0].source_position, filtered[-1].source_position)
 
     async def delete_by_migration(self, migration_id: UUID) -> int:
         """Delete all mappings for a migration."""
@@ -773,8 +772,8 @@ async def copy_events_with_position_mapping(
         # Record position mapping
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=stored_event.global_position,
-            target_position=result.new_version,  # Use new version as position
+            source_position=source_pos(stored_event.global_position),
+            target_position=target_pos(result.new_version),  # Use new version as position
             event_id=event.event_id,
         )
 
@@ -800,20 +799,20 @@ class TestPositionMappingRecording:
 
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=100,
-            target_position=50,
+            source_position=source_pos(100),
+            target_position=target_pos(50),
             event_id=event_id,
         )
 
         # Verify mapping was recorded
         result = await position_mapper.translate_position(
             migration_id=migration_id,
-            source_position=100,
+            source_position=source_pos(100),
         )
 
-        assert result.target_position == 50
+        assert result.target_position == target_pos(50)
         assert result.is_exact is True
-        assert result.source_position == 100
+        assert result.source_position == source_pos(100)
 
     @pytest.mark.asyncio
     async def test_record_batch_mappings(
@@ -823,9 +822,9 @@ class TestPositionMappingRecording:
     ) -> None:
         """Test recording multiple position mappings in batch."""
         mappings = [
-            (100, 50, uuid4()),
-            (200, 100, uuid4()),
-            (300, 150, uuid4()),
+            (source_pos(100), target_pos(50), uuid4()),
+            (source_pos(200), target_pos(100), uuid4()),
+            (source_pos(300), target_pos(150), uuid4()),
         ]
 
         count = await position_mapper.record_mappings_batch(
@@ -836,12 +835,12 @@ class TestPositionMappingRecording:
         assert count == 3
 
         # Verify all mappings were recorded
-        for source_pos, target_pos, _ in mappings:
+        for sp, tp, _ in mappings:
             result = await position_mapper.translate_position(
                 migration_id=migration_id,
-                source_position=source_pos,
+                source_position=sp,
             )
-            assert result.target_position == target_pos
+            assert result.target_position == tp
             assert result.is_exact is True
 
     @pytest.mark.asyncio
@@ -886,17 +885,17 @@ class TestPositionTranslation:
         # Record mappings
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=100,
-            target_position=50,
+            source_position=source_pos(100),
+            target_position=target_pos(50),
             event_id=uuid4(),
         )
 
         result = await position_mapper.translate_position(
             migration_id=migration_id,
-            source_position=100,
+            source_position=source_pos(100),
         )
 
-        assert result.target_position == 50
+        assert result.target_position == target_pos(50)
         assert result.is_exact is True
         assert result.nearest_source_position is None
 
@@ -910,26 +909,26 @@ class TestPositionTranslation:
         # Record mappings
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=100,
-            target_position=50,
+            source_position=source_pos(100),
+            target_position=target_pos(50),
             event_id=uuid4(),
         )
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=200,
-            target_position=100,
+            source_position=source_pos(200),
+            target_position=target_pos(100),
             event_id=uuid4(),
         )
 
         # Query position between recorded mappings
         result = await position_mapper.translate_position(
             migration_id=migration_id,
-            source_position=150,
+            source_position=source_pos(150),
         )
 
-        assert result.target_position == 50  # Nearest lower position
+        assert result.target_position == target_pos(50)  # Nearest lower position
         assert result.is_exact is False
-        assert result.nearest_source_position == 100
+        assert result.nearest_source_position == source_pos(100)
 
     @pytest.mark.asyncio
     async def test_translation_without_nearest_fails(
@@ -940,8 +939,8 @@ class TestPositionTranslation:
         """Test that translation fails when no mapping exists and use_nearest=False."""
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=100,
-            target_position=50,
+            source_position=source_pos(100),
+            target_position=target_pos(50),
             event_id=uuid4(),
         )
 
@@ -949,7 +948,7 @@ class TestPositionTranslation:
         with pytest.raises(PositionMappingError):
             await position_mapper.translate_position(
                 migration_id=migration_id,
-                source_position=150,
+                source_position=source_pos(150),
                 use_nearest=False,
             )
 
@@ -962,22 +961,22 @@ class TestPositionTranslation:
         """Test batch position translation."""
         # Record mappings
         mappings = [
-            (100, 50, uuid4()),
-            (200, 100, uuid4()),
-            (300, 150, uuid4()),
+            (source_pos(100), target_pos(50), uuid4()),
+            (source_pos(200), target_pos(100), uuid4()),
+            (source_pos(300), target_pos(150), uuid4()),
         ]
         await position_mapper.record_mappings_batch(migration_id, mappings)
 
         # Batch translate
         results = await position_mapper.translate_positions_batch(
             migration_id=migration_id,
-            source_positions=[100, 200, 300],
+            source_positions=[source_pos(100), source_pos(200), source_pos(300)],
         )
 
         assert len(results) == 3
-        assert results[0].target_position == 50
-        assert results[1].target_position == 100
-        assert results[2].target_position == 150
+        assert results[0].target_position == target_pos(50)
+        assert results[1].target_position == target_pos(100)
+        assert results[2].target_position == target_pos(150)
         assert all(r.is_exact for r in results)
 
 
@@ -1199,8 +1198,8 @@ class TestSubscriptionCheckpointMigration:
         # Setup position mappings
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=100,
-            target_position=50,
+            source_position=source_pos(100),
+            target_position=target_pos(50),
             event_id=uuid4(),
         )
 
@@ -1246,14 +1245,14 @@ class TestSubscriptionCheckpointMigration:
         # Setup position mappings
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=100,
-            target_position=50,
+            source_position=source_pos(100),
+            target_position=target_pos(50),
             event_id=uuid4(),
         )
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=200,
-            target_position=100,
+            source_position=source_pos(200),
+            target_position=target_pos(100),
             event_id=uuid4(),
         )
 
@@ -1296,14 +1295,14 @@ class TestSubscriptionCheckpointMigration:
         # Setup position mappings
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=100,
-            target_position=50,
+            source_position=source_pos(100),
+            target_position=target_pos(50),
             event_id=uuid4(),
         )
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=200,
-            target_position=100,
+            source_position=source_pos(200),
+            target_position=target_pos(100),
             event_id=uuid4(),
         )
 
@@ -1381,8 +1380,8 @@ class TestDryRunSubscriptionMigration:
         # Setup mappings
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=100,
-            target_position=50,
+            source_position=source_pos(100),
+            target_position=target_pos(50),
             event_id=uuid4(),
         )
 
@@ -1431,8 +1430,8 @@ class TestDryRunSubscriptionMigration:
         # Setup mapping (no exact match for checkpoint position)
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=100,
-            target_position=50,
+            source_position=source_pos(100),
+            target_position=target_pos(50),
             event_id=uuid4(),
         )
 
@@ -1619,8 +1618,8 @@ class TestFullMigrationWithVerificationAndSubscriptions:
         migration_id = uuid4()
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=100,
-            target_position=50,
+            source_position=source_pos(100),
+            target_position=target_pos(50),
             event_id=uuid4(),
         )
 
@@ -1690,7 +1689,7 @@ class TestMissingMappingErrors:
         with pytest.raises(PositionMappingError):
             await position_mapper.translate_position(
                 migration_id=migration_id,
-                source_position=100,
+                source_position=source_pos(100),
             )
 
     @pytest.mark.asyncio
@@ -1703,8 +1702,8 @@ class TestMissingMappingErrors:
         # Record mapping at position 100
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=100,
-            target_position=50,
+            source_position=source_pos(100),
+            target_position=target_pos(50),
             event_id=uuid4(),
         )
 
@@ -1712,7 +1711,7 @@ class TestMissingMappingErrors:
         with pytest.raises(PositionMappingError):
             await position_mapper.translate_position(
                 migration_id=migration_id,
-                source_position=50,  # Before position 100
+                source_position=source_pos(50),  # Before position 100
             )
 
     @pytest.mark.asyncio
@@ -1984,19 +1983,19 @@ class TestPositionMapperEdgeCases:
         """Test get_position_bounds returns correct bounds."""
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=100,
-            target_position=50,
+            source_position=source_pos(100),
+            target_position=target_pos(50),
             event_id=uuid4(),
         )
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=500,
-            target_position=250,
+            source_position=source_pos(500),
+            target_position=target_pos(250),
             event_id=uuid4(),
         )
 
         bounds = await position_mapper.get_position_bounds(migration_id)
-        assert bounds == (100, 500)
+        assert bounds == (source_pos(100), source_pos(500))
 
     @pytest.mark.asyncio
     async def test_clear_mappings(
@@ -2007,14 +2006,14 @@ class TestPositionMapperEdgeCases:
         """Test clearing all mappings for a migration."""
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=100,
-            target_position=50,
+            source_position=source_pos(100),
+            target_position=target_pos(50),
             event_id=uuid4(),
         )
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=200,
-            target_position=100,
+            source_position=source_pos(200),
+            target_position=target_pos(100),
             event_id=uuid4(),
         )
 
@@ -2035,15 +2034,15 @@ class TestPositionMapperEdgeCases:
         event_id = uuid4()
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=100,
-            target_position=50,
+            source_position=source_pos(100),
+            target_position=target_pos(50),
             event_id=event_id,
         )
 
         mapping = await position_mapper.get_mapping_by_event_id(migration_id, event_id)
         assert mapping is not None
-        assert mapping.source_position == 100
-        assert mapping.target_position == 50
+        assert mapping.source_position == source_pos(100)
+        assert mapping.target_position == target_pos(50)
         assert mapping.event_id == event_id
 
     @pytest.mark.asyncio
@@ -2153,8 +2152,8 @@ class TestMigrationSummary:
         # Setup
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=100,
-            target_position=50,
+            source_position=source_pos(100),
+            target_position=target_pos(50),
             event_id=uuid4(),
         )
         await checkpoint_repo.save_position(
@@ -2199,8 +2198,8 @@ class TestMigrationSummary:
         # Setup mappings - only mapping at position 100
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=100,
-            target_position=50,
+            source_position=source_pos(100),
+            target_position=target_pos(50),
             event_id=uuid4(),
         )
 

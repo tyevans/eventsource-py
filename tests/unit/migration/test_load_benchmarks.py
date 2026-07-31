@@ -54,8 +54,23 @@ from eventsource.migration.models import (
     PositionMapping,
 )
 from eventsource.migration.position_mapper import PositionMapper
+from eventsource.ports.positions import Position
 from eventsource.stores.in_memory import InMemoryEventStore
 from eventsource.stores.interface import AppendResult, ReadOptions, StoredEvent
+
+SOURCE_STORE_ID = "source-store"
+TARGET_STORE_ID = "target-store"
+
+
+def src_pos(n: int) -> Position:
+    """A source-store position token for the int the mapper is keyed on."""
+    return Position(store_id=SOURCE_STORE_ID, key=(n,))
+
+
+def tgt_pos(n: int) -> Position:
+    """A target-store position token, as the migrator writes back."""
+    return Position(store_id=TARGET_STORE_ID, key=(n,))
+
 
 # =============================================================================
 # Test Events
@@ -255,8 +270,8 @@ class InMemoryPositionMappingRepository:
     def __init__(self) -> None:
         """Initialize the repository."""
         self._mappings: dict[UUID, list[PositionMapping]] = {}
-        self._by_source: dict[UUID, dict[int, PositionMapping]] = {}
-        self._by_target: dict[UUID, dict[int, PositionMapping]] = {}
+        self._by_source: dict[UUID, dict[Position, PositionMapping]] = {}
+        self._by_target: dict[UUID, dict[Position, PositionMapping]] = {}
         self._by_event: dict[UUID, dict[UUID, PositionMapping]] = {}
         self._id_counter = 0
 
@@ -289,21 +304,21 @@ class InMemoryPositionMappingRepository:
         return None
 
     async def find_by_source_position(
-        self, migration_id: UUID, source_position: int
+        self, migration_id: UUID, source_position: Position
     ) -> PositionMapping | None:
         """Find mapping by source position."""
         source_map = self._by_source.get(migration_id, {})
         return source_map.get(source_position)
 
     async def find_by_target_position(
-        self, migration_id: UUID, target_position: int
+        self, migration_id: UUID, target_position: Position
     ) -> PositionMapping | None:
         """Find mapping by target position."""
         target_map = self._by_target.get(migration_id, {})
         return target_map.get(target_position)
 
     async def find_nearest_source_position(
-        self, migration_id: UUID, source_position: int
+        self, migration_id: UUID, source_position: Position
     ) -> PositionMapping | None:
         """Find nearest mapping with source_position <= given position."""
         source_map = self._by_source.get(migration_id, {})
@@ -329,17 +344,17 @@ class InMemoryPositionMappingRepository:
         return sorted(mappings, key=lambda m: m.source_position)[offset : offset + limit]
 
     async def list_in_source_range(
-        self, migration_id: UUID, start_position: int, end_position: int
+        self, migration_id: UUID, start_position: Position, end_position: Position
     ) -> list[PositionMapping]:
         """List mappings in source position range."""
         source_map = self._by_source.get(migration_id, {})
-        return [m for pos, m in source_map.items() if start_position <= pos <= end_position]
+        return [m for p, m in source_map.items() if start_position <= p <= end_position]
 
     async def count_by_migration(self, migration_id: UUID) -> int:
         """Count mappings for a migration."""
         return len(self._mappings.get(migration_id, []))
 
-    async def get_position_bounds(self, migration_id: UUID) -> tuple[int, int] | None:
+    async def get_position_bounds(self, migration_id: UUID) -> tuple[Position, Position] | None:
         """Get min/max source positions."""
         source_map = self._by_source.get(migration_id, {})
         if not source_map:
@@ -1011,8 +1026,8 @@ class TestPositionTranslation:
         for i in range(num_mappings):
             mapping = PositionMapping(
                 migration_id=migration_id,
-                source_position=i * 10,  # Sparse positions
-                target_position=i * 5,
+                source_position=src_pos(i * 10),  # Sparse positions
+                target_position=tgt_pos(i * 5),
                 event_id=uuid4(),
                 mapped_at=now,
             )
@@ -1020,7 +1035,7 @@ class TestPositionTranslation:
 
         # Benchmark exact lookups
         exact_latencies: list[float] = []
-        positions_to_lookup = [i * 10 for i in range(0, num_mappings, 100)]
+        positions_to_lookup = [src_pos(i * 10) for i in range(0, num_mappings, 100)]
 
         for pos in positions_to_lookup:
             start = time.monotonic()
@@ -1032,7 +1047,7 @@ class TestPositionTranslation:
 
         # Benchmark nearest lookups (positions between mapped values)
         nearest_latencies: list[float] = []
-        nearest_positions = [i * 10 + 5 for i in range(0, num_mappings - 1, 100)]
+        nearest_positions = [src_pos(i * 10 + 5) for i in range(0, num_mappings - 1, 100)]
 
         for pos in nearest_positions:
             start = time.monotonic()
@@ -1062,8 +1077,8 @@ class TestPositionTranslation:
         for i in range(num_mappings):
             mapping = PositionMapping(
                 migration_id=migration_id,
-                source_position=i * 10,
-                target_position=i * 5,
+                source_position=src_pos(i * 10),
+                target_position=tgt_pos(i * 5),
                 event_id=uuid4(),
                 mapped_at=now,
             )
@@ -1077,7 +1092,7 @@ class TestPositionTranslation:
             latencies: list[float] = []
 
             for _ in range(50):  # 50 batches of each size
-                positions = [i * 10 for i in range(batch_size)]
+                positions = [src_pos(i * 10) for i in range(batch_size)]
 
                 start = time.monotonic()
                 await mapper.translate_positions_batch(migration_id, positions, use_nearest=True)
@@ -1451,8 +1466,8 @@ class TestBenchmarkSummary:
         for i in range(1_000):
             mapping = PositionMapping(
                 migration_id=pos_migration_id,
-                source_position=i * 10,
-                target_position=i * 5,
+                source_position=src_pos(i * 10),
+                target_position=tgt_pos(i * 5),
                 event_id=uuid4(),
                 mapped_at=now,
             )
@@ -1461,7 +1476,9 @@ class TestBenchmarkSummary:
         pos_times: list[float] = []
         for i in range(100):
             start = time.monotonic()
-            await pos_mapper.translate_position(pos_migration_id, i * 100, use_nearest=True)
+            await pos_mapper.translate_position(
+                pos_migration_id, src_pos(i * 100), use_nearest=True
+            )
             pos_times.append((time.monotonic() - start) * 1000)
 
         pos_result = LatencyResult.from_samples("position_translation", pos_times)

@@ -74,7 +74,22 @@ from eventsource.migration.router import TenantStoreRouter
 from eventsource.migration.status_streamer import StatusStreamer, StatusStreamManager
 from eventsource.migration.sync_lag_tracker import SyncLagTracker
 from eventsource.migration.write_pause import WritePauseManager
+from eventsource.ports.positions import Position
 from eventsource.stores.in_memory import InMemoryEventStore
+
+SOURCE_STORE_ID = "source-store"
+TARGET_STORE_ID = "target-store"
+
+
+def src_pos(n: int) -> Position:
+    """A source-store position token for the int the mapper is keyed on."""
+    return Position(store_id=SOURCE_STORE_ID, key=(n,))
+
+
+def tgt_pos(n: int) -> Position:
+    """A target-store position token, as the migrator writes back."""
+    return Position(store_id=TARGET_STORE_ID, key=(n,))
+
 
 # =============================================================================
 # Test Event Classes
@@ -468,7 +483,7 @@ class InMemoryPositionMappingRepository:
     async def find_by_source_position(
         self,
         migration_id: UUID,
-        source_position: int,
+        source_position: Position,
     ) -> PositionMapping | None:
         """Find mapping by exact source position."""
         for mapping in self._mappings:
@@ -479,7 +494,7 @@ class InMemoryPositionMappingRepository:
     async def find_nearest_source_position(
         self,
         migration_id: UUID,
-        source_position: int,
+        source_position: Position,
     ) -> PositionMapping | None:
         """Find nearest mapping with source_position <= given position."""
         nearest: PositionMapping | None = None
@@ -510,13 +525,12 @@ class InMemoryPositionMappingRepository:
     async def get_position_bounds(
         self,
         migration_id: UUID,
-    ) -> tuple[int, int] | None:
-        """Get min and max source positions."""
+    ) -> tuple[Position, Position] | None:
+        """Get first and last source positions by insertion (id) order."""
         filtered = [m for m in self._mappings if m.migration_id == migration_id]
         if not filtered:
             return None
-        positions = [m.source_position for m in filtered]
-        return (min(positions), max(positions))
+        return (filtered[0].source_position, filtered[-1].source_position)
 
     async def delete_by_migration(self, migration_id: UUID) -> int:
         """Delete all mappings for a migration."""
@@ -2184,18 +2198,18 @@ class TestIntegrationOfAllPhase4Components:
             metrics.record_events_copied(copied, rate_events_per_sec=100.0)
 
             # Record position mappings
-            source_pos = 1
-            target_pos = 1
+            source_counter = 1
+            target_counter = 1
             async for stored_event in source_store.read_all():
                 if stored_event.event.tenant_id == tenant_id:
                     await position_mapper.record_mapping(
                         migration_id=migration.id,
-                        source_position=source_pos,
-                        target_position=target_pos,
+                        source_position=src_pos(source_counter),
+                        target_position=tgt_pos(target_counter),
                         event_id=stored_event.event.event_id,
                     )
-                    source_pos += 1
-                    target_pos += 1
+                    source_counter += 1
+                    target_counter += 1
 
         # 5. Record phase transition
         await audit_log_repo.record(
