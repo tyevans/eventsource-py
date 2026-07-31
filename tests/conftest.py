@@ -26,11 +26,11 @@ from hypothesis import HealthCheck, settings
 
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
 from eventsource.adapters.memory.dlq import InMemoryDLQRepository
+from eventsource.adapters.memory.outbox import InMemoryOutboxRepository
 from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.ports import ExpectedVersion
-from eventsource.repositories.outbox import InMemoryOutboxRepository
 
 # Import shared fixtures from fixtures module
 from tests.fixtures import (
@@ -651,7 +651,7 @@ async def sqlite_outbox_repo(
     if not AIOSQLITE_AVAILABLE:
         pytest.skip("aiosqlite not installed")
 
-    from eventsource.repositories.outbox import SQLiteOutboxRepository
+    from eventsource.adapters.sqlite.outbox import SQLiteOutboxRepository
 
     # Create the event_outbox table
     await sqlite_connection.execute("""

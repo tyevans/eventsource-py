@@ -29,7 +29,7 @@ class TestEventSourceJSONEncoder:
 
     This class is no longer used by json_dumps/json_loads (orjson, now a
     core dependency, serializes UUID/datetime natively) but remains public
-    API used directly by eventsource.repositories.outbox -- see the class
+    API used directly by eventsource.adapters.postgresql.outbox -- see the class
     docstring in serialization/json.py. These tests exercise it the same
     way outbox.py does: via stdlib json.dumps(..., cls=EventSourceJSONEncoder).
     """
@@ -646,17 +646,6 @@ class TestNewModuleExports:
 
         # Verify encoder is a class
         assert isinstance(EventSourceJSONEncoder, type)
-
-    def test_encoder_still_exported_from_repositories(self):
-        """Test that EventSourceJSONEncoder is still exported from repositories."""
-        from eventsource.repositories import EventSourceJSONEncoder
-
-        # Verify encoder is a class
-        assert isinstance(EventSourceJSONEncoder, type)
-
-        # Verify it works
-        result = json.dumps({"id": uuid4()}, cls=EventSourceJSONEncoder)
-        assert isinstance(result, str)
 
     def test_encoder_exported_from_top_level(self):
         """Test that EventSourceJSONEncoder is exported from eventsource package."""

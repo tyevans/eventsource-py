@@ -30,11 +30,16 @@ from eventsource.adapters.memory import (
     InMemoryCheckpointRepository,
     InMemoryDLQRepository,
     InMemoryEventStore,
+    InMemoryOutboxRepository,
 )
 
 # Snapshots
 from eventsource.adapters.memory.snapshots import InMemorySnapshotStore
-from eventsource.adapters.postgresql import ASYNCPG_AVAILABLE, PostgreSQLEventStore
+from eventsource.adapters.postgresql import (
+    ASYNCPG_AVAILABLE,
+    PostgreSQLEventStore,
+    PostgreSQLOutboxRepository,
+)
 from eventsource.adapters.sql import SQLCheckpointRepository, SQLDLQRepository
 
 # Projections (Task 09)
@@ -161,11 +166,15 @@ from eventsource.ports import (
     FeedReadOptions,
     FullEventStore,
     GlobalEventFeed,
+    OutboxEntry,
+    OutboxRepository,
+    OutboxStats,
     Position,
     ReadDirection,
     StreamReader,
     StreamReadOptions,
     collect,
+    outbox_event_data,
 )
 from eventsource.ports.checkpoints import CheckpointData, CheckpointRepository, LagMetrics
 from eventsource.ports.dlq import (
@@ -188,13 +197,6 @@ from eventsource.protocols import (
 
 # ReadModel Projections (Phase 3)
 from eventsource.readmodels import ReadModelProjection
-from eventsource.repositories import (
-    InMemoryOutboxRepository,
-    OutboxEntry,
-    OutboxRepository,
-    OutboxStats,
-    PostgreSQLOutboxRepository,
-)
 
 # Serialization utilities
 from eventsource.serialization import EventSourceJSONEncoder
@@ -205,7 +207,7 @@ from eventsource.sync import SyncEventStoreAdapter
 # SQLite outbox repository (optional - requires aiosqlite at import time,
 # unlike the SQLite store adapter, which imports cleanly without it).
 with contextlib.suppress(ImportError):
-    from eventsource.repositories.outbox import SQLiteOutboxRepository  # noqa: F401
+    from eventsource.adapters.sqlite import SQLiteOutboxRepository  # noqa: F401
 
 # Types - available immediately
 from eventsource.testing.recording import RecordingEventBus
@@ -314,6 +316,7 @@ __all__ = [
     "InMemoryOutboxRepository",
     "OutboxEntry",
     "OutboxStats",
+    "outbox_event_data",
     "EventSourceJSONEncoder",
     # Projections (Task 09)
     "Projection",

@@ -288,6 +288,7 @@ source_modules = [
     "eventsource.adapters.memory.snapshots",
     "eventsource.adapters.memory.checkpoints",
     "eventsource.adapters.memory.dlq",
+    "eventsource.adapters.memory.outbox",
     "eventsource.testing.builder",
     "eventsource.testing.assertions",
     "eventsource.testing.conformance",
@@ -310,11 +311,15 @@ forbidden_modules = ["sqlalchemy"]
 name = "Application ring must not import adapters"
 type = "forbidden"
 source_modules = ["eventsource.application"]
-forbidden_modules = ["eventsource.adapters", "eventsource.bus", "eventsource.repositories", "eventsource.locks"]
+forbidden_modules = ["eventsource.adapters", "eventsource.bus", "eventsource.locks"]
 
 # The projections/ Tier-0 blocker documented in docs/core-surface.md (projections/base.py
 # and the checkpoint/dlq managers pulling in sqlalchemy-backed repositories.checkpoint and
 # repositories.dlq) is resolved: projections/ and repositories/{checkpoint,dlq}.py were
 # deleted in favor of eventsource.ports.{checkpoints,dlq} (pure) and
 # eventsource.adapters.{sql,memory}.{checkpoints,dlq} (sqlalchemy-backed). See the
-# projections-ring slice report for detail.
+# projections-ring slice report for detail. The outbox slice went further and deleted
+# eventsource.repositories/ outright: its sole remaining member (the transactional outbox)
+# moved to eventsource.ports.outbox (pure) and eventsource.adapters.{memory,postgresql,
+# sqlite}.outbox (backend-specific), so "eventsource.repositories" no longer exists to
+# forbid above.

@@ -50,6 +50,12 @@ CORE_RINGS_EXPORTS = [
     "SnapshotDeserializationError",
     "SnapshotSchemaVersionError",
     "SnapshotNotFoundError",
+    "OutboxRepository",
+    "OutboxEntry",
+    "OutboxStats",
+    "outbox_event_data",
+    "InMemoryOutboxRepository",
+    "PostgreSQLOutboxRepository",
 ]
 
 # Spec section 4.2: names retired with the legacy store surface. None of
@@ -65,6 +71,7 @@ DEAD_NAMES = [
     "DEFAULT_UUID_FIELDS",
     "DEFAULT_STRING_ID_FIELDS",
     "MemoryEventStore",
+    "OutboxRepositoryProtocol",
 ]
 
 
@@ -125,6 +132,31 @@ class TestBlessedStoreSurface:
 
         assert eventsource.PostgreSQLEventStore is PostgreSQLEventStore
 
+    def test_top_level_outbox_repository_is_the_port_protocol(self) -> None:
+        from eventsource.ports import OutboxRepository
+
+        assert eventsource.OutboxRepository is OutboxRepository
+
+    def test_top_level_outbox_entry_is_the_port_vo(self) -> None:
+        from eventsource.ports import OutboxEntry
+
+        assert eventsource.OutboxEntry is OutboxEntry
+
+    def test_top_level_outbox_stats_is_the_port_vo(self) -> None:
+        from eventsource.ports import OutboxStats
+
+        assert eventsource.OutboxStats is OutboxStats
+
+    def test_top_level_in_memory_outbox_is_the_memory_adapter(self) -> None:
+        from eventsource.adapters.memory.outbox import InMemoryOutboxRepository
+
+        assert eventsource.InMemoryOutboxRepository is InMemoryOutboxRepository
+
+    def test_top_level_postgresql_outbox_is_the_postgresql_adapter(self) -> None:
+        from eventsource.adapters.postgresql import PostgreSQLOutboxRepository
+
+        assert eventsource.PostgreSQLOutboxRepository is PostgreSQLOutboxRepository
+
 
 class TestLegacyStoreSurfaceIsGone:
     """Spec section 4.2: the legacy names and their import path are retired."""
@@ -137,3 +169,10 @@ class TestLegacyStoreSurfaceIsGone:
     def test_legacy_stores_package_is_not_importable(self) -> None:
         with pytest.raises(ModuleNotFoundError):
             import eventsource.stores  # noqa: F401
+
+    def test_legacy_repositories_package_is_not_importable(self) -> None:
+        with pytest.raises(ModuleNotFoundError):
+            import eventsource.repositories  # noqa: F401
+
+    def test_outbox_repository_protocol_has_no_list_pending_events(self) -> None:
+        assert not hasattr(eventsource.ports.OutboxRepository, "list_pending_events")

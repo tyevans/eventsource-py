@@ -1,5 +1,6 @@
-"""SQLite adapter implementing the store ports."""
+"""SQLite adapter implementing the store, snapshot, and outbox ports."""
 
+from eventsource.adapters.sqlite.outbox import SQLiteOutboxRepository
 from eventsource.adapters.sqlite.snapshots import (
     SQLITE_AVAILABLE,
     SQLiteNotAvailableError,
@@ -12,5 +13,6 @@ __all__ = [
     "SQLITE_AVAILABLE",
     "SQLiteEventStore",
     "SQLiteNotAvailableError",
+    "SQLiteOutboxRepository",
     "SQLiteSnapshotStore",
 ]

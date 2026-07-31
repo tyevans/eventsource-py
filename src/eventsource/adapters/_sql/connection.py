@@ -1,10 +1,9 @@
 """Shared connection handling for SQL adapters.
 
-Deliberately distinct from `eventsource.repositories._connection`: that
-helper has a different signature (`transactional=`) and different call
-sites, and the outbox, read-model, and migration repositories still use
-it. The two merge when the outbox slice removes its last non-adapter
-caller.
+`eventsource.repositories._connection` (the `transactional=`-flavored
+predecessor of this helper) is gone: the outbox slice moved its last
+caller -- the PostgreSQL and in-memory outbox repositories -- onto
+`sql_connection`, and the whole `repositories/` package was deleted with it.
 """
 
 from collections.abc import AsyncIterator
