@@ -1,8 +1,9 @@
 # Snapshots
 
-Technical reference for the `eventsource.snapshots` package: the `Snapshot`
-value object, the `SnapshotStore` interface and its three backends, the
-snapshot-specific exception hierarchy, and the strategy objects that decide when
+Technical reference for the snapshot machinery: the `Snapshot` value object and
+`SnapshotStore` interface (ports ring), its three backend adapters, the
+snapshot-specific exception hierarchy, and the `SnapshotPolicy` /
+`SnapshotScheduler` collaborators (application ring) that decide when and how
 snapshots get written.
 
 A snapshot is a point-in-time capture of an aggregate's serialized state at a
@@ -11,34 +12,39 @@ event stream is. Any snapshot can be deleted and regenerated from events, and a
 missing, unreadable, or schema-mismatched snapshot always degrades to a full
 event replay rather than an error surfaced to the caller.
 
-The package is organized into five source modules:
+The machinery spans five source modules, across three rings:
 
-| Module | Contains |
-| --- | --- |
-| `eventsource.snapshots.interface` | `Snapshot`, `SnapshotStore` |
-| `eventsource.snapshots.exceptions` | `SnapshotError`, `SnapshotDeserializationError`, `SnapshotSchemaVersionError`, `SnapshotNotFoundError` |
-| `eventsource.snapshots.in_memory` | `InMemorySnapshotStore` |
-| `eventsource.snapshots.postgresql` | `PostgreSQLSnapshotStore` |
-| `eventsource.snapshots.sqlite` | `SQLiteSnapshotStore`, `SQLITE_AVAILABLE`, `SQLiteNotAvailableError` |
-| `eventsource.snapshots.strategies` | `SnapshotStrategy`, `BaseSnapshotStrategy`, `ThresholdSnapshotStrategy`, `BackgroundSnapshotStrategy`, `NoSnapshotStrategy`, `create_snapshot_strategy()` |
+| Module | Ring | Contains |
+| --- | --- | --- |
+| `eventsource.ports.snapshots` | Ports | `Snapshot`, `SnapshotStore` |
+| `eventsource.exceptions` | Entities | `SnapshotError`, `SnapshotDeserializationError`, `SnapshotSchemaVersionError`, `SnapshotNotFoundError` |
+| `eventsource.adapters.memory.snapshots` | Adapters | `InMemorySnapshotStore` |
+| `eventsource.adapters.postgresql.snapshots` | Adapters | `PostgreSQLSnapshotStore` |
+| `eventsource.adapters.sqlite.snapshots` | Adapters | `SQLiteSnapshotStore`, `SQLITE_AVAILABLE`, `SQLiteNotAvailableError` |
+| `eventsource.application.aggregates.snapshotting` | Application | `SnapshotPolicy`, `EveryNEvents`, `Never`, `SnapshotScheduler`, `ImmediateScheduler`, `BackgroundScheduler`, `take_snapshot()`, `read_valid_snapshot()` |
 
 Import paths differ by name. `Snapshot`, `SnapshotStore`,
 `InMemorySnapshotStore`, and the four exception types are re-exported from the
-top-level `eventsource` namespace. `PostgreSQLSnapshotStore`,
-`SQLiteSnapshotStore`, and `SQLITE_AVAILABLE` are exported from the
-`eventsource.snapshots` barrel only. The strategy classes and
-`create_snapshot_strategy()` are not in the barrel's `__all__` — import them from
-`eventsource.snapshots.strategies` directly.
+top-level `eventsource` namespace. `PostgreSQLSnapshotStore` and
+`SQLiteSnapshotStore` (plus its own `SQLITE_AVAILABLE` /
+`SQLiteNotAvailableError`) are exported only from their respective adapter
+packages — `eventsource.adapters.postgresql` /
+`eventsource.adapters.sqlite`. The policy and scheduler classes and
+`take_snapshot()` / `read_valid_snapshot()` are exported from
+`eventsource.application.aggregates` but not from the top-level barrel —
+import them from `eventsource.application.aggregates.snapshotting` directly.
 
 Snapshots are usually not driven by hand: `AggregateRepository` accepts a
-`snapshot_store` and a threshold, consults a strategy after each save, and
-restores from the stored state on load. The manual API documented below is what
-that machinery is built on, and what you use when you want snapshots taken at
-business milestones instead of on an event count.
+`snapshot_store` and a threshold, composes a `SnapshotPolicy` and
+`SnapshotScheduler` from them, and restores from the stored state on load. The
+manual API documented below is what that machinery is built on, and what you
+use when you want snapshots taken at business milestones instead of on an
+event count. See [ADR 0021](../adrs/0021-snapshot-policy-scheduler-composition.md)
+for why the design is split this way and what it replaced.
 
 ## Overview
 
-Three collaborating pieces make up the package.
+Three collaborating pieces make up the machinery.
 
 `Snapshot` is a frozen dataclass holding six fields: `aggregate_id`,
 `aggregate_type`, `version`, `state`, `schema_version`, and `created_at`. The
@@ -53,36 +59,39 @@ that can store JSON.
 `(aggregate_id, aggregate_type)` pair; `save_snapshot` upserts rather than
 appending, so reading back always yields the latest capture. Three backends
 ship in-tree: `InMemorySnapshotStore` (dict-backed, for tests and single-process
-use), `PostgreSQLSnapshotStore`, and `SQLiteSnapshotStore` (gated behind
-`SQLITE_AVAILABLE`, raising `SQLiteNotAvailableError` when `aiosqlite` is not
-installed).
+use), `PostgreSQLSnapshotStore`, and `SQLiteSnapshotStore` (gated behind its
+adapter package's own `SQLITE_AVAILABLE`, raising `SQLiteNotAvailableError`
+when `aiosqlite` is not installed).
 
-A `SnapshotStrategy` decides *when* a snapshot is written and *how* the write is
-executed. It is a `@runtime_checkable` `Protocol` with two members:
-`should_snapshot(aggregate, events_since_snapshot) -> bool` and
-`async execute_snapshot(aggregate, snapshot_store, aggregate_type) -> Snapshot | None`.
-`BaseSnapshotStrategy` supplies the shared implementation — a `threshold`
-property and a default `should_snapshot` that fires when
-`aggregate.version > 0 and aggregate.version % threshold == 0` — plus the
-private `_create_snapshot()` that reads `schema_version` off the aggregate class
-(defaulting to `1`), serializes state, stamps `created_at` with
-`datetime.now(UTC)`, and saves. Subclasses differ only in execution:
-`ThresholdSnapshotStrategy` awaits the write inline,
-`BackgroundSnapshotStrategy` fires it off as an `asyncio.Task` and returns
-`None` immediately, and `NoSnapshotStrategy` overrides `should_snapshot` to
-always return `False`. `create_snapshot_strategy(mode, threshold)` maps the
-mode strings `"sync"`, `"background"`, and `"manual"` onto those three classes
-and raises `ValueError` for anything else.
+A `SnapshotPolicy` decides *when* a snapshot is written; a `SnapshotScheduler`
+decides *how* the write is executed — two independent `@runtime_checkable`
+`Protocol`s rather than the single merged `SnapshotStrategy` protocol ADR 0017
+originally defined. `SnapshotPolicy` has one member,
+`should_snapshot(aggregate, events_since_snapshot) -> bool`; the built-in
+`EveryNEvents(n)` fires when `aggregate.version > 0 and aggregate.version % n == 0`,
+and `Never()` never fires (manual mode). `SnapshotScheduler` has
+`async schedule(write, *, aggregate_type, aggregate_id) -> Snapshot | None`
+plus `pending_count` and `await_pending()`; the built-in `ImmediateScheduler`
+awaits the write inline, and `BackgroundScheduler` hands it to a
+`BackgroundTaskManager` and returns `None` immediately. `take_snapshot()` is
+the single free function that builds and saves a `Snapshot` from a live
+aggregate — reading `schema_version` off the aggregate class (defaulting to
+`1`), serializing state, and stamping `created_at` with `datetime.now(UTC)` —
+and it is what both schedulers wrap.
 
-Failure handling is deliberately lenient at the write path. Both
-`ThresholdSnapshotStrategy.execute_snapshot` and the background task catch every
-`Exception`, log a warning with a traceback, and return `None` — a snapshot that
-cannot be written never fails the save that triggered it. The exception types in
-`eventsource.snapshots.exceptions` (`SnapshotError` and its three subclasses)
-name problems on the *read* path — corrupt state, a schema version the code no
-longer understands, or a snapshot expected to exist but absent. Note that no
-in-tree code currently raises them: they are a published vocabulary for custom
-stores and restore logic, not exceptions the shipped backends throw.
+Failure handling is deliberately lenient at the automatic write path. Both
+`ImmediateScheduler.schedule` and `BackgroundScheduler`'s background task
+catch every `Exception` raised by the write they were given, log a warning
+with a traceback, and return `None` — a snapshot that cannot be written never
+fails the save that triggered it. `take_snapshot()` itself does not catch
+anything: the manual path (`AggregateRepository.create_snapshot()`) calls it
+directly, with no scheduler in between, so it propagates errors. The exception
+types in `eventsource.exceptions` (`SnapshotError` and its three subclasses —
+note they do *not* derive from `EventSourceError`) name problems on the
+*read* path — corrupt state, a schema version the code no longer understands,
+or a snapshot expected to exist but absent. No in-tree code currently raises
+them: they are a published vocabulary for custom stores and restore logic,
+not exceptions the shipped backends throw.
 
 ## `Snapshot`
 
@@ -90,7 +99,7 @@ stores and restore logic, not exceptions the shipped backends throw.
 from eventsource import Snapshot
 ```
 
-Defined in `eventsource.snapshots.interface`. A frozen dataclass
+Defined in `eventsource.ports.snapshots`. A frozen dataclass
 (`@dataclass(frozen=True)`) that captures one aggregate's serialized state at
 one version. All six fields are required positional-or-keyword parameters with
 no defaults; the constructor performs no validation beyond dataclass field
@@ -207,11 +216,12 @@ needs replaying.
 
 The value comes from `AggregateRoot.version`, a read-only property returning
 the internal `_version` counter, which is the number of events applied to the
-aggregate. `AggregateSnapshotManager.create_snapshot()` and
-`BaseSnapshotStrategy._create_snapshot()` both build the `Snapshot` with
-`version=aggregate.version` at the moment they run — after the repository has
-appended the pending events — so a library-produced snapshot always matches the
-version just persisted to the event store.
+aggregate. `take_snapshot()` — the single function both the manual
+(`AggregateRepository.create_snapshot()`) and automatic (scheduler-wrapped)
+paths call — builds the `Snapshot` with `version=aggregate.version` at the
+moment it runs, after the repository has appended the pending events, so a
+library-produced snapshot always matches the version just persisted to the
+event store.
 
 The load path is what gives the field its meaning. `AggregateRepository.load()`
 starts with `from_version = 0`, and when a valid snapshot is found it sets
@@ -236,12 +246,11 @@ state model), the repository logs a warning, re-fetches from version `0`, and
 rebuilds from a fresh aggregate instance. A version that is merely inaccurate
 raises nothing and produces a wrong aggregate.
 
-`version` also drives the default snapshot cadence:
-`BaseSnapshotStrategy.should_snapshot()` returns
-`aggregate.version > 0 and aggregate.version % self._threshold == 0`, so with
-`snapshot_threshold=100` snapshots land on versions 100, 200, 300, and so on —
-and a save that jumps the version past a multiple of the threshold skips that
-boundary entirely.
+`version` also drives the default snapshot cadence: `EveryNEvents(n).should_snapshot()`
+returns `aggregate.version > 0 and aggregate.version % n == 0`, so with
+`snapshot_threshold=100` (mapped internally to `EveryNEvents(100)`) snapshots
+land on versions 100, 200, 300, and so on — and a save that jumps the version
+past a multiple of the threshold skips that boundary entirely.
 
 The field is not a store-level ordering key. Because each
 `(aggregate_id, aggregate_type)` pair holds at most one row, `save_snapshot`
@@ -257,8 +266,7 @@ JSON-compatible dictionary. This is the payload the snapshot exists to carry;
 every other field describes it.
 
 Library-produced snapshots fill it from `AggregateRoot._serialize_state()`,
-which both `BaseSnapshotStrategy._create_snapshot()` and
-`AggregateSnapshotManager.create_snapshot()` call. That method is a thin wrapper
+which `take_snapshot()` calls. That method is a thin wrapper
 over Pydantic:
 
 ```python

@@ -52,7 +52,7 @@ Any module that passes that test -- imports cleanly with nothing but the standar
 | `stores/interface.py` | (none beyond events/base) | `EventStore` ABC, `StoredEvent`, `EventStream` |
 | `bus/interface.py` | (none beyond events/base) | `EventBus` ABC |
 | `snapshots/interface.py` | pydantic (via events/base) | `SnapshotStore` ABC |
-| `snapshots/strategies.py` | (none beyond snapshots/interface) | Snapshot strategy definitions |
+| `application/aggregates/snapshotting.py` | `_internal/background_tasks`, `domain/aggregate`, `ports/snapshots` | `SnapshotPolicy`, `SnapshotScheduler`, `EveryNEvents`, `Never`, `ImmediateScheduler`, `BackgroundScheduler`, `take_snapshot()`, `read_valid_snapshot()` |
 | `handlers/decorators.py` | pydantic (via events/base) | `@handles` decorator |
 | `handlers/registry.py` | (none beyond handlers/decorators, events, exceptions) | `HandlerRegistry` |
 | `handlers/adapter.py` | (none beyond protocols, events) | Sync/async handler adapter |
@@ -62,13 +62,12 @@ Any module that passes that test -- imports cleanly with nothing but the standar
 | `observability/` | (none -- opentelemetry is optional, guarded) | `Tracer`, attribute constants |
 | `stores/in_memory.py` | (none beyond stores/interface) | `InMemoryEventStore` |
 | `bus/memory.py` | (none beyond bus/interface) | `InMemoryEventBus` |
-| `snapshots/in_memory.py` | (none beyond snapshots/interface) | `InMemorySnapshotStore` |
+| `adapters/memory/snapshots.py` | `observability`, `ports/snapshots` | `InMemorySnapshotStore` |
 | `projections/protocols.py` | (none beyond `eventsource.protocols`) | Re-exports `AsyncEventHandler` from the canonical `protocols.py` -- the only Tier 0 module under `projections/` |
 | `testing/builder.py` | pydantic (via events/base) | `EventBuilder` fluent test-event builder |
 | `testing/assertions.py` | pydantic (via events/base) | `EventAssertions` domain-specific test assertions |
 | `testing/conformance.py` | (none beyond events/base, exceptions, stores/interface, bus/interface) | `EventStoreConformanceSuite`, `EventBusConformanceSuite` |
-| `aggregates/repository.py` | (none beyond aggregates/base, snapshots, stores/interface, observability) | `AggregateRepository` load/save orchestration |
-| `aggregates/snapshot_manager.py` | (none beyond observability; snapshot types imported under `TYPE_CHECKING` or lazily inside methods) | `AggregateSnapshotManager` |
+| `application/aggregates/repository.py` | `application/aggregates/snapshotting`, `domain/aggregate`, `exceptions`, `observability`, `stores/interface` (`ports/snapshots` types imported under `TYPE_CHECKING`) | `AggregateRepository` load/save orchestration, composing a `SnapshotPolicy` and `SnapshotScheduler` |
 | `sync/adapter.py` | stdlib `threading` + `concurrent.futures.ThreadPoolExecutor`, plus `stores/interface` | `SyncEventStoreAdapter` wrapping an async store for sync callers |
 | `multitenancy/context.py` | stdlib `contextvars` only, plus `multitenancy/exceptions` | Tenant context get/set, `get_required_tenant` |
 | `multitenancy/events.py` | pydantic (`Field`), plus `events/base` and `multitenancy/context` | `TenantDomainEvent` |
@@ -317,10 +316,14 @@ src/eventsource/repositories/_connection.py
 src/eventsource/repositories/checkpoint.py
 src/eventsource/repositories/dlq.py
 src/eventsource/repositories/outbox.py
-src/eventsource/snapshots/postgresql.py
+src/eventsource/adapters/postgresql/snapshots.py
 src/eventsource/stores/postgresql.py
 src/eventsource/stores/sqlite.py
 ```
+
+(The ring migration also added infrastructure-importing modules outside this
+document's original scope -- `adapters/postgresql/store.py`, `adapters/_sql/dialect.py`,
+`engine.py` -- re-run the grep for the current full list before relying on it.)
 
 Every other non-Tier-0 module in this document is disqualified *transitively* -- it imports one of these thirteen, or something that does. So the grep is a first pass, not the whole answer: a clean result means "not directly disqualified," and you still have to walk the module's own in-library imports and confirm each one is Tier 0.
 
@@ -339,7 +342,7 @@ Two consequences for how you run the check:
     src/eventsource/ --include='*.py'
   ```
 
-  Today that surfaces `readmodels/sqlite.py:37` (`import aiosqlite`), `readmodels/projection.py:26`, `snapshots/sqlite.py:33`, `bus/redis.py:71-74`, `bus/kafka.py:123-125`, `bus/rabbitmq.py:73-75`, `repositories/checkpoint.py:29`, `repositories/outbox.py:38`, and `projections/base.py:973,979`. None of those lines runs at import time; none of those modules is Tier 0 either.
+  Today that surfaces `readmodels/sqlite.py:37` (`import aiosqlite`), `readmodels/projection.py:26`, `adapters/sqlite/snapshots.py`, `bus/redis.py:71-74`, `bus/kafka.py:123-125`, `bus/rabbitmq.py:73-75`, `repositories/checkpoint.py:29`, `repositories/outbox.py:38`, and `projections/base.py:973,979`. None of those lines runs at import time; none of those modules is Tier 0 either.
 
 - **`readmodels/sqlite.py` is the worked example.** It does not appear in the anchored grep at all -- it uses no sqlalchemy and imports `aiosqlite` only under `TYPE_CHECKING`. It is still a backend module, because its public methods take an `aiosqlite.Connection`. Judge by what the module requires of its caller, not by what its import block executes.
 
@@ -348,20 +351,17 @@ Two consequences for how you run the check:
 The tempting automated check -- install a `sys.meta_path` finder that raises on `sqlalchemy`, then `importlib.import_module` the target -- currently fails for *every* module in the package, including ones this document lists as Tier 0. The chain is in the package initializers, not the modules:
 
 ```
-eventsource/__init__.py:24
-  -> eventsource/aggregates/__init__.py:7
-     -> eventsource/aggregates/repository.py:22
-        -> eventsource/snapshots/__init__.py:87
-           -> eventsource/snapshots/postgresql.py:15  (import sqlalchemy)
+eventsource/__init__.py:213
+  -> eventsource/stores/postgresql.py  (import sqlalchemy)
 ```
 
-Importing `eventsource.testing.conformance` runs `eventsource/__init__.py` first, so the blocker fires before the target module is ever reached. Note the middle of that chain: `aggregates/repository.py` imports `eventsource.snapshots.strategies` (Tier 0) and pulls the concrete `Snapshot`/`SnapshotStore` names only under `TYPE_CHECKING` -- it is the *package* `snapshots/__init__.py` eagerly re-exporting `PostgreSQLSnapshotStore` that drags sqlalchemy in. This is the same package-taint pattern already described for `repositories/__init__.py`, `testing/__init__.py`, and `readmodels/`.
+Importing `eventsource.testing.conformance` runs `eventsource/__init__.py` first, so the blocker fires before the target module is ever reached, regardless of which sqlalchemy-backed module the top-level package happens to import eagerly. `application/aggregates/repository.py` itself stays clean: it imports `application.aggregates.snapshotting` (Tier 0) and pulls the concrete `Snapshot`/`SnapshotStore` names from `ports.snapshots` only under `TYPE_CHECKING`. `PostgreSQLSnapshotStore` is no longer part of this particular chain -- it now lives in `eventsource.adapters.postgresql`, which is not re-exported from the top-level package (see the comment at the top of `eventsource/__init__.py`) and must be imported path-only. This is the same package-taint pattern already described for `repositories/__init__.py`, `testing/__init__.py`, and `readmodels/`.
 
 So: **tier is a property of a module, not of the package that contains it**, and until the package initializers are made lazy, static grep plus manual import-walking is the only reliable verification. An import-time test becomes the authoritative check the moment those initializers stop eagerly importing backends -- and adding one is a reasonable acceptance criterion for that work.
 
 ### Checklist for a single module
 
 1. Run the anchored grep on the file. Any hit: not Tier 0, stop.
-2. Read its import block. For each `from eventsource.X import ...` at module level, confirm `X` is Tier 0 per the tables above -- recursing if you do not already know. Watch for package imports (`from eventsource.snapshots import ...`), which pull that package's `__init__.py` and everything it re-exports, not just the name you asked for.
+2. Read its import block. For each `from eventsource.X import ...` at module level, confirm `X` is Tier 0 per the tables above -- recursing if you do not already know. Watch for package imports (`from eventsource.adapters.postgresql import ...`), which pull that package's `__init__.py` and everything it re-exports, not just the name you asked for.
 3. Check the `TYPE_CHECKING` block and the method signatures. If a public signature's runtime contract is an infrastructure object, the module is a backend adapter regardless of step 1.
 4. Optional deps are acceptable only in the `try/except ImportError` with no-op fallback shape that `observability/` uses (boundary rule 3). A bare guarded import is not that shape.

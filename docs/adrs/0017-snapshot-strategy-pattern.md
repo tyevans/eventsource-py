@@ -9,6 +9,9 @@ silently instead of raising.
 
 ## Status
 
+Superseded by [ADR 0021](0021-snapshot-policy-scheduler-composition.md).
+Historical record of the strategy-pattern design it replaced.
+
 Accepted. Implemented in `src/eventsource/snapshots/strategies.py`
 (`SnapshotStrategy`, `BaseSnapshotStrategy`, `ThresholdSnapshotStrategy`,
 `BackgroundSnapshotStrategy`, `NoSnapshotStrategy`, `create_snapshot_strategy`)

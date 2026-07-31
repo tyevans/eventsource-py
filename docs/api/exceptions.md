@@ -49,11 +49,13 @@ serializing an event, and running a projection. Everything there derives from
 `EventSourceError`, so a single `except EventSourceError:` catches the whole
 group.
 
-**Subsystem errors** live beside the code that raises them —
-`eventsource.snapshots`, `eventsource.subscriptions`, `eventsource.migration`,
-`eventsource.multitenancy`, `eventsource.readmodels.exceptions`, and the
-optional bus backends each define their own families. These are *not* subclasses
-of `EventSourceError`; catching the core base class will not catch them.
+**Subsystem errors** live beside the code that raises them (or, for
+`SnapshotError`, alongside the core hierarchy in `eventsource.exceptions`
+despite not deriving from it) — `eventsource.subscriptions`,
+`eventsource.migration`, `eventsource.multitenancy`,
+`eventsource.readmodels.exceptions`, and the optional bus backends each
+define their own families. These are *not* subclasses of `EventSourceError`;
+catching the core base class will not catch them.
 
 Three properties of the core hierarchy are worth knowing before you write
 handling code:
@@ -101,7 +103,7 @@ not at `EventSourceError`:
 
 | Family | Root | Base class |
 | --- | --- | --- |
-| Snapshots | `SnapshotError` | `Exception` |
+| Snapshots | `SnapshotError` | `Exception` (defined in `eventsource.exceptions`, alongside but not part of the core hierarchy) |
 | Read models | `ReadModelError` | `Exception` |
 | Subscriptions | `SubscriptionError` | `Exception` |
 | Migration | `MigrationError` | `Exception` |
@@ -134,7 +136,8 @@ Exception
 │   ├── TenantContextNotSetError               eventsource.multitenancy.exceptions
 │   └── TenantMismatchError                    eventsource.multitenancy.exceptions
 │
-├── SnapshotError                             eventsource.snapshots.exceptions
+├── SnapshotError                             eventsource.exceptions
+│   │                                          (not a subclass of EventSourceError)
 │   ├── SnapshotDeserializationError
 │   ├── SnapshotSchemaVersionError
 │   └── SnapshotNotFoundError
@@ -189,7 +192,7 @@ Exception
     ├── RedisNotAvailableError                eventsource.bus.redis
     ├── RabbitMQNotAvailableError             eventsource.bus.rabbitmq
     ├── KafkaNotAvailableError                eventsource.bus.kafka
-    └── SQLiteNotAvailableError               eventsource.snapshots.sqlite
+    └── SQLiteNotAvailableError               eventsource.adapters.sqlite.snapshots
 ```
 
 Only the migration family has depth beyond one level; everywhere else the
