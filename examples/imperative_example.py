@@ -1,17 +1,16 @@
 """
-Basic Usage Example
+Imperative Aggregate Example
 
-This example demonstrates the fundamental concepts of event sourcing using the
-decider style, the primary way to write aggregates in this library:
+This example demonstrates the hand-written `_apply` style on `AggregateRoot`:
 - Defining domain events
-- Defining commands and a pure decide/evolve aggregate
+- Creating an aggregate with state
 - Using the repository pattern
 - Basic event store operations
 
-See `imperative_example.py` for the hand-written `_apply` style and
-`aggregate_example.py` for the `@handles`-decorated declarative style.
+See `basic_usage.py` for the primary (decider) style, and
+`docs/explanation/aggregate-styles.md` for a comparison of the two.
 
-Run with: python -m eventsource.examples.basic_usage
+Run with: python -m eventsource.examples.imperative_example
 """
 
 import asyncio
@@ -21,9 +20,7 @@ from pydantic import BaseModel
 
 from eventsource import (
     AggregateRepository,
-    CommandRejectedError,
-    DeciderAggregate,
-    DomainCommand,
+    AggregateRoot,
     DomainEvent,
     InMemoryEventStore,
     register_event,
@@ -92,95 +89,97 @@ class BankAccountState(BaseModel):
 
 
 # =============================================================================
-# Step 3: Define Commands
+# Step 3: Create the Aggregate
 # =============================================================================
-# Commands are immutable intents. Unlike events, they may be rejected -- and a
-# rejected command leaves no trace in the event store.
+# The aggregate is where business logic lives.
+# It validates commands and emits events.
 
 
-class OpenAccount(DomainCommand):
-    """Request to open a new bank account."""
-
-    owner_name: str
-    initial_balance: float = 0.0
-
-
-class DepositMoney(DomainCommand):
-    """Request to deposit money into an account."""
-
-    amount: float
-
-
-class WithdrawMoney(DomainCommand):
-    """Request to withdraw money from an account."""
-
-    amount: float
-
-
-# =============================================================================
-# Step 4: The domain as pure functions
-# =============================================================================
-# decide: command + state -> events (or a rejection).
-# evolve: state + event -> next state.
-# Both are pure -- no I/O, no versions, testable with plain asserts.
-
-
-class BankAccountAggregate(DeciderAggregate[BankAccountState]):
-    """Bank account in the decider style."""
+class BankAccountAggregate(AggregateRoot[BankAccountState]):
+    """Event-sourced bank account aggregate."""
 
     aggregate_type = "BankAccount"
 
-    @staticmethod
-    def initial_state(aggregate_id: UUID) -> BankAccountState:
-        return BankAccountState(account_id=aggregate_id)
+    def _get_initial_state(self) -> BankAccountState:
+        """Return initial state for new accounts."""
+        return BankAccountState(account_id=self.aggregate_id)
 
-    @staticmethod
-    def decide(command: object, state: BankAccountState) -> list[DomainEvent]:
-        match command, state:
-            case OpenAccount(owner_name=name, initial_balance=balance), BankAccountState(
-                is_open=False
-            ):
-                return [
-                    AccountOpened(
-                        aggregate_id=state.account_id,
-                        owner_name=name,
-                        initial_balance=balance,
-                    )
-                ]
-            case OpenAccount(), _:
-                raise CommandRejectedError("account is already open", command=command)
-            case DepositMoney(amount=amount), BankAccountState(is_open=True):
-                if amount <= 0:
-                    raise CommandRejectedError("deposit must be positive", command=command)
-                return [MoneyDeposited(aggregate_id=state.account_id, amount=amount)]
-            case WithdrawMoney(amount=amount), BankAccountState(is_open=True):
-                if amount <= 0:
-                    raise CommandRejectedError("withdrawal must be positive", command=command)
-                if amount > state.balance:
-                    raise CommandRejectedError("insufficient funds", command=command)
-                return [MoneyWithdrawn(aggregate_id=state.account_id, amount=amount)]
-            case ((DepositMoney() | WithdrawMoney()), _):
-                raise CommandRejectedError("account is not open", command=command)
-            case _:
-                raise CommandRejectedError(f"unknown command: {command!r}", command=command)
-
-    @staticmethod
-    def evolve(state: BankAccountState, event: DomainEvent) -> BankAccountState:
-        match event:
-            case AccountOpened(owner_name=name, initial_balance=balance):
-                return state.model_copy(
-                    update={"owner_name": name, "balance": balance, "is_open": True}
+    def _apply(self, event: DomainEvent) -> None:
+        """Apply an event to update the state."""
+        if isinstance(event, AccountOpened):
+            self._state = BankAccountState(
+                account_id=self.aggregate_id,
+                owner_name=event.owner_name,
+                balance=event.initial_balance,
+                is_open=True,
+            )
+        elif isinstance(event, MoneyDeposited):
+            if self._state:
+                self._state = self._state.model_copy(
+                    update={"balance": self._state.balance + event.amount}
                 )
-            case MoneyDeposited(amount=amount):
-                return state.model_copy(update={"balance": state.balance + amount})
-            case MoneyWithdrawn(amount=amount):
-                return state.model_copy(update={"balance": state.balance - amount})
-            case _:
-                return state
+        elif isinstance(event, MoneyWithdrawn) and self._state:
+            self._state = self._state.model_copy(
+                update={"balance": self._state.balance - event.amount}
+            )
+
+    # Command methods - these validate business rules and emit events
+
+    def open(self, owner_name: str, initial_balance: float = 0.0) -> None:
+        """Open a new bank account."""
+        # Business rule: can only open once
+        if self.version > 0:
+            raise ValueError("Account already opened")
+        # Business rule: initial balance must be non-negative
+        if initial_balance < 0:
+            raise ValueError("Initial balance cannot be negative")
+
+        event = AccountOpened(
+            aggregate_id=self.aggregate_id,
+            owner_name=owner_name,
+            initial_balance=initial_balance,
+            aggregate_version=self.get_next_version(),
+        )
+        self.apply_event(event)
+
+    def deposit(self, amount: float) -> None:
+        """Deposit money into the account."""
+        # Business rule: account must be open
+        if not self.state or not self.state.is_open:
+            raise ValueError("Account is not open")
+        # Business rule: amount must be positive
+        if amount <= 0:
+            raise ValueError("Deposit amount must be positive")
+
+        event = MoneyDeposited(
+            aggregate_id=self.aggregate_id,
+            amount=amount,
+            aggregate_version=self.get_next_version(),
+        )
+        self.apply_event(event)
+
+    def withdraw(self, amount: float) -> None:
+        """Withdraw money from the account."""
+        # Business rule: account must be open
+        if not self.state or not self.state.is_open:
+            raise ValueError("Account is not open")
+        # Business rule: amount must be positive
+        if amount <= 0:
+            raise ValueError("Withdrawal amount must be positive")
+        # Business rule: sufficient balance
+        if amount > self.state.balance:
+            raise ValueError(f"Insufficient balance: {self.state.balance}")
+
+        event = MoneyWithdrawn(
+            aggregate_id=self.aggregate_id,
+            amount=amount,
+            aggregate_version=self.get_next_version(),
+        )
+        self.apply_event(event)
 
 
 # =============================================================================
-# Step 5: Use the Repository
+# Step 4: Use the Repository
 # =============================================================================
 
 
@@ -205,7 +204,7 @@ async def main():
     print(f"\n1. Opening account {account_id}")
 
     account = repo.create_new(account_id)
-    account.execute(OpenAccount(owner_name="Alice", initial_balance=100.0))
+    account.open(owner_name="Alice", initial_balance=100.0)
     await repo.save(account)
 
     print(f"   Owner: {account.state.owner_name}")
@@ -216,8 +215,8 @@ async def main():
     print("\n2. Loading account and making deposits")
 
     loaded_account = await repo.load(account_id)
-    loaded_account.execute(DepositMoney(amount=50.0))
-    loaded_account.execute(DepositMoney(amount=25.0))
+    loaded_account.deposit(50.0)
+    loaded_account.deposit(25.0)
     await repo.save(loaded_account)
 
     print(f"   Balance after deposits: ${loaded_account.state.balance:.2f}")
@@ -227,7 +226,7 @@ async def main():
     print("\n3. Making a withdrawal")
 
     account = await repo.load(account_id)
-    account.execute(WithdrawMoney(amount=30.0))
+    account.withdraw(30.0)
     await repo.save(account)
 
     print(f"   Balance after withdrawal: ${account.state.balance:.2f}")
@@ -249,13 +248,13 @@ async def main():
 
     account = await repo.load(account_id)
     try:
-        account.execute(WithdrawMoney(amount=1000.0))  # More than balance
-    except CommandRejectedError as e:
+        account.withdraw(1000.0)  # More than balance
+    except ValueError as e:
         print(f"   Withdrawal blocked: {e}")
 
     try:
-        account.execute(DepositMoney(amount=-50.0))  # Negative amount
-    except CommandRejectedError as e:
+        account.deposit(-50.0)  # Negative amount
+    except ValueError as e:
         print(f"   Deposit blocked: {e}")
 
     # Show final state
