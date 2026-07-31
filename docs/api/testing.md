@@ -17,11 +17,11 @@ The package is organized into five source modules:
 | `eventsource.testing.builder` | `EventBuilder` |
 | `eventsource.testing.harness` | `InMemoryTestHarness` |
 | `eventsource.testing.assertions` | `EventAssertions` |
-| `eventsource.testing.bdd` | `given_events`, `when_command`, `then_event_published`, `then_no_events_published`, `then_event_sequence`, `then_event_count` |
+| `eventsource.testing.bdd` | `given_events`, `when_command`, `then_event_published`, `then_no_events_published`, `then_event_sequence`, `then_event_count`, `DeciderScenario` |
 | `eventsource.testing.conformance` | `EventStoreConformanceSuite`, `EventBusConformanceSuite` |
 
 Everything listed above is re-exported from `eventsource.testing` itself, and
-those eleven names are the whole of its `__all__`.
+those twelve names are the whole of its `__all__`.
 
 The pieces are designed to compose but are independent: `EventBuilder` produces
 `DomainEvent` instances with no harness involved, `InMemoryTestHarness` wires
@@ -125,6 +125,7 @@ from eventsource.testing import (
     then_no_events_published,
     then_event_sequence,
     then_event_count,
+    DeciderScenario,
     EventStoreConformanceSuite,
     EventBusConformanceSuite,
 )
@@ -581,3 +582,182 @@ assert first.event_id != second.event_id          # regenerated per instance
 That reuse is the main sharp edge: a builder shared across several events in one
 test silently shares `aggregate_id` and every other field you set. When you want
 independent events, construct a new builder.
+
+## DeciderScenario
+
+`DeciderScenario` is a synchronous Given-When-Then harness for testing
+decider-style aggregates. Unlike the async `given_events` / `when_command` / `then_*`
+helpers which require a harness and infrastructure, `DeciderScenario` is standalone,
+synchronous, and requires only the domain's three pure functions: `decide`,
+`evolve`, and `initial_state`.
+
+### For decider-style testing: no store, no bus, no async
+
+The BDD helpers above (`given_events`, `when_command`, `then_event_published`) are
+built on top of `InMemoryTestHarness` and do async operations under the hood. They
+are ideal for testing imperative aggregates (`DeclarativeAggregate`, hand-written
+`_apply`) because those aggregates live inside a store-and-bus ecosystem.
+
+`DeciderScenario` addresses a different testing need: when your domain is three
+pure functions, you should be able to test it with plain asserts and zero
+infrastructure. A decider-style domain looks like:
+
+```python
+from eventsource.aggregates.decider import DeciderAggregate
+
+class Order(DeciderAggregate[OrderState]):
+    aggregate_type = "Order"
+
+    @staticmethod
+    def initial_state(aggregate_id: UUID) -> OrderState:
+        return OrderState(order_id=aggregate_id)
+
+    @staticmethod
+    def decide(command: object, state: OrderState) -> list[DomainEvent]:
+        # Pure function: returns events or raises an exception
+        ...
+
+    @staticmethod
+    def evolve(state: OrderState, event: DomainEvent) -> OrderState:
+        # Pure function: folds an event into the state
+        ...
+```
+
+### `DeciderScenario(aggregate_class, ...)`
+
+```python
+DeciderScenario(
+    aggregate_class: type[Any] | None = None,
+    *,
+    decide: Callable[[Any, Any], list[DomainEvent]] | None = None,
+    evolve: Callable[[Any, DomainEvent], Any] | None = None,
+    initial_state: Callable[[UUID], Any] | None = None,
+    aggregate_id: UUID | None = None,
+) -> DeciderScenario
+```
+
+Create a scenario by passing a `DeciderAggregate` subclass (which provides the three
+functions) or by passing the three functions directly. If `aggregate_id` is not
+provided, one is generated.
+
+```python
+from eventsource.testing import DeciderScenario
+
+# From an aggregate class
+scenario = DeciderScenario(Order)
+
+# Or from individual functions (useful for testing pure functions in isolation)
+scenario = DeciderScenario(
+    decide=decide,
+    evolve=evolve,
+    initial_state=initial_state,
+)
+```
+
+### Methods: `given()`, `when()`, `then_events()`, `then_rejected()`
+
+All methods return `self`, so calls chain:
+
+```python
+scenario.given(...).when(...).then_events(...)
+```
+
+#### `given(*events: DomainEvent) -> DeciderScenario`
+
+Folds prior events into the initial state via `evolve`, building up a scenario's
+state before issuing a command. Multiple `given` calls fold in sequence:
+
+```python
+scenario = (
+    DeciderScenario(Order)
+    .given(OrderCreated(aggregate_id=order_id, aggregate_version=1, ...))
+    .given(OrderPaid(aggregate_id=order_id, aggregate_version=2, ...))
+)
+```
+
+#### `when(command: object) -> DeciderScenario`
+
+Runs `decide(command, state)`, capturing either the returned events or any raised
+exception. The scenario records the outcome for inspection by `then_*` methods.
+
+```python
+scenario = scenario.when(ShipOrder(tracking_number="TRACK123"))
+```
+
+#### `then_events(*event_types: type[DomainEvent]) -> DeciderScenario`
+
+Asserts that `decide` produced exactly the given event types, in order. Raises
+`AssertionError` if the types or count do not match:
+
+```python
+scenario.then_events(OrderShipped)  # exactly one event, of that type
+scenario.then_events(OrderPaid, OrderShipped)  # two events in sequence
+```
+
+#### `then_rejected(exc_type: type[BaseException] = CommandRejectedError, match: str | None = None) -> DeciderScenario`
+
+Asserts that `decide` raised an exception. The default is `CommandRejectedError`,
+but any exception type can be checked. If `match` is provided, the exception message
+must match the regex:
+
+```python
+scenario.then_rejected()  # command raised CommandRejectedError
+scenario.then_rejected(ValueError, match="Cannot ship unpaid")  # specific type and message
+```
+
+#### `events` property
+
+Read-only. Returns the list of events produced by `when()`, or an empty list if
+`when()` has not been called or if `decide` raised an exception:
+
+```python
+events = scenario.events
+assert len(events) == 1
+assert events[0].aggregate_id == order_id
+```
+
+### Example: testing a decider with DeciderScenario
+
+Here is a complete test:
+
+```python
+from decimal import Decimal
+from uuid import uuid4
+
+from eventsource.testing import DeciderScenario
+
+def test_paid_order_ships():
+    order_id = uuid4()
+
+    (DeciderScenario(Order)
+     .given(
+        OrderCreated(aggregate_id=order_id, aggregate_version=1, ...),
+        OrderPaid(aggregate_id=order_id, aggregate_version=2, ...),
+     )
+     .when(ShipOrder(tracking_number="TRACK123"))
+     .then_events(OrderShipped))
+
+def test_unpaid_order_cannot_ship():
+    order_id = uuid4()
+
+    (DeciderScenario(Order)
+     .given(OrderCreated(aggregate_id=order_id, aggregate_version=1, ...))
+     .when(ShipOrder(tracking_number="TRACK123"))
+     .then_rejected(ValueError, match="Cannot ship unpaid"))
+```
+
+### When to use DeciderScenario vs. the async BDD helpers
+
+Use `DeciderScenario` when:
+- Your aggregate is a `DeciderAggregate` or uses the decider pattern.
+- You want to test domain logic in isolation with no infrastructure.
+- You prefer synchronous tests (no `async`/`await`).
+
+Use the async BDD helpers (`given_events`, `when_command`, `then_*`) when:
+- Your aggregate is `DeclarativeAggregate` or uses hand-written `_apply`.
+- You need to test the full aggregate lifecycle: loading, saving, publishing.
+- You are testing behavior that spans the command and the repository.
+
+The two approaches test different layers: `DeciderScenario` isolates the domain
+logic (pure functions), while the async helpers validate the aggregate's contract
+with the store and bus.
