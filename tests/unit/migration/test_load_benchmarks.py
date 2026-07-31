@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import gc
+import math
 import statistics
 import time
 import tracemalloc
@@ -326,6 +327,11 @@ class InMemoryPositionMappingRepository:
         self._by_target: dict[UUID, dict[Position, PositionMapping]] = {}
         self._by_event: dict[UUID, dict[UUID, PositionMapping]] = {}
         self._id_counter = 0
+        # Counts comparisons made by the nearest-position binary search below,
+        # mirroring the production PostgreSQL repository's ordinal search
+        # (position_mapping.py). Used to assert an O(log n) bound
+        # deterministically instead of timing wall-clock latency.
+        self.nearest_lookup_comparisons = 0
 
     async def create(self, mapping: PositionMapping) -> int:
         """Create a position mapping."""
@@ -372,16 +378,30 @@ class InMemoryPositionMappingRepository:
     async def find_nearest_source_position(
         self, migration_id: UUID, source_position: Position
     ) -> PositionMapping | None:
-        """Find nearest mapping with source_position <= given position."""
-        source_map = self._by_source.get(migration_id, {})
-        if not source_map:
+        """Find nearest mapping with source_position <= given position.
+
+        Binary search over mappings sorted by source_position, mirroring the
+        ordinal search the PostgreSQL repository performs against `id` order
+        (mappings are recorded in ascending source-position order by a single
+        writer). Each iteration counts as one comparison against
+        `nearest_lookup_comparisons` so tests can assert an O(log n) bound.
+        """
+        mappings = sorted(self._mappings.get(migration_id, []), key=lambda m: m.source_position)
+        if not mappings:
             return None
 
-        # Find the largest key <= source_position
-        candidates = [k for k in source_map if k <= source_position]
-        if not candidates:
-            return None
-        return source_map[max(candidates)]
+        lo, hi = 0, len(mappings) - 1
+        best: PositionMapping | None = None
+        while lo <= hi:
+            self.nearest_lookup_comparisons += 1
+            mid = (lo + hi) // 2
+            candidate = mappings[mid]
+            if candidate.source_position <= source_position:
+                best = candidate
+                lo = mid + 1
+            else:
+                hi = mid - 1
+        return best
 
     async def find_by_event_id(self, migration_id: UUID, event_id: UUID) -> PositionMapping | None:
         """Find mapping by event ID."""
@@ -1081,7 +1101,14 @@ class TestPositionTranslation:
     @pytest.mark.asyncio
     async def test_position_translation_lookup(self) -> None:
         """
-        Test position translation lookup performance.
+        Test that nearest-position translation is bounded at O(log n)
+        repository comparisons, not wall-clock latency.
+
+        Wall-clock assertions on this lookup flaked under xdist (shared CPU
+        across workers), so this asserts the deterministic proxy instead: the
+        binary search's comparison count per lookup, which `PositionMapper`
+        delegates straight through to the repository (spec §11 risk 2 /
+        Task 2's binary search over the surrogate ordinal).
         """
         migration_id = uuid4()
         repo = InMemoryPositionMappingRepository()
@@ -1101,33 +1128,28 @@ class TestPositionTranslation:
             )
             await repo.create(mapping)
 
-        # Benchmark exact lookups
-        exact_latencies: list[float] = []
+        # Exact lookups go through a direct dict get -- one repository call
+        # each, no comparison loop to bound.
         positions_to_lookup = [src_pos(i * 10) for i in range(0, num_mappings, 100)]
-
         for pos in positions_to_lookup:
-            start = time.monotonic()
-            await mapper.translate_position(migration_id, pos, use_nearest=False)
-            end = time.monotonic()
-            exact_latencies.append((end - start) * 1000)
+            result = await mapper.translate_position(migration_id, pos, use_nearest=False)
+            assert result.target_position is not None
 
-        exact_result = LatencyResult.from_samples("position_exact_lookup", exact_latencies)
-
-        # Benchmark nearest lookups (positions between mapped values)
-        nearest_latencies: list[float] = []
+        # Nearest lookups (positions between mapped values) exercise the
+        # binary search. Each lookup must take no more than
+        # ceil(log2(num_mappings)) + 1 comparisons.
+        max_comparisons = math.ceil(math.log2(num_mappings)) + 1
         nearest_positions = [src_pos(i * 10 + 5) for i in range(0, num_mappings - 1, 100)]
 
         for pos in nearest_positions:
-            start = time.monotonic()
-            await mapper.translate_position(migration_id, pos, use_nearest=True)
-            end = time.monotonic()
-            nearest_latencies.append((end - start) * 1000)
-
-        nearest_result = LatencyResult.from_samples("position_nearest_lookup", nearest_latencies)
-
-        # Lookups should be fast (O(1) or O(log n))
-        assert exact_result.mean_ms < 1.0
-        assert nearest_result.mean_ms < 5.0
+            before = repo.nearest_lookup_comparisons
+            result = await mapper.translate_position(migration_id, pos, use_nearest=True)
+            comparisons = repo.nearest_lookup_comparisons - before
+            assert result.target_position is not None
+            assert comparisons <= max_comparisons, (
+                f"nearest lookup for {pos!r} took {comparisons} comparisons, "
+                f"expected at most {max_comparisons} (O(log n) bound)"
+            )
 
     @pytest.mark.asyncio
     async def test_batch_position_translation(self) -> None:

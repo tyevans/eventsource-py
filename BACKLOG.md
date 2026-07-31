@@ -183,3 +183,29 @@ catch-up path ships on this adapter: rerun at 1M+ events with concurrent writers
 if the Seq Scan persists, restructure the predicate or index so the planner keeps the
 index path (e.g. computing the horizon once per batch in a separate query rather than
 inline). Methodology + numbers: session artifact pg-catchup-bench.md (2026-07-31).
+
+## Wire position_mapper into BulkCopier's coordinator call site (P2)
+
+`MigrationCoordinator` never passes a `position_mapper` to `BulkCopier` on the default
+path, so an ordinary migration records no position mappings and subscription
+checkpoint translation (`SubscriptionMigrator` / `PositionMapper.translate_position`)
+has nothing to translate against. Spec §11 risk 2 (per-event append cost in
+`BulkCopier` with a position mapper attached) is therefore unmeasured in production
+use — the only place it gets exercised is tests that construct a mapper explicitly.
+Either wire `position_mapper` into the coordinator's default `BulkCopier`
+construction, or document the opt-in explicitly (a migration that wants checkpoint
+translation must pass a mapper itself) so the gap is a documented choice rather than
+an oversight. Surfaced by the store retirement slice (c) Task 6 review (2026-07-31).
+
+## No in-phase resync for dual-write mirror failures after bulk copy completes (P2)
+
+Once `BULK_COPY` finishes, `SyncLagTracker`'s lag anchor only advances through the
+dual-write mirror; a mirror failure during `DUAL_WRITE` clamps the anchor in place
+(fail-closed) via `first_failed_source_position`, and nothing in the `DUAL_WRITE`
+phase can run an absorbing copy pass to clear it — only `mark_copy_pass_complete`
+does, and that only runs during `BULK_COPY`. Today's remedy is abort-and-restart
+the migration. This should fold into the catch-up-cap "one more pass" operator API
+need: an operator-triggered resync entry point that runs a bounded catch-up copy
+pass while already in `DUAL_WRITE`, so a transient mirror failure late in a long
+migration doesn't force starting over. Surfaced by the store retirement slice (c)
+Task 6 review (2026-07-31); noted in `docs/guides/live-migration.md`.

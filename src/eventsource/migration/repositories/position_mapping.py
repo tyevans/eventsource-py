@@ -17,8 +17,9 @@ Database Table:
     Uses the `migration_position_mappings` table defined in PREREQ-002.
 
 Position Types:
-    - Source positions: Position in the source event store
-    - Target positions: Corresponding position in the target store
+    - Source positions: opaque `Position` tokens from the source event store
+    - Target positions: opaque `Position` tokens from the target event store,
+      persisted as their `Position.to_str()` encoding, never as an integer
 
 Usage:
     >>> from eventsource.migration.repositories import (
@@ -31,19 +32,21 @@ Usage:
     >>> # Record mapping
     >>> await repo.create(PositionMapping(
     ...     migration_id=migration.id,
-    ...     source_position=1000,
-    ...     target_position=500,
+    ...     source_position=source_position,  # Position
+    ...     target_position=target_position,  # Position
     ...     event_id=event.id,
     ...     mapped_at=datetime.now(UTC),
     ... ))
     >>>
     >>> # Find target position
-    >>> mapping = await repo.find_by_source_position(migration.id, 1000)
+    >>> mapping = await repo.find_by_source_position(migration.id, source_position)
     >>> print(f"Target position: {mapping.target_position}")
     >>>
-    >>> # Find nearest mapping (for checkpoint translation)
-    >>> mapping = await repo.find_nearest_source_position(migration.id, 1050)
-    >>> # Returns mapping with source_position <= 1050
+    >>> # Find nearest mapping (for checkpoint translation): a binary search
+    >>> # over rows ordered by surrogate id, comparing decoded Position values,
+    >>> # relying on mappings having been recorded in ascending source order
+    >>> mapping = await repo.find_nearest_source_position(migration.id, checkpoint_position)
+    >>> # Returns the mapping with the greatest source_position <= checkpoint_position
 
 See Also:
     - Task: P3-001-position-mapping-repository.md

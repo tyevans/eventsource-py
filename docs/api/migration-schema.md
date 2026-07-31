@@ -111,8 +111,10 @@ row per migration attempt; history is retained after completion.
 | `phase` | `VARCHAR(50) NOT NULL DEFAULT 'pending'` | State machine position; see the `CHECK` values below. |
 | `events_total` | `BIGINT DEFAULT 0` | Total events to migrate. |
 | `events_copied` | `BIGINT DEFAULT 0` | Events copied so far. |
-| `last_source_position` | `BIGINT DEFAULT 0` | Last processed position in the source store. |
-| `last_target_position` | `BIGINT DEFAULT 0` | Last written position in the target store. |
+| `last_source_position` | `BIGINT DEFAULT 0` | Legacy integer position column. Kept for backward compatibility only -- no longer read or written. |
+| `last_target_position` | `BIGINT DEFAULT 0` | Legacy integer position column. Kept for backward compatibility only -- no longer read or written. |
+| `last_source_position_token` | `TEXT` | Opaque token for the last source position copied to the target, as returned by `Position.to_str()`. `NULL` until the first event copies. |
+| `last_target_position_token` | `TEXT` | Opaque token for the last written target position. `NULL` until the first event copies. |
 | `started_at` | `TIMESTAMPTZ` | Nullable until the migration starts. |
 | `bulk_copy_started_at` | `TIMESTAMPTZ` | Phase timestamp. |
 | `bulk_copy_completed_at` | `TIMESTAMPTZ` | Phase timestamp. |
@@ -153,11 +155,15 @@ constraint only validates the value itself.
 ### Progress and position columns
 
 `events_total` is set once the source event count is known
-(`set_events_total`); `events_copied`, `last_source_position`, and
-`last_target_position` advance as the copier and dual-write interceptor run
-(`update_progress`). All four default to `0`, so a freshly created migration
-reports zero progress rather than `NULL`. They exist for monitoring and for
-resuming an interrupted bulk copy from the last recorded source position.
+(`set_events_total`); `events_copied`, `last_source_position_token`, and
+`last_target_position_token` advance as the copier and dual-write interceptor
+run (`update_progress`). `events_total` and `events_copied` default to `0`, so
+a freshly created migration reports zero progress rather than `NULL`; the
+token columns default to `NULL` and stay `NULL` until the first event copies.
+They exist for monitoring and for resuming an interrupted bulk copy from the
+last recorded source position. The legacy `last_source_position` /
+`last_target_position` `BIGINT` columns remain in the table but are no longer
+read or written -- they retire with their own schema revision, not this one.
 
 ### Phase timestamp columns
 
@@ -257,42 +263,52 @@ can be translated across the cutover.
 
 | Column | Type | Notes |
 | --- | --- | --- |
-| `id` | `BIGSERIAL PRIMARY KEY` | Surrogate key. |
+| `id` | `BIGSERIAL PRIMARY KEY` | Surrogate key. Also the ordering key for nearest-position lookups -- see below. |
 | `migration_id` | `UUID NOT NULL` | FK to `tenant_migrations(id)` `ON DELETE CASCADE`. |
-| `source_position` | `BIGINT NOT NULL` | Position in the source store. |
-| `target_position` | `BIGINT NOT NULL` | Corresponding position in the target store. |
+| `source_position` | `BIGINT` | Legacy integer position column. Kept for backward compatibility only -- no longer read or written; nullable since slice (c). |
+| `target_position` | `BIGINT` | Legacy integer position column. Kept for backward compatibility only -- no longer read or written; nullable since slice (c). |
+| `source_position_token` | `TEXT` | Opaque token for the source-store position, as returned by `Position.to_str()`. |
+| `target_position_token` | `TEXT` | Opaque token for the corresponding target-store position. |
 | `event_id` | `UUID NOT NULL` | Event identifier, for correlation and verification. |
 | `mapped_at` | `TIMESTAMPTZ NOT NULL DEFAULT NOW()` | When the mapping was recorded. |
 
 Unlike `tenant_migrations` and `tenant_routing`, this table has no `updated_at`
 column and no trigger — mappings are append-only facts.
 
-### `unique_migration_source_position` constraint
+### `uq_position_mappings_source_token` constraint
 
 ```sql
-CONSTRAINT unique_migration_source_position UNIQUE (migration_id, source_position)
+CREATE UNIQUE INDEX uq_position_mappings_source_token
+ON migration_position_mappings (migration_id, source_position_token)
+WHERE source_position_token IS NOT NULL;
 ```
 
-Each source position maps to exactly one target position within a migration. The
-constraint makes mapping writes idempotent-checkable: a retried batch that
-re-inserts an already-mapped source position fails loudly rather than creating a
-second, possibly divergent, mapping. The same `source_position` may of course
+Each source position maps to exactly one target position within a migration —
+the token-era equivalent of the legacy `unique_migration_source_position`
+constraint on the now-unused integer columns. A retried batch that re-inserts
+an already-mapped source position fails loudly rather than creating a second,
+possibly divergent, mapping. The same `source_position_token` may of course
 appear under a different `migration_id`.
 
-### Indexes for nearest-position checkpoint translation
+### Nearest-position checkpoint translation
 
 | Index | Definition |
 | --- | --- |
-| `idx_position_mappings_lookup` | `(migration_id, source_position)` — exact lookups. |
-| `idx_position_mappings_nearest` | `(migration_id, source_position DESC)` — supports "greatest mapped source position ≤ X". |
+| `idx_position_mappings_source_token` | `(migration_id, source_position_token)` — exact token lookups. |
+| `idx_position_mappings_target_token` | `(migration_id, target_position_token)` — reverse translation. |
 | `idx_position_mappings_event_id` | `(event_id)` — debugging and verification. |
 
 Checkpoint translation rarely finds an exact match: a projection's checkpoint
-sits at an arbitrary source position, not necessarily one that was mapped. The
-`DESC`-ordered index lets the nearest-position query walk backwards from the
-requested position and stop at the first row, instead of sorting a range. This
-is what `find_nearest_source_position` on the position mapping repository
-relies on.
+sits at an arbitrary source position, not necessarily one that was mapped.
+`Position` tokens are opaque and JSON-encoded, so their lexicographic string
+order is not position order — a `DESC`-ordered index over the token column
+cannot serve "greatest mapped source position ≤ X" the way the legacy integer
+index did. `find_nearest_source_position` instead does a binary search over
+rows ordered by the surrogate `id`, comparing decoded `Position` values in
+Python at each step, and bounds its row reads at `O(log n)` mappings rather
+than scanning a range. This rests on a documented precondition: mappings are
+recorded in ascending source-position order by a single writer, so `id` order
+and source-position order coincide.
 
 ## Table: `migration_audit_log`
 

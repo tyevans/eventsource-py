@@ -317,6 +317,7 @@ class DualWriteInterceptor:
         """
         if not self._unabsorbed_failure_positions:
             return None
+        # Ordering over same-store positions, not arithmetic.
         return min(self._unabsorbed_failure_positions)
 
     def safe_lag_anchor(self, checkpoint: Position | None) -> Position | None:

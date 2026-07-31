@@ -65,17 +65,18 @@ uv add "eventsource-py[postgresql]"   # pulls in asyncpg
 The control plane is PostgreSQL-only. `get_schema("migration")` ships a
 PostgreSQL template only (there is no SQLite equivalent), and cutover
 coordination goes through `PostgreSQLLockManager` from `eventsource.locks`.
-The stores you migrate between can be anything implementing `EventStore`; the
-database that holds migration state cannot.
+The stores you migrate between can be anything implementing `FullEventStore`
+(the combined ports surface: append, stream read, event lookup, global feed,
+and category query); the database that holds migration state cannot.
 
 ### Required components
 
-**Source store** -- the `EventStore` the tenant lives on today. It is the first
-positional argument to `MigrationCoordinator(source_store=...)`, alongside the
-keyword-only `source_store_id` string (default `"default"`) used as its key in
-routing records.
+**Source store** -- the `FullEventStore` the tenant lives on today. It is the
+first positional argument to `MigrationCoordinator(source_store=...)`,
+alongside the keyword-only `source_store_id` string (default `"default"`) used
+as its key in routing records.
 
-**Target store** -- a second `EventStore` instance, already provisioned with the
+**Target store** -- a second `FullEventStore` instance, already provisioned with the
 events schema and reachable from the coordinator process. You pass it to
 `start_migration(tenant_id, target_store, target_store_id, ...)`. It does not
 need to be the same backend as the source, but it should hold none of this
@@ -135,6 +136,13 @@ The forward transitions the coordinator drives are:
 
 `MigrationRepository` enforces this with a `VALID_TRANSITIONS` table, so an
 out-of-order phase update is rejected rather than corrupting state.
+
+Sync lag is anchored to the last source position the target has actually
+copied; once `BULK_COPY` completes, that anchor only advances through the
+dual-write mirror, and a mirror failure during `DUAL_WRITE` clamps it in
+place rather than letting the reported lag drift wrong. There is currently no
+in-phase resync for that case -- if mirroring falls behind after the copy has
+finished, the current remedy is to abort the migration and restart it.
 
 `ABORTED` and `FAILED` are the two off-ramps. `abort_migration()` is available
 from `PENDING`, `BULK_COPY`, and `DUAL_WRITE`; `FAILED` is reachable from
