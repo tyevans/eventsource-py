@@ -267,3 +267,4 @@ async def test_load_reconstructs_version_regardless_of_snapshot_point(
     )
     loaded = await repo2.load(aggregate_id)
     assert loaded.version == total
+    assert loaded.state.value == total
