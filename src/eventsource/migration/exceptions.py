@@ -733,8 +733,9 @@ class CutoverLagError(CutoverError):
         error_code="CUTOVER_LAG_TOO_HIGH",
         category="cutover",
         suggested_action=(
-            "Sync lag is too high for cutover. "
-            "Wait for lag to decrease below threshold, then retry."
+            "Sync lag is too high for cutover. Run MigrationCoordinator.run_resync_pass "
+            "to recover a clamped lag anchor and retry, or explicitly accept a bounded "
+            "loss window by passing a nonzero MigrationConfig.cutover_max_lag_events."
         ),
         retry_config=RetryConfig(
             max_attempts=10,
@@ -758,6 +759,15 @@ class CutoverLagError(CutoverError):
             migration_id=migration_id,
             rollback_performed=False,
             reason="lag_too_high",
+        )
+        # Override CutoverError's generic "reduce sync lag" text: under the
+        # strict-zero default, waiting for lag to drain is not always
+        # possible (a clamped anchor never drains on its own), so point
+        # operators at the actual remedies.
+        self.suggested_action = (
+            "Run MigrationCoordinator.run_resync_pass to recover a clamped lag "
+            "anchor and retry, or explicitly accept a bounded loss window by "
+            "passing a nonzero MigrationConfig.cutover_max_lag_events."
         )
 
 
