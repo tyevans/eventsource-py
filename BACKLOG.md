@@ -157,3 +157,17 @@ retirement slice (b) Task 3 review. Suggested fix direction: distinguish "empty
 read" from "all filtered" in `_process_batch`'s return contract (e.g. report
 envelopes-read alongside envelopes-delivered) so the loop can tell the two cases
 apart.
+
+## Re-benchmark pg catch-up horizon predicate at scale (P2)
+
+The slice-(b) completion bench (50k events, batch 500, no concurrent writers) measured
+the ports pg adapter's read_all at +27% wall time vs the legacy no-horizon path
+(0.8 ms/batch median) — acceptable at that scale. But EXPLAIN ANALYZE shows the
+safe-horizon predicate defeats the `global_position` index (Seq Scan + top-N heapsort
+instead of Index Scan), so per-batch cost is O(table size) and the regression is
+untested at 1M+ rows and under concurrent writers — the exact conditions spec §11
+risk 1 (legacy-store-retirement design) names. Before a high-throughput production
+catch-up path ships on this adapter: rerun at 1M+ events with concurrent writers, and
+if the Seq Scan persists, restructure the predicate or index so the planner keeps the
+index path (e.g. computing the horizon once per batch in a separate query rather than
+inline). Methodology + numbers: session artifact pg-catchup-bench.md (2026-07-31).
