@@ -78,6 +78,16 @@ class CategoryQuery(Protocol):
     ) -> AsyncIterator[EventEnvelope]: ...
 
 
+class AggregateStore(EventAppender, StreamReader, Protocol):
+    """What an aggregate repository needs: append plus stream read/version.
+
+    Narrower than `FullEventStore` on purpose -- a repository never reads
+    the global feed, never queries a category, and never probes for an
+    individual event id, so it must not type-require those capabilities
+    (ISP; see `.claude/rules/architecture.md`).
+    """
+
+
 class FullEventStore(
     EventAppender,
     StreamReader,

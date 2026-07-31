@@ -25,6 +25,7 @@ from eventsource.ports.envelopes import (
 from eventsource.ports.positions import ExpectedVersion, Position
 from eventsource.ports.snapshots import Snapshot, SnapshotStore
 from eventsource.ports.store import (
+    AggregateStore,
     CategoryQuery,
     EventAppender,
     EventLookup,
@@ -46,6 +47,7 @@ __all__ = [
     "FeedReadOptions",
     "CategoryReadOptions",
     # Store ports
+    "AggregateStore",
     "EventAppender",
     "StreamReader",
     "EventLookup",

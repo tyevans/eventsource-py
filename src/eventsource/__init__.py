@@ -156,6 +156,7 @@ from eventsource.multitenancy import (
     tenant_scope_sync,
 )
 from eventsource.ports import (
+    AggregateStore,
     CategoryQuery,
     CategoryReadOptions,
     EventAppender,
@@ -386,6 +387,7 @@ __all__ = [
     "StreamReadOptions",
     "FeedReadOptions",
     "CategoryReadOptions",
+    "AggregateStore",
     "EventAppender",
     "StreamReader",
     "EventLookup",

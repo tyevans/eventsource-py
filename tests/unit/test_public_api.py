@@ -25,6 +25,7 @@ CORE_RINGS_EXPORTS = [
     "GlobalEventFeed",
     "CategoryQuery",
     "FullEventStore",
+    "AggregateStore",
     "collect",
     "MemoryEventStore",
     "LegacyStoreAdapter",

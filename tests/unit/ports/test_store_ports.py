@@ -4,6 +4,7 @@ import pytest
 
 from eventsource.ports import collect
 from eventsource.ports.store import (
+    AggregateStore,
     CategoryQuery,
     EventAppender,
     EventLookup,
@@ -37,3 +38,28 @@ def test_ports_are_importable_and_distinct() -> None:
     assert EventLookup in FullEventStore.__mro__
     assert GlobalEventFeed in FullEventStore.__mro__
     assert CategoryQuery in FullEventStore.__mro__
+
+
+class TestAggregateStorePort:
+    def test_composes_appender_and_stream_reader(self) -> None:
+        bases = AggregateStore.__mro__
+        assert EventAppender in bases
+        assert StreamReader in bases
+
+    def test_does_not_require_feed_or_lookup_or_category(self) -> None:
+        members = set(AggregateStore.__protocol_attrs__)
+        assert members == {
+            "append",
+            "max_append_batch",
+            "read_stream",
+            "get_stream_version",
+        }
+
+    def test_full_event_store_is_assignable_to_aggregate_store(self) -> None:
+        def takes_aggregate_store(store: AggregateStore) -> AggregateStore:
+            return store
+
+        def give(store: FullEventStore) -> AggregateStore:
+            return takes_aggregate_store(store)
+
+        assert give is not None  # compile-time assertion; mypy is the real check
