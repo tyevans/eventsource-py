@@ -22,6 +22,13 @@ from eventsource.ports.envelopes import (
     ReadDirection,
     StreamReadOptions,
 )
+from eventsource.ports.locks import (
+    DistributedLock,
+    LockInfo,
+    LockManager,
+    LockRegistry,
+    migration_lock_key,
+)
 from eventsource.ports.outbox import (
     OutboxEntry,
     OutboxRepository,
@@ -81,4 +88,10 @@ __all__ = [
     "DLQRepository",
     "DLQStats",
     "ProjectionFailureCount",
+    # Lock port
+    "DistributedLock",
+    "LockInfo",
+    "LockManager",
+    "LockRegistry",
+    "migration_lock_key",
 ]
