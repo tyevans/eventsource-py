@@ -1,4 +1,4 @@
-"""Tests for the five store port protocols and the collect helper."""
+"""Tests for store port protocols (atomic and composite) and the collect helper."""
 
 import pytest
 
