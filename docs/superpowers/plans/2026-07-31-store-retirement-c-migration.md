@@ -33,7 +33,7 @@
 - **Red/green TDD.** Every task that changes behavior writes or edits its failing test first, observes the failure, then implements. Steps are ordered so the red step precedes the green one; do not reorder them.
 - **Hypothesis property tests** where this plan names them (Task 5's bulk-copy resume idempotency property, which the spec mandates). Do not add speculative property tests elsewhere.
 - **mypy strict:** all new and modified code fully annotated. `uv run mypy src/eventsource/ --config-file=pyproject.toml` is listed per task.
-- **import-linter must be green per task, not only at the end.** `uv run lint-imports` is listed in every task's verify step. Task 3 is where the recorded ring violation (`migration/` importing `adapters/_sql/`) actually disappears; the others must not introduce a new one.
+- **import-linter must be green per task, not only at the end.** `uv run lint-imports` is listed in every task's verify step. Task 3 cleans up the recorded ring violation (`migration/` importing `adapters/_sql/`); note that this is documentation-level debt (ADR 0024 amendment + module docstring), not lint-enforced (no import-linter contract covers `eventsource.migration`), and Task 3 removes it regardless.
 - Pre-commit hooks run on commit (ruff, mypy, import-linter). A task is not done until its commit succeeds — which means **every task must leave the tree type-clean**, not only the last one. This constraint is what forces Task 4's size; see its preamble.
 
 ### Behavior deltas this slice makes visible
@@ -109,7 +109,7 @@ Run: `uv run pytest tests/unit/migrations/test_additive_schema.py -q` — Expect
 
 - [ ] **Step 3 (green): write the fragment**
 
-`src/eventsource/migrations/additive/migration_position_tokens.sql`, in the comment style of `additive/checkpoints_position_token.sql`:
+`src/eventsource/migrations/additive/migration_position_tokens.sql`, in the comment style of `additive/checkpoints_position_token.sql`. The legacy `global_position` checkpoint column is now frozen (adapters write only position_token) — this fragment work is the natural place to mark or drop it.
 
 ```sql
 -- Additive fragment: opaque position tokens for migration bookkeeping.

@@ -2,6 +2,18 @@
 
 Open work items, carried over from the retired `bd` (beads) tracker.
 
+## Live-phase lag has no signal (P2)
+
+`Subscription.lag` is derived from `_events_seen - _events_delivered`, but only the
+catch-up runner increments `_events_seen` (`runners/catchup.py`); the live runner
+increments `_events_delivered` without ever recording events as seen, so lag is
+structurally zero during live processing and the accumulated surplus also masks lag
+across a later LIVE → CATCHING_UP transition. An operator's lag dashboard cannot
+distinguish a healthy live subscription from a stalled one. Give the live path a
+seen-recording point (bus delivery receipt) or an explicit "lag unavailable in live"
+marker on SubscriptionStatus, and make record_events_seen/record_events_unseen
+accounting symmetric across phases. Surfaced by the slice-(b) final review (2026-07-31).
+
 ## Investigate making sqlalchemy an optional dependency (P3)
 
 Investigate whether sqlalchemy can be moved from core deps to optional extras. It's
