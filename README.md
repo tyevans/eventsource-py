@@ -155,6 +155,88 @@ async def main():
 asyncio.run(main())
 ```
 
+### Alternative: the decider style
+
+The `Order` aggregate above is imperative — commands are methods, and business rules
+live inside them. If you prefer your domain as **pure functions**, the same aggregate
+can be written in the decider style: commands become values, and the whole domain
+becomes two functions you can unit-test with plain asserts — no aggregate instance, no
+event loop, no fixtures.
+
+```python
+# Commands - intents as values, may be rejected
+class PlaceOrder(BaseModel):
+    customer_id: UUID
+    total: float
+
+class ShipOrder(BaseModel):
+    tracking_number: str
+
+OrderCommand = PlaceOrder | ShipOrder
+
+# The domain as pure functions: no I/O, no self, no versions
+def initial_state(order_id: UUID) -> OrderState:
+    return OrderState(order_id=order_id)
+
+def decide(command: OrderCommand, state: OrderState) -> list[DomainEvent]:
+    """Command + current state -> new events (or a rejection)."""
+    match command, state:
+        case PlaceOrder(customer_id=cid, total=total), OrderState(status="draft"):
+            return [OrderPlaced(aggregate_id=state.order_id, customer_id=cid, total=total)]
+        case PlaceOrder(), _:
+            raise ValueError("Order already placed")
+        case ShipOrder(tracking_number=tn), OrderState(status="placed"):
+            return [OrderShipped(aggregate_id=state.order_id, tracking_number=tn)]
+        case ShipOrder(), _:
+            raise ValueError("Order must be placed before shipping")
+
+def evolve(state: OrderState, event: DomainEvent) -> OrderState:
+    """State + event -> next state."""
+    match event:
+        case OrderPlaced(customer_id=cid, total=total):
+            return state.model_copy(update={"customer_id": cid, "total": total, "status": "placed"})
+        case OrderShipped():
+            return state.model_copy(update={"status": "shipped"})
+        case _:
+            return state
+
+# Thin shell - adapts the pure functions to the aggregate machinery
+class Order(AggregateRoot[OrderState]):
+    aggregate_type = "Order"
+
+    def _get_initial_state(self) -> OrderState:
+        return initial_state(self.aggregate_id)
+
+    @property
+    def decider_state(self) -> OrderState:
+        # _state is None until the first event; deciders need real initial state
+        return self._state if self._state is not None else initial_state(self.aggregate_id)
+
+    def _apply(self, event: DomainEvent) -> None:
+        self._state = evolve(self.decider_state, event)
+
+    def execute(self, command: OrderCommand) -> None:
+        for event in decide(command, self.decider_state):
+            self.apply_event(event.with_aggregate_version(self.get_next_version()))
+```
+
+Callers issue commands as values instead of calling methods — everything else
+(events, state, projection, wiring) is identical to the example above, and so is the
+output:
+
+```python
+order = repo.create_new(uuid4())
+order.execute(PlaceOrder(customer_id=uuid4(), total=100.0))
+await repo.save(order)
+
+order.execute(ShipOrder(tracking_number="TRACK-001"))
+await repo.save(order)
+```
+
+See [The Decider Pattern](https://tyevans.github.io/eventsource-py/explanation/decider-pattern/)
+for the trade-offs and benchmarks (spoiler: identical on replay, a few microseconds
+per command — maintainability is the deciding factor, not speed).
+
 ## Production Ready
 
 Swap in production backends when you're ready to deploy:
