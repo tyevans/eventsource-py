@@ -29,7 +29,9 @@ Usage:
     >>> router = TenantStoreRouter(default_store, routing_repo)
     >>>
     >>> # Create coordinator
-    >>> coordinator = MigrationCoordinator(router, migration_repo)
+    >>> coordinator = MigrationCoordinator(
+    ...     source_store, migration_repo, routing_repo, router,
+    ... )
     >>>
     >>> # Start migration
     >>> migration = await coordinator.start_migration(

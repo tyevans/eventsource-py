@@ -14,8 +14,11 @@ Responsibilities:
 
 Routing Behavior by State:
     - NORMAL: All operations go to configured store
-    - BULK_COPY: Reads/writes go to source store
-    - DUAL_WRITE: Writes go through DualWriteInterceptor, reads from source
+    - BULK_COPY: Reads go to source store; writes go through
+      DualWriteInterceptor, which is already installed and mirroring to
+      target while the copy pass runs
+    - DUAL_WRITE: Copy pass is complete; writes keep going through
+      DualWriteInterceptor, reads from source
     - CUTOVER_PAUSED: Writes blocked, reads from source
     - MIGRATED: All operations go to target store
 
@@ -103,8 +106,11 @@ class TenantStoreRouter:
 
     During migration:
     - NORMAL: Route to configured store
-    - BULK_COPY: Route reads/writes to source store
-    - DUAL_WRITE: Route writes through DualWriteInterceptor
+    - BULK_COPY: Route reads to source store; route writes through
+      DualWriteInterceptor (installed before the copy pass starts, so
+      mirror coverage overlaps the copy with no gap)
+    - DUAL_WRITE: Copy pass complete; route writes through
+      DualWriteInterceptor
     - CUTOVER_PAUSED: Block writes, await completion
     - MIGRATED: Route to target store
 

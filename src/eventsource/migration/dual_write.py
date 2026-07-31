@@ -1,10 +1,13 @@
 """
 DualWriteInterceptor - Transparent dual-write during migration sync.
 
-The DualWriteInterceptor intercepts write operations during the dual-write
-phase of migration, ensuring new events are written to both source and
-target stores. This maintains data consistency while allowing the target
-store to catch up with the source.
+The DualWriteInterceptor intercepts write operations for a migrating
+tenant, ensuring new events are written to both source and target stores.
+It is installed before the bulk-copy pass starts and stays installed
+through the DUAL_WRITE phase, so its mirror coverage overlaps the copy
+with no gap: every event is either in the copier's feed snapshot or
+mirrored by the interceptor. This maintains data consistency while
+allowing the target store to catch up with the source.
 
 Responsibilities:
     - Intercept write operations for migrating tenants

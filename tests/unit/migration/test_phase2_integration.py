@@ -19,6 +19,7 @@ without requiring PostgreSQL.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -1563,6 +1564,51 @@ class TestSyncLagAnchorOnWriteActiveTenant:
         assert anchor is not None and copied_through is not None
         assert anchor > copied_through
 
+    @pytest.mark.asyncio
+    async def test_saturated_failure_history_never_reports_clean(
+        self,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
+        tenant_id: UUID,
+    ) -> None:
+        """Once tracked failures exceed `max_failure_history`, the fail-closed
+        guard must pin, not just slow, recovery.
+
+        Dropping the oldest unabsorbed failure position to bound memory
+        makes a future "fully absorbed" claim unsound -- there is no way
+        to prove the dropped position was re-copied. So once saturated,
+        `safe_lag_anchor` must clamp to the checkpoint forever, and
+        `mark_copy_pass_complete` must never again report zero remaining
+        failures, even when its checkpoint covers every position still on
+        record.
+        """
+        always_fails = FlakyTarget(target_store, reject_first=1_000_000)
+        interceptor = DualWriteInterceptor(
+            source_store=source_store,
+            target_store=always_fails,
+            tenant_id=tenant_id,
+            enable_tracing=False,
+            max_failure_history=2,
+        )
+
+        # Drive more failing mirrors than the cap so the guard saturates.
+        await drive_dual_writes(interceptor, tenant_id, 5)
+        checkpoint = await source_store.current_position()
+        assert checkpoint is not None
+
+        # A checkpoint that covers every recorded failure would normally
+        # absorb them all and report clean -- saturation must override that.
+        remaining = interceptor.mark_copy_pass_complete(checkpoint)
+        assert remaining >= 1
+
+        # Calling it again (another completed pass at the same checkpoint)
+        # must still refuse to report clean.
+        assert interceptor.mark_copy_pass_complete(checkpoint) >= 1
+
+        # The anchor stays pinned at the checkpoint regardless of how far
+        # writes have otherwise synced.
+        assert interceptor.safe_lag_anchor(checkpoint) == checkpoint
+
 
 class GatedFeedStore:
     """`FullEventStore` wrapper whose second `read_all` call blocks mid-stream.
@@ -1704,6 +1750,103 @@ class TestWriteActiveTenantFirstPassCutover:
         source_ids = {e.event_id for e in await get_all_tenant_events(inner_source, tenant_id)}
         target_ids = {e.event_id for e in await get_all_tenant_events(target_store, tenant_id)}
         assert source_ids == target_ids
+
+
+class TestCatchUpRoundsCap:
+    """The post-copy catch-up loop must be bounded, not spin forever.
+
+    A mirror that never drains (every mirrored write keeps failing) would
+    otherwise make the `while completed` loop in `_run_bulk_copy` run
+    forever waiting for `remaining == 0`. `_MAX_CATCHUP_ROUNDS` caps that:
+    once hit, the migration still completes its copy and transitions to
+    DUAL_WRITE (fail-open on progress), but the lag anchor -- driven by
+    the same unabsorbed-failure bookkeeping exercised in
+    `TestSyncLagAnchorOnWriteActiveTenant` -- stays clamped at the
+    checkpoint, so cutover keeps refusing until a later pass absorbs the
+    remainder.
+    """
+
+    @pytest.mark.asyncio
+    async def test_cap_hit_still_transitions_with_anchor_clamped(
+        self,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
+        migration_repo: InMemoryMigrationRepository,
+        routing_repo: InMemoryRoutingRepository,
+        router: TenantStoreRouter,
+        lock_manager: MockLockManager,
+        tenant_id: UUID,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Force every catch-up round to report failures still outstanding.
+
+        Rather than fighting the copier into a genuine sustained mirror
+        failure (which the retry/duplicate handling in `BulkCopier` is
+        specifically designed to resolve), fake the always-failing mirror
+        at the interceptor's public attestation boundary:
+        `mark_copy_pass_complete` never reports zero remaining, and
+        `safe_lag_anchor` never advances past the checkpoint -- exactly
+        the observable contract a permanently-saturated interceptor
+        already has (see `test_saturated_failure_history_never_reports_clean`).
+        This isolates the coordinator's bounded-loop control flow from the
+        interceptor's own bookkeeping, which is covered elsewhere.
+        """
+        monkeypatch.setattr(
+            DualWriteInterceptor,
+            "mark_copy_pass_complete",
+            lambda self, checkpoint: 1,
+        )
+        monkeypatch.setattr(
+            DualWriteInterceptor,
+            "safe_lag_anchor",
+            lambda self, checkpoint: checkpoint,
+        )
+
+        await create_test_events(source_store, tenant_id, count=3)
+
+        coordinator = MigrationCoordinator(
+            source_store=source_store,
+            migration_repo=migration_repo,
+            routing_repo=routing_repo,
+            router=router,
+            lock_manager=lock_manager,
+            source_store_id="default",
+            enable_tracing=False,
+        )
+        router.register_store("dedicated", target_store)
+
+        with caplog.at_level(logging.WARNING, logger="eventsource.migration.coordinator"):
+            migration = await coordinator.start_migration(
+                tenant_id=tenant_id,
+                target_store=target_store,
+                target_store_id="dedicated",
+                config=MigrationConfig(
+                    cutover_max_lag_events=2,
+                    verify_consistency=False,
+                    migrate_subscriptions=False,
+                ),
+            )
+
+            # The loop terminates (does not hang) and still reaches DUAL_WRITE.
+            migration = await coordinator.wait_for_phase(
+                migration.id, MigrationPhase.DUAL_WRITE, timeout=5.0, poll_interval=0.01
+            )
+
+        assert migration.phase == MigrationPhase.DUAL_WRITE
+        assert any(
+            "mirror failures remain unabsorbed" in record.message for record in caplog.records
+        )
+
+        # More source events land after the checkpoint. A working anchor
+        # would still be safe to advance on a healthy mirror, but with the
+        # cap hit and the mirror faked as permanently saturated, the
+        # anchor is pinned at the checkpoint -- these count as lag.
+        await create_test_events(source_store, tenant_id, count=5)
+
+        # The anchor never advanced past the checkpoint, so cutover refuses.
+        result = await coordinator.trigger_cutover(migration.id)
+        assert result.success is False
 
 
 # =============================================================================

@@ -444,8 +444,13 @@ class MigrationCoordinator:
         """
         Resume a paused migration.
 
-        Continues processing from the last checkpoint. If the background
-        task has completed or failed, starts a new one.
+        Un-pauses the routing state and, if an in-process copier for this
+        migration is still tracked in this coordinator instance, resumes
+        it. This does NOT restart a background task that has already
+        completed, failed, or been lost to a process restart -- there is
+        nothing in `_active_copiers` to resume in that case. To recover
+        a migration whose copier is gone, re-run the migration from its
+        last checkpoint or abort and restart it (see the migration guide).
 
         Args:
             migration_id: UUID of the migration
