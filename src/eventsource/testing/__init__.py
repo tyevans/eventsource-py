@@ -32,6 +32,7 @@ Note:
 
 from eventsource.testing.assertions import EventAssertions
 from eventsource.testing.bdd import (
+    DeciderScenario,
     given_events,
     then_event_count,
     then_event_published,
@@ -60,6 +61,7 @@ __all__ = [
     "then_no_events_published",
     "then_event_sequence",
     "then_event_count",
+    "DeciderScenario",
     # Conformance test suites
     "EventStoreConformanceSuite",
     "EventBusConformanceSuite",

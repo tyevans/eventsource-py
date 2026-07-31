@@ -6,23 +6,27 @@ In this tutorial you will build a complete event-sourced aggregate from scratch:
 An *aggregate* is the consistency boundary of an event-sourced system. Instead of
 storing the current row of an order in a table, you store the sequence of things that
 happened to it -- `OrderCreated`, `OrderShipped` -- and rebuild the current state by
-folding those events together. In `eventsource`, that folding lives in a subclass of
-`AggregateRoot[TState]`, where `TState` is a Pydantic model holding the aggregate's
-current state.
+folding those events together. In `eventsource`, the recommended way to write that is
+the **decider style**: the domain is two pure functions, `decide` and `evolve`, and a
+thin subclass of `DeciderAggregate[TState]` adapts them to the library's replay,
+snapshot, and repository machinery.
 
-You will write the state model, the events, and the aggregate class; raise events from
-command methods with `create_event()`; watch `state`, `version`, and
-`uncommitted_events` change as you go; enforce a business rule before an event is
-raised; rebuild the order from its history with `load_from_history()`; and finally see
-the same aggregate rewritten in the declarative `@handles` style.
+You will write the state model, the events, and the commands that request them; write
+`decide()` as the one place business rules live, and see it reject a command with
+`CommandRejectedError`; write `evolve()` as the fold that turns an event into the next
+state; call `execute()` to run a command end to end; watch `state`, `version`, and
+`uncommitted_events` change as you go; rebuild the order from its history with
+`load_from_history()`; and finally see the same domain sketched in the other two
+aggregate styles this library supports.
 
 Everything here runs in plain Python -- no database, no Docker, no event store. You are
 working with the aggregate in memory, which is exactly how aggregates are unit tested.
 Persisting the events comes later.
 
-By the end you will have a working `OrderAggregate` and a clear picture of the two
-things every aggregate does: decide whether a command is allowed, and turn the events it
-produces into new state.
+By the end you will have a working `OrderAggregate` and a clear picture of the three
+things every decider aggregate needs: a state to start from, a function that decides
+whether a command is allowed, and a function that turns the events it produces into new
+state.
 
 ## What you'll build
 
@@ -32,45 +36,48 @@ A single Python file containing an `OrderAggregate` and the pieces it needs:
   customer, its total, and its tracking number.
 - **Three domain events** -- `OrderCreated`, `OrderShipped`, and `OrderCancelled`, each
   a `DomainEvent` subclass carrying only the fields that event needs.
-- **`OrderAggregate(AggregateRoot[OrderState])`** -- with `aggregate_type = "Order"`,
-  a `_get_initial_state()` that seeds a fresh order, an `_apply()` that folds each event
-  type into a new `OrderState`, and three command methods (`create()`, `ship()`,
-  `cancel()`) that call `create_event()`.
+- **Three commands** -- `CreateOrder`, `ShipOrder`, and `CancelOrder`, each a
+  `DomainCommand` subclass carrying the intent's payload.
+- **`OrderAggregate(DeciderAggregate[OrderState])`** -- with `aggregate_type = "Order"`,
+  a static `initial_state()` that seeds a fresh order, a static `decide()` that turns a
+  command plus the current state into the events it produces (or raises
+  `CommandRejectedError`), and a static `evolve()` that folds each event type into a new
+  `OrderState`.
 
-By Step 7 you will run the file and watch three things move together: `state` (the
+By Step 8 you will run the file and watch three things move together: `state` (the
 folded `OrderState`), `version` (which advances to match each event's
 `aggregate_version`), and `uncommitted_events` (the list the repository will later
 persist).
 
-The later steps sharpen it. Step 8 adds an invariant so `ship()` refuses to run on a
-cancelled order and no event is raised. Step 9 attaches `metadata`, `actor_id`,
-`causation_id`, and an explicit `tenant_id` to the events you emit. Step 10 throws away
-the in-memory instance and rebuilds an identical order from its event list with
-`load_from_history()` -- the moment event sourcing pays off.
+The later steps sharpen it. Step 6 makes `decide()` refuse to ship a cancelled order --
+`CommandRejectedError` is raised and no event is produced, no version bump, nothing
+queued. Step 9 looks at what `execute()` stamped onto the events for free: `causation_id`
+linking each event back to the command that caused it, plus `correlation_id`,
+`actor_id`, and `tenant_id`. Step 10 throws away the in-memory instance and rebuilds an
+identical order from its event list with `load_from_history()` -- the moment event
+sourcing pays off.
 
-Then two views of the same aggregate. The aside unpacks what `create_event()` does for
-you by writing the equivalent `apply_event()` call by hand, so the convenience method
-stops being magic. The variation rewrites `OrderAggregate` as a
-`DeclarativeAggregate`, replacing the `isinstance` chain in `_apply()` with
-`@handles(OrderCreated)`-decorated methods -- the style you will see in most real
-codebases.
+Then a look at the other two ways to write an aggregate in this library, for when you
+run into an existing codebase that uses them.
 
 Here is the shape you are heading toward:
 
 ```python
-class OrderAggregate(AggregateRoot[OrderState]):
+class OrderAggregate(DeciderAggregate[OrderState]):
     aggregate_type = "Order"
 
-    def _get_initial_state(self) -> OrderState: ...
-    def _apply(self, event: DomainEvent) -> None: ...
+    @staticmethod
+    def initial_state(aggregate_id: UUID) -> OrderState: ...
 
-    def create(self, customer_id: UUID, total: Decimal) -> None: ...
-    def ship(self, tracking_number: str) -> None: ...
-    def cancel(self, reason: str) -> None: ...
+    @staticmethod
+    def decide(command: object, state: OrderState) -> list[DomainEvent]: ...
+
+    @staticmethod
+    def evolve(state: OrderState, event: DomainEvent) -> OrderState: ...
 ```
 
-Two methods to fold events into state, three methods to decide which events are allowed.
-That is the whole aggregate.
+Three static methods, none of them touching `self`. That is the whole domain; everything
+else -- version tracking, replay, provenance stamping -- is inherited.
 
 ## Prerequisites
 
@@ -80,8 +87,8 @@ Before you start you need:
 - **`eventsource-py` installed.** From a clone of the repository, `uv sync --all-extras`;
   otherwise `pip install eventsource-py`. Nothing in this tutorial needs an optional
   extra -- the core install (pydantic + sqlalchemy) is enough.
-- **Comfort with pydantic v2 models.** Both `OrderState` and every event you write are
-  `BaseModel` subclasses, and `DomainEvent` sets
+- **Comfort with pydantic v2 models.** `OrderState`, every event, and every command you
+  write are `BaseModel` subclasses, and both `DomainEvent` and `DomainCommand` set
   `model_config = ConfigDict(frozen=True)`, so you will update state with
   `model_copy(update={...})` rather than by assignment.
 - **[Your First Event](02-first-event.md), or its equivalent.** This tutorial assumes you
@@ -92,7 +99,7 @@ You do **not** need Docker, a database, or a message broker. An aggregate is pla
 Python: it holds state in memory, folds events into it, and collects the events it
 raised in `uncommitted_events` for someone else to persist later. Every snippet below can
 be pasted into a single file and run top to bottom with `python`, and none of the code is
-async -- `AggregateRoot`'s methods are all synchronous.
+async -- `DeciderAggregate`'s methods are all synchronous.
 
 Check your install before you begin:
 
@@ -105,8 +112,8 @@ If that prints a version, you are ready.
 ## Step 1: Model the state (a Pydantic `BaseModel`)
 
 Start with the answer to a single question: *what does the code need to know about an
-order right now?* Not the history -- the history is the events. Just the current facts a
-command method will read before it decides whether to allow something.
+order right now?* Not the history -- the history is the events. Just the current facts
+`decide()` will read before it decides whether to allow something.
 
 For our order that is four things: who the customer is, how much it is for, what status
 it is in, and (once shipped) the tracking number.
@@ -130,20 +137,20 @@ class OrderState(BaseModel):
 
 That is the whole state model. A few things about it are deliberate.
 
-**It is a Pydantic `BaseModel`, and that is a hard requirement.** `AggregateRoot` is
-declared as `AggregateRoot(Generic[TState], ABC)` where `TState = TypeVar("TState",
-bound=BaseModel)`. Anything you plug in as `TState` must be a `BaseModel` subclass. A
-dataclass or a plain dict will not type check, and the snapshot machinery would break on
-it: `_serialize_state()` calls `self._state.model_dump(mode="json")`, and
-`_restore_from_snapshot()` calls `state_type.model_validate(state_dict)`. Those two
+**It is a Pydantic `BaseModel`, and that is a hard requirement.** `AggregateRoot` (which
+`DeciderAggregate` extends) is declared as `AggregateRoot(Generic[TState], ABC)` where
+`TState = TypeVar("TState", bound=BaseModel)`. Anything you plug in as `TState` must be a
+`BaseModel` subclass. A dataclass or a plain dict will not type check, and the snapshot
+machinery would break on it: `_serialize_state()` calls `self._state.model_dump(mode="json")`,
+and `_restore_from_snapshot()` calls `state_type.model_validate(state_dict)`. Those two
 methods only exist because the state is a pydantic model.
 
 **Every field except `order_id` has a default.** In Step 4 you will write
-`_get_initial_state()`, which has to construct an `OrderState` *before* any event has
-been applied -- a blank order that exists only so `_apply()` has something to fold the
-first event into. Defaults are what make that one-line constructor possible. Fields that
-are unknown until an event arrives (`customer_id`, `tracking_number`) are typed as
-optional; fields with a sensible zero value (`total`, `status`) get one.
+`initial_state()`, which constructs an `OrderState` before any event has been applied --
+a blank order that exists only so `evolve()` has something to fold the first event into.
+Defaults are what make that one-line constructor possible. Fields that are unknown until
+an event arrives (`customer_id`, `tracking_number`) are typed as optional; fields with a
+sensible zero value (`total`, `status`) get one.
 
 **`status` is a plain `str` here** to keep the tutorial short. In a real aggregate you
 would reach for an enum:
@@ -160,7 +167,7 @@ class OrderStatus(StrEnum):
 
 Pydantic validates enum members on assignment and serializes them as strings, so
 swapping `status: str` for `status: OrderStatus = OrderStatus.PENDING` costs nothing and
-buys you a typo-proof invariant check in Step 8.
+buys you a typo-proof invariant check when `decide()` matches on it in Step 6.
 
 **`total` is a `Decimal`, not a `float`.** Money in a `float` accumulates rounding error,
 and this value will be reconstructed from JSON on every replay. Pydantic handles
@@ -175,28 +182,29 @@ Two habits from other architectures are worth unlearning right now.
 together, flattened, with no notion of which event put them there. If you find yourself
 adding a `last_event_type` field, that is the version counter's job, not the state's.
 
-*State is not the read model.* Resist putting anything in `OrderState` that no command
-method will read. Display names, formatted currency strings, denormalized customer
+*State is not the read model.* Resist putting anything in `OrderState` that `decide()`
+will never read. Display names, formatted currency strings, denormalized customer
 addresses -- those belong in a projection (see
 [Projections](06-projections.md)). The aggregate's state exists to answer the question
 "is this command allowed?", and it is loaded and rebuilt on every single command, so
 keep it small.
 
-A useful test: for each field, name the command method that reads it. `status` is read
-by `ship()` and `cancel()` to reject invalid transitions. `order_id` identifies the
+A useful test: for each field, name the `decide()` branch that reads it. `status` is
+read by every branch to reject invalid transitions. `order_id` identifies the
 aggregate. `customer_id` and `total` are there because a real system would check them
 (a refund limit, an ownership check) and because they make the folded state visible when
-you print it in Step 7. `tracking_number` records the shipment. Nothing else earns a
+you print it in Step 8. `tracking_number` records the shipment. Nothing else earns a
 slot.
 
 ### Should the state be frozen?
 
-`DomainEvent` sets `model_config = ConfigDict(frozen=True)` because an event is a record
-of something that already happened and must never change. `OrderState` is different --
-it is a value the aggregate replaces on every applied event, so freezing it is optional.
+`DomainEvent` (and, as you will see in the next step, `DomainCommand`) sets
+`model_config = ConfigDict(frozen=True)` because both are records of an intent or a fact
+that must never change after the fact. `OrderState` is different -- it is a value
+`evolve()` replaces on every applied event, so freezing it is optional.
 
 Leaving it mutable is fine as long as you keep the discipline of building a *new* state
-object in `_apply()` rather than mutating fields in place, which is what the
+object in `evolve()` rather than mutating fields in place, which is what the
 `model_copy(update={...})` pattern in Step 5 does. If you would rather have pydantic
 enforce that discipline for you, add the config:
 
@@ -211,13 +219,13 @@ class OrderState(BaseModel):
     # ... as above
 ```
 
-With `frozen=True`, `self._state.status = "shipped"` raises a
-`ValidationError` instead of silently succeeding, and `model_copy(update={...})` remains
-the only way forward. The rest of this tutorial works identically either way; the
-snippets use the unfrozen version and never mutate in place.
+With `frozen=True`, `state.status = "shipped"` raises a `ValidationError` instead of
+silently succeeding, and `model_copy(update={...})` remains the only way forward. The
+rest of this tutorial works identically either way; the snippets use the unfrozen
+version and never mutate in place.
 
-With the state modelled, the next step is the other half of the pair: the events that
-move it from one `OrderState` to the next.
+With the state modelled, the next step is the facts that move it from one `OrderState`
+to the next.
 
 ## Step 2: Define the domain events (`OrderCreated`, `OrderShipped`, `OrderCancelled`)
 
@@ -259,25 +267,26 @@ when it happened, what version it is -- comes from `DomainEvent`.
 | `event_type` | class name | auto-derived, see below |
 | `event_version` | `1` | schema version, for later migrations |
 | `occurred_at` | `datetime.now(UTC)` | timezone-aware |
-| `aggregate_id` | **required** | filled by `create_event()` in Step 6 |
+| `aggregate_id` | **required** | filled by `decide()` in Step 6 |
 | `aggregate_type` | **required** | we default it to `"Order"` above |
-| `aggregate_version` | `1` | filled by `create_event()` in Step 6 |
-| `tenant_id`, `actor_id`, `causation_id` | `None` | see Step 9 |
-| `correlation_id` | `uuid4()` | links events across aggregates |
+| `aggregate_version` | `1` | filled by `execute()`'s stamping, see Step 9 |
+| `tenant_id`, `actor_id`, `causation_id` | `None` | filled from the command by `execute()`, see Step 9 |
+| `correlation_id` | `uuid4()` | links events across aggregates and commands |
 | `metadata` | `{}` | free-form dict |
 
 Two of those are declared with `...` (required) on the base class: `aggregate_id` and
 `aggregate_type`. Giving `aggregate_type` a default of `"Order"` on each event class
 means you can construct one in a test without repeating it, and it documents which
 aggregate the event belongs to right at the class definition. `aggregate_id` stays
-required -- there is no sensible default for "which order" -- and Step 6 shows
-`create_event()` supplying it from the aggregate instance.
+required -- there is no sensible default for "which order" -- and Step 6 shows `decide()`
+supplying it from the state it was handed.
 
 ### `event_type` derives itself from the class name
 
 You do not write `event_type = "OrderCreated"`. `DomainEvent.__init_subclass__` sets the
-field default to the class name at class-definition time, and a `model_validator(mode="before")`
-does the same when an event is built from a dict (`model_validate`, `from_dict`). So:
+field default to the class name at class-definition time, and a
+`model_validator(mode="before")` does the same when an event is built from a dict
+(`model_validate`, `from_dict`). So:
 
 ```python
 event = OrderCreated(aggregate_id=uuid4(), customer_id=uuid4(), total=Decimal("42.00"))
@@ -308,8 +317,9 @@ that already happened, so mutating it is meaningless:
 event.total = Decimal("0")   # pydantic ValidationError: instance is frozen
 ```
 
-This is the one place the library forces immutability on you, and it is the reason
-`_apply()` in Step 5 builds a new `OrderState` instead of editing the event.
+This is one of two places the library forces immutability on you (the other is the
+command you are about to write), and it is the reason `evolve()` in Step 5 builds a new
+`OrderState` instead of editing the event.
 
 ### Choosing the payload
 
@@ -322,17 +332,17 @@ Each event answers "what changed?", and nothing more:
 - `OrderCancelled` carries a `reason`, because "why" is a fact worth keeping and there is
   nowhere else to keep it.
 
-Notice what is absent: no `status` field. The status is *derived* -- `_apply()` sets it
+Notice what is absent: no `status` field. The status is *derived* -- `evolve()` sets it
 to `"shipped"` when it sees an `OrderShipped`. Putting a `status` field on the event
 would let the two disagree. The same rule rules out `new_total`-style fields that restate
 the whole aggregate: store the delta or the new fact, and let the fold compute the rest.
 
-Also notice the names are past tense. `OrderShipped`, not `ShipOrder`. `ShipOrder` is a
-command -- a request that might be refused (Step 8 refuses one). An event is what
-remains after the refusal could no longer happen.
+Also notice the names are past tense. `OrderShipped`, not `ShipOrder`. `ShipOrder` is the
+command you write next -- a request that might be refused (Step 6 refuses one). An event
+is what remains after the refusal could no longer happen.
 
 Keep the payload types the same as the state types -- `total: Decimal` here matches
-`total: Decimal` on `OrderState`, so no conversion happens in `_apply()`, and the value
+`total: Decimal` on `OrderState`, so no conversion happens in `evolve()`, and the value
 round-trips through JSON with pydantic's `Decimal` handling intact.
 
 ### A note on the registry
@@ -345,74 +355,112 @@ class, which is a concern for the event store, not for the in-memory aggregate y
 building here. Registering a second class under a name already taken raises
 `DuplicateEventTypeError`, so it is a deliberate step rather than a silent one.
 
-With state and events defined, you have both halves of the fold. Next you connect them
-with an aggregate class.
+With the facts defined, the next step is the requests that might produce them.
 
-## Step 3: Subclass `AggregateRoot[OrderState]` and set `aggregate_type`
+## Step 3: Define the commands (`CreateOrder`, `ShipOrder`, `CancelOrder`)
+
+An event is a fact: it happened, full stop. A command is a *request* that the domain is
+free to refuse. `eventsource` gives requests their own base class, `DomainCommand`, so
+the distinction is visible in the type system and not just in a naming convention.
+
+Add to `first_aggregate.py`:
+
+```python
+from eventsource import DomainCommand
+
+
+class CreateOrder(DomainCommand):
+    customer_id: UUID
+    total: Decimal
+
+
+class ShipOrder(DomainCommand):
+    tracking_number: str
+
+
+class CancelOrder(DomainCommand):
+    reason: str
+```
+
+Three classes, four payload lines -- one less than the events, because commands carry no
+`aggregate_type`. A command does not belong to a stream the way an event does; it is
+handed to an aggregate instance that already knows its own identity.
+
+### What you get for free
+
+Like `DomainEvent`, `DomainCommand` declares an envelope so you only write the payload:
+
+| Field | Default | Notes |
+| --- | --- | --- |
+| `command_id` | `uuid4()` | becomes the `causation_id` of every event this command produces |
+| `issued_at` | `datetime.now(UTC)` | timezone-aware |
+| `correlation_id` | `uuid4()` | a fresh chain by default; see `caused_by()` below |
+| `actor_id` | `None` | who issued the command, if you track that |
+| `tenant_id` | `None` | falls back to the ambient tenant context if unset -- see Step 9 |
+
+### Commands are never persisted
+
+This is the load-bearing difference from events. `CreateOrder` and `ShipOrder` are never
+written to an event store, never registered, never serialized for storage. A rejected
+command -- Step 6 rejects one -- leaves no trace at all: no version bump, no event, no
+row anywhere. Only what `decide()` decided to *allow* becomes a stored fact. That is why
+there is no `@register_event`-equivalent for commands and no command bus in this
+library: a command's entire lifetime is the one `decide()` call that consumes it.
+
+### Commands are frozen, and have no `causation_id` of their own
+
+```python
+command = ShipOrder(tracking_number="1Z999")
+command.tracking_number = "1Z000"   # pydantic ValidationError: instance is frozen
+```
+
+Notice `DomainCommand` has no `causation_id` field, even though events do. That is
+deliberate: within one workflow, `event -> command -> event` linkage is expressed
+through `correlation_id`, not `causation_id`. If a saga reacts to an event by issuing a
+new command, it calls `command.caused_by(event)` to copy that event's `correlation_id`
+onto the new command, continuing the chain without needing an event-to-command
+`causation_id` field. You will see the other end of that chain -- command to event -- in
+Step 9, where `execute()` copies `command_id` onto each event's `causation_id`.
+
+With state, events, and commands all defined, you have every ingredient the domain
+needs. Next you connect them with an aggregate class.
+
+## Step 4: Subclass `DeciderAggregate[OrderState]` and set `aggregate_type`
 
 Now the class itself. Add this to `first_aggregate.py`:
 
 ```python
-from eventsource import AggregateRoot
+from eventsource import DeciderAggregate
 
 
-class OrderAggregate(AggregateRoot[OrderState]):
+class OrderAggregate(DeciderAggregate[OrderState]):
     aggregate_type = "Order"
+
+    @staticmethod
+    def initial_state(aggregate_id: UUID) -> OrderState:
+        return OrderState(order_id=aggregate_id)
 ```
 
-Two lines, and both of them carry weight.
+Three lines of substance, and each one carries weight.
 
 ### The `[OrderState]` parameter is not decoration
 
-`AggregateRoot` is declared `class AggregateRoot(Generic[TState], ABC)`. Writing
-`AggregateRoot[OrderState]` tells the type checker that `self.state` is an
-`OrderState | None`, so `self.state.status` in Step 8 is checked rather than guessed at.
-
-It also does real work at runtime. `_get_state_type()` walks the class's MRO looking at
-`__orig_bases__` for a parameterized base whose origin is an `AggregateRoot` subclass,
-and returns the first type argument:
-
-```python
-aggregate = OrderAggregate(uuid4())
-assert aggregate._get_state_type() is OrderState
-```
-
-That lookup is how snapshots get rehydrated -- `_restore_from_snapshot()` calls
-`state_type.model_validate(state_dict)` with whatever `_get_state_type()` returned. If
-you drop the parameter and write `class OrderAggregate(AggregateRoot):`, everything in
-this tutorial still runs, but the moment a snapshot is restored you get:
-
-```
-RuntimeError: Cannot determine state type for OrderAggregate.
-Ensure the class properly inherits from AggregateRoot[StateType].
-```
-
-Always write the parameter.
+`DeciderAggregate` subclasses `AggregateRoot`, declared `Generic[TState], ABC`. Writing
+`DeciderAggregate[OrderState]` tells the type checker that `self.state` is an
+`OrderState`, so `state.status` in Step 6 is checked rather than guessed at. It also
+does real work at runtime: it is how `_get_state_type()` resolves the class snapshots
+get rehydrated into. Always write the parameter.
 
 ### `aggregate_type` is the stream's name
 
 `AggregateRoot` defines `aggregate_type: str = "Unknown"` as a class attribute, and you
 are expected to override it. It is a plain string on the class -- not a property, not
 derived from the class name -- so `OrderAggregate` becomes `"Order"` only because you
-said so.
-
-That string ends up in three places:
-
-1. **On every event you raise.** `create_event()` builds its kwargs starting with
-   `{"aggregate_id": self.aggregate_id, "aggregate_type": self.aggregate_type,
-   "aggregate_version": self.get_next_version()}`. In Step 2 you also defaulted
-   `aggregate_type: str = "Order"` on each event class; `create_event()` passes the
-   aggregate's value explicitly, so the two must agree. Keep them in sync, or the events
-   your commands raise will be stamped differently from the ones you build by hand in
-   tests.
-2. **In the event store's stream identity.** Events are read back with
-   `get_events(aggregate_id, aggregate_type)`, and `EventStream` carries an
-   `aggregate_type` field. The pair `(aggregate_id, aggregate_type)` is the stream.
-3. **In the repository.** `AggregateRepository` infers its type from the class:
-   `_infer_aggregate_type()` reads `factory.aggregate_type` and accepts it only if it is
-   a non-empty string that is not `"Unknown"`. Leave the default in place and
-   constructing the repository raises `ValueError` with instructions to either set the
-   class attribute or pass `aggregate_type=` explicitly.
+said so. That string ends up in three places: on every event `execute()` stamps (it
+must agree with the `aggregate_type` you defaulted on each event class in Step 2), in
+the event store's stream identity (`get_events(aggregate_id, aggregate_type)`), and in
+`AggregateRepository`, which refuses to build a repository for a class that left
+`aggregate_type` at `"Unknown"`.
 
 Because it is baked into stored events, **treat `aggregate_type` as permanent**. Renaming
 the Python class from `OrderAggregate` to `PurchaseOrderAggregate` is free; changing the
@@ -420,225 +468,103 @@ string from `"Order"` to `"PurchaseOrder"` orphans every event already written u
 old name. Pick a short domain noun -- `"Order"`, not `"OrderAggregate"` and not
 `"orders"` -- and leave it alone.
 
-### The class does not work yet
+### `initial_state()` is a static method, and it *is* called for you
 
-Paste the two lines above into a REPL and try to build one:
-
-```python
-OrderAggregate(uuid4())
-# TypeError: Can't instantiate abstract class OrderAggregate without an
-# implementation for abstract methods '_apply', '_get_initial_state'
-```
-
-That is the point of the ABC. `_apply()` and `_get_initial_state()` are decorated
-`@abstractmethod`, so Python refuses to instantiate until you supply both -- the next two
-steps. The constructor you are calling is `AggregateRoot.__init__(self, aggregate_id:
-UUID)`: one argument, the identity. It sets `self._version = 0`, `self._state = None`,
-and an empty `self._uncommitted_events` list. Nothing else. An aggregate is born empty
-and only becomes something when events are applied to it.
-
-Do not write your own `__init__` to accept `customer_id` or a `total`. Creation is an
-event (`OrderCreated`, raised by the `create()` command in Step 6), not a constructor
-argument. The one-argument constructor is what lets the repository build an instance
-from nothing but an ID before replaying history into it.
-
-### Two more class attributes worth knowing about
-
-`AggregateRoot` declares two other overridable class-level settings. You will not change
-either in this tutorial, but they are visible right next to `aggregate_type` in the
-source and it is worth knowing what they are for:
+This is the first real departure from the two-abstract-method `AggregateRoot` you might
+have already met (or will meet in the "other styles" section below). There,
+`_get_initial_state()` is a factory the base class never invokes on your behalf -- your
+own `_apply()` has to call it, and `self.state` is `None` until it does. Here,
+`DeciderAggregate.__init__` calls `self.initial_state(aggregate_id)` immediately and
+assigns the result:
 
 ```python
-class OrderAggregate(AggregateRoot[OrderState]):
-    aggregate_type = "Order"
-    schema_version = 1        # default; bump when OrderState changes incompatibly
-    validate_versions = True  # default; see the aside after Step 10
+some_id = uuid4()
+print(OrderAggregate.initial_state(some_id))
 ```
 
-`schema_version` guards snapshots: if a stored snapshot's schema version does not match
-the class's, the snapshot is discarded and the aggregate is rebuilt from the full event
-history. Bump it when you change `OrderState` in a way old snapshots cannot satisfy.
+That prints `OrderState(order_id=..., customer_id=None, total=Decimal('0'),
+status='pending', tracking_number=None)` -- calling a `@staticmethod` needs no aggregate
+instance, which is why this runs even though `OrderAggregate` cannot be instantiated
+yet (`decide` and `evolve` are still unimplemented; more on that in Step 6). Once the
+class is complete, `DeciderAggregate.__init__` calls exactly this method for you, so
+`order.state` is never `None` on a `DeciderAggregate` -- accessing it before any event
+has been applied hands back the blank order `initial_state()` built, not an exception
+and not `None`. That is what lets `decide()` in Step 6 pattern-match on `state.status`
+unconditionally, with no `if state is None` guard anywhere in the domain code.
 
-`validate_versions` controls whether `apply_event()` enforces that a new event's
-`aggregate_version` equals `self.version + 1`. With the default `True` a mismatch raises
-`EventVersionError`; with `False` it only logs a warning. Since `create_event()` computes
-the version for you, you will not trip this -- the aside after Step 10 shows the case
-where it matters.
-
-With the class declared and named, the aggregate needs a starting state.
-
-## Step 4: Implement `_get_initial_state()`
-
-The first of the two abstract methods. Add it to the class body:
-
-```python
-class OrderAggregate(AggregateRoot[OrderState]):
-    aggregate_type = "Order"
-
-    def _get_initial_state(self) -> OrderState:
-        return OrderState(order_id=self.aggregate_id)
-```
-
-One line. This is where the defaults you gave `OrderState` in Step 1 pay off: every
-field except `order_id` has one, and `order_id` comes from `self.aggregate_id`, which
-`AggregateRoot.__init__` has already stored. There is nothing else to supply, because a
-blank order knows nothing yet -- no customer, no total, status `"pending"`.
-
-### A fresh aggregate's state is `None`, not the initial state
-
-This is the part that surprises people. `__init__` sets `self._state = None` and stops.
-It does **not** call `_get_initial_state()`. Try it:
-
-```python
-order = OrderAggregate(uuid4())
-print(order.state)               # None
-print(order.version)             # 0
-print(order.uncommitted_events)  # []
-```
-
-An aggregate that has had no events applied has no state, and `state` returning `None` is
-how you tell "this order does not exist yet" from "this order exists and is pending".
-If `__init__` eagerly built an `OrderState`, a brand-new instance would be
-indistinguishable from a real order that had been created and left alone -- and the
-repository, which constructs an instance from nothing but an ID before replaying
-history, would have no way to report that the stream was empty.
-
-`_get_initial_state()` is a *factory you call*, not a hook the base class calls for you.
-Search the source and you will find `AggregateRoot` never invokes it: not in `__init__`,
-not in `apply_event()`, not in `load_from_history()`. The only caller is your own
-`_apply()`.
-
-### Which is why `_apply()` calls it
-
-That makes the seeding step explicit, and Step 5 will open with it:
-
-```python
-    def _apply(self, event: DomainEvent) -> None:
-        if self._state is None:
-            self._state = self._get_initial_state()
-        # ... fold the event into self._state
-```
-
-Two lines at the top of the fold, and from there on `self._state` is guaranteed
-non-`None`, so `self._state.model_copy(update={...})` is safe for every event type.
-Without them, the first event applied to a new aggregate hits
-`AttributeError: 'NoneType' object has no attribute 'model_copy'`.
-
-You will sometimes see the seeding done per-branch instead -- the library's own test
-aggregates do this, calling `self._get_initial_state()` inside each `isinstance` arm.
-Same effect, more repetition. Guarding once at the top is the version this tutorial
-uses.
-
-There is a second, less obvious use for the method: a *reset*. An event that returns the
-aggregate to its blank state is exactly `self._state = self._get_initial_state()`, with
-no `model_copy` at all. That is why the method exists as a named factory rather than an
-inline `OrderState(order_id=self.aggregate_id)` buried in the fold.
-
-### Return type and the `TState | None` in the base class
-
-The abstract signature is `def _get_initial_state(self) -> TState | None`. Yours narrows
-that to `-> OrderState`, which is correct and what you want -- narrowing a return type in
-an override is allowed, and it keeps `self._state` typed as `OrderState` after the guard.
-
-The `| None` in the base signature exists for one specific case:
-`DeclarativeAggregate` subclasses that set `requires_creation_event = True`. Those
-aggregates have no meaningful blank state -- an extraction process, say, that only exists
-once it has been requested -- so their inherited `_get_initial_state()` returns `None`
-and the first event handler assigns the state outright. Accessing `.state` before that
-raises `AggregateNotCreatedError` rather than handing back a half-built object.
-`DeclarativeAggregate` also gives those aggregates `state_or_none` and `is_created` to
-check existence without the exception.
-
-You are not in that case. `OrderAggregate` extends `AggregateRoot` directly, where
-`_get_initial_state()` is a bare `@abstractmethod` -- Python requires you to implement it,
-and returning a real `OrderState` is the straightforward thing to do. (For reference:
-`DeclarativeAggregate` with the default `requires_creation_event = False` raises
-`NotImplementedError` at call time if you forget, rather than blocking instantiation.)
+`initial_state()` is a `@staticmethod` for the same reason `decide()` and `evolve()`
+will be: none of the three touch `self`, only their arguments. That is what makes them
+independently testable -- `OrderAggregate.initial_state(some_uuid)` is a plain function
+call, no aggregate instance required.
 
 ### Keep it cheap and deterministic
 
-`_get_initial_state()` may be called on every command, on every replay, and once per
-reset event. Two rules follow:
+`initial_state()` runs once per instance, in `__init__`, and (as you will see in Step
+10) once more per `load_from_history()` call on a fresh instance. Two rules follow:
 
 - **No I/O.** No database reads, no clock lookups that end up in state, no random values.
   The initial state must be identical every time it is built for a given
   `aggregate_id`, or replaying the same history twice would produce two different
   aggregates.
-- **Derive nothing but identity.** `self.aggregate_id` is the only thing available and the
-  only thing you should use. Everything else arrives as an event.
+- **Derive nothing but identity.** The `aggregate_id` argument is the only thing
+  available and the only thing you should use. Everything else arrives as an event.
 
-If you catch yourself wanting a constructor argument here -- a tenant, a currency, a
-customer -- that is a fact about the order, and facts arrive in `OrderCreated`.
+If you catch yourself wanting a parameter here -- a tenant, a currency, a customer --
+that is a fact about the order, and facts arrive in `OrderCreated`.
 
-With a starting state defined, the aggregate has somewhere to fold events into.
+With a starting state defined, the aggregate needs a way to fold events into it.
 
-## Step 5: Implement `_apply()` to fold events into state
+## Step 5: Implement `evolve()` to fold events into state
 
-The second abstract method, and the heart of the aggregate. `_apply()` takes one event
-and produces the next `OrderState`. Add it to the class:
+`evolve()` takes the current state and one event, and returns the next state. Add it to
+the class:
 
 ```python
-class OrderAggregate(AggregateRoot[OrderState]):
+class OrderAggregate(DeciderAggregate[OrderState]):
     aggregate_type = "Order"
 
-    def _get_initial_state(self) -> OrderState:
-        return OrderState(order_id=self.aggregate_id)
+    @staticmethod
+    def initial_state(aggregate_id: UUID) -> OrderState:
+        return OrderState(order_id=aggregate_id)
 
-    def _apply(self, event: DomainEvent) -> None:
-        if self._state is None:
-            self._state = self._get_initial_state()
-
-        if isinstance(event, OrderCreated):
-            self._state = self._state.model_copy(
-                update={
-                    "customer_id": event.customer_id,
-                    "total": event.total,
-                    "status": "created",
-                }
-            )
-        elif isinstance(event, OrderShipped):
-            self._state = self._state.model_copy(
-                update={
-                    "tracking_number": event.tracking_number,
-                    "status": "shipped",
-                }
-            )
-        elif isinstance(event, OrderCancelled):
-            self._state = self._state.model_copy(update={"status": "cancelled"})
+    @staticmethod
+    def evolve(state: OrderState, event: DomainEvent) -> OrderState:
+        match event:
+            case OrderCreated(customer_id=customer_id, total=total):
+                return state.model_copy(
+                    update={"customer_id": customer_id, "total": total, "status": "created"}
+                )
+            case OrderShipped(tracking_number=tracking_number):
+                return state.model_copy(
+                    update={"tracking_number": tracking_number, "status": "shipped"}
+                )
+            case OrderCancelled():
+                return state.model_copy(update={"status": "cancelled"})
+            case _:
+                return state
 ```
 
-The class is now concrete -- both abstract methods are implemented, so
-`OrderAggregate(uuid4())` no longer raises `TypeError`.
+Read it as a fold: one `match` arm per event type, each returning a new state derived
+from the old one plus the event's payload, and a fallthrough that returns the state
+unchanged.
 
-Read the method as a fold: one guard to make sure there is something to fold into, then
-one branch per event type, each returning a new state derived from the old one plus the
-event's payload.
+### `match`/`case`, not `isinstance`
 
-### The guard, then one branch per event
-
-The first two lines are the seeding you met in Step 4. After them, `self._state` is
-non-`None` for the rest of the method, so every branch can safely call
-`self._state.model_copy(...)`.
-
-Each branch does exactly two things: copy the fields the event introduces, and set the
-derived `status`. Notice where `status` comes from. No event carries it -- Step 2
-deliberately left it off the payloads -- so `_apply()` is the single place that decides
-`OrderShipped` means `status == "shipped"`. That is what "derived state" means: the
-events are the facts, the status is a conclusion the fold draws from them.
-
-Notice also what each branch *doesn't* touch. The `OrderShipped` branch never mentions
-`customer_id` or `total`; those were folded in by `OrderCreated` and `model_copy` carries
-every un-updated field through unchanged. Only write the fields this event changes.
+Structural pattern matching does two things an `isinstance` chain cannot: it binds the
+fields you need (`case OrderCreated(customer_id=customer_id, total=total):` both checks
+the type *and* unpacks the payload in one line) and it makes "no case matched" a single
+explicit `case _:` rather than an implicit fallthrough at the end of an `if/elif` chain.
+Every event class this aggregate emits gets one `case`; the wildcard exists for events a
+future version of the system might append that this class does not yet know about.
 
 ### `model_copy(update={...})` replaces the state, it doesn't mutate it
 
-`self._state = self._state.model_copy(update={...})` builds a *new* `OrderState` and
-rebinds the attribute. The old state object is untouched. This is the discipline Step 1
-mentioned, and it is why freezing `OrderState` costs you nothing: the pattern already
-never assigns to a field.
+`state.model_copy(update={...})` builds a *new* `OrderState` and returns it; `state`
+itself is untouched. This is the discipline Step 1 mentioned, and it is why freezing
+`OrderState` costs you nothing: the pattern already never assigns to a field.
 
-Two properties fall out of it. Applying an event is atomic -- either the whole new state
-is built and assigned, or the old one remains -- and any state object you captured
+Two properties fall out of it. Folding an event is atomic -- either the whole new state
+is built and returned, or nothing changes -- and any state object a caller captured
 earlier (in a test, in a snapshot, in a log line) stays valid.
 
 One sharp edge to know about: **`model_copy(update=...)` does not run validation.**
@@ -654,28 +580,27 @@ In practice this is fine, because the values you pass come off an event that pyd
 *did* validate when it was constructed. That is the real reason Step 2 told you to keep
 event field types identical to state field types: `event.total` is already a `Decimal`,
 so copying it into `total: Decimal` needs no conversion and no re-validation. If you ever
-find yourself computing or coercing a value inside `_apply()`, construct the state
+find yourself computing or coercing a value inside `evolve()`, construct the state
 directly (`OrderState(...)`) instead, which does validate.
 
-### `_apply()` must not decide anything
+### `evolve()` must not decide anything
 
-This is the rule that keeps event sourcing honest: **`_apply()` never rejects an event
+This is the rule that keeps event sourcing honest: **`evolve()` never rejects an event
 and never raises.** By the time an event reaches the fold it is a historical fact -- it
-either already happened in production, or your command method just decided it should.
-Refusing to fold it in would make the aggregate's state disagree with its own history.
+either already happened in production, or `decide()` just decided it should. Refusing to
+fold it in would make the aggregate's state disagree with its own history.
 
-So no validation, no `raise`, no invariant checks. Those live in the command methods
-(Step 6) and the guard clauses (Step 8), which run *before* an event exists. The division
-of labour is:
+So no validation, no `raise`, no invariant checks. Those live entirely in `decide()`
+(Step 6), which runs *before* an event exists. The division of labour is:
 
 | | Decides whether it may happen | Updates state |
 | --- | --- | --- |
-| `ship()` (Step 6, 8) | yes -- may raise | no |
-| `_apply()` | no -- never raises | yes |
+| `decide()` (Step 6) | yes -- may raise | no |
+| `evolve()` | no -- never raises | yes |
 
-Two more things `_apply()` must not do, for the same reason it must be deterministic:
+Two more things `evolve()` must not do, for the same reason it must be deterministic:
 
-- **No I/O and no side effects.** No database writes, no HTTP calls, no email. `_apply()`
+- **No I/O and no side effects.** No database writes, no HTTP calls, no email. `evolve()`
   runs again for every event on every single load of the aggregate; anything with an
   external effect would fire once per replay. Reacting to events belongs in a projection
   or subscriber, not in the fold.
@@ -683,111 +608,309 @@ Two more things `_apply()` must not do, for the same reason it must be determini
   `event.occurred_at` is right there. Replaying the same history must always produce the
   same state, and a clock read inside the fold breaks that.
 
-### Unrecognized events fall through silently
+Because `evolve()` is a `@staticmethod` that only touches its two arguments, both of
+these rules are easy to audit: there is no `self` to smuggle a side effect through.
 
-There is no `else: raise` on the chain, and that is deliberate. If a stored history
-contains an event type this class doesn't handle, `_apply()` simply leaves the state
-alone -- but the version still advances, because `apply_event()` sets
-`self._version = event.aggregate_version` *before* calling `_apply()`:
+With a fold in place, the aggregate can turn history into state. Next it needs a way to
+decide what history to add.
 
-```python
-order.apply_event(SomeUnhandledEvent(aggregate_id=order_id, aggregate_version=3))
-order.state    # unchanged
-order.version  # 3
-```
+## Step 6: Implement `decide()` -- the business-rule home
 
-That tolerance is what lets you deploy a new event type before every consumer knows about
-it, and lets old code replay newer histories without crashing. The cost is that a typo in
-an `isinstance` check fails quietly -- your state just never updates. Step 7 exists partly
-so you catch that immediately by printing the state after each command, and the
-`@handles` variation at the end of the tutorial removes the failure mode entirely by
-registering handlers by type rather than testing them by hand.
-
-### Where `_apply()` gets called from
-
-You never call `_apply()` yourself. It has exactly one caller in the library:
-`apply_event()`, which does four things in order.
-
-1. If `is_new=True`, check `event.aggregate_version == self.version + 1` and raise
-   `EventVersionError` if not (Step 3's `validate_versions`).
-2. Set `self._version = event.aggregate_version`.
-3. Call `self._apply(event)`.
-4. If `is_new=True`, append the event to `self._uncommitted_events`.
-
-Both paths into the aggregate go through it. `create_event()` in Step 6 builds an event
-and calls `apply_event(event, is_new=True)` -- state updates *and* the event is queued for
-persistence. `load_from_history()` in Step 10 loops over stored events calling
-`apply_event(event, is_new=False)` -- state updates, version tracks, nothing is queued,
-and version validation is skipped so a history starting at any version replays cleanly.
-
-Same fold, both times. That single shared path is why a rebuilt aggregate is guaranteed
-identical to the live one: there is only one piece of code that turns events into state,
-and you just wrote it.
-
-### The whole file so far
+This is where the domain logic lives, and it is the one method allowed to say no. Add
+it to the class, alongside `evolve()`:
 
 ```python
-from decimal import Decimal
-from uuid import UUID
-
-from pydantic import BaseModel
-
-from eventsource import AggregateRoot, DomainEvent
+from eventsource import CommandRejectedError
 
 
-class OrderState(BaseModel):
-    order_id: UUID
-    customer_id: UUID | None = None
-    total: Decimal = Decimal("0")
-    status: str = "pending"
-    tracking_number: str | None = None
+class OrderAggregate(DeciderAggregate[OrderState]):
+    # ... aggregate_type, initial_state, evolve as above
 
-
-class OrderCreated(DomainEvent):
-    aggregate_type: str = "Order"
-    customer_id: UUID
-    total: Decimal
-
-
-class OrderShipped(DomainEvent):
-    aggregate_type: str = "Order"
-    tracking_number: str
-
-
-class OrderCancelled(DomainEvent):
-    aggregate_type: str = "Order"
-    reason: str
-
-
-class OrderAggregate(AggregateRoot[OrderState]):
-    aggregate_type = "Order"
-
-    def _get_initial_state(self) -> OrderState:
-        return OrderState(order_id=self.aggregate_id)
-
-    def _apply(self, event: DomainEvent) -> None:
-        if self._state is None:
-            self._state = self._get_initial_state()
-
-        if isinstance(event, OrderCreated):
-            self._state = self._state.model_copy(
-                update={
-                    "customer_id": event.customer_id,
-                    "total": event.total,
-                    "status": "created",
-                }
-            )
-        elif isinstance(event, OrderShipped):
-            self._state = self._state.model_copy(
-                update={
-                    "tracking_number": event.tracking_number,
-                    "status": "shipped",
-                }
-            )
-        elif isinstance(event, OrderCancelled):
-            self._state = self._state.model_copy(update={"status": "cancelled"})
+    @staticmethod
+    def decide(command: object, state: OrderState) -> list[DomainEvent]:
+        match command, state:
+            case CreateOrder(customer_id=customer_id, total=total), OrderState(status="pending"):
+                return [
+                    OrderCreated(
+                        aggregate_id=state.order_id, customer_id=customer_id, total=total
+                    )
+                ]
+            case CreateOrder(), _:
+                raise CommandRejectedError("order already exists", command=command)
+            case ShipOrder(tracking_number=tracking_number), OrderState(status="created"):
+                return [
+                    OrderShipped(aggregate_id=state.order_id, tracking_number=tracking_number)
+                ]
+            case ShipOrder(), OrderState(status="cancelled"):
+                raise CommandRejectedError("cannot ship a cancelled order", command=command)
+            case ShipOrder(), _:
+                raise CommandRejectedError("order is not ready to ship", command=command)
+            case CancelOrder(), OrderState(status="cancelled"):
+                raise CommandRejectedError("order is already cancelled", command=command)
+            case CancelOrder(reason=reason), _:
+                return [OrderCancelled(aggregate_id=state.order_id, reason=reason)]
+            case _:
+                raise CommandRejectedError(f"unknown command: {command!r}", command=command)
 ```
 
-You can instantiate this and it will work -- but it has no commands yet, so the only way
-to get an event into it is to build one by hand and call `apply_event()`. The next step
-gives it a proper front door.
+The class is now concrete. `initial_state`, `decide`, and `evolve` are all declared
+`@staticmethod` and `@abstractmethod` on `DeciderAggregate`, so until this step
+`OrderAggregate(uuid4())` would have raised:
+
+```
+TypeError: Can't instantiate abstract class OrderAggregate without an
+implementation for abstract method 'decide'
+```
+
+At this point `initial_state` and `evolve` are already complete from the previous steps,
+so only `decide` is outstanding. `DeciderAggregate` asks for one more abstract method
+than the base `AggregateRoot` (which only requires `_apply()` and
+`_get_initial_state()`), because the decide/evolve split is itself the contract.
+With all three written, `OrderAggregate(uuid4())` builds cleanly.
+
+### Matching on `(command, state)` together
+
+Each `case` matches a *pair*: what was asked, and what is true right now. That pairing
+is the whole reason `decide()` takes `state` as an argument instead of reading
+`self.state` -- the function is pure, so every branch is a plain, testable fact about
+"given this command and this state, what happens?" You can call
+`OrderAggregate.decide(CreateOrder(...), OrderState(order_id=some_id))` directly in a
+unit test, no aggregate instance, no event store, no repository.
+
+The order of the `case` arms matters, as it does in any `match`: put the arm that should
+succeed before the arms that reject the same command type for other reasons. `ShipOrder`
+has three arms -- succeed when `status="created"`, a specific rejection message when the
+order is cancelled, and a generic rejection for every other status -- so the error
+message a caller sees is as precise as the arms you bothered to write.
+
+### Rejecting with `CommandRejectedError`
+
+`raise CommandRejectedError("cannot ship a cancelled order", command=command)` is the
+convention this library ships for "the domain said no" -- not a requirement, just one
+catchable type your application code can rely on instead of inventing its own per
+aggregate. It takes a message and, optionally, the command that was rejected, which
+`execute()` (Step 8) never sees because it does not catch the exception -- that is your
+caller's job:
+
+```python
+order = OrderAggregate(uuid4())
+order.execute(CreateOrder(customer_id=uuid4(), total=Decimal("10.00")))
+order.execute(ShipOrder(tracking_number="1Z999"))
+try:
+    order.execute(ShipOrder(tracking_number="1Z000"))
+except CommandRejectedError as e:
+    print(f"rejected: {e}")
+    print(e.command)
+```
+
+Running that prints `rejected: order is not ready to ship` followed by the second
+`ShipOrder` command's `repr` -- the order shipped once already, so the state's `status`
+is `"shipped"`, matching the generic `ShipOrder(), _:` arm rather than the
+`OrderState(status="created")` arm that succeeds.
+
+### Rejection is atomic
+
+The reason `decide()` is a separate function from `evolve()`, rather than one method
+that both validates and mutates, is what happens when it raises: nothing. `execute()`
+(Step 8) calls `decide()` to completion *before* touching the aggregate at all. If it
+raises, no `evolve()` call ever happens, `self.version` does not advance, and
+`uncommitted_events` gains nothing. A rejected command leaves the aggregate exactly as
+it found it -- which is also why, as Step 3 noted, a rejected command is never persisted:
+there is nothing to persist.
+
+### `decide()` returns events, it does not apply them
+
+Notice `decide()` never touches `self._state` or calls `evolve()` itself -- it returns a
+plain `list[DomainEvent]`, and it is the aggregate's `execute()` method (Step 8) that
+takes that list, stamps each event, and folds it in via `evolve()`. That separation is
+what makes `decide()` safe to call in a test without an aggregate instance at all, and
+it is what makes multi-event commands (a command that produces two or three events)
+just as easy to write as single-event ones: return however many events belong together.
+
+With the domain fully specified, the next step is watching it run.
+
+## Step 7: Run it and watch `state`, `version`, and `uncommitted_events`
+
+Add a small driver to the bottom of `first_aggregate.py`:
+
+```python
+from uuid import uuid4
+
+order = OrderAggregate(uuid4())
+print(order.state)
+print(order.version)
+print(order.uncommitted_events)
+
+order.execute(CreateOrder(customer_id=uuid4(), total=Decimal("42.00")))
+print(order.state)
+print(order.version)
+print(len(order.uncommitted_events))
+
+order.execute(ShipOrder(tracking_number="1Z999"))
+print(order.state)
+print(order.version)
+```
+
+Run the file. The first three lines show the aggregate before anything has happened:
+`state` is the blank `OrderState` `initial_state()` built (status `"pending"`, not
+`None`), `version` is `0`, and `uncommitted_events` is empty. After `execute(CreateOrder(...))`,
+`state.status` is `"created"`, `version` is `1`, and there is one uncommitted event.
+After `execute(ShipOrder(...))`, `state.status` is `"shipped"` and `version` is `2`.
+
+`state` and `version` move together because `execute()` (which you will look inside in
+Step 8) does the same three things every time: run `decide()`, stamp the resulting
+events with the next version number, and apply each one -- which both advances
+`self._version` and calls `evolve()`. `uncommitted_events` accumulates every stamped
+event across every `execute()` call until something clears it -- typically the
+repository, after persisting them.
+
+## Step 8: What `execute()` does under the hood
+
+You have been calling `execute()` since Step 6 without looking inside it. It is
+inherited from `DeciderAggregate`, and it is worth reading once so "run `decide()`, stamp
+the events, fold them in" stops being a black box:
+
+```python
+def execute(self, command: object) -> list[DomainEvent]:
+    events = self.decide(command, self.state)
+    applied: list[DomainEvent] = []
+    for event in events:
+        stamped = self._stamp(event, command)
+        self.apply_event(stamped, is_new=True)
+        applied.append(stamped)
+    return applied
+```
+
+Four things happen, in order: `decide()` runs to completion first (so a raised
+`CommandRejectedError` never reaches the loop); each returned event is stamped (Step 9
+covers exactly what that fills in); `apply_event(stamped, is_new=True)` -- the same
+method every aggregate style shares -- sets `self._version` to the stamped
+`aggregate_version`, calls `evolve()` to fold the event in, and appends it to
+`uncommitted_events`; and the stamped events are returned, in case a caller wants them
+(a test asserting on exactly what was produced, say).
+
+You never call `evolve()` or touch `self._version` yourself. `execute()` is the one
+front door, and it is the only method on `DeciderAggregate` that is not a `@staticmethod`
+-- it needs `self` to read the current state, advance the version counter, and mutate
+`uncommitted_events`.
+
+## Step 9: What gets stamped onto each event
+
+Look again at what `decide()` builds: `OrderCreated(aggregate_id=state.order_id,
+customer_id=customer_id, total=total)`. No `aggregate_version`, no `aggregate_type`, no
+`causation_id`. Those are exactly the fields `execute()`'s stamping step (`_stamp()`)
+fills in before the event is applied, and it is worth seeing what lands where. Add this
+after the `ShipOrder` call from Step 7:
+
+```python
+created_event, shipped_event = order.uncommitted_events
+print(shipped_event.causation_id is not None)
+print(shipped_event.causation_id != created_event.causation_id)
+```
+
+Both print `True`. Every stamped event gets `aggregate_version` (from
+`get_next_version()`) and `aggregate_type` (from the class attribute) if `decide()`
+didn't already set them explicitly -- which is why Step 2's `aggregate_type: str =
+"Order"` default and Step 4's `aggregate_type = "Order"` class attribute have to agree;
+stamping only fills in what `model_fields_set` shows as *not* already set.
+
+Because both `CreateOrder` and `ShipOrder` are `DomainCommand` instances, stamping goes
+further: each event's `causation_id` becomes the command's `command_id`, so
+`created_event.causation_id` points at the `CreateOrder` that produced it and
+`shipped_event.causation_id` points at the separate `ShipOrder` -- two different
+commands, two different `causation_id`s, which is exactly what the second `print` above
+confirms. `correlation_id`, `actor_id`, and `tenant_id` are copied across the same way,
+with `tenant_id` falling back to the ambient tenant context (see
+[Multi-Tenancy](16-multi-tenancy.md)) when neither the command nor the event set it.
+
+If `decide()` had built an event with `aggregate_version` already set -- useful in tests
+that assert on an exact version number -- stamping would leave it alone; the check is
+always "did `decide()` already decide this field," never "overwrite unconditionally."
+
+This is the traceability ADR-0022 introduced `DomainCommand` for: every event can be
+traced back to the command that caused it, and every command in a workflow can be traced
+back to the event that triggered it, via `caused_by()` (Step 3). Neither the imperative
+nor the declarative style (see the end of this tutorial) gets this for free from a plain
+method call -- both need an explicit `command=` argument to `create_event()` to opt in.
+
+## Step 10: Rebuild the order with `load_from_history()`
+
+Everything so far has lived in one `OrderAggregate` instance. The payoff of event
+sourcing is that the same history replayed into a *different* instance produces
+identical state. Add this to the bottom of the file:
+
+```python
+history = order.uncommitted_events
+replayed = OrderAggregate(order.aggregate_id)
+replayed.load_from_history(history)
+assert replayed.state == order.state
+assert replayed.version == order.version
+print("replay matches")
+```
+
+`load_from_history()` is unchanged from the base `AggregateRoot` -- it is not part of
+the decider contract at all. It loops over the events you hand it and calls
+`apply_event(event, is_new=False)` for each: version tracking happens, `evolve()` runs
+just as it did live, but nothing is appended to `uncommitted_events` and version
+validation is skipped, so a history starting at any version replays cleanly. The `is_new`
+flag is the only thing that distinguishes "this event is new, queue it for persistence"
+(`execute()`, Step 8) from "this event already happened, just fold it" (`load_from_history()`,
+here).
+
+`replayed` starts from `initial_state(order.aggregate_id)` -- the same blank order
+`order` itself started from -- and folds the identical two events through the identical
+`evolve()`. There is exactly one place that turns events into state on this class, and
+you wrote it once in Step 5; that is why the assertion holds.
+
+## Other styles
+
+`DeciderAggregate` is the style this library recommends and the one its own examples and
+tests lead with, but it is not the only way to write an aggregate, and you will likely
+run into the other two in an existing codebase.
+
+**The imperative style** subclasses `AggregateRoot[TState]` directly and hand-writes an
+`_apply()` method as an `isinstance` chain, with command methods that call
+`create_event()` instead of returning events from a pure function. It has no `decide()`/
+`evolve()` split -- validation and folding both happen inside command methods and
+`_apply()` -- and `self.state` is `None` until the first event lands. See
+`examples/imperative_example.py` for a complete `BankAccountAggregate` built this way.
+
+**The declarative style** subclasses `DeclarativeAggregate[TState]` and replaces the
+`isinstance` chain with one `@handles(EventType)`-decorated method per event type,
+dispatched through a per-subclass registry instead of a hand-written chain. It shares
+the imperative style's command-method-plus-`create_event()` shape, but scales better once
+an aggregate handles half a dozen event types. See `examples/aggregate_example.py` for a
+complete `ShoppingCartAggregate` built this way.
+
+Both styles are still `AggregateRoot` subclasses underneath, so everything you learned
+here about `aggregate_type`, `load_from_history()`, snapshots, and the repository applies
+to them unchanged -- only how state gets mutated differs. For a full comparison,
+including how to move an aggregate from one style to another, read
+[Aggregate Styles](../explanation/aggregate-styles.md).
+
+## Key Takeaways
+
+- `DeciderAggregate[TState]` needs three static methods: `initial_state(aggregate_id)`,
+  `decide(command, state)`, and `evolve(state, event)`. None of them touch `self`.
+- `state` is never `None` on a `DeciderAggregate` -- `initial_state()` runs eagerly in
+  `__init__`, so `decide()` and `evolve()` never need a null check.
+- Commands are `DomainCommand` subclasses: frozen, never persisted, and structurally
+  distinct from events because they might be refused.
+- `decide()` is the only place allowed to raise. Raise `CommandRejectedError` for a
+  refusal; a rejected command leaves the aggregate untouched and nothing is persisted.
+- `evolve()` must be total and side-effect free: no raising, no I/O, no clocks -- just
+  the next state.
+- `execute(command)` runs `decide()`, stamps the resulting events (version, type, and --
+  for `DomainCommand`s -- `causation_id`/`correlation_id`/`actor_id`/`tenant_id`), and
+  folds each one in with `evolve()`.
+- `load_from_history()` is shared by every aggregate style unchanged: replay the events,
+  `is_new=False`, nothing queued for persistence.
+- The imperative (`AggregateRoot` + `_apply()`) and declarative (`DeclarativeAggregate` +
+  `@handles`) styles remain available for existing code and for aggregates that don't fit
+  the decider shape; see [Aggregate Styles](../explanation/aggregate-styles.md).
+
+## Next Steps
+
+With a working aggregate, the next step is testing it properly. Continue to
+[Testing Your Aggregates](08-testing.md), or read ahead to
+[Building Projections](06-projections.md) to see these events drive a read model.

@@ -9,11 +9,11 @@ ship as a class but fully supports: the **decider pattern**, where the entire do
 three pure functions and the aggregate class shrinks to a thin adapter.
 
 This document shows the pattern working against the real `AggregateRepository`
-machinery, names the one integration gotcha, and quantifies what it costs. The verdict
-up front: the decider is behaviorally identical to the imperative style, costs nothing
-measurable on the replay path that dominates aggregate loading, costs about 50% extra
-on the (already microsecond-scale) command path, and buys you domain logic that can be
-unit-tested with plain asserts and no async machinery.
+machinery via the library's `DeciderAggregate`, and quantifies what it costs. The
+verdict up front: the decider is behaviorally identical to the imperative style, costs
+nothing measurable on the replay path that dominates aggregate loading, costs about 50%
+extra on the (already microsecond-scale) command path, and buys you domain logic that
+can be unit-tested with plain asserts and no async machinery.
 
 ## The pattern
 
@@ -84,35 +84,43 @@ error, which is the same silent-skip behavior a hand-written `_apply` has (see
 [Aggregate Styles](aggregate-styles.md) for why `DeclarativeAggregate`'s
 `unregistered_event_handling` exists to tighten that).
 
-## The imperative shell
+## The imperative shell: `DeciderAggregate`
 
 Everything in the library — `AggregateRepository`, snapshotting, the testing harness —
 is written against `AggregateRoot`, so the decider plugs in through a small adapter
-class. This is the classic "functional core, imperative shell" split; the shell is
-about ten lines:
+class. The library ships that adapter as `DeciderAggregate`: subclass it, implement the
+three static methods above, and set `aggregate_type`:
 
 ```python
-class Order(AggregateRoot[OrderState]):
+from eventsource import DeciderAggregate
+
+class Order(DeciderAggregate[OrderState]):
     aggregate_type = "Order"
 
-    def _get_initial_state(self) -> OrderState:
-        return initial_state(self.aggregate_id)
+    @staticmethod
+    def initial_state(aggregate_id: UUID) -> OrderState:
+        return initial_state(aggregate_id)
 
-    @property
-    def decider_state(self) -> OrderState:
-        # AggregateRoot._state is None until the first event; a decider
-        # needs a real initial state to match against before that.
-        return self._state if self._state is not None else initial_state(self.aggregate_id)
+    @staticmethod
+    def decide(command: OrderCommand, state: OrderState) -> list[DomainEvent]:
+        return decide(command, state)
 
-    def _apply(self, event: DomainEvent) -> None:
-        self._state = evolve(self.decider_state, event)
-
-    def execute(self, command: OrderCommand) -> None:
-        for event in decide(command, self.decider_state):
-            self.apply_event(event.with_aggregate_version(self.get_next_version()))
+    @staticmethod
+    def evolve(state: OrderState, event: DomainEvent) -> OrderState:
+        return evolve(state, event)
 ```
 
-Callers issue commands as values instead of calling named methods:
+There is no `_apply`, no `_get_initial_state`, and no hand-rolled `decider_state`
+property to guard against `None`. `DeciderAggregate.__init__` calls
+`initial_state(aggregate_id)` eagerly, so `state` is a real `OrderState` from the
+moment the aggregate is constructed — the very first `PlaceOrder` matches
+`(PlaceOrder(), OrderState(status="draft"))` correctly, with no fallback to remember.
+That fallback was the one genuine integration gotcha of the pattern on this library,
+and `DeciderAggregate` closes it structurally rather than asking every implementer to
+reproduce the guard.
+
+Callers issue commands as values through `execute()`, inherited from
+`DeciderAggregate`:
 
 ```python
 order = repo.create_new(uuid4())
@@ -125,33 +133,7 @@ await repo.save(order)
 
 Wired into the README Quick Start (same store, bus, repository, subscription manager,
 and projection), this produces byte-for-byte identical output to the imperative
-version. Two seams in the shell deserve explanation, because both are consequences of
-keeping the core pure.
-
-**The `decider_state` fallback.** `AggregateRoot._state` is `None` until the first
-event is applied, and nothing in the library ever calls `_get_initial_state()` for you
-— as [Aggregate Styles](aggregate-styles.md) notes, it exists to satisfy the abstract
-contract and it is *your* code that decides whether to invoke it. The imperative style
-dodges the `None` by guarding creation on `self.version > 0` and having the creation
-branch construct state from scratch. A decider cannot dodge it: `decide` needs a real
-`OrderState` to match `status="draft"` against *before* the first event exists. Without
-the fallback, the very first `PlaceOrder` matches `(PlaceOrder(), None)`, falls through
-to the rejection case, and fails with "Order already placed". This is the one genuine
-gotcha of the pattern on this library — if you adopt the shell, keep the fallback.
-
-It also shifts where the creation invariant lives: `version > 0` is an
-infrastructure fact, `status == "draft"` is a domain fact. The decider forces the
-domain phrasing, which is arguably more honest but means your state model must
-actually encode "not yet created" (here, the `"draft"` status).
-
-**Version stamping via `with_aggregate_version`.** Pure functions cannot know the next
-`aggregate_version` — that is optimistic-concurrency bookkeeping, not domain logic. So
-`decide` returns events without a meaningful version, and the shell stamps each one
-with `DomainEvent.with_aggregate_version()` (a `model_copy`) before handing it to
-`apply_event`, which then validates the version as usual. The alternative — passing the
-next version into `decide` — keeps one copy off the hot path but leaks infrastructure
-into the domain signature; measure first (below) before deciding that trade is worth
-it.
+version.
 
 ## What it costs
 
@@ -227,15 +209,89 @@ dispatch.
 Reach for the decider when the transition rules are the complicated part — many
 commands, state-dependent acceptance, rules you want product owners or property-based
 tests to exercise without infrastructure. Stay imperative (or declarative) when the
-aggregate is mostly plumbing with trivial rules; the shell is extra ceremony there, and
-`DeclarativeAggregate`'s creation-event enforcement and unregistered-event modes are
-features the plain shell above does not replicate.
+aggregate is mostly plumbing with trivial rules; the three static methods are extra
+ceremony there, and `DeclarativeAggregate`'s creation-event enforcement and
+unregistered-event modes are features `DeciderAggregate` does not replicate.
 
 The two styles also compose: nothing stops `execute` from living alongside ordinary
-command methods during a migration, because the shell is just an `AggregateRoot`
-subclass and every downstream consumer only sees that contract.
+command methods during a migration, because `DeciderAggregate` is just an
+`AggregateRoot` subclass and every downstream consumer only sees that contract.
 
-There is currently no first-class `Decider` abstraction in the library — the shell
-above is the price of admission. If the pattern sees real use, a `DeciderAggregate`
-helper (constructed from `decide`/`evolve`/`initial_state`, handling the
-initial-state fallback and version stamping centrally) would be the natural next step.
+## Command provenance: `DomainCommand`
+
+`decide()` and `execute()` accept any object as a command — plain pydantic models work
+fine, as in every example above. Subclassing `DomainCommand` instead
+(`eventsource.commands.base`) is opt-in, and it buys the events `decide()` produces
+some free bookkeeping: `DeciderAggregate.execute()` stamps `causation_id` (the
+command's `command_id`), `correlation_id`, `actor_id`, and `tenant_id` onto every event
+it applies, using `isinstance(command, DomainCommand)` to detect that the extra
+provenance is available.
+
+Stamping never overwrites a field `decide()` set explicitly — `execute()` checks
+`event.model_fields_set` per field before assigning, so an event that already carries
+its own `correlation_id` (for example, one built by `caused_by()`) keeps it. Tenant
+resolution falls back in order: the command's `tenant_id`, then the ambient tenant
+context, then untouched. `DomainCommand.caused_by(event)` copies an event's
+`correlation_id` onto a new command, which is how a saga continues an existing
+workflow chain instead of starting a new one — commands deliberately carry no
+`causation_id` of their own; that linkage is by correlation.
+
+Commands are never persisted — a command rejected by raising (conventionally
+`CommandRejectedError`, though any exception works) leaves no trace in the event
+store, and `execute()` runs `decide()` to completion before applying anything, so a
+rejection leaves the aggregate untouched. See
+[ADR-0022](../adrs/0022-command-objects-and-decider-style.md) for the full rationale,
+including why commands have no registry, no serialization, and no command bus.
+
+## How the shell works underneath
+
+`DeciderAggregate` is not magic — it is exactly the adapter you would hand-write, with
+the two gotchas below solved so you don't have to. Understanding what it does makes the
+guarantees above concrete, and this is the shape the pattern had before
+`DeciderAggregate` shipped:
+
+```python
+class Order(AggregateRoot[OrderState]):
+    aggregate_type = "Order"
+
+    def _get_initial_state(self) -> OrderState:
+        return initial_state(self.aggregate_id)
+
+    @property
+    def decider_state(self) -> OrderState:
+        # AggregateRoot._state is None until the first event; a decider
+        # needs a real initial state to match against before that.
+        return self._state if self._state is not None else initial_state(self.aggregate_id)
+
+    def _apply(self, event: DomainEvent) -> None:
+        self._state = evolve(self.decider_state, event)
+
+    def execute(self, command: OrderCommand) -> None:
+        for event in decide(command, self.decider_state):
+            self.apply_event(event.with_aggregate_version(self.get_next_version()))
+```
+
+**The `decider_state` fallback.** `AggregateRoot._state` is `None` until the first
+event is applied, and nothing in the library ever calls `_get_initial_state()` for you
+— as [Aggregate Styles](aggregate-styles.md) notes, it exists to satisfy the abstract
+contract and it is *your* code that decides whether to invoke it. The imperative style
+dodges the `None` by guarding creation on `self.version > 0` and having the creation
+branch construct state from scratch. A decider cannot dodge it: `decide` needs a real
+`OrderState` to match `status="draft"` against *before* the first event exists. Without
+the fallback, the very first `PlaceOrder` matches `(PlaceOrder(), None)`, falls through
+to the rejection case, and fails with "Order already placed". `DeciderAggregate` solves
+this by calling `initial_state()` in `__init__`, so `state` is never `None` in the
+first place.
+
+It also shifts where the creation invariant lives: `version > 0` is an
+infrastructure fact, `status == "draft"` is a domain fact. The decider forces the
+domain phrasing, which is arguably more honest but means your state model must
+actually encode "not yet created" (here, the `"draft"` status).
+
+**Version stamping via `model_copy`.** Pure functions cannot know the next
+`aggregate_version` — that is optimistic-concurrency bookkeeping, not domain logic. So
+`decide` returns events without a meaningful version, and the shell stamps each one
+with a `model_copy` before handing it to `apply_event`, which then validates the
+version as usual. `DeciderAggregate._stamp()` does this centrally (alongside the
+`DomainCommand` provenance fields above), so implementers never write the stamping
+code themselves.

@@ -9,8 +9,9 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from eventsource import DomainEvent, EventRegistry
+from eventsource import CommandRejectedError, DomainCommand, DomainEvent, EventRegistry
 from eventsource.domain.aggregate import DeclarativeAggregate
+from eventsource.domain.decider import DeciderAggregate
 from eventsource.handlers import handles
 
 PAYLOAD_SIZES: dict[str, int] = {"small": 200, "large": 5_000}
@@ -59,6 +60,38 @@ class BenchCounter(DeclarativeAggregate[BenchCounterState]):
             increment=amount,
         )
         self._raise_event(event)
+
+
+class BenchIncrement(DomainCommand):
+    """Command counterpart to ``BenchCounter.increment`` for the decider variant."""
+
+    amount: int = 1
+
+
+class BenchDeciderCounter(DeciderAggregate[BenchCounterState]):
+    """Decider-style counterpart to ``BenchCounter`` for style comparison benchmarks."""
+
+    aggregate_type = BenchCounter.aggregate_type
+
+    @staticmethod
+    def initial_state(aggregate_id: UUID) -> BenchCounterState:
+        return BenchCounterState(counter_id=aggregate_id)
+
+    @staticmethod
+    def decide(command: object, state: BenchCounterState) -> list[DomainEvent]:
+        match command:
+            case BenchIncrement(amount=amount):
+                return [BenchCounterIncremented(aggregate_id=state.counter_id, increment=amount)]
+            case _:
+                raise CommandRejectedError(f"unknown command: {command!r}", command=command)
+
+    @staticmethod
+    def evolve(state: BenchCounterState, event: DomainEvent) -> BenchCounterState:
+        match event:
+            case BenchCounterIncremented(increment=increment):
+                return state.model_copy(update={"value": state.value + increment})
+            case _:
+                return state
 
 
 def make_events(
