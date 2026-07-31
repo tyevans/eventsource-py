@@ -1,6 +1,7 @@
 """Tests for store port protocols (atomic and composite) and the collect helper."""
 
 import pytest
+from typing_extensions import get_protocol_members
 
 from eventsource.ports import collect
 from eventsource.ports.store import (
@@ -47,7 +48,7 @@ class TestAggregateStorePort:
         assert StreamReader in bases
 
     def test_does_not_require_feed_or_lookup_or_category(self) -> None:
-        members = set(AggregateStore.__protocol_attrs__)
+        members = set(get_protocol_members(AggregateStore))
         assert members == {
             "append",
             "max_append_batch",

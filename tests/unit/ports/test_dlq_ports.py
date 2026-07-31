@@ -6,6 +6,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
+from typing_extensions import get_protocol_members
 
 from eventsource.ports.dlq import (
     DLQEntry,
@@ -122,7 +123,7 @@ class TestDLQRepositoryProtocol:
         assert isinstance(DLQRepositoryStub(), DLQRepository)
 
     def test_dlq_repository_protocol_has_no_alias_methods(self) -> None:
-        members = set(DLQRepository.__protocol_attrs__)
+        members = set(get_protocol_members(DLQRepository))
         assert "list_failed_events" not in members
         assert "get_failed_event" not in members
         assert "get_failed_events" in members
