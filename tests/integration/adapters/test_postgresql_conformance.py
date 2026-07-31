@@ -144,6 +144,55 @@ class TestPostgreSQLSnapshotStore(SnapshotConformance):
         await engine.dispose()
 
 
+# `get_schema("checkpoints"/"dlq", "postgresql")` -- unlike "events" and
+# "snapshots" -- ships PL/pgSQL helper functions (dollar-quoted bodies with
+# `GET DIAGNOSTICS`) alongside the DDL. Neither `SQLCheckpointRepository`
+# nor `SQLDLQRepository` calls those functions (both issue plain
+# parameterized SQL from Python), but asyncpg's raw-connection `execute()` --
+# the simple query protocol used elsewhere in this module to run
+# `events.sql`/`snapshots.sql` as one script -- mis-splits the dollar-quoted
+# bodies and fails with `PostgresSyntaxError: unrecognized GET DIAGNOSTICS
+# item`. So these two tables are provisioned as bare DDL, one statement at a
+# time via `text()`, mirroring `tests/integration/conftest.py`'s
+# `CHECKPOINTS_SCHEMA_STATEMENTS`/`DLQ_SCHEMA_STATEMENTS`.
+_CHECKPOINTS_DDL = [
+    """
+    CREATE TABLE IF NOT EXISTS projection_checkpoints (
+        projection_name VARCHAR(255) PRIMARY KEY,
+        last_event_id UUID,
+        last_event_type VARCHAR(255),
+        last_processed_at TIMESTAMPTZ,
+        events_processed BIGINT NOT NULL DEFAULT 0,
+        global_position BIGINT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+]
+
+_DLQ_DDL = [
+    """
+    CREATE TABLE IF NOT EXISTS dead_letter_queue (
+        id BIGSERIAL PRIMARY KEY,
+        event_id UUID NOT NULL,
+        projection_name VARCHAR(255) NOT NULL,
+        event_type VARCHAR(255) NOT NULL,
+        event_data JSONB NOT NULL,
+        error_message TEXT NOT NULL,
+        error_stacktrace TEXT,
+        retry_count INTEGER NOT NULL DEFAULT 0,
+        first_failed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        last_failed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        status VARCHAR(20) NOT NULL DEFAULT 'failed',
+        resolved_at TIMESTAMPTZ,
+        resolved_by VARCHAR(255),
+        CONSTRAINT chk_dlq_status_ports CHECK (status IN ('failed', 'retrying', 'resolved')),
+        CONSTRAINT uq_dlq_event_projection_ports UNIQUE (event_id, projection_name)
+    )
+    """,
+]
+
+
 class TestPostgreSQLCheckpointRepository(CheckpointRepositoryConformance):
     @pytest.fixture
     async def store(
@@ -153,10 +202,11 @@ class TestPostgreSQLCheckpointRepository(CheckpointRepositoryConformance):
         async with engine.begin() as conn:
             await conn.execute(text("DROP TABLE IF EXISTS projection_checkpoints CASCADE"))
             await conn.execute(text("DROP TABLE IF EXISTS events CASCADE"))
+            for statement in _CHECKPOINTS_DDL:
+                await conn.execute(text(statement))
             raw = await conn.get_raw_connection()
             driver_connection = raw.driver_connection
             assert driver_connection is not None
-            await driver_connection.execute(get_schema("checkpoints", "postgresql"))
             await driver_connection.execute(get_schema("events", "postgresql"))
         yield SQLCheckpointRepository(engine)
         await engine.dispose()
@@ -168,10 +218,8 @@ class TestPostgreSQLDLQRepository(DLQRepositoryConformance):
         engine = create_async_engine(ports_postgres_connection_url)
         async with engine.begin() as conn:
             await conn.execute(text("DROP TABLE IF EXISTS dead_letter_queue CASCADE"))
-            raw = await conn.get_raw_connection()
-            driver_connection = raw.driver_connection
-            assert driver_connection is not None
-            await driver_connection.execute(get_schema("dlq", "postgresql"))
+            for statement in _DLQ_DDL:
+                await conn.execute(text(statement))
         yield SQLDLQRepository(engine)
         await engine.dispose()
 
