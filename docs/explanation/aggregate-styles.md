@@ -1,7 +1,7 @@
 # Aggregate Styles: AggregateRoot vs DeclarativeAggregate
 
 `eventsource` gives you two ways to write an aggregate, and the examples in this
-repository use one of each. `BankAccountAggregate` in `examples/basic_usage.py`
+repository use one of each. `BankAccountAggregate` in `examples/imperative_example.py`
 subclasses `AggregateRoot[BankAccountState]` and hand-writes an `_apply` method built
 from `isinstance` branches. `ShoppingCartAggregate` in `examples/aggregate_example.py`
 subclasses `DeclarativeAggregate[ShoppingCartState]` and decorates one method per event
@@ -159,7 +159,7 @@ decorator, and no machinery between an event arriving and your code deciding wha
 means. `apply_event()` hands the event to `_apply(event)` and whatever that method does
 is the whole of the aggregate's state-mutation behaviour.
 
-### What the code looks like (BankAccount, examples/basic_usage.py)
+### What the code looks like (BankAccount, examples/imperative_example.py)
 
 `BankAccountAggregate` is the minimal shape of the style. It declares
 `aggregate_type = "BankAccount"`, implements `_get_initial_state()` to return a

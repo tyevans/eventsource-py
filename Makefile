@@ -73,6 +73,7 @@ audit:  ## pip-audit dependency vulnerability scan
 
 test:  ## Unit suite with coverage (enforces the fail_under ratchet)
 	uv run pytest -m "$(UNIT_MARKERS)" \
+		-n auto --dist worksteal \
 		--cov=src/eventsource --cov-report=term-missing
 
 # Stamp file recording the last green `make test` run. `test-changed` only

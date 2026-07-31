@@ -193,6 +193,7 @@ dev = [
     "pytest-randomly>=3.15",
     "pytest-timeout>=2.3",
     "pip-audit>=2.7",
+    "pytest-xdist>=3.5",
 ]
 
 [tool.mutmut]
@@ -260,6 +261,8 @@ source_modules = [
     "eventsource.events.base",
     "eventsource.events.registry",
     "eventsource.domain.aggregate",
+    "eventsource.domain.decider",
+    "eventsource.commands",
     "eventsource.protocols",
     "eventsource.stores.interface",
     "eventsource.bus.interface",

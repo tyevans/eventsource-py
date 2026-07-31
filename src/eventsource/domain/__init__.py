@@ -5,6 +5,13 @@ count as this ring until sub-project 3 moves them.
 """
 
 from eventsource.domain.aggregate import AggregateRoot, DeclarativeAggregate
+from eventsource.domain.decider import DeciderAggregate
 from eventsource.domain.stream_id import CATEGORY_PATTERN, StreamId
 
-__all__ = ["CATEGORY_PATTERN", "AggregateRoot", "DeclarativeAggregate", "StreamId"]
+__all__ = [
+    "CATEGORY_PATTERN",
+    "AggregateRoot",
+    "DeciderAggregate",
+    "DeclarativeAggregate",
+    "StreamId",
+]

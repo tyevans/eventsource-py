@@ -79,8 +79,12 @@ from eventsource.bus.redis import (
 )
 from eventsource.bus.registry import SubscriptionRegistry
 from eventsource.bus.retry import RetryPolicy
+
+# Commands (Task 05 - decider feature)
+from eventsource.commands import DomainCommand
 from eventsource.domain import StreamId
 from eventsource.domain.aggregate import AggregateRoot, DeclarativeAggregate
+from eventsource.domain.decider import DeciderAggregate
 
 # Shared async engine factory
 from eventsource.engine import create_async_engine
@@ -103,6 +107,7 @@ from eventsource.events.registry import (
 from eventsource.exceptions import (
     AggregateNotCreatedError,
     AggregateNotFoundError,
+    CommandRejectedError,
     DuplicateEventError,
     EventNotFoundError,
     EventSourceError,
@@ -249,6 +254,8 @@ __all__ = [
     "create_async_engine",
     # Events (Task 02)
     "DomainEvent",
+    # Commands (Task 05 - decider feature)
+    "DomainCommand",
     # Event Registry (Task 03)
     "EventRegistry",
     "default_registry",
@@ -275,6 +282,7 @@ __all__ = [
     "AggregateRoot",
     "AggregateRepository",
     "DeclarativeAggregate",
+    "DeciderAggregate",
     "handles",
     # Event Bus (Task 10)
     "EventBus",
@@ -312,6 +320,7 @@ __all__ = [
     # Exceptions
     "AggregateNotCreatedError",
     "AggregateNotFoundError",
+    "CommandRejectedError",
     "EventNotFoundError",
     "EventSourceError",
     "EventVersionError",
