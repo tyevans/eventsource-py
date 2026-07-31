@@ -13,6 +13,7 @@ schema (`tenant_id UUID`) while the legacy fixtures provision `tenant_id
 VARCHAR(255)`.
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 from uuid import uuid4
 
@@ -58,6 +59,7 @@ from eventsource.testing.conformance_ports import (  # noqa: E402
     SnapshotConformance,
     StreamReaderConformance,
 )
+from eventsource.testing.conformance_ports._fixtures import make_event, make_stream  # noqa: E402
 
 
 async def _fresh_store(connection_url: str) -> PostgreSQLEventStore:
@@ -262,6 +264,93 @@ class TestPostgreSQLDLQRepository(DLQRepositoryConformance):
 
         assert deleted == 1
         assert await store.get_failed_event_by_id(entry.id) is None
+
+
+class TestPostgreSQLConcurrency:
+    """Real-transaction concurrency coverage ported from the retired legacy
+    `tests/integration/stores/test_postgresql.py` suite -- not exercised by
+    the port conformance suites above, which append sequentially. These
+    exercise genuine concurrent `asyncio.gather` writers against a live
+    PostgreSQL server, so they stay integration tests rather than folding
+    into the abstract conformance classes.
+    """
+
+    @pytest.fixture
+    async def store(
+        self, ports_postgres_connection_url: str
+    ) -> AsyncIterator[PostgreSQLEventStore]:
+        store = await _fresh_store(ports_postgres_connection_url)
+        yield store
+        await store.close()
+
+    async def test_concurrent_appends_to_different_streams_all_succeed(
+        self, store: PostgreSQLEventStore
+    ) -> None:
+        from eventsource.ports import ExpectedVersion
+
+        streams = [make_stream() for _ in range(5)]
+
+        async def append_one(s: object) -> None:
+            await store.append(s, [make_event(s.aggregate_id)], ExpectedVersion.no_stream())
+
+        await asyncio.gather(*[append_one(s) for s in streams])
+
+        for s in streams:
+            assert await store.get_stream_version(s) == 1
+
+    async def test_concurrent_appends_to_same_stream_only_one_succeeds(
+        self, store: PostgreSQLEventStore
+    ) -> None:
+        from eventsource.exceptions import OptimisticLockError
+        from eventsource.ports import ExpectedVersion
+
+        stream = make_stream()
+
+        async def append_at_zero() -> bool:
+            try:
+                await store.append(
+                    stream, [make_event(stream.aggregate_id)], ExpectedVersion.exact(0)
+                )
+                return True
+            except OptimisticLockError:
+                return False
+
+        results = await asyncio.gather(
+            *[append_at_zero() for _ in range(5)], return_exceptions=True
+        )
+
+        successes = sum(1 for r in results if r is True)
+        conflicts = sum(1 for r in results if r is False)
+        assert successes == 1
+        assert conflicts == 4
+
+
+class TestPostgreSQLLargePayloads:
+    """Large-metadata round trip, ported from the retired legacy suite --
+    exercises JSONB payload handling at a size the generic conformance
+    round-trip tests don't specifically stress."""
+
+    @pytest.fixture
+    async def store(
+        self, ports_postgres_connection_url: str
+    ) -> AsyncIterator[PostgreSQLEventStore]:
+        store = await _fresh_store(ports_postgres_connection_url)
+        yield store
+        await store.close()
+
+    async def test_large_metadata_round_trips(self, store: PostgreSQLEventStore) -> None:
+        from eventsource.ports import ExpectedVersion
+
+        stream = make_stream()
+        large_metadata = {f"key_{i}": f"value_{i}" * 100 for i in range(100)}
+        event = make_event(stream.aggregate_id).with_metadata(**large_metadata)
+
+        result = await store.append(stream, [event], ExpectedVersion.no_stream())
+        assert result.new_version == 1
+
+        envelopes = [e async for e in store.read_stream(stream)]
+        assert len(envelopes) == 1
+        assert envelopes[0].event.metadata == large_metadata
 
 
 async def test_store_id_stable_across_restarts(ports_postgres_connection_url: str) -> None:
