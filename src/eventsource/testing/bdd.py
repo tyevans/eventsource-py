@@ -42,10 +42,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from typing import Any, TypeVar
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from eventsource.aggregates.base import AggregateRoot
 from eventsource.events.base import DomainEvent
+from eventsource.exceptions import CommandRejectedError
 from eventsource.testing.harness import InMemoryTestHarness
 
 # Type variables for generic command/event handling
@@ -360,6 +361,105 @@ def then_event_count(
         )
 
 
+class DeciderScenario:
+    """
+    Synchronous given/when/then harness for decider-style domains.
+
+    Works with a DeciderAggregate subclass or the three functions directly.
+    No store, no event loop, no fixtures: ``given`` folds events through
+    ``evolve`` from ``initial_state``, ``when`` runs ``decide`` capturing
+    events or the raised exception, ``then_*`` assert.
+
+    Example:
+        >>> (DeciderScenario(OrderAggregate)
+        ...     .given(OrderCreated(aggregate_id=oid, aggregate_version=1, ...))
+        ...     .when(ShipOrder(tracking_number="T"))
+        ...     .then_events(OrderShipped))
+    """
+
+    def __init__(
+        self,
+        aggregate_class: type[Any] | None = None,
+        *,
+        decide: Callable[[Any, Any], list[DomainEvent]] | None = None,
+        evolve: Callable[[Any, DomainEvent], Any] | None = None,
+        initial_state: Callable[[UUID], Any] | None = None,
+        aggregate_id: UUID | None = None,
+    ) -> None:
+        if aggregate_class is not None:
+            decide = aggregate_class.decide
+            evolve = aggregate_class.evolve
+            initial_state = aggregate_class.initial_state
+        if decide is None or evolve is None or initial_state is None:
+            raise TypeError(
+                "DeciderScenario needs an aggregate class or all of "
+                "decide=, evolve=, initial_state="
+            )
+        self._decide = decide
+        self._evolve = evolve
+        self._aggregate_id = aggregate_id if aggregate_id is not None else uuid4()
+        self._state = initial_state(self._aggregate_id)
+        self._events: list[DomainEvent] | None = None
+        self._error: BaseException | None = None
+
+    @property
+    def events(self) -> list[DomainEvent]:
+        """Events produced by when(); empty before when() or on rejection."""
+        return list(self._events) if self._events is not None else []
+
+    def given(self, *events: DomainEvent) -> DeciderScenario:
+        """Fold prior events into state via evolve."""
+        for event in events:
+            self._state = self._evolve(self._state, event)
+        return self
+
+    def when(self, command: object) -> DeciderScenario:
+        """Run decide, capturing produced events or the raised exception."""
+        try:
+            self._events = list(self._decide(command, self._state))
+        except Exception as exc:  # noqa: BLE001 - the exception IS the result
+            self._error = exc
+        return self
+
+    def then_events(self, *event_types: type[DomainEvent]) -> DeciderScenario:
+        """Assert the command produced exactly these event types, in order."""
+        assert self._events is not None or self._error is not None, (
+            "call when() before then_events()"
+        )
+        if self._error is not None:
+            raise AssertionError(
+                f"expected events {[t.__name__ for t in event_types]} but the "
+                f"command was rejected: {self._error!r}"
+            )
+        assert self._events is not None
+        actual = [type(e).__name__ for e in self._events]
+        expected = [t.__name__ for t in event_types]
+        assert actual == expected, f"expected events {expected}, got {actual}"
+        return self
+
+    def then_rejected(
+        self,
+        exc_type: type[BaseException] = CommandRejectedError,
+        match: str | None = None,
+    ) -> DeciderScenario:
+        """Assert the command was rejected with exc_type (default CommandRejectedError)."""
+        assert self._events is not None or self._error is not None, (
+            "call when() before then_rejected()"
+        )
+        if self._error is None:
+            raise AssertionError(f"expected rejection but command produced {self.events!r}")
+        assert isinstance(self._error, exc_type), (
+            f"expected {exc_type.__name__}, got {type(self._error).__name__}: {self._error}"
+        )
+        if match is not None:
+            import re
+
+            assert re.search(match, str(self._error)), (
+                f"rejection message {str(self._error)!r} does not match {match!r}"
+            )
+        return self
+
+
 __all__ = [
     "given_events",
     "when_command",
@@ -367,4 +467,5 @@ __all__ = [
     "then_no_events_published",
     "then_event_sequence",
     "then_event_count",
+    "DeciderScenario",
 ]
