@@ -19,10 +19,8 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.repositories.checkpoint import (
-    CheckpointData,
-    InMemoryCheckpointRepository,
-)
+from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
+from eventsource.ports.checkpoints import CheckpointData
 
 
 class TestInMemoryCheckpointRepositoryPosition:
@@ -272,7 +270,7 @@ class TestInMemoryCheckpointRepositoryPositionConcurrency:
 try:
     import aiosqlite
 
-    from eventsource.repositories.checkpoint import SQLCheckpointRepository
+    from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository
 
     AIOSQLITE_AVAILABLE = True
 except ImportError:

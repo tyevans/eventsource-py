@@ -14,12 +14,8 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import text
 
-from eventsource.repositories.checkpoint import (
-    CheckpointData,
-    CheckpointRepository,
-    InMemoryCheckpointRepository,
-    LagMetrics,
-)
+from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
+from eventsource.ports.checkpoints import CheckpointData, CheckpointRepository, LagMetrics
 
 
 class TestInMemoryCheckpointRepository:
@@ -366,7 +362,7 @@ class TestSQLCheckpointRepository:
         await engine.dispose()
 
     async def test_update_and_get_checkpoint(self, sqlite_engine):
-        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+        from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository
 
         repo = SQLCheckpointRepository(sqlite_engine)
         event_id = uuid4()
@@ -379,7 +375,7 @@ class TestSQLCheckpointRepository:
         This is the regression test for the old SQLiteCheckpointRepository,
         which called connection.commit() inside update_checkpoint.
         """
-        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+        from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository
 
         conn = await sqlite_engine.connect()
         try:
@@ -394,14 +390,14 @@ class TestSQLCheckpointRepository:
         assert await repo.get_checkpoint("Proj") is None
 
     async def test_save_and_get_position(self, sqlite_engine):
-        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+        from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository
 
         repo = SQLCheckpointRepository(sqlite_engine)
         await repo.save_position("sub-1", 42, uuid4(), "Created")
         assert await repo.get_position("sub-1") == 42
 
     async def test_update_checkpoint_increments_count(self, sqlite_engine):
-        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+        from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository
 
         repo = SQLCheckpointRepository(sqlite_engine)
         projection_name = "TestProjection"
@@ -414,7 +410,7 @@ class TestSQLCheckpointRepository:
         assert checkpoints[0].events_processed == 3
 
     async def test_update_checkpoint_overwrites_previous(self, sqlite_engine):
-        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+        from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository
 
         repo = SQLCheckpointRepository(sqlite_engine)
         projection_name = "TestProjection"
@@ -427,7 +423,7 @@ class TestSQLCheckpointRepository:
         assert await repo.get_checkpoint(projection_name) == second_event_id
 
     async def test_multiple_projections_independent(self, sqlite_engine):
-        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+        from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository
 
         repo = SQLCheckpointRepository(sqlite_engine)
         proj1, proj2 = "Projection1", "Projection2"
@@ -440,7 +436,7 @@ class TestSQLCheckpointRepository:
         assert await repo.get_checkpoint(proj2) == event_id_2
 
     async def test_get_lag_metrics_returns_none_when_no_checkpoint(self, sqlite_engine):
-        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+        from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository
 
         repo = SQLCheckpointRepository(sqlite_engine)
         result = await repo.get_lag_metrics("NonExistent")
@@ -452,7 +448,7 @@ class TestSQLCheckpointRepository:
         from datetime import UTC
         from datetime import datetime as dt
 
-        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+        from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository
 
         repo = SQLCheckpointRepository(sqlite_engine)
         projection_name = "TestProjection"
@@ -496,7 +492,7 @@ class TestSQLCheckpointRepository:
         from datetime import UTC, timedelta
         from datetime import datetime as dt
 
-        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+        from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository
 
         repo = SQLCheckpointRepository(sqlite_engine)
         projection_name = "TestProjection"
@@ -532,7 +528,7 @@ class TestSQLCheckpointRepository:
         assert result.lag_seconds == 0.0
 
     async def test_get_lag_metrics_returns_data_for_existing_checkpoint(self, sqlite_engine):
-        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+        from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository
 
         repo = SQLCheckpointRepository(sqlite_engine)
         projection_name = "TestProjection"
@@ -548,7 +544,7 @@ class TestSQLCheckpointRepository:
         assert result.events_processed == 1
 
     async def test_reset_checkpoint_removes_checkpoint(self, sqlite_engine):
-        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+        from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository
 
         repo = SQLCheckpointRepository(sqlite_engine)
         projection_name = "TestProjection"
@@ -561,7 +557,7 @@ class TestSQLCheckpointRepository:
         assert await repo.get_checkpoint(projection_name) is None
 
     async def test_reset_checkpoint_does_not_affect_others(self, sqlite_engine):
-        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+        from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository
 
         repo = SQLCheckpointRepository(sqlite_engine)
         proj1, proj2 = "Projection1", "Projection2"
@@ -576,20 +572,20 @@ class TestSQLCheckpointRepository:
         assert await repo.get_checkpoint(proj2) == event_id_2
 
     async def test_reset_nonexistent_checkpoint_no_error(self, sqlite_engine):
-        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+        from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository
 
         repo = SQLCheckpointRepository(sqlite_engine)
         await repo.reset_checkpoint("NonExistent")  # Should not raise
 
     async def test_get_all_checkpoints_empty(self, sqlite_engine):
-        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+        from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository
 
         repo = SQLCheckpointRepository(sqlite_engine)
         result = await repo.get_all_checkpoints()
         assert result == []
 
     async def test_get_all_checkpoints_returns_all(self, sqlite_engine):
-        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+        from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository
 
         repo = SQLCheckpointRepository(sqlite_engine)
         projections = ["Zebra", "Apple", "Middle"]
@@ -601,7 +597,7 @@ class TestSQLCheckpointRepository:
         assert [c.projection_name for c in result] == ["Apple", "Middle", "Zebra"]
 
     async def test_checkpoint_data_structure(self, sqlite_engine):
-        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+        from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository
 
         repo = SQLCheckpointRepository(sqlite_engine)
         projection_name = "TestProjection"
@@ -622,7 +618,7 @@ class TestSQLCheckpointRepository:
         assert checkpoint.last_processed_at is not None
 
     async def test_lag_metrics_has_timestamp_info(self, sqlite_engine):
-        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+        from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository
 
         repo = SQLCheckpointRepository(sqlite_engine)
         projection_name = "TestProjection"
@@ -640,7 +636,7 @@ class TestSQLCheckpointRepository:
         from datetime import UTC
         from datetime import datetime as dt
 
-        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+        from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository
 
         repo = SQLCheckpointRepository(sqlite_engine)
         projection_name = "TestProjection"
@@ -688,7 +684,7 @@ class TestSQLCheckpointRepository:
         from datetime import UTC
         from datetime import datetime as dt
 
-        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+        from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository
 
         repo = SQLCheckpointRepository(sqlite_engine)
         projection_name = "TestProjection"
@@ -726,7 +722,7 @@ class TestSQLCheckpointRepository:
         from datetime import UTC
         from datetime import datetime as dt
 
-        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+        from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository
 
         repo = SQLCheckpointRepository(sqlite_engine)
         projection_name = "TestProjection"
@@ -765,7 +761,7 @@ class TestSQLCheckpointRepository:
         from datetime import UTC
         from datetime import datetime as dt
 
-        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+        from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository
 
         repo = SQLCheckpointRepository(sqlite_engine)
         projection_name = "TestProjection"
@@ -818,7 +814,7 @@ class TestSQLCheckpointRepository:
         from datetime import UTC, timedelta
         from datetime import datetime as dt
 
-        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+        from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository
 
         repo = SQLCheckpointRepository(sqlite_engine)
         projection_name = "TestProjection"
@@ -867,7 +863,7 @@ class TestSQLCheckpointRepository:
         from datetime import UTC, timedelta
         from datetime import datetime as dt
 
-        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+        from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository
 
         repo = SQLCheckpointRepository(sqlite_engine)
         projection_name = "TestProjection"
@@ -907,7 +903,7 @@ class TestSQLCheckpointRepository:
         filter, so `latest_event_time` is None and `raw_lag` never gets
         computed from a timestamp diff -- it must fall back to its default
         of 0.0, not some other sentinel."""
-        from eventsource.repositories.checkpoint import SQLCheckpointRepository
+        from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository
 
         repo = SQLCheckpointRepository(sqlite_engine)
         projection_name = "TestProjection"
@@ -924,9 +920,9 @@ class TestSQLCheckpointRepositoryProtocol:
     """Tests to verify SQLCheckpointRepository implements the protocol."""
 
     async def test_implements_protocol(self, tmp_path):
+        from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository
         from eventsource.engine import create_async_engine
         from eventsource.migrations import get_schema
-        from eventsource.repositories.checkpoint import SQLCheckpointRepository
 
         engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/cp2.db")
         async with engine.begin() as conn:

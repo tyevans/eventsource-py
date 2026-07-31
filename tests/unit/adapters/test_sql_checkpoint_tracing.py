@@ -15,14 +15,12 @@ from uuid import uuid4
 
 import pytest
 
+from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
 from eventsource.observability import (
     ATTR_EVENT_TYPE,
     ATTR_PROJECTION_NAME,
 )
 from eventsource.observability.tracer import MockTracer, NullTracer
-from eventsource.repositories.checkpoint import (
-    InMemoryCheckpointRepository,
-)
 
 # ============================================================================
 # Tracer Protocol Integration Tests - InMemoryCheckpointRepository
@@ -289,7 +287,7 @@ class TestInMemoryCheckpointRepositoryTracingDisabled:
 try:
     import aiosqlite
 
-    from eventsource.repositories.checkpoint import SQLCheckpointRepository
+    from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository
 
     AIOSQLITE_AVAILABLE = True
 except ImportError:

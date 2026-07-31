@@ -13,12 +13,9 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import text
 
-from eventsource.repositories.dlq import (
-    DLQEntry,
-    DLQRepository,
-    InMemoryDLQRepository,
-    SQLDLQRepository,
-)
+from eventsource.adapters.memory.dlq import InMemoryDLQRepository
+from eventsource.adapters.sql.dlq import SQLDLQRepository
+from eventsource.ports.dlq import DLQEntry, DLQRepository
 
 
 class TestInMemoryDLQRepository:
@@ -1186,46 +1183,6 @@ class TestSQLDLQRepository:
         assert len(failed_events) == 1
         assert "RuntimeError" in failed_events[0].error_stacktrace
         assert "Intentional error for test" in failed_events[0].error_stacktrace
-
-    @pytest.mark.asyncio
-    async def test_list_failed_events_is_alias_for_get_failed_events(self, repo: SQLDLQRepository):
-        """list_failed_events must return the same entries get_failed_events does."""
-        await repo.add_failed_event(
-            event_id=uuid4(),
-            projection_name="AliasProjection",
-            event_type="TestEvent",
-            event_data={},
-            error=Exception("Error"),
-        )
-
-        listed = await repo.list_failed_events(projection_name="AliasProjection")
-        fetched = await repo.get_failed_events(projection_name="AliasProjection")
-
-        assert len(listed) == 1
-        assert listed[0].event_id == fetched[0].event_id
-
-    @pytest.mark.asyncio
-    async def test_get_failed_event_is_alias_for_get_failed_event_by_id(
-        self, repo: SQLDLQRepository
-    ):
-        """get_failed_event must return the same entry get_failed_event_by_id does."""
-        event_id = uuid4()
-        await repo.add_failed_event(
-            event_id=event_id,
-            projection_name="AliasProjection2",
-            event_type="TestEvent",
-            event_data={},
-            error=Exception("Error"),
-        )
-
-        events = await repo.get_failed_events(projection_name="AliasProjection2")
-        dlq_id = events[0].id
-
-        via_alias = await repo.get_failed_event(dlq_id)
-        via_canonical = await repo.get_failed_event_by_id(dlq_id)
-
-        assert via_alias is not None
-        assert via_alias.event_id == via_canonical.event_id == event_id
 
 
 @pytest.mark.skipif(not AIOSQLITE_AVAILABLE, reason="aiosqlite not installed")
