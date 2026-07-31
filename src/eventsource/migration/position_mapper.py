@@ -22,21 +22,22 @@ Mapping Strategy:
 Usage:
     >>> from eventsource.migration import PositionMapper
     >>> from eventsource.migration.repositories import PostgreSQLPositionMappingRepository
+    >>> from eventsource.ports import Position
     >>>
     >>> mapper = PositionMapper(position_mapping_repo)
     >>>
     >>> # Record mapping during copy
     >>> await mapper.record_mapping(
     ...     migration_id=migration.id,
-    ...     source_position=1000,
-    ...     target_position=500,
+    ...     source_position=Position(store_id="source", key=(1000,)),
+    ...     target_position=Position(store_id="target", key=(500,)),
     ...     event_id=event.id,
     ... )
     >>>
     >>> # Translate position for subscription
     >>> result = await mapper.translate_position(
     ...     migration_id=migration.id,
-    ...     source_position=1050,
+    ...     source_position=Position(store_id="source", key=(1050,)),
     ... )
     >>> print(f"Target position: {result.target_position}")
 

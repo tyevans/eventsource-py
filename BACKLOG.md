@@ -265,7 +265,9 @@ the outbox slice they import `eventsource.adapters._sql.connection` directly —
 accepted debt with no import-linter contract covering it (spec §2.3 of the
 outbox ring design). Relocate them under `adapters/` (or split port protocols
 out first), then add the missing contract so the application ring can't name
-adapters. Campaign residue item (2026-07-31).
+adapters. Campaign residue item (2026-07-31). The same work should add a
+general import-linter `layers` contract pinning the ring order (ports must
+not import application/adapters), which no current contract enforces.
 
 ## Relocate subscriptions/ into the application ring (P2)
 
@@ -293,3 +295,22 @@ folding it into `testing/conformance.py`'s namespace or documenting the split;
 adapters stop importing `observability/` internals directly; (c) consolidate
 `protocols.py`'s remaining ABCs/Protocols with their ring homes (several now
 duplicate `ports/` definitions in spirit) with deprecation re-exports.
+
+## Cutover can switch routing with up to cutover_max_lag_events missing (P2)
+
+`cutover_max_lag_events` defaults to 100 (migration/models.py:391); cutover.py:321
+allows cutover to succeed with up to that many source events absent from the
+target — a real loss window at routing switch, caught only by the non-fatal
+post-cutover consistency check. This undercuts dual_write.py's documented
+"stuck-until-recopied, never cutover over missing data" stance. Decide: default
+to 0 (strict), or document the loss window prominently in the live-migration
+guide. Pre-existing default, not a campaign regression; needs its own small
+spec. Surfaced by the whole-campaign final review (2026-07-31).
+
+## given_events supports one aggregate per scenario (P3)
+
+The testing harness's `given_events` seeds a single aggregate stream per
+scenario; multi-aggregate scenarios need manual store setup. Behavior is
+documented in docs/tutorials/08-testing.md (~line 323); this entry exists so
+the limitation is tracked as improvable, closing a ledger note from the
+aggregates slice (2026-07-31).
