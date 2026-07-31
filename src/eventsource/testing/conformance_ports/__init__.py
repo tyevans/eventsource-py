@@ -7,6 +7,12 @@ contract. Suites are sqlalchemy-free: they import only from
 `eventsource.ports`, `eventsource.domain`, `eventsource.events`,
 `eventsource.exceptions`, and pytest/stdlib.
 
+Suites: `AppenderConformance`, `StreamReaderConformance`,
+`EventLookupConformance`, `GlobalFeedConformance`, `CategoryQueryConformance`,
+`SnapshotConformance`, `ProjectionCheckpointsConformance`,
+`SubscriptionPositionsConformance`, `CheckpointRepositoryConformance`,
+`DLQRepositoryConformance`, `OutboxRepositoryConformance`.
+
 This package sits beside the legacy `eventsource.testing.conformance`
 module and will replace it once all adapters migrate to the port suites.
 """
@@ -21,6 +27,7 @@ from eventsource.testing.conformance_ports.checkpoints import (
 from eventsource.testing.conformance_ports.dlq import DLQRepositoryConformance
 from eventsource.testing.conformance_ports.event_lookup import EventLookupConformance
 from eventsource.testing.conformance_ports.feed import GlobalFeedConformance
+from eventsource.testing.conformance_ports.outbox import OutboxRepositoryConformance
 from eventsource.testing.conformance_ports.snapshots import SnapshotConformance
 from eventsource.testing.conformance_ports.stream_reader import StreamReaderConformance
 
@@ -35,4 +42,5 @@ __all__ = [
     "SubscriptionPositionsConformance",
     "CheckpointRepositoryConformance",
     "DLQRepositoryConformance",
+    "OutboxRepositoryConformance",
 ]

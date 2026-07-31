@@ -37,6 +37,7 @@ def _make_registry():
 from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository  # noqa: E402
 from eventsource.adapters.sql.dlq import SQLDLQRepository  # noqa: E402
 from eventsource.adapters.sqlite import SQLiteEventStore, SQLiteSnapshotStore  # noqa: E402
+from eventsource.adapters.sqlite.outbox import SQLiteOutboxRepository  # noqa: E402
 from eventsource.engine import create_async_engine  # noqa: E402
 from eventsource.migrations import get_schema  # noqa: E402
 from eventsource.ports import ExpectedVersion  # noqa: E402
@@ -47,6 +48,7 @@ from eventsource.testing.conformance_ports import (  # noqa: E402
     DLQRepositoryConformance,
     EventLookupConformance,
     GlobalFeedConformance,
+    OutboxRepositoryConformance,
     SnapshotConformance,
     StreamReaderConformance,
 )
@@ -171,6 +173,50 @@ class TestSQLiteDLQRepository(DLQRepositoryConformance):
 
         assert deleted == 1
         assert await store.get_failed_event_by_id(entry.id) is None
+
+
+@pytest.mark.xfail(
+    reason=(
+        "Adapter/schema divergence found by the outbox conformance suite, not "
+        "fixed here (see task-4-report.md): the shipped SQLite migration "
+        "(migrations/templates/sqlite/outbox.sql) declares "
+        "`id INTEGER PRIMARY KEY AUTOINCREMENT`, but SQLiteOutboxRepository.add_event "
+        "inserts a `str(uuid4())` into that column, which SQLite's strict INTEGER "
+        "PRIMARY KEY typing rejects with `sqlite3.IntegrityError: datatype mismatch` "
+        "on every call against the real schema. The existing `sqlite_outbox_repo` "
+        "fixture in tests/conftest.py masks this by hand-rolling a divergent "
+        "`id TEXT PRIMARY KEY` schema instead of using `get_schema()`. Deciding "
+        "whether the adapter or the migration schema is wrong is not this task's call. "
+        "Not strict: `test_unknown_outbox_id_is_a_no_op_for_mutating_methods` never "
+        "calls `add_event` and passes cleanly."
+    ),
+    strict=False,
+)
+class TestSQLiteOutboxRepository(OutboxRepositoryConformance):
+    @pytest.fixture
+    async def store(self, tmp_path) -> AsyncIterator[SQLiteOutboxRepository]:
+        db_path = f"{tmp_path}/outbox_repo.db"
+        async with aiosqlite.connect(db_path) as conn:
+            await conn.executescript(get_schema("outbox", backend="sqlite"))
+            await conn.commit()
+            yield SQLiteOutboxRepository(conn)
+
+    async def test_sqlite_cleanup_published_removes_entries_past_the_cutoff(
+        self, store: SQLiteOutboxRepository
+    ) -> None:
+        from eventsource.testing.conformance_ports._fixtures import make_event
+
+        outbox_id = await store.add_event(make_event(aggregate_id=uuid4()))
+        await store.mark_published(outbox_id)
+        await store._connection.execute(
+            "UPDATE event_outbox SET published_at = datetime('now', '-10 days') WHERE id = ?",
+            (str(outbox_id),),
+        )
+        await store._connection.commit()
+
+        deleted = await store.cleanup_published(days=7)
+
+        assert deleted == 1
 
 
 class SQLiteStateMachine(StoreStateMachine):
