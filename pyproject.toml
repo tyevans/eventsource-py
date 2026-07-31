@@ -193,6 +193,7 @@ dev = [
     "pytest-randomly>=3.15",
     "pytest-timeout>=2.3",
     "pip-audit>=2.7",
+    "pytest-xdist>=3.5",
 ]
 
 [tool.mutmut]
