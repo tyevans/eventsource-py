@@ -470,3 +470,69 @@ class TestSQLCheckpointRepositoryPosition:
         checkpoints = await repo.get_all_checkpoints()
         assert checkpoints[0].last_processed_at is not None
         assert isinstance(checkpoints[0].last_processed_at, datetime)
+
+    @pytest.mark.asyncio
+    async def test_sqlitestore_position_round_trip_through_checkpoint_repo(
+        self, repo: SQLCheckpointRepository, tmp_path
+    ) -> None:
+        """Round-trip: SQLiteEventStore position → checkpoint → read → compare.
+
+        Tests the full codec round-trip: a position produced by a real
+        SQLiteEventStore append, saved through SQLCheckpointRepository.save_position,
+        read back, and asserted to equal the original. This proves store_id matching
+        and position ordering work end-to-end, covering the position token codec
+        round-trip through the checkpoint table.
+        """
+        from eventsource.adapters.sqlite import SQLiteEventStore
+        from eventsource.events.registry import EventRegistry
+        from eventsource.ports import ExpectedVersion
+        from eventsource.testing.conformance_ports._fixtures import (
+            ConformanceEvent,
+            make_stream,
+        )
+
+        # Create a fresh registry for the SQLiteEventStore
+        registry = EventRegistry()
+        registry.register(ConformanceEvent)
+
+        # Create a real SQLiteEventStore in a temp location
+        db_path = str(tmp_path / "store.db")
+        store = SQLiteEventStore(db_path, event_registry=registry)
+
+        try:
+            # Append first event and capture its position
+            stream1 = make_stream()
+            result1 = await store.append(
+                stream1,
+                [ConformanceEvent(aggregate_id=stream1.aggregate_id, payload="first")],
+                ExpectedVersion.any_(),
+            )
+            position1 = result1.position
+            assert position1 is not None
+
+            # Append second event and capture its position
+            stream2 = make_stream()
+            result2 = await store.append(
+                stream2,
+                [ConformanceEvent(aggregate_id=stream2.aggregate_id, payload="second")],
+                ExpectedVersion.any_(),
+            )
+            position2 = result2.position
+            assert position2 is not None
+
+            # Save position1 through the checkpoint repository
+            await repo.save_position("S", position1, uuid4(), "Created")
+
+            # Read it back
+            read_position = await repo.get_position("S")
+
+            # Assert the round-trip succeeded
+            assert read_position is not None
+            assert read_position == position1
+            assert read_position.store_id == position1.store_id
+
+            # Assert comparison with a later position works correctly
+            assert position1 < position2
+            assert read_position < position2
+        finally:
+            await store.close()
