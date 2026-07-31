@@ -324,3 +324,24 @@ scenario; multi-aggregate scenarios need manual store setup. Behavior is
 documented in docs/tutorials/08-testing.md (~line 323); this entry exists so
 the limitation is tracked as improvable, closing a ledger note from the
 aggregates slice (2026-07-31).
+
+## Differentiate run_resync_pass's two zero-return shapes in logs (P3)
+
+`MigrationCoordinator.run_resync_pass` returns 0 both when the migration is
+converged and when the coordinator restarted and has no interceptor registered
+(coordinator.py ~1010-1017). Operator outcome is identical (retry cutover), but
+a differentiating log line would make the restart shape visible. Deferred minor
+from the correctness-fixes slice final review (2026-07-31).
+
+## Buffered live events dropped on stop/transition-failure leave lag inflated (P3)
+
+`subscriptions/transition.py` `_cleanup` (~392-402) and the live runner's
+`stop()` drop the transition/pause buffers without calling
+`record_events_unseen` for the buffered events' seen-receipts (recorded at bus
+receipt since the live-lag fix), violating the reconciliation contract stated
+in `Subscription.lag`'s docstring. Bounded consequence: no in-tree path
+auto-restarts the same Subscription object, and nonzero lag on a stopped/ERROR
+subscription is directionally truthful — but re-calling manager.start() on the
+same registry objects inherits permanently inflated lag from the re-read. Fix:
+unsee `qsize()` on buffer drop, or reset both counters at transition start.
+Found by the correctness-fixes slice final review (2026-07-31).
