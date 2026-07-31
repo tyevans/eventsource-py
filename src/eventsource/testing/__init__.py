@@ -41,10 +41,7 @@ from eventsource.testing.bdd import (
     when_command,
 )
 from eventsource.testing.builder import EventBuilder
-from eventsource.testing.conformance import (
-    EventBusConformanceSuite,
-    EventStoreConformanceSuite,
-)
+from eventsource.testing.conformance import EventBusConformanceSuite
 from eventsource.testing.harness import InMemoryTestHarness
 from eventsource.testing.recording import RecordingEventBus
 
@@ -62,7 +59,6 @@ __all__ = [
     "then_event_sequence",
     "then_event_count",
     "DeciderScenario",
-    # Conformance test suites
-    "EventStoreConformanceSuite",
+    # Conformance test suite
     "EventBusConformanceSuite",
 ]

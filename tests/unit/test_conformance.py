@@ -1,8 +1,11 @@
 """
-Tests for conformance test suites.
+Tests for the EventBus conformance test suite.
 
-This module demonstrates how to use the EventStoreConformanceSuite and
-EventBusConformanceSuite by running them against the in-memory implementations.
+This module demonstrates how to use EventBusConformanceSuite by running it
+against the in-memory EventBus implementation. The EventStore half of this
+suite was retired in favor of `eventsource.testing.conformance_ports`
+(see `tests/unit/adapters/test_memory_conformance.py` and
+`test_sqlite_conformance.py` for the store-side runs).
 """
 
 from typing import Any
@@ -13,11 +16,7 @@ import pytest
 from eventsource.bus.interface import EventBus
 from eventsource.bus.memory import InMemoryEventBus
 from eventsource.events.base import DomainEvent
-from eventsource.stores.in_memory import InMemoryEventStore
-from eventsource.testing.conformance import (
-    EventBusConformanceSuite,
-    EventStoreConformanceSuite,
-)
+from eventsource.testing.conformance import EventBusConformanceSuite
 
 
 # Test event for conformance testing
@@ -27,22 +26,6 @@ class ConformanceTestEvent(DomainEvent):
     event_type: str = "ConformanceTestEvent"
     aggregate_type: str = "ConformanceTest"
     test_data: str = "test"
-
-
-class InMemoryEventStoreConformance(EventStoreConformanceSuite):
-    """Conformance tests for InMemoryEventStore."""
-
-    def create_store(self) -> InMemoryEventStore:
-        """Create a fresh InMemoryEventStore instance."""
-        return InMemoryEventStore(enable_tracing=False)
-
-    def create_test_event(self, aggregate_id: UUID, version: int = 1) -> DomainEvent:
-        """Create a test event."""
-        return ConformanceTestEvent(
-            aggregate_id=aggregate_id,
-            aggregate_version=version,
-            test_data=f"test-{version}",
-        )
 
 
 class InMemoryEventBusConformance(EventBusConformanceSuite):
@@ -77,13 +60,6 @@ class InMemoryEventBusConformance(EventBusConformanceSuite):
         await bus.shutdown(timeout=5.0)
 
 
-# EventStore conformance tests - all inherited from base suite
-class TestInMemoryEventStoreConformance(InMemoryEventStoreConformance):
-    """Run all EventStore conformance tests against InMemoryEventStore."""
-
-    pass
-
-
 # EventBus conformance tests - all inherited from base suite
 class TestInMemoryEventBusConformance(InMemoryEventBusConformance):
     """Run all EventBus conformance tests against InMemoryEventBus."""
@@ -95,29 +71,7 @@ class TestInMemoryEventBusConformance(InMemoryEventBusConformance):
 
 
 @pytest.mark.asyncio
-async def test_conformance_suite_can_be_extended() -> None:
-    """Verify that conformance suites can be extended with custom tests."""
-
-    class ExtendedStoreConformance(InMemoryEventStoreConformance):
-        async def test_custom_behavior(self) -> None:
-            """Custom test added by subclass."""
-            store = self.create_store()
-            # Add custom test logic here
-            assert store is not None
-
-    suite = ExtendedStoreConformance()
-    await suite.test_custom_behavior()
-
-
-@pytest.mark.asyncio
 async def test_event_bus_conformance_suite_works() -> None:
     """Smoke test that EventBus conformance suite runs successfully."""
     suite = InMemoryEventBusConformance()
     await suite.test_publish_and_subscribe_roundtrip()
-
-
-@pytest.mark.asyncio
-async def test_event_store_conformance_suite_works() -> None:
-    """Smoke test that EventStore conformance suite runs successfully."""
-    suite = InMemoryEventStoreConformance()
-    await suite.test_append_and_get_roundtrip()
