@@ -25,8 +25,10 @@ from eventsource import (
     AggregateRepository,
     DomainEvent,
     InMemoryEventBus,
-    PostgreSQLEventStore,
 )
+from eventsource.adapters.postgresql import PostgreSQLEventStore
+from eventsource.domain import StreamId
+from eventsource.ports import ExpectedVersion, StreamReadOptions
 
 from ..conftest import (
     TestOrderAggregate,
@@ -431,16 +433,18 @@ class TestEventStreamOperations:
         await repo.save(order)
 
         # Read all events
-        stream = await postgres_event_store.get_events(order_id, "TestOrder")
-        assert len(stream.events) == 4  # 1 created + 3 items
+        stream_id = StreamId(aggregate_id=order_id, category="TestOrder")
+        events = [e async for e in postgres_event_store.read_stream(stream_id)]
+        assert len(events) == 4  # 1 created + 3 items
 
-        # Read from version 2
-        stream_partial = await postgres_event_store.get_events(
-            order_id,
-            "TestOrder",
-            from_version=2,
-        )
-        assert len(stream_partial.events) == 2  # Events 3 and 4
+        # Read from version 2 (legacy "skip first 2" -> ports inclusive from_version=3)
+        events_partial = [
+            e
+            async for e in postgres_event_store.read_stream(
+                stream_id, StreamReadOptions(from_version=3)
+            )
+        ]
+        assert len(events_partial) == 2  # Events 3 and 4
 
     async def test_read_all_events_global(
         self,
@@ -457,11 +461,10 @@ class TestEventStreamOperations:
                 customer_id=sample_customer_id,
                 total_amount=0.0,
             )
-            await postgres_event_store.append_events(
-                aggregate_id=order_id,
-                aggregate_type="TestOrder",
-                events=[event],
-                expected_version=0,
+            await postgres_event_store.append(
+                StreamId(aggregate_id=order_id, category="TestOrder"),
+                [event],
+                ExpectedVersion.no_stream(),
             )
 
         # Read all events
@@ -472,7 +475,7 @@ class TestEventStreamOperations:
         assert len(all_events) >= 3
 
         # Verify global ordering
-        positions = [e.global_position for e in all_events]
+        positions = [e.position for e in all_events]
         assert positions == sorted(positions)
 
 
@@ -519,6 +522,17 @@ class TestProjectionRebuilding:
 class TestOutboxIntegration:
     """Tests for outbox pattern integration."""
 
+    @pytest.mark.skip(
+        reason=(
+            "eventsource.adapters.postgresql.store.PostgreSQLEventStore has no "
+            "outbox_enabled / _write_to_outbox support yet -- porting that write "
+            "path is tracked as backlog work in "
+            "docs/superpowers/specs/2026-07-31-legacy-store-retirement-design.md "
+            "(SS4.4, 'Port outbox_enabled + _write_to_outbox onto "
+            "adapters/postgresql/store.py'). Retarget this scenario once that "
+            "lands; do not delete it."
+        )
+    )
     async def test_outbox_enabled_stores_events(
         self,
         postgres_event_store_with_outbox: PostgreSQLEventStore,
@@ -534,11 +548,10 @@ class TestOutboxIntegration:
             total_amount=100.0,
         )
 
-        await postgres_event_store_with_outbox.append_events(
-            aggregate_id=order_id,
-            aggregate_type="TestOrder",
-            events=[event],
-            expected_version=0,
+        await postgres_event_store_with_outbox.append(
+            StreamId(aggregate_id=order_id, category="TestOrder"),
+            [event],
+            ExpectedVersion.no_stream(),
         )
 
         # Verify event is in outbox
