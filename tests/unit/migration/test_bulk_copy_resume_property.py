@@ -120,7 +120,8 @@ async def test_bulk_copy_resumes_to_a_source_equal_target(
     target_store = MemoryEventStore("target")
     await _append_streams(source_store, tenant_id, streams)
 
-    mapper = PositionMapper(FakePositionMappingRepository())
+    mapping_repo = FakePositionMappingRepository()
+    mapper = PositionMapper(mapping_repo)
 
     # First (interrupted) run: consume progress until at least crash_after
     # events have been persisted to the checkpoint, then stop consuming the
@@ -176,3 +177,19 @@ async def test_bulk_copy_resumes_to_a_source_equal_target(
     ]
     assert len(target_event_ids) == len(set(target_event_ids))
     assert len(target_event_ids) == events_total
+
+    # The position mapper is engaged for every append in this test (a
+    # mapper is always configured, so BulkCopier never takes the
+    # no-mapper batch fast path), and a duplicate append records no
+    # mapping -- so exactly one mapping should exist per event that
+    # ultimately landed in the target, covering it exactly once.
+    mapped_event_ids = [mapping.event_id for mapping in mapping_repo.mappings]
+    assert len(mapped_event_ids) == len(set(mapped_event_ids))
+    assert set(mapped_event_ids) == set(target_event_ids)
+    assert len(mapping_repo.mappings) == events_total
+
+    # Mappings are recorded in the order BulkCopier appends them, which is
+    # ascending source-position order -- the precondition the real
+    # PositionMappingRepository implementations document.
+    mapped_source_positions = [mapping.source_position for mapping in mapping_repo.mappings]
+    assert mapped_source_positions == sorted(mapped_source_positions)
