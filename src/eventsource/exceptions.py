@@ -217,6 +217,11 @@ class PositionForeignError(EventSourceError):
     """Positions from different stores were compared for order."""
 
 
+# NOTE: intentionally `Exception`, not `EventSourceError` -- this is the
+# pre-move contract preserved verbatim from the old eventsource.snapshots
+# package. `except EventSourceError` deliberately does not catch snapshot
+# errors; rebasing this hierarchy is a breaking change reserved for a
+# future major version.
 class SnapshotError(Exception):
     """
     Base exception for snapshot-related errors.

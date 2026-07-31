@@ -15,11 +15,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **PostgreSQL global feed no-skip guarantee**: the PostgreSQL adapter's feed reader no longer risks skipping events committed out of insertion order under concurrent writers.
 - **Conformance suites for the new ports** (`eventsource.testing.conformance_ports`) -- `AppenderConformance`, `StreamReaderConformance`, `EventLookupConformance`, `GlobalFeedConformance`, `CategoryQueryConformance`, and `SnapshotConformance`, run against the memory, sqlite, and (integration) postgresql adapters.
 - New exceptions `DuplicateEventError`, `PositionDecodeError`, `PositionForeignError`, and the `IntPositionCodec` position codec are re-exported from top-level `eventsource`.
+- **`eventsource.application.aggregates`** -- `SnapshotPolicy` (`EveryNEvents`, `Never`), `SnapshotScheduler` (`ImmediateScheduler`, `BackgroundScheduler`), and the `take_snapshot` / `read_valid_snapshot` helpers, composed by `AggregateRepository` to decide and schedule snapshotting. `AggregateRepository` gained `snapshot_policy=` / `snapshot_scheduler=` constructor parameters for injecting custom policy/scheduler implementations.
+- ADR 0021, documenting the snapshot composition design (policy + scheduler replacing the monolithic snapshot manager/strategy) and superseding ADR 0017.
 
 ### Changed
 
-- **Snapshot store implementations re-homed** into their adapters: `InMemorySnapshotStore` -> `eventsource.adapters.memory.snapshots`, `SQLiteSnapshotStore` -> `eventsource.adapters.sqlite.snapshots`, `PostgreSQLSnapshotStore` -> `eventsource.adapters.postgresql.snapshots`. The old `eventsource.snapshots.in_memory` / `.sqlite` / `.postgresql` modules are now `# TRANSITION` re-export shims; the `SnapshotStore` contract and `eventsource.snapshots` public imports are unchanged.
+- **Snapshot store implementations re-homed** into their adapters: `InMemorySnapshotStore` -> `eventsource.adapters.memory.snapshots`, `SQLiteSnapshotStore` -> `eventsource.adapters.sqlite.snapshots`, `PostgreSQLSnapshotStore` -> `eventsource.adapters.postgresql.snapshots`. `Snapshot` and `SnapshotStore` now live in `eventsource.ports.snapshots`; snapshot exceptions live in `eventsource.exceptions`. The `eventsource.snapshots` package itself has been **deleted** -- see Removed. Top-level `eventsource` re-exports of `Snapshot`, `SnapshotStore`, and the snapshot store adapters are unchanged.
 - **Colliding names stay path-only.** The new `ExpectedVersion` VO, `ReadDirection` enum, and `AppendResult` VO in `eventsource.ports` share a name with existing top-level exports of a *different* class (`eventsource.stores.interface.ExpectedVersion` / `.ReadDirection` / `.AppendResult`). To avoid silently changing what an existing export name means, the new port-layer classes are **not** rebound at the top level -- import them from `eventsource.ports` explicitly. Likewise, the new adapter classes `eventsource.adapters.sqlite.SQLiteEventStore` and `eventsource.adapters.postgresql.PostgreSQLEventStore` collide with the legacy `eventsource.SQLiteEventStore` / `eventsource.PostgreSQLEventStore` and are available path-only from their adapter modules.
+- **`AggregateRoot` and `DeclarativeAggregate` re-homed** to `eventsource.domain.aggregate`; the `eventsource.aggregates` import path is gone (see Removed). Top-level `eventsource` imports are unaffected.
+- **`AggregateRepository` re-homed** to `eventsource.application.aggregates`. Top-level `eventsource` imports are unaffected.
+- **`EventPublisher` re-homed** to `eventsource.ports.bus`; still re-exported from `eventsource.stores.interface` for existing callers.
+
+### Removed
+
+- **`eventsource.snapshots` package deleted**, including the `eventsource.aggregates` and `eventsource.snapshots` import paths themselves (the `# TRANSITION` re-export shims planned for these modules were never shipped -- the package was dissolved directly). Import `Snapshot` / `SnapshotStore` from `eventsource.ports.snapshots` or continue using the top-level `eventsource` re-exports.
+- **`AggregateSnapshotManager`** and the strategy classes it composed -- `SnapshotStrategy`, `ThresholdSnapshotStrategy`, `BackgroundSnapshotStrategy`, `NoSnapshotStrategy`, `create_snapshot_strategy` (formerly `eventsource.snapshots.strategies`) -- replaced by the `SnapshotPolicy` / `SnapshotScheduler` composition on `AggregateRepository` (see Added).
+- **`KafkaEventBus.record_reconnection()` / `record_rebalance()`**, deprecated in 0.7.0 with removal planned for 0.8.0. Use their replacements directly.
+- **`InMemoryEventBus.published_events` / `clear_published_events()`**, deprecated in 0.6.0 with removal planned for 0.8.0. Use `eventsource.testing.RecordingEventBus` instead.
+- **`eventsource.repositories._json`** internal module.
 
 ## [0.7.0] - 2026-07-30
 

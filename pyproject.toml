@@ -299,9 +299,8 @@ forbidden_modules = ["eventsource.adapters", "eventsource.bus", "eventsource.rep
 
 # KNOWN VIOLATIONS (not enforced -- see task-2e-report.md for detail):
 #
-# docs/core-surface.md and .claude/rules/architecture.md claim events/,
-# aggregates/, projections/ are "core domain" with no infrastructure imports.
-# In practice:
+# docs/core-surface.md documents projections/ as the one remaining Tier-0
+# blocker. In practice:
 #   - projections/base.py imports eventsource.repositories.checkpoint and
 #     eventsource.repositories.dlq (both sqlalchemy-backed)
 #   - projections/checkpoint_manager.py imports eventsource.repositories.checkpoint

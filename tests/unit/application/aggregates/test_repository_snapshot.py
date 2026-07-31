@@ -858,7 +858,7 @@ class TestRepositoryBackgroundSnapshot:
 # =============================================================================
 
 
-class TestSnapshotStrategyLogic:
+class TestSnapshotPolicyLogic:
     """Test snapshot policy logic via SnapshotPolicy classes.
 
     Note: These tests validate the policy logic that was previously in

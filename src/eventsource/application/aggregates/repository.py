@@ -299,12 +299,22 @@ class AggregateRepository(Generic[TAggregate]):
 
     @property
     def snapshot_threshold(self) -> int | None:
-        """Get the snapshot threshold (events between snapshots)."""
+        """Get the snapshot threshold (events between snapshots).
+
+        Caveat: this reflects the constructor knob only. When a custom
+        ``snapshot_policy`` is supplied, this property reports the default
+        threshold, not the active policy's actual behavior.
+        """
         return self._snapshot_threshold
 
     @property
     def snapshot_mode(self) -> Literal["sync", "background", "manual"]:
-        """Get the snapshot creation mode."""
+        """Get the snapshot creation mode.
+
+        Caveat: this reflects the constructor knob only. When a custom
+        ``snapshot_scheduler`` is supplied, this property reports the
+        default mode, not the active scheduler's actual behavior.
+        """
         return self._snapshot_mode
 
     @property
