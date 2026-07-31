@@ -12,8 +12,8 @@ from uuid import uuid4
 
 import pytest
 
+from eventsource.ports.readmodels.query import Filter, Query
 from eventsource.readmodels import ReadModel
-from eventsource.readmodels.query import Filter, Query
 from eventsource.readmodels.sqlite import SQLiteReadModelRepository
 
 

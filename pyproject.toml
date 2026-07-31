@@ -297,12 +297,6 @@ source_modules = [
     "eventsource.multitenancy.context",
     "eventsource.multitenancy.events",
     "eventsource.multitenancy.exceptions",
-    "eventsource.readmodels.base",
-    "eventsource.readmodels.query",
-    "eventsource.readmodels.schema",
-    "eventsource.readmodels.repository",
-    "eventsource.readmodels.in_memory",
-    "eventsource.readmodels.exceptions",
     "eventsource.multitenancy.repository",
 ]
 forbidden_modules = ["sqlalchemy"]

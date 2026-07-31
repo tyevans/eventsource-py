@@ -11,10 +11,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, TypeVar, runtime_checkable
 from uuid import UUID
 
-from eventsource.readmodels.base import ReadModel
+from eventsource.ports.readmodels.model import ReadModel
 
 if TYPE_CHECKING:
-    from eventsource.readmodels.query import Query
+    from eventsource.ports.readmodels.query import Query
 
 # Type variable for read model types
 TModel = TypeVar("TModel", bound=ReadModel)

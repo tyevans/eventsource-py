@@ -38,7 +38,7 @@ from uuid import UUID
 
 from pydantic.fields import FieldInfo
 
-from eventsource.readmodels.base import ReadModel
+from eventsource.ports.readmodels.model import ReadModel
 
 # Type mappings for PostgreSQL
 POSTGRESQL_TYPE_MAP: dict[type, str] = {

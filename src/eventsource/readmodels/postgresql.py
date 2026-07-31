@@ -24,9 +24,12 @@ from eventsource.observability.attributes import (
     ATTR_READMODEL_ID,
     ATTR_READMODEL_TYPE,
 )
-from eventsource.readmodels.base import ReadModel
-from eventsource.readmodels.exceptions import OptimisticLockError, ReadModelNotFoundError
-from eventsource.readmodels.query import Filter, Query
+from eventsource.ports.readmodels.exceptions import (
+    OptimisticLockError,
+    ReadModelNotFoundError,
+)
+from eventsource.ports.readmodels.model import ReadModel
+from eventsource.ports.readmodels.query import Filter, Query
 
 # Type variable for read model types
 TModel = TypeVar("TModel", bound=ReadModel)

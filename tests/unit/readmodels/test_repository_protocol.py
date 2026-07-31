@@ -2,8 +2,8 @@
 
 from uuid import UUID
 
+from eventsource.ports.readmodels.repository import ReadModelRepository
 from eventsource.readmodels import ReadModel
-from eventsource.readmodels.repository import ReadModelRepository
 
 
 class TestReadModelRepositoryProtocol:

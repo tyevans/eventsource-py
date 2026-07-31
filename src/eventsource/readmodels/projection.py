@@ -20,12 +20,12 @@ from eventsource.observability.attributes import (
 )
 from eventsource.ports.checkpoints import ProjectionCheckpoints
 from eventsource.ports.dlq import DLQRepository
-from eventsource.readmodels.base import ReadModel
+from eventsource.ports.readmodels.model import ReadModel
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionmaker
 
-    from eventsource.readmodels.repository import ReadModelRepository
+    from eventsource.ports.readmodels.repository import ReadModelRepository
 
 logger = logging.getLogger(__name__)
 

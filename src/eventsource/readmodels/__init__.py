@@ -64,17 +64,17 @@ Example:
     ...     print(f"Conflict: {e}")
 """
 
-from eventsource.readmodels.base import ReadModel
-from eventsource.readmodels.exceptions import (
+from eventsource.ports.readmodels.exceptions import (
     OptimisticLockError,
     ReadModelError,
     ReadModelNotFoundError,
 )
+from eventsource.ports.readmodels.model import ReadModel
+from eventsource.ports.readmodels.query import Filter, Query
+from eventsource.ports.readmodels.repository import ReadModelRepository
 from eventsource.readmodels.in_memory import InMemoryReadModelRepository
 from eventsource.readmodels.postgresql import PostgreSQLReadModelRepository
 from eventsource.readmodels.projection import ReadModelProjection
-from eventsource.readmodels.query import Filter, Query
-from eventsource.readmodels.repository import ReadModelRepository
 from eventsource.readmodels.schema import (
     POSTGRESQL_TYPE_MAP,
     SQLITE_TYPE_MAP,

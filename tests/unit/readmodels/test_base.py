@@ -6,8 +6,8 @@ from uuid import uuid4
 
 import pytest
 
+from eventsource.ports.readmodels.model import _camel_to_snake, _pluralize
 from eventsource.readmodels import ReadModel
-from eventsource.readmodels.base import _camel_to_snake, _pluralize
 
 
 class TestCamelToSnake:

@@ -30,8 +30,11 @@ from eventsource.observability.attributes import (
     ATTR_READMODEL_ID,
     ATTR_READMODEL_TYPE,
 )
-from eventsource.readmodels.exceptions import OptimisticLockError, ReadModelNotFoundError
-from eventsource.readmodels.query import Filter, Query
+from eventsource.ports.readmodels.exceptions import (
+    OptimisticLockError,
+    ReadModelNotFoundError,
+)
+from eventsource.ports.readmodels.query import Filter, Query
 
 if TYPE_CHECKING:
     import aiosqlite
@@ -40,7 +43,7 @@ if TYPE_CHECKING:
 # Create type var locally to avoid import issues
 from typing import TypeVar
 
-from eventsource.readmodels.base import ReadModel as _BaseReadModel
+from eventsource.ports.readmodels.model import ReadModel as _BaseReadModel
 
 TModel = TypeVar("TModel", bound=_BaseReadModel)
 
