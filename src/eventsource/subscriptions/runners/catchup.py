@@ -50,6 +50,20 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class _BatchOutcome:
+    """What one `_process_batch` call did.
+
+    Two numbers, because they answer different questions and the public
+    `CatchUpResult.events_processed` is defined by the second: how many
+    envelopes the batch read (whether or not the filter passed them), and
+    how many events reached the subscriber.
+    """
+
+    envelopes_read: int
+    events_delivered: int
+
+
 @dataclass
 class CatchUpResult:
     """
@@ -176,8 +190,10 @@ class CatchUpRunner:
         """
         Run catch-up until reaching the target position.
 
-        Reads events in batches from the current position until
-        reaching the target position or encountering an error.
+        Reads events in batches from the current position until reaching the
+        target position, a stop request, or an error. A batch that delivers
+        nothing (every envelope filtered out) does not stop the loop -- only
+        reaching the target position (or a stop request) does.
 
         Args:
             target_position: Position to catch up to
@@ -220,7 +236,15 @@ class CatchUpRunner:
 
                 self._metrics.record_lag(self.subscription.lag)
 
-                # Process batches until we reach the target or are stopped
+                # Process batches until we reach the target or are stopped.
+                # Termination is `_reached_target` and the stop flags, not a
+                # zero delivery: a batch can deliver nothing (every envelope
+                # filtered) and still have advanced position with more feed
+                # behind it. Progress is guaranteed regardless -- every
+                # counted envelope, delivered or filtered, calls
+                # `record_event_processed`, so the next read starts strictly
+                # after it, and the position-None guard below converts the
+                # only no-progress pathology into `_reached_target`.
                 while self._running and not self._stop_requested and not self._reached_target:
                     # Check for pause and wait if paused
                     was_paused = await self.subscription.wait_if_paused()
@@ -233,12 +257,8 @@ class CatchUpRunner:
                             extra={"subscription": self.subscription.name},
                         )
 
-                    batch_result = await self._process_batch(target_position)
-                    total_processed += batch_result
-
-                    if batch_result == 0:
-                        # No more events to process
-                        break
+                    outcome = await self._process_batch(target_position)
+                    total_processed += outcome.events_delivered
 
                 completed = self._reached_target
                 final_position = self.subscription.last_processed_position
@@ -284,7 +304,7 @@ class CatchUpRunner:
             finally:
                 self._running = False
 
-    async def _process_batch(self, target_position: Position) -> int:
+    async def _process_batch(self, target_position: Position) -> _BatchOutcome:
         """
         Process a single batch of events.
 
@@ -292,7 +312,9 @@ class CatchUpRunner:
             target_position: Position to stop at
 
         Returns:
-            Number of events processed in this batch
+            A `_BatchOutcome` with the number of envelopes read (whether or
+            not the filter passed them) and the number of events delivered
+            to the subscriber.
 
         Raises:
             RetryError: If event store read fails after all retries
@@ -305,7 +327,7 @@ class CatchUpRunner:
         envelopes = await self._read_batch_with_retry(current_position, self.config.batch_size)
         if not envelopes:
             self._reached_target = True
-            return 0
+            return _BatchOutcome(envelopes_read=0, events_delivered=0)
         await self.subscription.record_events_seen(len(envelopes))
 
         events_in_batch = 0
@@ -393,7 +415,7 @@ class CatchUpRunner:
             },
         )
 
-        return events_in_batch
+        return _BatchOutcome(envelopes_read=len(envelopes), events_delivered=events_in_batch)
 
     async def _read_batch_with_retry(
         self,
