@@ -34,10 +34,10 @@ SOURCE_STORE_ID = "source-store"
 
 
 def source_pos(n: int) -> Position:
-    """A source-store position token for the int the mapper is keyed on.
+    """A source-store position token.
 
-    The migrator converts token<->int at the slice-(c) seam, so the store_id
-    here must match the source_store_id the migrator is built with.
+    The migrator is token-native end to end: checkpoints, translations, and
+    results all carry Position objects, never ints.
     """
     return Position(store_id=SOURCE_STORE_ID, key=(n,))
 
@@ -58,8 +58,6 @@ class TestSubscriptionMigratorInit:
         migrator = SubscriptionMigrator(
             position_mapper=mock_position_mapper,
             checkpoint_repo=mock_checkpoint_repo,
-            source_store_id=SOURCE_STORE_ID,
-            target_store_id="target-store",
         )
 
         assert migrator._position_mapper == mock_position_mapper
@@ -73,8 +71,6 @@ class TestSubscriptionMigratorInit:
         migrator = SubscriptionMigrator(
             position_mapper=mock_position_mapper,
             checkpoint_repo=mock_checkpoint_repo,
-            source_store_id=SOURCE_STORE_ID,
-            target_store_id="target-store",
             enable_tracing=True,
         )
 
@@ -88,8 +84,6 @@ class TestSubscriptionMigratorInit:
         migrator = SubscriptionMigrator(
             position_mapper=mock_position_mapper,
             checkpoint_repo=mock_checkpoint_repo,
-            source_store_id=SOURCE_STORE_ID,
-            target_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -119,8 +113,6 @@ class TestSubscriptionMigratorPlanMigration:
         return SubscriptionMigrator(
             position_mapper=mock_position_mapper,
             checkpoint_repo=mock_checkpoint_repo,
-            source_store_id=SOURCE_STORE_ID,
-            target_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -242,7 +234,7 @@ class TestSubscriptionMigratorPlanMigration:
         assert plan.migratable_count == 1
         pm = plan.planned_migrations[0]
         assert pm.is_exact_translation is False
-        assert pm.nearest_source_position == 1000
+        assert pm.nearest_source_position == source_pos(1000)
         assert pm.warning is not None
         assert "nearest" in pm.warning.lower()
 
@@ -306,8 +298,6 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         return SubscriptionMigrator(
             position_mapper=mock_position_mapper,
             checkpoint_repo=mock_checkpoint_repo,
-            source_store_id=SOURCE_STORE_ID,
-            target_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -387,7 +377,7 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         # Should call save_position
         mock_checkpoint_repo.save_position.assert_called_once_with(
             subscription_id="OrderProjection",
-            position=Position(store_id="target-store", key=(500,)),
+            position=target_pos(500),
             event_id=event_id,
             event_type="OrderCreated",
         )
@@ -395,6 +385,17 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         assert summary.successful_count == 1
         assert summary.failed_count == 0
         assert summary.all_successful
+
+        # The checkpoint position and its translated target both round-trip
+        # through save_position as Position tokens -- no int appears anywhere
+        # on the path from checkpoint read to checkpoint write.
+        saved_position = mock_checkpoint_repo.save_position.call_args.kwargs["position"]
+        assert isinstance(saved_position, Position)
+        assert not isinstance(saved_position, int)
+        assert summary.results[0].source_position == source_pos(1000)
+        assert isinstance(summary.results[0].source_position, Position)
+        assert summary.results[0].target_position == target_pos(500)
+        assert isinstance(summary.results[0].target_position, Position)
 
     @pytest.mark.asyncio
     async def test_migrate_subscriptions_handles_missing_checkpoint_data(
@@ -541,8 +542,6 @@ class TestSubscriptionMigratorMigrateTenantSubscriptions:
         return SubscriptionMigrator(
             position_mapper=mock_position_mapper,
             checkpoint_repo=mock_checkpoint_repo,
-            source_store_id=SOURCE_STORE_ID,
-            target_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -657,8 +656,6 @@ class TestSubscriptionMigratorVerifyMigration:
         return SubscriptionMigrator(
             position_mapper=mock_position_mapper,
             checkpoint_repo=mock_checkpoint_repo,
-            source_store_id=SOURCE_STORE_ID,
-            target_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -714,16 +711,16 @@ class TestSubscriptionMigrationResultDataclass:
         result = SubscriptionMigrationResult(
             subscription_name="OrderProjection",
             success=True,
-            source_position=1000,
-            target_position=500,
+            source_position=source_pos(1000),
+            target_position=target_pos(500),
             is_exact_translation=True,
             migrated_at=now,
         )
 
         assert result.subscription_name == "OrderProjection"
         assert result.success is True
-        assert result.source_position == 1000
-        assert result.target_position == 500
+        assert result.source_position == source_pos(1000)
+        assert result.target_position == target_pos(500)
         assert result.is_exact_translation is True
         assert result.error_message is None
 
@@ -732,7 +729,7 @@ class TestSubscriptionMigrationResultDataclass:
         result = SubscriptionMigrationResult(
             subscription_name="OrderProjection",
             success=False,
-            source_position=1000,
+            source_position=source_pos(1000),
             error_message="Translation failed",
         )
 
@@ -746,8 +743,8 @@ class TestSubscriptionMigrationResultDataclass:
         result = SubscriptionMigrationResult(
             subscription_name="OrderProjection",
             success=True,
-            source_position=1000,
-            target_position=500,
+            source_position=source_pos(1000),
+            target_position=target_pos(500),
             migrated_at=now,
         )
 
@@ -755,8 +752,8 @@ class TestSubscriptionMigrationResultDataclass:
 
         assert d["subscription_name"] == "OrderProjection"
         assert d["success"] is True
-        assert d["source_position"] == 1000
-        assert d["target_position"] == 500
+        assert d["source_position"] == source_pos(1000).to_str()
+        assert d["target_position"] == target_pos(500).to_str()
         assert d["migrated_at"] == now.isoformat()
 
     def test_result_frozen(self) -> None:
@@ -764,7 +761,7 @@ class TestSubscriptionMigrationResultDataclass:
         result = SubscriptionMigrationResult(
             subscription_name="OrderProjection",
             success=True,
-            source_position=1000,
+            source_position=source_pos(1000),
         )
 
         with pytest.raises(AttributeError):
@@ -778,14 +775,14 @@ class TestPlannedMigrationDataclass:
         """Test PlannedMigration for exact translation."""
         planned = PlannedMigration(
             subscription_name="OrderProjection",
-            current_position=1000,
-            planned_target_position=500,
+            current_position=source_pos(1000),
+            planned_target_position=target_pos(500),
             is_exact_translation=True,
         )
 
         assert planned.subscription_name == "OrderProjection"
-        assert planned.current_position == 1000
-        assert planned.planned_target_position == 500
+        assert planned.current_position == source_pos(1000)
+        assert planned.planned_target_position == target_pos(500)
         assert planned.is_exact_translation is True
         assert planned.warning is None
 
@@ -793,30 +790,30 @@ class TestPlannedMigrationDataclass:
         """Test PlannedMigration with warning."""
         planned = PlannedMigration(
             subscription_name="OrderProjection",
-            current_position=1050,
-            planned_target_position=500,
+            current_position=source_pos(1050),
+            planned_target_position=target_pos(500),
             is_exact_translation=False,
-            nearest_source_position=1000,
+            nearest_source_position=source_pos(1000),
             warning="Using nearest position mapping",
         )
 
         assert planned.is_exact_translation is False
-        assert planned.nearest_source_position == 1000
+        assert planned.nearest_source_position == source_pos(1000)
         assert planned.warning is not None
 
     def test_planned_migration_to_dict(self) -> None:
         """Test PlannedMigration.to_dict serialization."""
         planned = PlannedMigration(
             subscription_name="OrderProjection",
-            current_position=1000,
-            planned_target_position=500,
+            current_position=source_pos(1000),
+            planned_target_position=target_pos(500),
         )
 
         d = planned.to_dict()
 
         assert d["subscription_name"] == "OrderProjection"
-        assert d["current_position"] == 1000
-        assert d["planned_target_position"] == 500
+        assert d["current_position"] == source_pos(1000).to_str()
+        assert d["planned_target_position"] == target_pos(500).to_str()
 
 
 class TestMigrationPlanDataclass:
@@ -829,8 +826,8 @@ class TestMigrationPlanDataclass:
 
         planned = PlannedMigration(
             subscription_name="OrderProjection",
-            current_position=1000,
-            planned_target_position=500,
+            current_position=source_pos(1000),
+            planned_target_position=target_pos(500),
         )
 
         plan = MigrationPlan(
@@ -878,8 +875,8 @@ class TestMigrationSummaryDataclass:
         result = SubscriptionMigrationResult(
             subscription_name="OrderProjection",
             success=True,
-            source_position=1000,
-            target_position=500,
+            source_position=source_pos(1000),
+            target_position=target_pos(500),
         )
 
         summary = MigrationSummary(
@@ -1004,8 +1001,6 @@ class TestSubscriptionMigratorWorkflows:
         return SubscriptionMigrator(
             position_mapper=mock_position_mapper,
             checkpoint_repo=mock_checkpoint_repo,
-            source_store_id=SOURCE_STORE_ID,
-            target_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -1050,7 +1045,7 @@ class TestSubscriptionMigratorWorkflows:
         )
 
         assert plan.migratable_count == 1
-        assert plan.planned_migrations[0].planned_target_position == 500
+        assert plan.planned_migrations[0].planned_target_position == target_pos(500)
 
         # Step 2: Execute migration
         summary = await migrator.migrate_subscriptions(

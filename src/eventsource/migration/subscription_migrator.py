@@ -18,10 +18,6 @@ Responsibilities:
     - Handle subscription handoff with minimal disruption
     - Support dry-run mode to preview changes
 
-Slice-(c) seam: the `position_mapping` table is int-keyed, so positions are
-converted int<->token at this boundary via `IntPositionCodec`. Slice (c)
-retypes that table and removes the conversion.
-
 Migration Strategy:
     - Pause subscription processing briefly during cutover
     - Translate last processed position to target store
@@ -63,7 +59,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from eventsource.adapters._sql.positions import IntPositionCodec
 from eventsource.migration.exceptions import MigrationError, PositionMappingError
 from eventsource.observability import Tracer, create_tracer
 from eventsource.subscriptions.subscription import render_position
@@ -71,6 +66,7 @@ from eventsource.subscriptions.subscription import render_position
 if TYPE_CHECKING:
     from eventsource.migration.position_mapper import PositionMapper
     from eventsource.ports.checkpoints import CheckpointRepository
+    from eventsource.ports.positions import Position
 
 logger = logging.getLogger(__name__)
 
@@ -125,10 +121,10 @@ class SubscriptionMigrationResult:
 
     subscription_name: str
     success: bool
-    source_position: int
-    target_position: int | None = None
+    source_position: Position
+    target_position: Position | None = None
     is_exact_translation: bool = False
-    nearest_source_position: int | None = None
+    nearest_source_position: Position | None = None
     error_message: str | None = None
     migrated_at: datetime | None = None
 
@@ -137,10 +133,12 @@ class SubscriptionMigrationResult:
         return {
             "subscription_name": self.subscription_name,
             "success": self.success,
-            "source_position": self.source_position,
-            "target_position": self.target_position,
+            "source_position": self.source_position.to_str(),
+            "target_position": self.target_position.to_str() if self.target_position else None,
             "is_exact_translation": self.is_exact_translation,
-            "nearest_source_position": self.nearest_source_position,
+            "nearest_source_position": (
+                self.nearest_source_position.to_str() if self.nearest_source_position else None
+            ),
             "error_message": self.error_message,
             "migrated_at": self.migrated_at.isoformat() if self.migrated_at else None,
         }
@@ -163,20 +161,24 @@ class PlannedMigration:
     """
 
     subscription_name: str
-    current_position: int
-    planned_target_position: int | None = None
+    current_position: Position
+    planned_target_position: Position | None = None
     is_exact_translation: bool = False
-    nearest_source_position: int | None = None
+    nearest_source_position: Position | None = None
     warning: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
             "subscription_name": self.subscription_name,
-            "current_position": self.current_position,
-            "planned_target_position": self.planned_target_position,
+            "current_position": self.current_position.to_str(),
+            "planned_target_position": (
+                self.planned_target_position.to_str() if self.planned_target_position else None
+            ),
             "is_exact_translation": self.is_exact_translation,
-            "nearest_source_position": self.nearest_source_position,
+            "nearest_source_position": (
+                self.nearest_source_position.to_str() if self.nearest_source_position else None
+            ),
             "warning": self.warning,
         }
 
@@ -316,8 +318,6 @@ class SubscriptionMigrator:
         position_mapper: PositionMapper,
         checkpoint_repo: CheckpointRepository,
         *,
-        source_store_id: str,
-        target_store_id: str,
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ) -> None:
@@ -327,14 +327,6 @@ class SubscriptionMigrator:
         Args:
             position_mapper: Position mapper for checkpoint translation.
             checkpoint_repo: Repository for reading/writing checkpoints.
-            source_store_id: `store_id` stamped into positions by the source
-                store. In slice (c), migration moves onto the ports store
-                surface and these ids will be derived from the stores' own
-                store_id attributes; until then the caller declares them.
-            target_store_id: `store_id` stamped into positions by the target
-                store. In slice (c), migration moves onto the ports store
-                surface and these ids will be derived from the stores' own
-                store_id attributes; until then the caller declares them.
             tracer: Optional custom Tracer instance.
             enable_tracing: Whether to enable OpenTelemetry tracing.
         """
@@ -343,8 +335,6 @@ class SubscriptionMigrator:
         self._enable_tracing = self._tracer.enabled
         self._position_mapper = position_mapper
         self._checkpoint_repo = checkpoint_repo
-        self._source_codec = IntPositionCodec(store_id=source_store_id)
-        self._target_codec = IntPositionCodec(store_id=target_store_id)
 
     async def plan_migration(
         self,
@@ -441,14 +431,11 @@ class SubscriptionMigrator:
         Returns:
             PlannedMigration or None if subscription should be skipped.
         """
-        # Get current checkpoint position. The mapper is now token-keyed
-        # (slice-(c)); the checkpoint repo already returns a Position, so no
-        # conversion is needed to call it. PlannedMigration.current_position
-        # is still int (Task 4 retypes it), so that field is derived via the
-        # codec -- # slice-(c) seam: retired in Task 4.
-        current_token = await self._checkpoint_repo.get_position(subscription_name)
+        # The checkpoint repo returns a Position, and the mapper is token-keyed,
+        # so it flows straight through with no conversion.
+        current_position = await self._checkpoint_repo.get_position(subscription_name)
 
-        if current_token is None:
+        if current_position is None:
             logger.debug(
                 "Subscription has no checkpoint, skipping",
                 extra={
@@ -458,36 +445,27 @@ class SubscriptionMigrator:
             )
             return None
 
-        current_position = self._source_codec.value_of(current_token)
-
         # Try to translate position
         try:
             translation = await self._position_mapper.translate_position(
                 migration_id=migration_id,
-                source_position=current_token,
+                source_position=current_position,
                 use_nearest=True,
             )
 
             warning = None
             if not translation.is_exact:
                 warning = (
-                    f"Using nearest position mapping: source {current_position} "
-                    f"-> nearest {translation.nearest_source_position}"
+                    f"Using nearest position mapping: source {current_position.to_str()} "
+                    f"-> nearest {render_position(translation.nearest_source_position)}"
                 )
 
-            # slice-(c) seam: retired in Task 4 -- PlannedMigration's
-            # position fields are still int.
-            nearest_int = (
-                self._source_codec.value_of(translation.nearest_source_position)
-                if translation.nearest_source_position is not None
-                else None
-            )
             return PlannedMigration(
                 subscription_name=subscription_name,
                 current_position=current_position,
-                planned_target_position=self._target_codec.value_of(translation.target_position),
+                planned_target_position=translation.target_position,
                 is_exact_translation=translation.is_exact,
-                nearest_source_position=nearest_int,
+                nearest_source_position=translation.nearest_source_position,
                 warning=warning,
             )
 
@@ -497,7 +475,7 @@ class SubscriptionMigrator:
                 extra={
                     "subscription": subscription_name,
                     "migration_id": str(migration_id),
-                    "position": current_position,
+                    "position": current_position.to_str(),
                     "error": str(e),
                 },
             )
@@ -670,15 +648,11 @@ class SubscriptionMigrator:
                 "subscription.name": subscription_name,
             },
         ):
-            # Get current checkpoint. The checkpoint repo already returns a
-            # Position, so it can be passed straight to the now token-keyed
-            # mapper. SubscriptionMigrationResult's position fields are
-            # still int (Task 4 retypes it), so current_position is derived
-            # via the codec for those fields only.
-            # slice-(c) seam: retired in Task 4.
-            current_token = await self._checkpoint_repo.get_position(subscription_name)
+            # The checkpoint repo returns a Position, and the mapper is
+            # token-keyed, so it flows straight through with no conversion.
+            current_position = await self._checkpoint_repo.get_position(subscription_name)
 
-            if current_token is None:
+            if current_position is None:
                 logger.debug(
                     "Subscription has no checkpoint, skipping",
                     extra={
@@ -687,8 +661,6 @@ class SubscriptionMigrator:
                     },
                 )
                 return None
-
-            current_position = self._source_codec.value_of(current_token)
 
             # Get the current checkpoint data for event_id and event_type
             checkpoints = await self._checkpoint_repo.get_all_checkpoints()
@@ -711,7 +683,7 @@ class SubscriptionMigrator:
             try:
                 translation = await self._position_mapper.translate_position(
                     migration_id=migration_id,
-                    source_position=current_token,
+                    source_position=current_position,
                     use_nearest=True,
                 )
             except PositionMappingError as e:
@@ -720,7 +692,7 @@ class SubscriptionMigrator:
                     extra={
                         "subscription": subscription_name,
                         "migration_id": str(migration_id),
-                        "position": current_position,
+                        "position": current_position.to_str(),
                         "error": str(e),
                     },
                 )
@@ -746,27 +718,19 @@ class SubscriptionMigrator:
                     extra={
                         "subscription": subscription_name,
                         "migration_id": str(migration_id),
-                        "source_position": current_position,
+                        "source_position": current_position.to_str(),
                         "target_position": translation.target_position.to_str(),
                         "is_exact": translation.is_exact,
                     },
                 )
 
-                # slice-(c) seam: retired in Task 4 -- SubscriptionMigrationResult's
-                # position fields are still int.
-                target_int = self._target_codec.value_of(translation.target_position)
-                nearest_int = (
-                    self._source_codec.value_of(translation.nearest_source_position)
-                    if translation.nearest_source_position is not None
-                    else None
-                )
                 return SubscriptionMigrationResult(
                     subscription_name=subscription_name,
                     success=True,
                     source_position=current_position,
-                    target_position=target_int,
+                    target_position=translation.target_position,
                     is_exact_translation=translation.is_exact,
-                    nearest_source_position=nearest_int,
+                    nearest_source_position=translation.nearest_source_position,
                     migrated_at=datetime.now(UTC),
                 )
 
@@ -783,7 +747,7 @@ class SubscriptionMigrator:
                     subscription_name=subscription_name,
                     success=False,
                     source_position=current_position,
-                    target_position=self._target_codec.value_of(translation.target_position),
+                    target_position=translation.target_position,
                     error_message=f"Checkpoint update failed: {e}",
                 )
 

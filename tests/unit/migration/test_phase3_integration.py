@@ -1214,8 +1214,6 @@ class TestSubscriptionCheckpointMigration:
         migrator = SubscriptionMigrator(
             position_mapper=position_mapper,
             checkpoint_repo=checkpoint_repo,
-            source_store_id=SOURCE_STORE_ID,
-            target_store_id=TARGET_STORE_ID,
             enable_tracing=False,
         )
 
@@ -1267,8 +1265,6 @@ class TestSubscriptionCheckpointMigration:
         migrator = SubscriptionMigrator(
             position_mapper=position_mapper,
             checkpoint_repo=checkpoint_repo,
-            source_store_id=SOURCE_STORE_ID,
-            target_store_id=TARGET_STORE_ID,
             enable_tracing=False,
         )
 
@@ -1281,7 +1277,7 @@ class TestSubscriptionCheckpointMigration:
         assert summary.all_successful is True
         assert len(summary.results) == 1
         assert summary.results[0].is_exact_translation is False
-        assert summary.results[0].target_position == 50  # Nearest lower
+        assert summary.results[0].target_position == target_pos(50)  # Nearest lower
 
     @pytest.mark.asyncio
     async def test_migrate_multiple_subscriptions(
@@ -1323,8 +1319,6 @@ class TestSubscriptionCheckpointMigration:
         migrator = SubscriptionMigrator(
             position_mapper=position_mapper,
             checkpoint_repo=checkpoint_repo,
-            source_store_id=SOURCE_STORE_ID,
-            target_store_id=TARGET_STORE_ID,
             enable_tracing=False,
         )
 
@@ -1349,8 +1343,6 @@ class TestSubscriptionCheckpointMigration:
         migrator = SubscriptionMigrator(
             position_mapper=position_mapper,
             checkpoint_repo=checkpoint_repo,
-            source_store_id=SOURCE_STORE_ID,
-            target_store_id=TARGET_STORE_ID,
             enable_tracing=False,
         )
 
@@ -1397,8 +1389,6 @@ class TestDryRunSubscriptionMigration:
         migrator = SubscriptionMigrator(
             position_mapper=position_mapper,
             checkpoint_repo=checkpoint_repo,
-            source_store_id=SOURCE_STORE_ID,
-            target_store_id=TARGET_STORE_ID,
             enable_tracing=False,
         )
 
@@ -1411,8 +1401,8 @@ class TestDryRunSubscriptionMigration:
 
         assert plan.migratable_count == 1
         assert len(plan.planned_migrations) == 1
-        assert plan.planned_migrations[0].current_position == 100
-        assert plan.planned_migrations[0].planned_target_position == 50
+        assert plan.planned_migrations[0].current_position == source_pos(100)
+        assert plan.planned_migrations[0].planned_target_position == target_pos(50)
 
         # Verify checkpoint was NOT changed
         current_position = await checkpoint_repo.get_position("OrderProjection")
@@ -1446,8 +1436,6 @@ class TestDryRunSubscriptionMigration:
         migrator = SubscriptionMigrator(
             position_mapper=position_mapper,
             checkpoint_repo=checkpoint_repo,
-            source_store_id=SOURCE_STORE_ID,
-            target_store_id=TARGET_STORE_ID,
             enable_tracing=False,
         )
 
@@ -1734,8 +1722,6 @@ class TestMissingMappingErrors:
         migrator = SubscriptionMigrator(
             position_mapper=position_mapper,
             checkpoint_repo=checkpoint_repo,
-            source_store_id=SOURCE_STORE_ID,
-            target_store_id=TARGET_STORE_ID,
             enable_tracing=False,
         )
 
@@ -2166,8 +2152,6 @@ class TestMigrationSummary:
         migrator = SubscriptionMigrator(
             position_mapper=position_mapper,
             checkpoint_repo=checkpoint_repo,
-            source_store_id=SOURCE_STORE_ID,
-            target_store_id=TARGET_STORE_ID,
             enable_tracing=False,
         )
 
@@ -2220,8 +2204,6 @@ class TestMigrationSummary:
         migrator = SubscriptionMigrator(
             position_mapper=position_mapper,
             checkpoint_repo=checkpoint_repo,
-            source_store_id=SOURCE_STORE_ID,
-            target_store_id=TARGET_STORE_ID,
             enable_tracing=False,
         )
 

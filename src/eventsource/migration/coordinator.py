@@ -217,13 +217,11 @@ class MigrationCoordinator:
                 a routing label, a different namespace from the `store_id`
                 stamped into positions -- see source_position_store_id.
             source_position_store_id: `store_id` stamped into positions by the
-                source store. In slice (c), migration moves onto the ports
-                store surface and these ids will be derived from the stores'
-                own store_id attributes; until then the caller declares them.
+                source store. Retained solely for the BulkCopier bridge;
+                retired in Task 4.
             target_position_store_id: `store_id` stamped into positions by the
-                target store. In slice (c), migration moves onto the ports
-                store surface and these ids will be derived from the stores'
-                own store_id attributes; until then the caller declares them.
+                target store. Retained solely for the BulkCopier bridge;
+                retired in Task 4.
             lock_manager: PostgreSQL advisory lock manager for cutover coordination.
                 Required for cutover operations in dual-write phase.
             position_mapper: PositionMapper for subscription checkpoint translation.
@@ -1635,8 +1633,6 @@ class MigrationCoordinator:
             migrator = SubscriptionMigrator(
                 position_mapper=self._position_mapper,
                 checkpoint_repo=self._checkpoint_repo,
-                source_store_id=self._source_position_store_id,
-                target_store_id=self._target_position_store_id,
                 enable_tracing=self._enable_tracing,
             )
 
