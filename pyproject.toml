@@ -216,6 +216,7 @@ only_mutate = [
     "src/eventsource/domain",
     "src/eventsource/ports",
     "src/eventsource/adapters",
+    "src/eventsource/application",
 ]
 pytest_add_cli_args_test_selection = [
     "tests/unit/test_engine.py",
@@ -229,6 +230,9 @@ pytest_add_cli_args_test_selection = [
     "tests/unit/bus/test_memory.py",
     # Core-rings surface (Task 14)
     "tests/unit/adapters/",
+    "tests/unit/application/",
+    "tests/unit/domain/",
+    "tests/unit/ports/",
     "tests/unit/test_public_api.py",
 ]
 pytest_add_cli_args = ["--no-cov", "-x", "-q", "-p", "no:randomly"]
@@ -285,6 +289,12 @@ source_modules = [
     "eventsource.readmodels.exceptions",
 ]
 forbidden_modules = ["sqlalchemy"]
+
+[[tool.importlinter.contracts]]
+name = "Application ring must not import adapters"
+type = "forbidden"
+source_modules = ["eventsource.application"]
+forbidden_modules = ["eventsource.adapters", "eventsource.bus", "eventsource.repositories", "eventsource.locks"]
 
 # KNOWN VIOLATIONS (not enforced -- see task-2e-report.md for detail):
 #
