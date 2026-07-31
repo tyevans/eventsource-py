@@ -28,7 +28,8 @@ from eventsource.observability.attributes import (
     ATTR_EVENT_COUNT,
     ATTR_VERSION,
 )
-from eventsource.stores.interface import EventPublisher, EventStore
+from eventsource.ports.bus import EventPublisher
+from eventsource.stores.interface import EventStore
 
 if TYPE_CHECKING:
     from eventsource.ports.snapshots import Snapshot, SnapshotStore

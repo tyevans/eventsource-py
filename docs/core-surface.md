@@ -50,13 +50,13 @@ Any module that passes that test -- imports cleanly with nothing but the standar
 | `domain/aggregate.py` | pydantic (via events, types) | `AggregateRoot`, `DeclarativeAggregate` |
 | `domain/stream_id.py` | (none -- stdlib only) | `StreamId` value object |
 | `protocols.py` | `from eventsource.events.base import DomainEvent` (module level, so pydantic transitively) -- not standalone | `EventHandler`, `SyncEventHandler`, `EventSubscriber` protocols/ABCs |
-| `stores/interface.py` | (none beyond events/base) | `EventStore` ABC, `StoredEvent`, `EventStream`, `EventPublisher` |
+| `stores/interface.py` | (none beyond events/base, ports/bus) | `EventStore` ABC, `StoredEvent`, `EventStream`; re-exports `EventPublisher` |
 | `bus/interface.py` | (none beyond events/base, protocols) | `EventBus` ABC |
 | `ports/snapshots.py` | (none -- stdlib only) | `SnapshotStore` ABC, `Snapshot` dataclass |
 | `ports/positions.py` | (none beyond exceptions) | `Position`, `ExpectedVersion` value objects |
 | `ports/envelopes.py` | pydantic (via domain, events) | `EventEnvelope`, read-option value objects, `AppendResult`, `ReadDirection` |
 | `ports/store.py` | (none beyond domain, events, ports siblings) | `EventAppender`, `StreamReader`, `CategoryQuery`, `EventLookup`, `GlobalEventFeed`, `FullEventStore` port Protocols |
-| `ports/bus.py` | (none beyond stores/interface) | Transitional re-export of `EventPublisher` from `stores/interface.py` |
+| `ports/bus.py` | (none beyond events/base) | `EventPublisher` publishing port |
 | `application/aggregates/snapshotting.py` | `_internal/background_tasks`, `domain/aggregate`, `ports/snapshots` | `SnapshotPolicy`, `SnapshotScheduler`, `EveryNEvents`, `Never`, `ImmediateScheduler`, `BackgroundScheduler`, `take_snapshot()`, `read_valid_snapshot()` |
 | `handlers/decorators.py` | pydantic (via events/base) | `@handles` decorator |
 | `handlers/registry.py` | (none beyond handlers/decorators, events, exceptions) | `HandlerRegistry` |
@@ -92,7 +92,7 @@ Any module that passes that test -- imports cleanly with nothing but the standar
 | `readmodels/in_memory.py` | (none beyond readmodels base/query/exceptions and `observability`) | `InMemoryReadModelRepository` |
 | `readmodels/exceptions.py` | (none) | `ReadModelNotFoundError`, `OptimisticLockError` |
 
-`domain/`, `ports/`, and `application/` are Tier 0 in full, package `__init__`s included: every module under them resolves to stdlib, pydantic, and other Tier 0 in-library modules. So is `adapters/memory/` -- the in-memory ring adapter and its `__init__` are clean, while its sibling backend directories (`adapters/postgresql/`, `adapters/sqlite/`, `adapters/_sql/dialect.py`) are not; see the next table. `ports/bus.py` deserves one caveat: it is a transitional alias module whose only import is `from eventsource.stores.interface import EventPublisher`, so it is Tier 0 by the dependency test but couples `ports/` to `stores/interface.py` until the publisher contract is physically relocated (see boundary finding 12).
+`domain/`, `ports/`, and `application/` are Tier 0 in full, package `__init__`s included: every module under them resolves to stdlib, pydantic, and other Tier 0 in-library modules. So is `adapters/memory/` -- the in-memory ring adapter and its `__init__` are clean, while its sibling backend directories (`adapters/postgresql/`, `adapters/sqlite/`, `adapters/_sql/dialect.py`) are not; see the next table. `ports/bus.py` now owns the `EventPublisher` definition outright; the transitional coupling to `stores/interface.py` is gone, and the dependency points the other way -- `stores/interface.py:26` re-exports the port from `ports/bus.py` for backward compatibility (see boundary finding 12).
 
 `testing/` is tiered per module, not as a package. The six modules above import only stdlib plus in-library Tier 0 contracts -- `builder.py` and `assertions.py` reach for `eventsource.events.base` and nothing else; `conformance.py` adds `eventsource.exceptions`, `eventsource.stores.interface`, and `eventsource.bus.interface`; `recording.py`, `partitioned_memory.py`, and `sync_facade.py` build on `bus/interface`, `protocols`, `domain`, `events`, and `ports`, all of which are themselves Tier 0. None of them touch a repository, a harness, or a backend implementation.
 
@@ -123,13 +123,13 @@ The same shape repeats across the other contract modules:
 | Module | Module-level `eventsource` import | Floor it sits on |
 |--------|-----------------------------------|------------------|
 | `protocols.py` | `events.base` | `events/base.py` |
-| `stores/interface.py` | `events.base` | `events/base.py` |
+| `stores/interface.py` | `events.base`, `ports.bus` | `events/base.py` (+ `ports/bus.py`) |
 | `bus/interface.py` | `events.base`, `protocols` | `events/base.py` (+ `protocols.py`) |
 | `handlers/decorators.py` | `events.base` | `events/base.py` |
 | `handlers/registry.py` | `events.base`, `exceptions`, `handlers.decorators` | `events/base.py`, `exceptions.py` |
 | `handlers/adapter.py` | `events.base`, `protocols` | `events/base.py` (+ `protocols.py`) |
 | `domain/aggregate.py` | `events.base`, `exceptions`, `types` | `events/base.py`, `exceptions.py`, `types.py` |
-| `ports/bus.py` | `stores.interface` | `stores/interface.py` (+ its floor, `events/base.py`) |
+| `ports/bus.py` | `events.base` | `events/base.py` |
 
 Two modules are worth calling out as exceptions, because they behave differently from what the table's shape suggests:
 
@@ -138,7 +138,7 @@ Two modules are worth calling out as exceptions, because they behave differently
 
 `types.py` is a floor too, but for `domain/aggregate.py`, not for `protocols.py` -- `protocols.py` does not import it. Both floors are stdlib + pydantic, so neither drags infrastructure in; the cost is purely that the package boundary has to be drawn wide enough to contain them.
 
-**Consequence for extraction.** An `eventsource-core` package cannot ship `protocols.py` without `events/`. The two are a single unit: `events/base.py`, `events/registry.py`, and `events/__init__.py` (which re-exports both) move together with `protocols.py`, and `exceptions.py` and `types.py` come along for the aggregate and handler contracts. Splitting "protocols" and "events" into separate distributions would produce a protocols package that fails to import. The same reasoning binds `ports/` to `stores/interface.py` for as long as `ports/bus.py` keeps its transitional re-export.
+**Consequence for extraction.** An `eventsource-core` package cannot ship `protocols.py` without `events/`. The two are a single unit: `events/base.py`, `events/registry.py`, and `events/__init__.py` (which re-exports both) move together with `protocols.py`, and `exceptions.py` and `types.py` come along for the aggregate and handler contracts. Splitting "protocols" and "events" into separate distributions would produce a protocols package that fails to import. The former reverse binding of `ports/` to `stores/interface.py` is gone: `ports/bus.py` defines `EventPublisher` itself, and it is now `stores/interface.py` that imports from `ports/`.
 
 ## Empty and placeholder modules on the advertised surface
 
@@ -263,7 +263,7 @@ That is why finding 2 is worth prioritizing on user-facing grounds and not only 
 
     Note that the top-level package does the same thing one level up: `src/eventsource/__init__.py:176-193` imports 16 names from `eventsource.repositories`, including all three SQL-backed classes, and separately imports `eventsource.engine` (line 86) and `eventsource.stores.postgresql` (line 213), each of which is sqlalchemy at module level in its own right. So `import eventsource` requires sqlalchemy regardless of what the caller wants -- narrowing `repositories/__init__.py` without also revisiting the top-level re-export list leaves the practical import cost unchanged for anyone using the documented `from eventsource import ...` entry point.
 
-12. **The ring packages -- `domain/`, `ports/`, `application/`, `adapters/memory/` -- are Tier 0 in full, but `ports/` is runtime-reachable only with sqlalchemy installed today.** Per module, the new hexagonal core is exactly what this document asks for: every file under those four packages, `__init__`s included, resolves to stdlib, pydantic, and Tier 0 in-library modules. The caveat is one transitional seam plus one eager initializer. `ports/bus.py:7` re-exports `EventPublisher` from `stores/interface.py` -- a Tier 0 module -- but importing `eventsource.stores.interface` executes the `eventsource.stores` package `__init__`, and `stores/__init__.py:20` eagerly imports `stores/postgresql.py`, which imports sqlalchemy (line 17). Since `ports/__init__.py:3` imports `ports/bus.py`, any runtime touch of the `ports` namespace -- including `import eventsource.ports.snapshots`, whose own module is stdlib-only -- currently loads sqlalchemy. No module under `ports/` is at fault; the taint enters entirely through the two package initializers, which is the same pattern already described for `repositories/__init__.py` and `testing/__init__.py`. Either fix clears it: relocate `EventPublisher` into `ports/` (the alias module's own comment says this is planned), or make `stores/__init__.py` stop eagerly importing its PostgreSQL backend.
+12. **The ring packages -- `domain/`, `ports/`, `application/`, `adapters/memory/` -- are Tier 0 in full, and `ports/` no longer has any import path of its own to sqlalchemy.** Per module, the new hexagonal core is exactly what this document asks for: every file under those four packages, `__init__`s included, resolves to stdlib, pydantic, and Tier 0 in-library modules. The transitional seam this finding used to describe is closed: `EventPublisher` is physically defined in `ports/bus.py` now, and the dependency runs the correct direction -- `stores/interface.py:26` re-exports it from `ports/bus.py` for backward compatibility. The complete import closure of the `ports` subpackage, package `__init__`s included, is `domain/`, `events/`, `exceptions.py`, and `types.py`; verified by importing every `ports` submodule under a stubbed top-level package and asserting sqlalchemy absent from `sys.modules`. The Tier 0 import-linter contract now lists `eventsource.ports` as a whole (not just `ports/snapshots`), so a reintroduced outward import would break the build. The remaining caveat is not specific to `ports/`: any `import eventsource.<anything>` executes the top-level `eventsource/__init__.py` first, and that front-door initializer eagerly reaches `stores/postgresql.py` (see the import chain in the verification section below), so a bare runtime `import eventsource.ports` still loads sqlalchemy for the same reason importing anything in the library does. Clearing that requires making the top-level `__init__` lazy about its sqlalchemy-backed exports -- a property of the delivery mechanism's front door, not of the ring packages.
 
 13. **`subscriptions/` no longer belongs in the non-Tier-0 table.** Earlier revisions of this document listed it as sqlalchemy-tainted "via stores, repositories." That is no longer true: no module under `subscriptions/` imports a repository, a store backend, or a driver, at module level or otherwise. The package's only out-of-package imports are `events/base`, `stores/interface`, and `observability` -- all Tier 0 -- and its runtime contracts are the store/bus interfaces, satisfiable by the in-memory implementations. The package `__init__` eagerly re-exports its own submodules only, so the namespace is as clean as the modules. It is a large surface (25+ modules) rather than a small contract set, so whether it belongs in an extracted core is a scoping question, not a dependency one.
 
@@ -374,18 +374,17 @@ Two consequences for how you run the check:
 
 ### Why an import-time test does not work today
 
-The tempting automated check -- install a `sys.meta_path` finder that raises on `sqlalchemy`, then `importlib.import_module` the target -- currently fails for *every* module in the package, including ones this document lists as Tier 0. The chain is in the package initializers, not the modules. Today the first import line of `eventsource/__init__.py` is already enough:
+The tempting automated check -- install a `sys.meta_path` finder that raises on `sqlalchemy`, then `importlib.import_module` the target -- currently fails for *every* module in the package, including ones this document lists as Tier 0. The chain is in the package initializers, not the modules. The `ports/bus.py` relocation shortened the chain by one hop (the old route through `ports/__init__` no longer exists), but the front door still reaches sqlalchemy a few lines further down:
 
 ```
-eventsource/__init__.py:39      (from eventsource.adapters._sql.positions import IntPositionCodec)
-  -> adapters/_sql/positions.py:6   (from eventsource.ports.positions import Position)
-  -> ports/__init__.py:3            (from eventsource.ports.bus import EventPublisher)
-  -> ports/bus.py:7                 (from eventsource.stores.interface import EventPublisher)
+eventsource/__init__.py:44      (from eventsource.application.aggregates.repository import AggregateRepository)
+  -> application/aggregates/__init__.py:3  (from eventsource.application.aggregates.repository import AggregateRepository, TAggregate)
+  -> application/aggregates/repository.py:32 (from eventsource.stores.interface import EventStore)
   -> stores/__init__.py:20          (from eventsource.stores.postgresql import PostgreSQLEventStore)
   -> stores/postgresql.py:17        (from sqlalchemy import text)
 ```
 
-Every module in that chain except the last is itself Tier 0; the sqlalchemy enters entirely through the two eager package `__init__`s (`ports/` pulling its `bus` alias, `stores/` pulling its PostgreSQL backend). Importing `eventsource.testing.conformance` -- or anything else -- runs `eventsource/__init__.py` first, so the blocker fires before the target module is ever reached. `application/aggregates/repository.py` itself stays clean: it imports `application.aggregates.snapshotting` (Tier 0) and pulls the concrete `Snapshot`/`SnapshotStore` names from `ports.snapshots` only under `TYPE_CHECKING`. `PostgreSQLSnapshotStore` lives in `eventsource.adapters.postgresql`, which is not re-exported from the top-level package (see the comment at the top of `eventsource/__init__.py`) and must be imported path-only. This is the same package-taint pattern already described for `repositories/__init__.py`, `testing/__init__.py`, and `readmodels/`.
+Every module in that chain except the last is itself Tier 0; the sqlalchemy enters entirely through one eager package `__init__` -- `stores/` pulling its PostgreSQL backend -- fired as a side effect of touching the Tier 0 `stores/interface.py`. Importing `eventsource.testing.conformance` -- or anything else -- runs `eventsource/__init__.py` first, so the blocker fires before the target module is ever reached. `application/aggregates/repository.py` itself stays clean in the static graph: `stores.interface` is Tier 0, its snapshot names come from `ports.snapshots` only under `TYPE_CHECKING`, and its `EventPublisher` hint now comes from `ports.bus` directly; the runtime taint above belongs to `stores/__init__.py`, not to it. `PostgreSQLSnapshotStore` lives in `eventsource.adapters.postgresql`, which is not re-exported from the top-level package (see the comment at the top of `eventsource/__init__.py`) and must be imported path-only. This is the same package-taint pattern already described for `repositories/__init__.py`, `testing/__init__.py`, and `readmodels/`.
 
 So: **tier is a property of a module, not of the package that contains it**, and until the package initializers are made lazy, static grep plus manual import-walking is the only reliable verification. An import-time test becomes the authoritative check the moment those initializers stop eagerly importing backends -- and adding one is a reasonable acceptance criterion for that work.
 

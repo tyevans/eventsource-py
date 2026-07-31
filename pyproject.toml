@@ -263,7 +263,7 @@ source_modules = [
     "eventsource.protocols",
     "eventsource.stores.interface",
     "eventsource.bus.interface",
-    "eventsource.ports.snapshots",
+    "eventsource.ports",
     "eventsource.application.aggregates.snapshotting",
     "eventsource.handlers.decorators",
     "eventsource.handlers.registry",

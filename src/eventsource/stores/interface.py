@@ -10,7 +10,9 @@ This module provides:
 - StoredEvent: Wrapper for persisted events with position metadata
 - ReadOptions: Configuration for reading events
 - EventStore: Abstract base class for event store implementations
-- EventPublisher: Protocol for publishing events to external systems
+
+It also re-exports EventPublisher (the publishing protocol) from its home in
+eventsource.ports.bus for backward compatibility.
 """
 
 from abc import ABC, abstractmethod
@@ -18,10 +20,10 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Protocol
 from uuid import UUID
 
 from eventsource.events.base import DomainEvent
+from eventsource.ports.bus import EventPublisher as EventPublisher
 
 
 class ReadDirection(Enum):
@@ -618,35 +620,5 @@ class EventStore(ABC):
         Example:
             >>> max_pos = await event_store.get_global_position()
             >>> print(f"Event store has events up to position {max_pos}")
-        """
-        ...
-
-
-class EventPublisher(Protocol):
-    """
-    Protocol for publishing events to external systems.
-
-    Event publishers enable downstream consumers to react to events
-    asynchronously (e.g., sending notifications, updating search indices).
-
-    This protocol defines the contract that event bus implementations
-    and other publishing mechanisms should follow.
-
-    Example:
-        >>> class NotificationPublisher:
-        ...     async def publish(self, events: list[DomainEvent]) -> None:
-        ...         for event in events:
-        ...             await send_notification(event)
-    """
-
-    async def publish(self, events: list[DomainEvent]) -> None:
-        """
-        Publish events to external systems.
-
-        Args:
-            events: Events to publish
-
-        Raises:
-            Exception: If publishing fails (implementation-specific)
         """
         ...
