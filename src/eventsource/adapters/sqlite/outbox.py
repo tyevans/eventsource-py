@@ -10,7 +10,7 @@ This adapter reads and writes `event_outbox` rows using the schema in
 """
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
@@ -279,14 +279,27 @@ class SQLiteOutboxRepository:
                 ATTR_DB_SYSTEM: "sqlite",
             },
         ) as span:
-            # SQLite uses different date arithmetic syntax
+            # The cutoff is computed in Python and bound as a parameter,
+            # not delegated to SQLite's datetime('now', ...) -- that
+            # function returns a space-separated, sub-second-less string
+            # ("2026-07-31 18:08:33"), while published_at is written as
+            # this adapter's own datetime.now(UTC).isoformat() output
+            # ('T'-separated, with microseconds and a UTC offset). TEXT
+            # comparison between the two formats is not the ordering
+            # either format alone would give: 'T' (0x54) sorts after ' '
+            # (0x20), so published_at never compares less than
+            # datetime('now', ...) for any cutoff computed within the
+            # same wall-clock second. Binding the same isoformat() the
+            # column was written with keeps both sides of the TEXT
+            # comparison in one format.
+            cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
             cursor = await self._connection.execute(
                 """
                 DELETE FROM event_outbox
                 WHERE status = 'published'
-                  AND published_at < datetime('now', '-' || ? || ' days')
+                  AND published_at < ?
                 """,
-                (days,),
+                (cutoff,),
             )
             await self._connection.commit()
             deleted = cursor.rowcount if cursor.rowcount is not None else 0

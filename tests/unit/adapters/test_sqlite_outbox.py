@@ -238,6 +238,29 @@ class TestSQLiteOutboxRepositoryCleanupPublished:
         deleted = await sqlite_outbox_repo.cleanup_published(days=7)
         assert deleted == 0
 
+    async def test_cleanup_published_days_zero_deletes_entry_published_moments_ago(
+        self, sqlite_outbox_repo: SQLiteOutboxRepository
+    ) -> None:
+        """Regression: `days=0` must delete an entry published moments ago.
+
+        `published_at` is written via `datetime.now(UTC).isoformat()`
+        ('T'-separated, with microseconds and a UTC offset). If
+        `cleanup_published` compares that string against SQLite's
+        `datetime('now', ...)` (space-separated, no microseconds) as raw
+        TEXT, 'T' (0x54) sorts after ' ' (0x20) and the comparison never
+        matches for a cutoff computed within the same wall-clock second --
+        so a `days=0` cleanup silently deletes nothing, no matter how long
+        the entry has been published. `cleanup_published` must compare
+        against a Python-computed cutoff in the same isoformat() shape.
+        """
+        event = TestSampleEvent(aggregate_id=uuid4())
+        outbox_id = await sqlite_outbox_repo.add_event(event)
+        await sqlite_outbox_repo.mark_published(outbox_id)
+
+        deleted = await sqlite_outbox_repo.cleanup_published(days=0)
+
+        assert deleted == 1
+
 
 class TestSQLiteOutboxRepositoryGetStats:
     """Tests for get_stats method."""
