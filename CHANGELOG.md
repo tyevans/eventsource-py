@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New exceptions `DuplicateEventError`, `PositionDecodeError`, `PositionForeignError`, and the `IntPositionCodec` position codec are re-exported from top-level `eventsource`.
 - **`eventsource.application.aggregates`** -- `SnapshotPolicy` (`EveryNEvents`, `Never`), `SnapshotScheduler` (`ImmediateScheduler`, `BackgroundScheduler`), and the `take_snapshot` / `read_valid_snapshot` helpers, composed by `AggregateRepository` to decide and schedule snapshotting. `AggregateRepository` gained `snapshot_policy=` / `snapshot_scheduler=` constructor parameters for injecting custom policy/scheduler implementations.
 - ADR 0021, documenting the snapshot composition design (policy + scheduler replacing the monolithic snapshot manager/strategy) and superseding ADR 0017.
+- **Command objects and the decider aggregate style** -- `eventsource.commands.DomainCommand` (frozen pydantic base for commands), `eventsource.domain.decider.DeciderAggregate` (decide/evolve aggregate style), `CommandRejectedError`, and `create_event(command=...)` provenance stamping on `AggregateRoot`. All re-exported from top-level `eventsource`; documented in ADR 0022. (Landed on main via PR #82; recorded here on merge since it shipped without a changelog entry.)
 
 ### Changed
 
