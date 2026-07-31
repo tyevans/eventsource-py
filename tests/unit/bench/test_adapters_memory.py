@@ -48,7 +48,7 @@ async def test_memory_bus_adapter_delivers() -> None:
 async def test_memory_snapshot_adapter_roundtrip() -> None:
     from datetime import UTC, datetime
 
-    from eventsource.snapshots.interface import Snapshot
+    from eventsource.ports.snapshots import Snapshot
 
     adapter = MemorySnapshotAdapter()
     await adapter.setup()

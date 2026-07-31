@@ -33,11 +33,13 @@ shape the public methods take.
 
 ### Public Import Surface (`from eventsource import ...`)
 
-`eventsource.__all__` is the supported public surface. It contains 102 names when the
-SQLite extra is absent and 107 when it is present. The barrel is deliberately flat —
+`eventsource.__all__` is the supported public surface. It contains 130 names when the
+SQLite extra is absent and 133 when it is present (`SQLITE_AVAILABLE`, `SQLiteEventStore`,
+and `SQLiteOutboxRepository` are the only names conditionally appended). The barrel is
+deliberately flat —
 `from eventsource import DomainEvent, AggregateRoot, InMemoryEventStore` is the idiomatic
 import style, and the module paths underneath (`eventsource.events.base`,
-`eventsource.aggregates.base`, `eventsource.stores.in_memory`) are where those names are
+`eventsource.domain.aggregate`, `eventsource.stores.in_memory`) are where those names are
 defined rather than where callers are expected to reach.
 
 The exported names fall into these groups:
@@ -67,12 +69,13 @@ level. They are imported from their own modules: `eventsource.testing`,
 `eventsource.locks`, `eventsource.gdpr`, `eventsource.config`, and the raw SQL under
 `eventsource.migrations`.
 
-A few names are also narrower at the barrel than in their defining module. Snapshots are
-the clearest case: `eventsource.snapshots.__all__` additionally contains
-`PostgreSQLSnapshotStore`, `SQLiteSnapshotStore`, its own `SQLITE_AVAILABLE`, and
-`SQLiteNotAvailableError`, none of which are re-exported at the top level. Persistent
-snapshot stores are therefore imported as
-`from eventsource.snapshots import PostgreSQLSnapshotStore`.
+A few names are also narrower at the barrel than in their defining adapter package.
+Snapshots are the clearest case: `PostgreSQLSnapshotStore` (`eventsource.adapters.postgresql`)
+and `SQLiteSnapshotStore` plus its own `SQLiteNotAvailableError`
+(`eventsource.adapters.sqlite`) are not re-exported at the top level, though the
+top-level `SQLITE_AVAILABLE` flag does cover the SQLite snapshot store along with the
+SQLite event store. Persistent snapshot stores are therefore imported path-only, e.g.
+`from eventsource.adapters.postgresql import PostgreSQLSnapshotStore`.
 
 `eventsource.protocols`, `eventsource.exceptions`, and `eventsource.types` are partly
 re-exported: the barrel carries the commonly used names from each, while the modules
@@ -113,7 +116,7 @@ if REDIS_AVAILABLE:
     bus = RedisEventBus()  # otherwise raises RedisNotAvailableError
 ```
 
-`SQLiteSnapshotStore` in `eventsource.snapshots` follows this same pattern, with
+`SQLiteSnapshotStore` in `eventsource.adapters.sqlite` follows this same pattern, with
 `SQLiteNotAvailableError` raised from its constructor.
 
 **Conditionally importable, absent when missing.** The SQLite store and repositories
@@ -236,8 +239,8 @@ short-circuited by a snapshot, consumed by a projection, and distributed over a 
 | --- | --- | --- |
 | [Events](events.md) | `eventsource.events` | 10 |
 | Event Stores | `eventsource.stores` | 9 (10 with the SQLite extra) |
-| [Aggregates](aggregates.md) | `eventsource.aggregates`, `eventsource.handlers` | 4 |
-| [Snapshots](snapshots.md) | `eventsource.snapshots` | 7 of 11 |
+| [Aggregates](aggregates.md) | `eventsource.domain.aggregate`, `eventsource.application.aggregates`, `eventsource.handlers` | 4 |
+| [Snapshots](snapshots.md) | `eventsource.ports.snapshots`, `eventsource.application.aggregates.snapshotting`, `eventsource.adapters.{memory,postgresql,sqlite}` | 7 of 11 |
 | [Projections](projections.md) | `eventsource.projections`, `eventsource.readmodels` | 5 of 21 |
 | [Event Bus](bus.md) | `eventsource.bus` | 20 |
 
@@ -305,17 +308,19 @@ between the bounded `get_events` family and the streaming `read_stream` / `read_
 iterators, and the conformance suite in `eventsource.testing.conformance` that a
 third-party store implementation is expected to pass.
 
-### Aggregates — `api/aggregates.md` (`eventsource.aggregates.base`, `eventsource.aggregates.repository`)
+### Aggregates — `api/aggregates.md` (`eventsource.domain.aggregate`, `eventsource.application.aggregates.repository`)
 
 Covers `AggregateRoot[TState]`, the abstract generic base holding state plus uncommitted
-events; `DeclarativeAggregate[TState]`, which routes events to methods marked with
-`@handles` instead of requiring a hand-written `apply` dispatch; and
-`AggregateRepository[TAggregate]`, which loads an aggregate by replaying its stream,
-saves uncommitted events with an `expected_version`, and optionally consults a snapshot
-store to skip part of the replay.
+events, and `DeclarativeAggregate[TState]`, which routes events to methods marked with
+`@handles` instead of requiring a hand-written `apply` dispatch — both in the entities
+ring, at `eventsource.domain.aggregate`. `AggregateRepository[TAggregate]`, which loads
+an aggregate by replaying its stream, saves uncommitted events with an
+`expected_version`, and optionally consults a snapshot store to skip part of the replay,
+is one ring out, at `eventsource.application.aggregates.repository`.
 
-`eventsource.aggregates.__all__` adds the two type variables `TAggregate` and `TState`
-to the three classes. The `handles` decorator itself is defined in
+`eventsource.application.aggregates.__all__` adds the type variable `TAggregate`
+alongside `AggregateRepository`; `TState` is declared in `eventsource.types` and
+re-exported from the top-level barrel. The `handles` decorator itself is defined in
 `eventsource.handlers` and re-exported from the barrel; the same decorator is used by
 `DeclarativeProjection`.
 
@@ -324,19 +329,25 @@ The page also covers the repository's snapshot policy surface — `snapshot_mode
 `await_pending_snapshots` — because snapshotting is configured at the repository, not on
 the aggregate.
 
-### Snapshots — `api/snapshots.md` (`eventsource.snapshots`)
+### Snapshots — `api/snapshots.md` (`eventsource.ports.snapshots`, `eventsource.application.aggregates.snapshotting`)
 
-Covers the `Snapshot` value object, the `SnapshotStore` interface, its three backends,
-the four-member exception hierarchy, and the strategy objects in
-`eventsource.snapshots.strategies` that decide when a snapshot is written.
+Covers the `Snapshot` value object, the `SnapshotStore` interface (both in
+`eventsource.ports.snapshots`), its three backend adapters, the four-member exception
+hierarchy (`eventsource.exceptions`), and the `SnapshotPolicy` / `SnapshotScheduler`
+collaborators in `eventsource.application.aggregates.snapshotting` — the composable
+replacement for ADR 0017's `SnapshotStrategy` — that decide when and how a snapshot is
+written (see [ADR 0021](../adrs/0021-snapshot-policy-scheduler-composition.md)).
 
 This is the clearest case of a page documenting more than the barrel exports. The
 top-level package re-exports `Snapshot`, `SnapshotStore`, `InMemorySnapshotStore`, and
-the four `Snapshot*Error` types. `eventsource.snapshots.__all__` adds
-`PostgreSQLSnapshotStore`, `SQLiteSnapshotStore`, its own `SQLITE_AVAILABLE`, and
-`SQLiteNotAvailableError`; the strategies are a further module-level import. Persistent
-snapshot storage is therefore always written as
-`from eventsource.snapshots import PostgreSQLSnapshotStore`.
+the four `Snapshot*Error` types. `PostgreSQLSnapshotStore` (from
+`eventsource.adapters.postgresql`), `SQLiteSnapshotStore` and its own
+`SQLiteNotAvailableError` (from `eventsource.adapters.sqlite`) are not re-exported at
+the top level, though top-level `SQLITE_AVAILABLE` does cover SQLite snapshot support;
+`SnapshotPolicy`, `SnapshotScheduler`, and their implementations are a further
+module-level import from `eventsource.application.aggregates.snapshotting`. Persistent
+snapshot storage is therefore always written path-only, e.g.
+`from eventsource.adapters.postgresql import PostgreSQLSnapshotStore`.
 
 The page's central invariant: a snapshot is an optimization artifact, never the source of
 truth. A missing, unreadable, or schema-mismatched snapshot degrades to a full event
@@ -393,7 +404,7 @@ from eventsource.events.base import DomainEvent  # submodule (identical object)
 
 For any name listed in `eventsource.__all__`, import from `eventsource` directly. The
 barrel is the supported contract; the module paths beneath it
-(`eventsource.events.base`, `eventsource.aggregates.repository`,
+(`eventsource.events.base`, `eventsource.application.aggregates.repository`,
 `eventsource.stores.in_memory`) are implementation detail and may be reorganized without
 being treated as a breaking change, provided the barrel name keeps working.
 
@@ -763,8 +774,11 @@ Consequences worth knowing:
       from eventsource import SQLiteEventStore
   ```
 
-- `eventsource.snapshots` exposes its own `SQLITE_AVAILABLE` for `SQLiteSnapshotStore`;
-  it is a separate flag from the top-level one.
+- `SQLiteSnapshotStore` (`eventsource.adapters.sqlite`) is not imported at the top
+  level at all, so it is not gated by the top-level `SQLITE_AVAILABLE` flag. The
+  `eventsource.adapters.sqlite` package exposes its own `SQLITE_AVAILABLE` (plus
+  `AIOSQLITE_AVAILABLE` for the event store) -- import path-only and check that
+  flag, or catch `SQLiteNotAvailableError` from the constructor.
 
 ### Names imported from submodules
 
@@ -1160,12 +1174,14 @@ is checked against the same contract the bundled backends satisfy.
 
 ### Aggregates
 
-`eventsource.aggregates` holds the consistency boundary: `AggregateRoot`, the base class
-that turns commands into events and events into state; `DeclarativeAggregate`, which
-routes events to `@handles`-decorated methods; and `AggregateRepository`, which loads and
-saves aggregates through an `EventStore`. All three are re-exported from the barrel, as
-is `handles` (whose canonical home is `eventsource.handlers`). The type variable
-`TAggregate` is exported from `eventsource.aggregates` but not from the barrel.
+`eventsource.domain.aggregate` holds the consistency boundary: `AggregateRoot`, the base
+class that turns commands into events and events into state, and `DeclarativeAggregate`,
+which routes events to `@handles`-decorated methods. `AggregateRepository`, which loads
+and saves aggregates through an `EventStore`, lives one ring out at
+`eventsource.application.aggregates.repository`. All three are re-exported from the
+barrel, as is `handles` (whose canonical home is `eventsource.handlers`). The type
+variable `TAggregate` is exported from `eventsource.application.aggregates` but not from
+the barrel.
 
 #### `AggregateRoot`
 

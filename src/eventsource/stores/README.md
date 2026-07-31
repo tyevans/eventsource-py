@@ -143,8 +143,9 @@ identically, and the shared behavior is pinned by the `EventStore` conformance s
 
 ### EventPublisher (Protocol)
 
-`EventPublisher` (`interface.py`) is a one-method `typing.Protocol` for pushing already-persisted
-events to downstream systems — notifications, search indices, an event bus:
+`EventPublisher` is a one-method `typing.Protocol` for pushing already-persisted events to
+downstream systems — notifications, search indices, an event bus. It is defined in
+`eventsource.ports.bus` and re-exported from `interface.py` for backward compatibility:
 
 ```python
 class EventPublisher(Protocol):
@@ -287,7 +288,7 @@ tests are meant to mirror production deserialization.
 | Data structures | `AppendResult`, `EventStream`, `StoredEvent`, `ReadOptions`, `ReadDirection`, `ExpectedVersion` | `interface.py` |
 | Abstract base class | `EventStore` | `interface.py` |
 | Concrete implementations | `InMemoryEventStore`, `PostgreSQLEventStore` | `in_memory.py`, `postgresql.py` |
-| Protocols | `EventPublisher` | `interface.py` |
+| Protocols | `EventPublisher` | `ports/bus.py` (re-exported via `interface.py`) |
 | Type conversion | `TypeConverter`, `DefaultTypeConverter`, `DEFAULT_UUID_FIELDS`, `DEFAULT_STRING_ID_FIELDS` | `_type_converter.py` |
 
 `PostgreSQLEventStore` is unconditional: SQLAlchemy is a core dependency, and the store creates
@@ -335,7 +336,7 @@ the `sqlite` extra (`uv sync --extra sqlite`, or `--all-extras` for development)
 
 ## Module Map
 
-### `interface.py` — EventStore ABC, StoredEvent, EventStream, AppendResult, ReadOptions, ReadDirection, ExpectedVersion, EventPublisher
+### `interface.py` — EventStore ABC, StoredEvent, EventStream, AppendResult, ReadOptions, ReadDirection, ExpectedVersion (+ re-exported EventPublisher)
 
 Backend-agnostic contracts and data structures. Imports only stdlib plus `DomainEvent`.
 

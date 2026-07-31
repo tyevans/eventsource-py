@@ -4,7 +4,7 @@ Additional unit tests for improving coverage.
 These tests target specific uncovered lines identified in the coverage report:
 - bus/memory.py: background publishing, error handling
 - projections/base.py: abstract methods, DLQ write failures
-- aggregates/base.py: edge cases
+- domain/aggregate.py: edge cases
 - stores/interface.py: protocol methods
 """
 
@@ -15,8 +15,8 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.aggregates.base import AggregateRoot, DeclarativeAggregate
 from eventsource.bus.memory import InMemoryEventBus
+from eventsource.domain.aggregate import AggregateRoot, DeclarativeAggregate
 from eventsource.events.base import DomainEvent
 from eventsource.handlers import handles
 from eventsource.projections.base import (

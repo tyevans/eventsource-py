@@ -203,7 +203,7 @@ the subscription guides below.
 | [Coordinate work with distributed locks](distributed-locks.md) | Serialize an operation across instances using PostgreSQL advisory locks |
 
 Background: [ADR 0009: multi-instance subscription coordination](../adrs/0009-multi-instance-subscription-coordination.md)
-and [ADR 0019: PostgreSQL advisory locks](../adrs/0019-postgresql-advisory-locks.md).
+and [ADR 0023: PostgreSQL advisory locks](../adrs/0023-postgresql-advisory-locks.md).
 
 ### Multi-tenancy
 
@@ -326,9 +326,12 @@ The work splits three ways, and the guide follows that order:
   `_restore_from_snapshot()`, and set the `schema_version` class attribute (default
   `1`). Bumping `schema_version` is how you invalidate every snapshot written under
   an older state shape.
-- **On the store.** `InMemorySnapshotStore`, `SQLiteSnapshotStore`, and
-  `PostgreSQLSnapshotStore` all come from `eventsource.snapshots` and implement the
-  same `SnapshotStore` interface. Neither SQL store creates its own table -- apply
+- **On the store.** `InMemorySnapshotStore` is re-exported from the top-level
+  `eventsource` package and comes from `eventsource.adapters.memory`;
+  `SQLiteSnapshotStore` and `PostgreSQLSnapshotStore` are imported from
+  `eventsource.adapters.sqlite` / `eventsource.adapters.postgresql` respectively.
+  All three implement the same `SnapshotStore` interface (`eventsource.ports.snapshots`).
+  Neither SQL store creates its own table -- apply
   the bundled `snapshots` schema first (`get_schema("snapshots")`, or the sqlite
   variant; see [set up the database schema](database-schema.md)). `SQLiteSnapshotStore`
   needs the `sqlite` extra and raises `SQLiteNotAvailableError` without it.

@@ -217,6 +217,7 @@ only_mutate = [
     "src/eventsource/domain",
     "src/eventsource/ports",
     "src/eventsource/adapters",
+    "src/eventsource/application",
 ]
 pytest_add_cli_args_test_selection = [
     "tests/unit/test_engine.py",
@@ -227,9 +228,11 @@ pytest_add_cli_args_test_selection = [
     "tests/unit/bus/test_base.py",
     "tests/unit/bus/rabbitmq/",
     "tests/unit/bus/kafka/",
-    "tests/unit/bus/test_memory.py",
     # Core-rings surface (Task 14)
     "tests/unit/adapters/",
+    "tests/unit/application/",
+    "tests/unit/domain/",
+    "tests/unit/ports/",
     "tests/unit/test_public_api.py",
 ]
 pytest_add_cli_args = ["--no-cov", "-x", "-q", "-p", "no:randomly"]
@@ -257,13 +260,14 @@ type = "forbidden"
 source_modules = [
     "eventsource.events.base",
     "eventsource.events.registry",
+    "eventsource.domain.aggregate",
+    "eventsource.domain.decider",
     "eventsource.commands",
-    "eventsource.aggregates.base",
     "eventsource.protocols",
     "eventsource.stores.interface",
     "eventsource.bus.interface",
-    "eventsource.snapshots.interface",
-    "eventsource.snapshots.strategies",
+    "eventsource.ports",
+    "eventsource.application.aggregates.snapshotting",
     "eventsource.handlers.decorators",
     "eventsource.handlers.registry",
     "eventsource.handlers.adapter",
@@ -271,12 +275,11 @@ source_modules = [
     "eventsource.types",
     "eventsource.stores.in_memory",
     "eventsource.bus.memory",
-    "eventsource.snapshots.in_memory",
+    "eventsource.adapters.memory.snapshots",
     "eventsource.projections.protocols",
     "eventsource.testing.builder",
     "eventsource.testing.assertions",
     "eventsource.testing.conformance",
-    "eventsource.aggregates.snapshot_manager",
     "eventsource.multitenancy.context",
     "eventsource.multitenancy.events",
     "eventsource.multitenancy.exceptions",
@@ -286,31 +289,32 @@ source_modules = [
     "eventsource.readmodels.repository",
     "eventsource.readmodels.in_memory",
     "eventsource.readmodels.exceptions",
+    "eventsource.application.aggregates.repository",
+    "eventsource.multitenancy.repository",
 ]
 forbidden_modules = ["sqlalchemy"]
 
+[[tool.importlinter.contracts]]
+name = "Application ring must not import adapters"
+type = "forbidden"
+source_modules = ["eventsource.application"]
+forbidden_modules = ["eventsource.adapters", "eventsource.bus", "eventsource.repositories", "eventsource.locks"]
+
 # KNOWN VIOLATIONS (not enforced -- see task-2e-report.md for detail):
 #
-# 1. docs/core-surface.md and .claude/rules/architecture.md claim events/,
-#    aggregates/, projections/ are "core domain" with no infrastructure imports.
-#    In practice:
-#      - projections/base.py imports eventsource.repositories.checkpoint and
-#        eventsource.repositories.dlq (both sqlalchemy-backed)
-#      - projections/checkpoint_manager.py imports eventsource.repositories.checkpoint
-#      - projections/dlq_manager.py imports eventsource.repositories.dlq
-#    repositories/checkpoint.py and repositories/dlq.py mix Protocol definitions
-#    with sqlalchemy implementations in the same module, so there is no way to
-#    import the protocol without importing sqlalchemy.
+# docs/core-surface.md documents projections/ as the one remaining Tier-0
+# blocker. In practice:
+#   - projections/base.py imports eventsource.repositories.checkpoint and
+#     eventsource.repositories.dlq (both sqlalchemy-backed)
+#   - projections/checkpoint_manager.py imports eventsource.repositories.checkpoint
+#   - projections/dlq_manager.py imports eventsource.repositories.dlq
+# repositories/checkpoint.py and repositories/dlq.py mix Protocol definitions
+# with sqlalchemy implementations in the same module, so there is no way to
+# import the protocol without importing sqlalchemy.
 #
-# 2. docs/core-surface.md lists eventsource.aggregates.repository and (via it)
-#    eventsource.multitenancy.repository as Tier 0, on the theory that snapshot
-#    types are imported lazily/under TYPE_CHECKING. That is true of the module
-#    itself, but eventsource/snapshots/__init__.py unconditionally does
-#    `from eventsource.snapshots.postgresql import PostgreSQLSnapshotStore` at
-#    module level (unguarded by try/except, unlike the sqlite import a few lines
-#    below it) -- so `import eventsource.snapshots` always pulls in sqlalchemy,
-#    and both repository modules import `eventsource.snapshots`. They are
-#    excluded from the contract's source_modules above for this reason.
+# (eventsource.application.aggregates.repository and
+# eventsource.multitenancy.repository were re-verified clean after the
+# snapshots-package dissolution and are now enforced in source_modules above.)
 #
 # Per task instructions: report the drift, do not weaken the contract to hide
 # it, and do not fix the violations here.

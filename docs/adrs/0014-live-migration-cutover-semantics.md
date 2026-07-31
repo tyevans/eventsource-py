@@ -51,7 +51,7 @@ Scope of the decision:
   operational tooling, not part of the everyday application surface.
 - It inherits, rather than revisits, the choice of PostgreSQL advisory locks as
   the distributed mutual-exclusion primitive. That decision and its scope
-  limits belong to ADR-0019 (PostgreSQL Advisory Locks for Distributed
+  limits belong to ADR-0023 (PostgreSQL Advisory Locks for Distributed
   Coordination); the practical consequence here is that live migration requires
   a PostgreSQL lock manager even when neither event store is PostgreSQL.
 
@@ -311,7 +311,7 @@ the holding session dies. If the lock cannot be acquired,
 `execute_cutover()` does not raise: it returns
 `CutoverResult(success=False, duration_ms=0.0, rolled_back=False)` with the
 acquisition error in `error_message`, so a contended cutover is a retryable
-no-op rather than a half-applied change. See ADR-0019 for why that lock
+no-op rather than a half-applied change. See ADR-0023 for why that lock
 primitive is PostgreSQL-only.
 
 #### The two-layer pause: distributed lock plus per-process `WritePauseManager` (`asyncio.Event`, `WritePausedError`)
@@ -620,6 +620,6 @@ operators trade coverage for time on very large tenants.
   `VerificationLevel`, `VerificationReport`
 - `src/eventsource/locks/postgresql.py` — `PostgreSQLLockManager`,
   `migration_lock_key`
-- ADR-0019: PostgreSQL Advisory Locks for Distributed Coordination
+- ADR-0023: PostgreSQL Advisory Locks for Distributed Coordination
 - ADR-0009: Multi-Instance Subscription Coordination
 - `tests/unit/migration/` — behavioural pinning for every claim above

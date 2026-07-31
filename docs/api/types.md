@@ -195,7 +195,9 @@ The single type variable in the module, declared as
 pydantic model. The `BaseModel` bound is what lets the framework validate,
 copy, and snapshot state generically.
 
-`TState` is re-exported from both `eventsource` and `eventsource.aggregates`.
+`TState` is re-exported from `eventsource`. It is declared in `eventsource.types`
+and imported by `eventsource.domain.aggregate` (`AggregateRoot`); the
+`aggregates` package it used to also be re-exported from no longer exists.
 
 ### Note: aliases are transparent, not distinct types (no runtime enforcement)
 

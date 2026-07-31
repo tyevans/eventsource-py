@@ -1,8 +1,8 @@
 # Aggregates API Reference
 
-Technical reference for the `eventsource.aggregates` package: the aggregate root
-base classes, the declarative event-routing variant, and the repository that
-loads and persists them.
+Technical reference for the aggregate root base classes (entities ring,
+`eventsource.domain.aggregate`) and the repository that loads and persists
+them (use-case ring, `eventsource.application.aggregates.repository`).
 
 ## Overview
 
@@ -10,10 +10,10 @@ The package exposes three public classes and two type variables:
 
 | Name | Kind | Defined in |
 | --- | --- | --- |
-| `AggregateRoot[TState]` | Abstract base class | `eventsource.aggregates.base` |
-| `DeclarativeAggregate[TState]` | Abstract base class (subclass of `AggregateRoot`) | `eventsource.aggregates.base` |
-| `AggregateRepository[TAggregate]` | Concrete generic class | `eventsource.aggregates.repository` |
-| `TAggregate` | `TypeVar` bound to `AggregateRoot[Any]` | `eventsource.aggregates.repository` |
+| `AggregateRoot[TState]` | Abstract base class | `eventsource.domain.aggregate` |
+| `DeclarativeAggregate[TState]` | Abstract base class (subclass of `AggregateRoot`) | `eventsource.domain.aggregate` |
+| `AggregateRepository[TAggregate]` | Concrete generic class | `eventsource.application.aggregates.repository` |
+| `TAggregate` | `TypeVar` bound to `AggregateRoot[Any]` | `eventsource.application.aggregates.repository` |
 | `TState` | `TypeVar` for the aggregate state model | `eventsource.types` |
 
 `AggregateRoot` is `Generic[TState], ABC`: `TState` is the Pydantic model that
@@ -31,13 +31,16 @@ behaves in the current source. Sections marked with a leading underscore
 the repository rely on them; they are not part of the stable public surface for
 application code unless explicitly noted as a subclass hook.
 
-A further module — `eventsource.aggregates.snapshot_manager` — backs the
-repository's snapshot behaviour. It is not re-exported from
-`eventsource.aggregates` and is documented here only through the repository
-methods and properties that expose its effects. Background-task tracking
-(used by the snapshot strategies and the event bus, not the repository
-directly) lives in the internal `eventsource._internal.background_tasks`
-module and is out of scope for this page.
+Two further modules back the repository's snapshot behaviour:
+`eventsource.application.aggregates.snapshotting` (`SnapshotPolicy`,
+`SnapshotScheduler`, and the `take_snapshot()` / `read_valid_snapshot()`
+functions — see [ADR 0021](../adrs/0021-snapshot-policy-scheduler-composition.md))
+and, for background scheduling, the internal
+`eventsource._internal.background_tasks` module. Neither is re-exported from
+`eventsource.application.aggregates` except where noted, and both are
+documented here only through the repository methods and properties that
+expose their effects; the [Snapshots reference](snapshots.md) covers
+`snapshotting.py` directly.
 
 For task-oriented material — modelling a new aggregate, wiring snapshots, or
 choosing between the declarative and imperative styles — see the guides under
@@ -46,38 +49,40 @@ choosing between the declarative and imperative styles — see the guides under
 [Snapshotting](../guides/snapshotting.md). This page assumes you already know
 what you want to call and need the exact signature and semantics.
 
-## Import Surface (`eventsource.aggregates`)
+## Import Surface
 
-`eventsource/aggregates/__init__.py` re-exports five names, and its `__all__`
-lists exactly those five:
+`AggregateRoot` and `DeclarativeAggregate` live in the entities ring:
 
 ```python
-from eventsource.aggregates import (
-    AggregateRoot,
-    AggregateRepository,
-    DeclarativeAggregate,
-    TAggregate,
-    TState,
-)
+from eventsource.domain.aggregate import AggregateRoot, DeclarativeAggregate
+```
+
+`eventsource.domain.__init__.py` re-exports both, plus `StreamId` and
+`CATEGORY_PATTERN` (unrelated to aggregates). `AggregateRepository` and the
+snapshotting collaborators live one ring out, in `eventsource.application.aggregates`,
+whose `__all__` lists exactly `AggregateRepository`, `TAggregate`,
+`BackgroundScheduler`, `EveryNEvents`, `ImmediateScheduler`, `Never`,
+`SnapshotPolicy`, `SnapshotScheduler`, `read_valid_snapshot`, `take_snapshot`:
+
+```python
+from eventsource.application.aggregates import AggregateRepository, TAggregate
 ```
 
 Their defining modules are:
 
 | Exported name | Defined in |
 | --- | --- |
-| `AggregateRoot` | `eventsource.aggregates.base` |
-| `DeclarativeAggregate` | `eventsource.aggregates.base` |
-| `AggregateRepository` | `eventsource.aggregates.repository` |
-| `TAggregate` | `eventsource.aggregates.repository` |
+| `AggregateRoot` | `eventsource.domain.aggregate` |
+| `DeclarativeAggregate` | `eventsource.domain.aggregate` |
+| `AggregateRepository` | `eventsource.application.aggregates.repository` |
+| `TAggregate` | `eventsource.application.aggregates.repository` |
 | `TState` | `eventsource.types` |
 
-`TState` is not defined in this package; the subpackage re-exports it from
-`eventsource.types`, where it is declared as `TypeVar("TState", bound=BaseModel)`.
-`TAggregate` is declared in `eventsource.aggregates.repository` as
-`TypeVar("TAggregate", bound="AggregateRoot[Any]")`. An identically named and
-identically bound `TAggregate` is declared separately in
-`eventsource.aggregates.snapshot_manager` for `AggregateSnapshotManager`; it is
-a distinct object and is not the one exported here.
+`TState` is not defined in either ring package; both re-export it (indirectly,
+via `AggregateRoot`'s own import) from `eventsource.types`, where it is
+declared as `TypeVar("TState", bound=BaseModel)`. `TAggregate` is declared in
+`eventsource.application.aggregates.repository` as
+`TypeVar("TAggregate", bound="AggregateRoot[Any]")`.
 
 ### Preferred import path
 
@@ -90,23 +95,27 @@ from eventsource import AggregateRoot, AggregateRepository, DeclarativeAggregate
 
 `TState` is likewise available as `from eventsource import TState`. `TAggregate`
 is **not** in the top-level `__all__` — to annotate against it, import it from
-`eventsource.aggregates` (or from `eventsource.aggregates.repository`).
+`eventsource.application.aggregates` (or from
+`eventsource.application.aggregates.repository`).
 
-### Names not exported
+### Names not exported at the top level
 
-`eventsource.aggregates.snapshot_manager` is an implementation module.
-`AggregateSnapshotManager` does not appear in the subpackage's `__all__` or
-in the top-level package, and is not covered by the project's
-backward-compatibility guarantees. Its behaviour reaches application code
-only through `AggregateRepository`'s snapshot properties and methods,
-documented under [Snapshot Surface](#snapshot-surface).
+`SnapshotPolicy`, `SnapshotScheduler`, `EveryNEvents`, `Never`,
+`ImmediateScheduler`, `BackgroundScheduler`, `take_snapshot`, and
+`read_valid_snapshot` are exported from `eventsource.application.aggregates`
+but not from the top-level package — import them path-only if you need to
+pass a custom policy or scheduler to `AggregateRepository`. Their behaviour
+reaches application code by default only through `AggregateRepository`'s
+snapshot properties and methods, documented under
+[Snapshot Surface](#snapshot-surface); see the
+[Snapshots reference](snapshots.md) for the collaborators themselves.
 
 Symbols that support these classes but live elsewhere — the `@handles`
 decorator (`eventsource.handlers`), `DomainEvent` (`eventsource.events`), the
 `EventStore` / `EventPublisher` / `SnapshotStore` contracts
-(`eventsource.protocols`), and the exceptions raised by this package
-(`eventsource.exceptions`) — are all re-exported from the top level and are
-referenced by their public names throughout this page.
+(`eventsource.protocols`, `eventsource.ports.snapshots`), and the exceptions
+raised by this package (`eventsource.exceptions`) — are all re-exported from
+the top level and are referenced by their public names throughout this page.
 
 ## `AggregateRoot[TState]`
 
@@ -115,7 +124,7 @@ class AggregateRoot(Generic[TState], ABC):
     def __init__(self, aggregate_id: UUID) -> None: ...
 ```
 
-Defined in `eventsource.aggregates.base`. The abstract base for every
+Defined in `eventsource.domain.aggregate`. The abstract base for every
 event-sourced aggregate. An instance owns three pieces of mutable state — the
 current version, the current `TState` model (or `None`), and a list of
 uncommitted `DomainEvent`s — and mutates all three through a single entry
@@ -181,10 +190,10 @@ aggregate is an entity identified by its ID rather than by its contents. See
 
 ### Module-level names
 
-Besides the two classes, `eventsource.aggregates.base` exports the type alias
+Besides the two classes, `eventsource.domain.aggregate` exports the type alias
 `UnregisteredEventHandling = str` (the `"ignore" | "warn" | "error"` values
 accepted by `DeclarativeAggregate.unregistered_event_handling`). It is in that
-module's `__all__` but is not re-exported from `eventsource.aggregates` or the
+module's `__all__` but is not re-exported from `eventsource.domain` or the
 top-level package. The module also defines, without exporting, the alias
 `EventHandler = Callable[[DomainEvent], None]` and the type variable
 `TEvent = TypeVar("TEvent", bound=DomainEvent)` used by `create_event()`.
@@ -227,14 +236,16 @@ class OrderAggregate(AggregateRoot[OrderState]):
 An integer describing the shape of `TState`, used solely for snapshot
 compatibility. It has no effect on events or on replay from the event store.
 
-On write, the snapshot path reads `getattr(type(aggregate), "schema_version", 1)`
+On write, `take_snapshot()` reads `getattr(type(aggregate), "schema_version", 1)`
 and stores it on the `Snapshot` record (the `snapshots` table has a
 `schema_version` column with an index on `(aggregate_type, schema_version)`).
-On load, `AggregateSnapshotManager` compares the stored value against the
+On load, `read_valid_snapshot()` compares the stored value against the
 aggregate class's current value; on mismatch it logs at INFO level, discards
 the snapshot, and falls back to a full event replay. **Nothing raises** —
-`SnapshotSchemaVersionError` exists in `eventsource.snapshots.exceptions` but
-is not raised by this comparison.
+`SnapshotSchemaVersionError` exists in `eventsource.exceptions` but
+is not raised by this comparison. See
+[ADR 0021](../adrs/0021-snapshot-policy-scheduler-composition.md) for the
+collaborators that replaced `AggregateSnapshotManager`.
 
 Increment `schema_version` whenever a change to `TState` would make an existing
 serialized snapshot invalid — a new required field, a renamed field, a changed

@@ -148,7 +148,7 @@ find that history.
 
 Inference happens once, in `__init__`, and its result is what everything
 downstream uses: the type recorded on spans (`ATTR_AGGREGATE_TYPE`), and the
-`aggregate_type` handed to the `AggregateSnapshotManager` when a
+`aggregate_type` passed to `take_snapshot()` / `read_valid_snapshot()` when a
 `snapshot_store` is configured. Because it is resolved eagerly, a misconfigured
 aggregate class fails loudly at wiring time rather than on the first `load()`.
 If construction raises `ValueError: Cannot infer aggregate_type from ...`, jump

@@ -83,7 +83,6 @@ import asyncio
 import contextlib
 import logging
 import time
-import warnings
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from types import TracebackType
@@ -566,36 +565,6 @@ class KafkaEventBus(BaseEventBus):
             "connected": self._connected,
             "consuming": self._consuming,
         }
-
-    def record_reconnection(self) -> None:
-        """Record a reconnection event for metrics.
-
-        .. deprecated:: 0.7.0
-            Only ever intended for internal use; scheduled for removal in
-            0.8.0. Use the connection manager directly if you need this.
-        """
-        warnings.warn(
-            "KafkaEventBus.record_reconnection() is deprecated and will be "
-            "removed in 0.8.0; it was only ever intended for internal use.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        self._connection_manager.record_reconnection()
-
-    def record_rebalance(self) -> None:
-        """Record a consumer rebalance event for metrics.
-
-        .. deprecated:: 0.7.0
-            Only ever intended for internal use; scheduled for removal in
-            0.8.0. Use the connection manager directly if you need this.
-        """
-        warnings.warn(
-            "KafkaEventBus.record_rebalance() is deprecated and will be "
-            "removed in 0.8.0; it was only ever intended for internal use.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        self._connection_manager.record_rebalance()
 
     # =========================================================================
     # Observable Gauge Methods

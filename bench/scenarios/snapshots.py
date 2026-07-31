@@ -8,7 +8,7 @@ from uuid import uuid4
 from bench.adapters.base import BenchAdapter
 from bench.core.domain import SNAPSHOT_SIZES, make_snapshot_state
 from bench.core.runner import Measurement, Scenario
-from eventsource.snapshots.interface import Snapshot, SnapshotStore
+from eventsource.ports.snapshots import Snapshot, SnapshotStore
 
 
 def _make_snapshot(size: str, version: int = 1) -> Snapshot:

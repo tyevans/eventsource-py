@@ -189,7 +189,7 @@ canonical handler contracts live in `eventsource.protocols` (`EventHandler`,
 `EventSubscriber`). The `background=True` flag makes publication
 fire-and-forget, trading delivery latency for eventual consistency.
 
-`SnapshotStore` (`eventsource.snapshots.interface`) is also an ABC, storing
+`SnapshotStore` (`eventsource.ports.snapshots`) is also an ABC, storing
 `Snapshot` records via `save_snapshot`, `get_snapshot`, `delete_snapshot`,
 `snapshot_exists`, and `delete_snapshots_by_type`. A snapshot is always an
 optimization: it lets an aggregate skip ahead before folding the remaining

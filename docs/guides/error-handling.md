@@ -55,7 +55,7 @@ Exception
 │   ├── TenantContextNotSetError        (eventsource.multitenancy.exceptions)
 │   └── TenantMismatchError             (eventsource.multitenancy.exceptions)
 ├── SubscriptionError                   (eventsource.subscriptions.exceptions)
-├── SnapshotError                       (eventsource.snapshots.exceptions)
+├── SnapshotError                       (eventsource.exceptions -- not actually a subclass of EventSourceError)
 └── ReadModelError                      (eventsource.readmodels.exceptions)
 ```
 
@@ -124,10 +124,10 @@ Three subsystems define their own root, each deriving straight from `Exception`.
 
 **`SubscriptionError`** — `eventsource.subscriptions.exceptions`. Raised by the subscription manager and runners: `SubscriptionConfigError`, `SubscriptionStateError`, `SubscriptionAlreadyExistsError`, `CheckpointNotFoundError` (has `.projection_name`), `EventStoreConnectionError`, `EventBusConnectionError`, `TransitionError`. Note that `CheckpointNotFoundError` here is unrelated to `eventsource.exceptions.CheckpointError`, which *is* an `EventSourceError`.
 
-**`SnapshotError`** — `eventsource.snapshots.exceptions`, with `SnapshotDeserializationError` (`aggregate_id`, `aggregate_type`, `original_error`), `SnapshotSchemaVersionError` (adds `snapshot_schema_version` and `expected_schema_version`), and `SnapshotNotFoundError`. These are largely internal: the snapshot path is designed so that a failed load degrades to a full event replay rather than surfacing to you — a *missing* snapshot is not an error at all, `get_snapshot()` simply returns `None`. Catch `SnapshotError` if you want to log the degradation; do not treat it as a request failure.
+**`SnapshotError`** — `eventsource.exceptions` (moved here from its own `snapshots` module in the ring migration; still not part of the `EventSourceError` tree), with `SnapshotDeserializationError` (`aggregate_id`, `aggregate_type`, `original_error`), `SnapshotSchemaVersionError` (adds `snapshot_schema_version` and `expected_schema_version`), and `SnapshotNotFoundError`. These are largely internal: the snapshot path is designed so that a failed load degrades to a full event replay rather than surfacing to you — a *missing* snapshot is not an error at all, `get_snapshot()` simply returns `None`. Catch `SnapshotError` if you want to log the degradation; do not treat it as a request failure.
 
 ```python
-from eventsource.snapshots.exceptions import SnapshotError
+from eventsource.exceptions import SnapshotError
 
 try:
     snapshot = await snapshot_store.get_snapshot(aggregate_id, "Order")

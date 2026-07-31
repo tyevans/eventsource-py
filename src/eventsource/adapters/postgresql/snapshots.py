@@ -21,7 +21,7 @@ from eventsource.observability.attributes import (
     ATTR_AGGREGATE_TYPE,
     ATTR_VERSION,
 )
-from eventsource.snapshots.interface import Snapshot, SnapshotStore
+from eventsource.ports.snapshots import Snapshot, SnapshotStore
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ class PostgreSQLSnapshotStore(SnapshotStore):
         ...     create_async_engine,
         ...     async_sessionmaker,
         ... )
-        >>> from eventsource.snapshots import PostgreSQLSnapshotStore
+        >>> from eventsource.adapters.postgresql.snapshots import PostgreSQLSnapshotStore
         >>>
         >>> engine = create_async_engine("postgresql+asyncpg://...")
         >>> session_factory = async_sessionmaker(engine, expire_on_commit=False)

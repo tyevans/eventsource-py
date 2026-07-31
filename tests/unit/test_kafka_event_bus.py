@@ -1197,10 +1197,12 @@ class TestKafkaEventBusCounterMetrics:
 
         kafka_module._meter = None
 
-        # Set up fresh metric reader and provider FIRST
+        # Private provider/reader per test. Never set the global meter
+        # provider here: it is set-once per process, and the first setter
+        # inherits stale _ProxyMeter instruments (e.g. connection gauges
+        # from earlier plain-bus tests) materialized onto its provider.
         self.reader = InMemoryMetricReader()
         self.provider = MeterProvider(metric_readers=[self.reader])
-        otel_metrics.set_meter_provider(self.provider)
 
         # Create a meter from the new provider
         self.meter = self.provider.get_meter("test.kafka.eventbus")
@@ -1279,20 +1281,18 @@ class TestKafkaEventBusCounterMetrics:
 
     @pytest.mark.asyncio
     async def test_reconnection_counter(self) -> None:
-        """Test reconnection counter via deprecated record_reconnection shim.
+        """Test reconnection counter increments end-to-end through OTel.
 
         Real logic (stats + metrics increments) is covered directly against
         KafkaConnectionManager in tests/unit/bus/kafka/test_connection.py.
-        This test verifies the deprecated facade shim still delegates and
-        the OTel wiring produces the expected reading end-to-end.
+        This test verifies the OTel wiring produces the expected reading
+        end-to-end when the connection manager records a reconnection.
         """
         bus = self._create_bus_with_test_metrics()
 
         # Record a reconnection
-        with pytest.deprecated_call():
-            bus.record_reconnection()
-        with pytest.deprecated_call():
-            bus.record_reconnection()
+        bus._connection_manager.record_reconnection()
+        bus._connection_manager.record_reconnection()
 
         metrics_data = self.reader.get_metrics_data()
         reconnection_count = _get_metric_value(metrics_data, "kafka.eventbus.reconnections")
@@ -1300,18 +1300,17 @@ class TestKafkaEventBusCounterMetrics:
 
     @pytest.mark.asyncio
     async def test_rebalance_counter(self) -> None:
-        """Test rebalance counter via deprecated record_rebalance shim.
+        """Test rebalance counter increments end-to-end through OTel.
 
         Real logic (stats + metrics increments) is covered directly against
         KafkaConnectionManager in tests/unit/bus/kafka/test_connection.py.
-        This test verifies the deprecated facade shim still delegates and
-        the OTel wiring produces the expected reading end-to-end.
+        This test verifies the OTel wiring produces the expected reading
+        end-to-end when the connection manager records a rebalance.
         """
         bus = self._create_bus_with_test_metrics()
 
         # Record a rebalance
-        with pytest.deprecated_call():
-            bus.record_rebalance()
+        bus._connection_manager.record_rebalance()
 
         metrics_data = self.reader.get_metrics_data()
         rebalance_count = _get_metric_value(metrics_data, "kafka.eventbus.rebalances")
@@ -1354,10 +1353,12 @@ class TestKafkaEventBusHistogramMetrics:
 
         kafka_module._meter = None
 
-        # Set up fresh metric reader and provider
+        # Private provider/reader per test. Never set the global meter
+        # provider here: it is set-once per process, and the first setter
+        # inherits stale _ProxyMeter instruments (e.g. connection gauges
+        # from earlier plain-bus tests) materialized onto its provider.
         self.reader = InMemoryMetricReader()
         self.provider = MeterProvider(metric_readers=[self.reader])
-        otel_metrics.set_meter_provider(self.provider)
 
         # Create a meter from the new provider
         self.meter = self.provider.get_meter("test.kafka.eventbus")
@@ -1428,10 +1429,12 @@ class TestKafkaEventBusGaugeMetrics:
 
         kafka_module._meter = None
 
-        # Set up fresh metric reader and provider
+        # Private provider/reader per test. Never set the global meter
+        # provider here: it is set-once per process, and the first setter
+        # inherits stale _ProxyMeter instruments (e.g. connection gauges
+        # from earlier plain-bus tests) materialized onto its provider.
         self.reader = InMemoryMetricReader()
         self.provider = MeterProvider(metric_readers=[self.reader])
-        otel_metrics.set_meter_provider(self.provider)
 
         # Create a meter from the new provider
         self.meter = self.provider.get_meter("test.kafka.eventbus")
@@ -1592,11 +1595,9 @@ class TestKafkaEventBusMetricsEdgeCases:
         # All operations should work without errors
         # (No need to connect/publish since we're testing that metrics being None doesn't crash)
 
-        # Record methods should not raise (deprecated shims still delegate)
-        with pytest.deprecated_call():
-            bus.record_reconnection()
-        with pytest.deprecated_call():
-            bus.record_rebalance()
+        # Record methods should not raise even with no metrics
+        bus._connection_manager.record_reconnection()
+        bus._connection_manager.record_rebalance()
 
         # Dispatch should work without error even with no metrics
         handler = OrderHandler()
@@ -1628,11 +1629,9 @@ class TestKafkaEventBusMetricsEdgeCases:
         # Bus should be created successfully, just without metrics
         assert bus._metrics is None
 
-        # Operations should not raise (deprecated shims still delegate)
-        with pytest.deprecated_call():
-            bus.record_reconnection()
-        with pytest.deprecated_call():
-            bus.record_rebalance()
+        # Operations should not raise
+        bus._connection_manager.record_reconnection()
+        bus._connection_manager.record_rebalance()
 
     @skip_if_no_otel_metrics
     @pytest.mark.asyncio
@@ -1643,10 +1642,10 @@ class TestKafkaEventBusMetricsEdgeCases:
 
         kafka_module._meter = None
 
-        # Set up fresh metric reader
+        # Private provider/reader for this test; the global meter provider
+        # is deliberately left untouched (set-once, see setup_metrics note).
         reader = InMemoryMetricReader()
         provider = MeterProvider(metric_readers=[reader])
-        otel_metrics.set_meter_provider(provider)
         meter = provider.get_meter("test.kafka.eventbus")
 
         try:
@@ -1693,10 +1692,10 @@ class TestKafkaEventBusMetricsEdgeCases:
 
         kafka_module._meter = None
 
-        # Set up fresh metric reader
+        # Private provider/reader for this test; the global meter provider
+        # is deliberately left untouched (set-once, see setup_metrics note).
         reader = InMemoryMetricReader()
         provider = MeterProvider(metric_readers=[reader])
-        otel_metrics.set_meter_provider(provider)
         meter = provider.get_meter("test.kafka.eventbus")
 
         try:
@@ -1741,10 +1740,10 @@ class TestKafkaEventBusMetricsEdgeCases:
 
         kafka_module._meter = None
 
-        # Set up fresh metric reader
+        # Private provider/reader for this test; the global meter provider
+        # is deliberately left untouched (set-once, see setup_metrics note).
         reader = InMemoryMetricReader()
         provider = MeterProvider(metric_readers=[reader])
-        otel_metrics.set_meter_provider(provider)
         meter = provider.get_meter("test.kafka.eventbus")
 
         try:

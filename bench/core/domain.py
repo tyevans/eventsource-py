@@ -10,7 +10,7 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from eventsource import DomainEvent, EventRegistry
-from eventsource.aggregates.base import DeclarativeAggregate
+from eventsource.domain.aggregate import DeclarativeAggregate
 from eventsource.handlers import handles
 
 PAYLOAD_SIZES: dict[str, int] = {"small": 200, "large": 5_000}
