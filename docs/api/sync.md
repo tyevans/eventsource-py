@@ -95,7 +95,7 @@ the documented surface.
 The module has no optional dependencies of its own. It imports only standard
 library modules (`asyncio`, `logging`, `threading`, `concurrent.futures`,
 `collections.abc`, `typing`, `uuid`) plus [`DomainEvent`](events.md),
-[`StreamId`](domain.md), and the `AppendResult`, `CategoryReadOptions`,
+[`StreamId`](types.md), and the `AppendResult`, `CategoryReadOptions`,
 `EventEnvelope`, `ExpectedVersion`, `FeedReadOptions`, `FullEventStore`,
 `Position`, `StreamReadOptions`, and `collect` names from
 `eventsource.ports`. Importing `eventsource.sync` is therefore always safe;

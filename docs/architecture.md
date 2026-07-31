@@ -821,9 +821,12 @@ is a duplicate. Neither runner has to be told about the other; they meet in one
 integer.
 
 **Reads go through `read_all()`, with retry, and with the tenant scope baked
-in.** `_read_batch_with_retry()` builds a `ReadOptions(direction=FORWARD,
-from_position=..., limit=..., tenant_id=self.config.tenant_id)`, drains the
-async iterator into a list, and submits that as an operation to
+in.** `_read_batch_with_retry()` builds a `FeedReadOptions(tenant_id=self.config.tenant_id,
+limit=...)` and passes `from_position` as a separate positional argument to
+`read_all(from_position, options)`; `FeedReadOptions` carries no `direction`
+(feed reads are always forward — BACKWARD feed reads have no ports
+equivalent, per ADR 0025). It drains the async iterator into a list, and
+submits that as an operation to
 `RetryableOperation` with `TRANSIENT_EXCEPTIONS` as the retryable set. A
 transient store failure therefore costs a retry, not a failed catch-up; a
 non-transient one propagates and is caught by `run_until_position`, which logs
