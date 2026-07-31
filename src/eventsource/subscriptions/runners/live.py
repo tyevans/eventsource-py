@@ -221,10 +221,17 @@ class LiveRunner:
         """
         Handle a live event from the event bus.
 
+        The bus delivery receipt is the live phase's seen-point: every
+        received event is counted here, before branching, so live lag
+        equals queue depth plus in-flight count. Every terminal path in
+        `_process_live_event` that does not deliver compensates with
+        `record_events_unseen(1)` -- see `Subscription.lag`'s invariant.
+
         Args:
             event: The event received from the bus
         """
         self._stats.events_received += 1
+        await self.subscription.record_events_seen(1)
 
         if self._buffer_enabled:
             # During transition, buffer events for later processing
@@ -293,6 +300,7 @@ class LiveRunner:
                         "last_processed": render_position(last_processed),
                     },
                 )
+                await self.subscription.record_events_unseen(1)
                 return
 
             # Apply event type filtering
@@ -313,6 +321,11 @@ class LiveRunner:
                         event_id=event.event_id,
                         event_type=event.event_type,
                     )
+                else:
+                    # No position to record against, so nothing increments
+                    # `_events_delivered` -- release the receipt instead of
+                    # leaving it outstanding forever.
+                    await self.subscription.record_events_unseen(1)
                 return
 
             # Acquire flow control slot (may block if at capacity)
@@ -368,6 +381,11 @@ class LiveRunner:
 
                     if not self.config.continue_on_error:
                         raise
+
+                    # Terminally disposed (possibly DLQ'd): the failure
+                    # counters carry that signal, and lag must not report
+                    # it as outstanding work forever.
+                    await self.subscription.record_events_unseen(1)
 
                     logger.warning(
                         "Live event processing failed, continuing",

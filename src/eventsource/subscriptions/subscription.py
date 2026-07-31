@@ -444,10 +444,12 @@ class Subscription:
                 self.events_dlq += 1
 
     async def record_events_seen(self, count: int) -> None:
-        """Record events observed in the feed but not yet delivered.
+        """Record events observed but not yet delivered.
 
-        Lag is a count, not a distance: global positions are opaque tokens
-        that cannot be subtracted (ADR 0019).
+        "Seen" means read from the feed (catch-up) or received from the
+        bus (live) -- one counter shared across both phases. Lag is a
+        count, not a distance: global positions are opaque tokens that
+        cannot be subtracted (ADR 0019).
 
         Args:
             count: Number of events observed in this read.
@@ -479,7 +481,11 @@ class Subscription:
         Lag is the count of events seen from the feed in the current run
         that have not yet been delivered -- it rises by a batch and falls
         as the batch drains, rather than being a store-wide position
-        distance.
+        distance. During catch-up, "seen" means read from the feed; during
+        live, it means received from the bus, so lag is receipts not yet
+        delivered. That includes both the catch-up-to-live transition
+        buffer and the pause buffer, so a paused or stalled subscription
+        shows growing lag while a healthy live subscription reports ~0.
 
         Invariant: across any stop boundary, `events_seen - events_delivered`
         equals the number of read-but-unprocessed events, so lag never
