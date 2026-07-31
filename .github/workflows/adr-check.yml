@@ -1,0 +1,56 @@
+# ADR Check
+# Validates ADR numbering in docs/adrs/: every ADR file must follow the
+# NNNN-slug.md naming pattern and no two ADRs may share a number.
+#
+# This check is informational for now -- it is intentionally NOT in the
+# branch-protection required checks, so a failure does not block merges.
+# Promote it to required once the existing duplicate numbering is resolved.
+
+name: ADR Check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/adrs/**"
+      - ".github/workflows/adr-check.yml"
+  pull_request:
+    paths:
+      - "docs/adrs/**"
+      - ".github/workflows/adr-check.yml"
+  workflow_dispatch:
+
+jobs:
+  adr-numbering:
+    name: ADR numbering uniqueness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check ADR numbering
+        run: |
+          set -uo pipefail
+          cd docs/adrs
+          status=0
+
+          # Every markdown file except index.md must be named NNNN-slug.md
+          for f in *.md; do
+            [ "$f" = "index.md" ] && continue
+            if ! echo "$f" | grep -qE '^[0-9]{4}-.+\.md$'; then
+              echo "::error file=docs/adrs/$f::ADR filename does not match NNNN-slug.md: $f"
+              status=1
+            fi
+          done
+
+          # No two ADRs may share a number prefix
+          dupes=$(ls *.md | grep -E '^[0-9]{4}-' | sed -E 's/^([0-9]{4})-.*/\1/' | sort | uniq -d)
+          for num in $dupes; do
+            echo "::error::Duplicate ADR number $num claimed by:"
+            ls "${num}"-*.md | sed 's/^/::error::  docs\/adrs\//'
+            status=1
+          done
+
+          if [ "$status" -eq 0 ]; then
+            echo "All ADR numbers are unique and well-formed."
+          fi
+          exit $status
