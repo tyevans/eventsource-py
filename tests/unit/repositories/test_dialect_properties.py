@@ -1,5 +1,5 @@
 """
-Property-based tests for `eventsource.repositories._dialect`.
+Property-based tests for `eventsource.adapters._sql.dialect`.
 
 Complements the hand-enumerated cases in `test_dialect.py`. That suite
 covers `uuid_result` for `str` and `UUID` inputs but not `bytes`,
@@ -22,7 +22,7 @@ from uuid import UUID
 from hypothesis import given
 from hypothesis import strategies as st
 
-from eventsource.repositories._dialect import (
+from eventsource.adapters._sql.dialect import (
     Dialect,
     ts_param,
     ts_result,

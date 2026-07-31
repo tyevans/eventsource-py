@@ -16,10 +16,10 @@ Target baselines:
 from typing import Any
 from uuid import uuid4
 
+from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
+from eventsource.application.projections.base import DeclarativeProjection
 from eventsource.events.base import DomainEvent
 from eventsource.handlers import handles
-from eventsource.projections.base import DeclarativeProjection
-from eventsource.repositories.checkpoint import InMemoryCheckpointRepository
 from tests.benchmarks.conftest import run_async
 from tests.fixtures import (
     CounterDecremented,

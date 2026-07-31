@@ -10,9 +10,9 @@ from uuid import UUID
 
 import pytest
 
+from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
+from eventsource.adapters.memory.dlq import InMemoryDLQRepository
 from eventsource.events.base import DomainEvent
-from eventsource.repositories.checkpoint import InMemoryCheckpointRepository
-from eventsource.repositories.dlq import InMemoryDLQRepository
 from eventsource.stores.in_memory import InMemoryEventStore
 from tests.conftest import MockEventPublisher
 from tests.fixtures import (

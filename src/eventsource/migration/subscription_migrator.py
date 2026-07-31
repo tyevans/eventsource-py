@@ -64,7 +64,7 @@ from eventsource.observability import Tracer, create_tracer
 
 if TYPE_CHECKING:
     from eventsource.migration.position_mapper import PositionMapper
-    from eventsource.repositories.checkpoint import CheckpointRepository
+    from eventsource.ports.checkpoints import CheckpointRepository
 
 logger = logging.getLogger(__name__)
 

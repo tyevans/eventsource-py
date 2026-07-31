@@ -518,7 +518,7 @@ class TestCheckpointRepositoryStandardAttributes:
         import subprocess
 
         result = subprocess.run(
-            ["grep", "-c", "ATTR_", "src/eventsource/repositories/checkpoint.py"],
+            ["grep", "-c", "ATTR_", "src/eventsource/adapters/sql/checkpoints.py"],
             capture_output=True,
             text=True,
             cwd=Path(__file__).parents[3],
@@ -528,22 +528,22 @@ class TestCheckpointRepositoryStandardAttributes:
         assert count >= 10, f"Expected at least 10 ATTR_* usages, found {count}"
 
     def test_no_duplicate_otel_available(self):
-        """Verify no duplicate OTEL_AVAILABLE definition in checkpoint.py."""
+        """Verify no duplicate OTEL_AVAILABLE definition in checkpoints.py."""
         import subprocess
 
         result = subprocess.run(
-            ["grep", "-c", "OTEL_AVAILABLE = ", "src/eventsource/repositories/checkpoint.py"],
+            ["grep", "-c", "OTEL_AVAILABLE = ", "src/eventsource/adapters/sql/checkpoints.py"],
             capture_output=True,
             text=True,
             cwd=Path(__file__).parents[3],
         )
         # Should be 0 - no local definition
         assert result.stdout.strip() == "0", (
-            f"Found {result.stdout.strip()} definitions of OTEL_AVAILABLE in checkpoint.py"
+            f"Found {result.stdout.strip()} definitions of OTEL_AVAILABLE in checkpoints.py"
         )
 
     def test_imports_from_observability_module(self):
-        """Verify checkpoint.py imports tracing from observability module."""
+        """Verify checkpoints.py imports tracing from observability module."""
         import subprocess
 
         result = subprocess.run(
@@ -551,7 +551,7 @@ class TestCheckpointRepositoryStandardAttributes:
                 "grep",
                 "-c",
                 "from eventsource.observability import",
-                "src/eventsource/repositories/checkpoint.py",
+                "src/eventsource/adapters/sql/checkpoints.py",
             ],
             capture_output=True,
             text=True,
@@ -559,4 +559,4 @@ class TestCheckpointRepositoryStandardAttributes:
         )
         # Should be at least 1 - imports from observability
         count = int(result.stdout.strip())
-        assert count >= 1, "checkpoint.py should import from eventsource.observability"
+        assert count >= 1, "checkpoints.py should import from eventsource.observability"

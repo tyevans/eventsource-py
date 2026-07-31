@@ -24,14 +24,10 @@ from tests.conftest import AIOSQLITE_AVAILABLE, skip_if_no_aiosqlite
 if AIOSQLITE_AVAILABLE:
     import aiosqlite
 
-    from eventsource.repositories.checkpoint import (
-        CheckpointRepository,
-        SQLCheckpointRepository,
-    )
-    from eventsource.repositories.dlq import (
-        DLQRepository,
-        SQLDLQRepository,
-    )
+    from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository
+    from eventsource.adapters.sql.dlq import SQLDLQRepository
+    from eventsource.ports.checkpoints import CheckpointRepository
+    from eventsource.ports.dlq import DLQRepository
     from eventsource.repositories.outbox import (
         OutboxRepository,
         SQLiteOutboxRepository,

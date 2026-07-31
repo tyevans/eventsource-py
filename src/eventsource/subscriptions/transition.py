@@ -33,7 +33,7 @@ from eventsource.subscriptions.subscription import Subscription
 
 if TYPE_CHECKING:
     from eventsource.bus.interface import EventBus
-    from eventsource.repositories.checkpoint import CheckpointRepository
+    from eventsource.ports.checkpoints import SubscriptionPositions
     from eventsource.stores.interface import EventStore
     from eventsource.subscriptions.flow_control import FlowController
 
@@ -135,7 +135,7 @@ class TransitionCoordinator:
         self,
         event_store: "EventStore",
         event_bus: "EventBus",
-        checkpoint_repo: "CheckpointRepository",
+        checkpoint_repo: "SubscriptionPositions",
         subscription: Subscription,
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
@@ -495,7 +495,7 @@ class StartFromResolver:
     def __init__(
         self,
         event_store: "EventStore",
-        checkpoint_repo: "CheckpointRepository",
+        checkpoint_repo: "SubscriptionPositions",
     ) -> None:
         """
         Initialize the start position resolver.

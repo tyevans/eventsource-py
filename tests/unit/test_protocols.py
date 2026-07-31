@@ -326,14 +326,6 @@ class TestCanonicalExports:
         assert hasattr(bus, "FlexibleEventHandler")
         assert hasattr(bus, "FlexibleEventSubscriber")
 
-    def test_eventsource_projections_exports_protocols(self) -> None:
-        """Projections module exports protocols."""
-        from eventsource import projections
-
-        assert hasattr(projections, "EventHandler")
-        assert hasattr(projections, "SyncEventHandler")
-        assert hasattr(projections, "EventSubscriber")
-
     def test_eventsource_root_exports_async_event_handler(self) -> None:
         """Root eventsource module exports AsyncEventHandler."""
         import eventsource
@@ -433,13 +425,6 @@ class TestAsyncEventHandlerImports:
     def test_handlers_adapter_import_works(self) -> None:
         """Import from handlers.adapter works."""
         from eventsource.handlers.adapter import AsyncEventHandler
-        from eventsource.protocols import AsyncEventHandler as Canonical
-
-        assert AsyncEventHandler is Canonical
-
-    def test_projections_protocols_import_works(self) -> None:
-        """Import from projections.protocols works (now direct, no deprecation)."""
-        from eventsource.projections.protocols import AsyncEventHandler
         from eventsource.protocols import AsyncEventHandler as Canonical
 
         assert AsyncEventHandler is Canonical

@@ -22,10 +22,10 @@ from uuid import uuid4
 import pytest
 import pytest_asyncio
 
+from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
+from eventsource.adapters.memory.dlq import InMemoryDLQRepository
 from eventsource.bus.memory import InMemoryEventBus
 from eventsource.events.base import DomainEvent
-from eventsource.repositories.checkpoint import InMemoryCheckpointRepository
-from eventsource.repositories.dlq import InMemoryDLQRepository
 from eventsource.stores.in_memory import InMemoryEventStore
 from eventsource.subscriptions import SubscriptionConfig, SubscriptionManager
 from eventsource.subscriptions.error_handling import (

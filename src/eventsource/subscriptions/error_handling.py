@@ -26,7 +26,7 @@ from uuid import UUID
 
 if TYPE_CHECKING:
     from eventsource.events.base import DomainEvent
-    from eventsource.repositories.dlq import DLQRepository
+    from eventsource.ports.dlq import DLQRepository
     from eventsource.stores.interface import StoredEvent
 
 logger = logging.getLogger(__name__)

@@ -12,10 +12,10 @@ from uuid import uuid4
 import pytest
 import pytest_asyncio
 
+from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
 from eventsource.bus.memory import InMemoryEventBus
 from eventsource.events.base import DomainEvent
 from eventsource.events.registry import register_event
-from eventsource.repositories.checkpoint import InMemoryCheckpointRepository
 from eventsource.stores.in_memory import InMemoryEventStore
 from eventsource.subscriptions import SubscriptionManager
 

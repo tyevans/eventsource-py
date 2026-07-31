@@ -27,7 +27,7 @@ from eventsource.migration.subscription_migrator import (
     SubscriptionMigrationResult,
     SubscriptionMigrator,
 )
-from eventsource.repositories.checkpoint import CheckpointData
+from eventsource.ports.checkpoints import CheckpointData
 
 
 class TestSubscriptionMigratorInit:

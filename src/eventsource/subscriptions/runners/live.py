@@ -40,7 +40,7 @@ from eventsource.subscriptions.subscription import Subscription, SubscriptionSta
 
 if TYPE_CHECKING:
     from eventsource.bus.interface import EventBus
-    from eventsource.repositories.checkpoint import CheckpointRepository
+    from eventsource.ports.checkpoints import SubscriptionPositions
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +92,7 @@ class LiveRunner:
     """
 
     event_bus: "EventBus"
-    checkpoint_repo: "CheckpointRepository"
+    checkpoint_repo: "SubscriptionPositions"
     subscription: Subscription
     tracer: Tracer | None = None
     enable_metrics: bool = True

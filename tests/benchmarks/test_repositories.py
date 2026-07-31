@@ -16,9 +16,9 @@ Target baselines:
 import asyncio
 from typing import Any
 
+from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
+from eventsource.adapters.memory.dlq import InMemoryDLQRepository
 from eventsource.events.base import DomainEvent
-from eventsource.repositories.checkpoint import InMemoryCheckpointRepository
-from eventsource.repositories.dlq import InMemoryDLQRepository
 from eventsource.repositories.outbox import InMemoryOutboxRepository
 from tests.benchmarks.conftest import run_async
 from tests.fixtures import SampleEvent, create_event

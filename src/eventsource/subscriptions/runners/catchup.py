@@ -39,7 +39,7 @@ from eventsource.subscriptions.retry import (
 from eventsource.subscriptions.subscription import Subscription, SubscriptionState
 
 if TYPE_CHECKING:
-    from eventsource.repositories.checkpoint import CheckpointRepository
+    from eventsource.ports.checkpoints import SubscriptionPositions
     from eventsource.stores.interface import EventStore
 
 logger = logging.getLogger(__name__)
@@ -93,7 +93,7 @@ class CatchUpRunner:
     def __init__(
         self,
         event_store: "EventStore",
-        checkpoint_repo: "CheckpointRepository",
+        checkpoint_repo: "SubscriptionPositions",
         subscription: Subscription,
         event_filter: EventFilter | None = None,
         tracer: Tracer | None = None,

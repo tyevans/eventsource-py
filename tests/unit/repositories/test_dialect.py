@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.repositories._dialect import (
+from eventsource.adapters._sql.dialect import (
     Dialect,
     dialect_of,
     json_param,

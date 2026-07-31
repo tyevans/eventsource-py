@@ -25,10 +25,9 @@ from __future__ import annotations
 import threading
 from typing import TYPE_CHECKING
 
+from eventsource.adapters.memory import InMemoryCheckpointRepository, InMemoryDLQRepository
 from eventsource.bus.memory import InMemoryEventBus
 from eventsource.events.base import DomainEvent
-from eventsource.repositories.checkpoint import InMemoryCheckpointRepository
-from eventsource.repositories.dlq import InMemoryDLQRepository
 from eventsource.stores.in_memory import InMemoryEventStore
 
 if TYPE_CHECKING:

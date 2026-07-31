@@ -37,11 +37,26 @@ except PackageNotFoundError:
 # `eventsource.adapters.sqlite.SQLiteEventStore` /
 # `eventsource.adapters.postgresql.PostgreSQLEventStore` path-only.
 from eventsource.adapters._sql.positions import IntPositionCodec
-from eventsource.adapters.memory import MemoryEventStore
+
+# Repository infrastructure (Task 12)
+from eventsource.adapters.memory import (
+    InMemoryCheckpointRepository,
+    InMemoryDLQRepository,
+    MemoryEventStore,
+)
 
 # Snapshots
 from eventsource.adapters.memory.snapshots import InMemorySnapshotStore
+from eventsource.adapters.sql import SQLCheckpointRepository, SQLDLQRepository
+
+# Projections (Task 09)
+from eventsource.adapters.sql.projection import DatabaseProjection
 from eventsource.application.aggregates.repository import AggregateRepository
+from eventsource.application.projections.base import (
+    CheckpointTrackingProjection,
+    DeclarativeProjection,
+    Projection,
+)
 
 # Event bus (Task 10)
 from eventsource.bus.base import BaseEventBus
@@ -154,15 +169,14 @@ from eventsource.ports import (
     StreamReadOptions,
     collect,
 )
-from eventsource.ports.snapshots import Snapshot, SnapshotStore
-
-# Projections (Task 09)
-from eventsource.projections.base import (
-    CheckpointTrackingProjection,
-    DatabaseProjection,
-    DeclarativeProjection,
-    Projection,
+from eventsource.ports.checkpoints import CheckpointData, CheckpointRepository, LagMetrics
+from eventsource.ports.dlq import (
+    DLQEntry,
+    DLQRepository,
+    DLQStats,
+    ProjectionFailureCount,
 )
+from eventsource.ports.snapshots import Snapshot, SnapshotStore
 
 # Protocols - canonical location (TD-007)
 from eventsource.protocols import (
@@ -176,25 +190,12 @@ from eventsource.protocols import (
 
 # ReadModel Projections (Phase 3)
 from eventsource.readmodels import ReadModelProjection
-
-# Repository infrastructure (Task 12)
 from eventsource.repositories import (
-    CheckpointData,
-    CheckpointRepository,
-    DLQEntry,
-    DLQRepository,
-    DLQStats,
-    InMemoryCheckpointRepository,
-    InMemoryDLQRepository,
     InMemoryOutboxRepository,
-    LagMetrics,
     OutboxEntry,
     OutboxRepository,
     OutboxStats,
     PostgreSQLOutboxRepository,
-    ProjectionFailureCount,
-    SQLCheckpointRepository,
-    SQLDLQRepository,
 )
 
 # Serialization utilities

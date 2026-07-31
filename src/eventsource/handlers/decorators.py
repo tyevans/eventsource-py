@@ -74,7 +74,7 @@ def handles(event_type: type[DomainEvent]) -> Callable[[F], F]:
 
     Example (Projection):
         >>> from eventsource.handlers import handles
-        >>> from eventsource.projections import DeclarativeProjection
+        >>> from eventsource.application.projections import DeclarativeProjection
         >>>
         >>> class OrderProjection(DeclarativeProjection):
         ...     @handles(OrderCreated)

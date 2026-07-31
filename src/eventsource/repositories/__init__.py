@@ -1,11 +1,10 @@
 """
 Repository implementations for the eventsource library.
 
-This module provides infrastructure repositories for:
-
-- **Checkpoint tracking**: Track projection positions for resumption
-- **Dead Letter Queue (DLQ)**: Store failed events for retry/investigation
-- **Outbox**: Transactional outbox pattern for reliable event publishing
+This module provides the transactional outbox repository: reliable event
+publishing via the transactional outbox pattern. Checkpoint and DLQ
+repositories moved to `eventsource.ports` (interfaces) and
+`eventsource.adapters` (implementations).
 
 Each repository type provides:
 - A Protocol (interface) defining the contract
@@ -23,32 +22,8 @@ Naming Convention:
     - delete_{entity}()   - Delete an entity
     - save_{entity}()     - Upsert (create or update)
 
-    Some methods have both styles available for backward compatibility.
-    For example, both get_failed_events() and list_failed_events() work.
     Prefer the list_* form when fetching multiple items.
 """
-
-# Checkpoint repository
-# JSON utilities (re-exported from serialization module)
-from eventsource.repositories.checkpoint import (
-    CheckpointData,
-    CheckpointRepository,
-    CheckpointRepositoryProtocol,
-    InMemoryCheckpointRepository,
-    LagMetrics,
-    SQLCheckpointRepository,
-)
-
-# DLQ repository
-from eventsource.repositories.dlq import (
-    DLQEntry,
-    DLQRepository,
-    DLQRepositoryProtocol,
-    DLQStats,
-    InMemoryDLQRepository,
-    ProjectionFailureCount,
-    SQLDLQRepository,
-)
 
 # Outbox repository
 from eventsource.repositories.outbox import (
@@ -67,21 +42,6 @@ from eventsource.serialization import (
 )
 
 __all__ = [
-    # Checkpoint
-    "CheckpointRepository",
-    "CheckpointRepositoryProtocol",
-    "SQLCheckpointRepository",
-    "InMemoryCheckpointRepository",
-    "CheckpointData",
-    "LagMetrics",
-    # DLQ
-    "DLQRepository",
-    "DLQRepositoryProtocol",
-    "SQLDLQRepository",
-    "InMemoryDLQRepository",
-    "DLQEntry",
-    "DLQStats",
-    "ProjectionFailureCount",
     # Outbox
     "OutboxRepository",
     "OutboxRepositoryProtocol",

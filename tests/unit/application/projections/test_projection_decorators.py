@@ -264,17 +264,6 @@ class TestHandlesDecoratorConsolidation:
         assert hasattr(handler, "_handles_event_type")
         assert handler._handles_event_type is OrderShipped
 
-    def test_canonical_import_from_projections_module(self) -> None:
-        """@handles from eventsource.projections module is canonical."""
-        from eventsource.projections import handles as projections_handles
-
-        @projections_handles(OrderCreated)
-        async def handler(self, conn, event: OrderCreated) -> None:
-            pass
-
-        assert hasattr(handler, "_handles_event_type")
-        assert handler._handles_event_type is OrderCreated
-
     def test_handles_in_main_package_all(self) -> None:
         """'handles' is in eventsource.__all__ for IDE autocomplete."""
         import eventsource
@@ -286,9 +275,3 @@ class TestHandlesDecoratorConsolidation:
         from eventsource import handlers
 
         assert "handles" in handlers.__all__
-
-    def test_handles_in_projections_all(self) -> None:
-        """'handles' is in eventsource.projections.__all__ for IDE autocomplete."""
-        from eventsource import projections
-
-        assert "handles" in projections.__all__

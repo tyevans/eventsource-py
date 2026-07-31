@@ -106,7 +106,7 @@ if TYPE_CHECKING:
     from eventsource.migration.repositories.routing import TenantRoutingRepository
     from eventsource.migration.router import TenantStoreRouter
     from eventsource.migration.status_streamer import StatusStreamer
-    from eventsource.repositories.checkpoint import CheckpointRepository
+    from eventsource.ports.checkpoints import CheckpointRepository
 
 logger = logging.getLogger(__name__)
 

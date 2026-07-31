@@ -15,17 +15,18 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.bus.memory import InMemoryEventBus
-from eventsource.domain.aggregate import AggregateRoot, DeclarativeAggregate
-from eventsource.events.base import DomainEvent
-from eventsource.handlers import handles
-from eventsource.projections.base import (
+from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
+from eventsource.application.projections.base import (
     CheckpointTrackingProjection,
     DeclarativeProjection,
     EventHandlerBase,
     Projection,
     SyncProjection,
 )
+from eventsource.bus.memory import InMemoryEventBus
+from eventsource.domain.aggregate import AggregateRoot, DeclarativeAggregate
+from eventsource.events.base import DomainEvent
+from eventsource.handlers import handles
 from eventsource.protocols import (
     AsyncEventHandler,
     FlexibleEventSubscriber,
@@ -33,7 +34,6 @@ from eventsource.protocols import (
 from eventsource.protocols import (
     FlexibleEventHandler as EventHandler,
 )
-from eventsource.repositories.checkpoint import InMemoryCheckpointRepository
 from eventsource.stores.interface import (
     AppendResult,
     EventStream,

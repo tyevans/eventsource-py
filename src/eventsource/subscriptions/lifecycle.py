@@ -33,7 +33,7 @@ from eventsource.subscriptions.transition import StartFromResolver, TransitionCo
 
 if TYPE_CHECKING:
     from eventsource.bus.interface import EventBus
-    from eventsource.repositories.checkpoint import CheckpointRepository
+    from eventsource.ports.checkpoints import SubscriptionPositions
     from eventsource.stores.interface import EventStore
 
 logger = logging.getLogger(__name__)
@@ -61,7 +61,7 @@ class SubscriptionLifecycleManager:
         self,
         event_store: "EventStore",
         event_bus: "EventBus",
-        checkpoint_repo: "CheckpointRepository",
+        checkpoint_repo: "SubscriptionPositions",
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ) -> None:

@@ -202,7 +202,7 @@ source_paths = [
 ]
 only_mutate = [
     "src/eventsource/engine.py",
-    "src/eventsource/repositories/_dialect.py",
+    "src/eventsource/adapters/_sql/dialect.py",
     "src/eventsource/serialization/json.py",
     "src/eventsource/bus/registry.py",
     "src/eventsource/bus/retry.py",
@@ -276,7 +276,6 @@ source_modules = [
     "eventsource.stores.in_memory",
     "eventsource.bus.memory",
     "eventsource.adapters.memory.snapshots",
-    "eventsource.projections.protocols",
     "eventsource.testing.builder",
     "eventsource.testing.assertions",
     "eventsource.testing.conformance",
@@ -300,21 +299,9 @@ type = "forbidden"
 source_modules = ["eventsource.application"]
 forbidden_modules = ["eventsource.adapters", "eventsource.bus", "eventsource.repositories", "eventsource.locks"]
 
-# KNOWN VIOLATIONS (not enforced -- see task-2e-report.md for detail):
-#
-# docs/core-surface.md documents projections/ as the one remaining Tier-0
-# blocker. In practice:
-#   - projections/base.py imports eventsource.repositories.checkpoint and
-#     eventsource.repositories.dlq (both sqlalchemy-backed)
-#   - projections/checkpoint_manager.py imports eventsource.repositories.checkpoint
-#   - projections/dlq_manager.py imports eventsource.repositories.dlq
-# repositories/checkpoint.py and repositories/dlq.py mix Protocol definitions
-# with sqlalchemy implementations in the same module, so there is no way to
-# import the protocol without importing sqlalchemy.
-#
-# (eventsource.application.aggregates.repository and
-# eventsource.multitenancy.repository were re-verified clean after the
-# snapshots-package dissolution and are now enforced in source_modules above.)
-#
-# Per task instructions: report the drift, do not weaken the contract to hide
-# it, and do not fix the violations here.
+# The projections/ Tier-0 blocker documented in docs/core-surface.md (projections/base.py
+# and the checkpoint/dlq managers pulling in sqlalchemy-backed repositories.checkpoint and
+# repositories.dlq) is resolved: projections/ and repositories/{checkpoint,dlq}.py were
+# deleted in favor of eventsource.ports.{checkpoints,dlq} (pure) and
+# eventsource.adapters.{sql,memory}.{checkpoints,dlq} (sqlalchemy-backed). See the
+# projections-ring slice report for detail.
