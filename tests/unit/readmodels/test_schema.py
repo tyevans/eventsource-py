@@ -7,8 +7,7 @@ from uuid import UUID
 
 from pydantic import Field
 
-from eventsource.readmodels import ReadModel
-from eventsource.readmodels.schema import (
+from eventsource.adapters.sql.readmodel_schema import (
     POSTGRESQL_TYPE_MAP,
     SQLITE_TYPE_MAP,
     _extract_type,
@@ -19,6 +18,7 @@ from eventsource.readmodels.schema import (
     generate_indexes,
     generate_schema,
 )
+from eventsource.readmodels import ReadModel
 
 
 # Test models

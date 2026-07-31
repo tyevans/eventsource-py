@@ -300,7 +300,9 @@ class TestReadModelProjectionHandlerRouting:
 
         event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
 
-        with patch("eventsource.readmodels.postgresql.PostgreSQLReadModelRepository") as mock_repo:
+        with patch(
+            "eventsource.adapters.postgresql.readmodels.PostgreSQLReadModelRepository"
+        ) as mock_repo:
             mock_repo_instance = MagicMock()
             mock_repo.return_value = mock_repo_instance
 
@@ -331,7 +333,7 @@ class TestReadModelProjectionHandlerRouting:
 
         event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
 
-        with patch("eventsource.readmodels.postgresql.PostgreSQLReadModelRepository"):
+        with patch("eventsource.adapters.postgresql.readmodels.PostgreSQLReadModelRepository"):
             await projection.handle(event)
 
             assert len(events_handled) == 1
@@ -365,7 +367,7 @@ class TestReadModelProjectionHandlerRouting:
         assert OrderCreated in projection.subscribed_to()
         assert OrderShipped in projection.subscribed_to()
 
-        with patch("eventsource.readmodels.postgresql.PostgreSQLReadModelRepository"):
+        with patch("eventsource.adapters.postgresql.readmodels.PostgreSQLReadModelRepository"):
             created = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
             shipped = OrderShipped(aggregate_id=uuid4(), tracking_number="TRK-001")
 
@@ -401,7 +403,9 @@ class TestReadModelProjectionHandlerRouting:
             checkpoint_repo=checkpoint_repo,
         )
 
-        with patch("eventsource.readmodels.postgresql.PostgreSQLReadModelRepository") as mock_repo:
+        with patch(
+            "eventsource.adapters.postgresql.readmodels.PostgreSQLReadModelRepository"
+        ) as mock_repo:
             mock_repo_instance = MagicMock()
             mock_repo.return_value = mock_repo_instance
 
@@ -438,7 +442,9 @@ class TestDialectDetection:
             checkpoint_repo=checkpoint_repo,
         )
 
-        with patch("eventsource.readmodels.postgresql.PostgreSQLReadModelRepository") as mock_repo:
+        with patch(
+            "eventsource.adapters.postgresql.readmodels.PostgreSQLReadModelRepository"
+        ) as mock_repo:
             mock_repo_instance = MagicMock()
             mock_repo.return_value = mock_repo_instance
 
@@ -469,7 +475,7 @@ class TestDialectDetection:
             checkpoint_repo=checkpoint_repo,
         )
 
-        with patch("eventsource.readmodels.sqlite.SQLiteReadModelRepository") as mock_repo:
+        with patch("eventsource.adapters.sqlite.readmodels.SQLiteReadModelRepository") as mock_repo:
             mock_repo_instance = MagicMock()
             mock_repo.return_value = mock_repo_instance
 
@@ -506,7 +512,9 @@ class TestDialectDetection:
             checkpoint_repo=checkpoint_repo,
         )
 
-        with patch("eventsource.readmodels.postgresql.PostgreSQLReadModelRepository") as mock_repo:
+        with patch(
+            "eventsource.adapters.postgresql.readmodels.PostgreSQLReadModelRepository"
+        ) as mock_repo:
             mock_repo_instance = MagicMock()
             mock_repo.return_value = mock_repo_instance
 
@@ -542,7 +550,9 @@ class TestTruncateReadModels:
             checkpoint_repo=checkpoint_repo,
         )
 
-        with patch("eventsource.readmodels.postgresql.PostgreSQLReadModelRepository") as mock_repo:
+        with patch(
+            "eventsource.adapters.postgresql.readmodels.PostgreSQLReadModelRepository"
+        ) as mock_repo:
             mock_repo_instance = MagicMock()
             mock_repo_instance.truncate = AsyncMock(return_value=10)
             mock_repo.return_value = mock_repo_instance
@@ -569,7 +579,9 @@ class TestTruncateReadModels:
             checkpoint_repo=checkpoint_repo,
         )
 
-        with patch("eventsource.readmodels.postgresql.PostgreSQLReadModelRepository") as mock_repo:
+        with patch(
+            "eventsource.adapters.postgresql.readmodels.PostgreSQLReadModelRepository"
+        ) as mock_repo:
             mock_repo_instance = MagicMock()
             mock_repo_instance.truncate = AsyncMock(return_value=5)
             mock_repo.return_value = mock_repo_instance
@@ -632,7 +644,7 @@ class TestCheckpointBehavior:
             checkpoint_repo=checkpoint_repo,
         )
 
-        with patch("eventsource.readmodels.postgresql.PostgreSQLReadModelRepository"):
+        with patch("eventsource.adapters.postgresql.readmodels.PostgreSQLReadModelRepository"):
             event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
             await projection.handle(event)
 
@@ -662,7 +674,7 @@ class TestCheckpointBehavior:
             dlq_repo=dlq_repo,
         )
 
-        with patch("eventsource.readmodels.postgresql.PostgreSQLReadModelRepository"):
+        with patch("eventsource.adapters.postgresql.readmodels.PostgreSQLReadModelRepository"):
             event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
 
             with pytest.raises(ValueError, match="Handler error"):
@@ -697,7 +709,7 @@ class TestRepositoryCleanup:
         # Before handle
         assert projection._current_repository is None
 
-        with patch("eventsource.readmodels.postgresql.PostgreSQLReadModelRepository"):
+        with patch("eventsource.adapters.postgresql.readmodels.PostgreSQLReadModelRepository"):
             event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
             await projection.handle(event)
 
@@ -726,7 +738,7 @@ class TestRepositoryCleanup:
             dlq_repo=dlq_repo,
         )
 
-        with patch("eventsource.readmodels.postgresql.PostgreSQLReadModelRepository"):
+        with patch("eventsource.adapters.postgresql.readmodels.PostgreSQLReadModelRepository"):
             event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
 
             with pytest.raises(ValueError):
@@ -759,7 +771,7 @@ class TestUnregisteredEventHandling:
             checkpoint_repo=checkpoint_repo,
         )
 
-        with patch("eventsource.readmodels.postgresql.PostgreSQLReadModelRepository"):
+        with patch("eventsource.adapters.postgresql.readmodels.PostgreSQLReadModelRepository"):
             # Try to handle an event type with no handler
             event = OrderShipped(aggregate_id=uuid4(), tracking_number="TRK-001")
 
@@ -794,7 +806,7 @@ class TestUnregisteredEventHandling:
             dlq_repo=dlq_repo,
         )
 
-        with patch("eventsource.readmodels.postgresql.PostgreSQLReadModelRepository"):
+        with patch("eventsource.adapters.postgresql.readmodels.PostgreSQLReadModelRepository"):
             event = OrderShipped(aggregate_id=uuid4(), tracking_number="TRK-001")
 
             with pytest.raises(UnhandledEventError) as exc_info:

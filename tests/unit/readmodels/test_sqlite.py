@@ -12,9 +12,9 @@ from uuid import uuid4
 
 import pytest
 
+from eventsource.adapters.sqlite.readmodels import SQLiteReadModelRepository
 from eventsource.ports.readmodels.query import Filter, Query
 from eventsource.readmodels import ReadModel
-from eventsource.readmodels.sqlite import SQLiteReadModelRepository
 
 
 class OrderSummary(ReadModel):

@@ -10,9 +10,9 @@ from uuid import uuid4
 
 import pytest
 
+from eventsource.adapters.postgresql.readmodels import PostgreSQLReadModelRepository
 from eventsource.ports.readmodels.query import Filter, Query
 from eventsource.readmodels import ReadModel
-from eventsource.readmodels.postgresql import PostgreSQLReadModelRepository
 
 
 class OrderSummary(ReadModel):

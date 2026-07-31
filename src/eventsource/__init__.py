@@ -44,6 +44,9 @@ from eventsource.adapters.sql import SQLCheckpointRepository, SQLDLQRepository
 
 # Projections (Task 09)
 from eventsource.adapters.sql.projection import DatabaseProjection
+
+# ReadModel Projections (Phase 3)
+from eventsource.adapters.sql.readmodel_projection import ReadModelProjection
 from eventsource.adapters.sqlite import (
     AIOSQLITE_AVAILABLE,
     SQLITE_AVAILABLE,
@@ -194,9 +197,6 @@ from eventsource.protocols import (
     FlexibleEventSubscriber,
     SyncEventHandler,
 )
-
-# ReadModel Projections (Phase 3)
-from eventsource.readmodels import ReadModelProjection
 
 # Serialization utilities
 from eventsource.serialization import EventSourceJSONEncoder

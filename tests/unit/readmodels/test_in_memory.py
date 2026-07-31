@@ -5,9 +5,9 @@ from uuid import uuid4
 
 import pytest
 
+from eventsource.adapters.memory.readmodels import InMemoryReadModelRepository
 from eventsource.ports.readmodels.query import Filter, Query
 from eventsource.readmodels import ReadModel
-from eventsource.readmodels.in_memory import InMemoryReadModelRepository
 
 
 class OrderSummary(ReadModel):

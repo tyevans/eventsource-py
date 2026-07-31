@@ -2,6 +2,7 @@
 
 from eventsource.adapters.postgresql.locks import PostgreSQLLockManager
 from eventsource.adapters.postgresql.outbox import PostgreSQLOutboxRepository
+from eventsource.adapters.postgresql.readmodels import PostgreSQLReadModelRepository
 from eventsource.adapters.postgresql.snapshots import PostgreSQLSnapshotStore
 from eventsource.adapters.postgresql.store import ASYNCPG_AVAILABLE, PostgreSQLEventStore
 
@@ -10,5 +11,6 @@ __all__ = [
     "PostgreSQLEventStore",
     "PostgreSQLLockManager",
     "PostgreSQLOutboxRepository",
+    "PostgreSQLReadModelRepository",
     "PostgreSQLSnapshotStore",
 ]

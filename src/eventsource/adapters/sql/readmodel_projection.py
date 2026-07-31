@@ -215,7 +215,7 @@ class ReadModelProjection(DatabaseProjection, Generic[TModel]):
             ReadModelRepository instance
         """
         # Import here to avoid circular imports
-        from eventsource.readmodels.postgresql import PostgreSQLReadModelRepository
+        from eventsource.adapters.postgresql.readmodels import PostgreSQLReadModelRepository
 
         # Detect dialect from connection
         dialect_name = conn.dialect.name
@@ -230,7 +230,7 @@ class ReadModelProjection(DatabaseProjection, Generic[TModel]):
             # For SQLite, we need the raw connection
             from aiosqlite import Connection as AiosqliteConnection
 
-            from eventsource.readmodels.sqlite import SQLiteReadModelRepository
+            from eventsource.adapters.sqlite.readmodels import SQLiteReadModelRepository
 
             # Get raw aiosqlite connection from SQLAlchemy
             raw_conn = await conn.get_raw_connection()

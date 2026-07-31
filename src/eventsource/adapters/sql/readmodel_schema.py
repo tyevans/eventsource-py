@@ -4,6 +4,10 @@ Schema generation utilities for read models.
 Generates CREATE TABLE SQL statements from ReadModel class definitions.
 Supports PostgreSQL and SQLite dialects with appropriate type mappings.
 
+This lives under `adapters/sql/` rather than `ports/` because it hardcodes
+`POSTGRESQL_TYPE_MAP` / `SQLITE_TYPE_MAP` and emits dialect-specific
+`CREATE TABLE` text -- dialect knowledge belongs to an adapter, not a port.
+
 Example:
     >>> from eventsource.readmodels import ReadModel
     >>> from eventsource.readmodels.schema import generate_schema
