@@ -1,6 +1,10 @@
 """
 PostgreSQL advisory lock utilities for distributed coordination.
 
+Implements `eventsource.ports.locks.LockManager`. The cross-process exclusion,
+release-on-connection-loss, and PostgreSQL-fairness guarantees documented
+below are this adapter's, not the port's -- see ADR 0029.
+
 Advisory locks are application-level locks that:
 - Are independent of table/row locks
 - Persist for session duration (until released or disconnected)
@@ -21,73 +25,16 @@ import hashlib
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
-from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from eventsource.exceptions import LockAcquisitionError, LockNotHeldError
 from eventsource.observability import Tracer, create_tracer
-
-if TYPE_CHECKING:
-    pass
+from eventsource.ports.locks import LockInfo
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class LockInfo:
-    """
-    Information about an acquired lock.
-
-    Attributes:
-        key: The string key used to identify the lock
-        lock_id: The numeric PostgreSQL lock ID (derived from key hash)
-        acquired_at: When the lock was acquired
-        holder_id: Optional identifier for the lock holder (for debugging)
-    """
-
-    key: str
-    lock_id: int
-    acquired_at: datetime
-    holder_id: str | None = None
-
-
-class LockAcquisitionError(Exception):
-    """
-    Raised when a lock cannot be acquired.
-
-    Attributes:
-        key: The lock key that could not be acquired
-        reason: Description of why acquisition failed
-        timeout: The timeout value if timeout was the cause
-    """
-
-    def __init__(
-        self,
-        key: str,
-        reason: str,
-        timeout: float | None = None,
-    ):
-        self.key = key
-        self.reason = reason
-        self.timeout = timeout
-        super().__init__(f"Failed to acquire lock '{key}': {reason}")
-
-
-class LockNotHeldError(Exception):
-    """
-    Raised when attempting to release a lock not held.
-
-    Attributes:
-        key: The lock key that was not held
-    """
-
-    def __init__(self, key: str):
-        self.key = key
-        super().__init__(f"Lock '{key}' is not held by this session")
 
 
 class PostgreSQLLockManager:
@@ -504,22 +451,4 @@ class PostgreSQLLockManager:
         return len(self._held_locks)
 
 
-def migration_lock_key(tenant_id: UUID, operation: str = "migration") -> str:
-    """
-    Create a lock key for migration operations.
-
-    Provides a consistent naming convention for migration-related locks.
-
-    Args:
-        tenant_id: Tenant UUID
-        operation: Operation type (migration, cutover, etc.)
-
-    Returns:
-        Lock key string in format "{operation}:{tenant_id}"
-
-    Example:
-        >>> key = migration_lock_key(tenant_id, "cutover")
-        >>> async with lock_manager.acquire(key):
-        ...     await perform_cutover()
-    """
-    return f"{operation}:{tenant_id}"
+__all__ = ["PostgreSQLLockManager"]

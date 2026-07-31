@@ -100,13 +100,13 @@ from eventsource.observability import Tracer, create_tracer
 from eventsource.ports import FullEventStore, Position
 
 if TYPE_CHECKING:
-    from eventsource.locks import PostgreSQLLockManager
     from eventsource.migration.position_mapper import PositionMapper
     from eventsource.migration.repositories.migration import MigrationRepository
     from eventsource.migration.repositories.routing import TenantRoutingRepository
     from eventsource.migration.router import TenantStoreRouter
     from eventsource.migration.status_streamer import StatusStreamer
     from eventsource.ports.checkpoints import CheckpointRepository
+    from eventsource.ports.locks import DistributedLock
 
 logger = logging.getLogger(__name__)
 
@@ -178,7 +178,7 @@ class MigrationCoordinator:
         _routing_repo: Repository for tenant routing configuration.
         _router: TenantStoreRouter for routing management.
         _source_store_id: Identifier for the source store.
-        _lock_manager: PostgreSQL advisory lock manager for cutover coordination.
+        _lock_manager: Distributed lock manager for cutover coordination.
         _active_copiers: Dictionary of active BulkCopier instances by migration ID.
         _active_tasks: Dictionary of active background tasks by migration ID.
         _status_queues: Status observer queues for streaming updates.
@@ -199,7 +199,7 @@ class MigrationCoordinator:
         router: TenantStoreRouter,
         *,
         source_store_id: str = "default",
-        lock_manager: PostgreSQLLockManager | None = None,
+        lock_manager: DistributedLock | None = None,
         position_mapper: PositionMapper | None = None,
         checkpoint_repo: CheckpointRepository | None = None,
         tracer: Tracer | None = None,
@@ -214,7 +214,7 @@ class MigrationCoordinator:
             routing_repo: Repository for tenant routing
             router: TenantStoreRouter for routing management
             source_store_id: Routing identifier for the source store.
-            lock_manager: PostgreSQL advisory lock manager for cutover coordination.
+            lock_manager: Distributed lock manager for cutover coordination.
                 Required for cutover operations in dual-write phase.
             position_mapper: PositionMapper for subscription checkpoint translation.
                 Required for subscription migration in P3-005.
@@ -1382,8 +1382,8 @@ class MigrationCoordinator:
         if self._lock_manager is None:
             raise MigrationError(
                 "Cannot perform cutover: lock_manager not provided to coordinator. "
-                "Provide a PostgreSQLLockManager when creating the coordinator to "
-                "enable cutover operations.",
+                "Provide a lock manager (e.g. PostgreSQLLockManager) when creating "
+                "the coordinator to enable cutover operations.",
             )
 
         self._cutover_manager = CutoverManager(

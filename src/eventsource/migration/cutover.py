@@ -60,7 +60,7 @@ import time
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from eventsource.locks import LockAcquisitionError, migration_lock_key
+from eventsource.exceptions import LockAcquisitionError
 from eventsource.migration.exceptions import (
     CutoverError,
     CutoverLagError,
@@ -73,12 +73,13 @@ from eventsource.migration.models import (
 )
 from eventsource.observability import ATTR_TENANT_ID, Tracer, create_tracer
 from eventsource.ports import Position
+from eventsource.ports.locks import migration_lock_key
 
 if TYPE_CHECKING:
-    from eventsource.locks import PostgreSQLLockManager
     from eventsource.migration.repositories.routing import TenantRoutingRepository
     from eventsource.migration.router import TenantStoreRouter
     from eventsource.migration.sync_lag_tracker import SyncLagTracker
+    from eventsource.ports.locks import DistributedLock
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +136,7 @@ class CutoverManager:
         ...     print(f"Cutover completed in {result.duration_ms:.2f}ms")
 
     Attributes:
-        _lock_manager: PostgreSQL advisory lock manager for coordination.
+        _lock_manager: Distributed lock manager for coordination.
         _router: TenantStoreRouter for write pause/resume and routing.
         _routing_repo: Repository for atomic routing state updates.
         _lock_acquisition_timeout: Timeout for acquiring advisory lock.
@@ -143,7 +144,7 @@ class CutoverManager:
 
     def __init__(
         self,
-        lock_manager: PostgreSQLLockManager,
+        lock_manager: DistributedLock,
         router: TenantStoreRouter,
         routing_repo: TenantRoutingRepository,
         *,
@@ -155,7 +156,7 @@ class CutoverManager:
         Initialize the cutover manager.
 
         Args:
-            lock_manager: PostgreSQL advisory lock manager for distributed coordination.
+            lock_manager: Distributed lock manager for distributed coordination.
             router: TenantStoreRouter for managing write pause/resume.
             routing_repo: Repository for updating tenant routing state.
             lock_acquisition_timeout: Timeout in seconds for acquiring the advisory lock.

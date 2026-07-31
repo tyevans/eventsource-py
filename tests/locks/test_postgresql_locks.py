@@ -12,13 +12,9 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.locks import (
-    LockAcquisitionError,
-    LockInfo,
-    LockNotHeldError,
-    PostgreSQLLockManager,
-    migration_lock_key,
-)
+from eventsource.adapters.postgresql.locks import PostgreSQLLockManager
+from eventsource.exceptions import LockAcquisitionError, LockNotHeldError
+from eventsource.ports.locks import LockInfo, migration_lock_key
 
 # =============================================================================
 # Unit Tests - No database required

@@ -419,3 +419,38 @@ class SnapshotNotFoundError(SnapshotError):
             f"aggregate_id={self.aggregate_id!r}, "
             f"aggregate_type={self.aggregate_type!r})"
         )
+
+
+class LockAcquisitionError(EventSourceError):
+    """
+    Raised when a lock cannot be acquired.
+
+    Attributes:
+        key: The lock key that could not be acquired
+        reason: Description of why acquisition failed
+        timeout: The timeout value if timeout was the cause
+    """
+
+    def __init__(
+        self,
+        key: str,
+        reason: str,
+        timeout: float | None = None,
+    ):
+        self.key = key
+        self.reason = reason
+        self.timeout = timeout
+        super().__init__(f"Failed to acquire lock '{key}': {reason}")
+
+
+class LockNotHeldError(EventSourceError):
+    """
+    Raised when attempting to release a lock not held.
+
+    Attributes:
+        key: The lock key that was not held
+    """
+
+    def __init__(self, key: str):
+        self.key = key
+        super().__init__(f"Lock '{key}' is not held by this session")

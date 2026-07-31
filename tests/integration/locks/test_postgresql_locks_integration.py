@@ -17,12 +17,9 @@ from typing import TYPE_CHECKING
 import pytest
 import pytest_asyncio
 
-from eventsource.locks import (
-    LockAcquisitionError,
-    LockNotHeldError,
-    PostgreSQLLockManager,
-    migration_lock_key,
-)
+from eventsource.adapters.postgresql.locks import PostgreSQLLockManager
+from eventsource.exceptions import LockAcquisitionError, LockNotHeldError
+from eventsource.ports.locks import migration_lock_key
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
