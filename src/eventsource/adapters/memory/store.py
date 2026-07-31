@@ -4,7 +4,7 @@ Suitable for testing and development only. All state lives in process
 memory and is lost on restart. Not distributed-safe.
 """
 
-import asyncio
+import threading
 from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime
 from uuid import UUID
@@ -54,7 +54,12 @@ class MemoryEventStore:
         self._events: list[EventEnvelope] = []
         self._streams: dict[str, list[int]] = {}
         self._event_ids: set[UUID] = set()
-        self._lock = asyncio.Lock()
+        # threading.Lock, not asyncio.Lock: SyncEventStoreAdapter runs each
+        # call in a fresh event loop (`asyncio.run`), so an asyncio.Lock
+        # acquired under one loop raises RuntimeError when awaited from
+        # another. The critical section below never awaits, so a plain
+        # threading.Lock (safe across loops and threads) is sufficient.
+        self._lock = threading.Lock()
 
     @property
     def store_id(self) -> str:
@@ -90,7 +95,7 @@ class MemoryEventStore:
         if not events:
             raise ValueError("cannot append an empty batch of events")
 
-        async with self._lock:
+        with self._lock:
             key = stream.render()
             indexes = self._streams.get(key, [])
             current_version = len(indexes)
