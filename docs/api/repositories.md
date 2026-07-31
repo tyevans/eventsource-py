@@ -27,7 +27,6 @@ The package now holds one public source module, plus two private helpers:
 | --- | --- |
 | `eventsource.repositories.outbox` | `OutboxRepository`, `OutboxRepositoryProtocol`, `PostgreSQLOutboxRepository`, `SQLiteOutboxRepository`, `InMemoryOutboxRepository`, `OutboxEntry`, `OutboxStats` |
 | `eventsource.repositories._connection` | Private connection-handling helper shared by the SQL backends |
-| `eventsource.repositories._json` | Deprecated JSON shim; import from `eventsource.serialization` instead |
 
 Every name above from the public module is re-exported from the
 `eventsource.repositories` barrel, along with three JSON utilities forwarded
