@@ -84,3 +84,18 @@ class TestCommandRejectedError:
         from eventsource.exceptions import CommandRejectedError
 
         assert CommandRejectedError("no").command is None
+
+
+class TestPublicExports:
+    def test_top_level_imports(self) -> None:
+        from eventsource import CommandRejectedError, DeciderAggregate, DomainCommand
+
+        assert DomainCommand is not None
+        assert DeciderAggregate is not None
+        assert CommandRejectedError is not None
+
+    def test_in_all(self) -> None:
+        import eventsource
+
+        for name in ("DomainCommand", "DeciderAggregate", "CommandRejectedError"):
+            assert name in eventsource.__all__
