@@ -68,3 +68,19 @@ class TestMatchSupport:
                 assert name == "alice"
             case _:
                 pytest.fail("pattern did not match")
+
+
+class TestCommandRejectedError:
+    def test_is_eventsource_error_and_carries_command(self) -> None:
+        from eventsource.exceptions import CommandRejectedError, EventSourceError
+
+        cmd = OpenAccount(owner_name="alice")
+        err = CommandRejectedError("account already open", command=cmd)
+        assert isinstance(err, EventSourceError)
+        assert err.command is cmd
+        assert "already open" in str(err)
+
+    def test_command_defaults_to_none(self) -> None:
+        from eventsource.exceptions import CommandRejectedError
+
+        assert CommandRejectedError("no").command is None
