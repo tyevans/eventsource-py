@@ -27,6 +27,7 @@ from eventsource.migration.exceptions import (
     RoutingError,
 )
 from eventsource.migration.models import MigrationPhase
+from eventsource.ports.positions import Position
 
 
 class TestMigrationError:
@@ -382,14 +383,15 @@ class TestPositionMappingError:
     def test_creation_with_position(self) -> None:
         """Test creating PositionMappingError with source position."""
         migration_id = uuid4()
+        source_position = Position(store_id="src", key=(12345,))
         error = PositionMappingError(
             "Cannot map position",
             migration_id=migration_id,
-            source_position=12345,
+            source_position=source_position,
             reason="Position out of range",
         )
 
-        assert error.source_position == 12345
+        assert error.source_position == source_position
         assert error.reason == "Position out of range"
 
     def test_is_subclass_of_migration_error(self) -> None:

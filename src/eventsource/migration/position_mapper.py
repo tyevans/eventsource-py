@@ -56,6 +56,7 @@ from uuid import UUID
 from eventsource.migration.exceptions import PositionMappingError
 from eventsource.migration.models import PositionMapping
 from eventsource.observability import Tracer, create_tracer
+from eventsource.ports.positions import Position
 
 if TYPE_CHECKING:
     from eventsource.migration.repositories.position_mapping import (
@@ -81,10 +82,10 @@ class TranslationResult:
         interpolated: Whether interpolation was used.
     """
 
-    source_position: int
-    target_position: int
+    source_position: Position
+    target_position: Position
     is_exact: bool
-    nearest_source_position: int | None = None
+    nearest_source_position: Position | None = None
     interpolated: bool = False
 
 
@@ -103,10 +104,10 @@ class ReverseTranslationResult:
         nearest_target_position: The target position used for nearest match.
     """
 
-    target_position: int
-    source_position: int
+    target_position: Position
+    source_position: Position
     is_exact: bool
-    nearest_target_position: int | None = None
+    nearest_target_position: Position | None = None
 
 
 class PositionMapper:
@@ -161,8 +162,8 @@ class PositionMapper:
     async def record_mapping(
         self,
         migration_id: UUID,
-        source_position: int,
-        target_position: int,
+        source_position: Position,
+        target_position: Position,
         event_id: UUID,
         *,
         mapped_at: datetime | None = None,
@@ -173,6 +174,10 @@ class PositionMapper:
         Creates a mapping between a source store position and the
         corresponding target store position. These mappings are used
         for checkpoint translation during subscription migration.
+
+        Callers must record mappings in ascending source-position order
+        for a given migration; the repository's nearest-match lookups
+        depend on that ordering (see `PostgreSQLPositionMappingRepository`).
 
         Args:
             migration_id: ID of the migration.
@@ -188,8 +193,8 @@ class PositionMapper:
             "eventsource.position_mapper.record_mapping",
             {
                 "migration.id": str(migration_id),
-                "source_position": source_position,
-                "target_position": target_position,
+                "source_position": source_position.to_str(),
+                "target_position": target_position.to_str(),
                 "event.id": str(event_id),
             },
         ):
@@ -204,9 +209,9 @@ class PositionMapper:
             try:
                 await self._repo.create(mapping)
                 logger.debug(
-                    "Recorded position mapping: source=%d -> target=%d for migration %s",
-                    source_position,
-                    target_position,
+                    "Recorded position mapping: source=%s -> target=%s for migration %s",
+                    source_position.to_str(),
+                    target_position.to_str(),
                     migration_id,
                 )
             except Exception as e:
@@ -221,7 +226,7 @@ class PositionMapper:
     async def record_mappings_batch(
         self,
         migration_id: UUID,
-        mappings: list[tuple[int, int, UUID]],
+        mappings: list[tuple[Position, Position, UUID]],
         *,
         mapped_at: datetime | None = None,
     ) -> int:
@@ -283,7 +288,7 @@ class PositionMapper:
     async def translate_position(
         self,
         migration_id: UUID,
-        source_position: int,
+        source_position: Position,
         *,
         use_nearest: bool = True,
     ) -> TranslationResult:
@@ -310,7 +315,7 @@ class PositionMapper:
             "eventsource.position_mapper.translate_position",
             {
                 "migration.id": str(migration_id),
-                "source_position": source_position,
+                "source_position": source_position.to_str(),
                 "use_nearest": use_nearest,
             },
         ):
@@ -322,9 +327,9 @@ class PositionMapper:
 
             if exact_mapping is not None:
                 logger.debug(
-                    "Exact position translation: source=%d -> target=%d",
-                    source_position,
-                    exact_mapping.target_position,
+                    "Exact position translation: source=%s -> target=%s",
+                    source_position.to_str(),
+                    exact_mapping.target_position.to_str(),
                 )
                 return TranslationResult(
                     source_position=source_position,
@@ -341,10 +346,10 @@ class PositionMapper:
 
                 if nearest_mapping is not None:
                     logger.debug(
-                        "Nearest position translation: source=%d (nearest=%d) -> target=%d",
-                        source_position,
-                        nearest_mapping.source_position,
-                        nearest_mapping.target_position,
+                        "Nearest position translation: source=%s (nearest=%s) -> target=%s",
+                        source_position.to_str(),
+                        nearest_mapping.source_position.to_str(),
+                        nearest_mapping.target_position.to_str(),
                     )
                     return TranslationResult(
                         source_position=source_position,
@@ -355,7 +360,7 @@ class PositionMapper:
 
             # No mapping found
             raise PositionMappingError(
-                f"No mapping found for source position {source_position}",
+                "No mapping found for source position",
                 migration_id=migration_id,
                 source_position=source_position,
                 reason="no_mapping",
@@ -364,7 +369,7 @@ class PositionMapper:
     async def translate_position_reverse(
         self,
         migration_id: UUID,
-        target_position: int,
+        target_position: Position,
     ) -> ReverseTranslationResult:
         """
         Translate a target position back to source position.
@@ -386,7 +391,7 @@ class PositionMapper:
             "eventsource.position_mapper.translate_position_reverse",
             {
                 "migration.id": str(migration_id),
-                "target_position": target_position,
+                "target_position": target_position.to_str(),
             },
         ):
             mapping = await self._repo.find_by_target_position(
@@ -396,9 +401,9 @@ class PositionMapper:
 
             if mapping is not None:
                 logger.debug(
-                    "Reverse position translation: target=%d -> source=%d",
-                    target_position,
-                    mapping.source_position,
+                    "Reverse position translation: target=%s -> source=%s",
+                    target_position.to_str(),
+                    mapping.source_position.to_str(),
                 )
                 return ReverseTranslationResult(
                     target_position=target_position,
@@ -408,7 +413,7 @@ class PositionMapper:
 
             # No exact match found
             raise PositionMappingError(
-                f"No mapping found for target position {target_position}",
+                f"No mapping found for target position {target_position.to_str()}",
                 migration_id=migration_id,
                 reason="no_mapping",
             )
@@ -416,15 +421,19 @@ class PositionMapper:
     async def translate_positions_batch(
         self,
         migration_id: UUID,
-        source_positions: list[int],
+        source_positions: list[Position],
         *,
         use_nearest: bool = True,
     ) -> list[TranslationResult]:
         """
         Translate multiple source positions to target positions.
 
-        Optimizes batch translation by fetching a range of mappings
-        once and performing lookups in memory.
+        Delegates to `translate_position` for each position. Positions are
+        opaque tokens, so the previous int-range optimization (fetching a
+        padded window of mappings and searching it in memory) no longer
+        applies -- there is no arithmetic "buffer" to pad a token range
+        with. Each lookup is still O(log n) via the repository's binary
+        search over the row ordinal.
 
         Args:
             migration_id: ID of the migration.
@@ -449,62 +458,14 @@ class PositionMapper:
                 "use_nearest": use_nearest,
             },
         ):
-            # Get the range of positions
-            min_pos = min(source_positions)
-            max_pos = max(source_positions)
-
-            # Fetch all mappings in the range (with some buffer for nearest lookups)
-            buffer = 1000  # Extra positions for nearest lookups
-            start_pos = max(0, min_pos - buffer)
-            end_pos = max_pos
-
-            mappings = await self._repo.list_in_source_range(
-                migration_id,
-                start_pos,
-                end_pos,
-            )
-
-            # Build lookup structures
-            exact_map: dict[int, int] = {m.source_position: m.target_position for m in mappings}
-
-            # Sort mappings by source position for nearest lookup
-            sorted_mappings = sorted(mappings, key=lambda m: m.source_position)
-
-            results: list[TranslationResult] = []
-
-            for source_pos in source_positions:
-                # Try exact match
-                if source_pos in exact_map:
-                    results.append(
-                        TranslationResult(
-                            source_position=source_pos,
-                            target_position=exact_map[source_pos],
-                            is_exact=True,
-                        )
-                    )
-                    continue
-
-                # Try nearest match
-                if use_nearest and sorted_mappings:
-                    nearest = self._find_nearest(sorted_mappings, source_pos)
-                    if nearest is not None:
-                        results.append(
-                            TranslationResult(
-                                source_position=source_pos,
-                                target_position=nearest.target_position,
-                                is_exact=False,
-                                nearest_source_position=nearest.source_position,
-                            )
-                        )
-                        continue
-
-                # No mapping found
-                raise PositionMappingError(
-                    f"No mapping found for source position {source_pos}",
-                    migration_id=migration_id,
-                    source_position=source_pos,
-                    reason="no_mapping",
+            results = [
+                await self.translate_position(
+                    migration_id,
+                    source_pos,
+                    use_nearest=use_nearest,
                 )
+                for source_pos in source_positions
+            ]
 
             logger.debug(
                 "Batch translated %d positions for migration %s",
@@ -542,9 +503,9 @@ class PositionMapper:
     async def get_position_bounds(
         self,
         migration_id: UUID,
-    ) -> tuple[int, int] | None:
+    ) -> tuple[Position, Position] | None:
         """
-        Get the min and max source positions mapped for a migration.
+        Get the first and last source positions mapped for a migration.
 
         Useful for understanding the range of positions that have
         been mapped during migration.
@@ -610,7 +571,7 @@ class PositionMapper:
     def _find_nearest(
         self,
         sorted_mappings: list[PositionMapping],
-        source_position: int,
+        source_position: Position,
     ) -> PositionMapping | None:
         """
         Find the nearest mapping with source_position <= given position.

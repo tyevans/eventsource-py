@@ -41,6 +41,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from eventsource.adapters._sql.positions import IntPositionCodec
 from eventsource.migration.exceptions import BulkCopyError
 from eventsource.migration.models import Migration
 from eventsource.observability import Tracer, create_tracer
@@ -216,6 +217,8 @@ class BulkCopier:
         migration_repo: MigrationRepository,
         *,
         position_mapper: PositionMapper | None = None,
+        source_position_store_id: str | None = None,
+        target_position_store_id: str | None = None,
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ) -> None:
@@ -227,6 +230,16 @@ class BulkCopier:
             target_store: EventStore to write to.
             migration_repo: Repository for progress persistence.
             position_mapper: Optional mapper for tracking position translations.
+            source_position_store_id: `store_id` stamped into positions read
+                from the source store. Required (with target_position_store_id)
+                to record position mappings when position_mapper is provided --
+                the mapper is now token-keyed (slice-(c)) and BulkCopier still
+                works in the legacy int-position world until Task 4, so this
+                is the int->Position bridge.
+                # slice-(c) seam: retired in Task 4.
+            target_position_store_id: `store_id` stamped into positions written
+                to the target store. See source_position_store_id.
+                # slice-(c) seam: retired in Task 4.
             tracer: Optional custom Tracer instance. If not provided, one is
                    created based on enable_tracing setting.
             enable_tracing: Whether to enable OpenTelemetry tracing.
@@ -239,6 +252,17 @@ class BulkCopier:
         self._target = target_store
         self._migration_repo = migration_repo
         self._position_mapper = position_mapper
+        # slice-(c) seam: retired in Task 4.
+        self._source_codec = (
+            IntPositionCodec(store_id=source_position_store_id)
+            if source_position_store_id is not None
+            else None
+        )
+        self._target_codec = (
+            IntPositionCodec(store_id=target_position_store_id)
+            if target_position_store_id is not None
+            else None
+        )
 
         # State
         self._is_cancelled = False
@@ -577,15 +601,23 @@ class BulkCopier:
 
                 last_target_position = max(last_target_position, result.global_position)
 
-                # Record position mappings if mapper available
-                if self._position_mapper:
+                # Record position mappings if mapper and codecs are available.
+                # The mapper is token-keyed (slice-(c)); BulkCopier still
+                # deals in legacy int positions until Task 4, so int
+                # positions are bridged to Position here.
+                # slice-(c) seam: retired in Task 4.
+                if (
+                    self._position_mapper is not None
+                    and self._source_codec is not None
+                    and self._target_codec is not None
+                ):
                     for i, stored_event in enumerate(agg_events):
                         # Target position is estimated; actual may vary
                         target_pos = result.global_position - len(agg_events) + i + 1
                         await self._position_mapper.record_mapping(
                             migration_id,
-                            stored_event.global_position,
-                            target_pos,
+                            self._source_codec.encode(stored_event.global_position),
+                            self._target_codec.encode(target_pos),
                             stored_event.event_id,
                         )
 

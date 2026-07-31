@@ -37,6 +37,8 @@ from enum import Enum
 from typing import Any
 from uuid import UUID
 
+from eventsource.ports.positions import Position
+
 
 class MigrationPhase(Enum):
     """
@@ -701,8 +703,8 @@ class PositionMapping:
     """
 
     migration_id: UUID
-    source_position: int
-    target_position: int
+    source_position: Position
+    target_position: Position
     event_id: UUID
     mapped_at: datetime
 

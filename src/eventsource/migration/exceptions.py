@@ -45,6 +45,7 @@ from uuid import UUID
 
 if TYPE_CHECKING:
     from eventsource.migration.models import MigrationPhase
+    from eventsource.ports.positions import Position
 
 logger = logging.getLogger(__name__)
 
@@ -917,11 +918,13 @@ class PositionMappingError(MigrationError):
         self,
         message: str,
         migration_id: UUID,
-        source_position: int | None = None,
+        source_position: Position | None = None,
         reason: str | None = None,
     ) -> None:
         self.source_position = source_position
         self.reason = reason
+        if source_position is not None:
+            message = f"{message} (source_position={source_position.to_str()})"
         super().__init__(
             message=message,
             migration_id=migration_id,

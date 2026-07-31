@@ -34,6 +34,7 @@ from eventsource.migration.models import (
     TenantMigrationState,
     TenantRouting,
 )
+from eventsource.ports.positions import Position
 
 
 class TestMigrationPhase:
@@ -594,16 +595,18 @@ class TestPositionMapping:
         migration_id = uuid4()
         event_id = uuid4()
         mapped_at = datetime.now()
+        source_position = Position(store_id="src", key=(100,))
+        target_position = Position(store_id="tgt", key=(50,))
         mapping = PositionMapping(
             migration_id=migration_id,
-            source_position=100,
-            target_position=50,
+            source_position=source_position,
+            target_position=target_position,
             event_id=event_id,
             mapped_at=mapped_at,
         )
         assert mapping.migration_id == migration_id
-        assert mapping.source_position == 100
-        assert mapping.target_position == 50
+        assert mapping.source_position == source_position
+        assert mapping.target_position == target_position
         assert mapping.event_id == event_id
         assert mapping.mapped_at == mapped_at
 
@@ -611,13 +614,13 @@ class TestPositionMapping:
         """Test that PositionMapping is frozen (immutable)."""
         mapping = PositionMapping(
             migration_id=uuid4(),
-            source_position=100,
-            target_position=50,
+            source_position=Position(store_id="src", key=(100,)),
+            target_position=Position(store_id="tgt", key=(50,)),
             event_id=uuid4(),
             mapped_at=datetime.now(),
         )
         with pytest.raises(AttributeError):
-            mapping.source_position = 200  # type: ignore[misc]
+            mapping.source_position = Position(store_id="src", key=(200,))  # type: ignore[misc]
 
 
 class TestSyncLag:

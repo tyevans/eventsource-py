@@ -793,6 +793,8 @@ class MigrationCoordinator:
                 self._source_store,
                 target_store,
                 self._migration_repo,
+                source_position_store_id=self._source_position_store_id,
+                target_position_store_id=self._target_position_store_id,
                 enable_tracing=self._enable_tracing,
             )
 

@@ -761,6 +761,8 @@ class TestBulkCopierWriteBatch:
             target_store=target_store,
             migration_repo=MagicMock(),
             position_mapper=position_mapper,
+            source_position_store_id="src",
+            target_position_store_id="tgt",
             enable_tracing=False,
         )
 

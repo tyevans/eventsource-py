@@ -441,8 +441,11 @@ class SubscriptionMigrator:
         Returns:
             PlannedMigration or None if subscription should be skipped.
         """
-        # Get current checkpoint position. The mapper is int-keyed
-        # (slice-(c) seam), so the token is converted at this boundary.
+        # Get current checkpoint position. The mapper is now token-keyed
+        # (slice-(c)); the checkpoint repo already returns a Position, so no
+        # conversion is needed to call it. PlannedMigration.current_position
+        # is still int (Task 4 retypes it), so that field is derived via the
+        # codec -- # slice-(c) seam: retired in Task 4.
         current_token = await self._checkpoint_repo.get_position(subscription_name)
 
         if current_token is None:
@@ -461,7 +464,7 @@ class SubscriptionMigrator:
         try:
             translation = await self._position_mapper.translate_position(
                 migration_id=migration_id,
-                source_position=current_position,
+                source_position=current_token,
                 use_nearest=True,
             )
 
@@ -472,12 +475,19 @@ class SubscriptionMigrator:
                     f"-> nearest {translation.nearest_source_position}"
                 )
 
+            # slice-(c) seam: retired in Task 4 -- PlannedMigration's
+            # position fields are still int.
+            nearest_int = (
+                self._source_codec.value_of(translation.nearest_source_position)
+                if translation.nearest_source_position is not None
+                else None
+            )
             return PlannedMigration(
                 subscription_name=subscription_name,
                 current_position=current_position,
-                planned_target_position=translation.target_position,
+                planned_target_position=self._target_codec.value_of(translation.target_position),
                 is_exact_translation=translation.is_exact,
-                nearest_source_position=translation.nearest_source_position,
+                nearest_source_position=nearest_int,
                 warning=warning,
             )
 
@@ -660,8 +670,12 @@ class SubscriptionMigrator:
                 "subscription.name": subscription_name,
             },
         ):
-            # Get current checkpoint. The mapper is int-keyed (slice-(c)
-            # seam), so the token is converted at this boundary.
+            # Get current checkpoint. The checkpoint repo already returns a
+            # Position, so it can be passed straight to the now token-keyed
+            # mapper. SubscriptionMigrationResult's position fields are
+            # still int (Task 4 retypes it), so current_position is derived
+            # via the codec for those fields only.
+            # slice-(c) seam: retired in Task 4.
             current_token = await self._checkpoint_repo.get_position(subscription_name)
 
             if current_token is None:
@@ -697,7 +711,7 @@ class SubscriptionMigrator:
             try:
                 translation = await self._position_mapper.translate_position(
                     migration_id=migration_id,
-                    source_position=current_position,
+                    source_position=current_token,
                     use_nearest=True,
                 )
             except PositionMappingError as e:
@@ -717,11 +731,12 @@ class SubscriptionMigrator:
                     error_message=f"Position translation failed: {e}",
                 )
 
-            # Update checkpoint with translated position
+            # Update checkpoint with translated position. translation.target_position
+            # is already a Position -- no codec needed to save it.
             try:
                 await self._checkpoint_repo.save_position(
                     subscription_id=subscription_name,
-                    position=self._target_codec.encode(translation.target_position),
+                    position=translation.target_position,
                     event_id=checkpoint_data.last_event_id,
                     event_type=checkpoint_data.last_event_type or "Unknown",
                 )
@@ -732,18 +747,26 @@ class SubscriptionMigrator:
                         "subscription": subscription_name,
                         "migration_id": str(migration_id),
                         "source_position": current_position,
-                        "target_position": translation.target_position,
+                        "target_position": translation.target_position.to_str(),
                         "is_exact": translation.is_exact,
                     },
                 )
 
+                # slice-(c) seam: retired in Task 4 -- SubscriptionMigrationResult's
+                # position fields are still int.
+                target_int = self._target_codec.value_of(translation.target_position)
+                nearest_int = (
+                    self._source_codec.value_of(translation.nearest_source_position)
+                    if translation.nearest_source_position is not None
+                    else None
+                )
                 return SubscriptionMigrationResult(
                     subscription_name=subscription_name,
                     success=True,
                     source_position=current_position,
-                    target_position=translation.target_position,
+                    target_position=target_int,
                     is_exact_translation=translation.is_exact,
-                    nearest_source_position=translation.nearest_source_position,
+                    nearest_source_position=nearest_int,
                     migrated_at=datetime.now(UTC),
                 )
 
@@ -760,7 +783,7 @@ class SubscriptionMigrator:
                     subscription_name=subscription_name,
                     success=False,
                     source_position=current_position,
-                    target_position=translation.target_position,
+                    target_position=self._target_codec.value_of(translation.target_position),
                     error_message=f"Checkpoint update failed: {e}",
                 )
 

@@ -42,6 +42,11 @@ def source_pos(n: int) -> Position:
     return Position(store_id=SOURCE_STORE_ID, key=(n,))
 
 
+def target_pos(n: int) -> Position:
+    """A target-store position token, symmetric to source_pos."""
+    return Position(store_id="target-store", key=(n,))
+
+
 class TestSubscriptionMigratorInit:
     """Tests for SubscriptionMigrator initialization."""
 
@@ -133,8 +138,8 @@ class TestSubscriptionMigratorPlanMigration:
         mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
         mock_position_mapper.translate_position = AsyncMock(
             return_value=TranslationResult(
-                source_position=1000,
-                target_position=500,
+                source_position=source_pos(1000),
+                target_position=target_pos(500),
                 is_exact=True,
             )
         )
@@ -190,7 +195,7 @@ class TestSubscriptionMigratorPlanMigration:
             side_effect=PositionMappingError(
                 "No mapping found",
                 migration_id=migration_id,
-                source_position=1000,
+                source_position=source_pos(1000),
                 reason="no_mapping",
             )
         )
@@ -221,10 +226,10 @@ class TestSubscriptionMigratorPlanMigration:
         mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1050))
         mock_position_mapper.translate_position = AsyncMock(
             return_value=TranslationResult(
-                source_position=1050,
-                target_position=500,
+                source_position=source_pos(1050),
+                target_position=target_pos(500),
                 is_exact=False,
-                nearest_source_position=1000,
+                nearest_source_position=source_pos(1000),
             )
         )
 
@@ -261,8 +266,8 @@ class TestSubscriptionMigratorPlanMigration:
         mock_checkpoint_repo.get_position = AsyncMock(side_effect=lambda name: positions.get(name))
         mock_position_mapper.translate_position = AsyncMock(
             return_value=TranslationResult(
-                source_position=1000,
-                target_position=500,
+                source_position=source_pos(1000),
+                target_position=target_pos(500),
                 is_exact=True,
             )
         )
@@ -320,8 +325,8 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
         mock_position_mapper.translate_position = AsyncMock(
             return_value=TranslationResult(
-                source_position=1000,
-                target_position=500,
+                source_position=source_pos(1000),
+                target_position=target_pos(500),
                 is_exact=True,
             )
         )
@@ -366,8 +371,8 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         mock_checkpoint_repo.save_position = AsyncMock()
         mock_position_mapper.translate_position = AsyncMock(
             return_value=TranslationResult(
-                source_position=1000,
-                target_position=500,
+                source_position=source_pos(1000),
+                target_position=target_pos(500),
                 is_exact=True,
             )
         )
@@ -452,7 +457,7 @@ class TestSubscriptionMigratorMigrateSubscriptions:
             side_effect=PositionMappingError(
                 "No mapping found",
                 migration_id=migration_id,
-                source_position=1000,
+                source_position=source_pos(1000),
                 reason="no_mapping",
             )
         )
@@ -495,8 +500,8 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         mock_checkpoint_repo.save_position = AsyncMock(side_effect=Exception("Database error"))
         mock_position_mapper.translate_position = AsyncMock(
             return_value=TranslationResult(
-                source_position=1000,
-                target_position=500,
+                source_position=source_pos(1000),
+                target_position=target_pos(500),
                 is_exact=True,
             )
         )
@@ -567,8 +572,8 @@ class TestSubscriptionMigratorMigrateTenantSubscriptions:
         mock_checkpoint_repo.save_position = AsyncMock()
         mock_position_mapper.translate_position = AsyncMock(
             return_value=TranslationResult(
-                source_position=1000,
-                target_position=500,
+                source_position=source_pos(1000),
+                target_position=target_pos(500),
                 is_exact=True,
             )
         )
@@ -613,8 +618,8 @@ class TestSubscriptionMigratorMigrateTenantSubscriptions:
         mock_checkpoint_repo.save_position = AsyncMock()
         mock_position_mapper.translate_position = AsyncMock(
             return_value=TranslationResult(
-                source_position=1000,
-                target_position=500,
+                source_position=source_pos(1000),
+                target_position=target_pos(500),
                 is_exact=True,
             )
         )
@@ -1031,8 +1036,8 @@ class TestSubscriptionMigratorWorkflows:
         mock_checkpoint_repo.save_position = AsyncMock()
         mock_position_mapper.translate_position = AsyncMock(
             return_value=TranslationResult(
-                source_position=1000,
-                target_position=500,
+                source_position=source_pos(1000),
+                target_position=target_pos(500),
                 is_exact=True,
             )
         )
@@ -1105,10 +1110,10 @@ class TestSubscriptionMigratorWorkflows:
         mock_checkpoint_repo.save_position = AsyncMock()
 
         def translate_position_effect(migration_id, source_position, use_nearest=True):
-            if source_position == 1000:
+            if source_position == source_pos(1000):
                 return TranslationResult(
-                    source_position=1000,
-                    target_position=500,
+                    source_position=source_pos(1000),
+                    target_position=target_pos(500),
                     is_exact=True,
                 )
             else:
