@@ -58,7 +58,7 @@ CREATE INDEX IF NOT EXISTS idx_events_aggregate_version ON events (aggregate_id,
 -- Implements the transactional outbox pattern for reliable event publishing.
 
 CREATE TABLE IF NOT EXISTS event_outbox (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT PRIMARY KEY,
     event_id TEXT NOT NULL,
     event_type TEXT NOT NULL,
     aggregate_id TEXT NOT NULL,

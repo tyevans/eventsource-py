@@ -639,7 +639,8 @@ async def sqlite_outbox_repo(
     """
     Provide a SQLiteOutboxRepository with schema initialized.
 
-    Creates the event_outbox table in the in-memory database
+    Provisions the event_outbox table from
+    `get_schema("outbox", backend="sqlite")` in the in-memory database
     for outbox testing.
 
     Args:
@@ -652,25 +653,9 @@ async def sqlite_outbox_repo(
         pytest.skip("aiosqlite not installed")
 
     from eventsource.adapters.sqlite.outbox import SQLiteOutboxRepository
+    from eventsource.migrations import get_schema
 
-    # Create the event_outbox table
-    await sqlite_connection.execute("""
-        CREATE TABLE IF NOT EXISTS event_outbox (
-            id TEXT PRIMARY KEY,
-            event_id TEXT NOT NULL,
-            event_type TEXT NOT NULL,
-            aggregate_id TEXT NOT NULL,
-            aggregate_type TEXT NOT NULL,
-            tenant_id TEXT,
-            event_data TEXT NOT NULL,
-            created_at TEXT NOT NULL DEFAULT (datetime('now')),
-            published_at TEXT,
-            retry_count INTEGER NOT NULL DEFAULT 0,
-            last_error TEXT,
-            status TEXT NOT NULL DEFAULT 'pending',
-            CHECK (status IN ('pending', 'published', 'failed'))
-        )
-    """)
+    await sqlite_connection.executescript(get_schema("outbox", backend="sqlite"))
     await sqlite_connection.commit()
 
     repo = SQLiteOutboxRepository(sqlite_connection)

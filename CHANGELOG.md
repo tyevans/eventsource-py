@@ -68,6 +68,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The legacy BIGINT position columns (`projection_checkpoints.global_position`, `migration_position_mappings.source_position` / `.target_position`, `tenant_migrations.last_source_position` / `.last_target_position`) are frozen, not dropped.** They are neither written nor read by the library after this release; they remain in the schema and die with their own schema revision, not this one (dropping a column is destructive, and `schemas/checkpoints.sql` is under the Do Not Modify rule).
 - Nearest-position lookup in migration checkpoint translation (`find_nearest_source_position`) is now a binary search over the position-mapping table's surrogate row order, resting on a documented monotonicity precondition, since opaque `Position` tokens have no SQL-orderable representation.
 
+### Fixed
+
+- **SQLite outbox schema corrected: `event_outbox.id` is now `TEXT PRIMARY KEY`, was `INTEGER PRIMARY KEY AUTOINCREMENT`.** `SQLiteOutboxRepository.add_event` inserts a `str(uuid4())` into that column, which SQLite's strictly-typed rowid alias rejects with `sqlite3.IntegrityError: datatype mismatch` -- so every insert against the shipped schema failed, and the table has never held a row written by this library. **Migration note:** an existing SQLite database provisioned from `migrations/templates/sqlite/outbox.sql` or `migrations/schemas/sqlite_all.sql` carries an empty, unusable `event_outbox` table. `CREATE TABLE IF NOT EXISTS` will not replace it -- run `DROP TABLE event_outbox;` and re-provision from the corrected schema. No data can be lost: none can have existed. See ADR 0027.
+
 ## [0.7.0] - 2026-07-30
 
 ### Changed

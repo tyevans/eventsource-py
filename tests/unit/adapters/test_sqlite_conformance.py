@@ -175,23 +175,6 @@ class TestSQLiteDLQRepository(DLQRepositoryConformance):
         assert await store.get_failed_event_by_id(entry.id) is None
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Adapter/schema divergence found by the outbox conformance suite, not "
-        "fixed here (see task-4-report.md): the shipped SQLite migration "
-        "(migrations/templates/sqlite/outbox.sql) declares "
-        "`id INTEGER PRIMARY KEY AUTOINCREMENT`, but SQLiteOutboxRepository.add_event "
-        "inserts a `str(uuid4())` into that column, which SQLite's strict INTEGER "
-        "PRIMARY KEY typing rejects with `sqlite3.IntegrityError: datatype mismatch` "
-        "on every call against the real schema. The existing `sqlite_outbox_repo` "
-        "fixture in tests/conftest.py masks this by hand-rolling a divergent "
-        "`id TEXT PRIMARY KEY` schema instead of using `get_schema()`. Deciding "
-        "whether the adapter or the migration schema is wrong is not this task's call. "
-        "Not strict: `test_unknown_outbox_id_is_a_no_op_for_mutating_methods` never "
-        "calls `add_event` and passes cleanly."
-    ),
-    strict=False,
-)
 class TestSQLiteOutboxRepository(OutboxRepositoryConformance):
     @pytest.fixture
     async def store(self, tmp_path) -> AsyncIterator[SQLiteOutboxRepository]:
