@@ -475,8 +475,10 @@ class Migration:
         phase: Current migration phase.
         events_total: Total events to migrate.
         events_copied: Events copied so far.
-        last_source_position: Last processed position in source.
-        last_target_position: Last written position in target.
+        last_source_position: Last processed position in source (None
+            before anything has been copied).
+        last_target_position: Last written position in target (None
+            before anything has been copied).
         started_at: When migration started.
         bulk_copy_started_at: When bulk copy phase started.
         bulk_copy_completed_at: When bulk copy phase completed.
@@ -502,8 +504,8 @@ class Migration:
     phase: MigrationPhase = MigrationPhase.PENDING
     events_total: int = 0
     events_copied: int = 0
-    last_source_position: int = 0
-    last_target_position: int = 0
+    last_source_position: Position | None = None
+    last_target_position: Position | None = None
     started_at: datetime | None = None
     bulk_copy_started_at: datetime | None = None
     bulk_copy_completed_at: datetime | None = None
@@ -719,23 +721,32 @@ class SyncLag:
     measurement.
 
     Attributes:
-        events: Number of events behind.
-        source_position: Current source store position.
-        target_position: Current target store position.
+        events: Number of source events not yet copied to the target,
+            counted exactly up to the sync threshold.
+        count_is_bounded: True when the count hit its bound and stopped
+            reading, i.e. the real backlog is `events` or more.
+        source_position: Current source store position. REPORTING ONLY --
+            never compared with `target_position` (they come from
+            different stores; ordering them raises `PositionForeignError`).
+        target_position: Current target store position. REPORTING ONLY --
+            see `source_position`.
         timestamp: When this lag was measured.
     """
 
     events: int
-    """Number of events behind."""
+    """Number of events behind, exact up to the sync threshold."""
 
-    source_position: int
-    """Current source store position."""
+    source_position: Position | None
+    """Current source store position (reporting only, never compared)."""
 
-    target_position: int
-    """Current target store position."""
+    target_position: Position | None
+    """Current target store position (reporting only, never compared)."""
 
     timestamp: datetime
     """When this lag was measured."""
+
+    count_is_bounded: bool = False
+    """True when the count stopped at its bound; the real backlog may be larger."""
 
     @property
     def is_converged(self) -> bool:

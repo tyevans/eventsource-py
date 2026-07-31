@@ -63,7 +63,19 @@ from eventsource.migration.models import (
 )
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import ATTR_DB_SYSTEM, ATTR_TENANT_ID
+from eventsource.ports.positions import Position
 from eventsource.repositories._connection import execute_with_connection
+
+
+def _token(position: Position | None) -> str | None:
+    """Render a position as its persisted token, or None."""
+    return position.to_str() if position is not None else None
+
+
+def _position(token: Any) -> Position | None:
+    """Decode a persisted position token, or None when the column is null."""
+    return Position.from_str(token) if token else None
+
 
 # Valid phase transitions for the migration state machine
 VALID_TRANSITIONS: dict[MigrationPhase, set[MigrationPhase]] = {
@@ -163,8 +175,8 @@ class MigrationRepository(Protocol):
         self,
         migration_id: UUID,
         events_copied: int,
-        last_source_position: int,
-        last_target_position: int | None = None,
+        last_source_position: Position | None,
+        last_target_position: Position | None = None,
     ) -> None:
         """
         Update bulk copy progress.
@@ -172,7 +184,8 @@ class MigrationRepository(Protocol):
         Args:
             migration_id: UUID of the migration
             events_copied: Total events copied so far
-            last_source_position: Last source position processed
+            last_source_position: Last source position processed (opaque
+                token; None when nothing has been copied yet)
             last_target_position: Last target position written (optional)
         """
         ...
@@ -307,12 +320,12 @@ class PostgreSQLMigrationRepository:
                 INSERT INTO tenant_migrations (
                     id, tenant_id, source_store_id, target_store_id,
                     phase, events_total, events_copied,
-                    last_source_position, last_target_position,
+                    last_source_position_token, last_target_position_token,
                     config, error_count, created_at, updated_at, created_by
                 ) VALUES (
                     :id, :tenant_id, :source_store_id, :target_store_id,
                     :phase, :events_total, :events_copied,
-                    :last_source_position, :last_target_position,
+                    :last_source_position_token, :last_target_position_token,
                     :config, :error_count, :created_at, :updated_at, :created_by
                 )
             """)
@@ -325,8 +338,8 @@ class PostgreSQLMigrationRepository:
                 "phase": migration.phase.value,
                 "events_total": migration.events_total,
                 "events_copied": migration.events_copied,
-                "last_source_position": migration.last_source_position,
-                "last_target_position": migration.last_target_position,
+                "last_source_position_token": _token(migration.last_source_position),
+                "last_target_position_token": _token(migration.last_target_position),
                 "config": json.dumps(migration.config.to_dict()),
                 "error_count": migration.error_count,
                 "created_at": now,
@@ -360,7 +373,7 @@ class PostgreSQLMigrationRepository:
                 SELECT
                     id, tenant_id, source_store_id, target_store_id,
                     phase, events_total, events_copied,
-                    last_source_position, last_target_position,
+                    last_source_position_token, last_target_position_token,
                     started_at, bulk_copy_started_at, bulk_copy_completed_at,
                     dual_write_started_at, cutover_started_at, completed_at,
                     config, error_count, last_error, last_error_at,
@@ -403,7 +416,7 @@ class PostgreSQLMigrationRepository:
                 SELECT
                     id, tenant_id, source_store_id, target_store_id,
                     phase, events_total, events_copied,
-                    last_source_position, last_target_position,
+                    last_source_position_token, last_target_position_token,
                     started_at, bulk_copy_started_at, bulk_copy_completed_at,
                     dual_write_started_at, cutover_started_at, completed_at,
                     config, error_count, last_error, last_error_at,
@@ -493,8 +506,8 @@ class PostgreSQLMigrationRepository:
         self,
         migration_id: UUID,
         events_copied: int,
-        last_source_position: int,
-        last_target_position: int | None = None,
+        last_source_position: Position | None,
+        last_target_position: Position | None = None,
     ) -> None:
         """
         Update bulk copy progress.
@@ -505,7 +518,8 @@ class PostgreSQLMigrationRepository:
         Args:
             migration_id: UUID of the migration
             events_copied: Total events copied so far
-            last_source_position: Last source position processed
+            last_source_position: Last source position processed (opaque
+                token; None when nothing has been copied yet)
             last_target_position: Last target position written (optional)
         """
         with self._tracer.span(
@@ -522,30 +536,30 @@ class PostgreSQLMigrationRepository:
                 query = text("""
                     UPDATE tenant_migrations
                     SET events_copied = :events_copied,
-                        last_source_position = :last_source_position,
-                        last_target_position = :last_target_position,
+                        last_source_position_token = :last_source_position_token,
+                        last_target_position_token = :last_target_position_token,
                         updated_at = :updated_at
                     WHERE id = :id
                 """)
                 params = {
                     "id": migration_id,
                     "events_copied": events_copied,
-                    "last_source_position": last_source_position,
-                    "last_target_position": last_target_position,
+                    "last_source_position_token": _token(last_source_position),
+                    "last_target_position_token": _token(last_target_position),
                     "updated_at": now,
                 }
             else:
                 query = text("""
                     UPDATE tenant_migrations
                     SET events_copied = :events_copied,
-                        last_source_position = :last_source_position,
+                        last_source_position_token = :last_source_position_token,
                         updated_at = :updated_at
                     WHERE id = :id
                 """)
                 params = {
                     "id": migration_id,
                     "events_copied": events_copied,
-                    "last_source_position": last_source_position,
+                    "last_source_position_token": _token(last_source_position),
                     "updated_at": now,
                 }
 
@@ -713,7 +727,7 @@ class PostgreSQLMigrationRepository:
                 SELECT
                     id, tenant_id, source_store_id, target_store_id,
                     phase, events_total, events_copied,
-                    last_source_position, last_target_position,
+                    last_source_position_token, last_target_position_token,
                     started_at, bulk_copy_started_at, bulk_copy_completed_at,
                     dual_write_started_at, cutover_started_at, completed_at,
                     config, error_count, last_error, last_error_at,
@@ -757,8 +771,8 @@ class PostgreSQLMigrationRepository:
             phase=MigrationPhase(row[4]),
             events_total=row[5] or 0,
             events_copied=row[6] or 0,
-            last_source_position=row[7] or 0,
-            last_target_position=row[8] or 0,
+            last_source_position=_position(row[7]),
+            last_target_position=_position(row[8]),
             started_at=row[9],
             bulk_copy_started_at=row[10],
             bulk_copy_completed_at=row[11],

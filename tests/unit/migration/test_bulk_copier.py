@@ -21,7 +21,9 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
+from eventsource.exceptions import DuplicateEventError
 from eventsource.migration.bulk_copier import (
     BulkCopier,
     BulkCopyProgress,
@@ -30,7 +32,7 @@ from eventsource.migration.bulk_copier import (
 )
 from eventsource.migration.exceptions import BulkCopyError
 from eventsource.migration.models import Migration, MigrationConfig, MigrationPhase
-from eventsource.stores.interface import AppendResult, StoredEvent
+from eventsource.ports import AppendResult, EventEnvelope, Position
 
 
 # Test event class for testing
@@ -42,6 +44,10 @@ class TestEvent(DomainEvent):
     value: str = "test"
 
 
+def _pos(store_id: str, *key: int | str) -> Position:
+    return Position(store_id=store_id, key=key)
+
+
 class TestBulkCopyProgress:
     """Tests for BulkCopyProgress dataclass."""
 
@@ -51,8 +57,8 @@ class TestBulkCopyProgress:
             migration_id=uuid4(),
             events_copied=500,
             events_total=1000,
-            last_source_position=500,
-            last_target_position=250,
+            last_source_position=_pos("source", 500),
+            last_target_position=_pos("target", 250),
             events_per_second=100.0,
             estimated_remaining_seconds=5.0,
             is_complete=False,
@@ -65,8 +71,8 @@ class TestBulkCopyProgress:
             migration_id=uuid4(),
             events_copied=0,
             events_total=0,
-            last_source_position=0,
-            last_target_position=0,
+            last_source_position=None,
+            last_target_position=None,
             events_per_second=0.0,
             estimated_remaining_seconds=None,
             is_complete=False,
@@ -79,8 +85,8 @@ class TestBulkCopyProgress:
             migration_id=uuid4(),
             events_copied=1500,  # More than total (shouldn't happen but handle it)
             events_total=1000,
-            last_source_position=1500,
-            last_target_position=750,
+            last_source_position=_pos("source", 1500),
+            last_target_position=_pos("target", 750),
             events_per_second=100.0,
             estimated_remaining_seconds=0.0,
             is_complete=True,
@@ -93,8 +99,8 @@ class TestBulkCopyProgress:
             migration_id=uuid4(),
             events_copied=100,
             events_total=1000,
-            last_source_position=100,
-            last_target_position=50,
+            last_source_position=_pos("source", 100),
+            last_target_position=_pos("target", 50),
             events_per_second=10.0,
             estimated_remaining_seconds=90.0,
             is_complete=False,
@@ -111,8 +117,8 @@ class TestBulkCopyResult:
         result = BulkCopyResult(
             success=True,
             events_copied=1000,
-            last_source_position=1000,
-            last_target_position=500,
+            last_source_position=_pos("source", 1000),
+            last_target_position=_pos("target", 500),
             duration_seconds=10.5,
         )
         assert result.success is True
@@ -124,8 +130,8 @@ class TestBulkCopyResult:
         result = BulkCopyResult(
             success=False,
             events_copied=500,
-            last_source_position=500,
-            last_target_position=250,
+            last_source_position=_pos("source", 500),
+            last_target_position=_pos("target", 250),
             duration_seconds=5.0,
             error_message="Connection failed",
         )
@@ -317,29 +323,32 @@ class TestBulkCopierRun:
         """Create a mock migration repository."""
         return AsyncMock()
 
-    def _create_stored_events(
+    def _create_events(
         self,
         count: int,
         tenant_id: UUID,
         aggregate_id: UUID | None = None,
-    ) -> list[StoredEvent]:
-        """Create a list of stored events for testing."""
+        start: int = 1,
+        store_id: str = "source",
+    ) -> list[EventEnvelope]:
+        """Create a list of EventEnvelope instances for testing."""
         events = []
         agg_id = aggregate_id or uuid4()
+        stream_id = StreamId(aggregate_id=agg_id, category="TestAggregate")
         for i in range(count):
             event = TestEvent(
                 aggregate_id=agg_id,
                 tenant_id=tenant_id,
                 value=f"test_{i}",
             )
-            stored = StoredEvent(
+            envelope = EventEnvelope(
                 event=event,
-                stream_id=f"{agg_id}:TestAggregate",
-                stream_position=i + 1,
-                global_position=i + 1,
+                stream_id=stream_id,
+                stream_version=i + 1,
+                position=_pos(store_id, start + i),
                 stored_at=datetime.now(UTC),
             )
-            events.append(stored)
+            events.append(envelope)
         return events
 
     @pytest.mark.asyncio
@@ -352,7 +361,7 @@ class TestBulkCopierRun:
     ) -> None:
         """Test run with no events to copy."""
 
-        async def empty_generator(options):
+        async def empty_generator(from_position, options):
             return
             yield  # Make it an async generator
 
@@ -386,15 +395,19 @@ class TestBulkCopierRun:
         migration_repo: AsyncMock,
     ) -> None:
         """Test run with events fitting in single batch."""
-        events = self._create_stored_events(5, migration.tenant_id)
+        events = self._create_events(5, migration.tenant_id)
 
-        async def event_generator(options):
+        async def event_generator(from_position, options):
             for event in events:
                 yield event
 
         source_store.read_all = event_generator
         target_store.get_stream_version = AsyncMock(return_value=0)
-        target_store.append_events = AsyncMock(return_value=AppendResult.successful(5, 5))
+        target_store.append = AsyncMock(
+            return_value=AppendResult(
+                stream=events[0].stream_id, new_version=5, position=_pos("target", 5)
+            )
+        )
         migration_repo.set_events_total = AsyncMock()
         migration_repo.update_progress = AsyncMock()
 
@@ -424,19 +437,25 @@ class TestBulkCopierRun:
         migration_repo: AsyncMock,
     ) -> None:
         """Test run with events spanning multiple batches."""
-        events = self._create_stored_events(25, migration.tenant_id)
+        events = self._create_events(25, migration.tenant_id)
 
-        async def event_generator(options):
+        async def event_generator(from_position, options):
             for event in events:
                 yield event
 
         source_store.read_all = event_generator
         target_store.get_stream_version = AsyncMock(return_value=0)
-        target_store.append_events = AsyncMock(
+        target_store.append = AsyncMock(
             side_effect=[
-                AppendResult.successful(10, 10),
-                AppendResult.successful(20, 20),
-                AppendResult.successful(25, 25),
+                AppendResult(
+                    stream=events[0].stream_id, new_version=10, position=_pos("target", 10)
+                ),
+                AppendResult(
+                    stream=events[0].stream_id, new_version=20, position=_pos("target", 20)
+                ),
+                AppendResult(
+                    stream=events[0].stream_id, new_version=25, position=_pos("target", 25)
+                ),
             ]
         )
         migration_repo.set_events_total = AsyncMock()
@@ -470,15 +489,19 @@ class TestBulkCopierRun:
         migration_repo: AsyncMock,
     ) -> None:
         """Test run calls progress callback."""
-        events = self._create_stored_events(5, migration.tenant_id)
+        events = self._create_events(5, migration.tenant_id)
 
-        async def event_generator(options):
+        async def event_generator(from_position, options):
             for event in events:
                 yield event
 
         source_store.read_all = event_generator
         target_store.get_stream_version = AsyncMock(return_value=0)
-        target_store.append_events = AsyncMock(return_value=AppendResult.successful(5, 5))
+        target_store.append = AsyncMock(
+            return_value=AppendResult(
+                stream=events[0].stream_id, new_version=5, position=_pos("target", 5)
+            )
+        )
         migration_repo.set_events_total = AsyncMock()
         migration_repo.update_progress = AsyncMock()
 
@@ -509,18 +532,19 @@ class TestBulkCopierRun:
         migration_repo: AsyncMock,
     ) -> None:
         """Test run stops when cancelled."""
-        events = self._create_stored_events(100, migration.tenant_id)
-        event_index = 0
+        events = self._create_events(100, migration.tenant_id)
 
-        async def event_generator(options):
-            nonlocal event_index
+        async def event_generator(from_position, options):
             for event in events:
-                event_index += 1
                 yield event
 
         source_store.read_all = event_generator
         target_store.get_stream_version = AsyncMock(return_value=0)
-        target_store.append_events = AsyncMock(return_value=AppendResult.successful(10, 10))
+        target_store.append = AsyncMock(
+            return_value=AppendResult(
+                stream=events[0].stream_id, new_version=10, position=_pos("target", 10)
+            )
+        )
         migration_repo.set_events_total = AsyncMock()
         migration_repo.update_progress = AsyncMock()
 
@@ -553,21 +577,21 @@ class TestBulkCopierRun:
     ) -> None:
         """Test run resumes from last checkpoint."""
         tenant_id = uuid4()
-        events = self._create_stored_events(25, tenant_id)
-        # Simulate events starting from position 10
-        for i, event in enumerate(events):
-            object.__setattr__(event, "global_position", i + 11)
+        events = self._create_events(25, tenant_id, start=11)
 
-        async def event_generator(options):
-            # Should only return events after from_position
-            start_pos = options.from_position if options else 0
+        async def event_generator(from_position, options):
+            # Should only return events strictly after from_position
             for event in events:
-                if event.global_position > start_pos:
+                if from_position is None or event.position > from_position:
                     yield event
 
         source_store.read_all = event_generator
         target_store.get_stream_version = AsyncMock(return_value=10)
-        target_store.append_events = AsyncMock(return_value=AppendResult.successful(25, 35))
+        target_store.append = AsyncMock(
+            return_value=AppendResult(
+                stream=events[0].stream_id, new_version=35, position=_pos("target", 35)
+            )
+        )
         migration_repo.set_events_total = AsyncMock()
         migration_repo.update_progress = AsyncMock()
 
@@ -580,8 +604,8 @@ class TestBulkCopierRun:
             phase=MigrationPhase.BULK_COPY,
             events_total=35,  # Already set
             events_copied=10,  # Already copied 10
-            last_source_position=10,  # Checkpoint
-            last_target_position=5,
+            last_source_position=_pos("source", 10),  # Checkpoint
+            last_target_position=_pos("target", 5),
             config=MigrationConfig(batch_size=100, max_bulk_copy_rate=100000),
         )
 
@@ -608,15 +632,15 @@ class TestBulkCopierRun:
         migration_repo: AsyncMock,
     ) -> None:
         """Test run handles errors and raises BulkCopyError."""
-        events = self._create_stored_events(5, migration.tenant_id)
+        events = self._create_events(5, migration.tenant_id)
 
-        async def event_generator(options):
+        async def event_generator(from_position, options):
             for event in events:
                 yield event
 
         source_store.read_all = event_generator
         target_store.get_stream_version = AsyncMock(return_value=0)
-        target_store.append_events = AsyncMock(side_effect=Exception("Connection failed"))
+        target_store.append = AsyncMock(side_effect=Exception("Connection failed"))
         migration_repo.set_events_total = AsyncMock()
         migration_repo.record_error = AsyncMock()
 
@@ -646,18 +670,19 @@ class TestBulkCopierRun:
     ) -> None:
         """Test run counts events when total is not set."""
         tenant_id = uuid4()
-        events = self._create_stored_events(15, tenant_id)
-        call_count = 0
+        events = self._create_events(15, tenant_id)
 
-        async def event_generator(options):
-            nonlocal call_count
-            call_count += 1
+        async def event_generator(from_position, options):
             for event in events:
                 yield event
 
         source_store.read_all = event_generator
         target_store.get_stream_version = AsyncMock(return_value=0)
-        target_store.append_events = AsyncMock(return_value=AppendResult.successful(15, 15))
+        target_store.append = AsyncMock(
+            return_value=AppendResult(
+                stream=events[0].stream_id, new_version=15, position=_pos("target", 15)
+            )
+        )
         migration_repo.set_events_total = AsyncMock()
         migration_repo.update_progress = AsyncMock()
 
@@ -693,13 +718,20 @@ class TestBulkCopierWriteBatch:
 
     @pytest.mark.asyncio
     async def test_write_batch_groups_by_aggregate(self) -> None:
-        """Test write batch groups events by aggregate."""
+        """Test write batch groups events by aggregate (batched path, no position_mapper)."""
         target_store = AsyncMock()
         target_store.get_stream_version = AsyncMock(return_value=0)
-        target_store.append_events = AsyncMock(
+
+        tenant_id = uuid4()
+        agg1_id = uuid4()
+        agg2_id = uuid4()
+        stream1 = StreamId(aggregate_id=agg1_id, category="TestAggregate")
+        stream2 = StreamId(aggregate_id=agg2_id, category="TestAggregate")
+
+        target_store.append = AsyncMock(
             side_effect=[
-                AppendResult.successful(2, 2),
-                AppendResult.successful(3, 5),
+                AppendResult(stream=stream1, new_version=2, position=_pos("target", 2)),
+                AppendResult(stream=stream2, new_version=3, position=_pos("target", 5)),
             ]
         )
 
@@ -710,31 +742,27 @@ class TestBulkCopierWriteBatch:
             enable_tracing=False,
         )
 
-        tenant_id = uuid4()
-        agg1_id = uuid4()
-        agg2_id = uuid4()
-
         # Create events for two different aggregates
         events = []
         for i in range(2):
             event = TestEvent(aggregate_id=agg1_id, tenant_id=tenant_id)
             events.append(
-                StoredEvent(
+                EventEnvelope(
                     event=event,
-                    stream_id=f"{agg1_id}:TestAggregate",
-                    stream_position=i + 1,
-                    global_position=i + 1,
+                    stream_id=stream1,
+                    stream_version=i + 1,
+                    position=_pos("source", i + 1),
                     stored_at=datetime.now(UTC),
                 )
             )
         for i in range(3):
             event = TestEvent(aggregate_id=agg2_id, tenant_id=tenant_id)
             events.append(
-                StoredEvent(
+                EventEnvelope(
                     event=event,
-                    stream_id=f"{agg2_id}:TestAggregate",
-                    stream_position=i + 1,
-                    global_position=i + 3,
+                    stream_id=stream2,
+                    stream_version=i + 1,
+                    position=_pos("source", i + 3),
                     stored_at=datetime.now(UTC),
                 )
             )
@@ -742,16 +770,28 @@ class TestBulkCopierWriteBatch:
         migration_id = uuid4()
         last_pos = await copier._write_batch(migration_id, tenant_id, events)
 
-        # Should have called append_events twice (once per aggregate)
-        assert target_store.append_events.call_count == 2
-        assert last_pos == 5
+        # Should have called append twice (once per aggregate stream, batched)
+        assert target_store.append.call_count == 2
+        assert last_pos == _pos("target", 5)
 
     @pytest.mark.asyncio
     async def test_write_batch_with_position_mapper(self) -> None:
-        """Test write batch records position mappings."""
+        """Test write batch appends one event at a time and records mappings."""
         target_store = AsyncMock()
         target_store.get_stream_version = AsyncMock(return_value=0)
-        target_store.append_events = AsyncMock(return_value=AppendResult.successful(3, 3))
+
+        tenant_id = uuid4()
+        agg_id = uuid4()
+        migration_id = uuid4()
+        stream = StreamId(aggregate_id=agg_id, category="TestAggregate")
+
+        target_positions = [_pos("target", 1), _pos("target", 2), _pos("target", 3)]
+        target_store.append = AsyncMock(
+            side_effect=[
+                AppendResult(stream=stream, new_version=i + 1, position=target_positions[i])
+                for i in range(3)
+            ]
+        )
 
         position_mapper = AsyncMock()
         position_mapper.record_mapping = AsyncMock()
@@ -761,39 +801,52 @@ class TestBulkCopierWriteBatch:
             target_store=target_store,
             migration_repo=MagicMock(),
             position_mapper=position_mapper,
-            source_position_store_id="src",
-            target_position_store_id="tgt",
             enable_tracing=False,
         )
 
-        tenant_id = uuid4()
-        agg_id = uuid4()
-        migration_id = uuid4()
-
+        source_positions = [_pos("source", 1), _pos("source", 2), _pos("source", 3)]
         events = []
         for i in range(3):
             event = TestEvent(aggregate_id=agg_id, tenant_id=tenant_id)
             events.append(
-                StoredEvent(
+                EventEnvelope(
                     event=event,
-                    stream_id=f"{agg_id}:TestAggregate",
-                    stream_position=i + 1,
-                    global_position=i + 1,
+                    stream_id=stream,
+                    stream_version=i + 1,
+                    position=source_positions[i],
                     stored_at=datetime.now(UTC),
                 )
             )
 
-        await copier._write_batch(migration_id, tenant_id, events)
+        last_pos = await copier._write_batch(migration_id, tenant_id, events)
 
-        # Should have recorded 3 position mappings
+        # Per-event appends: one append call per event.
+        assert target_store.append.call_count == 3
+        # Should have recorded 3 position mappings, one per event, in
+        # ascending source order.
         assert position_mapper.record_mapping.call_count == 3
+        for i, call in enumerate(position_mapper.record_mapping.call_args_list):
+            args = call.args
+            assert args[0] == migration_id
+            assert args[1] == source_positions[i]
+            assert args[2] == target_positions[i]
+            assert args[3] == events[i].event.event_id
+
+        # Last append wins.
+        assert last_pos == target_positions[-1]
 
     @pytest.mark.asyncio
     async def test_write_batch_handles_missing_stream_version(self) -> None:
         """Test write batch handles exception when getting stream version."""
         target_store = AsyncMock()
         target_store.get_stream_version = AsyncMock(side_effect=Exception("Stream not found"))
-        target_store.append_events = AsyncMock(return_value=AppendResult.successful(1, 1))
+
+        tenant_id = uuid4()
+        agg_id = uuid4()
+        stream = StreamId(aggregate_id=agg_id, category="TestAggregate")
+        target_store.append = AsyncMock(
+            return_value=AppendResult(stream=stream, new_version=1, position=_pos("target", 1))
+        )
 
         copier = BulkCopier(
             source_store=MagicMock(),
@@ -802,24 +855,79 @@ class TestBulkCopierWriteBatch:
             enable_tracing=False,
         )
 
-        tenant_id = uuid4()
-        agg_id = uuid4()
         event = TestEvent(aggregate_id=agg_id, tenant_id=tenant_id)
-        stored_event = StoredEvent(
+        envelope = EventEnvelope(
             event=event,
-            stream_id=f"{agg_id}:TestAggregate",
-            stream_position=1,
-            global_position=1,
+            stream_id=stream,
+            stream_version=1,
+            position=_pos("source", 1),
             stored_at=datetime.now(UTC),
         )
 
         # Should not raise, should use version 0
-        last_pos = await copier._write_batch(uuid4(), tenant_id, [stored_event])
-        assert last_pos == 1
+        last_pos = await copier._write_batch(uuid4(), tenant_id, [envelope])
+        assert last_pos == _pos("target", 1)
 
-        # Should have called append with version 0
-        call_args = target_store.append_events.call_args
-        assert call_args[0][3] == 0  # expected_version
+        # Should have called append with ExpectedVersion.exact(0)
+        call_args = target_store.append.call_args
+        expected_version = call_args.args[2]
+        assert expected_version.kind == "exact"
+        assert expected_version.version == 0
+
+    @pytest.mark.asyncio
+    async def test_write_batch_duplicate_event_counts_as_copied_and_continues(self) -> None:
+        """A DuplicateEventError on append means the event was already copied;
+        the copy continues rather than failing."""
+        target_store = AsyncMock()
+        target_store.get_stream_version = AsyncMock(return_value=0)
+
+        tenant_id = uuid4()
+        agg1_id = uuid4()
+        agg2_id = uuid4()
+        stream1 = StreamId(aggregate_id=agg1_id, category="TestAggregate")
+        stream2 = StreamId(aggregate_id=agg2_id, category="TestAggregate")
+
+        # First stream's batch append raises DuplicateEventError (already
+        # copied), second stream succeeds.
+        target_store.append = AsyncMock(
+            side_effect=[
+                DuplicateEventError("already present"),
+                AppendResult(stream=stream2, new_version=1, position=_pos("target", 9)),
+            ]
+        )
+
+        copier = BulkCopier(
+            source_store=MagicMock(),
+            target_store=target_store,
+            migration_repo=MagicMock(),
+            enable_tracing=False,
+        )
+
+        event1 = TestEvent(aggregate_id=agg1_id, tenant_id=tenant_id)
+        event2 = TestEvent(aggregate_id=agg2_id, tenant_id=tenant_id)
+        events = [
+            EventEnvelope(
+                event=event1,
+                stream_id=stream1,
+                stream_version=1,
+                position=_pos("source", 1),
+                stored_at=datetime.now(UTC),
+            ),
+            EventEnvelope(
+                event=event2,
+                stream_id=stream2,
+                stream_version=1,
+                position=_pos("source", 2),
+                stored_at=datetime.now(UTC),
+            ),
+        ]
+
+        # Should not raise -- duplicate is swallowed and counted as copied.
+        last_pos = await copier._write_batch(uuid4(), tenant_id, events)
+
+        assert target_store.append.call_count == 2
+        # Only the successful (non-duplicate) stream contributes a position.
+        assert last_pos == _pos("target", 9)
 
 
 class TestBulkCopierCountTenantEvents:
@@ -831,7 +939,7 @@ class TestBulkCopierCountTenantEvents:
         tenant_id = uuid4()
         source_store = AsyncMock()
 
-        async def event_generator(options):
+        async def event_generator(from_position, options):
             for _i in range(15):
                 yield MagicMock()
 
@@ -853,7 +961,7 @@ class TestBulkCopierCountTenantEvents:
         tenant_id = uuid4()
         source_store = AsyncMock()
 
-        async def event_generator(options):
+        async def event_generator(from_position, options):
             return
             yield
 
@@ -878,10 +986,12 @@ class TestBulkCopierStreamTenantEvents:
         """Test streaming events with from_position."""
         tenant_id = uuid4()
         source_store = AsyncMock()
+        captured_from_position = "unset"
         captured_options = None
 
-        async def event_generator(options):
-            nonlocal captured_options
+        async def event_generator(from_position, options):
+            nonlocal captured_from_position, captured_options
+            captured_from_position = from_position
             captured_options = options
             yield MagicMock()
 
@@ -894,11 +1004,12 @@ class TestBulkCopierStreamTenantEvents:
             enable_tracing=False,
         )
 
-        async for _ in copier._stream_tenant_events(tenant_id, from_position=100):
+        from_position = _pos("source", 100)
+        async for _ in copier._stream_tenant_events(tenant_id, from_position):
             pass
 
+        assert captured_from_position == from_position
         assert captured_options is not None
-        assert captured_options.from_position == 100
         assert captured_options.tenant_id == tenant_id
 
 

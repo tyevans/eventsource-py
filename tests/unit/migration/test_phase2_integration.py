@@ -12,7 +12,7 @@ Tests cover:
 - Error handling and recovery
 - Concurrent operations during migration
 
-These tests use InMemoryEventStore for unit-level integration testing
+These tests use MemoryEventStore for unit-level integration testing
 without requiring PostgreSQL.
 """
 
@@ -27,6 +27,8 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from eventsource.adapters.memory import MemoryEventStore
+from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.migration.coordinator import MigrationCoordinator
 from eventsource.migration.cutover import CutoverManager
@@ -47,7 +49,7 @@ from eventsource.migration.models import (
 from eventsource.migration.router import TenantStoreRouter
 from eventsource.migration.sync_lag_tracker import SyncLagTracker
 from eventsource.migration.write_pause import WritePauseManager
-from eventsource.stores.in_memory import InMemoryEventStore
+from eventsource.ports import ExpectedVersion, Position
 
 # =============================================================================
 # Test Event Classes
@@ -173,8 +175,8 @@ class InMemoryMigrationRepository:
         self,
         migration_id: UUID,
         events_copied: int,
-        last_source_position: int,
-        last_target_position: int | None = None,
+        last_source_position: Position | None,
+        last_target_position: Position | None = None,
     ) -> None:
         """Update bulk copy progress."""
         migration = await self.get(migration_id)
@@ -419,15 +421,15 @@ class MockLockManager:
 
 
 @pytest.fixture
-def source_store() -> InMemoryEventStore:
+def source_store() -> MemoryEventStore:
     """Create source (shared) event store."""
-    return InMemoryEventStore(enable_tracing=False)
+    return MemoryEventStore("source")
 
 
 @pytest.fixture
-def target_store() -> InMemoryEventStore:
+def target_store() -> MemoryEventStore:
     """Create target (dedicated) event store."""
-    return InMemoryEventStore(enable_tracing=False)
+    return MemoryEventStore("target")
 
 
 @pytest.fixture
@@ -462,7 +464,7 @@ def tenant_id() -> UUID:
 
 @pytest.fixture
 def router(
-    source_store: InMemoryEventStore,
+    source_store: MemoryEventStore,
     routing_repo: InMemoryRoutingRepository,
     write_pause_manager: WritePauseManager,
 ) -> TenantStoreRouter:
@@ -479,7 +481,7 @@ def router(
 
 @pytest.fixture
 def coordinator(
-    source_store: InMemoryEventStore,
+    source_store: MemoryEventStore,
     migration_repo: InMemoryMigrationRepository,
     routing_repo: InMemoryRoutingRepository,
     router: TenantStoreRouter,
@@ -491,8 +493,6 @@ def coordinator(
         migration_repo=migration_repo,
         routing_repo=routing_repo,
         router=router,
-        source_position_store_id="source-store",
-        target_position_store_id="target-store",
         lock_manager=lock_manager,
         source_store_id="default",
         enable_tracing=False,
@@ -505,7 +505,7 @@ def coordinator(
 
 
 async def create_test_events(
-    store: InMemoryEventStore,
+    store: MemoryEventStore,
     tenant_id: UUID,
     count: int = 10,
     aggregate_type: str = "Order",
@@ -524,25 +524,24 @@ async def create_test_events(
             amount=100.0 + i,
         )
 
-        await store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type=aggregate_type,
-            events=[event],
-            expected_version=0,
+        await store.append(
+            StreamId(aggregate_id=aggregate_id, category=aggregate_type),
+            [event],
+            ExpectedVersion.no_stream(),
         )
 
     return aggregate_ids
 
 
 async def get_all_tenant_events(
-    store: InMemoryEventStore,
+    store: MemoryEventStore,
     tenant_id: UUID,
 ) -> list[DomainEvent]:
     """Get all events for a tenant from a store."""
     events = []
-    async for stored_event in store.read_all():
-        if stored_event.event.tenant_id == tenant_id:
-            events.append(stored_event.event)
+    async for envelope in store.read_all():
+        if envelope.event.tenant_id == tenant_id:
+            events.append(envelope.event)
     return events
 
 
@@ -557,8 +556,8 @@ class TestFullMigrationLifecycle:
     @pytest.mark.asyncio
     async def test_full_lifecycle_with_events(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
@@ -583,8 +582,6 @@ class TestFullMigrationLifecycle:
             migration_repo=migration_repo,
             routing_repo=routing_repo,
             router=router,
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             lock_manager=lock_manager,
             source_store_id="default",
             enable_tracing=False,
@@ -627,8 +624,8 @@ class TestFullMigrationLifecycle:
     @pytest.mark.asyncio
     async def test_migration_phases_are_tracked(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
@@ -641,8 +638,6 @@ class TestFullMigrationLifecycle:
             migration_repo=migration_repo,
             routing_repo=routing_repo,
             router=router,
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             lock_manager=lock_manager,
             source_store_id="default",
             enable_tracing=False,
@@ -677,8 +672,8 @@ class TestDualWriteBehavior:
     @pytest.mark.asyncio
     async def test_dual_write_writes_to_both_stores(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test that dual-write interceptor writes to both stores."""
@@ -694,32 +689,28 @@ class TestDualWriteBehavior:
             aggregate_id=aggregate_id,
             tenant_id=tenant_id,
         )
+        stream = StreamId(aggregate_id=aggregate_id, category="Order")
 
         # Write through interceptor
-        result = await interceptor.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="Order",
-            events=[event],
-            expected_version=0,
-        )
+        result = await interceptor.append(stream, [event], ExpectedVersion.no_stream())
 
-        assert result.success
+        assert result.new_version == 1
 
         # Verify event in source
-        source_stream = await source_store.get_events(aggregate_id, "Order")
-        assert len(source_stream.events) == 1
-        assert source_stream.events[0].event_id == event.event_id
+        source_events = [e async for e in source_store.read_stream(stream)]
+        assert len(source_events) == 1
+        assert source_events[0].event.event_id == event.event_id
 
         # Verify event in target
-        target_stream = await target_store.get_events(aggregate_id, "Order")
-        assert len(target_stream.events) == 1
-        assert target_stream.events[0].event_id == event.event_id
+        target_events = [e async for e in target_store.read_stream(stream)]
+        assert len(target_events) == 1
+        assert target_events[0].event.event_id == event.event_id
 
     @pytest.mark.asyncio
     async def test_dual_write_reads_from_source(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test that reads during dual-write come from source store."""
@@ -729,13 +720,9 @@ class TestDualWriteBehavior:
             aggregate_id=aggregate_id,
             tenant_id=tenant_id,
         )
+        stream = StreamId(aggregate_id=aggregate_id, category="Order")
 
-        await source_store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="Order",
-            events=[event],
-            expected_version=0,
-        )
+        await source_store.append(stream, [event], ExpectedVersion.no_stream())
 
         # Target is empty
 
@@ -747,26 +734,26 @@ class TestDualWriteBehavior:
         )
 
         # Read through interceptor
-        stream = await interceptor.get_events(aggregate_id, "Order")
+        events = [e async for e in interceptor.read_stream(stream)]
 
         # Should get event from source
-        assert len(stream.events) == 1
-        assert stream.events[0].event_id == event.event_id
+        assert len(events) == 1
+        assert events[0].event.event_id == event.event_id
 
     @pytest.mark.asyncio
     async def test_dual_write_handles_target_failure(
         self,
-        source_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test that dual-write handles target store failure gracefully."""
 
         # Create a target store that will fail on append
-        class FailingStore(InMemoryEventStore):
-            async def append_events(self, *args, **kwargs):
+        class FailingStore(MemoryEventStore):
+            async def append(self, *args, **kwargs):
                 raise RuntimeError("Target store failure")
 
-        failing_target = FailingStore(enable_tracing=False)
+        failing_target = FailingStore("failing-target")
 
         interceptor = DualWriteInterceptor(
             source_store=source_store,
@@ -780,20 +767,16 @@ class TestDualWriteBehavior:
             aggregate_id=aggregate_id,
             tenant_id=tenant_id,
         )
+        stream = StreamId(aggregate_id=aggregate_id, category="Order")
 
         # Write should succeed (source is authoritative)
-        result = await interceptor.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="Order",
-            events=[event],
-            expected_version=0,
-        )
+        result = await interceptor.append(stream, [event], ExpectedVersion.no_stream())
 
-        assert result.success
+        assert result.new_version == 1
 
         # Verify event in source
-        source_stream = await source_store.get_events(aggregate_id, "Order")
-        assert len(source_stream.events) == 1
+        source_events = [e async for e in source_store.read_stream(stream)]
+        assert len(source_events) == 1
 
         # Verify failure was recorded
         stats = interceptor.get_failure_stats()
@@ -802,8 +785,8 @@ class TestDualWriteBehavior:
     @pytest.mark.asyncio
     async def test_dual_write_multiple_events_same_aggregate(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test dual-write with multiple events on same aggregate."""
@@ -815,37 +798,28 @@ class TestDualWriteBehavior:
         )
 
         aggregate_id = uuid4()
+        stream = StreamId(aggregate_id=aggregate_id, category="Order")
 
         # Write first event
         event1 = OrderCreated(
             aggregate_id=aggregate_id,
             tenant_id=tenant_id,
         )
-        await interceptor.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="Order",
-            events=[event1],
-            expected_version=0,
-        )
+        await interceptor.append(stream, [event1], ExpectedVersion.no_stream())
 
         # Write second event
         event2 = OrderConfirmed(
             aggregate_id=aggregate_id,
             tenant_id=tenant_id,
         )
-        await interceptor.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="Order",
-            events=[event2],
-            expected_version=1,
-        )
+        await interceptor.append(stream, [event2], ExpectedVersion.exact(1))
 
         # Verify both events in both stores
-        source_stream = await source_store.get_events(aggregate_id, "Order")
-        assert len(source_stream.events) == 2
+        source_events = [e async for e in source_store.read_stream(stream)]
+        assert len(source_events) == 2
 
-        target_stream = await target_store.get_events(aggregate_id, "Order")
-        assert len(target_stream.events) == 2
+        target_events = [e async for e in target_store.read_stream(stream)]
+        assert len(target_events) == 2
 
 
 # =============================================================================
@@ -859,8 +833,8 @@ class TestSyncLagTracking:
     @pytest.mark.asyncio
     async def test_sync_lag_calculation(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test sync lag is calculated correctly."""
@@ -871,11 +845,10 @@ class TestSyncLagTracking:
                 aggregate_id=aggregate_id,
                 tenant_id=tenant_id,
             )
-            await source_store.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="SampleAggregate",
-                events=[event],
-                expected_version=0,
+            await source_store.append(
+                StreamId(aggregate_id=aggregate_id, category="SampleAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
             )
 
         # Target has only 5 events
@@ -885,11 +858,10 @@ class TestSyncLagTracking:
                 aggregate_id=aggregate_id,
                 tenant_id=tenant_id,
             )
-            await target_store.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="SampleAggregate",
-                events=[event],
-                expected_version=0,
+            await target_store.append(
+                StreamId(aggregate_id=aggregate_id, category="SampleAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
             )
 
         tracker = SyncLagTracker(
@@ -899,21 +871,25 @@ class TestSyncLagTracking:
             enable_tracing=False,
         )
 
+        # No copying has happened yet (since=None): every source event is
+        # behind, regardless of how many events the target happens to hold.
         lag = await tracker.calculate_lag()
 
         assert lag is not None
-        assert lag.source_position == 10
-        assert lag.target_position == 5
-        assert lag.events == 5  # 10 - 5 = 5 events behind
+        assert lag.source_position is not None
+        assert lag.target_position is not None
+        assert lag.events == 10  # nothing copied yet -> all 10 source events are behind
 
     @pytest.mark.asyncio
     async def test_sync_lag_converged_when_equal(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         tenant_id: UUID,
     ) -> None:
-        """Test sync lag shows converged when stores are in sync."""
+        """Test sync lag shows converged when the target has caught up."""
+        last_source_position: Position | None = None
+
         # Same events in both stores
         for _i in range(5):
             aggregate_id = uuid4()
@@ -921,18 +897,10 @@ class TestSyncLagTracking:
                 aggregate_id=aggregate_id,
                 tenant_id=tenant_id,
             )
-            await source_store.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="SampleAggregate",
-                events=[event],
-                expected_version=0,
-            )
-            await target_store.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="SampleAggregate",
-                events=[event],
-                expected_version=0,
-            )
+            stream = StreamId(aggregate_id=aggregate_id, category="SampleAggregate")
+            result = await source_store.append(stream, [event], ExpectedVersion.no_stream())
+            last_source_position = result.position
+            await target_store.append(stream, [event], ExpectedVersion.no_stream())
 
         tracker = SyncLagTracker(
             source_store=source_store,
@@ -941,7 +909,9 @@ class TestSyncLagTracking:
             enable_tracing=False,
         )
 
-        lag = await tracker.calculate_lag()
+        # `since` is the last position the target has copied; passing the
+        # final source position means nothing is behind.
+        lag = await tracker.calculate_lag(since=last_source_position)
 
         assert lag is not None
         assert lag.events == 0
@@ -950,39 +920,30 @@ class TestSyncLagTracking:
     @pytest.mark.asyncio
     async def test_sync_ready_within_threshold(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test is_sync_ready returns True when lag is within threshold."""
         config = MigrationConfig(cutover_max_lag_events=100)
 
-        # Create small lag (10 events)
-        for _i in range(20):
-            aggregate_id = uuid4()
-            event = SampleTestEvent(
-                aggregate_id=aggregate_id,
-                tenant_id=tenant_id,
-            )
-            await source_store.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="SampleAggregate",
-                events=[event],
-                expected_version=0,
-            )
+        last_source_position: Position | None = None
 
-        for _i in range(10):
+        # Copy the first 10 events' worth of position, leave the rest (10
+        # more) as lag -- 10 events behind, well within the 100 threshold.
+        for i in range(20):
             aggregate_id = uuid4()
             event = SampleTestEvent(
                 aggregate_id=aggregate_id,
                 tenant_id=tenant_id,
             )
-            await target_store.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="SampleAggregate",
-                events=[event],
-                expected_version=0,
+            result = await source_store.append(
+                StreamId(aggregate_id=aggregate_id, category="SampleAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
             )
+            if i == 9:
+                last_source_position = result.position
 
         tracker = SyncLagTracker(
             source_store=source_store,
@@ -992,7 +953,7 @@ class TestSyncLagTracking:
             enable_tracing=False,
         )
 
-        await tracker.calculate_lag()
+        await tracker.calculate_lag(since=last_source_position)
 
         # 10 events lag is within 100 event threshold
         assert tracker.is_sync_ready()
@@ -1000,8 +961,8 @@ class TestSyncLagTracking:
     @pytest.mark.asyncio
     async def test_lag_statistics_tracking(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test lag statistics are properly tracked over time."""
@@ -1012,19 +973,18 @@ class TestSyncLagTracking:
             enable_tracing=False,
         )
 
-        # Take multiple lag samples
+        # Take multiple lag samples, always measured from the start
+        # (since=None) -- each new event increases the count behind by one.
         for _i in range(5):
-            # Add event to source to increase lag
             aggregate_id = uuid4()
             event = SampleTestEvent(
                 aggregate_id=aggregate_id,
                 tenant_id=tenant_id,
             )
-            await source_store.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="SampleAggregate",
-                events=[event],
-                expected_version=0,
+            await source_store.append(
+                StreamId(aggregate_id=aggregate_id, category="SampleAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
             )
 
             await tracker.calculate_lag()
@@ -1047,8 +1007,8 @@ class TestCutoverSuccess:
     @pytest.mark.asyncio
     async def test_cutover_success_when_synced(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
         lock_manager: MockLockManager,
@@ -1056,6 +1016,7 @@ class TestCutoverSuccess:
     ) -> None:
         """Test successful cutover when stores are synchronized."""
         migration_id = uuid4()
+        last_source_position: Position | None = None
 
         # Setup: Same events in both stores (fully synced)
         for _i in range(5):
@@ -1064,18 +1025,10 @@ class TestCutoverSuccess:
                 aggregate_id=aggregate_id,
                 tenant_id=tenant_id,
             )
-            await source_store.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="SampleAggregate",
-                events=[event],
-                expected_version=0,
-            )
-            await target_store.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="SampleAggregate",
-                events=[event],
-                expected_version=0,
-            )
+            stream = StreamId(aggregate_id=aggregate_id, category="SampleAggregate")
+            result = await source_store.append(stream, [event], ExpectedVersion.no_stream())
+            last_source_position = result.position
+            await target_store.append(stream, [event], ExpectedVersion.no_stream())
 
         # Setup routing state
         await routing_repo.set_migration_state(
@@ -1104,13 +1057,15 @@ class TestCutoverSuccess:
             enable_tracing=False,
         )
 
-        # Execute cutover
+        # Execute cutover -- `since` the last position already copied, so
+        # the lag tracker sees zero events behind.
         result = await cutover_manager.execute_cutover(
             migration_id=migration_id,
             tenant_id=tenant_id,
             lag_tracker=lag_tracker,
             target_store_id="dedicated",
             timeout_ms=500.0,
+            since=last_source_position,
         )
 
         assert result.success
@@ -1129,8 +1084,8 @@ class TestCutoverFailureAndRollback:
     @pytest.mark.asyncio
     async def test_cutover_fails_when_lag_too_high(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
         lock_manager: MockLockManager,
@@ -1139,18 +1094,18 @@ class TestCutoverFailureAndRollback:
         """Test cutover fails when sync lag exceeds threshold."""
         migration_id = uuid4()
 
-        # Setup: Source has many more events than target
+        # Setup: Source has many more events than target, and nothing has
+        # been copied yet (since=None), so every source event counts as lag.
         for _i in range(200):
             aggregate_id = uuid4()
             event = SampleTestEvent(
                 aggregate_id=aggregate_id,
                 tenant_id=tenant_id,
             )
-            await source_store.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="SampleAggregate",
-                events=[event],
-                expected_version=0,
+            await source_store.append(
+                StreamId(aggregate_id=aggregate_id, category="SampleAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
             )
 
         # Target has only 10 events
@@ -1160,11 +1115,10 @@ class TestCutoverFailureAndRollback:
                 aggregate_id=aggregate_id,
                 tenant_id=tenant_id,
             )
-            await target_store.append_events(
-                aggregate_id=aggregate_id,
-                aggregate_type="SampleAggregate",
-                events=[event],
-                expected_version=0,
+            await target_store.append(
+                StreamId(aggregate_id=aggregate_id, category="SampleAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
             )
 
         # Setup routing state
@@ -1213,8 +1167,8 @@ class TestCutoverFailureAndRollback:
     @pytest.mark.asyncio
     async def test_cutover_fails_on_lock_acquisition_failure(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
         tenant_id: UUID,
@@ -1270,8 +1224,8 @@ class TestAbortDuringDifferentPhases:
     @pytest.mark.asyncio
     async def test_abort_during_bulk_copy(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
@@ -1287,8 +1241,6 @@ class TestAbortDuringDifferentPhases:
             migration_repo=migration_repo,
             routing_repo=routing_repo,
             router=router,
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             lock_manager=lock_manager,
             source_store_id="default",
             enable_tracing=False,
@@ -1320,8 +1272,8 @@ class TestAbortDuringDifferentPhases:
     @pytest.mark.asyncio
     async def test_abort_clears_routing_state(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
@@ -1334,8 +1286,6 @@ class TestAbortDuringDifferentPhases:
             migration_repo=migration_repo,
             routing_repo=routing_repo,
             router=router,
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             lock_manager=lock_manager,
             source_store_id="default",
             enable_tracing=False,
@@ -1368,8 +1318,8 @@ class TestPauseResumeDuringMigration:
     @pytest.mark.asyncio
     async def test_pause_migration(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
@@ -1382,8 +1332,6 @@ class TestPauseResumeDuringMigration:
             migration_repo=migration_repo,
             routing_repo=routing_repo,
             router=router,
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             lock_manager=lock_manager,
             source_store_id="default",
             enable_tracing=False,
@@ -1408,8 +1356,8 @@ class TestPauseResumeDuringMigration:
     @pytest.mark.asyncio
     async def test_resume_migration(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
@@ -1422,8 +1370,6 @@ class TestPauseResumeDuringMigration:
             migration_repo=migration_repo,
             routing_repo=routing_repo,
             router=router,
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             lock_manager=lock_manager,
             source_store_id="default",
             enable_tracing=False,
@@ -1458,8 +1404,8 @@ class TestErrorHandlingAndRecovery:
     @pytest.mark.asyncio
     async def test_duplicate_migration_raises_error(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
@@ -1472,8 +1418,6 @@ class TestErrorHandlingAndRecovery:
             migration_repo=migration_repo,
             routing_repo=routing_repo,
             router=router,
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             lock_manager=lock_manager,
             source_store_id="default",
             enable_tracing=False,
@@ -1500,7 +1444,7 @@ class TestErrorHandlingAndRecovery:
     @pytest.mark.asyncio
     async def test_get_status_nonexistent_migration(
         self,
-        source_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
@@ -1512,8 +1456,6 @@ class TestErrorHandlingAndRecovery:
             migration_repo=migration_repo,
             routing_repo=routing_repo,
             router=router,
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             lock_manager=lock_manager,
             source_store_id="default",
             enable_tracing=False,
@@ -1527,8 +1469,8 @@ class TestErrorHandlingAndRecovery:
     @pytest.mark.asyncio
     async def test_abort_completed_migration_raises_error(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
@@ -1541,8 +1483,6 @@ class TestErrorHandlingAndRecovery:
             migration_repo=migration_repo,
             routing_repo=routing_repo,
             router=router,
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             lock_manager=lock_manager,
             source_store_id="default",
             enable_tracing=False,
@@ -1579,8 +1519,8 @@ class TestConcurrentOperations:
     @pytest.mark.asyncio
     async def test_concurrent_writes_during_dual_write(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test concurrent writes during dual-write phase."""
@@ -1604,11 +1544,10 @@ class TestConcurrentOperations:
                     value=f"{prefix}-{i}",
                 )
 
-                await interceptor.append_events(
-                    aggregate_id=aggregate_id,
-                    aggregate_type="SampleAggregate",
-                    events=[event],
-                    expected_version=0,
+                await interceptor.append(
+                    StreamId(aggregate_id=aggregate_id, category="SampleAggregate"),
+                    [event],
+                    ExpectedVersion.no_stream(),
                 )
 
             return ids
@@ -1624,12 +1563,12 @@ class TestConcurrentOperations:
         assert total_ids == 15
 
         # Verify all events in source
-        source_count = await source_store.get_event_count()
-        assert source_count == 15
+        source_events = [e async for e in source_store.read_all()]
+        assert len(source_events) == 15
 
         # Verify all events in target
-        target_count = await target_store.get_event_count()
-        assert target_count == 15
+        target_events = [e async for e in target_store.read_all()]
+        assert len(target_events) == 15
 
     @pytest.mark.asyncio
     async def test_write_pause_blocks_concurrent_writers(
@@ -1675,8 +1614,8 @@ class TestConcurrentOperations:
     @pytest.mark.asyncio
     async def test_multiple_tenants_independent(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
     ) -> None:
         """Test that multiple tenants operate independently."""
         tenant1 = uuid4()
@@ -1699,31 +1638,23 @@ class TestConcurrentOperations:
         # Write events for tenant1
         agg1 = uuid4()
         event1 = SampleTestEvent(aggregate_id=agg1, tenant_id=tenant1, value="tenant1")
-        await interceptor1.append_events(
-            aggregate_id=agg1,
-            aggregate_type="SampleAggregate",
-            events=[event1],
-            expected_version=0,
-        )
+        stream1 = StreamId(aggregate_id=agg1, category="SampleAggregate")
+        await interceptor1.append(stream1, [event1], ExpectedVersion.no_stream())
 
         # Write events for tenant2
         agg2 = uuid4()
         event2 = SampleTestEvent(aggregate_id=agg2, tenant_id=tenant2, value="tenant2")
-        await interceptor2.append_events(
-            aggregate_id=agg2,
-            aggregate_type="SampleAggregate",
-            events=[event2],
-            expected_version=0,
-        )
+        stream2 = StreamId(aggregate_id=agg2, category="SampleAggregate")
+        await interceptor2.append(stream2, [event2], ExpectedVersion.no_stream())
 
         # Verify both tenants have their events
-        stream1 = await source_store.get_events(agg1, "SampleAggregate")
-        assert len(stream1.events) == 1
-        assert stream1.events[0].tenant_id == tenant1
+        events1 = [e async for e in source_store.read_stream(stream1)]
+        assert len(events1) == 1
+        assert events1[0].event.tenant_id == tenant1
 
-        stream2 = await source_store.get_events(agg2, "SampleAggregate")
-        assert len(stream2.events) == 1
-        assert stream2.events[0].tenant_id == tenant2
+        events2 = [e async for e in source_store.read_stream(stream2)]
+        assert len(events2) == 1
+        assert events2[0].event.tenant_id == tenant2
 
 
 # =============================================================================

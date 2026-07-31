@@ -875,8 +875,6 @@ class TestCoordinatorIntegration:
             "migration_repo": AsyncMock(),
             "routing_repo": AsyncMock(),
             "router": MagicMock(),
-            "source_position_store_id": "source-store",
-            "target_position_store_id": "target-store",
         }
 
     def test_create_status_streamer(self, mock_deps: dict) -> None:

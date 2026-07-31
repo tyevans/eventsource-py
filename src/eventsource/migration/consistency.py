@@ -51,15 +51,12 @@ import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import UUID
 
 from eventsource.migration.exceptions import ConsistencyError
 from eventsource.observability import Tracer, create_tracer
-from eventsource.stores.interface import ReadOptions, StoredEvent
-
-if TYPE_CHECKING:
-    from eventsource.stores.interface import EventStore
+from eventsource.ports import EventEnvelope, FeedReadOptions, FullEventStore
 
 logger = logging.getLogger(__name__)
 
@@ -282,8 +279,8 @@ class ConsistencyVerifier:
 
     def __init__(
         self,
-        source_store: EventStore,
-        target_store: EventStore,
+        source_store: FullEventStore,
+        target_store: FullEventStore,
         *,
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
@@ -292,8 +289,8 @@ class ConsistencyVerifier:
         Initialize the consistency verifier.
 
         Args:
-            source_store: EventStore to verify from (source of truth).
-            target_store: EventStore to verify against (migration target).
+            source_store: FullEventStore to verify from (source of truth).
+            target_store: FullEventStore to verify against (migration target).
             tracer: Optional custom Tracer instance. If not provided, one is
                    created based on enable_tracing setting.
             enable_tracing: Whether to enable OpenTelemetry tracing.
@@ -521,9 +518,9 @@ class ConsistencyVerifier:
 
     async def _collect_tenant_events(
         self,
-        store: EventStore,
+        store: FullEventStore,
         tenant_id: UUID,
-    ) -> list[StoredEvent]:
+    ) -> list[EventEnvelope]:
         """
         Collect all events for a tenant from a store.
 
@@ -532,20 +529,19 @@ class ConsistencyVerifier:
             tenant_id: The tenant UUID.
 
         Returns:
-            List of StoredEvent instances.
+            List of EventEnvelope instances.
         """
-        events: list[StoredEvent] = []
-        options = ReadOptions(tenant_id=tenant_id)
+        events: list[EventEnvelope] = []
 
-        async for event in store.read_all(options):
-            events.append(event)
+        async for envelope in store.read_all(None, FeedReadOptions(tenant_id=tenant_id)):
+            events.append(envelope)
 
         return events
 
     def _group_events_by_stream(
         self,
-        events: list[StoredEvent],
-    ) -> dict[str, list[StoredEvent]]:
+        events: list[EventEnvelope],
+    ) -> dict[str, list[EventEnvelope]]:
         """
         Group events by their stream ID.
 
@@ -555,25 +551,26 @@ class ConsistencyVerifier:
         Returns:
             Dictionary mapping stream_id to list of events.
         """
-        grouped: dict[str, list[StoredEvent]] = {}
+        grouped: dict[str, list[EventEnvelope]] = {}
 
-        for event in events:
-            stream_id = event.stream_id
+        for envelope in events:
+            # Same wire format the legacy `stream_id` string used.
+            stream_id = envelope.stream_id.render()
             if stream_id not in grouped:
                 grouped[stream_id] = []
-            grouped[stream_id].append(event)
+            grouped[stream_id].append(envelope)
 
-        # Sort events within each stream by position
+        # Sort events within each stream by version
         for stream_id in grouped:
-            grouped[stream_id].sort(key=lambda e: e.stream_position)
+            grouped[stream_id].sort(key=lambda e: e.stream_version)
 
         return grouped
 
     async def _verify_stream(
         self,
         stream_id: str,
-        source_events: list[StoredEvent],
-        target_events: list[StoredEvent],
+        source_events: list[EventEnvelope],
+        target_events: list[EventEnvelope],
         level: VerificationLevel,
         sample_percentage: float,
     ) -> tuple[StreamConsistency, list[ConsistencyViolation]]:
@@ -605,8 +602,8 @@ class ConsistencyVerifier:
 
         source_count = len(source_events)
         target_count = len(target_events)
-        source_version = source_events[-1].stream_position if source_events else 0
-        target_version = target_events[-1].stream_position if target_events else 0
+        source_version = source_events[-1].stream_version if source_events else 0
+        target_version = target_events[-1].stream_version if target_events else 0
 
         # Check if stream is missing
         if source_count > 0 and target_count == 0:
@@ -671,26 +668,26 @@ class ConsistencyVerifier:
 
                     if source_hash != target_hash:
                         hash_match = False
-                        mismatched_positions.append(source_event.stream_position)
+                        mismatched_positions.append(source_event.stream_version)
                         violations.append(
                             ConsistencyViolation(
                                 violation_type="hash_mismatch",
                                 stream_id=stream_id,
                                 source_value=source_hash[:16],
                                 target_value=target_hash[:16],
-                                position=source_event.stream_position,
+                                position=source_event.stream_version,
                                 details="Event content hash mismatch",
                             )
                         )
                 elif level == VerificationLevel.FULL:
                     mismatch = self._compare_events_full(source_event, target_event)
                     if mismatch:
-                        mismatched_positions.append(source_event.stream_position)
+                        mismatched_positions.append(source_event.stream_version)
                         violations.append(
                             ConsistencyViolation(
                                 violation_type="content_mismatch",
                                 stream_id=stream_id,
-                                position=source_event.stream_position,
+                                position=source_event.stream_version,
                                 details=mismatch,
                             )
                         )
@@ -718,10 +715,10 @@ class ConsistencyVerifier:
 
     def _sample_events(
         self,
-        source_events: list[StoredEvent],
-        target_events: list[StoredEvent],
+        source_events: list[EventEnvelope],
+        target_events: list[EventEnvelope],
         sample_percentage: float,
-    ) -> list[tuple[StoredEvent, StoredEvent]]:
+    ) -> list[tuple[EventEnvelope, EventEnvelope]]:
         """
         Sample events for verification.
 
@@ -757,7 +754,7 @@ class ConsistencyVerifier:
         # Use reservoir sampling for large datasets
         return random.sample(pairs, sample_size)  # nosec B311 - statistical sampling, not security
 
-    def _compute_event_hash(self, event: StoredEvent) -> str:
+    def _compute_event_hash(self, event: EventEnvelope) -> str:
         """
         Compute SHA-256 hash of event content.
 
@@ -765,7 +762,7 @@ class ConsistencyVerifier:
         aggregate_type, and the event's data payload.
 
         Args:
-            event: The stored event to hash.
+            event: The envelope to hash.
 
         Returns:
             Hex-encoded SHA-256 hash string.
@@ -773,11 +770,11 @@ class ConsistencyVerifier:
         hasher = hashlib.sha256()
 
         # Hash event identity
-        hasher.update(str(event.event_id).encode())
-        hasher.update(event.event_type.encode())
-        hasher.update(str(event.aggregate_id).encode())
-        hasher.update(event.aggregate_type.encode())
-        hasher.update(str(event.stream_position).encode())
+        hasher.update(str(event.event.event_id).encode())
+        hasher.update(event.event.event_type.encode())
+        hasher.update(str(event.stream_id.aggregate_id).encode())
+        hasher.update(event.stream_id.category.encode())
+        hasher.update(str(event.stream_version).encode())
 
         # Hash event data if available
         underlying = event.event
@@ -794,8 +791,8 @@ class ConsistencyVerifier:
 
     def _compare_events_full(
         self,
-        source_event: StoredEvent,
-        target_event: StoredEvent,
+        source_event: EventEnvelope,
+        target_event: EventEnvelope,
     ) -> str | None:
         """
         Fully compare two events for equality.
@@ -810,31 +807,37 @@ class ConsistencyVerifier:
             Description of mismatch if found, None if events match.
         """
         # Compare event IDs
-        if source_event.event_id != target_event.event_id:
-            return f"event_id mismatch: {source_event.event_id} vs {target_event.event_id}"
+        if source_event.event.event_id != target_event.event.event_id:
+            return (
+                f"event_id mismatch: {source_event.event.event_id} vs {target_event.event.event_id}"
+            )
 
         # Compare event types
-        if source_event.event_type != target_event.event_type:
-            return f"event_type mismatch: {source_event.event_type} vs {target_event.event_type}"
+        if source_event.event.event_type != target_event.event.event_type:
+            return (
+                f"event_type mismatch: "
+                f"{source_event.event.event_type} vs {target_event.event.event_type}"
+            )
 
         # Compare aggregate IDs
-        if source_event.aggregate_id != target_event.aggregate_id:
+        if source_event.stream_id.aggregate_id != target_event.stream_id.aggregate_id:
             return (
-                f"aggregate_id mismatch: {source_event.aggregate_id} vs {target_event.aggregate_id}"
+                f"aggregate_id mismatch: "
+                f"{source_event.stream_id.aggregate_id} vs {target_event.stream_id.aggregate_id}"
             )
 
         # Compare aggregate types
-        if source_event.aggregate_type != target_event.aggregate_type:
+        if source_event.stream_id.category != target_event.stream_id.category:
             return (
                 f"aggregate_type mismatch: "
-                f"{source_event.aggregate_type} vs {target_event.aggregate_type}"
+                f"{source_event.stream_id.category} vs {target_event.stream_id.category}"
             )
 
-        # Compare stream positions
-        if source_event.stream_position != target_event.stream_position:
+        # Compare stream versions
+        if source_event.stream_version != target_event.stream_version:
             return (
-                f"stream_position mismatch: "
-                f"{source_event.stream_position} vs {target_event.stream_position}"
+                f"stream_version mismatch: "
+                f"{source_event.stream_version} vs {target_event.stream_version}"
             )
 
         # Compare event data using hashes as fallback

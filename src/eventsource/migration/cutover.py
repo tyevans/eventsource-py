@@ -72,6 +72,7 @@ from eventsource.migration.models import (
     TenantMigrationState,
 )
 from eventsource.observability import ATTR_TENANT_ID, Tracer, create_tracer
+from eventsource.ports import Position
 
 if TYPE_CHECKING:
     from eventsource.locks import PostgreSQLLockManager
@@ -179,6 +180,7 @@ class CutoverManager:
         *,
         config: MigrationConfig | None = None,
         timeout_ms: float | None = None,
+        since: Position | None = None,
     ) -> CutoverResult:
         """
         Execute the atomic cutover from source to target store.
@@ -197,6 +199,9 @@ class CutoverManager:
                 defaults are used.
             timeout_ms: Maximum time in milliseconds for the cutover pause.
                 If not provided, uses config.cutover_timeout_ms or 500ms.
+            since: Last source position copied to the target (the
+                migration's `last_source_position`), used as the lag
+                tracker's count anchor.
 
         Returns:
             CutoverResult indicating success/failure and timing details.
@@ -247,6 +252,7 @@ class CutoverManager:
                         target_store_id=target_store_id,
                         config=config,
                         timeout_ms=effective_timeout_ms,
+                        since=since,
                     )
 
             except LockAcquisitionError as e:
@@ -270,6 +276,7 @@ class CutoverManager:
         target_store_id: str,
         config: MigrationConfig,
         timeout_ms: float,
+        since: Position | None,
     ) -> CutoverResult:
         """
         Execute cutover while holding the advisory lock.
@@ -284,6 +291,8 @@ class CutoverManager:
             target_store_id: Target store to switch to.
             config: Migration configuration.
             timeout_ms: Maximum cutover pause time.
+            since: Last source position copied to the target, used as the
+                lag tracker's count anchor.
 
         Returns:
             CutoverResult with outcome details.
@@ -299,7 +308,7 @@ class CutoverManager:
             logger.debug("Paused writes for tenant %s", tenant_id)
 
             # Step 2: Pre-cutover validation - verify sync lag
-            await lag_tracker.calculate_lag()
+            await lag_tracker.calculate_lag(since=since)
             lag = lag_tracker.current_lag
 
             if lag is None:
@@ -345,7 +354,7 @@ class CutoverManager:
                 await asyncio.sleep(min(remaining_ms / 1000, 0.010))  # Max 10ms wait
 
             # Step 6: Final lag check after brief wait
-            await lag_tracker.calculate_lag()
+            await lag_tracker.calculate_lag(since=since)
             final_lag = lag_tracker.current_lag
 
             if final_lag:
@@ -364,7 +373,7 @@ class CutoverManager:
             try:
                 target_store = self._router.get_store(target_store_id)
                 if target_store is not None:
-                    await target_store.get_global_position()
+                    await target_store.current_position()
                 else:
                     logger.warning(
                         "Target store %s not found in router registry",
@@ -523,6 +532,8 @@ class CutoverManager:
         tenant_id: UUID,
         lag_tracker: SyncLagTracker,
         config: MigrationConfig | None = None,
+        *,
+        since: Position | None = None,
     ) -> tuple[bool, str | None]:
         """
         Validate that conditions are met for cutover to proceed.
@@ -534,6 +545,8 @@ class CutoverManager:
             tenant_id: Tenant to validate.
             lag_tracker: SyncLagTracker with current lag information.
             config: Optional migration configuration.
+            since: Last source position copied to the target, used as the
+                lag tracker's count anchor.
 
         Returns:
             Tuple of (is_ready, error_message).
@@ -558,7 +571,7 @@ class CutoverManager:
             },
         ):
             # Check 1: Verify sync lag
-            await lag_tracker.calculate_lag()
+            await lag_tracker.calculate_lag(since=since)
             lag = lag_tracker.current_lag
 
             if lag is None:

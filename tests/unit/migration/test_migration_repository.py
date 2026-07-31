@@ -34,6 +34,7 @@ from eventsource.migration.repositories.migration import (
     MigrationRepository,
     PostgreSQLMigrationRepository,
 )
+from eventsource.ports.positions import Position
 
 
 class TestValidTransitions:
@@ -239,6 +240,8 @@ class TestPostgreSQLMigrationRepositoryGet:
         migration_id = uuid4()
         tenant_id = uuid4()
         config = MigrationConfig().to_dict()
+        source_position = Position(store_id="source", key=(250,))
+        target_position = Position(store_id="target", key=(125,))
 
         # Create a row tuple matching the SELECT query
         row = (
@@ -249,8 +252,8 @@ class TestPostgreSQLMigrationRepositoryGet:
             "pending",  # phase
             1000,  # events_total
             500,  # events_copied
-            250,  # last_source_position
-            125,  # last_target_position
+            source_position.to_str(),  # last_source_position_token
+            target_position.to_str(),  # last_target_position_token
             None,  # started_at
             None,  # bulk_copy_started_at
             None,  # bulk_copy_completed_at
@@ -418,6 +421,7 @@ class TestPostgreSQLMigrationRepositoryUpdateProgress:
     ) -> None:
         """Test update_progress without target position."""
         migration_id = uuid4()
+        source_position = Position(store_id="source", key=(500,))
 
         with patch(
             "eventsource.migration.repositories.migration.execute_with_connection"
@@ -428,14 +432,15 @@ class TestPostgreSQLMigrationRepositoryUpdateProgress:
             await repo.update_progress(
                 migration_id=migration_id,
                 events_copied=500,
-                last_source_position=500,
+                last_source_position=source_position,
             )
 
             mock_conn.execute.assert_called_once()
-            # Check that the query does not include last_target_position
+            # Check that the query does not include last_target_position_token
             call_args = mock_conn.execute.call_args
             params = call_args[0][1]
-            assert "last_target_position" not in params
+            assert "last_target_position_token" not in params
+            assert params["last_source_position_token"] == source_position.to_str()
 
     @pytest.mark.asyncio
     async def test_update_progress_with_target_position(
@@ -444,6 +449,8 @@ class TestPostgreSQLMigrationRepositoryUpdateProgress:
     ) -> None:
         """Test update_progress with target position."""
         migration_id = uuid4()
+        source_position = Position(store_id="source", key=(500,))
+        target_position = Position(store_id="target", key=(250,))
 
         with patch(
             "eventsource.migration.repositories.migration.execute_with_connection"
@@ -454,15 +461,15 @@ class TestPostgreSQLMigrationRepositoryUpdateProgress:
             await repo.update_progress(
                 migration_id=migration_id,
                 events_copied=500,
-                last_source_position=500,
-                last_target_position=250,
+                last_source_position=source_position,
+                last_target_position=target_position,
             )
 
             mock_conn.execute.assert_called_once()
-            # Check that the query includes last_target_position
+            # Check that the query includes last_target_position_token
             call_args = mock_conn.execute.call_args
             params = call_args[0][1]
-            assert params["last_target_position"] == 250
+            assert params["last_target_position_token"] == target_position.to_str()
 
 
 class TestPostgreSQLMigrationRepositorySetEventsTotal:
@@ -658,6 +665,8 @@ class TestPostgreSQLMigrationRepositoryListActive:
     ) -> None:
         """Test list_active returns active migrations."""
         config = MigrationConfig().to_dict()
+        source_position1 = Position(store_id="source", key=(250,))
+        target_position1 = Position(store_id="target", key=(125,))
         row1 = (
             uuid4(),  # id
             uuid4(),  # tenant_id
@@ -666,8 +675,8 @@ class TestPostgreSQLMigrationRepositoryListActive:
             "bulk_copy",  # phase
             1000,  # events_total
             500,  # events_copied
-            250,  # last_source_position
-            125,  # last_target_position
+            source_position1.to_str(),  # last_source_position_token
+            target_position1.to_str(),  # last_target_position_token
             datetime.now(UTC),  # started_at
             datetime.now(UTC),  # bulk_copy_started_at
             None,  # bulk_copy_completed_at
@@ -685,6 +694,8 @@ class TestPostgreSQLMigrationRepositoryListActive:
             datetime.now(UTC),  # updated_at
             "test@example.com",  # created_by
         )
+        source_position2 = Position(store_id="source", key=(750,))
+        target_position2 = Position(store_id="target", key=(375,))
         row2 = (
             uuid4(),  # id
             uuid4(),  # tenant_id
@@ -693,8 +704,8 @@ class TestPostgreSQLMigrationRepositoryListActive:
             "dual_write",  # phase
             2000,  # events_total
             1500,  # events_copied
-            750,  # last_source_position
-            375,  # last_target_position
+            source_position2.to_str(),  # last_source_position_token
+            target_position2.to_str(),  # last_target_position_token
             datetime.now(UTC),  # started_at
             datetime.now(UTC),  # bulk_copy_started_at
             datetime.now(UTC),  # bulk_copy_completed_at
@@ -823,6 +834,8 @@ class TestPostgreSQLMigrationRepositoryHelpers:
         tenant_id = uuid4()
         config = MigrationConfig(batch_size=500).to_dict()
         created_at = datetime.now(UTC)
+        source_position = Position(store_id="source", key=(400,))
+        target_position = Position(store_id="target", key=(200,))
 
         row = (
             migration_id,  # id
@@ -832,8 +845,8 @@ class TestPostgreSQLMigrationRepositoryHelpers:
             "dual_write",  # phase
             1000,  # events_total
             750,  # events_copied
-            400,  # last_source_position
-            200,  # last_target_position
+            source_position.to_str(),  # last_source_position_token
+            target_position.to_str(),  # last_target_position_token
             created_at,  # started_at
             created_at,  # bulk_copy_started_at
             created_at,  # bulk_copy_completed_at
@@ -861,8 +874,8 @@ class TestPostgreSQLMigrationRepositoryHelpers:
         assert migration.phase == MigrationPhase.DUAL_WRITE
         assert migration.events_total == 1000
         assert migration.events_copied == 750
-        assert migration.last_source_position == 400
-        assert migration.last_target_position == 200
+        assert migration.last_source_position == source_position
+        assert migration.last_target_position == target_position
         assert migration.config.batch_size == 500
         assert migration.error_count == 2
         assert migration.last_error == "Test error"
@@ -888,8 +901,8 @@ class TestPostgreSQLMigrationRepositoryHelpers:
             "pending",
             0,
             0,
-            0,
-            0,
+            None,  # last_source_position_token
+            None,  # last_target_position_token
             None,
             None,
             None,
@@ -929,8 +942,8 @@ class TestPostgreSQLMigrationRepositoryHelpers:
             "pending",
             None,  # events_total
             None,  # events_copied
-            None,  # last_source_position
-            None,  # last_target_position
+            None,  # last_source_position_token
+            None,  # last_target_position_token
             None,
             None,
             None,
@@ -953,8 +966,8 @@ class TestPostgreSQLMigrationRepositoryHelpers:
 
         assert migration.events_total == 0
         assert migration.events_copied == 0
-        assert migration.last_source_position == 0
-        assert migration.last_target_position == 0
+        assert migration.last_source_position is None
+        assert migration.last_target_position is None
         assert migration.error_count == 0
         assert migration.is_paused is False
 

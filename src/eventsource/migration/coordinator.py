@@ -97,7 +97,7 @@ from eventsource.migration.subscription_migrator import (
 )
 from eventsource.migration.sync_lag_tracker import SyncLagTracker
 from eventsource.observability import Tracer, create_tracer
-from eventsource.stores.interface import EventStore
+from eventsource.ports import FullEventStore
 
 if TYPE_CHECKING:
     from eventsource.locks import PostgreSQLLockManager
@@ -171,7 +171,7 @@ class MigrationCoordinator:
         ...     print(f"Cutover: {'success' if result.success else 'failed'}")
 
     Attributes:
-        _source_store: Source EventStore (where tenant currently resides).
+        _source_store: Source FullEventStore (where tenant currently resides).
         _migration_repo: Repository for migration state persistence.
         _routing_repo: Repository for tenant routing configuration.
         _router: TenantStoreRouter for routing management.
@@ -181,7 +181,7 @@ class MigrationCoordinator:
         _active_tasks: Dictionary of active background tasks by migration ID.
         _status_queues: Status observer queues for streaming updates.
         _lag_trackers: Dictionary of SyncLagTracker instances by migration ID.
-        _target_stores: Dictionary of target EventStore instances by migration ID.
+        _target_stores: Dictionary of target FullEventStore instances by migration ID.
         _cutover_manager: Shared CutoverManager instance for cutover operations.
         _position_mapper: PositionMapper for subscription checkpoint translation (P3-005).
         _checkpoint_repo: CheckpointRepository for subscription checkpoints (P3-005).
@@ -191,14 +191,12 @@ class MigrationCoordinator:
 
     def __init__(
         self,
-        source_store: EventStore,
+        source_store: FullEventStore,
         migration_repo: MigrationRepository,
         routing_repo: TenantRoutingRepository,
         router: TenantStoreRouter,
         *,
         source_store_id: str = "default",
-        source_position_store_id: str,
-        target_position_store_id: str,
         lock_manager: PostgreSQLLockManager | None = None,
         position_mapper: PositionMapper | None = None,
         checkpoint_repo: CheckpointRepository | None = None,
@@ -209,19 +207,11 @@ class MigrationCoordinator:
         Initialize the coordinator.
 
         Args:
-            source_store: Source EventStore (where tenant currently is)
+            source_store: Source FullEventStore (where tenant currently is)
             migration_repo: Repository for migration state
             routing_repo: Repository for tenant routing
             router: TenantStoreRouter for routing management
-            source_store_id: Routing identifier for the source store. This is
-                a routing label, a different namespace from the `store_id`
-                stamped into positions -- see source_position_store_id.
-            source_position_store_id: `store_id` stamped into positions by the
-                source store. Retained solely for the BulkCopier bridge;
-                retired in Task 4.
-            target_position_store_id: `store_id` stamped into positions by the
-                target store. Retained solely for the BulkCopier bridge;
-                retired in Task 4.
+            source_store_id: Routing identifier for the source store.
             lock_manager: PostgreSQL advisory lock manager for cutover coordination.
                 Required for cutover operations in dual-write phase.
             position_mapper: PositionMapper for subscription checkpoint translation.
@@ -239,8 +229,6 @@ class MigrationCoordinator:
         self._routing_repo = routing_repo
         self._router = router
         self._source_store_id = source_store_id
-        self._source_position_store_id = source_position_store_id
-        self._target_position_store_id = target_position_store_id
         self._lock_manager = lock_manager
 
         # Active copiers by migration_id
@@ -257,7 +245,7 @@ class MigrationCoordinator:
         self._lag_trackers: dict[UUID, SyncLagTracker] = {}
 
         # Target stores by migration_id (needed for dual-write interceptor creation)
-        self._target_stores: dict[UUID, EventStore] = {}
+        self._target_stores: dict[UUID, FullEventStore] = {}
 
         # CutoverManager instance (created lazily when needed)
         self._cutover_manager: CutoverManager | None = None
@@ -275,7 +263,7 @@ class MigrationCoordinator:
     async def start_migration(
         self,
         tenant_id: UUID,
-        target_store: EventStore,
+        target_store: FullEventStore,
         target_store_id: str,
         config: MigrationConfig | None = None,
         *,
@@ -290,7 +278,7 @@ class MigrationCoordinator:
 
         Args:
             tenant_id: Tenant UUID to migrate
-            target_store: Target EventStore instance
+            target_store: Target FullEventStore instance
             target_store_id: Identifier for target store
             config: Migration configuration (uses defaults if None)
             created_by: Operator identifier for audit
@@ -765,7 +753,7 @@ class MigrationCoordinator:
     async def _run_bulk_copy(
         self,
         migration: Migration,
-        target_store: EventStore,
+        target_store: FullEventStore,
     ) -> None:
         """
         Run the bulk copy phase.
@@ -778,7 +766,7 @@ class MigrationCoordinator:
 
         Args:
             migration: Migration instance
-            target_store: Target EventStore to copy to
+            target_store: Target FullEventStore to copy to
         """
         with self._tracer.span(
             "eventsource.coordinator.run_bulk_copy",
@@ -791,8 +779,6 @@ class MigrationCoordinator:
                 self._source_store,
                 target_store,
                 self._migration_repo,
-                source_position_store_id=self._source_position_store_id,
-                target_position_store_id=self._target_position_store_id,
                 enable_tracing=self._enable_tracing,
             )
 
@@ -839,7 +825,7 @@ class MigrationCoordinator:
     async def _transition_to_dual_write(
         self,
         migration: Migration,
-        target_store: EventStore,
+        target_store: FullEventStore,
     ) -> None:
         """
         Transition from bulk copy to dual-write phase.
@@ -849,7 +835,7 @@ class MigrationCoordinator:
 
         Args:
             migration: Migration instance
-            target_store: Target EventStore to write to
+            target_store: Target FullEventStore to write to
         """
         with self._tracer.span(
             "eventsource.coordinator.transition_to_dual_write",
@@ -979,6 +965,7 @@ class MigrationCoordinator:
                 target_store_id=migration.target_store_id,
                 config=migration.config,
                 timeout_ms=timeout_ms,
+                since=migration.last_source_position,
             )
 
             # Handle result
@@ -1199,7 +1186,7 @@ class MigrationCoordinator:
         if lag_tracker is None:
             return None
 
-        return await lag_tracker.calculate_lag()
+        return await lag_tracker.calculate_lag(since=migration.last_source_position)
 
     async def is_cutover_ready(self, migration_id: UUID) -> tuple[bool, str | None]:
         """
@@ -1234,7 +1221,7 @@ class MigrationCoordinator:
             return False, "No sync lag tracker found for migration"
 
         # Calculate current lag
-        await lag_tracker.calculate_lag()
+        await lag_tracker.calculate_lag(since=migration.last_source_position)
 
         if lag_tracker.is_sync_ready():
             return True, None

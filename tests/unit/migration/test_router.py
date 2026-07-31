@@ -7,7 +7,7 @@ Tests cover:
 - Dual-write interceptor management
 - Write pause mechanism
 - Routing based on migration state
-- EventStore protocol implementation
+- FullEventStore port (structural) implementation
 - Error conditions
 """
 
@@ -17,6 +17,7 @@ from uuid import uuid4
 
 import pytest
 
+from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.migration.models import (
     TenantMigrationState,
@@ -27,10 +28,13 @@ from eventsource.migration.router import (
     TenantStoreRouter,
     WritePausedError,
 )
-from eventsource.stores.interface import (
+from eventsource.ports import (
     AppendResult,
-    EventStream,
-    ReadOptions,
+    CategoryReadOptions,
+    ExpectedVersion,
+    FeedReadOptions,
+    FullEventStore,
+    Position,
 )
 
 # =============================================================================
@@ -46,29 +50,30 @@ class TestEvent(DomainEvent):
     data: str = "test"
 
 
+def sid(aggregate_id=None, category: str = "TestAggregate") -> StreamId:
+    """Build a StreamId for tests."""
+    return StreamId(aggregate_id=aggregate_id or uuid4(), category=category)
+
+
 # =============================================================================
 # Test Fixtures
 # =============================================================================
 
 
-def create_mock_store(global_position: int = 100) -> MagicMock:
-    """Create a mock event store with proper async iterator support."""
+def create_mock_store(store_id: str = "store", position_key: tuple = (100,)) -> MagicMock:
+    """Create a mock FullEventStore with proper async iterator support."""
     store = MagicMock()
-    store.append_events = AsyncMock(
-        return_value=AppendResult.successful(new_version=1, global_position=1)
-    )
-    store.get_events = AsyncMock(
-        return_value=EventStream(
-            aggregate_id=uuid4(),
-            aggregate_type="TestAggregate",
-            events=[],
-            version=0,
+    store.max_append_batch = None
+    store.append = AsyncMock(
+        side_effect=lambda stream, events, expected: AppendResult(
+            stream=stream,
+            new_version=1,
+            position=Position(store_id=store_id, key=(1,)),
         )
     )
-    store.get_events_by_type = AsyncMock(return_value=[])
     store.event_exists = AsyncMock(return_value=False)
     store.get_stream_version = AsyncMock(return_value=0)
-    store.get_global_position = AsyncMock(return_value=global_position)
+    store.current_position = AsyncMock(return_value=Position(store_id=store_id, key=position_key))
 
     # For async generators, we need to return the generator itself, not a coroutine
     def mock_read_stream(*args, **kwargs):
@@ -77,21 +82,25 @@ def create_mock_store(global_position: int = 100) -> MagicMock:
     def mock_read_all(*args, **kwargs):
         return async_generator_mock([])
 
+    def mock_read_category(*args, **kwargs):
+        return async_generator_mock([])
+
     store.read_stream = mock_read_stream
     store.read_all = mock_read_all
+    store.read_category = mock_read_category
     return store
 
 
 @pytest.fixture
 def mock_default_store() -> MagicMock:
     """Create a mock default event store."""
-    return create_mock_store(global_position=100)
+    return create_mock_store(store_id="default", position_key=(100,))
 
 
 @pytest.fixture
 def mock_dedicated_store() -> MagicMock:
     """Create a mock dedicated event store."""
-    return create_mock_store(global_position=50)
+    return create_mock_store(store_id="dedicated", position_key=(50,))
 
 
 @pytest.fixture
@@ -292,7 +301,7 @@ class TestStoreRegistryManagement:
         mock_dedicated_store: MagicMock,
     ) -> None:
         """Test registering a store with existing ID overwrites."""
-        other_store = AsyncMock()
+        other_store = create_mock_store(store_id="other")
         router.register_store("dedicated", mock_dedicated_store)
         router.register_store("dedicated", other_store)
 
@@ -429,7 +438,6 @@ class TestDualWriteInterceptorManagement:
 class TestWritePauseManagement:
     """Tests for write pause management."""
 
-    @pytest.mark.asyncio
     async def test_pause_writes(
         self,
         router: TenantStoreRouter,
@@ -442,7 +450,6 @@ class TestWritePauseManagement:
         assert result is True
         assert router.is_paused(tenant_id) is True
 
-    @pytest.mark.asyncio
     async def test_pause_writes_idempotent(
         self,
         router: TenantStoreRouter,
@@ -458,7 +465,6 @@ class TestWritePauseManagement:
         assert result2 is False
         assert router.is_paused(tenant_id) is True
 
-    @pytest.mark.asyncio
     async def test_resume_writes(
         self,
         router: TenantStoreRouter,
@@ -472,7 +478,6 @@ class TestWritePauseManagement:
         assert metrics is not None
         assert router.is_paused(tenant_id) is False
 
-    @pytest.mark.asyncio
     async def test_resume_writes_signals_waiters(
         self,
         router: TenantStoreRouter,
@@ -502,7 +507,6 @@ class TestWritePauseManagement:
 
         assert waiter_completed is True
 
-    @pytest.mark.asyncio
     async def test_resume_nonexistent_pause(
         self,
         router: TenantStoreRouter,
@@ -531,7 +535,6 @@ class TestWritePauseManagement:
 class TestWaitIfPaused:
     """Tests for _wait_if_paused method."""
 
-    @pytest.mark.asyncio
     async def test_wait_if_paused_returns_immediately_when_not_paused(
         self,
         router: TenantStoreRouter,
@@ -545,7 +548,6 @@ class TestWaitIfPaused:
             timeout=0.1,
         )
 
-    @pytest.mark.asyncio
     async def test_wait_if_paused_returns_immediately_for_none_tenant(
         self,
         router: TenantStoreRouter,
@@ -556,7 +558,6 @@ class TestWaitIfPaused:
             timeout=0.1,
         )
 
-    @pytest.mark.asyncio
     async def test_wait_if_paused_raises_on_timeout(
         self,
         mock_default_store: MagicMock,
@@ -580,24 +581,22 @@ class TestWaitIfPaused:
 
 
 # =============================================================================
-# Test Append Events Routing
+# Test Append Routing
 # =============================================================================
 
 
-class TestAppendEventsRouting:
-    """Tests for append_events routing logic."""
+class TestAppendRouting:
+    """Tests for append() routing logic."""
 
-    @pytest.mark.asyncio
-    async def test_append_events_empty_list_raises(
+    async def test_append_empty_list_raises(
         self,
         router: TenantStoreRouter,
     ) -> None:
         """Test appending empty event list raises ValueError."""
         with pytest.raises(ValueError, match="Cannot append empty event list"):
-            await router.append_events(uuid4(), "TestAggregate", [], 0)
+            await router.append(sid(), [], ExpectedVersion.no_stream())
 
-    @pytest.mark.asyncio
-    async def test_append_events_routes_to_default_without_tenant(
+    async def test_append_routes_to_default_without_tenant(
         self,
         router: TenantStoreRouter,
         mock_default_store: MagicMock,
@@ -605,15 +604,15 @@ class TestAppendEventsRouting:
         """Test events without tenant_id route to default store."""
         aggregate_id = uuid4()
         event = TestEvent(aggregate_id=aggregate_id)
+        stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
 
-        await router.append_events(aggregate_id, "TestAggregate", [event], 0)
+        await router.append(stream, [event], ExpectedVersion.no_stream())
 
-        mock_default_store.append_events.assert_called_once_with(
-            aggregate_id, "TestAggregate", [event], 0
+        mock_default_store.append.assert_called_once_with(
+            stream, [event], ExpectedVersion.no_stream()
         )
 
-    @pytest.mark.asyncio
-    async def test_append_events_routes_to_tenant_store_normal_state(
+    async def test_append_routes_to_tenant_store_normal_state(
         self,
         mock_default_store: MagicMock,
         mock_dedicated_store: MagicMock,
@@ -623,6 +622,7 @@ class TestAppendEventsRouting:
         tenant_id = uuid4()
         aggregate_id = uuid4()
         event = TestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)
+        stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
 
         # Configure routing
         routing = TenantRouting(
@@ -639,13 +639,12 @@ class TestAppendEventsRouting:
             enable_tracing=False,
         )
 
-        await router.append_events(aggregate_id, "TestAggregate", [event], 0)
+        await router.append(stream, [event], ExpectedVersion.no_stream())
 
-        mock_dedicated_store.append_events.assert_called_once()
-        mock_default_store.append_events.assert_not_called()
+        mock_dedicated_store.append.assert_called_once()
+        mock_default_store.append.assert_not_called()
 
-    @pytest.mark.asyncio
-    async def test_append_events_routes_to_source_in_bulk_copy(
+    async def test_append_routes_to_source_in_bulk_copy(
         self,
         mock_default_store: MagicMock,
         mock_dedicated_store: MagicMock,
@@ -655,6 +654,7 @@ class TestAppendEventsRouting:
         tenant_id = uuid4()
         aggregate_id = uuid4()
         event = TestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)
+        stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
 
         routing = TenantRouting(
             tenant_id=tenant_id,
@@ -671,12 +671,11 @@ class TestAppendEventsRouting:
             enable_tracing=False,
         )
 
-        await router.append_events(aggregate_id, "TestAggregate", [event], 0)
+        await router.append(stream, [event], ExpectedVersion.no_stream())
 
-        mock_default_store.append_events.assert_called_once()
+        mock_default_store.append.assert_called_once()
 
-    @pytest.mark.asyncio
-    async def test_append_events_uses_interceptor_in_dual_write(
+    async def test_append_uses_interceptor_in_dual_write(
         self,
         mock_default_store: MagicMock,
         mock_routing_repo: AsyncMock,
@@ -685,6 +684,7 @@ class TestAppendEventsRouting:
         tenant_id = uuid4()
         aggregate_id = uuid4()
         event = TestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)
+        stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
 
         routing = TenantRouting(
             tenant_id=tenant_id,
@@ -693,8 +693,7 @@ class TestAppendEventsRouting:
         )
         mock_routing_repo.get_routing.return_value = routing
 
-        mock_interceptor = AsyncMock()
-        mock_interceptor.append_events = AsyncMock(return_value=AppendResult.successful(1, 1))
+        mock_interceptor = create_mock_store(store_id="interceptor")
 
         router = TenantStoreRouter(
             default_store=mock_default_store,
@@ -703,13 +702,12 @@ class TestAppendEventsRouting:
         )
         router.set_dual_write_interceptor(tenant_id, mock_interceptor)
 
-        await router.append_events(aggregate_id, "TestAggregate", [event], 0)
+        await router.append(stream, [event], ExpectedVersion.no_stream())
 
-        mock_interceptor.append_events.assert_called_once()
-        mock_default_store.append_events.assert_not_called()
+        mock_interceptor.append.assert_called_once()
+        mock_default_store.append.assert_not_called()
 
-    @pytest.mark.asyncio
-    async def test_append_events_routes_to_target_after_migration(
+    async def test_append_routes_to_target_after_migration(
         self,
         mock_default_store: MagicMock,
         mock_dedicated_store: MagicMock,
@@ -719,6 +717,7 @@ class TestAppendEventsRouting:
         tenant_id = uuid4()
         aggregate_id = uuid4()
         event = TestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)
+        stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
 
         # After migration, store_id is updated to target
         routing = TenantRouting(
@@ -735,21 +734,21 @@ class TestAppendEventsRouting:
             enable_tracing=False,
         )
 
-        await router.append_events(aggregate_id, "TestAggregate", [event], 0)
+        await router.append(stream, [event], ExpectedVersion.no_stream())
 
-        mock_dedicated_store.append_events.assert_called_once()
-        mock_default_store.append_events.assert_not_called()
+        mock_dedicated_store.append.assert_called_once()
+        mock_default_store.append.assert_not_called()
 
-    @pytest.mark.asyncio
-    async def test_append_events_waits_when_paused(
+    async def test_append_waits_when_paused(
         self,
         mock_default_store: MagicMock,
         mock_routing_repo: AsyncMock,
     ) -> None:
-        """Test append_events waits when writes are paused."""
+        """Test append waits when writes are paused."""
         tenant_id = uuid4()
         aggregate_id = uuid4()
         event = TestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)
+        stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
 
         router = TenantStoreRouter(
             default_store=mock_default_store,
@@ -766,7 +765,7 @@ class TestAppendEventsRouting:
         async def do_append():
             nonlocal append_started, append_completed
             append_started = True
-            await router.append_events(aggregate_id, "TestAggregate", [event], 0)
+            await router.append(stream, [event], ExpectedVersion.no_stream())
             append_completed = True
 
         append_task = asyncio.create_task(do_append())
@@ -789,27 +788,13 @@ class TestAppendEventsRouting:
 class TestReadOperationsRouting:
     """Tests for read operation routing."""
 
-    @pytest.mark.asyncio
-    async def test_get_events_routes_to_default(
-        self,
-        router: TenantStoreRouter,
-        mock_default_store: MagicMock,
-    ) -> None:
-        """Test get_events routes to default store."""
-        aggregate_id = uuid4()
-
-        await router.get_events(aggregate_id, "TestAggregate")
-
-        mock_default_store.get_events.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_get_events_by_type_with_tenant_id(
+    async def test_read_category_with_tenant_id(
         self,
         mock_default_store: MagicMock,
         mock_dedicated_store: MagicMock,
         mock_routing_repo: AsyncMock,
     ) -> None:
-        """Test get_events_by_type routes based on tenant_id."""
+        """Test read_category routes based on options.tenant_id."""
         tenant_id = uuid4()
 
         routing = TenantRouting(
@@ -819,6 +804,22 @@ class TestReadOperationsRouting:
         )
         mock_routing_repo.get_routing.return_value = routing
 
+        default_called = False
+        dedicated_called = False
+
+        def default_read_category(*args, **kwargs):
+            nonlocal default_called
+            default_called = True
+            return async_generator_mock([])
+
+        def dedicated_read_category(*args, **kwargs):
+            nonlocal dedicated_called
+            dedicated_called = True
+            return async_generator_mock([])
+
+        mock_default_store.read_category = default_read_category
+        mock_dedicated_store.read_category = dedicated_read_category
+
         router = TenantStoreRouter(
             default_store=mock_default_store,
             routing_repo=mock_routing_repo,
@@ -826,23 +827,33 @@ class TestReadOperationsRouting:
             enable_tracing=False,
         )
 
-        await router.get_events_by_type("TestAggregate", tenant_id)
+        options = CategoryReadOptions(tenant_id=tenant_id)
+        async for _ in router.read_category("TestAggregate", options):
+            pass
 
-        mock_dedicated_store.get_events_by_type.assert_called_once()
-        mock_default_store.get_events_by_type.assert_not_called()
+        assert dedicated_called is True
+        assert default_called is False
 
-    @pytest.mark.asyncio
-    async def test_get_events_by_type_without_tenant_id(
+    async def test_read_category_without_tenant_id_routes_to_default(
         self,
         router: TenantStoreRouter,
         mock_default_store: MagicMock,
     ) -> None:
-        """Test get_events_by_type without tenant routes to default."""
-        await router.get_events_by_type("TestAggregate")
+        """Test read_category without tenant routes to default store."""
+        read_category_called = False
 
-        mock_default_store.get_events_by_type.assert_called_once()
+        def tracked_read_category(*args, **kwargs):
+            nonlocal read_category_called
+            read_category_called = True
+            return async_generator_mock([])
 
-    @pytest.mark.asyncio
+        mock_default_store.read_category = tracked_read_category
+
+        async for _ in router.read_category("TestAggregate"):
+            pass
+
+        assert read_category_called is True
+
     async def test_event_exists_checks_all_stores(
         self,
         mock_default_store: MagicMock,
@@ -868,7 +879,6 @@ class TestReadOperationsRouting:
         mock_default_store.event_exists.assert_called_once()
         mock_dedicated_store.event_exists.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_event_exists_returns_false_if_not_found(
         self,
         mock_default_store: MagicMock,
@@ -892,30 +902,28 @@ class TestReadOperationsRouting:
 
         assert result is False
 
-    @pytest.mark.asyncio
     async def test_get_stream_version(
         self,
         router: TenantStoreRouter,
         mock_default_store: MagicMock,
     ) -> None:
         """Test get_stream_version delegates to default store."""
-        aggregate_id = uuid4()
+        stream = sid()
 
-        await router.get_stream_version(aggregate_id, "TestAggregate")
+        await router.get_stream_version(stream)
 
-        mock_default_store.get_stream_version.assert_called_once()
+        mock_default_store.get_stream_version.assert_called_once_with(stream)
 
-    @pytest.mark.asyncio
-    async def test_get_global_position(
+    async def test_current_position(
         self,
         router: TenantStoreRouter,
         mock_default_store: MagicMock,
     ) -> None:
-        """Test get_global_position delegates to default store."""
-        result = await router.get_global_position()
+        """Test current_position delegates to default store."""
+        result = await router.current_position()
 
-        assert result == 100
-        mock_default_store.get_global_position.assert_called_once()
+        assert result == Position(store_id="default", key=(100,))
+        mock_default_store.current_position.assert_called_once()
 
 
 # =============================================================================
@@ -926,22 +934,19 @@ class TestReadOperationsRouting:
 class TestStreamOperationsRouting:
     """Tests for read_all and read_stream routing."""
 
-    @pytest.mark.asyncio
     async def test_read_all_routes_to_default_without_tenant(
         self,
         mock_routing_repo: AsyncMock,
     ) -> None:
         """Test read_all without tenant routes to default store."""
-        # Create store with tracking
         read_all_called = False
 
-        async def tracked_read_all(*args, **kwargs):
+        def tracked_read_all(*args, **kwargs):
             nonlocal read_all_called
             read_all_called = True
-            return
-            yield  # Make it an async generator
+            return async_generator_mock([])
 
-        default_store = create_mock_store()
+        default_store = create_mock_store(store_id="default")
         default_store.read_all = tracked_read_all
 
         router = TenantStoreRouter(
@@ -950,13 +955,11 @@ class TestStreamOperationsRouting:
             enable_tracing=False,
         )
 
-        events = []
-        async for event in router.read_all():
-            events.append(event)
+        async for _ in router.read_all():
+            pass
 
         assert read_all_called is True
 
-    @pytest.mark.asyncio
     async def test_read_all_routes_to_tenant_store_with_tenant_id(
         self,
         mock_routing_repo: AsyncMock,
@@ -975,20 +978,18 @@ class TestStreamOperationsRouting:
         default_called = False
         dedicated_called = False
 
-        async def default_read_all(*args, **kwargs):
+        def default_read_all(*args, **kwargs):
             nonlocal default_called
             default_called = True
-            return
-            yield
+            return async_generator_mock([])
 
-        async def dedicated_read_all(*args, **kwargs):
+        def dedicated_read_all(*args, **kwargs):
             nonlocal dedicated_called
             dedicated_called = True
-            return
-            yield
+            return async_generator_mock([])
 
-        default_store = create_mock_store()
-        dedicated_store = create_mock_store()
+        default_store = create_mock_store(store_id="default")
+        dedicated_store = create_mock_store(store_id="dedicated")
         default_store.read_all = default_read_all
         dedicated_store.read_all = dedicated_read_all
 
@@ -999,31 +1000,28 @@ class TestStreamOperationsRouting:
             enable_tracing=False,
         )
 
-        options = ReadOptions(tenant_id=tenant_id)
-        events = []
-        async for event in router.read_all(options):
-            events.append(event)
+        options = FeedReadOptions(tenant_id=tenant_id)
+        async for _ in router.read_all(options=options):
+            pass
 
         assert dedicated_called is True
         assert default_called is False
 
-    @pytest.mark.asyncio
     async def test_read_stream_routes_to_default_without_tenant(
         self,
         mock_routing_repo: AsyncMock,
     ) -> None:
         """Test read_stream without tenant routes to default store."""
-        stream_id = f"{uuid4()}:TestAggregate"
+        stream = sid()
 
         read_stream_called = False
 
-        async def tracked_read_stream(*args, **kwargs):
+        def tracked_read_stream(*args, **kwargs):
             nonlocal read_stream_called
             read_stream_called = True
-            return
-            yield
+            return async_generator_mock([])
 
-        default_store = create_mock_store()
+        default_store = create_mock_store(store_id="default")
         default_store.read_stream = tracked_read_stream
 
         router = TenantStoreRouter(
@@ -1032,9 +1030,8 @@ class TestStreamOperationsRouting:
             enable_tracing=False,
         )
 
-        events = []
-        async for event in router.read_stream(stream_id):
-            events.append(event)
+        async for _ in router.read_stream(stream):
+            pass
 
         assert read_stream_called is True
 
@@ -1047,7 +1044,6 @@ class TestStreamOperationsRouting:
 class TestTenantStoreResolution:
     """Tests for get_store_for_tenant and get_write_stores_for_tenant."""
 
-    @pytest.mark.asyncio
     async def test_get_store_for_tenant_returns_default_if_no_routing(
         self,
         router: TenantStoreRouter,
@@ -1062,7 +1058,6 @@ class TestTenantStoreResolution:
 
         assert store == mock_default_store
 
-    @pytest.mark.asyncio
     async def test_get_store_for_tenant_returns_configured_store(
         self,
         mock_default_store: MagicMock,
@@ -1090,7 +1085,6 @@ class TestTenantStoreResolution:
 
         assert store == mock_dedicated_store
 
-    @pytest.mark.asyncio
     async def test_get_write_stores_for_tenant_returns_default_if_no_routing(
         self,
         router: TenantStoreRouter,
@@ -1105,7 +1099,6 @@ class TestTenantStoreResolution:
 
         assert stores == [mock_default_store]
 
-    @pytest.mark.asyncio
     async def test_get_write_stores_for_tenant_returns_both_in_dual_write(
         self,
         mock_default_store: MagicMock,
@@ -1186,7 +1179,6 @@ class TestHelperMethods:
 class TestMigrationStateRouting:
     """Tests for routing behavior across all migration states."""
 
-    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "state,expected_store_key",
         [
@@ -1207,6 +1199,7 @@ class TestMigrationStateRouting:
         tenant_id = uuid4()
         aggregate_id = uuid4()
         event = TestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)
+        stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
 
         stores = {
             "source": mock_default_store,
@@ -1229,12 +1222,11 @@ class TestMigrationStateRouting:
             enable_tracing=False,
         )
 
-        await router.append_events(aggregate_id, "TestAggregate", [event], 0)
+        await router.append(stream, [event], ExpectedVersion.no_stream())
 
         expected_store = stores[expected_store_key]
-        expected_store.append_events.assert_called_once()
+        expected_store.append.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_cutover_paused_state_raises(
         self,
         mock_default_store: MagicMock,
@@ -1244,6 +1236,7 @@ class TestMigrationStateRouting:
         tenant_id = uuid4()
         aggregate_id = uuid4()
         event = TestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)
+        stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
 
         routing = TenantRouting(
             tenant_id=tenant_id,
@@ -1263,7 +1256,7 @@ class TestMigrationStateRouting:
         await router.pause_writes(tenant_id)
 
         with pytest.raises(WritePausedError):
-            await router.append_events(aggregate_id, "TestAggregate", [event], 0)
+            await router.append(stream, [event], ExpectedVersion.no_stream())
 
 
 # =============================================================================
@@ -1274,7 +1267,6 @@ class TestMigrationStateRouting:
 class TestDualWriteStateWithoutInterceptor:
     """Tests for DUAL_WRITE state when interceptor is not set."""
 
-    @pytest.mark.asyncio
     async def test_dual_write_falls_back_to_source_without_interceptor(
         self,
         mock_default_store: MagicMock,
@@ -1284,6 +1276,7 @@ class TestDualWriteStateWithoutInterceptor:
         tenant_id = uuid4()
         aggregate_id = uuid4()
         event = TestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)
+        stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
 
         routing = TenantRouting(
             tenant_id=tenant_id,
@@ -1299,9 +1292,41 @@ class TestDualWriteStateWithoutInterceptor:
         )
 
         # No interceptor set - should fall back to source
-        await router.append_events(aggregate_id, "TestAggregate", [event], 0)
+        await router.append(stream, [event], ExpectedVersion.no_stream())
 
-        mock_default_store.append_events.assert_called_once()
+        mock_default_store.append.assert_called_once()
+
+
+# =============================================================================
+# Test Structural Conformance to FullEventStore
+# =============================================================================
+
+
+class TestRouterStructuralConformance:
+    """The router satisfies `FullEventStore` structurally, not via inheritance."""
+
+    async def test_conforms_to_full_event_store(
+        self,
+        router: TenantStoreRouter,
+    ) -> None:
+        """mypy-checked structural conformance, plus a call through each member."""
+        _: FullEventStore = router
+
+        assert router.max_append_batch is None
+
+        stream = StreamId(aggregate_id=uuid4(), category="TestAggregate")
+        event = TestEvent(aggregate_id=stream.aggregate_id)
+
+        await router.append(stream, [event], ExpectedVersion.no_stream())
+        async for _ in router.read_stream(stream):
+            pass
+        await router.get_stream_version(stream)
+        await router.event_exists(event.event_id)
+        async for _ in router.read_all():
+            pass
+        await router.current_position()
+        async for _ in router.read_category("TestAggregate"):
+            pass
 
 
 # =============================================================================
@@ -1312,7 +1337,6 @@ class TestDualWriteStateWithoutInterceptor:
 class TestConcurrentOperations:
     """Tests for concurrent operation handling."""
 
-    @pytest.mark.asyncio
     async def test_concurrent_pause_resume(
         self,
         router: TenantStoreRouter,
@@ -1332,7 +1356,6 @@ class TestConcurrentOperations:
         # Should end in unparsed state
         assert router.is_paused(tenant_id) is False
 
-    @pytest.mark.asyncio
     async def test_concurrent_store_registration(
         self,
         router: TenantStoreRouter,
@@ -1341,7 +1364,7 @@ class TestConcurrentOperations:
 
         def register_stores():
             for i in range(100):
-                mock_store = AsyncMock()
+                mock_store = create_mock_store(store_id=f"store-{i}")
                 router.register_store(f"store-{i}", mock_store)
 
         # Run in executor to simulate concurrency

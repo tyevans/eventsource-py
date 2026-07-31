@@ -188,10 +188,11 @@ router = TenantStoreRouter(
     routing_repo=routing_repo,
 )
 
-# The router implements the EventStore protocol
+# The router satisfies the FullEventStore port
 # Use it exactly like a regular event store
-events = await router.read_events(stream_id, tenant_id="tenant-123")
-await router.append_events(stream_id, events, tenant_id="tenant-123")
+async for envelope in router.read_stream(stream):
+    ...
+await router.append(stream, events, ExpectedVersion.exact(0))
 ```
 
 ### BulkCopier

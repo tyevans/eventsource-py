@@ -321,23 +321,24 @@ class TestBulkCopyError:
     def test_creation(self) -> None:
         """Test creating a BulkCopyError."""
         migration_id = uuid4()
+        last_position = Position(store_id="source", key=(50000,))
         error = BulkCopyError(
             migration_id=migration_id,
-            last_position=50000,
+            last_position=last_position,
             error="Connection timeout",
         )
 
         assert error.migration_id == migration_id
-        assert error.last_position == 50000
+        assert error.last_position == last_position
         assert error.original_error == "Connection timeout"
-        assert "position 50000" in str(error)
+        assert f"position {last_position.to_str()}" in str(error)
         assert "Connection timeout" in str(error)
         assert error.recoverable is True
         assert error.suggested_action is not None
 
     def test_is_subclass_of_migration_error(self) -> None:
         """Test that BulkCopyError is a MigrationError."""
-        error = BulkCopyError(uuid4(), 0, "error")
+        error = BulkCopyError(uuid4(), None, "error")
         assert isinstance(error, MigrationError)
 
 
@@ -452,7 +453,7 @@ class TestExceptionHierarchy:
             CutoverTimeoutError(uuid4(), 150.0, 100.0),
             CutoverLagError(uuid4(), 500, 100),
             ConsistencyError("msg", uuid4()),
-            BulkCopyError(uuid4(), 0, "error"),
+            BulkCopyError(uuid4(), None, "error"),
             DualWriteError(uuid4(), "error"),
             PositionMappingError("msg", uuid4()),
             RoutingError("msg", uuid4()),
@@ -475,7 +476,7 @@ class TestExceptionHierarchy:
                 raise error
 
         # Non-cutover errors should not be caught
-        non_cutover = BulkCopyError(uuid4(), 0, "error")
+        non_cutover = BulkCopyError(uuid4(), None, "error")
         with pytest.raises(BulkCopyError):
             raise non_cutover
         # Verify it's not a CutoverError

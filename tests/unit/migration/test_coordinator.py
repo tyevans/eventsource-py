@@ -64,8 +64,6 @@ class TestMigrationCoordinatorInit:
             migration_repo=migration_repo,
             routing_repo=routing_repo,
             router=router,
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -85,8 +83,6 @@ class TestMigrationCoordinatorInit:
             migration_repo=MagicMock(),
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             source_store_id="shared-postgres",
             enable_tracing=False,
         )
@@ -100,8 +96,6 @@ class TestMigrationCoordinatorInit:
             migration_repo=MagicMock(),
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -119,8 +113,6 @@ class TestStartMigration:
             "migration_repo": AsyncMock(),
             "routing_repo": AsyncMock(),
             "router": MagicMock(),
-            "source_position_store_id": "source-store",
-            "target_position_store_id": "target-store",
         }
 
     @pytest.mark.asyncio
@@ -314,8 +306,6 @@ class TestGetStatus:
             migration_repo=migration_repo,
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -342,8 +332,6 @@ class TestGetStatus:
             migration_repo=migration_repo,
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -378,8 +366,6 @@ class TestPauseMigration:
             migration_repo=migration_repo,
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -416,8 +402,6 @@ class TestPauseMigration:
             migration_repo=migration_repo,
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -448,8 +432,6 @@ class TestPauseMigration:
             migration_repo=migration_repo,
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -484,8 +466,6 @@ class TestResumeMigration:
             migration_repo=migration_repo,
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -519,8 +499,6 @@ class TestResumeMigration:
             migration_repo=migration_repo,
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -563,8 +541,6 @@ class TestAbortMigration:
             migration_repo=migration_repo,
             routing_repo=routing_repo,
             router=router,
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -612,8 +588,6 @@ class TestAbortMigration:
             migration_repo=migration_repo,
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -654,8 +628,6 @@ class TestListActiveMigrations:
             migration_repo=migration_repo,
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -677,8 +649,6 @@ class TestListActiveMigrations:
             migration_repo=migration_repo,
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -710,8 +680,6 @@ class TestWaitForPhase:
             migration_repo=migration_repo,
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -743,8 +711,6 @@ class TestWaitForPhase:
             migration_repo=migration_repo,
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -777,8 +743,6 @@ class TestWaitForPhase:
             migration_repo=migration_repo,
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -803,8 +767,6 @@ class TestWaitForPhase:
             migration_repo=migration_repo,
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -839,8 +801,6 @@ class TestGetMigration:
             migration_repo=migration_repo,
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -859,8 +819,6 @@ class TestGetMigration:
             migration_repo=migration_repo,
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -892,8 +850,6 @@ class TestGetMigrationForTenant:
             migration_repo=migration_repo,
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -923,8 +879,6 @@ class TestBuildStatus:
             migration_repo=MagicMock(),
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -950,8 +904,6 @@ class TestBuildStatus:
             migration_repo=MagicMock(),
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -970,8 +922,6 @@ class TestStatusQueueManagement:
             migration_repo=MagicMock(),
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -990,8 +940,6 @@ class TestStatusQueueManagement:
             migration_repo=MagicMock(),
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -1011,8 +959,6 @@ class TestStatusQueueManagement:
             migration_repo=MagicMock(),
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -1033,8 +979,6 @@ class TestStatusQueueManagement:
             migration_repo=MagicMock(),
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -1070,8 +1014,6 @@ class TestCalculateDuration:
             migration_repo=MagicMock(),
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -1086,8 +1028,6 @@ class TestCalculateDuration:
             migration_repo=MagicMock(),
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -1111,8 +1051,6 @@ class TestCalculateDuration:
             migration_repo=MagicMock(),
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -1151,8 +1089,6 @@ class TestCompleteMigration:
             migration_repo=migration_repo,
             routing_repo=routing_repo,
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -1194,8 +1130,6 @@ class TestFailMigration:
             migration_repo=migration_repo,
             routing_repo=routing_repo,
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 

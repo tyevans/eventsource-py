@@ -29,10 +29,8 @@ Usage:
     ...     tenant_id=tenant_uuid,
     ... )
     >>>
-    >>> # Use like any EventStore - writes go to both stores
-    >>> result = await interceptor.append_events(
-    ...     aggregate_id, "Order", events, expected_version
-    ... )
+    >>> # Use like any FullEventStore - writes go to both stores
+    >>> result = await interceptor.append(stream, events, expected)
     >>>
     >>> # Check failure statistics
     >>> stats = interceptor.get_failure_stats()
@@ -46,12 +44,13 @@ See Also:
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import UUID
 
+from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.observability import (
     ATTR_AGGREGATE_ID,
@@ -62,16 +61,16 @@ from eventsource.observability import (
     Tracer,
     create_tracer,
 )
-from eventsource.stores.interface import (
+from eventsource.ports import (
     AppendResult,
-    EventStore,
-    EventStream,
-    ReadOptions,
-    StoredEvent,
+    CategoryReadOptions,
+    EventEnvelope,
+    ExpectedVersion,
+    FeedReadOptions,
+    FullEventStore,
+    Position,
+    StreamReadOptions,
 )
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +89,9 @@ class FailedWrite:
         aggregate_type: Type of the aggregate.
         event_ids: IDs of events that failed to write.
         error_message: The error message from the failed write.
-        source_position: Global position in source store after successful write.
+        source_position: Position of the FIRST event of the source append
+            (`AppendResult.position`), not the position after the write.
+            None when the source store has no global feed.
     """
 
     timestamp: datetime
@@ -98,7 +99,7 @@ class FailedWrite:
     aggregate_type: str
     event_ids: list[UUID]
     error_message: str
-    source_position: int
+    source_position: Position | None
 
 
 @dataclass
@@ -135,9 +136,13 @@ class FailureStats:
         }
 
 
-class DualWriteInterceptor(EventStore):
+class DualWriteInterceptor:
     """
     Intercepts writes to duplicate to both stores during migration.
+
+    Structural conformance only -- the interceptor satisfies
+    `FullEventStore` by having its eight members, not by inheriting
+    from any base class.
 
     Ensures new events are written to both source and target stores
     during the dual-write phase, maintaining consistency while the
@@ -148,7 +153,7 @@ class DualWriteInterceptor(EventStore):
         - Target write is best-effort; failures are logged but don't fail the operation
         - Failed target writes are tracked for background sync recovery
 
-    The interceptor implements the EventStore protocol, making it a
+    The interceptor satisfies the `FullEventStore` port, making it a
     drop-in replacement that the TenantStoreRouter can use transparently.
 
     Example:
@@ -162,9 +167,11 @@ class DualWriteInterceptor(EventStore):
         >>> router.set_dual_write_interceptor(tenant_id, interceptor)
         >>>
         >>> # Now writes automatically go to both stores
-        >>> await router.append_events(agg_id, "Order", events, 0)
+        >>> await router.append(stream, events, ExpectedVersion.exact(0))
 
     Attributes:
+        max_append_batch: The interceptor imposes no batch-size limit of
+            its own; the source store enforces whatever limit it has.
         _source: The authoritative source event store.
         _target: The target event store being migrated to.
         _tenant_id: The tenant this interceptor handles.
@@ -172,10 +179,12 @@ class DualWriteInterceptor(EventStore):
         _affected_aggregates: Set of aggregate IDs with failed writes.
     """
 
+    max_append_batch: int | None = None
+
     def __init__(
         self,
-        source_store: EventStore,
-        target_store: EventStore,
+        source_store: FullEventStore,
+        target_store: FullEventStore,
         tenant_id: UUID,
         *,
         tracer: Tracer | None = None,
@@ -211,12 +220,12 @@ class DualWriteInterceptor(EventStore):
     # =========================================================================
 
     @property
-    def source_store(self) -> EventStore:
+    def source_store(self) -> FullEventStore:
         """Get the source (authoritative) event store."""
         return self._source
 
     @property
-    def target_store(self) -> EventStore:
+    def target_store(self) -> FullEventStore:
         """Get the target event store."""
         return self._target
 
@@ -276,9 +285,9 @@ class DualWriteInterceptor(EventStore):
         self,
         aggregate_id: UUID,
         aggregate_type: str,
-        events: list[DomainEvent],
+        events: Sequence[DomainEvent],
         error: Exception,
-        source_position: int,
+        source_position: Position | None,
     ) -> None:
         """
         Record a failed target write for monitoring and recovery.
@@ -288,7 +297,8 @@ class DualWriteInterceptor(EventStore):
             aggregate_type: Type of the aggregate.
             events: The events that failed to write.
             error: The exception that caused the failure.
-            source_position: Global position in source after successful write.
+            source_position: Position of the first event of the successful
+                source append; None for a feedless source store.
         """
         failed_write = FailedWrite(
             timestamp=datetime.now(UTC),
@@ -314,148 +324,96 @@ class DualWriteInterceptor(EventStore):
             logger.debug(f"Trimmed {len(removed)} old failure records for tenant {self._tenant_id}")
 
     # =========================================================================
-    # EventStore Protocol Implementation - Write Operations
+    # FullEventStore Port Implementation - Write Operations
     # =========================================================================
 
-    async def append_events(
+    async def append(
         self,
-        aggregate_id: UUID,
-        aggregate_type: str,
-        events: list[DomainEvent],
-        expected_version: int,
+        stream: StreamId,
+        events: Sequence[DomainEvent],
+        expected: ExpectedVersion,
     ) -> AppendResult:
         """
         Append events to both source and target stores.
 
         Writes to source store first (authoritative), then attempts to write
-        to target store. Source failures propagate as operation failures.
-        Target failures are logged but don't fail the operation.
+        to target store. Source failures propagate to the caller. Target
+        failures are recorded but don't fail the operation.
 
         Args:
-            aggregate_id: ID of the aggregate.
-            aggregate_type: Type of aggregate (e.g., 'Order').
+            stream: Identity of the stream to append to.
             events: Events to append.
-            expected_version: Expected current version (for optimistic locking).
+            expected: Optimistic-concurrency expectation.
 
         Returns:
             AppendResult from the source store write.
 
         Raises:
-            OptimisticLockError: If source store version check fails.
+            OptimisticLockError: If the source store's version check fails.
             ValueError: If events list is empty.
         """
         if not events:
             raise ValueError("Cannot append empty event list")
 
         with self._tracer.span(
-            "eventsource.dual_write.append_events",
+            "eventsource.dual_write.append",
             {
-                ATTR_AGGREGATE_ID: str(aggregate_id),
-                ATTR_AGGREGATE_TYPE: aggregate_type,
+                ATTR_AGGREGATE_ID: str(stream.aggregate_id),
+                ATTR_AGGREGATE_TYPE: stream.category,
                 ATTR_TENANT_ID: str(self._tenant_id),
                 ATTR_EVENT_COUNT: len(events),
-                ATTR_EXPECTED_VERSION: expected_version,
+                ATTR_EXPECTED_VERSION: expected.kind,
             },
         ):
-            # Step 1: Write to source (authoritative)
-            # If this fails, the entire operation fails
-            source_result = await self._source.append_events(
-                aggregate_id,
-                aggregate_type,
-                events,
-                expected_version,
-            )
-
-            # If source write failed (conflict), return immediately
-            if not source_result.success:
-                return source_result
+            # Step 1: Write to source (authoritative). A concurrency
+            # failure raises out of here, which is the honest propagation.
+            source_result = await self._source.append(stream, events, expected)
 
             # Step 2: Write to target (best-effort)
             # Target failures are logged but don't fail the operation
             try:
-                await self._target.append_events(
-                    aggregate_id,
-                    aggregate_type,
-                    events,
-                    expected_version,
-                )
+                await self._target.append(stream, events, expected)
                 logger.debug(
-                    f"Dual-write success for tenant {self._tenant_id}, aggregate {aggregate_id}"
+                    f"Dual-write success for tenant {self._tenant_id}, stream {stream.render()}"
                 )
             except Exception as e:
                 # Log the failure but don't fail the operation
                 logger.warning(
                     f"Target write failed for tenant {self._tenant_id}, "
-                    f"aggregate {aggregate_id}: {e}"
+                    f"stream {stream.render()}: {e}"
                 )
                 self._record_sync_failure(
-                    aggregate_id=aggregate_id,
-                    aggregate_type=aggregate_type,
+                    aggregate_id=stream.aggregate_id,
+                    aggregate_type=stream.category,
                     events=events,
                     error=e,
-                    source_position=source_result.global_position,
+                    source_position=source_result.position,
                 )
 
             # Return the source result (operation succeeded)
             return source_result
 
     # =========================================================================
-    # EventStore Protocol Implementation - Read Operations
+    # FullEventStore Port Implementation - Read Operations
     # =========================================================================
 
-    async def get_events(
+    async def read_category(
         self,
-        aggregate_id: UUID,
-        aggregate_type: str | None = None,
-        from_version: int = 0,
-        from_timestamp: datetime | None = None,
-        to_timestamp: datetime | None = None,
-    ) -> EventStream:
+        category: str,
+        options: CategoryReadOptions | None = None,
+    ) -> AsyncIterator[EventEnvelope]:
         """
-        Get events from the source store.
-
-        During dual-write, reads always come from the authoritative source.
+        Read a category from the source store.
 
         Args:
-            aggregate_id: ID of the aggregate.
-            aggregate_type: Type of aggregate (optional).
-            from_version: Start from this version (default: 0).
-            from_timestamp: Only get events after this timestamp.
-            to_timestamp: Only get events before this timestamp.
+            category: The stream category (e.g. 'Order').
+            options: Options for reading.
 
-        Returns:
-            EventStream containing the aggregate's events.
+        Yields:
+            EventEnvelope instances from the source store.
         """
-        return await self._source.get_events(
-            aggregate_id,
-            aggregate_type,
-            from_version,
-            from_timestamp,
-            to_timestamp,
-        )
-
-    async def get_events_by_type(
-        self,
-        aggregate_type: str,
-        tenant_id: UUID | None = None,
-        from_timestamp: datetime | None = None,
-    ) -> list[DomainEvent]:
-        """
-        Get all events for a specific aggregate type from source store.
-
-        Args:
-            aggregate_type: Type of aggregate (e.g., 'Order').
-            tenant_id: Filter by tenant ID (optional).
-            from_timestamp: Only get events after this timestamp.
-
-        Returns:
-            List of events in chronological order.
-        """
-        return await self._source.get_events_by_type(
-            aggregate_type,
-            tenant_id,
-            from_timestamp,
-        )
+        async for envelope in self._source.read_category(category, options):
+            yield envelope
 
     async def event_exists(self, event_id: UUID) -> bool:
         """
@@ -469,65 +427,65 @@ class DualWriteInterceptor(EventStore):
         """
         return await self._source.event_exists(event_id)
 
-    async def get_stream_version(
-        self,
-        aggregate_id: UUID,
-        aggregate_type: str,
-    ) -> int:
+    async def get_stream_version(self, stream: StreamId) -> int:
         """
-        Get the current version of an aggregate from source store.
+        Get the current version of a stream from the source store.
 
         Args:
-            aggregate_id: ID of the aggregate.
-            aggregate_type: Type of aggregate.
+            stream: Identity of the stream.
 
         Returns:
-            Current version (0 if aggregate doesn't exist).
+            Current version (0 if the stream doesn't exist).
         """
-        return await self._source.get_stream_version(aggregate_id, aggregate_type)
+        return await self._source.get_stream_version(stream)
 
     async def read_stream(
         self,
-        stream_id: str,
-        options: ReadOptions | None = None,
-    ) -> AsyncIterator[StoredEvent]:
+        stream: StreamId,
+        options: StreamReadOptions | None = None,
+    ) -> AsyncIterator[EventEnvelope]:
         """
         Read events from a stream in the source store.
 
         Args:
-            stream_id: The stream identifier.
+            stream: Identity of the stream.
             options: Options for reading.
 
         Yields:
-            StoredEvent instances from source store.
+            EventEnvelope instances from the source store.
         """
-        async for event in self._source.read_stream(stream_id, options):
-            yield event
+        async for envelope in self._source.read_stream(stream, options):
+            yield envelope
 
     async def read_all(
         self,
-        options: ReadOptions | None = None,
-    ) -> AsyncIterator[StoredEvent]:
+        from_position: Position | None = None,
+        options: FeedReadOptions | None = None,
+    ) -> AsyncIterator[EventEnvelope]:
         """
-        Read all events from the source store.
+        Read the global feed from the source store.
 
         Args:
+            from_position: Read strictly after this source-store position.
             options: Options for reading.
 
         Yields:
-            StoredEvent instances from source store.
+            EventEnvelope instances from the source store.
         """
-        async for event in self._source.read_all(options):
-            yield event
+        async for envelope in self._source.read_all(from_position, options):
+            yield envelope
 
-    async def get_global_position(self) -> int:
+    async def current_position(self) -> Position | None:
         """
-        Get the global position from the source store.
+        Get the current global-feed position of the SOURCE store.
+
+        The returned position belongs to the source store and is not
+        comparable with the target store's positions.
 
         Returns:
-            The maximum global position in the source store.
+            The source store's latest position, or None if it is empty.
         """
-        return await self._source.get_global_position()
+        return await self._source.current_position()
 
 
 __all__ = [

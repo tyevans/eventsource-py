@@ -113,8 +113,6 @@ class TestVerifyConsistency:
             "migration_repo": AsyncMock(),
             "routing_repo": AsyncMock(),
             "router": MagicMock(),
-            "source_position_store_id": "source-store",
-            "target_position_store_id": "target-store",
         }
 
     @pytest.mark.asyncio
@@ -281,8 +279,6 @@ class TestMigrateSubscriptions:
             "migration_repo": AsyncMock(),
             "routing_repo": AsyncMock(),
             "router": MagicMock(),
-            "source_position_store_id": "source-store",
-            "target_position_store_id": "target-store",
         }
 
     @pytest.mark.asyncio
@@ -550,8 +546,6 @@ class TestGetConsistencyReport:
             migration_repo=MagicMock(),
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -577,8 +571,6 @@ class TestGetConsistencyReport:
             migration_repo=MagicMock(),
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -599,8 +591,6 @@ class TestGetSubscriptionSummary:
             migration_repo=MagicMock(),
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -624,8 +614,6 @@ class TestGetSubscriptionSummary:
             migration_repo=MagicMock(),
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -644,8 +632,6 @@ class TestCompleteCutoverWithP3005:
             "migration_repo": AsyncMock(),
             "routing_repo": AsyncMock(),
             "router": MagicMock(),
-            "source_position_store_id": "source-store",
-            "target_position_store_id": "target-store",
         }
 
     @pytest.mark.asyncio
@@ -876,8 +862,6 @@ class TestCleanupMigrationResourcesP3005:
             migration_repo=MagicMock(),
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -903,8 +887,6 @@ class TestCleanupMigrationResourcesP3005:
             migration_repo=MagicMock(),
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -927,8 +909,6 @@ class TestVerificationLevel:
             migration_repo=AsyncMock(),
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -977,8 +957,6 @@ class TestVerificationLevel:
             migration_repo=AsyncMock(),
             routing_repo=MagicMock(),
             router=MagicMock(),
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             enable_tracing=False,
         )
 

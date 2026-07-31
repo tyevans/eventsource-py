@@ -3,7 +3,7 @@ Unit tests for SyncLagTracker.
 
 Tests cover:
 - SyncLagTracker initialization
-- Lag calculation between source and target stores
+- Lag calculation as a count of source-feed events after `since`
 - Convergence detection (is_converged, is_sync_ready)
 - Lag statistics (average, max, min)
 - Convergence trend detection
@@ -13,45 +13,69 @@ Tests cover:
 """
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
 import pytest
 
+from eventsource.adapters.memory.store import MemoryEventStore
+from eventsource.domain import StreamId
+from eventsource.events.base import DomainEvent
 from eventsource.migration.models import MigrationConfig, SyncLag
 from eventsource.migration.sync_lag_tracker import (
     LagSample,
     LagStats,
     SyncLagTracker,
 )
+from eventsource.ports import ExpectedVersion, Position
+
+# =============================================================================
+# Test Events
+# =============================================================================
+
+
+class LagTestEvent(DomainEvent):
+    """Test event for unit tests."""
+
+    event_type: str = "LagTestEvent"
+    aggregate_type: str = "LagTestAggregate"
+    data: str = "test"
+
+
+def sid(category: str = "LagTestAggregate") -> StreamId:
+    """Build a fresh StreamId for tests."""
+    return StreamId(aggregate_id=uuid4(), category=category)
+
+
+async def seed_events(store: MemoryEventStore, count: int) -> Position | None:
+    """Append `count` events (one per stream) to `store`.
+
+    Returns the position of the last appended event, or None if count == 0.
+    """
+    last_position: Position | None = None
+    for _ in range(count):
+        stream = sid()
+        result = await store.append(
+            stream, [LagTestEvent(aggregate_id=stream.aggregate_id)], ExpectedVersion.any_()
+        )
+        last_position = result.position
+    return last_position
+
 
 # =============================================================================
 # Test Fixtures
 # =============================================================================
 
 
-def create_mock_store(global_position: int = 100) -> MagicMock:
-    """Create a mock event store with proper async support."""
-    store = MagicMock()
-    store.get_global_position = AsyncMock(return_value=global_position)
-    return store
+@pytest.fixture
+def source_store() -> MemoryEventStore:
+    """Create an empty source event store."""
+    return MemoryEventStore(store_id="source")
 
 
 @pytest.fixture
-def source_store() -> MagicMock:
-    """Create a mock source event store at position 100."""
-    return create_mock_store(global_position=100)
-
-
-@pytest.fixture
-def target_store() -> MagicMock:
-    """Create a mock target event store at position 50."""
-    return create_mock_store(global_position=50)
-
-
-@pytest.fixture
-def synced_target_store() -> MagicMock:
-    """Create a mock target event store that matches source position."""
-    return create_mock_store(global_position=100)
+def target_store() -> MemoryEventStore:
+    """Create an empty target event store."""
+    return MemoryEventStore(store_id="target")
 
 
 @pytest.fixture
@@ -68,11 +92,11 @@ def strict_config() -> MigrationConfig:
 
 @pytest.fixture
 def tracker(
-    source_store: MagicMock,
-    target_store: MagicMock,
+    source_store: MemoryEventStore,
+    target_store: MemoryEventStore,
     config: MigrationConfig,
 ) -> SyncLagTracker:
-    """Create a SyncLagTracker with mock dependencies."""
+    """Create a SyncLagTracker with real in-memory stores, source 50 events ahead."""
     return SyncLagTracker(
         source_store=source_store,
         target_store=target_store,
@@ -93,8 +117,8 @@ class TestLagSample:
         """Test creating a LagSample."""
         lag = SyncLag(
             events=50,
-            source_position=100,
-            target_position=50,
+            source_position=Position(store_id="source", key=(100,)),
+            target_position=Position(store_id="target", key=(50,)),
             timestamp=datetime.now(UTC),
         )
         sample = LagSample(lag=lag)
@@ -106,8 +130,8 @@ class TestLagSample:
         """Test creating a LagSample with custom timestamp."""
         lag = SyncLag(
             events=50,
-            source_position=100,
-            target_position=50,
+            source_position=Position(store_id="source", key=(100,)),
+            target_position=Position(store_id="target", key=(50,)),
             timestamp=datetime.now(UTC),
         )
         custom_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
@@ -198,8 +222,8 @@ class TestSyncLagTrackerInit:
 
     def test_init_with_defaults(
         self,
-        source_store: MagicMock,
-        target_store: MagicMock,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
     ) -> None:
         """Test initialization with default parameters."""
         tracker = SyncLagTracker(
@@ -216,8 +240,8 @@ class TestSyncLagTrackerInit:
 
     def test_init_with_config(
         self,
-        source_store: MagicMock,
-        target_store: MagicMock,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         strict_config: MigrationConfig,
     ) -> None:
         """Test initialization with custom config."""
@@ -232,12 +256,10 @@ class TestSyncLagTrackerInit:
 
     def test_init_with_tenant_id(
         self,
-        source_store: MagicMock,
-        target_store: MagicMock,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
     ) -> None:
         """Test initialization with tenant ID."""
-        from uuid import uuid4
-
         tenant_id = uuid4()
         tracker = SyncLagTracker(
             source_store=source_store,
@@ -249,8 +271,8 @@ class TestSyncLagTrackerInit:
 
     def test_init_with_custom_sample_history(
         self,
-        source_store: MagicMock,
-        target_store: MagicMock,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
     ) -> None:
         """Test initialization with custom max sample history."""
         tracker = SyncLagTracker(
@@ -263,8 +285,8 @@ class TestSyncLagTrackerInit:
 
     def test_init_with_tracing_disabled(
         self,
-        source_store: MagicMock,
-        target_store: MagicMock,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
     ) -> None:
         """Test initialization with tracing disabled."""
         tracker = SyncLagTracker(
@@ -278,8 +300,8 @@ class TestSyncLagTrackerInit:
     def test_properties(
         self,
         tracker: SyncLagTracker,
-        source_store: MagicMock,
-        target_store: MagicMock,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         config: MigrationConfig,
     ) -> None:
         """Test property accessors."""
@@ -301,25 +323,29 @@ class TestCalculateLag:
     async def test_calculate_lag_basic(
         self,
         tracker: SyncLagTracker,
-        source_store: MagicMock,
-        target_store: MagicMock,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
     ) -> None:
-        """Test basic lag calculation."""
+        """Source feed has 50 events and nothing has been copied (since=None):
+        the tracker counts all of them."""
+        await seed_events(source_store, 50)
+
         lag = await tracker.calculate_lag()
 
-        assert lag.events == 50  # 100 - 50
-        assert lag.source_position == 100
-        assert lag.target_position == 50
+        assert lag.events == 50
+        assert lag.source_position == await source_store.current_position()
+        assert lag.target_position == await target_store.current_position()
         assert lag.timestamp is not None
-        source_store.get_global_position.assert_called_once()
-        target_store.get_global_position.assert_called_once()
+        assert lag.count_is_bounded is False
 
     @pytest.mark.asyncio
     async def test_calculate_lag_updates_current(
         self,
         tracker: SyncLagTracker,
+        source_store: MemoryEventStore,
     ) -> None:
         """Test that calculate_lag updates current_lag property."""
+        await seed_events(source_store, 5)
         assert tracker.current_lag is None
 
         lag = await tracker.calculate_lag()
@@ -330,8 +356,10 @@ class TestCalculateLag:
     async def test_calculate_lag_adds_sample(
         self,
         tracker: SyncLagTracker,
+        source_store: MemoryEventStore,
     ) -> None:
         """Test that calculate_lag adds to sample history."""
+        await seed_events(source_store, 5)
         assert len(tracker._lag_samples) == 0
 
         await tracker.calculate_lag()
@@ -339,16 +367,38 @@ class TestCalculateLag:
         assert len(tracker._lag_samples) == 1
 
     @pytest.mark.asyncio
-    async def test_calculate_lag_zero_lag(
+    async def test_calculate_lag_zero_when_since_is_head(
         self,
-        source_store: MagicMock,
-        synced_target_store: MagicMock,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         config: MigrationConfig,
     ) -> None:
-        """Test calculating lag when stores are synced."""
+        """Target has copied everything: `since` is the source's current head,
+        so nothing counts as behind."""
         tracker = SyncLagTracker(
             source_store=source_store,
-            target_store=synced_target_store,
+            target_store=target_store,
+            config=config,
+            enable_tracing=False,
+        )
+        last_position = await seed_events(source_store, 25)
+
+        lag = await tracker.calculate_lag(since=last_position)
+
+        assert lag.events == 0
+        assert lag.is_converged is True
+
+    @pytest.mark.asyncio
+    async def test_calculate_lag_empty_source(
+        self,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
+        config: MigrationConfig,
+    ) -> None:
+        """An empty source feed reports zero lag regardless of `since`."""
+        tracker = SyncLagTracker(
+            source_store=source_store,
+            target_store=target_store,
             config=config,
             enable_tracing=False,
         )
@@ -356,38 +406,38 @@ class TestCalculateLag:
         lag = await tracker.calculate_lag()
 
         assert lag.events == 0
-        assert lag.is_converged is True
+        assert lag.count_is_bounded is False
 
     @pytest.mark.asyncio
-    async def test_calculate_lag_target_ahead(
+    async def test_calculate_lag_at_bound_reports_and_stops(
         self,
-        source_store: MagicMock,
-        config: MigrationConfig,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
+        strict_config: MigrationConfig,
     ) -> None:
-        """Test that lag is zero when target is ahead (edge case)."""
-        # Target somehow has more events (shouldn't happen but handle gracefully)
-        target_store = create_mock_store(global_position=150)
+        """With `threshold + 1` (or more) events behind, the tracker caps the
+        count at `threshold + 1`, marks it bounded, and stops reading."""
         tracker = SyncLagTracker(
             source_store=source_store,
             target_store=target_store,
-            config=config,
+            config=strict_config,  # threshold = 10
             enable_tracing=False,
         )
+        await seed_events(source_store, 15)
 
         lag = await tracker.calculate_lag()
 
-        assert lag.events == 0  # Clamped to zero
-        assert lag.source_position == 100
-        assert lag.target_position == 150
+        assert lag.events == strict_config.cutover_max_lag_events + 1
+        assert lag.count_is_bounded is True
 
     @pytest.mark.asyncio
     async def test_calculate_lag_multiple_calls(
         self,
-        source_store: MagicMock,
-        target_store: MagicMock,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         config: MigrationConfig,
     ) -> None:
-        """Test multiple lag calculations."""
+        """Test multiple lag calculations as the source feed grows."""
         tracker = SyncLagTracker(
             source_store=source_store,
             target_store=target_store,
@@ -395,14 +445,13 @@ class TestCalculateLag:
             enable_tracing=False,
         )
 
-        # First call: 100 - 50 = 50
+        await seed_events(source_store, 50)
         await tracker.calculate_lag()
 
-        # Update positions to simulate sync progress
-        target_store.get_global_position.return_value = 80
+        await seed_events(source_store, 20)
         lag2 = await tracker.calculate_lag()
 
-        assert lag2.events == 20  # 100 - 80
+        assert lag2.events == 70
         assert len(tracker._lag_samples) == 2
 
 
@@ -425,17 +474,18 @@ class TestConvergenceDetection:
     @pytest.mark.asyncio
     async def test_is_converged_within_threshold(
         self,
-        source_store: MagicMock,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         config: MigrationConfig,
     ) -> None:
         """Test is_converged returns True when within threshold."""
-        target_store = create_mock_store(global_position=50)
         tracker = SyncLagTracker(
             source_store=source_store,
             target_store=target_store,
             config=config,  # threshold = 100
             enable_tracing=False,
         )
+        await seed_events(source_store, 50)
 
         await tracker.calculate_lag()  # lag = 50
 
@@ -444,19 +494,20 @@ class TestConvergenceDetection:
     @pytest.mark.asyncio
     async def test_is_converged_exceeds_threshold(
         self,
-        source_store: MagicMock,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         strict_config: MigrationConfig,
     ) -> None:
         """Test is_converged returns False when exceeding threshold."""
-        target_store = create_mock_store(global_position=50)
         tracker = SyncLagTracker(
             source_store=source_store,
             target_store=target_store,
             config=strict_config,  # threshold = 10
             enable_tracing=False,
         )
+        await seed_events(source_store, 50)
 
-        await tracker.calculate_lag()  # lag = 50
+        await tracker.calculate_lag()  # lag = 11 (bounded)
 
         assert tracker.is_converged() is False
 
@@ -464,8 +515,10 @@ class TestConvergenceDetection:
     async def test_is_converged_custom_threshold(
         self,
         tracker: SyncLagTracker,
+        source_store: MemoryEventStore,
     ) -> None:
         """Test is_converged with custom max_lag parameter."""
+        await seed_events(source_store, 50)
         await tracker.calculate_lag()  # lag = 50
 
         assert tracker.is_converged(max_lag=100) is True
@@ -484,17 +537,18 @@ class TestConvergenceDetection:
     @pytest.mark.asyncio
     async def test_is_sync_ready_within_threshold(
         self,
-        source_store: MagicMock,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         config: MigrationConfig,
     ) -> None:
         """Test is_sync_ready returns True when within threshold."""
-        target_store = create_mock_store(global_position=50)
         tracker = SyncLagTracker(
             source_store=source_store,
             target_store=target_store,
             config=config,  # threshold = 100
             enable_tracing=False,
         )
+        await seed_events(source_store, 50)
 
         await tracker.calculate_lag()  # lag = 50
 
@@ -503,19 +557,20 @@ class TestConvergenceDetection:
     @pytest.mark.asyncio
     async def test_is_sync_ready_exceeds_threshold(
         self,
-        source_store: MagicMock,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         strict_config: MigrationConfig,
     ) -> None:
         """Test is_sync_ready returns False when exceeding threshold."""
-        target_store = create_mock_store(global_position=50)
         tracker = SyncLagTracker(
             source_store=source_store,
             target_store=target_store,
             config=strict_config,  # threshold = 10
             enable_tracing=False,
         )
+        await seed_events(source_store, 50)
 
-        await tracker.calculate_lag()  # lag = 50
+        await tracker.calculate_lag()  # lag = 11 (bounded)
 
         assert tracker.is_sync_ready() is False
 
@@ -531,8 +586,10 @@ class TestConvergenceDetection:
     async def test_is_fully_converged_with_lag(
         self,
         tracker: SyncLagTracker,
+        source_store: MemoryEventStore,
     ) -> None:
         """Test is_fully_converged returns False when there is lag."""
+        await seed_events(source_store, 50)
         await tracker.calculate_lag()  # lag = 50
 
         assert tracker.is_fully_converged() is False
@@ -540,19 +597,20 @@ class TestConvergenceDetection:
     @pytest.mark.asyncio
     async def test_is_fully_converged_zero_lag(
         self,
-        source_store: MagicMock,
-        synced_target_store: MagicMock,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         config: MigrationConfig,
     ) -> None:
-        """Test is_fully_converged returns True when lag is zero."""
+        """Test is_fully_converged returns True when target has copied everything."""
         tracker = SyncLagTracker(
             source_store=source_store,
-            target_store=synced_target_store,
+            target_store=target_store,
             config=config,
             enable_tracing=False,
         )
+        last_position = await seed_events(source_store, 25)
 
-        await tracker.calculate_lag()  # lag = 0
+        await tracker.calculate_lag(since=last_position)  # lag = 0
 
         assert tracker.is_fully_converged() is True
 
@@ -585,8 +643,10 @@ class TestTrackerLagStats:
     async def test_get_lag_stats_single_sample(
         self,
         tracker: SyncLagTracker,
+        source_store: MemoryEventStore,
     ) -> None:
         """Test get_lag_stats with single sample."""
+        await seed_events(source_store, 50)
         await tracker.calculate_lag()  # lag = 50
 
         stats = tracker.get_lag_stats()
@@ -602,11 +662,11 @@ class TestTrackerLagStats:
     @pytest.mark.asyncio
     async def test_get_lag_stats_multiple_samples(
         self,
-        source_store: MagicMock,
-        target_store: MagicMock,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         config: MigrationConfig,
     ) -> None:
-        """Test get_lag_stats with multiple samples."""
+        """Test get_lag_stats with multiple samples as target catches up."""
         tracker = SyncLagTracker(
             source_store=source_store,
             target_store=target_store,
@@ -614,30 +674,36 @@ class TestTrackerLagStats:
             enable_tracing=False,
         )
 
-        # First measurement: 100 - 50 = 50
+        positions = []
+        for _ in range(90):
+            result = await source_store.append(
+                (stream := sid()),
+                [LagTestEvent(aggregate_id=stream.aggregate_id)],
+                ExpectedVersion.any_(),
+            )
+            positions.append(result.position)
+
+        # First measurement: nothing copied yet -> 90 behind (bounded at 101)
         await tracker.calculate_lag()
 
-        # Second measurement: 100 - 70 = 30
-        target_store.get_global_position.return_value = 70
-        await tracker.calculate_lag()
+        # Second measurement: target has copied the first 60 -> 30 behind
+        await tracker.calculate_lag(since=positions[59])
 
-        # Third measurement: 100 - 90 = 10
-        target_store.get_global_position.return_value = 90
-        await tracker.calculate_lag()
+        # Third measurement: target has copied the first 80 -> 10 behind
+        await tracker.calculate_lag(since=positions[79])
 
         stats = tracker.get_lag_stats()
 
         assert stats.current_lag == 10
-        assert stats.average_lag == 30.0  # (50 + 30 + 10) / 3
-        assert stats.max_lag == 50
-        assert stats.min_lag == 10
         assert stats.sample_count == 3
+        assert stats.max_lag == 90
+        assert stats.min_lag == 10
 
     @pytest.mark.asyncio
     async def test_convergence_trend_detection(
         self,
-        source_store: MagicMock,
-        target_store: MagicMock,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         config: MigrationConfig,
     ) -> None:
         """Test that convergence trend is detected correctly."""
@@ -648,11 +714,20 @@ class TestTrackerLagStats:
             enable_tracing=False,
         )
 
-        # Create decreasing lag pattern (converging)
-        positions = [50, 60, 70, 80, 90, 95]  # target positions
-        for pos in positions:
-            target_store.get_global_position.return_value = pos
-            await tracker.calculate_lag()
+        positions = []
+        for _ in range(100):
+            result = await source_store.append(
+                (stream := sid()),
+                [LagTestEvent(aggregate_id=stream.aggregate_id)],
+                ExpectedVersion.any_(),
+            )
+            positions.append(result.position)
+
+        # Decreasing lag pattern (converging): target catches up over time
+        copied_counts = [50, 60, 70, 80, 90, 95]
+        for copied in copied_counts:
+            since = positions[copied - 1]
+            await tracker.calculate_lag(since=since)
 
         stats = tracker.get_lag_stats()
 
@@ -661,8 +736,8 @@ class TestTrackerLagStats:
     @pytest.mark.asyncio
     async def test_non_convergence_trend_detection(
         self,
-        source_store: MagicMock,
-        target_store: MagicMock,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         config: MigrationConfig,
     ) -> None:
         """Test that non-convergence (diverging) is detected."""
@@ -673,12 +748,20 @@ class TestTrackerLagStats:
             enable_tracing=False,
         )
 
-        # Create increasing lag pattern (diverging)
-        # Source stays at 100, target decreases
-        positions = [90, 80, 70, 60, 50, 40]  # target positions
-        for pos in positions:
-            target_store.get_global_position.return_value = pos
-            await tracker.calculate_lag()
+        positions = []
+        for _ in range(100):
+            result = await source_store.append(
+                (stream := sid()),
+                [LagTestEvent(aggregate_id=stream.aggregate_id)],
+                ExpectedVersion.any_(),
+            )
+            positions.append(result.position)
+
+        # Increasing lag pattern (diverging): target falls further behind
+        copied_counts = [90, 80, 70, 60, 50, 40]
+        for copied in copied_counts:
+            since = positions[copied - 1]
+            await tracker.calculate_lag(since=since)
 
         stats = tracker.get_lag_stats()
 
@@ -696,8 +779,8 @@ class TestSampleHistoryManagement:
     @pytest.mark.asyncio
     async def test_get_sample_history(
         self,
-        source_store: MagicMock,
-        target_store: MagicMock,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         config: MigrationConfig,
     ) -> None:
         """Test getting sample history."""
@@ -708,9 +791,17 @@ class TestSampleHistoryManagement:
             enable_tracing=False,
         )
 
+        positions = []
+        for _ in range(50):
+            result = await source_store.append(
+                (stream := sid()),
+                [LagTestEvent(aggregate_id=stream.aggregate_id)],
+                ExpectedVersion.any_(),
+            )
+            positions.append(result.position)
+
         await tracker.calculate_lag()
-        target_store.get_global_position.return_value = 70
-        await tracker.calculate_lag()
+        await tracker.calculate_lag(since=positions[19])
 
         history = tracker.get_sample_history()
 
@@ -727,8 +818,8 @@ class TestSampleHistoryManagement:
         # Add some samples manually
         lag = SyncLag(
             events=50,
-            source_position=100,
-            target_position=50,
+            source_position=Position(store_id="source", key=(100,)),
+            target_position=Position(store_id="target", key=(50,)),
             timestamp=datetime.now(UTC),
         )
         tracker.record_lag(lag)
@@ -745,8 +836,8 @@ class TestSampleHistoryManagement:
     @pytest.mark.asyncio
     async def test_sample_history_max_size(
         self,
-        source_store: MagicMock,
-        target_store: MagicMock,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         config: MigrationConfig,
     ) -> None:
         """Test that sample history respects max size."""
@@ -759,9 +850,9 @@ class TestSampleHistoryManagement:
             max_sample_history=max_history,
         )
 
-        # Add more samples than max
-        for i in range(max_history + 3):
-            target_store.get_global_position.return_value = 50 + i
+        # Take more measurements than max, growing the source feed each time.
+        for _ in range(max_history + 3):
+            await seed_events(source_store, 1)
             await tracker.calculate_lag()
 
         assert len(tracker._lag_samples) == max_history
@@ -782,8 +873,8 @@ class TestManualLagRecording:
         """Test manually recording a lag measurement."""
         lag = SyncLag(
             events=25,
-            source_position=100,
-            target_position=75,
+            source_position=Position(store_id="source", key=(100,)),
+            target_position=Position(store_id="target", key=(75,)),
             timestamp=datetime.now(UTC),
         )
 
@@ -801,8 +892,8 @@ class TestManualLagRecording:
         for i in range(3):
             lag = SyncLag(
                 events=50 - (i * 10),
-                source_position=100,
-                target_position=50 + (i * 10),
+                source_position=Position(store_id="source", key=(100,)),
+                target_position=Position(store_id="target", key=(50 + (i * 10),)),
                 timestamp=datetime.now(UTC),
             )
             tracker.record_lag(lag)
@@ -819,8 +910,8 @@ class TestManualLagRecording:
         for lag_events in lags:
             lag = SyncLag(
                 events=lag_events,
-                source_position=100,
-                target_position=100 - lag_events,
+                source_position=Position(store_id="source", key=(100,)),
+                target_position=Position(store_id="target", key=(100 - lag_events,)),
                 timestamp=datetime.now(UTC),
             )
             tracker.record_lag(lag)
@@ -844,11 +935,11 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_empty_stores(
         self,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         config: MigrationConfig,
     ) -> None:
-        """Test with empty stores (both at position 0)."""
-        source_store = create_mock_store(global_position=0)
-        target_store = create_mock_store(global_position=0)
+        """Test with an empty source feed."""
         tracker = SyncLagTracker(
             source_store=source_store,
             target_store=target_store,
@@ -863,41 +954,44 @@ class TestEdgeCases:
         assert tracker.is_fully_converged() is True
 
     @pytest.mark.asyncio
-    async def test_large_lag(
+    async def test_large_lag_is_bounded(
         self,
-        config: MigrationConfig,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
+        strict_config: MigrationConfig,
     ) -> None:
-        """Test with very large lag."""
-        source_store = create_mock_store(global_position=1_000_000)
-        target_store = create_mock_store(global_position=0)
+        """A very large backlog is capped at threshold + 1 and marked bounded."""
         tracker = SyncLagTracker(
             source_store=source_store,
             target_store=target_store,
-            config=config,
+            config=strict_config,  # threshold = 10
             enable_tracing=False,
         )
+        await seed_events(source_store, 1_000)
 
         lag = await tracker.calculate_lag()
 
-        assert lag.events == 1_000_000
+        assert lag.events == strict_config.cutover_max_lag_events + 1
+        assert lag.count_is_bounded is True
         assert tracker.is_sync_ready() is False
-        assert tracker.is_converged(max_lag=1_000_000) is True
+        assert tracker.is_converged(max_lag=1_000) is True
 
     @pytest.mark.asyncio
     async def test_exact_threshold(
         self,
-        source_store: MagicMock,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         config: MigrationConfig,
     ) -> None:
         """Test when lag is exactly at threshold."""
-        # Config threshold is 100, set lag to exactly 100
-        target_store = create_mock_store(global_position=0)
+        # Config threshold is 100, source has exactly 100 events behind.
         tracker = SyncLagTracker(
             source_store=source_store,
             target_store=target_store,
             config=config,  # threshold = 100
             enable_tracing=False,
         )
+        await seed_events(source_store, 100)
 
         await tracker.calculate_lag()  # lag = 100
 
@@ -913,8 +1007,8 @@ class TestEdgeCases:
         for i in range(3):
             lag = SyncLag(
                 events=50 - (i * 10),
-                source_position=100,
-                target_position=50 + (i * 10),
+                source_position=Position(store_id="source", key=(100,)),
+                target_position=Position(store_id="target", key=(50 + (i * 10),)),
                 timestamp=datetime.now(UTC),
             )
             tracker.record_lag(lag)
@@ -936,13 +1030,11 @@ class TestWithTenantId:
     @pytest.mark.asyncio
     async def test_tracker_with_tenant_id(
         self,
-        source_store: MagicMock,
-        target_store: MagicMock,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         config: MigrationConfig,
     ) -> None:
         """Test tracker operations with tenant ID set."""
-        from uuid import uuid4
-
         tenant_id = uuid4()
         tracker = SyncLagTracker(
             source_store=source_store,
@@ -951,6 +1043,19 @@ class TestWithTenantId:
             tenant_id=tenant_id,
             enable_tracing=False,
         )
+        # Only events for this tenant should count toward the lag.
+        for _ in range(50):
+            await source_store.append(
+                sid(),
+                [(lambda s: LagTestEvent(aggregate_id=s.aggregate_id, tenant_id=tenant_id))(sid())],
+                ExpectedVersion.any_(),
+            )
+        for _ in range(5):
+            await source_store.append(
+                sid(),
+                [(lambda s: LagTestEvent(aggregate_id=s.aggregate_id, tenant_id=uuid4()))(sid())],
+                ExpectedVersion.any_(),
+            )
 
         lag = await tracker.calculate_lag()
 
@@ -969,11 +1074,12 @@ class TestIntegrationScenarios:
     @pytest.mark.asyncio
     async def test_typical_migration_scenario(
         self,
-        source_store: MagicMock,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         config: MigrationConfig,
     ) -> None:
-        """Test a typical migration scenario with decreasing lag."""
-        target_store = create_mock_store(global_position=0)
+        """Test a typical migration scenario with decreasing lag as the
+        target catches up on a fixed source feed of 100 events."""
         tracker = SyncLagTracker(
             source_store=source_store,
             target_store=target_store,
@@ -981,12 +1087,21 @@ class TestIntegrationScenarios:
             enable_tracing=False,
         )
 
-        # Simulate sync progress
-        target_positions = [0, 20, 40, 60, 80, 90, 95, 99, 100]
+        positions = []
+        for _ in range(100):
+            result = await source_store.append(
+                (stream := sid()),
+                [LagTestEvent(aggregate_id=stream.aggregate_id)],
+                ExpectedVersion.any_(),
+            )
+            positions.append(result.position)
 
-        for pos in target_positions:
-            target_store.get_global_position.return_value = pos
-            await tracker.calculate_lag()
+        # Simulate sync progress: target copies more of the source feed each pass.
+        copied_counts = [0, 20, 40, 60, 80, 90, 95, 99, 100]
+
+        for copied in copied_counts:
+            since = positions[copied - 1] if copied > 0 else None
+            await tracker.calculate_lag(since=since)
 
         # Final state
         assert tracker.is_sync_ready() is True
@@ -1001,11 +1116,11 @@ class TestIntegrationScenarios:
     @pytest.mark.asyncio
     async def test_fluctuating_lag_scenario(
         self,
-        source_store: MagicMock,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         config: MigrationConfig,
     ) -> None:
         """Test scenario where lag fluctuates but generally improves."""
-        target_store = create_mock_store(global_position=0)
         tracker = SyncLagTracker(
             source_store=source_store,
             target_store=target_store,
@@ -1013,13 +1128,21 @@ class TestIntegrationScenarios:
             enable_tracing=False,
         )
 
-        # Fluctuating but improving (source also moving)
-        # Source: 100, Target moves toward it
-        target_positions = [0, 30, 25, 50, 45, 70, 65, 90, 95, 100]
+        positions = []
+        for _ in range(100):
+            result = await source_store.append(
+                (stream := sid()),
+                [LagTestEvent(aggregate_id=stream.aggregate_id)],
+                ExpectedVersion.any_(),
+            )
+            positions.append(result.position)
 
-        for pos in target_positions:
-            target_store.get_global_position.return_value = pos
-            await tracker.calculate_lag()
+        # Fluctuating but improving progress through the fixed source feed.
+        copied_counts = [0, 30, 25, 50, 45, 70, 65, 90, 95, 100]
+
+        for copied in copied_counts:
+            since = positions[copied - 1] if copied > 0 else None
+            await tracker.calculate_lag(since=since)
 
         stats = tracker.get_lag_stats()
 

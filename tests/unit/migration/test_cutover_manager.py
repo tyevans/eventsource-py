@@ -29,6 +29,7 @@ from eventsource.migration.models import (
     TenantMigrationState,
     TenantRouting,
 )
+from eventsource.ports import Position
 
 # =============================================================================
 # Test Fixtures
@@ -83,7 +84,7 @@ def mock_router():
 
     # Mock target store
     mock_store = MagicMock()
-    mock_store.get_global_position = AsyncMock(return_value=100)
+    mock_store.current_position = AsyncMock(return_value=Position(store_id="target", key=(100,)))
     router.get_store.return_value = mock_store
 
     return router
@@ -117,8 +118,8 @@ def mock_lag_tracker():
     # Default: synced (zero lag)
     lag = SyncLag(
         events=0,
-        source_position=100,
-        target_position=100,
+        source_position=Position(store_id="source", key=(100,)),
+        target_position=Position(store_id="target", key=(100,)),
         timestamp=datetime.now(UTC),
     )
     tracker.current_lag = lag
@@ -317,8 +318,8 @@ class TestSuccessfulCutover:
         # Set small lag (within threshold)
         lag = SyncLag(
             events=50,  # Below threshold of 100
-            source_position=100,
-            target_position=50,
+            source_position=Position(store_id="source", key=(100,)),
+            target_position=Position(store_id="target", key=(50,)),
             timestamp=datetime.now(UTC),
         )
         mock_lag_tracker.current_lag = lag
@@ -366,22 +367,22 @@ class TestSuccessfulCutover:
         # Initial lag
         initial_lag = SyncLag(
             events=10,
-            source_position=100,
-            target_position=90,
+            source_position=Position(store_id="source", key=(100,)),
+            target_position=Position(store_id="target", key=(90,)),
             timestamp=datetime.now(UTC),
         )
         # Final lag (improved during pause)
         final_lag = SyncLag(
             events=2,
-            source_position=100,
-            target_position=98,
+            source_position=Position(store_id="source", key=(100,)),
+            target_position=Position(store_id="target", key=(98,)),
             timestamp=datetime.now(UTC),
         )
 
         # Set up mock to return different lags on successive calls
         call_count = 0
 
-        async def update_lag():
+        async def update_lag(*, since=None):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
@@ -534,8 +535,8 @@ class TestSyncLagValidation:
         # Set high lag
         lag = SyncLag(
             events=50,  # Exceeds strict threshold of 10
-            source_position=100,
-            target_position=50,
+            source_position=Position(store_id="source", key=(100,)),
+            target_position=Position(store_id="target", key=(50,)),
             timestamp=datetime.now(UTC),
         )
         mock_lag_tracker.current_lag = lag
@@ -601,8 +602,8 @@ class TestSyncLagValidation:
         # Set lag exactly at threshold
         lag = SyncLag(
             events=100,  # Exactly at threshold
-            source_position=200,
-            target_position=100,
+            source_position=Position(store_id="source", key=(200,)),
+            target_position=Position(store_id="target", key=(100,)),
             timestamp=datetime.now(UTC),
         )
         mock_lag_tracker.current_lag = lag
@@ -651,8 +652,8 @@ class TestTimeoutEnforcement:
         # Zero lag so lag check passes
         mock_lag_tracker.current_lag = SyncLag(
             events=0,
-            source_position=100,
-            target_position=100,
+            source_position=Position(store_id="source", key=(100,)),
+            target_position=Position(store_id="target", key=(100,)),
             timestamp=datetime.now(UTC),
         )
 
@@ -723,8 +724,8 @@ class TestAutomaticRollback:
         """Test rollback when lag check fails."""
         mock_lag_tracker.current_lag = SyncLag(
             events=100,  # Exceeds strict threshold
-            source_position=200,
-            target_position=100,
+            source_position=Position(store_id="source", key=(200,)),
+            target_position=Position(store_id="target", key=(100,)),
             timestamp=datetime.now(UTC),
         )
 
@@ -760,7 +761,7 @@ class TestAutomaticRollback:
         """Test rollback when target store health check fails."""
         # Make target store health check fail
         mock_store = MagicMock()
-        mock_store.get_global_position = AsyncMock(side_effect=Exception("Connection failed"))
+        mock_store.current_position = AsyncMock(side_effect=Exception("Connection failed"))
         mock_router.get_store.return_value = mock_store
 
         result = await cutover_manager.execute_cutover(
@@ -815,14 +816,14 @@ class TestAutomaticRollback:
         # Set low lag so lag check passes
         mock_lag_tracker.current_lag = SyncLag(
             events=0,
-            source_position=100,
-            target_position=100,
+            source_position=Position(store_id="source", key=(100,)),
+            target_position=Position(store_id="target", key=(100,)),
             timestamp=datetime.now(UTC),
         )
 
         # Make target store health check fail to trigger rollback
         mock_store = MagicMock()
-        mock_store.get_global_position = AsyncMock(side_effect=Exception("Connection failed"))
+        mock_store.current_position = AsyncMock(side_effect=Exception("Connection failed"))
         mock_router.get_store.return_value = mock_store
 
         # Make rollback fail
@@ -922,8 +923,8 @@ class TestWritePauseResume:
         # Set high lag to trigger failure
         mock_lag_tracker.current_lag = SyncLag(
             events=100,
-            source_position=200,
-            target_position=100,
+            source_position=Position(store_id="source", key=(200,)),
+            target_position=Position(store_id="target", key=(100,)),
             timestamp=datetime.now(UTC),
         )
 
@@ -1115,8 +1116,8 @@ class TestCutoverReadinessValidation:
         """Test readiness validation fails on high lag."""
         mock_lag_tracker.current_lag = SyncLag(
             events=100,
-            source_position=200,
-            target_position=100,
+            source_position=Position(store_id="source", key=(200,)),
+            target_position=Position(store_id="target", key=(100,)),
             timestamp=datetime.now(UTC),
         )
 

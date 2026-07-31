@@ -1,7 +1,7 @@
 """
 Load Testing and Benchmarks for Migration Operations (P4-005).
 
-This module contains synthetic benchmarks using InMemoryEventStore to establish
+This module contains synthetic benchmarks using MemoryEventStore to establish
 baseline performance characteristics for migration system components.
 
 Performance Targets:
@@ -43,6 +43,8 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from eventsource.adapters.memory import MemoryEventStore
+from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.migration.bulk_copier import BulkCopier
 from eventsource.migration.dual_write import DualWriteInterceptor
@@ -54,9 +56,13 @@ from eventsource.migration.models import (
     PositionMapping,
 )
 from eventsource.migration.position_mapper import PositionMapper
+from eventsource.ports import (
+    AppendResult,
+    EventEnvelope,
+    ExpectedVersion,
+    FeedReadOptions,
+)
 from eventsource.ports.positions import Position
-from eventsource.stores.in_memory import InMemoryEventStore
-from eventsource.stores.interface import AppendResult, ReadOptions, StoredEvent
 
 SOURCE_STORE_ID = "source-store"
 TARGET_STORE_ID = "target-store"
@@ -171,6 +177,52 @@ class MemoryResult:
 
 
 # =============================================================================
+# Failure-Injecting Store Wrapper
+# =============================================================================
+
+
+class RaisingTargetStore:
+    """
+    `FullEventStore`-shaped wrapper around `MemoryEventStore` whose
+    `append` always raises.
+
+    Structural conformance only -- delegates the other seven members to
+    the inner store and never subclasses the legacy `EventStore` ABC.
+    """
+
+    max_append_batch: int | None = None
+
+    def __init__(self, inner: MemoryEventStore | None = None) -> None:
+        self._inner = inner or MemoryEventStore()
+
+    async def append(
+        self,
+        stream: StreamId,
+        events: list[DomainEvent],
+        expected: ExpectedVersion,
+    ) -> AppendResult:
+        raise Exception("Simulated target failure")
+
+    def read_stream(self, stream: StreamId, options=None):
+        return self._inner.read_stream(stream, options)
+
+    async def get_stream_version(self, stream: StreamId) -> int:
+        return await self._inner.get_stream_version(stream)
+
+    async def event_exists(self, event_id: UUID) -> bool:
+        return await self._inner.event_exists(event_id)
+
+    def read_all(self, from_position: Position | None = None, options=None):
+        return self._inner.read_all(from_position, options)
+
+    async def current_position(self) -> Position | None:
+        return await self._inner.current_position()
+
+    def read_category(self, category: str, options=None):
+        return self._inner.read_category(category, options)
+
+
+# =============================================================================
 # Mock Repositories for Benchmarks
 # =============================================================================
 
@@ -229,8 +281,8 @@ class InMemoryMigrationRepository:
         self,
         migration_id: UUID,
         events_copied: int,
-        last_source_position: int,
-        last_target_position: int,
+        last_source_position: Position | None,
+        last_target_position: Position | None = None,
     ) -> None:
         """Update migration progress."""
         migration = self._migrations.get(migration_id)
@@ -378,12 +430,12 @@ class InMemoryPositionMappingRepository:
 
 
 async def create_test_events(
-    store: InMemoryEventStore,
+    store: MemoryEventStore,
     tenant_id: UUID,
     count: int,
     aggregate_count: int = 100,
     payload_size: int = 100,
-) -> list[StoredEvent]:
+) -> list[EventEnvelope]:
     """
     Create test events in a store.
 
@@ -398,7 +450,7 @@ async def create_test_events(
         List of stored events
     """
     payload = "x" * payload_size
-    stored_events: list[StoredEvent] = []
+    stored_events: list[EventEnvelope] = []
 
     events_per_aggregate = count // aggregate_count
     remaining = count % aggregate_count
@@ -417,16 +469,15 @@ async def create_test_events(
         ]
 
         if events:
-            await store.append_events(
-                aggregate_id,
-                "BenchmarkAggregate",
+            await store.append(
+                StreamId(aggregate_id=aggregate_id, category="BenchmarkAggregate"),
                 events,
-                0,
+                ExpectedVersion.no_stream(),
             )
 
     # Collect all stored events
-    async for stored in store.read_all(ReadOptions(tenant_id=tenant_id)):
-        stored_events.append(stored)
+    async for envelope in store.read_all(None, FeedReadOptions(tenant_id=tenant_id)):
+        stored_events.append(envelope)
 
     return stored_events
 
@@ -463,8 +514,8 @@ class TestBulkCopyThroughput:
         Measures events/second for different batch size configurations.
         """
         tenant_id = uuid4()
-        source_store = InMemoryEventStore(enable_tracing=False)
-        target_store = InMemoryEventStore(enable_tracing=False)
+        source_store = MemoryEventStore()
+        target_store = MemoryEventStore()
         migration_repo = InMemoryMigrationRepository()
 
         # Create test events in source
@@ -521,8 +572,8 @@ class TestBulkCopyThroughput:
     async def test_bulk_copy_with_large_payload(self) -> None:
         """Test bulk copy performance with larger event payloads."""
         tenant_id = uuid4()
-        source_store = InMemoryEventStore(enable_tracing=False)
-        target_store = InMemoryEventStore(enable_tracing=False)
+        source_store = MemoryEventStore()
+        target_store = MemoryEventStore()
         migration_repo = InMemoryMigrationRepository()
 
         event_count = 5_000
@@ -586,8 +637,8 @@ class TestDualWriteOverhead:
 
         Measures the overhead introduced by dual-write mode.
         """
-        source_store = InMemoryEventStore(enable_tracing=False)
-        target_store = InMemoryEventStore(enable_tracing=False)
+        source_store = MemoryEventStore()
+        target_store = MemoryEventStore()
         tenant_id = uuid4()
 
         # Number of operations for statistical significance
@@ -605,7 +656,11 @@ class TestDualWriteOverhead:
             )
 
             start = time.monotonic()
-            await source_store.append_events(aggregate_id, "BenchmarkAggregate", [event], 0)
+            await source_store.append(
+                StreamId(aggregate_id=aggregate_id, category="BenchmarkAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
+            )
             end = time.monotonic()
             single_write_times.append((end - start) * 1000)  # Convert to ms
 
@@ -628,7 +683,11 @@ class TestDualWriteOverhead:
             )
 
             start = time.monotonic()
-            await interceptor.append_events(aggregate_id, "BenchmarkAggregate", [event], 0)
+            await interceptor.append(
+                StreamId(aggregate_id=aggregate_id, category="BenchmarkAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
+            )
             end = time.monotonic()
             dual_write_times.append((end - start) * 1000)
 
@@ -657,16 +716,12 @@ class TestDualWriteOverhead:
 
         Verifies that target failures don't significantly impact latency.
         """
-        source_store = InMemoryEventStore(enable_tracing=False)
+        source_store = MemoryEventStore()
         tenant_id = uuid4()
         num_operations = 200
 
-        # Create a failing target store
-        class FailingStore(InMemoryEventStore):
-            async def append_events(self, *args, **kwargs) -> AppendResult:
-                raise Exception("Simulated target failure")
-
-        failing_target = FailingStore(enable_tracing=False)
+        # Failing target store: composition wrapper, not a subclass.
+        failing_target = RaisingTargetStore()
 
         interceptor = DualWriteInterceptor(
             source_store=source_store,
@@ -685,11 +740,16 @@ class TestDualWriteOverhead:
             )
 
             start = time.monotonic()
-            result = await interceptor.append_events(aggregate_id, "BenchmarkAggregate", [event], 0)
+            result = await interceptor.append(
+                StreamId(aggregate_id=aggregate_id, category="BenchmarkAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
+            )
             end = time.monotonic()
 
-            # Source write should still succeed
-            assert result.success
+            # Source write should still succeed: no exception propagated
+            # means the target's failure was absorbed by the interceptor.
+            assert result.new_version >= 1
             latencies.append((end - start) * 1000)
 
         result = LatencyResult.from_samples("dual_write_target_failure", latencies)
@@ -707,8 +767,8 @@ class TestDualWriteOverhead:
         """
         Test dual-write performance with batches of multiple events.
         """
-        source_store = InMemoryEventStore(enable_tracing=False)
-        target_store = InMemoryEventStore(enable_tracing=False)
+        source_store = MemoryEventStore()
+        target_store = MemoryEventStore()
         tenant_id = uuid4()
 
         interceptor = DualWriteInterceptor(
@@ -735,7 +795,11 @@ class TestDualWriteOverhead:
                 ]
 
                 start = time.monotonic()
-                await interceptor.append_events(aggregate_id, "BenchmarkAggregate", events, 0)
+                await interceptor.append(
+                    StreamId(aggregate_id=aggregate_id, category="BenchmarkAggregate"),
+                    events,
+                    ExpectedVersion.no_stream(),
+                )
                 end = time.monotonic()
                 latencies.append((end - start) * 1000)
 
@@ -771,8 +835,8 @@ class TestMemoryUsage:
         not total event count.
         """
         tenant_id = uuid4()
-        source_store = InMemoryEventStore(enable_tracing=False)
-        target_store = InMemoryEventStore(enable_tracing=False)
+        source_store = MemoryEventStore()
+        target_store = MemoryEventStore()
         migration_repo = InMemoryMigrationRepository()
 
         event_count = 10_000
@@ -843,8 +907,8 @@ class TestMemoryUsage:
             for i in range(count):
                 mapping = PositionMapping(
                     migration_id=migration_id,
-                    source_position=i,
-                    target_position=i // 2,
+                    source_position=src_pos(i),
+                    target_position=tgt_pos(i // 2),
                     event_id=uuid4(),
                     mapped_at=now,
                 )
@@ -890,8 +954,8 @@ class TestConcurrentMigrations:
 
         async def run_migration(index: int) -> BenchmarkResult:
             tenant_id = uuid4()
-            source_store = InMemoryEventStore(enable_tracing=False)
-            target_store = InMemoryEventStore(enable_tracing=False)
+            source_store = MemoryEventStore()
+            target_store = MemoryEventStore()
             migration_repo = InMemoryMigrationRepository()
 
             await create_test_events(source_store, tenant_id, events_per_migration)
@@ -955,8 +1019,8 @@ class TestConcurrentMigrations:
         """
         Test concurrent dual-write operations.
         """
-        source_store = InMemoryEventStore(enable_tracing=False)
-        target_store = InMemoryEventStore(enable_tracing=False)
+        source_store = MemoryEventStore()
+        target_store = MemoryEventStore()
 
         num_tenants = 5
         ops_per_tenant = 100
@@ -981,7 +1045,11 @@ class TestConcurrentMigrations:
                 )
 
                 start = time.monotonic()
-                await interceptor.append_events(aggregate_id, "BenchmarkAggregate", [event], 0)
+                await interceptor.append(
+                    StreamId(aggregate_id=aggregate_id, category="BenchmarkAggregate"),
+                    [event],
+                    ExpectedVersion.no_stream(),
+                )
                 end = time.monotonic()
                 latencies.append((end - start) * 1000)
 
@@ -1276,8 +1344,8 @@ class TestPerformanceRegression:
 
     @pytest.mark.asyncio
     async def test_event_store_append_regression(self) -> None:
-        """Ensure InMemoryEventStore append performance hasn't regressed."""
-        store = InMemoryEventStore(enable_tracing=False)
+        """Ensure MemoryEventStore append performance hasn't regressed."""
+        store = MemoryEventStore()
         tenant_id = uuid4()
         num_operations = 1_000
 
@@ -1291,7 +1359,11 @@ class TestPerformanceRegression:
             )
 
             start = time.monotonic()
-            await store.append_events(aggregate_id, "BenchmarkAggregate", [event], 0)
+            await store.append(
+                StreamId(aggregate_id=aggregate_id, category="BenchmarkAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
+            )
             end = time.monotonic()
             latencies.append((end - start) * 1000)
 
@@ -1303,8 +1375,8 @@ class TestPerformanceRegression:
 
     @pytest.mark.asyncio
     async def test_event_store_read_all_regression(self) -> None:
-        """Ensure InMemoryEventStore read_all performance hasn't regressed."""
-        store = InMemoryEventStore(enable_tracing=False)
+        """Ensure MemoryEventStore read_all performance hasn't regressed."""
+        store = MemoryEventStore()
         tenant_id = uuid4()
 
         # Create 10K events
@@ -1314,7 +1386,7 @@ class TestPerformanceRegression:
         start_time = time.monotonic()
         count = 0
 
-        async for _ in store.read_all(ReadOptions(tenant_id=tenant_id)):
+        async for _ in store.read_all(None, FeedReadOptions(tenant_id=tenant_id)):
             count += 1
 
         end_time = time.monotonic()
@@ -1336,8 +1408,8 @@ class TestPerformanceRegression:
     @pytest.mark.asyncio
     async def test_dual_write_regression(self) -> None:
         """Ensure DualWriteInterceptor performance hasn't regressed."""
-        source_store = InMemoryEventStore(enable_tracing=False)
-        target_store = InMemoryEventStore(enable_tracing=False)
+        source_store = MemoryEventStore()
+        target_store = MemoryEventStore()
         tenant_id = uuid4()
 
         interceptor = DualWriteInterceptor(
@@ -1358,7 +1430,11 @@ class TestPerformanceRegression:
             )
 
             start = time.monotonic()
-            await interceptor.append_events(aggregate_id, "BenchmarkAggregate", [event], 0)
+            await interceptor.append(
+                StreamId(aggregate_id=aggregate_id, category="BenchmarkAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
+            )
             end = time.monotonic()
             latencies.append((end - start) * 1000)
 
@@ -1394,8 +1470,8 @@ class TestBenchmarkSummary:
 
         # Bulk copy benchmark
         tenant_id = uuid4()
-        source_store = InMemoryEventStore(enable_tracing=False)
-        target_store = InMemoryEventStore(enable_tracing=False)
+        source_store = MemoryEventStore()
+        target_store = MemoryEventStore()
         migration_repo = InMemoryMigrationRepository()
 
         await create_test_events(source_store, tenant_id, 5_000)
@@ -1429,8 +1505,8 @@ class TestBenchmarkSummary:
         summary.append(f"  Throughput: {events_copied / bulk_copy_time:,.0f} events/s")
 
         # Dual-write benchmark
-        source_store2 = InMemoryEventStore(enable_tracing=False)
-        target_store2 = InMemoryEventStore(enable_tracing=False)
+        source_store2 = MemoryEventStore()
+        target_store2 = MemoryEventStore()
         tenant_id2 = uuid4()
 
         interceptor = DualWriteInterceptor(
@@ -1446,7 +1522,11 @@ class TestBenchmarkSummary:
             event = BenchmarkEvent(aggregate_id=aggregate_id, tenant_id=tenant_id2)
 
             start = time.monotonic()
-            await interceptor.append_events(aggregate_id, "BenchmarkAggregate", [event], 0)
+            await interceptor.append(
+                StreamId(aggregate_id=aggregate_id, category="BenchmarkAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
+            )
             dual_write_times.append((time.monotonic() - start) * 1000)
 
         dual_result = LatencyResult.from_samples("dual_write", dual_write_times)

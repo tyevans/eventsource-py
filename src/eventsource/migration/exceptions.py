@@ -818,7 +818,8 @@ class BulkCopyError(MigrationError):
     process, which is typically recoverable by resuming.
 
     Attributes:
-        last_position: The last successfully copied position.
+        last_position: The last successfully copied source position
+            (None when nothing had been copied yet).
         original_error: The underlying error message.
     """
 
@@ -837,13 +838,14 @@ class BulkCopyError(MigrationError):
     def __init__(
         self,
         migration_id: UUID,
-        last_position: int,
+        last_position: Position | None,
         error: str,
     ) -> None:
         self.last_position = last_position
         self.original_error = error
+        rendered = last_position.to_str() if last_position is not None else "start"
         super().__init__(
-            message=f"Bulk copy failed at position {last_position}: {error}",
+            message=f"Bulk copy failed at position {rendered}: {error}",
             migration_id=migration_id,
             recoverable=True,
             suggested_action="Resume migration to continue from last checkpoint",

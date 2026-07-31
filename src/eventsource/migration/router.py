@@ -26,7 +26,7 @@ Usage:
     >>> router.register_store("dedicated", dedicated_store)
     >>>
     >>> # Operations route based on tenant state
-    >>> await router.append_events(aggregate_id, "Order", events, 0)
+    >>> await router.append(stream, events, ExpectedVersion.exact(0))
 
 See Also:
     - Task: P1-005-tenant-store-router.md
@@ -36,11 +36,11 @@ See Also:
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator
-from datetime import datetime
+from collections.abc import AsyncIterator, Sequence
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.migration.models import TenantMigrationState
 from eventsource.migration.write_pause import (
@@ -54,16 +54,18 @@ from eventsource.observability.attributes import (
     ATTR_AGGREGATE_TYPE,
     ATTR_EVENT_COUNT,
     ATTR_EXPECTED_VERSION,
-    ATTR_FROM_VERSION,
     ATTR_POSITION,
     ATTR_TENANT_ID,
 )
-from eventsource.stores.interface import (
+from eventsource.ports import (
     AppendResult,
-    EventStore,
-    EventStream,
-    ReadOptions,
-    StoredEvent,
+    CategoryReadOptions,
+    EventEnvelope,
+    ExpectedVersion,
+    FeedReadOptions,
+    FullEventStore,
+    Position,
+    StreamReadOptions,
 )
 
 if TYPE_CHECKING:
@@ -88,9 +90,12 @@ class StoreNotFoundError(Exception):
         super().__init__(f"Store not found: {store_id}")
 
 
-class TenantStoreRouter(EventStore):
+class TenantStoreRouter:
     """
-    EventStore implementation that routes operations by tenant.
+    `FullEventStore`-shaped wrapper that routes operations by tenant.
+
+    Structural conformance only -- the router satisfies `FullEventStore`
+    by having its eight members, not by inheriting from any base class.
 
     Routes read and write operations to the appropriate store based on:
     - Tenant routing configuration (which store the tenant is on)
@@ -115,15 +120,21 @@ class TenantStoreRouter(EventStore):
         ... )
         >>>
         >>> # Operations route based on tenant
-        >>> await router.append_events(aggregate_id, "Order", events, 0)
+        >>> await router.append(stream, events, ExpectedVersion.exact(0))
+
+    Attributes:
+        max_append_batch: The router imposes no batch-size limit of its
+            own; the store it routes to enforces whatever limit it has.
     """
+
+    max_append_batch: int | None = None
 
     def __init__(
         self,
-        default_store: EventStore,
+        default_store: FullEventStore,
         routing_repo: TenantRoutingRepository,
-        stores: dict[str, EventStore] | None = None,
         *,
+        stores: dict[str, FullEventStore] | None = None,
         default_store_id: str = "default",
         write_pause_timeout: float = 5.0,
         tracer: Tracer | None = None,
@@ -136,7 +147,7 @@ class TenantStoreRouter(EventStore):
         Args:
             default_store: Default store for tenants without explicit routing
             routing_repo: Repository for routing configuration
-            stores: Dictionary mapping store IDs to EventStore instances
+            stores: Dictionary mapping store IDs to FullEventStore instances
             default_store_id: Identifier for the default store
             write_pause_timeout: Max seconds to wait during cutover pause
             tracer: Optional custom Tracer instance.
@@ -151,7 +162,7 @@ class TenantStoreRouter(EventStore):
         self._default_store = default_store
         self._default_store_id = default_store_id
         self._routing_repo = routing_repo
-        self._stores: dict[str, EventStore] = stores.copy() if stores else {}
+        self._stores: dict[str, FullEventStore] = stores.copy() if stores else {}
         self._stores[default_store_id] = default_store
         self._write_pause_timeout = write_pause_timeout
 
@@ -161,19 +172,19 @@ class TenantStoreRouter(EventStore):
         )
 
         # Dual-write interceptors (set during migration)
-        self._dual_write_interceptors: dict[UUID, EventStore] = {}
+        self._dual_write_interceptors: dict[UUID, FullEventStore] = {}
 
     # =========================================================================
     # Store Registry Management
     # =========================================================================
 
-    def register_store(self, store_id: str, store: EventStore) -> None:
+    def register_store(self, store_id: str, store: FullEventStore) -> None:
         """
         Register a store for routing.
 
         Args:
             store_id: Unique identifier for the store
-            store: EventStore instance
+            store: FullEventStore instance
         """
         self._stores[store_id] = store
         logger.debug(f"Registered store: {store_id}")
@@ -193,7 +204,7 @@ class TenantStoreRouter(EventStore):
         self._stores.pop(store_id, None)
         logger.debug(f"Unregistered store: {store_id}")
 
-    def get_store(self, store_id: str) -> EventStore | None:
+    def get_store(self, store_id: str) -> FullEventStore | None:
         """
         Get a registered store by ID.
 
@@ -201,7 +212,7 @@ class TenantStoreRouter(EventStore):
             store_id: Store identifier
 
         Returns:
-            EventStore instance or None if not registered
+            FullEventStore instance or None if not registered
         """
         return self._stores.get(store_id)
 
@@ -221,7 +232,7 @@ class TenantStoreRouter(EventStore):
     def set_dual_write_interceptor(
         self,
         tenant_id: UUID,
-        interceptor: EventStore,
+        interceptor: FullEventStore,
     ) -> None:
         """
         Set dual-write interceptor for a tenant.
@@ -321,32 +332,31 @@ class TenantStoreRouter(EventStore):
         return self._write_pause_manager
 
     # =========================================================================
-    # EventStore Protocol Implementation
+    # FullEventStore Port Implementation
     # =========================================================================
 
-    async def append_events(
+    async def append(
         self,
-        aggregate_id: UUID,
-        aggregate_type: str,
-        events: list[DomainEvent],
-        expected_version: int,
+        stream: StreamId,
+        events: Sequence[DomainEvent],
+        expected: ExpectedVersion,
     ) -> AppendResult:
         """
-        Append events, routing to appropriate store.
+        Append events, routing to the appropriate store.
 
         Routes based on tenant_id from events and migration state.
 
         Args:
-            aggregate_id: ID of the aggregate
-            aggregate_type: Type of aggregate (e.g., 'Order')
+            stream: Identity of the stream to append to
             events: Events to append
-            expected_version: Expected current version (for optimistic locking)
+            expected: Optimistic-concurrency expectation
 
         Returns:
-            AppendResult with success status and new version
+            AppendResult from the routed store
 
         Raises:
             ValueError: If events list is empty
+            OptimisticLockError: If the routed store's version check fails
             WritePausedError: If writes are paused and timeout exceeded
         """
         if not events:
@@ -355,13 +365,13 @@ class TenantStoreRouter(EventStore):
         tenant_id = self._extract_tenant_id(events)
 
         with self._tracer.span(
-            "eventsource.router.append_events",
+            "eventsource.router.append",
             {
-                ATTR_AGGREGATE_ID: str(aggregate_id),
-                ATTR_AGGREGATE_TYPE: aggregate_type,
+                ATTR_AGGREGATE_ID: str(stream.aggregate_id),
+                ATTR_AGGREGATE_TYPE: stream.category,
                 ATTR_TENANT_ID: str(tenant_id) if tenant_id else "none",
                 ATTR_EVENT_COUNT: len(events),
-                ATTR_EXPECTED_VERSION: expected_version,
+                ATTR_EXPECTED_VERSION: expected.kind,
             },
         ):
             # Check for write pause
@@ -370,94 +380,43 @@ class TenantStoreRouter(EventStore):
             # Get routing
             store = await self._get_write_store(tenant_id)
 
-            return await store.append_events(
-                aggregate_id,
-                aggregate_type,
-                events,
-                expected_version,
-            )
+            return await store.append(stream, events, expected)
 
-    async def get_events(
+    async def read_category(
         self,
-        aggregate_id: UUID,
-        aggregate_type: str | None = None,
-        from_version: int = 0,
-        from_timestamp: datetime | None = None,
-        to_timestamp: datetime | None = None,
-    ) -> EventStream:
+        category: str,
+        options: CategoryReadOptions | None = None,
+    ) -> AsyncIterator[EventEnvelope]:
         """
-        Get all events for an aggregate from appropriate store.
+        Read events across all streams in a category.
 
-        For tenant-aware routing, the aggregate must have at least one
-        event in the store for tenant detection. If not found in default
-        store, routes based on aggregate lookup.
+        Routes to the appropriate store based on `options.tenant_id`
+        when one is given, otherwise reads from the default store.
 
         Args:
-            aggregate_id: ID of the aggregate
-            aggregate_type: Type of aggregate (optional)
-            from_version: Start from this version (default: 0)
-            from_timestamp: Only get events after this timestamp
-            to_timestamp: Only get events before this timestamp
+            category: The stream category (e.g. 'Order')
+            options: Options for reading (tenant, timestamp, limit)
 
-        Returns:
-            EventStream containing the aggregate's events
+        Yields:
+            EventEnvelope instances in the port's category order
+            (storage time, position tie-break, `from_timestamp` inclusive)
         """
+        opts = options or CategoryReadOptions()
+
         with self._tracer.span(
-            "eventsource.router.get_events",
+            "eventsource.router.read_category",
             {
-                ATTR_AGGREGATE_ID: str(aggregate_id),
-                ATTR_AGGREGATE_TYPE: aggregate_type or "any",
-                ATTR_FROM_VERSION: from_version,
+                ATTR_AGGREGATE_TYPE: category,
+                ATTR_TENANT_ID: str(opts.tenant_id) if opts.tenant_id else "all",
             },
         ):
-            # For reads without tenant context, use default store
-            # The router needs tenant_id to make routing decisions
-            store = self._default_store
-
-            return await store.get_events(
-                aggregate_id,
-                aggregate_type,
-                from_version,
-                from_timestamp,
-                to_timestamp,
-            )
-
-    async def get_events_by_type(
-        self,
-        aggregate_type: str,
-        tenant_id: UUID | None = None,
-        from_timestamp: datetime | None = None,
-    ) -> list[DomainEvent]:
-        """
-        Get all events for a specific aggregate type.
-
-        Routes to appropriate store based on tenant_id if provided.
-
-        Args:
-            aggregate_type: Type of aggregate (e.g., 'Order')
-            tenant_id: Filter by tenant ID (optional)
-            from_timestamp: Only get events after this timestamp
-
-        Returns:
-            List of events in chronological order
-        """
-        with self._tracer.span(
-            "eventsource.router.get_events_by_type",
-            {
-                ATTR_AGGREGATE_TYPE: aggregate_type,
-                ATTR_TENANT_ID: str(tenant_id) if tenant_id else "all",
-            },
-        ):
-            if tenant_id:
-                store = await self._get_read_store(tenant_id)
+            if opts.tenant_id:
+                store = await self._get_read_store(opts.tenant_id)
             else:
                 store = self._default_store
 
-            return await store.get_events_by_type(
-                aggregate_type,
-                tenant_id,
-                from_timestamp,
-            )
+            async for envelope in store.read_category(category, opts):
+                yield envelope
 
     async def event_exists(self, event_id: UUID) -> bool:
         """
@@ -488,109 +447,98 @@ class TenantStoreRouter(EventStore):
 
             return False
 
-    async def get_stream_version(
-        self,
-        aggregate_id: UUID,
-        aggregate_type: str,
-    ) -> int:
+    async def get_stream_version(self, stream: StreamId) -> int:
         """
-        Get the current version of an aggregate.
+        Get the current version of a stream in the default store.
 
         Args:
-            aggregate_id: ID of the aggregate
-            aggregate_type: Type of aggregate
+            stream: Identity of the stream
 
         Returns:
-            Current version (0 if aggregate doesn't exist)
+            Current version (0 if the stream doesn't exist)
         """
-        return await self._default_store.get_stream_version(
-            aggregate_id,
-            aggregate_type,
-        )
+        return await self._default_store.get_stream_version(stream)
 
     async def read_stream(
         self,
-        stream_id: str,
-        options: ReadOptions | None = None,
-    ) -> AsyncIterator[StoredEvent]:
+        stream: StreamId,
+        options: StreamReadOptions | None = None,
+    ) -> AsyncIterator[EventEnvelope]:
         """
-        Read events from a specific stream.
+        Read events from a specific stream in the default store.
 
-        Routes to appropriate store based on tenant_id in options.
+        The stream read carries no tenant, so it cannot be routed by
+        tenant; it goes to the default store.
 
         Args:
-            stream_id: The stream identifier (format: "aggregate_id:aggregate_type")
-            options: Options for reading (direction, limit, etc.)
+            stream: Identity of the stream
+            options: Options for reading (direction, version range, limit)
 
         Yields:
-            StoredEvent instances with position metadata
+            EventEnvelope instances
         """
-        options = options or ReadOptions()
-
         with self._tracer.span(
             "eventsource.router.read_stream",
-            {
-                "stream_id": stream_id,
-                ATTR_POSITION: options.from_position,
-            },
+            {"stream_id": stream.render()},
         ):
-            if options.tenant_id:
-                store = await self._get_read_store(options.tenant_id)
-            else:
-                store = self._default_store
-
-            async for event in store.read_stream(stream_id, options):
-                yield event
+            async for envelope in self._default_store.read_stream(stream, options):
+                yield envelope
 
     async def read_all(
         self,
-        options: ReadOptions | None = None,
-    ) -> AsyncIterator[StoredEvent]:
+        from_position: Position | None = None,
+        options: FeedReadOptions | None = None,
+    ) -> AsyncIterator[EventEnvelope]:
         """
-        Read all events from appropriate store.
+        Read the global feed from the appropriate store.
 
-        If options.tenant_id is provided, routes to that tenant's store.
-        Otherwise, reads from default store.
+        If `options.tenant_id` is provided, routes to that tenant's store.
+        Otherwise, reads from the default store. `from_position` must
+        belong to whichever store the read resolves to.
 
         Args:
-            options: Options for reading (direction, limit, tenant_id, etc.)
+            from_position: Read strictly after this position; None for the
+                start of the feed
+            options: Options for reading (tenant, limit)
 
         Yields:
-            StoredEvent instances with global position metadata
+            EventEnvelope instances in global feed order
         """
-        options = options or ReadOptions()
+        opts = options or FeedReadOptions()
 
         with self._tracer.span(
             "eventsource.router.read_all",
             {
-                ATTR_TENANT_ID: str(options.tenant_id) if options.tenant_id else "all",
-                ATTR_POSITION: options.from_position,
+                ATTR_TENANT_ID: str(opts.tenant_id) if opts.tenant_id else "all",
+                ATTR_POSITION: from_position.to_str() if from_position else "start",
             },
         ):
-            if options.tenant_id:
-                store = await self._get_read_store(options.tenant_id)
+            if opts.tenant_id:
+                store = await self._get_read_store(opts.tenant_id)
             else:
                 store = self._default_store
 
-            async for event in store.read_all(options):
-                yield event
+            async for envelope in store.read_all(from_position, opts):
+                yield envelope
 
-    async def get_global_position(self) -> int:
+    async def current_position(self) -> Position | None:
         """
-        Get global position from default store.
+        Get the current global-feed position of the DEFAULT store.
 
-        Note: Each store has its own position sequence.
+        The returned position belongs to the default store and is NOT
+        comparable with any other store's positions -- ordering two
+        stores' positions raises `PositionForeignError`.
 
         Returns:
-            The maximum global position in the default store
+            The default store's latest position, or None if it is empty
         """
-        return await self._default_store.get_global_position()
+        return await self._default_store.current_position()
 
     # =========================================================================
     # Tenant-Aware Store Resolution
     # =========================================================================
 
-    async def get_store_for_tenant(self, tenant_id: UUID) -> EventStore:
+    async def get_store_for_tenant(self, tenant_id: UUID) -> FullEventStore:
         """
         Get the read store for a specific tenant.
 
@@ -601,11 +549,11 @@ class TenantStoreRouter(EventStore):
             tenant_id: Tenant UUID
 
         Returns:
-            EventStore for the tenant
+            FullEventStore for the tenant
         """
         return await self._get_read_store(tenant_id)
 
-    async def get_write_stores_for_tenant(self, tenant_id: UUID) -> list[EventStore]:
+    async def get_write_stores_for_tenant(self, tenant_id: UUID) -> list[FullEventStore]:
         """
         Get all write stores for a tenant during migration.
 
@@ -616,7 +564,7 @@ class TenantStoreRouter(EventStore):
             tenant_id: Tenant UUID
 
         Returns:
-            List of EventStore instances for writing
+            List of FullEventStore instances for writing
         """
         routing = await self._routing_repo.get_routing(tenant_id)
 
@@ -627,7 +575,7 @@ class TenantStoreRouter(EventStore):
 
         if state == TenantMigrationState.DUAL_WRITE:
             # In dual-write, return both stores
-            stores = []
+            stores: list[FullEventStore] = []
             source_store = self._stores.get(routing.store_id, self._default_store)
             stores.append(source_store)
 
@@ -646,7 +594,7 @@ class TenantStoreRouter(EventStore):
     # Helper Methods
     # =========================================================================
 
-    def _extract_tenant_id(self, events: list[DomainEvent]) -> UUID | None:
+    def _extract_tenant_id(self, events: Sequence[DomainEvent]) -> UUID | None:
         """
         Extract tenant_id from events.
 
@@ -654,7 +602,7 @@ class TenantStoreRouter(EventStore):
         Returns None if no tenant_id is set.
 
         Args:
-            events: List of domain events
+            events: The events being appended
 
         Returns:
             Tenant UUID or None
@@ -663,7 +611,7 @@ class TenantStoreRouter(EventStore):
             return events[0].tenant_id
         return None
 
-    async def _get_write_store(self, tenant_id: UUID | None) -> EventStore:
+    async def _get_write_store(self, tenant_id: UUID | None) -> FullEventStore:
         """
         Get the store for write operations based on tenant and migration state.
 
@@ -671,7 +619,7 @@ class TenantStoreRouter(EventStore):
             tenant_id: Tenant UUID or None
 
         Returns:
-            EventStore for writing
+            FullEventStore for writing
 
         Raises:
             WritePausedError: If tenant is in CUTOVER_PAUSED state
@@ -718,7 +666,7 @@ class TenantStoreRouter(EventStore):
 
         return self._default_store
 
-    async def _get_read_store(self, tenant_id: UUID) -> EventStore:
+    async def _get_read_store(self, tenant_id: UUID) -> FullEventStore:
         """
         Get the store for read operations based on tenant and migration state.
 
@@ -726,7 +674,7 @@ class TenantStoreRouter(EventStore):
             tenant_id: Tenant UUID
 
         Returns:
-            EventStore for reading
+            FullEventStore for reading
         """
         routing = await self._routing_repo.get_routing(tenant_id)
 

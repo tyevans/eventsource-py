@@ -10,7 +10,7 @@ Tests cover:
 - Error scenarios: missing mappings, verification failures
 - Dry-run subscription migration
 
-These tests use InMemoryEventStore for unit-level integration testing
+These tests use MemoryEventStore for unit-level integration testing
 without requiring PostgreSQL.
 """
 
@@ -25,6 +25,8 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from eventsource.adapters.memory import MemoryEventStore
+from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.migration.consistency import (
     ConsistencyVerifier,
@@ -52,8 +54,7 @@ from eventsource.migration.subscription_migrator import (
     SubscriptionMigrator,
 )
 from eventsource.migration.write_pause import WritePauseManager
-from eventsource.ports.positions import Position
-from eventsource.stores.in_memory import InMemoryEventStore
+from eventsource.ports.positions import ExpectedVersion, Position
 
 # =============================================================================
 # Test Event Classes
@@ -616,15 +617,15 @@ class MockLockManager:
 
 
 @pytest.fixture
-def source_store() -> InMemoryEventStore:
+def source_store() -> MemoryEventStore:
     """Create source (shared) event store."""
-    return InMemoryEventStore(enable_tracing=False)
+    return MemoryEventStore("source")
 
 
 @pytest.fixture
-def target_store() -> InMemoryEventStore:
+def target_store() -> MemoryEventStore:
     """Create target (dedicated) event store."""
-    return InMemoryEventStore(enable_tracing=False)
+    return MemoryEventStore("target")
 
 
 @pytest.fixture
@@ -677,7 +678,7 @@ def migration_id() -> UUID:
 
 @pytest.fixture
 def router(
-    source_store: InMemoryEventStore,
+    source_store: MemoryEventStore,
     routing_repo: InMemoryRoutingRepository,
     write_pause_manager: WritePauseManager,
 ) -> TenantStoreRouter:
@@ -706,7 +707,7 @@ def position_mapper(
 
 
 async def create_test_events(
-    store: InMemoryEventStore,
+    store: MemoryEventStore,
     tenant_id: UUID,
     count: int = 10,
     aggregate_type: str = "Order",
@@ -725,59 +726,56 @@ async def create_test_events(
             amount=100.0 + i,
         )
 
-        await store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type=aggregate_type,
-            events=[event],
-            expected_version=0,
+        await store.append(
+            StreamId(aggregate_id=aggregate_id, category=aggregate_type),
+            [event],
+            ExpectedVersion.no_stream(),
         )
 
     return aggregate_ids
 
 
 async def get_all_tenant_events(
-    store: InMemoryEventStore,
+    store: MemoryEventStore,
     tenant_id: UUID,
 ) -> list[DomainEvent]:
     """Get all events for a tenant from a store."""
     events = []
-    async for stored_event in store.read_all():
-        if stored_event.event.tenant_id == tenant_id:
-            events.append(stored_event.event)
+    async for envelope in store.read_all():
+        if envelope.event.tenant_id == tenant_id:
+            events.append(envelope.event)
     return events
 
 
 async def copy_events_with_position_mapping(
-    source_store: InMemoryEventStore,
-    target_store: InMemoryEventStore,
+    source_store: MemoryEventStore,
+    target_store: MemoryEventStore,
     tenant_id: UUID,
     migration_id: UUID,
     position_mapper: PositionMapper,
 ) -> int:
     """Copy events from source to target and record position mappings."""
-    events = []
-    async for stored_event in source_store.read_all():
-        if stored_event.event.tenant_id == tenant_id:
-            events.append(stored_event)
+    envelopes = []
+    async for envelope in source_store.read_all():
+        if envelope.event.tenant_id == tenant_id:
+            envelopes.append(envelope)
 
-    for stored_event in events:
-        event = stored_event.event
-        result = await target_store.append_events(
-            aggregate_id=event.aggregate_id,
-            aggregate_type=event.aggregate_type,
-            events=[event],
-            expected_version=-1,  # ANY
-        )
+    for envelope in envelopes:
+        event = envelope.event
+        stream = StreamId(aggregate_id=event.aggregate_id, category=event.aggregate_type)
+        result = await target_store.append(stream, [event], ExpectedVersion.any_())
 
-        # Record position mapping
+        # Record position mapping (real positions from each store's feed)
+        assert envelope.position is not None
+        assert result.position is not None
         await position_mapper.record_mapping(
             migration_id=migration_id,
-            source_position=source_pos(stored_event.global_position),
-            target_position=target_pos(result.new_version),  # Use new version as position
+            source_position=envelope.position,
+            target_position=result.position,
             event_id=event.event_id,
         )
 
-    return len(events)
+    return len(envelopes)
 
 
 # =============================================================================
@@ -846,8 +844,8 @@ class TestPositionMappingRecording:
     @pytest.mark.asyncio
     async def test_position_mapping_during_bulk_copy(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         position_mapper: PositionMapper,
         tenant_id: UUID,
         migration_id: UUID,
@@ -991,8 +989,8 @@ class TestConsistencyVerificationLevels:
     @pytest.mark.asyncio
     async def test_count_level_verification_passes(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test COUNT level verification passes when counts match."""
@@ -1000,14 +998,13 @@ class TestConsistencyVerificationLevels:
         await create_test_events(source_store, tenant_id, count=5)
 
         # Copy to target (same events)
-        async for stored_event in source_store.read_all():
-            if stored_event.event.tenant_id == tenant_id:
-                event = stored_event.event
-                await target_store.append_events(
-                    aggregate_id=event.aggregate_id,
-                    aggregate_type=event.aggregate_type,
-                    events=[event],
-                    expected_version=-1,
+        async for envelope in source_store.read_all():
+            if envelope.event.tenant_id == tenant_id:
+                event = envelope.event
+                await target_store.append(
+                    StreamId(aggregate_id=event.aggregate_id, category=event.aggregate_type),
+                    [event],
+                    ExpectedVersion.any_(),
                 )
 
         verifier = ConsistencyVerifier(source_store, target_store, enable_tracing=False)
@@ -1025,8 +1022,8 @@ class TestConsistencyVerificationLevels:
     @pytest.mark.asyncio
     async def test_count_level_verification_detects_mismatch(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test COUNT level verification detects count mismatch."""
@@ -1034,15 +1031,16 @@ class TestConsistencyVerificationLevels:
         await create_test_events(source_store, tenant_id, count=5)
 
         # Create fewer events in target (only 3)
-        async for stored_event in source_store.read_all():
-            if stored_event.event.tenant_id == tenant_id and stored_event.global_position <= 3:
-                event = stored_event.event
-                await target_store.append_events(
-                    aggregate_id=event.aggregate_id,
-                    aggregate_type=event.aggregate_type,
-                    events=[event],
-                    expected_version=-1,
+        copied = 0
+        async for envelope in source_store.read_all():
+            if envelope.event.tenant_id == tenant_id and copied < 3:
+                event = envelope.event
+                await target_store.append(
+                    StreamId(aggregate_id=event.aggregate_id, category=event.aggregate_type),
+                    [event],
+                    ExpectedVersion.any_(),
                 )
+                copied += 1
 
         verifier = ConsistencyVerifier(source_store, target_store, enable_tracing=False)
 
@@ -1058,8 +1056,8 @@ class TestConsistencyVerificationLevels:
     @pytest.mark.asyncio
     async def test_hash_level_verification_passes(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test HASH level verification passes with identical data."""
@@ -1067,14 +1065,13 @@ class TestConsistencyVerificationLevels:
         await create_test_events(source_store, tenant_id, count=5)
 
         # Copy to target
-        async for stored_event in source_store.read_all():
-            if stored_event.event.tenant_id == tenant_id:
-                event = stored_event.event
-                await target_store.append_events(
-                    aggregate_id=event.aggregate_id,
-                    aggregate_type=event.aggregate_type,
-                    events=[event],
-                    expected_version=-1,
+        async for envelope in source_store.read_all():
+            if envelope.event.tenant_id == tenant_id:
+                event = envelope.event
+                await target_store.append(
+                    StreamId(aggregate_id=event.aggregate_id, category=event.aggregate_type),
+                    [event],
+                    ExpectedVersion.any_(),
                 )
 
         verifier = ConsistencyVerifier(source_store, target_store, enable_tracing=False)
@@ -1090,21 +1087,20 @@ class TestConsistencyVerificationLevels:
     @pytest.mark.asyncio
     async def test_full_level_verification_passes(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test FULL level verification passes with identical data."""
         await create_test_events(source_store, tenant_id, count=3)
 
-        async for stored_event in source_store.read_all():
-            if stored_event.event.tenant_id == tenant_id:
-                event = stored_event.event
-                await target_store.append_events(
-                    aggregate_id=event.aggregate_id,
-                    aggregate_type=event.aggregate_type,
-                    events=[event],
-                    expected_version=-1,
+        async for envelope in source_store.read_all():
+            if envelope.event.tenant_id == tenant_id:
+                event = envelope.event
+                await target_store.append(
+                    StreamId(aggregate_id=event.aggregate_id, category=event.aggregate_type),
+                    [event],
+                    ExpectedVersion.any_(),
                 )
 
         verifier = ConsistencyVerifier(source_store, target_store, enable_tracing=False)
@@ -1124,22 +1120,21 @@ class TestConsistencyVerificationWithSampling:
     @pytest.mark.asyncio
     async def test_verification_with_50_percent_sampling(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test verification with 50% sampling."""
         # Create events in both stores
         await create_test_events(source_store, tenant_id, count=10)
 
-        async for stored_event in source_store.read_all():
-            if stored_event.event.tenant_id == tenant_id:
-                event = stored_event.event
-                await target_store.append_events(
-                    aggregate_id=event.aggregate_id,
-                    aggregate_type=event.aggregate_type,
-                    events=[event],
-                    expected_version=-1,
+        async for envelope in source_store.read_all():
+            if envelope.event.tenant_id == tenant_id:
+                event = envelope.event
+                await target_store.append(
+                    StreamId(aggregate_id=event.aggregate_id, category=event.aggregate_type),
+                    [event],
+                    ExpectedVersion.any_(),
                 )
 
         verifier = ConsistencyVerifier(source_store, target_store, enable_tracing=False)
@@ -1156,8 +1151,8 @@ class TestConsistencyVerificationWithSampling:
     @pytest.mark.asyncio
     async def test_invalid_sample_percentage_raises(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test that invalid sample percentage raises ValueError."""
@@ -1461,8 +1456,8 @@ class TestFullMigrationWithVerificationAndSubscriptions:
     @pytest.mark.asyncio
     async def test_full_lifecycle_with_verification_enabled(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         position_mapping_repo: InMemoryPositionMappingRepository,
@@ -1484,8 +1479,6 @@ class TestFullMigrationWithVerificationAndSubscriptions:
             migration_repo=migration_repo,
             routing_repo=routing_repo,
             router=router,
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             lock_manager=lock_manager,
             position_mapper=position_mapper,
             checkpoint_repo=checkpoint_repo,
@@ -1522,8 +1515,8 @@ class TestFullMigrationWithVerificationAndSubscriptions:
     @pytest.mark.asyncio
     async def test_verify_consistency_on_coordinator(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         position_mapping_repo: InMemoryPositionMappingRepository,
@@ -1535,14 +1528,13 @@ class TestFullMigrationWithVerificationAndSubscriptions:
         # Create events in both stores (simulating completed bulk copy)
         await create_test_events(source_store, tenant_id, count=5)
 
-        async for stored_event in source_store.read_all():
-            if stored_event.event.tenant_id == tenant_id:
-                event = stored_event.event
-                await target_store.append_events(
-                    aggregate_id=event.aggregate_id,
-                    aggregate_type=event.aggregate_type,
-                    events=[event],
-                    expected_version=-1,
+        async for envelope in source_store.read_all():
+            if envelope.event.tenant_id == tenant_id:
+                event = envelope.event
+                await target_store.append(
+                    StreamId(aggregate_id=event.aggregate_id, category=event.aggregate_type),
+                    [event],
+                    ExpectedVersion.any_(),
                 )
 
         position_mapper = PositionMapper(position_mapping_repo, enable_tracing=False)
@@ -1552,8 +1544,6 @@ class TestFullMigrationWithVerificationAndSubscriptions:
             migration_repo=migration_repo,
             routing_repo=routing_repo,
             router=router,
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             lock_manager=lock_manager,
             position_mapper=position_mapper,
             source_store_id="default",
@@ -1588,8 +1578,8 @@ class TestFullMigrationWithVerificationAndSubscriptions:
     @pytest.mark.asyncio
     async def test_migrate_subscriptions_on_coordinator(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         position_mapping_repo: InMemoryPositionMappingRepository,
@@ -1624,8 +1614,6 @@ class TestFullMigrationWithVerificationAndSubscriptions:
             migration_repo=migration_repo,
             routing_repo=routing_repo,
             router=router,
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             lock_manager=lock_manager,
             position_mapper=position_mapper,
             checkpoint_repo=checkpoint_repo,
@@ -1742,8 +1730,8 @@ class TestVerificationFailures:
     @pytest.mark.asyncio
     async def test_verification_detects_missing_events(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test verification detects missing events in target."""
@@ -1767,8 +1755,8 @@ class TestVerificationFailures:
     @pytest.mark.asyncio
     async def test_verification_detects_extra_events_in_target(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test verification detects extra events in target."""
@@ -1790,8 +1778,8 @@ class TestVerificationFailures:
     @pytest.mark.asyncio
     async def test_verification_passes_with_empty_stores(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test verification passes when both stores are empty."""
@@ -1813,7 +1801,7 @@ class TestCoordinatorErrorHandling:
     @pytest.mark.asyncio
     async def test_verify_consistency_without_target_store(
         self,
-        source_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
@@ -1826,8 +1814,6 @@ class TestCoordinatorErrorHandling:
             migration_repo=migration_repo,
             routing_repo=routing_repo,
             router=router,
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             lock_manager=lock_manager,
             source_store_id="default",
             enable_tracing=False,
@@ -1851,7 +1837,7 @@ class TestCoordinatorErrorHandling:
     @pytest.mark.asyncio
     async def test_migrate_subscriptions_without_position_mapper(
         self,
-        source_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
@@ -1864,8 +1850,6 @@ class TestCoordinatorErrorHandling:
             migration_repo=migration_repo,
             routing_repo=routing_repo,
             router=router,
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             lock_manager=lock_manager,
             # No position_mapper provided
             source_store_id="default",
@@ -1889,7 +1873,7 @@ class TestCoordinatorErrorHandling:
     @pytest.mark.asyncio
     async def test_migrate_subscriptions_without_checkpoint_repo(
         self,
-        source_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         position_mapping_repo: InMemoryPositionMappingRepository,
@@ -1905,8 +1889,6 @@ class TestCoordinatorErrorHandling:
             migration_repo=migration_repo,
             routing_repo=routing_repo,
             router=router,
-            source_position_store_id="source-store",
-            target_position_store_id="target-store",
             lock_manager=lock_manager,
             position_mapper=position_mapper,
             # No checkpoint_repo provided
@@ -2056,20 +2038,19 @@ class TestVerificationReport:
     @pytest.mark.asyncio
     async def test_report_to_dict_serialization(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test report can be serialized to dictionary."""
         await create_test_events(source_store, tenant_id, count=3)
-        async for stored_event in source_store.read_all():
-            if stored_event.event.tenant_id == tenant_id:
-                event = stored_event.event
-                await target_store.append_events(
-                    aggregate_id=event.aggregate_id,
-                    aggregate_type=event.aggregate_type,
-                    events=[event],
-                    expected_version=-1,
+        async for envelope in source_store.read_all():
+            if envelope.event.tenant_id == tenant_id:
+                event = envelope.event
+                await target_store.append(
+                    StreamId(aggregate_id=event.aggregate_id, category=event.aggregate_type),
+                    [event],
+                    ExpectedVersion.any_(),
                 )
 
         verifier = ConsistencyVerifier(source_store, target_store, enable_tracing=False)
@@ -2091,21 +2072,20 @@ class TestVerificationReport:
     @pytest.mark.asyncio
     async def test_report_consistency_percentage(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
+        source_store: MemoryEventStore,
+        target_store: MemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test consistency percentage calculation."""
         # Create events that will pass verification
         await create_test_events(source_store, tenant_id, count=3)
-        async for stored_event in source_store.read_all():
-            if stored_event.event.tenant_id == tenant_id:
-                event = stored_event.event
-                await target_store.append_events(
-                    aggregate_id=event.aggregate_id,
-                    aggregate_type=event.aggregate_type,
-                    events=[event],
-                    expected_version=-1,
+        async for envelope in source_store.read_all():
+            if envelope.event.tenant_id == tenant_id:
+                event = envelope.event
+                await target_store.append(
+                    StreamId(aggregate_id=event.aggregate_id, category=event.aggregate_type),
+                    [event],
+                    ExpectedVersion.any_(),
                 )
 
         verifier = ConsistencyVerifier(source_store, target_store, enable_tracing=False)
