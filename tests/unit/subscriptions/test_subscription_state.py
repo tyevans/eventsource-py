@@ -646,42 +646,49 @@ class TestLagCalculation:
     """Tests for lag calculation."""
 
     @pytest.mark.asyncio
-    async def test_lag_with_no_max_position(self, subscription: Subscription):
-        """Test lag is 0 when max position not set."""
+    async def test_lag_with_fresh_subscription(self, subscription: Subscription):
+        """Test lag is 0 for a fresh subscription."""
         assert subscription.lag == 0
 
     @pytest.mark.asyncio
-    async def test_lag_calculation(self, subscription: Subscription):
-        """Test lag calculation."""
-        await subscription.update_max_position(100)
-        await subscription.record_event_processed(
-            position=50,
-            event_id=uuid4(),
-            event_type="OrderCreated",
-        )
-        assert subscription.lag == 50
+    async def test_lag_after_events_seen_none_processed(self, subscription: Subscription):
+        """Test lag equals events seen when nothing has been processed."""
+        await subscription.record_events_seen(10)
+        assert subscription.lag == 10
+
+    @pytest.mark.asyncio
+    async def test_lag_decreases_as_events_are_processed(self, subscription: Subscription):
+        """Test lag falls as events are processed against events seen."""
+        await subscription.record_events_seen(10)
+        for _ in range(4):
+            await subscription.record_event_processed(
+                position=0,
+                event_id=uuid4(),
+                event_type="OrderCreated",
+            )
+        assert subscription.lag == 6
 
     @pytest.mark.asyncio
     async def test_lag_is_never_negative(self, subscription: Subscription):
-        """Test lag is never negative."""
-        await subscription.update_max_position(50)
-        await subscription.record_event_processed(
-            position=100,
-            event_id=uuid4(),
-            event_type="OrderCreated",
-        )
+        """Test processing more events than were seen clamps lag at 0."""
+        await subscription.record_events_seen(2)
+        for _ in range(5):
+            await subscription.record_event_processed(
+                position=0,
+                event_id=uuid4(),
+                event_type="OrderCreated",
+            )
         assert subscription.lag == 0
 
     @pytest.mark.asyncio
-    async def test_lag_is_zero_when_caught_up(self, subscription: Subscription):
-        """Test lag is 0 when caught up."""
-        await subscription.update_max_position(100)
-        await subscription.record_event_processed(
-            position=100,
-            event_id=uuid4(),
-            event_type="OrderCreated",
-        )
-        assert subscription.lag == 0
+    async def test_lag_unaffected_by_position_without_processing(self, subscription: Subscription):
+        """Test lag does not change when last_processed_position changes
+        without a record_event_processed call -- lag is no longer derived
+        from position at all."""
+        await subscription.record_events_seen(10)
+        assert subscription.lag == 10
+        subscription.last_processed_position = 999
+        assert subscription.lag == 10
 
 
 # Property Tests
@@ -871,14 +878,14 @@ class TestSubscriptionGetStatus:
     @pytest.mark.asyncio
     async def test_get_status_includes_lag(self, subscription: Subscription):
         """Test status includes lag."""
-        await subscription.update_max_position(100)
+        await subscription.record_events_seen(100)
         await subscription.record_event_processed(
             position=50,
             event_id=uuid4(),
             event_type="OrderCreated",
         )
         status = subscription.get_status()
-        assert status.lag_events == 50
+        assert status.lag_events == 99
 
     @pytest.mark.asyncio
     async def test_get_status_includes_statistics(self, subscription: Subscription):

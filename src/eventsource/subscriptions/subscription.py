@@ -300,7 +300,8 @@ class Subscription:
 
     # Internal
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
-    _max_position: int = field(default=0, repr=False)  # For lag calculation
+    _events_seen: int = field(default=0, repr=False)  # For lag calculation
+    _events_delivered: int = field(default=0, repr=False)  # For lag calculation
     _recent_errors: list[RecentErrorInfo] = field(default_factory=list, repr=False)
     _max_recent_errors: int = field(default=100, repr=False)
 
@@ -373,6 +374,7 @@ class Subscription:
             self.last_event_id = event_id
             self.last_event_type = event_type
             self.events_processed += 1
+            self._events_delivered += 1
             self.last_processed_at = datetime.now(UTC)
 
     async def record_event_failed(self, error: Exception) -> None:
@@ -429,27 +431,32 @@ class Subscription:
             if sent_to_dlq:
                 self.events_dlq += 1
 
-    async def update_max_position(self, position: int) -> None:
-        """
-        Update the known maximum position in the event store.
+    async def record_events_seen(self, count: int) -> None:
+        """Record events observed in the feed but not yet delivered.
 
-        Used for calculating lag.
+        Lag is a count, not a distance: global positions are opaque tokens
+        that cannot be subtracted (ADR 0019).
 
         Args:
-            position: Current max position in event store
+            count: Number of events observed in this read.
         """
         async with self._lock:
-            self._max_position = position
+            self._events_seen += count
 
     @property
     def lag(self) -> int:
         """
         Calculate current lag (events behind).
 
+        Lag is the count of events seen from the feed in the current run
+        that have not yet been delivered -- it rises by a batch and falls
+        as the batch drains, rather than being a store-wide position
+        distance.
+
         Returns:
-            Number of events behind the current max position
+            Number of events seen but not yet delivered.
         """
-        return max(0, self._max_position - self.last_processed_position)
+        return max(0, self._events_seen - self._events_delivered)
 
     @property
     def is_running(self) -> bool:

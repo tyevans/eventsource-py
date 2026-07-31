@@ -678,22 +678,22 @@ class TestCatchUpRunnerPositionTracking:
         assert subscription.events_processed == 3
 
     @pytest.mark.asyncio
-    async def test_max_position_updated_for_lag(
+    async def test_events_seen_tracked_for_lag(
         self,
         runner: CatchUpRunner,
         event_store: InMemoryEventStore,
         subscription: Subscription,
     ):
-        """Test subscription max_position is updated for lag calculation."""
+        """Test subscription lag is tracked by counting events seen vs delivered."""
         await add_events_to_store(event_store, 5)
         target = await event_store.get_global_position()
 
-        # Initial lag should be 0 (no max position set)
+        # Initial lag should be 0 (nothing seen yet)
         assert subscription.lag == 0
 
         await runner.run_until_position(target_position=target)
 
-        # After catching up, lag should be 0
+        # After catching up, all seen events have been delivered
         assert subscription.lag == 0
 
     @pytest.mark.asyncio

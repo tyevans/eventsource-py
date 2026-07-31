@@ -207,8 +207,6 @@ class CatchUpRunner:
                 await self.subscription.transition_to(SubscriptionState.CATCHING_UP)
                 self._metrics.record_state("catching_up")
 
-                # Update max position for lag calculation
-                await self.subscription.update_max_position(target_position)
                 self._metrics.record_lag(self.subscription.lag)
 
                 # Process batches until we reach the target or are stopped
@@ -302,6 +300,7 @@ class CatchUpRunner:
 
         # Read batch from event store with retry
         events = await self._read_batch_with_retry(current_position, batch_limit)
+        await self.subscription.record_events_seen(len(events))
 
         events_in_batch = 0
         events_filtered = 0

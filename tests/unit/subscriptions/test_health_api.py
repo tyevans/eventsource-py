@@ -198,9 +198,8 @@ class TestHealthCheck:
         await subscription.transition_to(SubscriptionState.CATCHING_UP)
         await subscription.transition_to(SubscriptionState.LIVE)
 
-        # Set up lag by updating max position without processing
-        await subscription.update_max_position(5000)
-        subscription.last_processed_position = 100
+        # Set up lag by recording events seen without processing
+        await subscription.record_events_seen(4900)
 
         health = await manager.health_check()
 
@@ -463,8 +462,7 @@ class TestHealthCheckWithConfig:
         await subscription.transition_to(SubscriptionState.LIVE)
 
         # Set lag above warning but below critical (50-100)
-        await subscription.update_max_position(75)
-        subscription.last_processed_position = 0
+        await subscription.record_events_seen(75)
 
         health = await manager_with_config.health_check()
 
