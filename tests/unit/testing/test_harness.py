@@ -356,6 +356,25 @@ class TestHarnessReset:
         assert len(entries) == 0
 
 
+class TestHarnessTracingDisabled:
+    """Tests for tracing configuration."""
+
+    def test_event_bus_tracing_disabled(self) -> None:
+        """Event bus is created with tracing disabled."""
+        harness = InMemoryTestHarness()
+        assert harness.event_bus._enable_tracing is False
+
+    def test_checkpoint_repo_tracing_disabled(self) -> None:
+        """Checkpoint repo is created with tracing disabled."""
+        harness = InMemoryTestHarness()
+        assert harness.checkpoint_repo._enable_tracing is False
+
+    def test_dlq_repo_tracing_disabled(self) -> None:
+        """DLQ repo is created with tracing disabled."""
+        harness = InMemoryTestHarness()
+        assert harness.dlq_repo._enable_tracing is False
+
+
 class TestHarnessGetEventsOfType:
     """Tests for get_events_of_type functionality."""
 
