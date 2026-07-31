@@ -32,3 +32,43 @@ class TestPositionTokenReachesComposedSchemas:
             _TEMPLATES_DIR / "sqlite" / "checkpoints.sql",
         ):
             assert "position_token" not in path.read_text(), path
+
+
+class TestMigrationPositionTokensReachComposedSchema:
+    """The migration schema's token columns arrive via the same additive
+    fragment mechanism, but only for the PostgreSQL backend (no SQLite
+    migration schema exists to compose against).
+    """
+
+    _TOKEN_COLUMNS = (
+        "source_position_token",
+        "target_position_token",
+        "last_source_position_token",
+        "last_target_position_token",
+    )
+
+    def test_postgres_migration_schema_carries_the_token_columns(self) -> None:
+        schema = get_schema("migration")
+
+        for column in self._TOKEN_COLUMNS:
+            assert column in schema, column
+
+    def test_base_migration_template_is_unmodified(self) -> None:
+        """The column must come from a fragment, never from an edited base file."""
+        from eventsource.migrations import _TEMPLATES_DIR
+
+        text = (_TEMPLATES_DIR / "migration.sql").read_text()
+        for column in self._TOKEN_COLUMNS:
+            assert column not in text, column
+
+    def test_non_additive_migration_schema_omits_the_token_columns(self) -> None:
+        schema = get_schema("migration", additive=False)
+
+        for column in self._TOKEN_COLUMNS:
+            assert column not in schema, column
+
+    def test_sqlite_migration_schema_still_raises(self) -> None:
+        import pytest
+
+        with pytest.raises(ValueError):
+            get_schema("migration", backend="sqlite")

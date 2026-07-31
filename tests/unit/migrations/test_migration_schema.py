@@ -323,6 +323,24 @@ class TestMigrationAuditLogTable:
             assert index in schema, f"Missing index: {index}"
 
 
+class TestMigrationPositionTokenColumns:
+    """Tests for the additive position-token columns (spec §11 risk 4)."""
+
+    def test_position_mappings_has_token_columns(self):
+        """Test that migration_position_mappings carries the token columns."""
+        schema = get_schema("migration")
+
+        assert "source_position_token" in schema
+        assert "target_position_token" in schema
+
+    def test_tenant_migrations_has_token_columns(self):
+        """Test that tenant_migrations carries the token columns."""
+        schema = get_schema("migration")
+
+        assert "last_source_position_token" in schema
+        assert "last_target_position_token" in schema
+
+
 class TestSchemaIdempotency:
     """Tests for schema idempotency (CREATE IF NOT EXISTS)."""
 

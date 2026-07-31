@@ -70,6 +70,7 @@ _ADDITIVE_FRAGMENTS: dict[tuple[str, str], tuple[str, ...]] = {
     ("checkpoints", "sqlite"): ("checkpoints_position_token",),
     ("all", "postgresql"): ("checkpoints_position_token",),
     ("all", "sqlite"): ("checkpoints_position_token",),
+    ("migration", "postgresql"): ("migration_position_tokens",),
 }
 
 
