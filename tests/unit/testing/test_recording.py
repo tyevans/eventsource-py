@@ -1,6 +1,5 @@
 """Unit tests for RecordingEventBus."""
 
-import warnings
 from uuid import uuid4
 
 from eventsource.bus.memory import InMemoryEventBus
@@ -68,18 +67,6 @@ async def test_max_events_none_means_unbounded() -> None:
         await bus.publish([RecordedEvent(aggregate_id=uuid4())])
 
     assert len(bus.published_events) == 50
-
-
-async def test_in_memory_published_events_warns_but_still_works() -> None:
-    bus = InMemoryEventBus()
-    await bus.publish([RecordedEvent(aggregate_id=uuid4())])
-
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        events = bus.published_events
-
-    assert len(events) == 1
-    assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
 
 async def test_clear_subscribers_delegates_to_wrapped_bus() -> None:

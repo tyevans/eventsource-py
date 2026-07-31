@@ -62,7 +62,10 @@ pre-commit run --all-files
 
 ```
 src/eventsource/
-  aggregates/       # AggregateRoot, DeclarativeAggregate, AggregateRepository
+  domain/           # Entities ring: AggregateRoot, DeclarativeAggregate, StreamId (pure: stdlib + pydantic only)
+  application/      # Use-case ring: AggregateRepository, snapshot policy/scheduler collaborators
+  ports/            # Boundary interfaces: Snapshot/SnapshotStore, store/bus/envelope/position ports
+  adapters/         # Interface adapters: memory/postgresql/sqlite snapshot + event store implementations
   bus/              # EventBus interface + InMemory, Redis, RabbitMQ, Kafka backends (implementations colocated)
   events/           # DomainEvent (pydantic BaseModel), EventRegistry
   handlers/         # @handles decorator for declarative event routing
@@ -75,7 +78,6 @@ src/eventsource/
   readmodels/       # ReadModelProjection
   repositories/     # Checkpoint, DLQ, Outbox repos (postgres, sqlite, memory backends)
   serialization/    # JSON encoding (EventSourceJSONEncoder)
-  snapshots/        # Snapshot store interface + InMemory, PostgreSQL, SQLite implementations
   stores/           # EventStore interface + PostgreSQL, SQLite, InMemory implementations
   subscriptions/    # Subscription lifecycle: manager, runners, retry, health, flow control
   sync/             # SyncEventStoreAdapter (wraps async store for sync callers)
@@ -84,7 +86,7 @@ src/eventsource/
   _internal/        # Internal helpers (not public API)
   config.py         # Configuration utilities
   protocols.py      # Canonical type contracts (Protocols + ABCs, see note below)
-  exceptions.py     # All exception types
+  exceptions.py     # All exception types (includes the SnapshotError hierarchy)
   types.py          # Type aliases (AggregateId, EventId, TenantId, etc.)
 ```
 

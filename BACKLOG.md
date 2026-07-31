@@ -40,8 +40,29 @@ runs `-m benchmark` and reports results.
 
 0.8.0: remove bus facade compat shims -- migrate ~90 white-box test call sites to
 collaborator access (`bus._connection_manager.*` etc.), delete the facade property
-shims and thin delegations on both backends, alongside the scheduled
-`record_reconnection`/`record_rebalance` removal.
+shims and thin delegations on both backends. (The scheduled
+`record_reconnection`/`record_rebalance` removal landed with the
+aggregates-application-ring branch.)
+
+## Redesign SnapshotStore port as composed Protocols (P2)
+
+`ports/snapshots.py` now permanently hosts `SnapshotStore`, but it moved verbatim
+as an ABC with concrete default bodies (`snapshot_exists`) and a
+`delete_snapshots_by_type` that raises `NotImplementedError` by default -- both
+violate the settled ports rules ("no implementation code, ever"; optional
+capability = not implementing a port, never NotImplementedError). Split into small
+composed Protocols (save/get/delete; bulk invalidation as a separate optional
+capability port), update the three snapshot adapters and the conformance suite,
+and drop the NotImplementedError default. Flagged by the
+aggregates-application-ring final review (deliberately out of scope there).
+
+## Lazy top-level eventsource/__init__ (P3)
+
+`import eventsource` eagerly loads sqlalchemy through the public front door
+(`application/aggregates/repository.py` -> `stores/__init__` -> `stores/postgresql`).
+Correctness is unaffected (sqlalchemy is a core dep) but import time and the Tier 0
+story would benefit from a PEP 562 lazy `__getattr__` front door. Pairs with the
+"Investigate making sqlalchemy an optional dependency" item above.
 
 ## Define store lifecycle in the ports layer (P2)
 

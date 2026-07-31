@@ -238,7 +238,7 @@ class TestImplementationStatus:
 
         from pydantic import BaseModel
 
-        from eventsource.aggregates.base import AggregateRoot
+        from eventsource.domain.aggregate import AggregateRoot
         from eventsource.events.base import DomainEvent
         from eventsource.testing import when_command
 

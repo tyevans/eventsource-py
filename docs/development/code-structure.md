@@ -39,12 +39,14 @@ thing, you can find its directory.
 
 | Package | Owns |
 | --- | --- |
-| `aggregates/` | `AggregateRoot`, `DeclarativeAggregate`, `AggregateRepository`, plus the snapshot and background-task collaborators |
+| `domain/` | Entities ring: `AggregateRoot`, `DeclarativeAggregate` (`aggregate.py`), `StreamId` |
+| `application/aggregates/` | Use-case ring: `AggregateRepository`, plus the `SnapshotPolicy`/`SnapshotScheduler` collaborators (`snapshotting.py`) |
+| `ports/` | Boundary interfaces: `Snapshot`/`SnapshotStore` (`snapshots.py`), store/bus/envelope/position ports |
+| `adapters/` | Interface adapters: snapshot store and event store implementations, one subpackage per technology (`memory/`, `postgresql/`, `sqlite/`) |
 | `events/` | `DomainEvent` (`base.py`) and the `EventRegistry` (`registry.py`) |
 | `handlers/` | The `@handles` decorator, its registry, and the sync/async handler adapter |
 | `stores/` | `EventStore` interface plus PostgreSQL / SQLite / in-memory implementations |
 | `bus/` | `EventBus` interface plus in-memory, Redis, RabbitMQ, and Kafka backends |
-| `snapshots/` | `SnapshotStore` interface, three backends, and the snapshot *strategies* |
 | `projections/` | Projection base, coordinator, checkpoint manager, DLQ manager, retry |
 | `readmodels/` | Read-model projections, query surface, schema, and per-backend repositories |
 | `subscriptions/` | Subscription lifecycle: manager, `runners/`, retry, health, flow control, pause/resume, shutdown |
@@ -61,17 +63,23 @@ Three properties of this map are worth naming, because they are choices rather t
 
 **Backends live next to the interface they implement.** `stores/postgresql.py`,
 `stores/sqlite.py`, and `stores/in_memory.py` all sit beside `stores/interface.py`; the same shape
-holds in `bus/`, `snapshots/`, and `readmodels/`. Reading one directory therefore tells you both
-what the contract is and how many ways it has been satisfied — and it makes an interface change
-impossible to ship without seeing every implementation it breaks. An `infrastructure/` package
-once held these; it was deleted precisely because it hid that coupling behind a directory boundary.
+holds in `bus/` and `readmodels/`. Snapshot backends follow the ring-adapter version of the same
+idea: `adapters/memory/snapshots.py`, `adapters/postgresql/snapshots.py`, and
+`adapters/sqlite/snapshots.py` each implement the `SnapshotStore` port declared in
+`ports/snapshots.py`, one technology per subpackage rather than one file per technology beside a
+shared interface file. Reading one directory therefore tells you both what the contract is and how
+many ways it has been satisfied — and it makes an interface change impossible to ship without
+seeing every implementation it breaks. An `infrastructure/` package once held these; it was deleted
+precisely because it hid that coupling behind a directory boundary.
 
 **Shared vocabulary is centralized; shared behavior is not.** `protocols.py`, `types.py`, and
 `exceptions.py` are the only genuinely global modules, and they contain declarations only —
-`EventHandler`, `EventSubscriber`, `AggregateId`, `OptimisticLockError`. Nothing importable from
-them does work. Behavior that several packages need arrives as an injected collaborator from its
-own package (a `Tracer` from `observability/`, a `SnapshotStrategy` from `snapshots/`) rather than
-as a utility import, which is what keeps the dependency graph from turning into a mesh.
+`EventHandler`, `EventSubscriber`, `AggregateId`, `OptimisticLockError`, and (as of the ring
+migration) the `SnapshotError` hierarchy, which moved into `exceptions.py` from its own module.
+Nothing importable from them does work. Behavior that several packages need arrives as an injected
+collaborator from its own package (a `Tracer` from `observability/`, a `SnapshotPolicy` or
+`SnapshotScheduler` from `application/aggregates/snapshotting.py`) rather than as a utility import,
+which is what keeps the dependency graph from turning into a mesh.
 
 **Two similarly-named directories mean different things.** `migration/` (singular) is runtime
 Python for moving a live system between event stores. `migrations/` (plural) is SQL DDL. They are
@@ -92,10 +100,18 @@ that follow trace those splits in detail.
 
 When a class starts answering two unrelated questions — "how do I persist this aggregate?" and
 "when should I snapshot it?" — the second question moves out, into a module named for the answer.
-That is the literal history of `aggregates/snapshot_manager.py`: `AggregateSnapshotManager` was
-carved out of `AggregateRepository`. Background task tracking was carved out for the same reason,
-but it lives in `_internal/background_tasks.py` rather than `aggregates/`, since its consumers
-are the snapshot strategy and the event bus, not the repository.
+That is the literal history of snapshotting in this codebase, in two stages. First
+`AggregateSnapshotManager` was carved out of `AggregateRepository`. Then, in the ring migration
+(see [ADR 0021](../adrs/0021-snapshot-policy-scheduler-composition.md)), the manager itself was
+dissolved: it had accumulated four responsibilities behind one object (read validation, write
+delegation, manual write, background-task reporting), and each moved to the collaborator that
+actually owns it — `SnapshotPolicy` decides *when*, `SnapshotScheduler` decides *how*,
+`take_snapshot()` is the single construction path, and `read_valid_snapshot()` is the single
+load-path validation function, all in `application/aggregates/snapshotting.py`, composed directly
+by the repository with no manager object in between. Background task tracking was carved out for
+the same one-responsibility reason, but it lives in `_internal/background_tasks.py` rather than
+`application/aggregates/`, since its consumers are `SnapshotScheduler` and the event bus, not the
+repository.
 
 The test for whether a module has one responsibility is not line count; it is whether the
 failure modes are shared. Persistence fails with `OptimisticLockError` and must propagate.
@@ -117,10 +133,14 @@ responsibility, tracers are trivially mockable, and implementations become swapp
 touching the class hierarchy.
 
 Inheritance is still used, but only for *implementation reuse under a fixed contract*.
-`BaseSnapshotStrategy` is an ABC because all three strategies genuinely share one
-serialize-and-save body (`_create_snapshot`); `AggregateRoot` and `DeclarativeAggregate` are
-abstract bases because "an aggregate" is what the subclass *is*. The rule of thumb: inherit to
-say what something is, compose to say what something has. Tracing, snapshotting, and background
+`AggregateRoot` and `DeclarativeAggregate` are abstract bases because "an aggregate" is what the
+subclass *is*. The snapshot collaborators went the other way on this axis: ADR 0017's
+`BaseSnapshotStrategy` ABC (shared `_create_snapshot` body across three strategy subclasses) was
+replaced by ADR 0021 with two independent `Protocol`s and free functions — `SnapshotPolicy`,
+`SnapshotScheduler`, `take_snapshot()` — because *when* and *how* turned out not to share enough
+implementation to justify a common base, and the shared construction logic factors out cleaner as
+a single function than as an ABC method every implementation inherits. The rule of thumb: inherit
+to say what something is, compose to say what something has. Tracing, snapshotting, and background
 task tracking are all things a repository *has*.
 
 A useful side effect is that the constructor becomes the whole dependency list. Reading
@@ -131,9 +151,13 @@ true of a class that acquires half its behavior from three levels of `super()`.
 
 Where a component needs a pluggable collaborator, the contract is a `typing.Protocol` — structural
 typing, so an implementation satisfies it by having the right methods, with no import of the
-contract and no inheritance. `SnapshotStrategy` (`snapshots/strategies.py`) and `Tracer`
-(`observability/tracer.py`) are both Protocols, and both are `@runtime_checkable` so an
-`isinstance` guard remains possible where one is genuinely needed.
+contract and no inheritance. `SnapshotPolicy` and `SnapshotScheduler`
+(`application/aggregates/snapshotting.py`) and `Tracer` (`observability/tracer.py`) are all
+Protocols, and all are `@runtime_checkable` so an `isinstance` guard remains possible where one is
+genuinely needed — though `SnapshotScheduler`'s uniform `pending_count`/`await_pending()` surface
+is specifically designed so the repository never needs that guard for scheduler capability
+detection (see [ADR 0021](../adrs/0021-snapshot-policy-scheduler-composition.md) on the isinstance
+sniffing it replaces).
 
 ABCs are used where the contract also wants to *supply* behavior or enforce a base
 `__init__`. `protocols.py` is deliberately mixed for this reason and says so: `EventHandler`,
@@ -149,19 +173,22 @@ dependencies — along.
 
 ### How the three interact
 
-The snapshot path shows all three in one line of wiring: the repository *has* a manager
-(composition), the manager *has* a strategy (composition), the strategy conforms to a Protocol
-(boundary), and each object owns exactly one decision (SRP) — persist, cache-lifecycle, policy.
-Adding a fourth snapshot behavior touches none of the existing three; it is a new class
-implementing `SnapshotStrategy`. That is the shape to reach for when extending any package here.
+The snapshot path shows all three in one line of wiring: the repository *has* a `SnapshotPolicy`
+and a `SnapshotScheduler` directly (composition, no intervening manager object), each conforms to
+its own Protocol (boundary), and each object owns exactly one decision (SRP) — persist (the
+repository's `load`/`save`), when (`SnapshotPolicy`), how (`SnapshotScheduler`). Adding a fourth
+snapshot behavior touches none of the existing ones; it is a new class implementing
+`SnapshotPolicy` or `SnapshotScheduler`. That is the shape to reach for when extending any package
+here.
 
 ## The aggregates bounded context
 
-### `aggregates/base.py` — state derived from events
+### `domain/aggregate.py` — state derived from events
 
-`base.py` holds two abstract classes and one idea: an aggregate's state is a *fold over its
+`aggregate.py` holds two abstract classes and one idea: an aggregate's state is a *fold over its
 events*, never a thing you set. Everything in the module either advances that fold or exists so
-another package can shortcut it.
+another package can shortcut it. It is the whole of the entities ring's aggregate surface —
+pure: stdlib, pydantic, and the entities-ring `events`/`exceptions` modules only, no I/O.
 
 `AggregateRoot[TState]` is the base. Its instance state is deliberately four fields —
 `_aggregate_id`, `_version`, `_uncommitted_events`, `_state` — exposed through read-only
@@ -194,8 +221,9 @@ The snapshot seam is exactly two methods, and they are the only places state cro
 persistence boundary. `_serialize_state()` returns `self._state.model_dump(mode="json")` (or `{}`
 for a never-created aggregate), and `_restore_from_snapshot(state_dict, version)` validates that
 dict back into the state model via `_get_state_type()` and sets `_version` directly. Both are
-underscore-private and documented as repository-internal: they let the snapshot manager skip a
-replay, and they are not an alternative way to construct an aggregate. `_get_state_type()`
+underscore-private and documented as repository-internal: they let `read_valid_snapshot()` and
+`AggregateRepository.load()` skip a replay, and they are not an alternative way to construct an
+aggregate. `_get_state_type()`
 recovers `TState` by walking `__orig_bases__`, which is why an aggregate must be declared as
 `AggregateRoot[OrderState]` rather than bare — the generic parameter is load-bearing at runtime.
 `schema_version` (also on `AggregateRoot`, default `1`) is the invalidation lever: bump it when
@@ -219,24 +247,25 @@ raises `AggregateNotCreatedError` until then — with `state_or_none` and `is_cr
 non-raising ways to ask. This is the "does an empty Order exist?" question given a type-level
 answer instead of a `None` check at every call site.
 
-### `aggregates/repository.py` — load and save, and not much else
+### `application/aggregates/repository.py` — load and save, and not much else
 
 `AggregateRepository[TAggregate]` is the persistence orchestrator, and its public surface is
 deliberately small. Seven methods do the work: `load`, `load_or_create`, `save`, `exists`,
 `get_version`, `get_or_raise` (an intent-revealing alias for `load`, identical in behavior), and
 `create_new` (a bare `self._aggregate_factory(aggregate_id)` — an in-memory instance at version 0,
 no I/O at all). Everything else on the class is either configuration read-back
-(`aggregate_type`, `event_store`, `event_publisher`) or a pass-through to the snapshot manager.
+(`aggregate_type`, `event_store`, `event_publisher`) or a pass-through to the `SnapshotScheduler`.
 
 The constructor takes the whole dependency list, which is the point of the composition style: an
 `EventStore`, an `aggregate_factory` (the aggregate class itself), an optional `aggregate_type`
-string, an optional `EventPublisher`, the three snapshot knobs, and the two tracing arguments.
+string, an optional `EventPublisher`, the three snapshot mode/threshold knobs plus the
+`snapshot_policy=`/`snapshot_scheduler=` escape hatches, and the two tracing arguments.
 When `aggregate_type` is omitted, `_infer_aggregate_type` reads the `aggregate_type` class
 attribute off the factory and rejects `""` and `"Unknown"` as unset — the `ValueError` it raises
 spells out both fixes rather than letting a mistyped stream name reach the store.
 
 `load` is where the loading *sequence* lives, and reading it top to bottom is the fastest way to
-understand the aggregate lifecycle: ask the snapshot manager for a valid snapshot; fetch events
+understand the aggregate lifecycle: call `read_valid_snapshot()` for a valid snapshot; fetch events
 from `snapshot.version` if there was one and from `0` if not; instantiate the aggregate; restore
 snapshot state; replay whatever events came back; return. The method owns the two failure
 policies that go with that sequence. No snapshot *and* no events means the aggregate does not
@@ -257,9 +286,11 @@ arithmetic is the whole optimistic-locking contract: the aggregate already advan
 locally as each event was applied, so the version *before* the command is what the store must
 still be at. Getting it from the aggregate rather than from a caller-supplied argument is what
 makes `OptimisticLockError` impossible to bypass by accident. On a successful append it marks the
-events committed, publishes them if a publisher was configured, and then asks the snapshot
-manager whether a snapshot is warranted — `maybe_create_snapshot(aggregate, events_since_snapshot=...)`.
-It does not decide that itself, and it does not let the answer affect the outcome of the save.
+events committed, publishes them if a publisher was configured, and then asks
+`self._snapshot_policy.should_snapshot(aggregate, len(uncommitted_events))` whether a snapshot is
+warranted. It does not decide that itself, and it does not let the answer affect the outcome of
+the save; if the policy says yes, it hands `self._snapshot_scheduler.schedule(take_snapshot(...))`
+the work and moves on.
 
 The ordering here is a policy, not an accident: durable append first, then local bookkeeping,
 then publication, then caching. Each step is safe to lose if the process dies after it, and none
@@ -271,71 +302,57 @@ of the later steps can invalidate the earlier ones.
 which is the reason they exist as separate methods rather than as `try: await load(...)`.
 
 What the repository conspicuously does *not* contain is as informative as what it does. There is
-no snapshot validation logic, no threshold arithmetic, no `asyncio.Task` list, and no tracing
-base class — those are `AggregateSnapshotManager`, `SnapshotStrategy`, `BackgroundTaskManager`,
+no snapshot manager object, no threshold arithmetic, no `asyncio.Task` list, and no tracing
+base class — those are `SnapshotPolicy`, `SnapshotScheduler`, `BackgroundTaskManager`,
 and an injected `Tracer` respectively. What remains is a class you can read in one sitting whose
 every method is a short story about events.
 
-### `aggregates/snapshot_manager.py` — the snapshot lifecycle
+### `application/aggregates/snapshotting.py` — the collaborators that replaced the manager
 
-`AggregateSnapshotManager[TAggregate]` owns everything snapshot-shaped. Its constructor takes a
-`SnapshotStore`, the `aggregate_type` string, an optional `SnapshotStrategy`, and the two tracing
-arguments — no event store, no aggregate factory, no publisher. That dependency list is the
-clearest statement of scope in the module: the manager can read and write snapshots and it can
-ask a strategy a question, and it can do nothing else. It cannot load events, so it can never
-quietly become a second way to reconstitute an aggregate.
+The manager object this section used to describe — `AggregateSnapshotManager` — is gone (see
+[ADR 0021](../adrs/0021-snapshot-policy-scheduler-composition.md)). Its four responsibilities
+(read validation, automatic write delegation, manual write, background-work reporting) now belong
+to four separate things in `snapshotting.py`, none of which hold a reference to the others; the
+repository composes them directly.
 
-`strategy` is genuinely optional. Passed `None`, the manager still loads and validates snapshots
-and still creates them on demand; only the automatic path goes away. "Manual snapshots only" is
-therefore the absence of a collaborator rather than a mode flag.
+`read_valid_snapshot(store, aggregate_id, aggregate_type, aggregate_factory)` is the read path,
+and its contract is *never raise*. It fetches from the store inside a `try`, and three distinct
+outcomes all funnel to the same `None`: a store exception (logged at `warning` with "Falling back
+to event replay"), a missing snapshot (silent — not finding a cache entry is not news), and a
+`schema_version` mismatch against `getattr(aggregate_factory, "schema_version", 1)` (logged at
+`info`, naming both versions). The uniform `None` is what lets `AggregateRepository.load` treat
+"no snapshot" as one branch instead of four, and it is why bumping `schema_version` on an
+aggregate is a safe deployment action rather than a breaking one — every stored snapshot silently
+stops matching and reads degrade to full replay. Note the direction of the schema check: the
+function reads the *expected* version off the aggregate class it was handed, not off any state of
+its own — it is a pure function, not a stateful object, so there is nothing to keep correct across
+a schema bump.
 
-Four operations make up the surface.
+`take_snapshot(aggregate, aggregate_type, store)` is the single construction path, used by both
+the automatic and manual writes. It reads `schema_version` off `type(aggregate)`, calls the
+aggregate's repository-internal `_serialize_state()`, builds a `Snapshot` with
+`created_at=datetime.now(UTC)`, saves it, logs at `info`, and returns it. Unlike the old manager
+split, there is only one place this logic lives — `AggregateSnapshotManager.create_snapshot()` and
+`BaseSnapshotStrategy._create_snapshot()` used to duplicate it. `take_snapshot()` does not catch
+anything: it propagates errors to whichever caller invoked it.
 
-`load_valid_snapshot(aggregate_id, aggregate_factory)` is the read path, and its contract is
-*never raise*. It fetches from the store inside a `try`, and three distinct outcomes all funnel to
-the same `None`: a store exception (logged at `warning` with "Falling back to event replay"), a
-missing snapshot (silent — not finding a cache entry is not news), and a `schema_version`
-mismatch against `getattr(aggregate_factory, "schema_version", 1)` (logged at `info`, naming both
-versions). Only on the way out does it set `snapshot.found` and `snapshot.version` on the span.
-The uniform `None` is what lets `AggregateRepository.load` treat "no snapshot" as one branch
-instead of four, and it is why bumping `schema_version` on an aggregate is a safe deployment
-action rather than a breaking one — every stored snapshot silently stops matching and reads
-degrade to full replay.
+`SnapshotPolicy.should_snapshot(aggregate, events_since_snapshot)` decides *when*. `EveryNEvents(n)`
+fires on `aggregate.version > 0 and aggregate.version % n == 0`; `Never()` never fires (manual
+mode). `SnapshotScheduler.schedule(write, *, aggregate_type, aggregate_id)` decides *how* a write
+executes and is where the automatic-path failure handling now lives: `ImmediateScheduler` awaits
+`write` (a `take_snapshot(...)` coroutine) inline and catches/logs failures; `BackgroundScheduler`
+hands it to a `BackgroundTaskManager` and returns `None` immediately, with its own guarded wrapper
+doing the catch/log. `pending_count` and `await_pending()` are declared on the `SnapshotScheduler`
+Protocol itself and answered by every implementation — `0`/no-op for `ImmediateScheduler` — so the
+repository never needs the `isinstance` check the old manager used for
+`BackgroundSnapshotStrategy`. Tests are the main consumer of `await_pending()` — call it before
+asserting a snapshot exists under `snapshot_mode="background"`.
 
-Note the direction of the schema check: the manager reads the *expected* version off the
-aggregate class it was handed, not off itself. It holds no opinion about what version is current,
-which is what keeps a single manager correct across a schema bump.
-
-`maybe_create_snapshot(aggregate, events_since_snapshot=0)` is the automatic write path and is
-mostly a pair of guards: return `None` if there is no strategy, return `None` if
-`strategy.should_snapshot(aggregate, events_since_snapshot)` says no. Only past both does it open
-a span and call `strategy.execute_snapshot(aggregate, store, aggregate_type)`, returning whatever
-that gives back — a `Snapshot` for the synchronous strategy, `None` for the background one. Both
-early returns happen *before* the `with`, so a trace contains a `maybe_create_snapshot` span only
-when a snapshot actually happened; the overwhelmingly common "not at a threshold boundary" case
-costs nothing and shows nothing.
-
-`create_snapshot(aggregate)` is the manual write path and deliberately does not consult the
-strategy at all. It reads `schema_version` off `type(aggregate)`, calls the aggregate's
-repository-internal `_serialize_state()`, builds a `Snapshot` with `created_at=datetime.now(UTC)`,
-saves it, logs at `info`, and returns it. It also returns `Snapshot`, not `Snapshot | None` —
-where the automatic path is best-effort, an explicit request either produces a snapshot or raises.
-Two different callers, two different failure policies, and the type signatures say so.
-
-`pending_count` and `await_pending()` are the background-work window. Each does an `isinstance`
-check for `BackgroundSnapshotStrategy` and forwards, returning `0` otherwise. That check is the
-one place the manager knows a concrete strategy class, and it is a conscious concession: awaiting
-in-flight tasks is meaningless for the other two strategies, so rather than widen the
-`SnapshotStrategy` Protocol with methods most implementations would stub out, the capability is
-detected where it is used. Tests are the main consumer — `await manager.await_pending()` before
-asserting a snapshot exists.
-
-What the manager does *not* own is equally deliberate. It does not decide *when* to snapshot
-(that is the strategy), it does not own the `asyncio.Task` list (that is
-`BackgroundSnapshotStrategy`), and it does not know how to replay events (that is the
-repository). It is the lifecycle coordinator sitting between a store and a policy, and its
-`__repr__` — `AggregateSnapshotManager(Order, strategy=ThresholdSnapshotStrategy)` — is a fair
-summary of everything it holds.
+The manual write path, `AggregateRepository.create_snapshot(aggregate)`, calls `take_snapshot()`
+directly with no scheduler in between, so it stays strict by construction: no store configured
+raises `RuntimeError`, and store/serialization errors propagate. That asymmetry with the
+automatic path — degrade for work the library decided to do, raise for work you asked for — is
+the same rule ADR 0017 established; ADR 0021 just relocated where it is enforced.
 
 ### Why snapshot logic moved out of the repository
 
@@ -345,47 +362,60 @@ different job — a cache lifecycle with its own validity rules (schema versions
 policy (degrade to replay, never fail the caller), and its own timing concerns. Fused into one
 class, those two jobs shared a constructor, shared mutable state, and every change to snapshot
 validation risked the save path. Split apart, `load`/`save` read as narratives about events, and
-snapshot correctness can be reasoned about — and tested — on its own.
+snapshot correctness can be reasoned about — and tested — on its own. The ring migration pushed
+this one step further: even the intermediate manager object turned out to be answering four
+different questions behind one interface, so it was replaced with two Protocols and two free
+functions, each answering exactly one.
 
-### Delegating the when/how decision to `SnapshotStrategy`
+### Delegating the when/how decision to `SnapshotPolicy` and `SnapshotScheduler`
 
-Even inside the manager, the *policy* question is factored out again. `SnapshotStrategy`
-(`snapshots/strategies.py`) is a runtime-checkable Protocol with two methods: `should_snapshot()`
-and `execute_snapshot()`. Three implementations descend from `BaseSnapshotStrategy`, which
-supplies the shared serialize-and-save body (`_create_snapshot`).
+Where ADR 0017's `SnapshotStrategy` merged *when* and *how* into one Protocol, ADR 0021 splits
+them. `SnapshotPolicy` (`application/aggregates/snapshotting.py`) is a runtime-checkable Protocol
+with one method, `should_snapshot()`; `SnapshotScheduler` is a separate runtime-checkable Protocol
+with `schedule()`, `pending_count`, and `await_pending()`. Splitting them fixes an interface-
+segregation problem the merged design had: ADR 0017's `NoSnapshotStrategy` (manual mode) was
+forced to implement an `execute_snapshot()` it could never legitimately be asked to run, because
+its `should_snapshot()` always returns `False`. Under the split design, manual mode is just
+`Never()` — a policy with nothing to schedule, and no unrunnable method to carry.
 
-The shared `should_snapshot` on the base returns `False` when no threshold is configured and
-otherwise fires on a threshold boundary (`version > 0 and version % threshold == 0`); only the
-*execution* differs between subclasses:
+Only two policies ship, and only the boundary predicate matters — `EveryNEvents(n)` fires on a
+threshold boundary (`version > 0 and version % n == 0`); `Never()` never fires. The *execution*
+differs between the two schedulers:
 
-- `ThresholdSnapshotStrategy` — snapshot synchronously at the boundary; failures
+- `ImmediateScheduler` — await the write inline; failures
   are logged and swallowed, returning `None`.
-- `BackgroundSnapshotStrategy` — same trigger, but `execute_snapshot` spawns an `asyncio` task
-  and returns `None` immediately, so the save path never waits on the store. It tracks the task,
+- `BackgroundScheduler` — submits the write to a `BackgroundTaskManager` and returns `None`
+  immediately, so the save path never waits on the store. It tracks the task,
   prunes completed ones, and exposes `pending_count` / `await_pending()`.
-- `NoSnapshotStrategy` — `should_snapshot` is unconditionally `False`; snapshots only happen via
-  an explicit call.
 
-`create_snapshot_strategy(mode, threshold)` maps the legacy `"sync" | "background" | "manual"`
-mode strings onto those classes and raises `ValueError` for anything else. This is the
-Open/Closed payoff: a new snapshot behavior is a new class implementing the Protocol, not an
-extra branch inside the repository.
+`Never()` fills the `"should_snapshot always False"` role `NoSnapshotStrategy` used to; snapshots
+only happen via an explicit `create_snapshot()` call in that mode. `AggregateRepository.__init__`
+maps the legacy `"sync" | "background" | "manual"` mode strings onto `EveryNEvents`/`Never` and
+`ImmediateScheduler`/`BackgroundScheduler` directly rather than through a factory function — there
+is no `create_snapshot_strategy()` equivalent, and no runtime `ValueError` for an unrecognized
+string (mypy is the only guard, via the `Literal` type). This is still the Open/Closed payoff ADR
+0017 established: a new snapshot behavior is a new class implementing `SnapshotPolicy` or
+`SnapshotScheduler`, not an extra branch inside the repository.
 
-### How the repository wires the manager
+### How the repository composes the collaborators
 
-The wiring is a short chain in `AggregateRepository.__init__`, and it only happens when a
-`snapshot_store` was supplied:
+The wiring is a short pair of `if`/`elif`/`else` chains in `AggregateRepository.__init__`, and it
+always runs — there is no manager object gating it on whether `snapshot_store` was supplied:
 
-`snapshot_mode` + `snapshot_threshold` → `create_snapshot_strategy(...)` → `AggregateSnapshotManager(store, aggregate_type, strategy, enable_tracing)`
+`snapshot_mode` + `snapshot_threshold` → `EveryNEvents(threshold)` or `Never()` (policy), and
+`snapshot_mode` → `ImmediateScheduler()` or `BackgroundScheduler()` (scheduler) — or, when
+`snapshot_policy=`/`snapshot_scheduler=` are passed directly, those objects verbatim (mutually
+exclusive with the mode/threshold knobs; passing both raises `ValueError`).
 
-Without a store, `_snapshot_strategy` and `_snapshot_manager` are both `None` and every snapshot
-path becomes a no-op or a clear error. The repository then keeps a thin pass-through surface so
-callers never need to reach for the manager:
+Without a `snapshot_store`, the policy and scheduler are still constructed, but `save()` and
+`load()` gate every snapshot code path on `self._snapshot_store is not None` first, so they are
+simply never consulted. The repository keeps a thin pass-through surface so callers never need to
+reach for `snapshotting.py` directly:
 
-- `create_snapshot(aggregate)` — raises `RuntimeError` if no store is configured, otherwise
-  delegates.
-- `await_pending_snapshots()` — returns `0` with no manager, else `manager.await_pending()`.
-- `pending_snapshot_count` — same shape, as a property.
+- `create_snapshot(aggregate)` — raises `RuntimeError` if no store is configured, otherwise calls
+  `take_snapshot()` directly.
+- `await_pending_snapshots()` — delegates to `self._snapshot_scheduler.await_pending()`.
+- `pending_snapshot_count` — same shape, as a property reading `pending_count`.
 - `snapshot_store`, `snapshot_threshold`, `snapshot_mode`, `has_snapshot_support` — read-only
   views of the configuration.
 
@@ -399,8 +429,8 @@ stragglers past the timeout and logging a warning), and `cancel_all()` cancels e
 returns the count.
 
 It is internal (not part of the public API) and has two real consumers today:
-`snapshots.strategies.BackgroundSnapshotStrategy` delegates its pending-task bookkeeping and
-`await_pending()` to an instance, and `bus.base.BaseEventBus` delegates `_track_background` /
+`application.aggregates.snapshotting.BackgroundScheduler` delegates its pending-task bookkeeping
+and `await_pending()` to an instance, and `bus.base.BaseEventBus` delegates `_track_background` /
 `get_background_task_count` / `_drain_background` to one, while keeping its own timeout-specific
 log messages at the call site so existing log output is unchanged.
 
@@ -437,11 +467,14 @@ assuming a live span object.
 Each collaborator names its own spans, which means the trace tree mirrors the module structure:
 
 - `AggregateRepository`: `eventsource.repository.load`, `.save`, `.exists`,
-  `.create_snapshot`. `get_version`, `load_or_create`, and `create_new` are unspanned —
-  `load_or_create` inherits `load`'s span. `save` opens no span at all when there is nothing to
-  commit, because the early return happens before the `with`.
-- `AggregateSnapshotManager`: `eventsource.snapshot_manager.load_valid_snapshot`,
-  `.maybe_create_snapshot`, `.create_snapshot`.
+  `.create_snapshot`, and `eventsource.repository.snapshot` (opened around the scheduler call
+  inside `save`, only when the policy actually says yes). `get_version`, `load_or_create`, and
+  `create_new` are unspanned — `load_or_create` inherits `load`'s span. `save` opens no span at
+  all when there is nothing to commit, because the early return happens before the `with`.
+  `read_valid_snapshot()` and `take_snapshot()` are plain functions and open no spans of their
+  own — the observable change from the ring migration is that the
+  `eventsource.snapshot_manager.*` spans this used to name no longer exist (see
+  [ADR 0021](../adrs/0021-snapshot-policy-scheduler-composition.md)'s Consequences).
 
 Attributes come from the shared constants in `observability/attributes.py`
 (`ATTR_AGGREGATE_ID`, `ATTR_AGGREGATE_TYPE`, `ATTR_EVENT_COUNT`, `ATTR_VERSION`), plus
@@ -460,7 +493,7 @@ marks the same migration across `projections/`, `subscriptions/`, `bus/`, and `m
 
 ### What the tests pin down
 
-`tests/unit/aggregates/test_repository_tracing.py` locks the contract in place:
+`tests/unit/application/aggregates/test_repository_tracing.py` locks the contract in place:
 
 - `test_uses_tracer_composition` inspects `AggregateRepository.__init__` and asserts a `tracer`
   parameter exists — a structural guard against a regression to inheritance.
@@ -481,12 +514,12 @@ attribute constants, and the absence of a span when `save` has no events.
 
 A workable order:
 
-1. `base.py` — `apply_event`, `load_from_history`, `_apply`. Everything else assumes these.
-2. `repository.py` — `__init__` for the wiring, then `load` and `save`.
-3. `snapshot_manager.py` — `load_valid_snapshot` and `maybe_create_snapshot`.
-4. `snapshots/strategies.py` — `BaseSnapshotStrategy` then the three subclasses.
-5. `observability/tracer.py` — only if you are touching spans.
-6. `_internal/background_tasks.py` — standalone; read whenever background tasks come up.
+1. `domain/aggregate.py` — `apply_event`, `load_from_history`, `_apply`. Everything else assumes these.
+2. `application/aggregates/repository.py` — `__init__` for the wiring, then `load` and `save`.
+3. `application/aggregates/snapshotting.py` — `read_valid_snapshot()` and `take_snapshot()`, then
+   `SnapshotPolicy`/`EveryNEvents`/`Never` and `SnapshotScheduler`/`ImmediateScheduler`/`BackgroundScheduler`.
+4. `observability/tracer.py` — only if you are touching spans.
+5. `_internal/background_tasks.py` — standalone; read whenever background tasks come up.
 
 ## The same split elsewhere
 
@@ -495,10 +528,13 @@ codebase. `projections/` separates the coordinator from `checkpoint_manager.py`;
 splits lifecycle, pause/resume, retry, health, and flow control into distinct modules;
 `migration/` separates the router, the consistency checker, and the status streamer. All of them
 carry the same composition-based tracing initialization. When adding to any of these packages,
-prefer a new collaborator or a new strategy implementation over a new branch or a new mixin.
+prefer a new collaborator or a new policy/scheduler implementation over a new branch or a new mixin.
 
 ## Related documents
 
 - `docs/core-surface.md` — the Tier 0 dependency boundary.
-- `src/eventsource/aggregates/README.md` — per-directory interface and invariant summary.
+- `docs/adrs/0021-snapshot-policy-scheduler-composition.md` — why the snapshot manager was
+  dissolved into `SnapshotPolicy`/`SnapshotScheduler`.
+- `src/eventsource/application/aggregates/README.md` — per-directory interface and invariant
+  summary.
 - `.claude/rules/architecture.md` — layer boundaries and interface patterns.

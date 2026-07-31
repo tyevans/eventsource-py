@@ -11,8 +11,8 @@ import logging
 from typing import TYPE_CHECKING, Generic, TypeVar
 from uuid import UUID
 
-from eventsource.aggregates.base import AggregateRoot
-from eventsource.aggregates.repository import AggregateRepository
+from eventsource.application.aggregates.repository import AggregateRepository
+from eventsource.domain.aggregate import AggregateRoot
 from eventsource.multitenancy.context import get_required_tenant
 from eventsource.multitenancy.exceptions import TenantMismatchError
 
@@ -43,7 +43,7 @@ class TenantAwareRepository(Generic[TAggregate]):
 
     Example:
         >>> from eventsource.multitenancy import TenantAwareRepository, tenant_scope
-        >>> from eventsource.aggregates import AggregateRepository
+        >>> from eventsource.application.aggregates import AggregateRepository
         >>>
         >>> # Create tenant-aware wrapper
         >>> base_repo = AggregateRepository(event_store, OrderAggregate, "Order")

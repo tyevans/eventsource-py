@@ -229,17 +229,19 @@ for production (Step 10 fixes that).
 The three snapshot parameters:
 
 - `snapshot_store` -- any `SnapshotStore` implementation. Passing it is the switch:
-  internally the repository builds an `AggregateSnapshotManager`, and
+  internally the repository composes a `SnapshotPolicy` and `SnapshotScheduler`, and
   `has_snapshot_support` is literally "is `snapshot_store` not `None`". Leave it out and
-  the manager is `None`, which is the Step 2 behavior.
+  the policy is `Never()`, which is the Step 2 behavior.
 - `snapshot_threshold` -- how many events between automatic snapshots. `None` (the
-  default) means the strategy's `should_snapshot()` always returns `False`, so nothing is
-  ever written automatically, whatever the mode.
-- `snapshot_mode` -- `"sync"` (the default: `ThresholdSnapshotStrategy`, which writes the
-  snapshot before `save()` returns), `"background"` (`BackgroundSnapshotStrategy`, a
-  fire-and-forget task -- use `repo.pending_snapshot_count` and
-  `await repo.await_pending_snapshots()` to observe it), or `"manual"`
-  (`NoSnapshotStrategy`, never automatic).
+  default) means the repository selects the `Never()` policy, whose `should_snapshot()`
+  always returns `False`, so nothing is ever written automatically, whatever the mode.
+- `snapshot_mode` -- `"sync"` (the default: `EveryNEvents(threshold)` paired with
+  `ImmediateScheduler`, which writes the snapshot before `save()` returns), `"background"`
+  (`EveryNEvents(threshold)` paired with `BackgroundScheduler`, a fire-and-forget task --
+  use `repo.pending_snapshot_count` and `await repo.await_pending_snapshots()` to observe
+  it), or `"manual"` (`Never()`, never automatic). See
+  [ADR 0021](../adrs/0021-snapshot-policy-scheduler-composition.md) for how these
+  collaborators fit together.
 
 Mode and threshold are independent, and both must be set for anything to happen on its
 own: `snapshot_mode="sync"` with no threshold writes nothing, and `snapshot_threshold=100`
@@ -309,7 +311,7 @@ snapshot: Snapshot(Counter/4687a41d-..., v600, schema_v1)
 ```
 
 There it is -- your first snapshot, written by the library rather than by you. 99 events
-took the aggregate from 501 to 600, `600 % 100 == 0`, and `ThresholdSnapshotStrategy`
+took the aggregate from 501 to 600, `600 % 100 == 0`, and `ImmediateScheduler`
 serialized the state and called `save_snapshot()` before `save()` returned. That is what
 `snapshot_mode="sync"` buys you: by the time the `await repo.save(c)` line finishes, the
 snapshot is durable. (Under `"background"` it would not be -- you would need
@@ -534,7 +536,7 @@ library:
     import aiosqlite
 
     from eventsource.migrations import get_schema
-    from eventsource.snapshots import SQLiteSnapshotStore
+    from eventsource.adapters.sqlite import SQLiteSnapshotStore
 
     db_path = "snapshots.db"
 
@@ -572,7 +574,7 @@ of the `SnapshotStore` interface. For PostgreSQL the swap is the same shape:
 ```python
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from eventsource.snapshots import PostgreSQLSnapshotStore
+from eventsource.adapters.postgresql import PostgreSQLSnapshotStore
 
 session_factory = async_sessionmaker(engine, expire_on_commit=False)
 snapshot_store = PostgreSQLSnapshotStore(session_factory)
@@ -580,7 +582,7 @@ snapshot_store = PostgreSQLSnapshotStore(session_factory)
 
 with `get_schema("snapshots")` (PostgreSQL is the default backend) applied to the database
 first. `SQLiteSnapshotStore` requires the `aiosqlite` extra; check
-`eventsource.snapshots.SQLITE_AVAILABLE` if you need to degrade gracefully.
+`eventsource.adapters.sqlite.SQLITE_AVAILABLE` if you need to degrade gracefully.
 
 ## What you learned
 
@@ -609,9 +611,9 @@ first. `SQLiteSnapshotStore` requires the `aiosqlite` extra; check
 - Try `snapshot_mode="background"` and confirm with `repo.pending_snapshot_count` and
   `await repo.await_pending_snapshots()` that the snapshot really is written off the save
   path.
-- Read `eventsource/snapshots/strategies.py` and write your own `SnapshotStrategy` -- for
-  example, one that snapshots on elapsed time rather than event count -- and pass it
-  straight to `AggregateSnapshotManager`.
+- Read `eventsource/application/aggregates/snapshotting.py` and write your own
+  `SnapshotPolicy` -- for example, one that snapshots on elapsed time rather than event
+  count -- and pass it as `snapshot_policy=` to `AggregateRepository`.
 - Plan a real schema migration: bump `schema_version`, deploy, then run
   `delete_snapshots_by_type(aggregate_type, schema_version_below=N)` to evict the stale
   snapshots in one pass.

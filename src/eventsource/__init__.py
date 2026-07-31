@@ -38,9 +38,10 @@ except PackageNotFoundError:
 # `eventsource.adapters.postgresql.PostgreSQLEventStore` path-only.
 from eventsource.adapters._sql.positions import IntPositionCodec
 from eventsource.adapters.memory import MemoryEventStore
-from eventsource.aggregates.base import AggregateRoot, DeclarativeAggregate
-from eventsource.aggregates.decider import DeciderAggregate
-from eventsource.aggregates.repository import AggregateRepository
+
+# Snapshots
+from eventsource.adapters.memory.snapshots import InMemorySnapshotStore
+from eventsource.application.aggregates.repository import AggregateRepository
 
 # Event bus (Task 10)
 from eventsource.bus.base import BaseEventBus
@@ -82,6 +83,8 @@ from eventsource.bus.retry import RetryPolicy
 # Commands (Task 05 - decider feature)
 from eventsource.commands import DomainCommand
 from eventsource.domain import StreamId
+from eventsource.domain.aggregate import AggregateRoot, DeclarativeAggregate
+from eventsource.domain.decider import DeciderAggregate
 
 # Shared async engine factory
 from eventsource.engine import create_async_engine
@@ -114,6 +117,10 @@ from eventsource.exceptions import (
     PositionDecodeError,
     PositionForeignError,
     ProjectionError,
+    SnapshotDeserializationError,
+    SnapshotError,
+    SnapshotNotFoundError,
+    SnapshotSchemaVersionError,
 )
 
 # Decorators - canonical location for @handles (TD-006)
@@ -147,6 +154,7 @@ from eventsource.ports import (
     StreamReadOptions,
     collect,
 )
+from eventsource.ports.snapshots import Snapshot, SnapshotStore
 
 # Projections (Task 09)
 from eventsource.projections.base import (
@@ -191,17 +199,6 @@ from eventsource.repositories import (
 
 # Serialization utilities
 from eventsource.serialization import EventSourceJSONEncoder
-
-# Snapshots
-from eventsource.snapshots import (
-    InMemorySnapshotStore,
-    Snapshot,
-    SnapshotDeserializationError,
-    SnapshotError,
-    SnapshotNotFoundError,
-    SnapshotSchemaVersionError,
-    SnapshotStore,
-)
 
 # Event store implementations (Task 05, Task 06)
 from eventsource.stores.in_memory import InMemoryEventStore

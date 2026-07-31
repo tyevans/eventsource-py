@@ -45,7 +45,7 @@ from collections.abc import Callable, Sequence
 from typing import Any, TypeVar
 from uuid import UUID, uuid4
 
-from eventsource.aggregates.base import AggregateRoot
+from eventsource.domain.aggregate import AggregateRoot
 from eventsource.events.base import DomainEvent
 from eventsource.exceptions import CommandRejectedError
 from eventsource.testing.harness import InMemoryTestHarness

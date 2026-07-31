@@ -17,7 +17,7 @@ from eventsource.observability.attributes import (
     ATTR_AGGREGATE_TYPE,
     ATTR_VERSION,
 )
-from eventsource.snapshots.interface import Snapshot, SnapshotStore
+from eventsource.ports.snapshots import Snapshot, SnapshotStore
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,8 @@ class InMemorySnapshotStore(SnapshotStore):
     - Single-process only (no shared state)
 
     Example:
-        >>> from eventsource.snapshots import InMemorySnapshotStore, Snapshot
+        >>> from eventsource.adapters.memory.snapshots import InMemorySnapshotStore
+        >>> from eventsource.ports.snapshots import Snapshot
         >>> from datetime import datetime, UTC
         >>> from uuid import uuid4
         >>>

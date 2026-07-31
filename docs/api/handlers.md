@@ -292,7 +292,7 @@ Aggregate — sync, single parameter, mutates state:
 
 ```python
 from eventsource import handles
-from eventsource.aggregates import DeclarativeAggregate
+from eventsource.domain.aggregate import DeclarativeAggregate
 
 
 class OrderAggregate(DeclarativeAggregate[OrderState]):

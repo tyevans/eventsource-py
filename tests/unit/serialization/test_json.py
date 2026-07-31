@@ -160,52 +160,6 @@ class TestJsonLoads:
         assert result == [1, 2, 3, "four"]
 
 
-class TestDeprecatedImports:
-    """Tests for backward compatibility with deprecated import paths."""
-
-    def test_deprecated_import_warns(self):
-        """Test that importing from deprecated path shows warning."""
-        with pytest.warns(DeprecationWarning, match="eventsource.serialization"):
-            from eventsource.repositories._json import json_dumps as _  # noqa: F401
-
-    def test_deprecated_import_works(self):
-        """Test that deprecated imports still work correctly."""
-        import warnings
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            from eventsource.repositories._json import json_dumps
-
-            result = json_dumps({"test": "data"})
-            assert "test" in result
-
-    def test_deprecated_encoder_import_warns(self):
-        """Test that importing encoder from deprecated path shows warning."""
-        with pytest.warns(DeprecationWarning, match="eventsource.serialization"):
-            from eventsource.repositories._json import EventSourceJSONEncoder as _  # noqa: F401
-
-    def test_deprecated_loads_import_warns(self):
-        """Test that importing json_loads from deprecated path shows warning."""
-        with pytest.warns(DeprecationWarning, match="eventsource.serialization"):
-            from eventsource.repositories._json import json_loads as _  # noqa: F401
-
-    def test_deprecated_module_dir(self):
-        """Test that deprecated module's __dir__ returns expected names."""
-        from eventsource.repositories import _json
-
-        available = dir(_json)
-        assert "EventSourceJSONEncoder" in available
-        assert "json_dumps" in available
-        assert "json_loads" in available
-
-    def test_deprecated_module_unknown_attr_raises(self):
-        """Test that accessing unknown attr in deprecated module raises AttributeError."""
-        with pytest.raises(AttributeError, match="has no attribute"):
-            from eventsource.repositories import _json
-
-            _ = _json.unknown_attribute
-
-
 class TestJsonEncoderContract:
     """
     Contract tests for the single orjson-backed encoder.

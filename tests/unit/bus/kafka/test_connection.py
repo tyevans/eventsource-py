@@ -1,8 +1,7 @@
 """Unit tests for the extracted ``KafkaConnectionManager``.
 
 Covers connect/disconnect/cleanup/reconnect lifecycle and record_reconnection
-/record_rebalance logic in isolation from ``KafkaEventBus``, plus the
-deprecated facade shims that now delegate to the manager.
+/record_rebalance logic in isolation from ``KafkaEventBus``.
 """
 
 from __future__ import annotations
@@ -252,27 +251,3 @@ class TestKafkaRebalanceListener:
 
         # Should not raise; nothing to assert beyond no exception.
         await listener.on_partitions_assigned({tp})
-
-
-class TestFacadeDeprecationShims:
-    def test_record_reconnection_warns_and_delegates(self) -> None:
-        from eventsource.bus.kafka import KafkaEventBus
-
-        with patch.object(KafkaEventBusConfig, "_validate_security_config"):
-            bus = KafkaEventBus()
-
-        with pytest.warns(DeprecationWarning, match="record_reconnection"):
-            bus.record_reconnection()
-
-        assert bus._connection_manager._stats.reconnections == 1
-
-    def test_record_rebalance_warns_and_delegates(self) -> None:
-        from eventsource.bus.kafka import KafkaEventBus
-
-        with patch.object(KafkaEventBusConfig, "_validate_security_config"):
-            bus = KafkaEventBus()
-
-        with pytest.warns(DeprecationWarning, match="record_rebalance"):
-            bus.record_rebalance()
-
-        assert bus._connection_manager._stats.rebalance_count == 1

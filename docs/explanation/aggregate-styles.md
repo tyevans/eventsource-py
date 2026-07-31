@@ -8,7 +8,7 @@ subclasses `DeclarativeAggregate[ShoppingCartState]` and decorates one method pe
 type with `@handles(...)`.
 
 This is not two competing frameworks bolted together. `DeclarativeAggregate` is a
-subclass of `AggregateRoot` (`src/eventsource/aggregates/base.py`) whose only real job
+subclass of `AggregateRoot` (`src/eventsource/domain/aggregate.py`) whose only real job
 is to supply an `_apply` implementation for you: it looks the event's Python type up in
 a per-subclass `_event_handlers` registry and calls the method registered for it. Every
 other moving part -- `apply_event()` and its version check, `load_from_history()`,

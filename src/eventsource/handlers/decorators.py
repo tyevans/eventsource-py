@@ -62,7 +62,7 @@ def handles(event_type: type[DomainEvent]) -> Callable[[F], F]:
 
     Example (Aggregate):
         >>> from eventsource.handlers import handles
-        >>> from eventsource.aggregates import DeclarativeAggregate
+        >>> from eventsource.domain.aggregate import DeclarativeAggregate
         >>>
         >>> class OrderAggregate(DeclarativeAggregate[OrderState]):
         ...     @handles(OrderCreated)

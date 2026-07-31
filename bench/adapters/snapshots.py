@@ -7,8 +7,8 @@ from uuid import uuid4
 
 from bench.adapters._postgres import asyncpg_dsn, ensure_schema, ping, postgres_url, truncate
 from bench.adapters.base import BenchAdapter
-from eventsource.snapshots.in_memory import InMemorySnapshotStore
-from eventsource.snapshots.interface import SnapshotStore
+from eventsource.adapters.memory.snapshots import InMemorySnapshotStore
+from eventsource.ports.snapshots import SnapshotStore
 
 
 class MemorySnapshotAdapter(BenchAdapter[SnapshotStore]):
@@ -47,7 +47,7 @@ class PostgresSnapshotAdapter(BenchAdapter[SnapshotStore]):
             await self._engine.dispose()
 
     async def create(self) -> SnapshotStore:
-        from eventsource.snapshots.postgresql import PostgreSQLSnapshotStore
+        from eventsource.adapters.postgresql.snapshots import PostgreSQLSnapshotStore
 
         await truncate(asyncpg_dsn(self._url))
         return PostgreSQLSnapshotStore(self._session_factory, enable_tracing=False)
@@ -76,8 +76,8 @@ class SQLiteSnapshotAdapter(BenchAdapter[SnapshotStore]):
     async def create(self) -> SnapshotStore:
         import aiosqlite
 
+        from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
         from eventsource.migrations import get_schema
-        from eventsource.snapshots.sqlite import SQLiteSnapshotStore
 
         assert self._tmpdir is not None
         database = str(Path(self._tmpdir.name) / f"{uuid4().hex}.db")

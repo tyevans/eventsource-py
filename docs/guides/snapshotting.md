@@ -99,16 +99,16 @@ Specifically:
   for shorter replays. On aggregates with a few dozen events the full replay is
   already cheap, and the snapshot is overhead.
 
-You also need a snapshot store. Pick one from `eventsource.snapshots`:
+You also need a snapshot store. Pick one from `eventsource.adapters`:
 
 | Store | Import | Requires |
 | --- | --- | --- |
-| `InMemorySnapshotStore` | `from eventsource.snapshots import InMemorySnapshotStore` | nothing -- tests and development only, state is lost on restart |
-| `PostgreSQLSnapshotStore` | `from eventsource.snapshots import PostgreSQLSnapshotStore` | `pip install "eventsource-py[postgresql]"`, plus a SQLAlchemy `async_sessionmaker` |
-| `SQLiteSnapshotStore` | `from eventsource.snapshots import SQLiteSnapshotStore` | `pip install "eventsource-py[sqlite]"` (aiosqlite), plus a database path |
+| `InMemorySnapshotStore` | `from eventsource import InMemorySnapshotStore` | nothing -- tests and development only, state is lost on restart |
+| `PostgreSQLSnapshotStore` | `from eventsource.adapters.postgresql import PostgreSQLSnapshotStore` | `pip install "eventsource-py[postgresql]"`, plus a SQLAlchemy `async_sessionmaker` |
+| `SQLiteSnapshotStore` | `from eventsource.adapters.sqlite import SQLiteSnapshotStore` | `pip install "eventsource-py[sqlite]"` (aiosqlite), plus a database path |
 
 The SQLite store is an optional import: if `aiosqlite` is missing,
-`eventsource.snapshots.SQLITE_AVAILABLE` is `False`, `SQLiteSnapshotStore` is
+`eventsource.adapters.sqlite.SQLITE_AVAILABLE` is `False`, `SQLiteSnapshotStore` is
 `None`, and constructing it raises `SQLiteNotAvailableError`. Guard on
 `SQLITE_AVAILABLE` if your code must run in both configurations.
 
@@ -252,7 +252,7 @@ repository. If they differ -- in either direction, so a rollback invalidates
 just as a bump does -- it logs at `INFO` ("Snapshot schema version mismatch ...
 Falling back to full event replay") and returns `None`, so the aggregate replays
 its full stream. Nothing is raised: `SnapshotSchemaVersionError` exists in
-`eventsource.snapshots.exceptions` for your own code to raise, but the load path
+`eventsource.exceptions` for your own code to raise, but the load path
 never does. The stale row is overwritten in place the next time the aggregate is
 snapshotted, since snapshots are upserted per `(aggregate_id, aggregate_type)`.
 
@@ -365,13 +365,13 @@ one that matches where your events already live.
 
 | Store | Import from | Constructor argument | Extra required |
 | --- | --- | --- | --- |
-| `InMemorySnapshotStore` | `eventsource` or `eventsource.snapshots` | none | none |
-| `SQLiteSnapshotStore` | `eventsource.snapshots` | `database_path: str` | `eventsource-py[sqlite]` |
-| `PostgreSQLSnapshotStore` | `eventsource.snapshots` | `session_factory: async_sessionmaker[AsyncSession]` | `eventsource-py[postgresql]` |
+| `InMemorySnapshotStore` | `eventsource` or `eventsource.adapters.memory` | none | none |
+| `SQLiteSnapshotStore` | `eventsource.adapters.sqlite` | `database_path: str` | `eventsource-py[sqlite]` |
+| `PostgreSQLSnapshotStore` | `eventsource.adapters.postgresql` | `session_factory: async_sessionmaker[AsyncSession]` | `eventsource-py[postgresql]` |
 
 Only `Snapshot`, `SnapshotStore`, and `InMemorySnapshotStore` are re-exported
 from the top-level `eventsource` package. The two durable stores are imported
-from `eventsource.snapshots`.
+path-only from their adapter packages.
 
 All three take the same optional keyword arguments: `tracer` (a custom
 `Tracer`) and `enable_tracing` (default `True`, ignored when `tracer` is
@@ -390,7 +390,7 @@ A `dict` keyed by `(aggregate_id, aggregate_type)` guarded by an
 up between runs except the store object itself:
 
 ```python
-from eventsource.snapshots import InMemorySnapshotStore
+from eventsource import InMemorySnapshotStore
 
 store = InMemorySnapshotStore()
 ```
@@ -456,7 +456,7 @@ saves are in flight.
 Backed by `aiosqlite`, one file on disk:
 
 ```python
-from eventsource.snapshots import SQLiteSnapshotStore
+from eventsource.adapters.sqlite import SQLiteSnapshotStore
 
 store = SQLiteSnapshotStore("snapshots.db")
 ```
@@ -469,7 +469,7 @@ decoded on read, so the `Snapshot` you get back has a real `dict` and a real
 Three things to know before you rely on it:
 
 - **The import is optional.** If `aiosqlite` is not installed,
-  `eventsource.snapshots.SQLITE_AVAILABLE` is `False` and `SQLiteSnapshotStore`
+  `eventsource.adapters.sqlite.SQLITE_AVAILABLE` is `False` and `SQLiteSnapshotStore`
   is bound to `None` -- so a missing dependency surfaces as a `TypeError` on
   call, not a clean `ImportError`. Guard on `SQLITE_AVAILABLE` in code that must
   run in both configurations. When the class is importable but `aiosqlite` is
@@ -496,7 +496,7 @@ store uses:
 ```python
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from eventsource.snapshots import PostgreSQLSnapshotStore
+from eventsource.adapters.postgresql import PostgreSQLSnapshotStore
 
 engine = create_async_engine("postgresql+asyncpg://localhost/app")
 session_factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -581,7 +581,7 @@ Snapshotting is configured entirely at repository construction. Pass a
 
 ```python
 from eventsource import AggregateRepository
-from eventsource.snapshots import PostgreSQLSnapshotStore
+from eventsource.adapters.postgresql import PostgreSQLSnapshotStore
 
 repo = AggregateRepository(
     event_store=event_store,
@@ -613,9 +613,18 @@ repository with a store but no threshold reads snapshots but only writes them
 when you call `create_snapshot()` yourself.
 
 `snapshot_mode` -- `"sync"` (default), `"background"`, or `"manual"`; how an
-automatic snapshot is executed once the threshold triggers. The mode is mapped
-to a strategy object by `create_snapshot_strategy()`, and an unrecognized string
-raises `ValueError` at construction time. See
+automatic snapshot is executed once the threshold triggers. `AggregateRepository.__init__`
+maps the mode/threshold combination directly to a `SnapshotPolicy` and
+`SnapshotScheduler` (see [ADR 0021](../adrs/0021-snapshot-policy-scheduler-composition.md)):
+`snapshot_mode="background"` selects `BackgroundScheduler`, everything else
+selects `ImmediateScheduler`; a non-`None` threshold outside `"manual"` mode
+selects `EveryNEvents(threshold)`, everything else selects `Never()`. The
+parameter is typed `Literal["sync", "background", "manual"]`, so mypy rejects
+an unrecognized string, but nothing raises at runtime for one that slips
+through untyped code -- it is simply treated the same as `"sync"`. Prefer
+passing `snapshot_policy=`/`snapshot_scheduler=` directly (mutually exclusive
+with `snapshot_mode`/`snapshot_threshold`) if you want behavior beyond the
+three named modes. See
 [Choose a snapshot mode](#choose-a-snapshot-mode-sync-background-or-manual)
 for the trade-offs.
 
@@ -653,10 +662,11 @@ exactly on a multiple of the threshold. Two consequences worth planning around:
   accumulate at versions 100, 200, 300, ... rather than drifting.
 
 If you need a different rule -- elapsed time, event type, state size --
-implement the `SnapshotStrategy` protocol
-(`should_snapshot()` plus `execute_snapshot()`) rather than tuning the
-threshold; the repository accepts modes, but the strategy layer is the extension
-point.
+implement the `SnapshotPolicy` protocol (one method,
+`should_snapshot(aggregate, events_since_snapshot) -> bool`) and pass it as
+`snapshot_policy=` rather than tuning the threshold; the mode/threshold
+knobs are a convenience over the built-in `EveryNEvents`/`Never` policies, but
+`SnapshotPolicy` is the extension point.
 
 ### Verify it is on
 
@@ -690,20 +700,23 @@ snapshot has been validated and applied.
 `should_snapshot()` returns `True`. It does not decide whether snapshots are
 read -- reads are on as soon as `snapshot_store` is set, in every mode.
 
-`create_snapshot_strategy(mode, threshold)` maps the string to a strategy class:
+`AggregateRepository.__init__` maps the mode/threshold pair to a
+`SnapshotPolicy` and `SnapshotScheduler` (`eventsource.application.aggregates.snapshotting`):
 
-| Mode | Strategy class | Threshold used | `save()` waits for the write? |
+| Mode | Policy | Scheduler | `save()` waits for the write? |
 | --- | --- | --- | --- |
-| `"sync"` (default) | `ThresholdSnapshotStrategy` | yes | yes |
-| `"background"` | `BackgroundSnapshotStrategy` | yes | no -- `asyncio.create_task()` |
-| `"manual"` | `NoSnapshotStrategy` | **no, discarded** | n/a -- never auto-snapshots |
+| `"sync"` (default) | `EveryNEvents(threshold)` | `ImmediateScheduler` | yes |
+| `"background"` | `EveryNEvents(threshold)` | `BackgroundScheduler` | no -- `BackgroundTaskManager` |
+| `"manual"` | `Never()` -- threshold discarded | `ImmediateScheduler` | n/a -- never auto-snapshots |
 
-Any other string raises `ValueError` from the repository constructor:
-`Unknown snapshot mode: <mode>. Must be one of: sync, background, manual`.
+Mypy rejects any string outside `Literal["sync", "background", "manual"]` at
+the type-check level; there is no runtime `ValueError` for an unrecognized
+mode string reaching the constructor (see the note above under
+[the three arguments](#what-each-argument-does)).
 
 ### `"sync"` -- write the snapshot before `save()` returns
 
-`ThresholdSnapshotStrategy.execute_snapshot()` awaits the serialize-and-save
+`ImmediateScheduler.schedule()` awaits the write (`take_snapshot()`)
 inline, so the snapshot is durable by the time `save()` returns.
 
 ```python
@@ -731,16 +744,17 @@ The cost is latency, and it lands unevenly: 99 saves are unaffected and the
 100th pays for a full state serialization plus a store write. If your p99 matters
 more than your mean, that spike is the reason to look at `background`.
 
-A failed sync snapshot is caught inside `execute_snapshot()`, logged at
+A failed sync snapshot is caught inside `ImmediateScheduler.schedule()`, logged at
 `WARNING` (`Failed to create snapshot for ...`, with `exc_info`), and turned
 into `None`. `save()` still succeeds. See
 [Sync-mode snapshot writes that fail do not fail save()](#sync-mode-snapshot-writes-that-fail-do-not-fail-save).
 
 ### `"background"` -- hand the snapshot to a fire-and-forget task
 
-`BackgroundSnapshotStrategy.execute_snapshot()` wraps the write in
-`asyncio.create_task()`, appends it to an internal pending list, prunes any
-completed tasks, and returns `None` immediately. `save()` does not wait.
+`BackgroundScheduler.schedule()` submits the write to a
+`BackgroundTaskManager` (`eventsource._internal.background_tasks`), which
+tracks it in a pending set, attaches a done-callback that discards it and
+logs any exception, and returns `None` immediately. `save()` does not wait.
 
 ```python
 repo = AggregateRepository(
@@ -760,14 +774,16 @@ command handlers, or a snapshot store slower than your event store.
 
 Three properties of this mode to plan around:
 
-- **The task serializes the aggregate later, not now.** `_create_snapshot()`
-  reads `aggregate.version` and calls `aggregate._serialize_state()` when the
-  task actually runs. If you keep mutating the same aggregate instance after
-  `save()` returns, the snapshot can capture a state *newer* than the version it
-  was scheduled at -- and it records whatever `aggregate.version` reads at that
-  moment. Reload from the repository rather than continuing to command an
-  instance you have already saved.
-- **Failures are invisible to the caller.** `_create_snapshot_background()`
+- **The task serializes the aggregate later, not now.** `save()` builds the
+  `take_snapshot(...)` coroutine before handing it to the scheduler, but the
+  coroutine's body -- reading `aggregate.version` and calling
+  `aggregate._serialize_state()` -- only runs when the background task is
+  actually scheduled by the event loop. If you keep mutating the same
+  aggregate instance after `save()` returns, the snapshot can capture a state
+  *newer* than the version it was scheduled at -- and it records whatever
+  `aggregate.version` reads at that moment. Reload from the repository rather
+  than continuing to command an instance you have already saved.
+- **Failures are invisible to the caller.** The scheduler's guarded wrapper
   catches everything and logs at `WARNING`; nothing propagates into `save()`,
   and the returned value was already `None`.
 - **Tasks are only tracked, not bounded.** There is no concurrency limit and no
@@ -782,10 +798,10 @@ tests](#wait-for-background-snapshots-in-tests-with-await_pending_snapshots-and-
 
 ### `"manual"` -- read snapshots, write only when you say so
 
-`NoSnapshotStrategy.should_snapshot()` returns `False` unconditionally, and
-`create_snapshot_strategy()` constructs it with **no threshold at all** -- a
-`snapshot_threshold` passed alongside `snapshot_mode="manual"` is silently
-discarded.
+`Never().should_snapshot()` returns `False` unconditionally, and
+`AggregateRepository.__init__` selects it whenever `snapshot_mode == "manual"`
+-- a `snapshot_threshold` passed alongside `snapshot_mode="manual"` is
+silently discarded.
 
 ```python
 repo = AggregateRepository(
@@ -816,8 +832,8 @@ a few snapshots by hand, confirm they are being used, then switch to `sync` or
   both `snapshot_mode` and `snapshot_threshold`. It is also the one snapshot
   path that raises: `RuntimeError` when no store is configured, and store errors
   propagate to the caller instead of being swallowed.
-- **Loading is identical.** All three modes go through
-  `AggregateSnapshotManager.load_valid_snapshot()`, with the same schema-version
+- **Loading is identical.** All three modes go through the same
+  `read_valid_snapshot()` function, with the same schema-version
   validation and the same fallback to full replay.
 - **No mode can corrupt state.** `sync` and `background` failures are both
   caught and logged; the aggregate still loads correctly by replaying events.
@@ -1003,10 +1019,10 @@ changes incompatibly.
 
 The value is written into every snapshot and compared on every load:
 
-- **On write** -- `SnapshotStrategy._create_snapshot()` and
-  `AggregateSnapshotManager.create_snapshot()` both read
-  `getattr(type(aggregate), "schema_version", 1)` and store it on the `Snapshot`.
-- **On read** -- `AggregateSnapshotManager.load_valid_snapshot()` reads
+- **On write** -- `take_snapshot()`, the single function both the manual and
+  automatic write paths call, reads
+  `getattr(type(aggregate), "schema_version", 1)` and stores it on the `Snapshot`.
+- **On read** -- `read_valid_snapshot()` reads
   `getattr(aggregate_factory, "schema_version", 1)` and compares:
 
   ```python
@@ -1022,7 +1038,7 @@ ignores the newer snapshots rather than misreading them.
 A mismatch is not an error. `load_valid_snapshot()` returns `None`, `load()`
 replays the aggregate's full event stream, and the aggregate comes back correct
 -- just more slowly. Nothing raises, and nothing is written to the DLQ.
-`SnapshotSchemaVersionError` exists in `eventsource.snapshots.exceptions` for
+`SnapshotSchemaVersionError` exists in `eventsource.exceptions` for
 callers that want to signal a mismatch themselves; the load path does not raise
 it.
 
@@ -1160,16 +1176,16 @@ The five automatic failure modes, and the one deliberate exception:
 
 | Failure | Where it is caught | Log level | Result |
 | --- | --- | --- | --- |
-| Snapshot store read error | `AggregateSnapshotManager.load_valid_snapshot()` | `WARNING` | full replay |
-| `schema_version` mismatch | `AggregateSnapshotManager.load_valid_snapshot()` | `INFO` | full replay |
+| Snapshot store read error | `read_valid_snapshot()` | `WARNING` | full replay |
+| `schema_version` mismatch | `read_valid_snapshot()` | `INFO` | full replay |
 | `_restore_from_snapshot()` raises | `AggregateRepository.load()` | `WARNING` | full replay |
-| Sync snapshot write fails | `ThresholdSnapshotStrategy.execute_snapshot()` | `WARNING` | `save()` succeeds, no snapshot |
-| Background snapshot task fails | `BackgroundSnapshotStrategy._create_snapshot_background()` | `WARNING` | `save()` succeeds, no snapshot |
+| Sync snapshot write fails | `ImmediateScheduler.schedule()` | `WARNING` | `save()` succeeds, no snapshot |
+| Background snapshot task fails | `BackgroundScheduler`'s guarded task wrapper | `WARNING` | `save()` succeeds, no snapshot |
 | **`create_snapshot()` fails** | **not caught** | -- | **raises to the caller** |
 
 ### Snapshot store read errors fall back to full event replay
 
-`load_valid_snapshot()` wraps the `snapshot_store.get_snapshot()` call:
+`read_valid_snapshot()` wraps the `snapshot_store.get_snapshot()` call:
 
 ```python
 try:
@@ -1204,7 +1220,7 @@ get, so alert on it.
 
 ### schema_version mismatches fall back to full event replay
 
-Immediately after the read, `load_valid_snapshot()` compares the stored
+Immediately after the read, `read_valid_snapshot()` compares the stored
 `schema_version` against `getattr(aggregate_factory, "schema_version", 1)` and
 returns `None` on any inequality, logging at `INFO` rather than `WARNING`.
 
@@ -1221,9 +1237,9 @@ indistinguishable from "no snapshot," and only the `INFO` line names it.
 
 ### State deserialization (_restore_from_snapshot) failures fall back to full event replay
 
-This fallback lives in `AggregateRepository.load()`, not in the manager, because
-by the time it fires the repository has already fetched only the events *after*
-the snapshot:
+This fallback lives in `AggregateRepository.load()` itself, not in
+`read_valid_snapshot()`, because by the time it fires the repository has
+already fetched only the events *after* the snapshot:
 
 ```python
 try:
@@ -1272,23 +1288,25 @@ _restore_from_snapshot()](#implement-_serialize_state-and-_restore_from_snapshot
 
 ### Sync-mode snapshot writes that fail do not fail save()
 
-`ThresholdSnapshotStrategy.execute_snapshot()` is the entire sync write path,
+`ImmediateScheduler.schedule()` is the entire sync write path,
 and its body is one `try/except`:
 
 ```python
 try:
-    return await self._create_snapshot(aggregate, snapshot_store, aggregate_type)
+    return await write
 except Exception as e:
     logger.warning("Failed to create snapshot for %s/%s: %s", ..., exc_info=True)
     return None
 ```
 
-`save()` awaits `maybe_create_snapshot()` last -- after the events are appended,
-after `mark_events_as_committed()`, after publishing -- so a snapshot failure
-cannot leave the aggregate or the event store in a bad state. The events are
-already durable; only the optimization was lost.
+where `write` is the `take_snapshot(aggregate, aggregate_type, snapshot_store)`
+coroutine `save()` builds. `save()` awaits the scheduler's `schedule()` call
+last -- after the events are appended, after `mark_events_as_committed()`,
+after publishing -- so a snapshot failure cannot leave the aggregate or the
+event store in a bad state. The events are already durable; only the
+optimization was lost.
 
-Because `_create_snapshot()` does both the serialization and the store write,
+Because `take_snapshot()` does both the serialization and the store write,
 this `except` also catches `_serialize_state()` raising. A serializer that is
 broken for a subset of aggregates therefore produces no snapshots for them, and
 the only evidence is the `WARNING` -- which does carry `exc_info`, so you get a
@@ -1299,26 +1317,28 @@ Nothing retries. The next opportunity is the next threshold boundary -- version
 
 ### Background-mode snapshot tasks that fail do not fail save()
 
-Background mode swallows failures twice over. `execute_snapshot()` returns
-`None` the moment the task is scheduled, so `save()` has no failure to observe
-even in principle; and `_create_snapshot_background()` wraps the actual work in
-its own `try/except Exception`, logging `Background snapshot creation failed for
-...` at `WARNING` with `exc_info`.
+Background mode swallows failures twice over. `BackgroundScheduler.schedule()`
+returns `None` the moment the task is submitted to its
+`BackgroundTaskManager`, so `save()` has no failure to observe even in
+principle; and the scheduler's guarded wrapper around the `take_snapshot(...)`
+coroutine has its own `try/except Exception`, logging `Background snapshot
+creation failed for ...` at `WARNING` with `exc_info`.
 
 Additional ways a background snapshot can quietly not happen:
 
-- **Process exit with tasks pending.** `asyncio.create_task()` produces
-  fire-and-forget tasks that are never awaited unless you call
+- **Process exit with tasks pending.** The scheduler's `BackgroundTaskManager`
+  produces fire-and-forget tasks that are never awaited unless you call
   `await_pending_snapshots()`. A shutdown that tears down the loop drops them --
   no log, no snapshot.
 - **Cancellation.** A cancelled task raises `CancelledError`, which derives from
   `BaseException` and so is *not* caught by the `except Exception` in
-  `_create_snapshot_background()`. It propagates into the task, where nothing
-  observes it.
+  the scheduler's guarded wrapper. It propagates into the task, where the
+  `BackgroundTaskManager`'s done-callback discards it as cancelled without
+  logging.
 - **Errors surfaced only on await.** `await_pending()` gathers with
   `return_exceptions=True` and logs anything unexpected at `ERROR`
-  (`Unexpected error in background snapshot task`). In normal operation this
-  never fires, because the per-task handler has already caught everything --
+  (`Background task failed: ...`). In normal operation this never fires,
+  because the per-task guarded wrapper has already caught everything --
   seeing it means something escaped that handler.
 
 If you need certainty that a snapshot landed, background mode is the wrong tool.

@@ -32,6 +32,13 @@ CORE_RINGS_EXPORTS = [
     "PositionDecodeError",
     "PositionForeignError",
     "IntPositionCodec",
+    "Snapshot",
+    "SnapshotStore",
+    "InMemorySnapshotStore",
+    "SnapshotError",
+    "SnapshotDeserializationError",
+    "SnapshotSchemaVersionError",
+    "SnapshotNotFoundError",
 ]
 
 

@@ -92,7 +92,7 @@ class. The library ships that adapter as `DeciderAggregate`: subclass it, implem
 three static methods above, and set `aggregate_type`:
 
 ```python
-from eventsource.aggregates.decider import DeciderAggregate
+from eventsource import DeciderAggregate
 
 class Order(DeciderAggregate[OrderState]):
     aggregate_type = "Order"

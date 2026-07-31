@@ -6,7 +6,7 @@ import pytest
 
 from eventsource.exceptions import CommandRejectedError
 from eventsource.testing import DeciderScenario
-from tests.unit.aggregates.test_decider_aggregate import (
+from tests.unit.domain.test_decider_aggregate import (
     Account,
     AccountOpened,
     DepositMoney,

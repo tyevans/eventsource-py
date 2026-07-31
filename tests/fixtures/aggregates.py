@@ -15,9 +15,9 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from eventsource.aggregates.base import AggregateRoot, DeclarativeAggregate
-from eventsource.aggregates.decider import DeciderAggregate
 from eventsource.commands.base import DomainCommand
+from eventsource.domain.aggregate import AggregateRoot, DeclarativeAggregate
+from eventsource.domain.decider import DeciderAggregate
 from eventsource.events.base import DomainEvent
 from eventsource.handlers import handles
 from tests.fixtures.events import (

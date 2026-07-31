@@ -690,7 +690,7 @@ def evolve(state: OrderState, event: DomainEvent) -> OrderState:
 These functions are wrapped in a `DeciderAggregate` subclass:
 
 ```python
-from eventsource.aggregates.decider import DeciderAggregate
+from eventsource import DeciderAggregate
 
 class Order(DeciderAggregate[OrderState]):
     aggregate_type = "Order"

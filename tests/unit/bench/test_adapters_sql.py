@@ -42,7 +42,7 @@ async def test_sqlite_store_adapter_appends_and_reads() -> None:
 async def test_sqlite_snapshot_adapter_roundtrip() -> None:
     from datetime import UTC, datetime
 
-    from eventsource.snapshots.interface import Snapshot
+    from eventsource.ports.snapshots import Snapshot
 
     adapter = SQLiteSnapshotAdapter()
     await adapter.setup()

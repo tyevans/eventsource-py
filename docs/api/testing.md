@@ -603,7 +603,7 @@ pure functions, you should be able to test it with plain asserts and zero
 infrastructure. A decider-style domain looks like:
 
 ```python
-from eventsource.aggregates.decider import DeciderAggregate
+from eventsource import DeciderAggregate
 
 class Order(DeciderAggregate[OrderState]):
     aggregate_type = "Order"
