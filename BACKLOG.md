@@ -93,15 +93,26 @@ outbox ring migration), so the chain `docs/core-surface.md` records post-slice i
 than the `eventsource.engine` path this note previously recorded (structure
 slice A / ADR 0029 moved `engine.py` under `adapters/_sql/`), but no cheaper:
 still exactly two module-level imports in the top-level `__init__` itself,
-same sqlalchemy cost either way. Structure slice A added nothing to this
-chain — the locks and readmodels adapters are reached only through their
-shims' lazy `__getattr__`, never eagerly, and `ReadModelProjection`'s
+same sqlalchemy cost either way. Structure slice A did not change this
+conclusion, but not because the moved adapters stayed lazy — they didn't.
+`eventsource/__init__.py` imports `eventsource.adapters.memory`,
+`eventsource.adapters.postgresql`, and `eventsource.adapters.sql` at module
+level (for the store/checkpoint/DLQ/outbox exports it already had), and those
+package `__init__.py` files now also import `readmodels`/`locks` submodules
+eagerly — so the read-model and lock adapters are loaded through the front
+door's existing eager `adapters` imports, not through their `eventsource.readmodels`
+/ `eventsource.locks` shims' lazy `__getattr__` (the shims are lazy, but the
+front door never goes through them). For read models this is the same eager
+cost as pre-slice, just by a different path — `ReadModelProjection`'s
 top-level re-export already pulled sqlalchemy in via
-`adapters/sql/projection.py` before this slice; do not expand this entry's
-scope on the strength of that slice landing. Correctness is unaffected
-(sqlalchemy is a core dep) but import time and the Tier 0 story would benefit
-from a PEP 562 lazy `__getattr__` front door. Pairs with the "Investigate
-making sqlalchemy an optional dependency" item above.
+`adapters/sql/projection.py` (now `adapters/sql/readmodel_projection.py`)
+before this slice. For locks it is newly eager — `PostgreSQLLockManager`
+was not previously imported by the front door — but it is pure Python with
+no new third-party import, so it adds no new dependency weight. Do not
+expand this entry's scope on the strength of that slice landing. Correctness
+is unaffected (sqlalchemy is a core dep) but import time and the Tier 0 story
+would benefit from a PEP 562 lazy `__getattr__` front door. Pairs with the
+"Investigate making sqlalchemy an optional dependency" item above.
 
 Note for whoever picks this up: the readmodels port-purity test
 (`tests/unit/ports/test_readmodels_port_surface.py`) had to be written as a
