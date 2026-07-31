@@ -204,7 +204,7 @@ class TestReadModelProjectionConstruction:
         self, mock_postgresql_session_factory, checkpoint_repo
     ) -> None:
         """Test that ReadModelProjection inherits from DatabaseProjection."""
-        from eventsource.projections.base import DatabaseProjection
+        from eventsource.adapters.sql.projection import DatabaseProjection
 
         factory, _, _ = mock_postgresql_session_factory
 

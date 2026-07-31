@@ -309,8 +309,8 @@ class TestDatabaseProjectionTracing:
 
     def test_enable_tracing_passed_through(self, mock_session_factory):
         """enable_tracing is passed to parent class."""
+        from eventsource.adapters.sql.projection import DatabaseProjection
         from eventsource.handlers import handles
-        from eventsource.projections.base import DatabaseProjection
 
         factory, _, _ = mock_session_factory
 

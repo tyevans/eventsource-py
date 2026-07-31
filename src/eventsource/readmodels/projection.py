@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Generic, TypeVar
 
+from eventsource.adapters.sql.projection import DatabaseProjection
 from eventsource.events.base import DomainEvent
 from eventsource.observability.attributes import (
     ATTR_EVENT_TYPE,
@@ -17,10 +18,9 @@ from eventsource.observability.attributes import (
     ATTR_PROJECTION_NAME,
     ATTR_READMODEL_TYPE,
 )
-from eventsource.projections.base import DatabaseProjection
+from eventsource.ports.checkpoints import ProjectionCheckpoints
+from eventsource.ports.dlq import DLQRepository
 from eventsource.readmodels.base import ReadModel
-from eventsource.repositories.checkpoint import CheckpointRepository
-from eventsource.repositories.dlq import DLQRepository
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionmaker
@@ -75,7 +75,7 @@ class ReadModelProjection(DatabaseProjection, Generic[TModel]):
 
     Example:
         >>> from eventsource.readmodels import ReadModelProjection, ReadModel
-        >>> from eventsource.projections import handles
+        >>> from eventsource.handlers import handles
         >>> # Or: from eventsource import ReadModelProjection, handles
         >>>
         >>> class OrderSummary(ReadModel):
@@ -129,7 +129,7 @@ class ReadModelProjection(DatabaseProjection, Generic[TModel]):
         self,
         session_factory: async_sessionmaker[AsyncSession],
         model_class: type[TModel],
-        checkpoint_repo: CheckpointRepository | None = None,
+        checkpoint_repo: ProjectionCheckpoints | None = None,
         dlq_repo: DLQRepository | None = None,
         enable_tracing: bool = False,
     ) -> None:

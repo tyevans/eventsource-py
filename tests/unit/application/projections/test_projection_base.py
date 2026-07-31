@@ -701,7 +701,7 @@ class TestDatabaseProjection:
         mock_session_factory,
     ) -> None:
         """Handler with (conn, event) signature gets real connection."""
-        from eventsource.projections.base import DatabaseProjection
+        from eventsource.adapters.sql.projection import DatabaseProjection
 
         factory, session, mock_conn = mock_session_factory
         received_conn = []
@@ -733,7 +733,7 @@ class TestDatabaseProjection:
         mock_session_factory,
     ) -> None:
         """Handler with (event) signature works without connection."""
-        from eventsource.projections.base import DatabaseProjection
+        from eventsource.adapters.sql.projection import DatabaseProjection
 
         factory, session, mock_conn = mock_session_factory
         events_handled = []
@@ -761,7 +761,7 @@ class TestDatabaseProjection:
         mock_session_factory,
     ) -> None:
         """Checkpoint is updated after successful processing."""
-        from eventsource.projections.base import DatabaseProjection
+        from eventsource.adapters.sql.projection import DatabaseProjection
 
         factory, session, mock_conn = mock_session_factory
 
@@ -790,7 +790,7 @@ class TestDatabaseProjection:
         mock_session_factory,
     ) -> None:
         """Checkpoint is NOT updated when handler raises error."""
-        from eventsource.projections.base import DatabaseProjection
+        from eventsource.adapters.sql.projection import DatabaseProjection
 
         factory, session, mock_conn = mock_session_factory
 
@@ -830,7 +830,7 @@ class TestDatabaseProjection:
         is called, which indicates the context is being properly exited
         (and will trigger rollback on exception in a real session).
         """
-        from eventsource.projections.base import DatabaseProjection
+        from eventsource.adapters.sql.projection import DatabaseProjection
 
         factory, session, mock_conn = mock_session_factory
 
@@ -878,7 +878,7 @@ class TestDatabaseProjection:
         mock_session_factory,
     ) -> None:
         """Different handlers in same projection get same connection."""
-        from eventsource.projections.base import DatabaseProjection
+        from eventsource.adapters.sql.projection import DatabaseProjection
 
         factory, session, mock_conn = mock_session_factory
         received_conns = []
@@ -915,7 +915,7 @@ class TestDatabaseProjection:
         mock_session_factory,
     ) -> None:
         """RuntimeError if _process_event is called without handle() context."""
-        from eventsource.projections.base import DatabaseProjection
+        from eventsource.adapters.sql.projection import DatabaseProjection
 
         factory, session, mock_conn = mock_session_factory
 
@@ -945,7 +945,7 @@ class TestDatabaseProjection:
         """Unhandled event type is silently ignored by default (backwards compatible)."""
         import logging
 
-        from eventsource.projections.base import DatabaseProjection
+        from eventsource.adapters.sql.projection import DatabaseProjection
 
         factory, session, mock_conn = mock_session_factory
 
@@ -975,7 +975,7 @@ class TestDatabaseProjection:
         mock_session_factory,
     ) -> None:
         """Connection is cleared after handle() completes."""
-        from eventsource.projections.base import DatabaseProjection
+        from eventsource.adapters.sql.projection import DatabaseProjection
 
         factory, session, mock_conn = mock_session_factory
 
@@ -1006,7 +1006,7 @@ class TestDatabaseProjection:
         mock_session_factory,
     ) -> None:
         """Connection is cleared even when handler raises error."""
-        from eventsource.projections.base import DatabaseProjection
+        from eventsource.adapters.sql.projection import DatabaseProjection
 
         factory, session, mock_conn = mock_session_factory
 
@@ -1039,7 +1039,7 @@ class TestDatabaseProjection:
         mock_session_factory,
     ) -> None:
         """Projection can have both 1-param and 2-param handlers."""
-        from eventsource.projections.base import DatabaseProjection
+        from eventsource.adapters.sql.projection import DatabaseProjection
 
         factory, session, mock_conn = mock_session_factory
         one_param_events = []
@@ -1074,7 +1074,7 @@ class TestDatabaseProjection:
 
     def test_can_import_from_projections_module(self) -> None:
         """DatabaseProjection can be imported from projections module."""
-        from eventsource.projections import DatabaseProjection as DBProjection
+        from eventsource.adapters.sql.projection import DatabaseProjection as DBProjection
 
         assert DBProjection is not None
 
@@ -1357,7 +1357,7 @@ class TestDatabaseProjectionUnregisteredEventHandling:
         mock_session_factory,
     ) -> None:
         """DatabaseProjection respects unregistered_event_handling='error'."""
-        from eventsource.projections.base import DatabaseProjection
+        from eventsource.adapters.sql.projection import DatabaseProjection
 
         factory, session, mock_conn = mock_session_factory
 
@@ -1390,7 +1390,7 @@ class TestDatabaseProjectionUnregisteredEventHandling:
         mock_session_factory,
     ) -> None:
         """DatabaseProjection respects unregistered_event_handling='ignore'."""
-        from eventsource.projections.base import DatabaseProjection
+        from eventsource.adapters.sql.projection import DatabaseProjection
 
         factory, session, mock_conn = mock_session_factory
 
