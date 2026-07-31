@@ -134,6 +134,7 @@ async def main():
         await repo.save(order)
 
         if i == 0:  # Ship the first order
+            shipped_order_id = order.aggregate_id
             order.ship(tracking_number="TRACK-001")
             await repo.save(order)
 
@@ -145,7 +146,7 @@ async def main():
     print(f"Orders shipped: {report.orders_shipped}")  # Orders shipped: 1
 
     # Events are the source of truth - reload aggregate from its event history
-    order = await repo.load(order.aggregate_id)
+    order = await repo.load(shipped_order_id)
     print(f"Order status: {order.state.status}")  # Order status: shipped
     print(f"Order version: {order.version}")      # Order version: 2 (placed + shipped)
 
