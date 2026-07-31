@@ -71,7 +71,18 @@ class SQLiteEventStore:
     Uses aiosqlite for async database operations. A single connection is
     opened lazily on first use and reused for the store's lifetime --
     required for `":memory:"` databases, whose contents live only as
-    long as the connection that created them stays open.
+    long as the connection that created them stays open. A second
+    connection would see a different, empty database, which is why reads
+    are not given one.
+
+    Connection discipline: *every* statement on that shared connection
+    runs under `self._lock` -- reads as well as `append`. `append` is
+    multi-statement (per-event INSERTs, then `commit()`), and a
+    same-connection read scheduled between two of them would run inside
+    its open transaction and observe a torn batch. Readers therefore
+    never see an open append transaction. `asyncio.Lock` is
+    non-reentrant, so `append`'s internal SELECTs use the connection
+    directly and must never be routed through the public read helpers.
 
     Structural conformance only -- no inheritance from the port protocols.
 
@@ -332,32 +343,35 @@ class SQLiteEventStore:
             query_parts.append("LIMIT ?")
             params.append(options.limit)
 
-        cursor = await conn.execute("\n".join(query_parts), params)
-        rows = await cursor.fetchall()
+        async with self._lock:
+            cursor = await conn.execute("\n".join(query_parts), params)
+            rows = await cursor.fetchall()
 
         for row in rows:
             yield self._row_to_envelope(row)
 
     async def get_stream_version(self, stream: StreamId) -> int:
         conn = await self._conn()
-        cursor = await conn.execute(
-            """
-            SELECT COALESCE(MAX(version), 0)
-            FROM events
-            WHERE aggregate_id = ? AND aggregate_type = ?
-            """,
-            (str(stream.aggregate_id), stream.category),
-        )
-        row = await cursor.fetchone()
+        async with self._lock:
+            cursor = await conn.execute(
+                """
+                SELECT COALESCE(MAX(version), 0)
+                FROM events
+                WHERE aggregate_id = ? AND aggregate_type = ?
+                """,
+                (str(stream.aggregate_id), stream.category),
+            )
+            row = await cursor.fetchone()
         return row[0] if row else 0
 
     async def event_exists(self, event_id: UUID) -> bool:
         conn = await self._conn()
-        cursor = await conn.execute(
-            "SELECT 1 FROM events WHERE event_id = ? LIMIT 1",
-            (str(event_id),),
-        )
-        return await cursor.fetchone() is not None
+        async with self._lock:
+            cursor = await conn.execute(
+                "SELECT 1 FROM events WHERE event_id = ? LIMIT 1",
+                (str(event_id),),
+            )
+            return await cursor.fetchone() is not None
 
     def read_all(
         self,
@@ -393,16 +407,18 @@ class SQLiteEventStore:
             query_parts.append("LIMIT ?")
             params.append(options.limit)
 
-        cursor = await conn.execute("\n".join(query_parts), params)
-        rows = await cursor.fetchall()
+        async with self._lock:
+            cursor = await conn.execute("\n".join(query_parts), params)
+            rows = await cursor.fetchall()
 
         for row in rows:
             yield self._row_to_envelope(row)
 
     async def current_position(self) -> Position | None:
         conn = await self._conn()
-        cursor = await conn.execute("SELECT MAX(global_position) FROM events")
-        row = await cursor.fetchone()
+        async with self._lock:
+            cursor = await conn.execute("SELECT MAX(global_position) FROM events")
+            row = await cursor.fetchone()
         if row is None or row[0] is None:
             return None
         return self._codec.encode(row[0])
@@ -449,8 +465,9 @@ class SQLiteEventStore:
             query_parts.append("LIMIT ?")
             params.append(options.limit)
 
-        cursor = await conn.execute("\n".join(query_parts), params)
-        rows = await cursor.fetchall()
+        async with self._lock:
+            cursor = await conn.execute("\n".join(query_parts), params)
+            rows = await cursor.fetchall()
 
         for row in rows:
             yield self._row_to_envelope(row)
