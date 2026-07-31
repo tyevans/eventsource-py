@@ -140,7 +140,7 @@ The forward transitions the coordinator drives are:
 
 - `PENDING -> BULK_COPY` on `start_migration()`
 - `BULK_COPY -> DUAL_WRITE` once the historical copy is done
-- `DUAL_WRITE -> CUTOVER` once sync lag is under `cutover_max_lag_events`
+- `DUAL_WRITE -> CUTOVER` once sync lag is within `cutover_max_lag_events` (0 by default -- exactly zero)
 - `CUTOVER -> COMPLETED` once routing has flipped
 
 `MigrationRepository` enforces this with a `VALID_TRANSITIONS` table, so an
@@ -162,6 +162,15 @@ Each call runs one bounded catch-up copy pass while the migration stays in
 return of 0 means the lag anchor is unclamped and cutover can proceed once
 lag drains. Bounding the retries is your policy, not the library's: a count
 that stops falling is a mirror problem to investigate, not a pass to repeat.
+
+> **Warning — a nonzero `cutover_max_lag_events` accepts event loss.** The lag
+> it tolerates is not optimistic slack: `safe_lag_anchor` guarantees every
+> counted event is provably absent from the target. Writes are paused for the
+> whole cutover and nothing in the sequence copies the residue, so any lag
+> remaining at the routing switch is events the target never receives while it
+> becomes authoritative. The default is 0. If a cutover refuses because lag
+> will not drain, the remedy is `run_resync_pass` (above), not a higher
+> threshold.
 
 `ABORTED` and `FAILED` are the two off-ramps. `abort_migration()` is available
 from `PENDING`, `BULK_COPY`, and `DUAL_WRITE`; `FAILED` is reachable from

@@ -370,7 +370,12 @@ class MigrationConfig:
         batch_size: Events per batch during bulk copy (default 1000).
         max_bulk_copy_rate: Max events/second during bulk copy (default 10000).
         dual_write_timeout_minutes: Max time in dual-write phase (default 30).
-        cutover_max_lag_events: Max lag allowed before cutover (default 100).
+        cutover_max_lag_events: Max lag allowed before cutover (default 0 --
+            strict). Any nonzero value permits cutover while that many
+            source events are absent from the target; they are never
+            copied, because writes are paused for the whole cutover and
+            nothing in the sequence copies the residue. Set it only as an
+            explicit acceptance of that bounded loss.
         cutover_timeout_ms: Hard timeout for cutover operation (default 500).
         position_mapping_enabled: Whether to record position mappings (default True).
         verify_consistency: Run consistency verification after migration (default True).
@@ -388,7 +393,7 @@ class MigrationConfig:
     batch_size: int = 1000
     max_bulk_copy_rate: int = 10000
     dual_write_timeout_minutes: int = 30
-    cutover_max_lag_events: int = 100
+    cutover_max_lag_events: int = 0
     cutover_timeout_ms: int = 500
     position_mapping_enabled: bool = True
     verify_consistency: bool = True
@@ -448,7 +453,7 @@ class MigrationConfig:
             batch_size=data.get("batch_size", 1000),
             max_bulk_copy_rate=data.get("max_bulk_copy_rate", 10000),
             dual_write_timeout_minutes=data.get("dual_write_timeout_minutes", 30),
-            cutover_max_lag_events=data.get("cutover_max_lag_events", 100),
+            cutover_max_lag_events=data.get("cutover_max_lag_events", 0),
             cutover_timeout_ms=data.get("cutover_timeout_ms", 500),
             position_mapping_enabled=data.get("position_mapping_enabled", True),
             verify_consistency=data.get("verify_consistency", True),

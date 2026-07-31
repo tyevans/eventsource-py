@@ -222,7 +222,7 @@ class TestMigrationConfig:
         assert config.batch_size == 1000
         assert config.max_bulk_copy_rate == 10000
         assert config.dual_write_timeout_minutes == 30
-        assert config.cutover_max_lag_events == 100
+        assert config.cutover_max_lag_events == 0
         assert config.cutover_timeout_ms == 500
         assert config.position_mapping_enabled is True
         assert config.verify_consistency is True
@@ -316,6 +316,9 @@ class TestMigrationConfig:
         config = MigrationConfig.from_dict({})
         assert config.batch_size == 1000
         assert config.max_bulk_copy_rate == 10000
+
+    def test_from_dict_defaults_to_strict_zero_lag(self) -> None:
+        assert MigrationConfig.from_dict({}).cutover_max_lag_events == 0
 
     def test_to_dict_from_dict_roundtrip(self) -> None:
         """Test to_dict/from_dict roundtrip."""

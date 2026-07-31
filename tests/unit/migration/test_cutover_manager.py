@@ -362,6 +362,7 @@ class TestSuccessfulCutover:
         migration_id,
         target_store_id,
         mock_lag_tracker,
+        config,
     ):
         """Test that cutover tracks events synced during pause."""
         # Initial lag
@@ -398,10 +399,74 @@ class TestSuccessfulCutover:
             tenant_id=tenant_id,
             lag_tracker=mock_lag_tracker,
             target_store_id=target_store_id,
+            config=config,  # tolerance is incidental; the subject is events_synced tracking
         )
 
         assert result.success is True
         assert result.events_synced == 8  # 10 - 2
+
+
+class TestStrictZeroLagDefault:
+    """`cutover_max_lag_events` defaults to 0: no cutover over missing data."""
+
+    @pytest.mark.asyncio
+    async def test_default_config_refuses_cutover_on_a_single_missing_event(
+        self,
+        cutover_manager,
+        tenant_id,
+        migration_id,
+        target_store_id,
+        mock_lag_tracker,
+        mock_router,
+        mock_routing_repo,
+    ):
+        mock_lag_tracker.current_lag = SyncLag(
+            events=1,
+            source_position=Position(store_id="source", key=(101,)),
+            target_position=Position(store_id="target", key=(100,)),
+            timestamp=datetime.now(UTC),
+        )
+
+        result = await cutover_manager.execute_cutover(
+            migration_id=migration_id,
+            tenant_id=tenant_id,
+            lag_tracker=mock_lag_tracker,
+            target_store_id=target_store_id,
+        )
+
+        assert result.success is False
+        assert result.rolled_back is True
+        # Routing never switched: the source stays authoritative.
+        mock_routing_repo.set_routing.assert_not_called()
+        mock_router.resume_writes.assert_called_once_with(tenant_id)
+
+    @pytest.mark.asyncio
+    async def test_an_explicit_threshold_still_tolerates_lag(
+        self,
+        cutover_manager,
+        tenant_id,
+        migration_id,
+        target_store_id,
+        mock_lag_tracker,
+        config,
+    ):
+        """The knob survives -- it just stops being the default."""
+        mock_lag_tracker.current_lag = SyncLag(
+            events=1,
+            source_position=Position(store_id="source", key=(101,)),
+            target_position=Position(store_id="target", key=(100,)),
+            timestamp=datetime.now(UTC),
+        )
+
+        result = await cutover_manager.execute_cutover(
+            migration_id=migration_id,
+            tenant_id=tenant_id,
+            lag_tracker=mock_lag_tracker,
+            target_store_id=target_store_id,
+            config=config,  # cutover_max_lag_events=100
+        )
+
+        assert result.success is True
 
 
 # =============================================================================

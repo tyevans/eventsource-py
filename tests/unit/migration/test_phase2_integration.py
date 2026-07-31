@@ -870,6 +870,7 @@ class TestSyncLagTracking:
         tracker = SyncLagTracker(
             source_store=source_store,
             target_store=target_store,
+            config=MigrationConfig(cutover_max_lag_events=100),  # exact count, not clamped
             tenant_id=tenant_id,
             enable_tracing=False,
         )
@@ -972,6 +973,7 @@ class TestSyncLagTracking:
         tracker = SyncLagTracker(
             source_store=source_store,
             target_store=target_store,
+            config=MigrationConfig(cutover_max_lag_events=100),  # exact count, not clamped
             tenant_id=tenant_id,
             enable_tracing=False,
         )

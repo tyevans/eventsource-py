@@ -2,9 +2,7 @@
 
 ## Status
 
-Proposed. This record's resync half (`_build_copier`, `run_resync_pass`)
-ships in this slice's task 4. The cutover-strictness half is completed by
-task 5.
+Accepted.
 
 ## Context
 
@@ -40,6 +38,25 @@ Both gaps share one root cause: there were two ways the coordinator could
 end up constructing a `BulkCopier` (the automated bulk-copy path, and now
 the operator-triggered resync this record adds), and nothing forced them
 to agree on how.
+
+A third, related gap: `MigrationConfig.cutover_max_lag_events` defaulted to
+`100`, and `CutoverManager.execute_cutover` (`cutover.py:321`) let the
+routing switch proceed with up to 100 source events `safe_lag_anchor` had
+already proven absent from the target. Those events are not eventually
+consistent -- writes are paused for the entire cutover and nothing in the
+sequence copies the residue, so lag remaining at the moment routing flips
+is events the target never receives while it becomes authoritative. The
+only thing that caught this was a non-fatal post-cutover consistency
+check, which contradicts `dual_write.py`'s own documented invariant: the
+accepted failure mode is stuck-until-recopied, never a cutover over
+missing data. A default that silently discards events on the happy path is
+exactly backwards from that stance.
+
+That default was also load-bearing for a bad reason: without a way to
+recover a clamped lag anchor from inside `DUAL_WRITE`, a strict threshold
+would have turned every transient mirror failure into a forced abort. The
+100-event slack was doing the job `run_resync_pass` (above) should have
+been doing.
 
 ## Decision
 
@@ -91,6 +108,26 @@ attempts are worth making, and at what interval, is an operational
 judgment about whether the underlying mirror problem is transient -- not
 something the library can decide on the caller's behalf.
 
+**`cutover_max_lag_events` defaults to `0` (strict).** No cutover proceeds
+while any source event is provably absent from the target. Zero is
+*achievable* on the healthy path: writes are paused before the lag check
+runs, so a mirror that is keeping up has already drained to exactly zero
+by the time `execute_cutover` reads `lag.is_within_threshold`. Zero is
+*recoverable* on the unhealthy path: a clamped anchor -- the only way a
+healthy-looking mirror can still show nonzero lag -- has a remedy that
+does not require aborting the migration, namely `run_resync_pass` from
+this same record. Neither half makes the other sufficient on its own:
+strict-0 without resync is stuck-until-abort the first time a mirror
+write fails; resync without strict-0 leaves a default that still permits
+cutover over a hole resync could have closed. Together they read as one
+operational sequence -- run a resync pass, then cut over -- which is why
+both halves belong in a single record.
+
+The knob survives, non-default. `MigrationConfig(cutover_max_lag_events=N)`
+for `N > 0` still works exactly as before: an explicit, documented
+operator acceptance of up to `N` lost events at the switch, for cases
+where availability of the cutover matters more than that bounded loss.
+
 ## Rejected Alternatives
 
 **Automatic background resync.** A timer or lag-threshold trigger that
@@ -123,6 +160,24 @@ historical events) into the cutover window, which this record's other half
 belongs entirely inside `DUAL_WRITE`, before cutover is even attempted, not
 folded into the phase that is supposed to be brief and low-risk.
 
+**Keep the default at 100 and document the loss window.** Rejected because
+a default that silently discards events on the happy path contradicts the
+module's own documented stance -- `dual_write.py`'s stuck-until-recopied
+invariant exists specifically to rule this out -- and because "documented"
+does not change what happens at runtime for a caller who never reads the
+docstring. Defaults should be safe; overrides should be loud. A safe
+default that requires an explicit opt-in to accept loss satisfies both;
+a lossy default with a comment does neither.
+
+**Remove `cutover_max_lag_events` entirely.** Rejected, but not for the
+same reason as the default question: an operator consciously trading a
+bounded loss window for cutover availability -- e.g. an environment where
+a stalled cutover is worse than losing a handful of low-value events -- is
+a legitimate choice, not a bug to design away. Removing the knob would
+take that choice away rather than making it explicit. Flipping the
+default and keeping the knob does both: unsafe behavior requires an
+explicit ask, and the ask remains available.
+
 ## Consequences
 
 - Every migration that uses the documented defaults now actually records
@@ -134,8 +189,14 @@ folded into the phase that is supposed to be brief and low-risk.
 - `_build_copier` becomes the one place future changes to `BulkCopier`
   construction need to land -- a second, divergent construction site would
   defeat the point of this record.
-- The cutover-strictness half of this decision (T5) is not yet written;
-  this record's Decision section covers the resync/wiring half only.
+- A cutover that previously succeeded with residual lag now raises
+  `CutoverLagError` and rolls back to `DUAL_WRITE` -- a breaking behavior
+  change for any caller relying on the old 100-event slack. Restoring the
+  old tolerance requires passing `MigrationConfig(cutover_max_lag_events=100)`
+  explicitly.
+- The failure mode this default flip is meant to prevent -- a cutover
+  switching routing over provably-missing data -- is now caught before the
+  switch instead of after it, by a non-fatal consistency check.
 
 ## ADR Impact
 

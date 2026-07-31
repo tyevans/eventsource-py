@@ -127,7 +127,7 @@ config = MigrationConfig(
     dual_write_timeout_minutes=30,  # Max time in dual-write
 
     # Cutover settings
-    cutover_max_lag_events=100,   # Max lag before cutover allowed
+    cutover_max_lag_events=0,     # strict (the default): no cutover over missing events
     cutover_timeout_ms=500,       # Hard timeout for cutover
 
     # Post-cutover options

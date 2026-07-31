@@ -19,7 +19,7 @@ Usage:
     >>> tracker = SyncLagTracker(
     ...     source_store=source,
     ...     target_store=target,
-    ...     config=MigrationConfig(cutover_max_lag_events=100),
+    ...     config=MigrationConfig(),  # cutover_max_lag_events defaults to 0 (strict)
     ... )
     >>>
     >>> # Calculate current lag (since = last copied source position)
@@ -137,7 +137,7 @@ class SyncLagTracker:
         >>> tracker = SyncLagTracker(
         ...     source_store=shared_store,
         ...     target_store=dedicated_store,
-        ...     config=MigrationConfig(cutover_max_lag_events=50),
+        ...     config=MigrationConfig(cutover_max_lag_events=50),  # nonzero: accepts up to 50 events lost at the switch
         ...     tenant_id=tenant_uuid,
         ... )
         >>>

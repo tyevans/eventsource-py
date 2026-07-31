@@ -100,7 +100,7 @@ shared PostgreSQL event store to a dedicated one. It is designed so that:
 - writes are only blocked during the cutover pause itself, bounded by
   `MigrationConfig.cutover_timeout_ms` (default 500 ms, minimum 100), and
   cutover only proceeds when sync lag is within `cutover_max_lag_events`
-  (default 100) -- otherwise `CutoverManager` raises rather than switching;
+  (default 0 -- strict) -- otherwise `CutoverManager` raises rather than switching;
 - application code is unchanged, because routing is hidden behind
   `TenantStoreRouter`, which is itself a `FullEventStore`;
 - subscription checkpoints are translated to target-store positions by
