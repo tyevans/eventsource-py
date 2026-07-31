@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import pytest
 
+import eventsource.sync.adapter as adapter_module
 from eventsource.adapters.memory.store import MemoryEventStore
 from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
@@ -455,3 +456,84 @@ class TestSyncEventStoreAdapterExecutorManagement:
         assert executor1 is executor2
 
         SyncEventStoreAdapter.shutdown_executor()
+
+
+class _DummyFuture:
+    """Stand-in for the Future returned by `asyncio.run_coroutine_threadsafe`."""
+
+    def __init__(self, *, result: object = None, exception: BaseException | None = None) -> None:
+        self._result = result
+        self._exception = exception
+        self.cancelled = False
+
+    def result(self, timeout: float | None = None) -> object:
+        if self._exception is not None:
+            raise self._exception
+        return self._result
+
+    def cancel(self) -> None:
+        self.cancelled = True
+
+
+class TestRunSyncRunningLoopBranch:
+    """`_run_sync`'s "there is a running loop" branch (thread-in-loop pattern):
+    a coroutine calling a sync method sees `asyncio.get_running_loop()`
+    succeed and must go through `run_coroutine_threadsafe`, not fall through
+    to a fresh `asyncio.run()`. These tests fake the loop/future machinery
+    directly since the branch is inherently deadlock-prone to exercise with a
+    real second event loop pumping from the same thread that's blocked in it.
+    """
+
+    async def _stub_coro(self) -> str:
+        return "should not run via asyncio.run fallback"
+
+    def test_success_returns_future_result_without_asyncio_run_fallback(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = MemoryEventStore()
+        sync_store = SyncEventStoreAdapter(store, timeout=5.0)
+
+        fake_loop = object()
+        monkeypatch.setattr(adapter_module.asyncio, "get_running_loop", lambda: fake_loop)
+
+        captured: dict[str, object] = {}
+
+        def fake_run_coroutine_threadsafe(coro: object, loop: object) -> _DummyFuture:
+            captured["coro"] = coro
+            captured["loop"] = loop
+            coro.close()  # type: ignore[attr-defined]
+            return _DummyFuture(result=42)
+
+        monkeypatch.setattr(
+            adapter_module.asyncio, "run_coroutine_threadsafe", fake_run_coroutine_threadsafe
+        )
+
+        result = sync_store._run_sync(self._stub_coro())
+
+        assert result == 42
+        assert captured["loop"] is fake_loop
+
+    def test_store_exception_propagates_unmodified(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A RuntimeError raised by the wrapped store must propagate as-is,
+        not be swallowed and retried via `asyncio.run()` on an
+        already-consumed coroutine."""
+        store = MemoryEventStore()
+        sync_store = SyncEventStoreAdapter(store, timeout=5.0)
+
+        fake_loop = object()
+        monkeypatch.setattr(adapter_module.asyncio, "get_running_loop", lambda: fake_loop)
+
+        store_error = RuntimeError("boom from the store")
+
+        def fake_run_coroutine_threadsafe(coro: object, loop: object) -> _DummyFuture:
+            coro.close()  # type: ignore[attr-defined]
+            return _DummyFuture(exception=store_error)
+
+        monkeypatch.setattr(
+            adapter_module.asyncio, "run_coroutine_threadsafe", fake_run_coroutine_threadsafe
+        )
+
+        with pytest.raises(RuntimeError) as exc_info:
+            sync_store._run_sync(self._stub_coro())
+
+        assert exc_info.value is store_error

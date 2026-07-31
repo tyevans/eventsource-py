@@ -42,10 +42,10 @@ class SyncEventStoreAdapter:
     synchronous contexts like Celery tasks, Django management commands,
     or RQ workers.
 
-    Handles three event loop scenarios:
-    1. No event loop exists -> uses asyncio.run()
-    2. Event loop exists but not running -> uses loop.run_until_complete()
-    3. Event loop is running -> uses run_coroutine_threadsafe() with thread pool
+    Handles two event loop scenarios:
+    1. No running event loop -> uses asyncio.run() (a fresh loop per call)
+    2. A running event loop is detected on the calling thread ->
+       uses run_coroutine_threadsafe() against that loop directly
 
     Thread Safety:
         The adapter is thread-safe for concurrent calls from multiple threads.
@@ -83,10 +83,13 @@ class SyncEventStoreAdapter:
         counterpart: it owns one private event loop for its lifetime and has no
         timeouts. This adapter is for production sync callers (Celery, Django
         management commands, RQ): per-call `asyncio.run`, a running-loop
-        threadpool fallback, and a timeout on every operation.
+        `run_coroutine_threadsafe` fallback, and a timeout on every operation.
     """
 
-    # Class-level executor for running loop case
+    # Retained for API compatibility only: `_run_sync` never dispatches work
+    # to this executor. It is not used by the running-loop path either --
+    # that path runs the coroutine on the caller's own loop via
+    # `run_coroutine_threadsafe`, not on a worker thread from this pool.
     _executor: ThreadPoolExecutor | None = None
     _executor_lock: threading.Lock = threading.Lock()
 
@@ -106,7 +109,11 @@ class SyncEventStoreAdapter:
 
     @classmethod
     def _get_executor(cls) -> ThreadPoolExecutor:
-        """Get or create the shared thread pool executor."""
+        """Get or create the shared thread pool executor.
+
+        Retained for API compatibility; `_run_sync` does not use this
+        executor for either event loop scenario it handles.
+        """
         with cls._executor_lock:
             if cls._executor is None:
                 cls._executor = ThreadPoolExecutor(
@@ -120,8 +127,13 @@ class SyncEventStoreAdapter:
         """
         Shutdown the shared thread pool executor.
 
-        Call this during application shutdown to clean up resources.
-        After calling this, the executor will be recreated on next use.
+        Retained for API compatibility. This executor is not used by
+        `_run_sync` -- the running-loop path runs coroutines on the caller's
+        own loop via `run_coroutine_threadsafe`, not on a worker thread here.
+        Calling this is safe (a no-op beyond releasing the pool, if one was
+        ever created via `_get_executor`) but has no effect on adapter
+        behavior. After calling this, the executor will be recreated on next
+        use of `_get_executor`.
         """
         with cls._executor_lock:
             if cls._executor is not None:
@@ -148,7 +160,10 @@ class SyncEventStoreAdapter:
         try:
             # Check if there's a running event loop
             loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
 
+        if loop is not None:
             # We're in a running loop - use thread pool
             logger.warning(
                 "SyncEventStoreAdapter called from running event loop. "
@@ -165,10 +180,6 @@ class SyncEventStoreAdapter:
                     f"Sync operation timed out after {effective_timeout}s "
                     "(called from running event loop)"
                 ) from None
-
-        except RuntimeError:
-            # No running event loop - this is the common case for sync contexts
-            pass
 
         # Create a new event loop with asyncio.run()
         # This is the recommended approach for Python 3.10+
