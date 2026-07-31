@@ -144,7 +144,8 @@ jobs:
 
       - name: Run tests
         run: |
-          uv run pytest --cov=src/eventsource --cov-report=xml --cov-report=term-missing \
+          uv run pytest -n auto --dist worksteal \
+            --cov=src/eventsource --cov-report=xml --cov-report=term-missing \
             -m "not integration and not postgres and not redis and not e2e"
 
       - name: Upload coverage report
