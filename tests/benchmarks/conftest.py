@@ -14,9 +14,11 @@ import pytest
 
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
 from eventsource.adapters.memory.dlq import InMemoryDLQRepository
+from eventsource.adapters.memory.store import MemoryEventStore
+from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
+from eventsource.ports.positions import ExpectedVersion
 from eventsource.repositories.outbox import InMemoryOutboxRepository
-from eventsource.stores.in_memory import InMemoryEventStore
 from tests.fixtures import (
     CounterIncremented,
     OrderCreated,
@@ -174,29 +176,29 @@ def order_events_100(benchmark_aggregate_id: UUID) -> list[DomainEvent]:
 
 
 @pytest.fixture
-def benchmark_store() -> InMemoryEventStore:
+def benchmark_store() -> MemoryEventStore:
     """
-    Provide a fresh InMemoryEventStore for benchmarking.
+    Provide a fresh MemoryEventStore for benchmarking.
     """
-    return InMemoryEventStore()
+    return MemoryEventStore()
 
 
 @pytest.fixture
 def populated_benchmark_store_100(
-    benchmark_store: InMemoryEventStore,
+    benchmark_store: MemoryEventStore,
     sample_events_100: list[DomainEvent],
-) -> Generator[InMemoryEventStore, None, None]:
+) -> Generator[MemoryEventStore, None, None]:
     """
-    Provide an InMemoryEventStore pre-populated with 100 events.
+    Provide a MemoryEventStore pre-populated with 100 events.
     """
     aggregate_id = sample_events_100[0].aggregate_id
 
     async def setup() -> None:
-        await benchmark_store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="TestAggregate",
-            events=sample_events_100,
-            expected_version=0,
+        stream_id = StreamId(str(aggregate_id), "TestAggregate")
+        await benchmark_store.append(
+            stream_id,
+            sample_events_100,
+            ExpectedVersion.exact(0),
         )
 
     run_async(setup())
@@ -205,20 +207,20 @@ def populated_benchmark_store_100(
 
 @pytest.fixture
 def populated_benchmark_store_1000(
-    benchmark_store: InMemoryEventStore,
+    benchmark_store: MemoryEventStore,
     sample_events_1000: list[DomainEvent],
-) -> Generator[InMemoryEventStore, None, None]:
+) -> Generator[MemoryEventStore, None, None]:
     """
-    Provide an InMemoryEventStore pre-populated with 1000 events.
+    Provide a MemoryEventStore pre-populated with 1000 events.
     """
     aggregate_id = sample_events_1000[0].aggregate_id
 
     async def setup() -> None:
-        await benchmark_store.append_events(
-            aggregate_id=aggregate_id,
-            aggregate_type="TestAggregate",
-            events=sample_events_1000,
-            expected_version=0,
+        stream_id = StreamId(str(aggregate_id), "TestAggregate")
+        await benchmark_store.append(
+            stream_id,
+            sample_events_1000,
+            ExpectedVersion.exact(0),
         )
 
     run_async(setup())
