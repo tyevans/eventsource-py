@@ -719,7 +719,8 @@ flow, and the moment that joins them belongs to neither.
 **The two halves pull events in opposite directions.** `CatchUpRunner` is a
 loop: it decides when to read, computes its own batch limit from
 `target_position - last_processed_position`, calls `read_all()` with a
-`FeedReadOptions(direction=FORWARD, ...)`, walks the
+`FeedReadOptions(tenant_id=..., limit=...)` -- feed reads are always forward,
+so there is no `direction` field to set -- walks the
 returned `EventEnvelope`s, and stops when it reaches the target or a batch comes
 back empty. It owns its clock, so it can be paused mid-batch
 (`wait_if_paused()` is checked both between batches and between events within a
