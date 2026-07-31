@@ -14,14 +14,16 @@ from enum import Enum
 from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
+from eventsource.ports.positions import Position
+
 if TYPE_CHECKING:
     from eventsource.events.base import DomainEvent
     from eventsource.subscriptions.retry import CircuitBreakerConfig, RetryConfig
 
 
 # Type alias for start position
-# Can be a string literal or an integer position
-StartPosition = Literal["beginning", "end", "checkpoint"] | int
+# Can be a string literal or an explicit opaque position token
+StartPosition = Literal["beginning", "end", "checkpoint"] | Position
 
 
 class CheckpointStrategy(Enum):
@@ -49,10 +51,10 @@ class SubscriptionConfig:
 
     Attributes:
         start_from: Where to start reading events
-            - "beginning": Start from global position 0
+            - "beginning": Start from the start of the global feed
             - "end": Start from current end (live-only)
             - "checkpoint": Resume from last checkpoint (default)
-            - int: Start from specific global position
+            - Position: Start from a specific opaque feed position
         batch_size: Number of events to read in each batch during catch-up
         max_in_flight: Maximum events being processed concurrently
         backpressure_threshold: Fraction (0-1) at which to signal backpressure
@@ -136,13 +138,6 @@ class SubscriptionConfig:
             raise ValueError(
                 f"max_in_flight must be positive, got {self.max_in_flight}. "
                 "Use a value like 1000 (default) for reasonable backpressure."
-            )
-
-        # Validate start_from if integer
-        if isinstance(self.start_from, int) and self.start_from < 0:
-            raise ValueError(
-                f"start_from position must be >= 0, got {self.start_from}. "
-                "Use 0 for beginning, or 'beginning'/'end'/'checkpoint' strings."
             )
 
         # Validate timeouts

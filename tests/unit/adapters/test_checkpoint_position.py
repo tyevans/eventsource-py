@@ -11,7 +11,9 @@ These tests verify:
 - save_position() updates existing checkpoint position
 - events_processed increments on each save_position() call
 - get_position() returns correct value after save_position()
-- global_position is included in CheckpointData from get_all_checkpoints()
+- position is included in CheckpointData from get_all_checkpoints()
+
+Positions are opaque tokens: `pos()` builds one per int used below.
 """
 
 from datetime import datetime
@@ -21,6 +23,12 @@ import pytest
 
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
 from eventsource.ports.checkpoints import CheckpointData
+from eventsource.ports.positions import Position
+
+
+def pos(n: int) -> Position:
+    """Build a token for a test store, standing in for an int position."""
+    return Position(store_id="test", key=(n,))
 
 
 class TestInMemoryCheckpointRepositoryPosition:
@@ -45,7 +53,7 @@ class TestInMemoryCheckpointRepositoryPosition:
         subscription_id = "TestSubscription"
         event_id = uuid4()
         event_type = "TestEvent"
-        position = 100
+        position = pos(100)
 
         await repo.save_position(subscription_id, position, event_id, event_type)
 
@@ -58,8 +66,8 @@ class TestInMemoryCheckpointRepositoryPosition:
     ):
         """Test that save_position updates existing checkpoint position."""
         subscription_id = "TestSubscription"
-        first_position = 100
-        second_position = 200
+        first_position = pos(100)
+        second_position = pos(200)
 
         await repo.save_position(subscription_id, first_position, uuid4(), "Event1")
         await repo.save_position(subscription_id, second_position, uuid4(), "Event2")
@@ -76,7 +84,7 @@ class TestInMemoryCheckpointRepositoryPosition:
 
         # Save position three times
         for i in range(3):
-            await repo.save_position(subscription_id, i * 100, uuid4(), f"Event{i}")
+            await repo.save_position(subscription_id, pos(i * 100), uuid4(), f"Event{i}")
 
         # Check count
         checkpoints = await repo.get_all_checkpoints()
@@ -91,7 +99,7 @@ class TestInMemoryCheckpointRepositoryPosition:
         subscription_id = "TestSubscription"
         event_id = uuid4()
         event_type = "TestEventType"
-        position = 100
+        position = pos(100)
 
         await repo.save_position(subscription_id, position, event_id, event_type)
 
@@ -107,20 +115,20 @@ class TestInMemoryCheckpointRepositoryPosition:
     ):
         """Test that get_position returns correct value after save_position."""
         subscription_id = "TestSubscription"
-        positions = [10, 50, 100, 500, 1000]
+        positions = [pos(n) for n in (10, 50, 100, 500, 1000)]
 
-        for pos in positions:
-            await repo.save_position(subscription_id, pos, uuid4(), "Event")
+        for position in positions:
+            await repo.save_position(subscription_id, position, uuid4(), "Event")
             result = await repo.get_position(subscription_id)
-            assert result == pos
+            assert result == position
 
     @pytest.mark.asyncio
     async def test_checkpoint_data_includes_global_position(
         self, repo: InMemoryCheckpointRepository
     ):
-        """Test that CheckpointData includes global_position field."""
+        """Test that CheckpointData includes the position field."""
         subscription_id = "TestSubscription"
-        position = 42
+        position = pos(42)
 
         await repo.save_position(subscription_id, position, uuid4(), "TestEvent")
 
@@ -129,7 +137,7 @@ class TestInMemoryCheckpointRepositoryPosition:
         checkpoint = checkpoints[0]
 
         assert isinstance(checkpoint, CheckpointData)
-        assert checkpoint.global_position == position
+        assert checkpoint.position == position
 
     @pytest.mark.asyncio
     async def test_multiple_subscriptions_independent_positions(
@@ -138,8 +146,8 @@ class TestInMemoryCheckpointRepositoryPosition:
         """Test that different subscriptions have independent positions."""
         sub1 = "Subscription1"
         sub2 = "Subscription2"
-        pos1 = 100
-        pos2 = 200
+        pos1 = pos(100)
+        pos2 = pos(200)
 
         await repo.save_position(sub1, pos1, uuid4(), "Event1")
         await repo.save_position(sub2, pos2, uuid4(), "Event2")
@@ -152,8 +160,8 @@ class TestInMemoryCheckpointRepositoryPosition:
         """Test that get_position returns None after reset_checkpoint."""
         subscription_id = "TestSubscription"
 
-        await repo.save_position(subscription_id, 100, uuid4(), "Event")
-        assert await repo.get_position(subscription_id) == 100
+        await repo.save_position(subscription_id, pos(100), uuid4(), "Event")
+        assert await repo.get_position(subscription_id) == pos(100)
 
         await repo.reset_checkpoint(subscription_id)
         assert await repo.get_position(subscription_id) is None
@@ -162,7 +170,7 @@ class TestInMemoryCheckpointRepositoryPosition:
     async def test_update_checkpoint_does_not_set_position(
         self, repo: InMemoryCheckpointRepository
     ):
-        """Test that update_checkpoint does not set global_position."""
+        """Test that update_checkpoint does not set a position."""
         subscription_id = "TestSubscription"
         event_id = uuid4()
 
@@ -186,7 +194,7 @@ class TestInMemoryCheckpointRepositoryPosition:
         assert await repo.get_position(subscription_id) is None
 
         # Then use save_position
-        position = 500
+        position = pos(500)
         await repo.save_position(subscription_id, position, uuid4(), "Event2")
         assert await repo.get_position(subscription_id) == position
 
@@ -199,7 +207,7 @@ class TestInMemoryCheckpointRepositoryPosition:
         """Test that save_position sets last_processed_at timestamp."""
         subscription_id = "TestSubscription"
 
-        await repo.save_position(subscription_id, 100, uuid4(), "Event")
+        await repo.save_position(subscription_id, pos(100), uuid4(), "Event")
 
         checkpoints = await repo.get_all_checkpoints()
         assert checkpoints[0].last_processed_at is not None
@@ -223,7 +231,7 @@ class TestInMemoryCheckpointRepositoryPositionConcurrency:
         num_updates = 100
 
         async def save_position(i: int):
-            await repo.save_position(subscription_id, i, uuid4(), f"Event{i}")
+            await repo.save_position(subscription_id, pos(i), uuid4(), f"Event{i}")
 
         # Run 100 concurrent save_position calls
         tasks = [save_position(i) for i in range(num_updates)]
@@ -241,10 +249,10 @@ class TestInMemoryCheckpointRepositoryPositionConcurrency:
 
         subscription_id = "TestSubscription"
         num_operations = 50
-        positions: list[int | None] = []
+        positions: list[Position | None] = []
 
         async def writer(i: int):
-            await repo.save_position(subscription_id, i * 10, uuid4(), f"Event{i}")
+            await repo.save_position(subscription_id, pos(i * 10), uuid4(), f"Event{i}")
 
         async def reader():
             result = await repo.get_position(subscription_id)
@@ -313,7 +321,7 @@ class TestSQLCheckpointRepositoryPosition:
         subscription_id = "TestSubscription"
         event_id = uuid4()
         event_type = "TestEvent"
-        position = 100
+        position = pos(100)
 
         await repo.save_position(subscription_id, position, event_id, event_type)
 
@@ -324,8 +332,8 @@ class TestSQLCheckpointRepositoryPosition:
     async def test_save_position_updates_existing_checkpoint(self, repo: SQLCheckpointRepository):
         """Test that save_position updates existing checkpoint position."""
         subscription_id = "TestSubscription"
-        first_position = 100
-        second_position = 200
+        first_position = pos(100)
+        second_position = pos(200)
 
         await repo.save_position(subscription_id, first_position, uuid4(), "Event1")
         await repo.save_position(subscription_id, second_position, uuid4(), "Event2")
@@ -340,7 +348,7 @@ class TestSQLCheckpointRepositoryPosition:
 
         # Save position three times
         for i in range(3):
-            await repo.save_position(subscription_id, i * 100, uuid4(), f"Event{i}")
+            await repo.save_position(subscription_id, pos(i * 100), uuid4(), f"Event{i}")
 
         # Check count
         checkpoints = await repo.get_all_checkpoints()
@@ -353,7 +361,7 @@ class TestSQLCheckpointRepositoryPosition:
         subscription_id = "TestSubscription"
         event_id = uuid4()
         event_type = "TestEventType"
-        position = 100
+        position = pos(100)
 
         await repo.save_position(subscription_id, position, event_id, event_type)
 
@@ -369,18 +377,18 @@ class TestSQLCheckpointRepositoryPosition:
     ):
         """Test that get_position returns correct value after save_position."""
         subscription_id = "TestSubscription"
-        positions = [10, 50, 100, 500, 1000]
+        positions = [pos(n) for n in (10, 50, 100, 500, 1000)]
 
-        for pos in positions:
-            await repo.save_position(subscription_id, pos, uuid4(), "Event")
+        for position in positions:
+            await repo.save_position(subscription_id, position, uuid4(), "Event")
             result = await repo.get_position(subscription_id)
-            assert result == pos
+            assert result == position
 
     @pytest.mark.asyncio
     async def test_checkpoint_data_includes_global_position(self, repo: SQLCheckpointRepository):
-        """Test that CheckpointData includes global_position field."""
+        """Test that CheckpointData includes the position field."""
         subscription_id = "TestSubscription"
-        position = 42
+        position = pos(42)
 
         await repo.save_position(subscription_id, position, uuid4(), "TestEvent")
 
@@ -389,7 +397,7 @@ class TestSQLCheckpointRepositoryPosition:
         checkpoint = checkpoints[0]
 
         assert isinstance(checkpoint, CheckpointData)
-        assert checkpoint.global_position == position
+        assert checkpoint.position == position
 
     @pytest.mark.asyncio
     async def test_multiple_subscriptions_independent_positions(
@@ -398,8 +406,8 @@ class TestSQLCheckpointRepositoryPosition:
         """Test that different subscriptions have independent positions."""
         sub1 = "Subscription1"
         sub2 = "Subscription2"
-        pos1 = 100
-        pos2 = 200
+        pos1 = pos(100)
+        pos2 = pos(200)
 
         await repo.save_position(sub1, pos1, uuid4(), "Event1")
         await repo.save_position(sub2, pos2, uuid4(), "Event2")
@@ -412,15 +420,15 @@ class TestSQLCheckpointRepositoryPosition:
         """Test that get_position returns None after reset_checkpoint."""
         subscription_id = "TestSubscription"
 
-        await repo.save_position(subscription_id, 100, uuid4(), "Event")
-        assert await repo.get_position(subscription_id) == 100
+        await repo.save_position(subscription_id, pos(100), uuid4(), "Event")
+        assert await repo.get_position(subscription_id) == pos(100)
 
         await repo.reset_checkpoint(subscription_id)
         assert await repo.get_position(subscription_id) is None
 
     @pytest.mark.asyncio
     async def test_update_checkpoint_does_not_set_position(self, repo: SQLCheckpointRepository):
-        """Test that update_checkpoint does not set global_position."""
+        """Test that update_checkpoint does not set a position."""
         subscription_id = "TestSubscription"
         event_id = uuid4()
 
@@ -444,7 +452,7 @@ class TestSQLCheckpointRepositoryPosition:
         assert await repo.get_position(subscription_id) is None
 
         # Then use save_position
-        position = 500
+        position = pos(500)
         await repo.save_position(subscription_id, position, uuid4(), "Event2")
         assert await repo.get_position(subscription_id) == position
 
@@ -457,7 +465,7 @@ class TestSQLCheckpointRepositoryPosition:
         """Test that save_position sets last_processed_at timestamp."""
         subscription_id = "TestSubscription"
 
-        await repo.save_position(subscription_id, 100, uuid4(), "Event")
+        await repo.save_position(subscription_id, pos(100), uuid4(), "Event")
 
         checkpoints = await repo.get_all_checkpoints()
         assert checkpoints[0].last_processed_at is not None

@@ -18,6 +18,10 @@ Responsibilities:
     - Handle subscription handoff with minimal disruption
     - Support dry-run mode to preview changes
 
+Slice-(c) seam: the `position_mapping` table is int-keyed, so positions are
+converted int<->token at this boundary via `IntPositionCodec`. Slice (c)
+retypes that table and removes the conversion.
+
 Migration Strategy:
     - Pause subscription processing briefly during cutover
     - Translate last processed position to target store
@@ -59,6 +63,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
+from eventsource.adapters._sql.positions import IntPositionCodec
 from eventsource.migration.exceptions import MigrationError, PositionMappingError
 from eventsource.observability import Tracer, create_tracer
 
@@ -310,6 +315,8 @@ class SubscriptionMigrator:
         position_mapper: PositionMapper,
         checkpoint_repo: CheckpointRepository,
         *,
+        source_store_id: str,
+        target_store_id: str,
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ) -> None:
@@ -319,6 +326,14 @@ class SubscriptionMigrator:
         Args:
             position_mapper: Position mapper for checkpoint translation.
             checkpoint_repo: Repository for reading/writing checkpoints.
+            source_store_id: `store_id` stamped into positions by the source
+                store. In slice (c), migration moves onto the ports store
+                surface and these ids will be derived from the stores' own
+                store_id attributes; until then the caller declares them.
+            target_store_id: `store_id` stamped into positions by the target
+                store. In slice (c), migration moves onto the ports store
+                surface and these ids will be derived from the stores' own
+                store_id attributes; until then the caller declares them.
             tracer: Optional custom Tracer instance.
             enable_tracing: Whether to enable OpenTelemetry tracing.
         """
@@ -327,6 +342,8 @@ class SubscriptionMigrator:
         self._enable_tracing = self._tracer.enabled
         self._position_mapper = position_mapper
         self._checkpoint_repo = checkpoint_repo
+        self._source_codec = IntPositionCodec(store_id=source_store_id)
+        self._target_codec = IntPositionCodec(store_id=target_store_id)
 
     async def plan_migration(
         self,
@@ -423,10 +440,11 @@ class SubscriptionMigrator:
         Returns:
             PlannedMigration or None if subscription should be skipped.
         """
-        # Get current checkpoint position
-        current_position = await self._checkpoint_repo.get_position(subscription_name)
+        # Get current checkpoint position. The mapper is int-keyed
+        # (slice-(c) seam), so the token is converted at this boundary.
+        current_token = await self._checkpoint_repo.get_position(subscription_name)
 
-        if current_position is None:
+        if current_token is None:
             logger.debug(
                 "Subscription has no checkpoint, skipping",
                 extra={
@@ -435,6 +453,8 @@ class SubscriptionMigrator:
                 },
             )
             return None
+
+        current_position = self._source_codec.value_of(current_token)
 
         # Try to translate position
         try:
@@ -639,10 +659,11 @@ class SubscriptionMigrator:
                 "subscription.name": subscription_name,
             },
         ):
-            # Get current checkpoint
-            current_position = await self._checkpoint_repo.get_position(subscription_name)
+            # Get current checkpoint. The mapper is int-keyed (slice-(c)
+            # seam), so the token is converted at this boundary.
+            current_token = await self._checkpoint_repo.get_position(subscription_name)
 
-            if current_position is None:
+            if current_token is None:
                 logger.debug(
                     "Subscription has no checkpoint, skipping",
                     extra={
@@ -651,6 +672,8 @@ class SubscriptionMigrator:
                     },
                 )
                 return None
+
+            current_position = self._source_codec.value_of(current_token)
 
             # Get the current checkpoint data for event_id and event_type
             checkpoints = await self._checkpoint_repo.get_all_checkpoints()
@@ -697,7 +720,7 @@ class SubscriptionMigrator:
             try:
                 await self._checkpoint_repo.save_position(
                     subscription_id=subscription_name,
-                    position=translation.target_position,
+                    position=self._target_codec.encode(translation.target_position),
                     event_id=checkpoint_data.last_event_id,
                     event_type=checkpoint_data.last_event_type or "Unknown",
                 )

@@ -13,6 +13,7 @@ from uuid import uuid4
 import pytest
 
 from eventsource.events.base import DomainEvent
+from eventsource.ports.positions import Position
 from eventsource.protocols import EventSubscriber
 from eventsource.subscriptions import (
     VALID_TRANSITIONS,
@@ -27,6 +28,11 @@ from eventsource.subscriptions import (
 )
 
 # Test fixtures
+
+
+def pos(n: int) -> Position:
+    """Build a test-store position token standing in for an int position."""
+    return Position(store_id="test", key=(n,))
 
 
 class MockSubscriber(EventSubscriber):
@@ -348,9 +354,9 @@ class TestSubscriptionCreation:
         """Test initial state is STARTING."""
         assert subscription.state == SubscriptionState.STARTING
 
-    def test_initial_position_is_zero(self, subscription: Subscription):
-        """Test initial position is 0."""
-        assert subscription.last_processed_position == 0
+    def test_initial_position_is_none(self, subscription: Subscription):
+        """Test initial position is None -- nothing processed yet."""
+        assert subscription.last_processed_position is None
 
     def test_initial_event_id_is_none(self, subscription: Subscription):
         """Test initial event_id is None."""
@@ -542,18 +548,18 @@ class TestPositionTracking:
         """Test recording event processed updates position."""
         event_id = uuid4()
         await subscription.record_event_processed(
-            position=42,
+            position=pos(42),
             event_id=event_id,
             event_type="OrderCreated",
         )
-        assert subscription.last_processed_position == 42
+        assert subscription.last_processed_position == pos(42)
 
     @pytest.mark.asyncio
     async def test_record_event_processed_updates_event_id(self, subscription: Subscription):
         """Test recording event processed updates event_id."""
         event_id = uuid4()
         await subscription.record_event_processed(
-            position=42,
+            position=pos(42),
             event_id=event_id,
             event_type="OrderCreated",
         )
@@ -564,7 +570,7 @@ class TestPositionTracking:
         """Test recording event processed updates event_type."""
         event_id = uuid4()
         await subscription.record_event_processed(
-            position=42,
+            position=pos(42),
             event_id=event_id,
             event_type="OrderCreated",
         )
@@ -575,14 +581,14 @@ class TestPositionTracking:
         """Test recording event processed increments counter."""
         event_id = uuid4()
         await subscription.record_event_processed(
-            position=1,
+            position=pos(1),
             event_id=event_id,
             event_type="OrderCreated",
         )
         assert subscription.events_processed == 1
 
         await subscription.record_event_processed(
-            position=2,
+            position=pos(2),
             event_id=uuid4(),
             event_type="OrderShipped",
         )
@@ -596,7 +602,7 @@ class TestPositionTracking:
         before = datetime.now(UTC)
         event_id = uuid4()
         await subscription.record_event_processed(
-            position=42,
+            position=pos(42),
             event_id=event_id,
             event_type="OrderCreated",
         )
@@ -662,7 +668,7 @@ class TestLagCalculation:
         await subscription.record_events_seen(10)
         for _ in range(4):
             await subscription.record_event_processed(
-                position=0,
+                position=pos(0),
                 event_id=uuid4(),
                 event_type="OrderCreated",
             )
@@ -674,7 +680,7 @@ class TestLagCalculation:
         await subscription.record_events_seen(2)
         for _ in range(5):
             await subscription.record_event_processed(
-                position=0,
+                position=pos(0),
                 event_id=uuid4(),
                 event_type="OrderCreated",
             )
@@ -687,7 +693,7 @@ class TestLagCalculation:
         from position at all."""
         await subscription.record_events_seen(10)
         assert subscription.lag == 10
-        subscription.last_processed_position = 999
+        subscription.last_processed_position = pos(999)
         assert subscription.lag == 10
 
 
@@ -764,7 +770,7 @@ class TestSubscriptionStatus:
         status = SubscriptionStatus(
             name="TestSubscription",
             state="live",
-            position=42,
+            position=pos(42),
             lag_events=10,
             events_processed=100,
             events_failed=2,
@@ -774,7 +780,7 @@ class TestSubscriptionStatus:
         )
         assert status.name == "TestSubscription"
         assert status.state == "live"
-        assert status.position == 42
+        assert status.position == pos(42)
         assert status.lag_events == 10
         assert status.events_processed == 100
         assert status.events_failed == 2
@@ -788,7 +794,7 @@ class TestSubscriptionStatus:
         status = SubscriptionStatus(
             name="TestSubscription",
             state="error",
-            position=42,
+            position=pos(42),
             lag_events=0,
             events_processed=100,
             events_failed=1,
@@ -804,7 +810,7 @@ class TestSubscriptionStatus:
         status = SubscriptionStatus(
             name="TestSubscription",
             state="live",
-            position=42,
+            position=pos(42),
             lag_events=10,
             events_processed=100,
             events_failed=2,
@@ -816,7 +822,7 @@ class TestSubscriptionStatus:
 
         assert result["name"] == "TestSubscription"
         assert result["state"] == "live"
-        assert result["position"] == 42
+        assert result["position"] == pos(42).to_str()
         assert result["lag_events"] == 10
         assert result["events_processed"] == 100
         assert result["events_failed"] == 2
@@ -830,7 +836,7 @@ class TestSubscriptionStatus:
         status = SubscriptionStatus(
             name="TestSubscription",
             state="live",
-            position=42,
+            position=pos(42),
             lag_events=10,
             events_processed=100,
             events_failed=2,
@@ -839,7 +845,7 @@ class TestSubscriptionStatus:
             uptime_seconds=0.0,
         )
         with pytest.raises(AttributeError):
-            status.position = 100  # type: ignore[misc]
+            status.position = pos(100)  # type: ignore[misc]
 
 
 class TestSubscriptionGetStatus:
@@ -868,19 +874,19 @@ class TestSubscriptionGetStatus:
     async def test_get_status_includes_position(self, subscription: Subscription):
         """Test status includes position."""
         await subscription.record_event_processed(
-            position=42,
+            position=pos(42),
             event_id=uuid4(),
             event_type="OrderCreated",
         )
         status = subscription.get_status()
-        assert status.position == 42
+        assert status.position == pos(42)
 
     @pytest.mark.asyncio
     async def test_get_status_includes_lag(self, subscription: Subscription):
         """Test status includes lag."""
         await subscription.record_events_seen(100)
         await subscription.record_event_processed(
-            position=50,
+            position=pos(50),
             event_id=uuid4(),
             event_type="OrderCreated",
         )
@@ -891,7 +897,7 @@ class TestSubscriptionGetStatus:
     async def test_get_status_includes_statistics(self, subscription: Subscription):
         """Test status includes statistics."""
         await subscription.record_event_processed(
-            position=1,
+            position=pos(1),
             event_id=uuid4(),
             event_type="OrderCreated",
         )
@@ -905,7 +911,7 @@ class TestSubscriptionGetStatus:
     async def test_get_status_includes_timestamps(self, subscription: Subscription):
         """Test status includes timestamps."""
         await subscription.record_event_processed(
-            position=1,
+            position=pos(1),
             event_id=uuid4(),
             event_type="OrderCreated",
         )
@@ -958,20 +964,21 @@ class TestStringRepresentation:
         result = str(subscription)
         assert "TestSubscription" in result
         assert "starting" in result
-        assert "pos=0" in result
+        # Nothing processed yet: the token placeholder, not a position.
+        assert "pos=-" in result
 
     @pytest.mark.asyncio
     async def test_str_representation_after_processing(self, subscription: Subscription):
         """Test __str__ after processing events."""
         await subscription.transition_to(SubscriptionState.LIVE)
         await subscription.record_event_processed(
-            position=42,
+            position=pos(42),
             event_id=uuid4(),
             event_type="OrderCreated",
         )
         result = str(subscription)
         assert "live" in result
-        assert "pos=42" in result
+        assert f"pos={pos(42).to_str()}" in result
 
 
 # Concurrency Tests

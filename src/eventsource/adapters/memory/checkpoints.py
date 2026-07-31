@@ -10,6 +10,7 @@ from eventsource.observability.attributes import (
     ATTR_PROJECTION_NAME,
 )
 from eventsource.ports.checkpoints import CheckpointData, LagMetrics
+from eventsource.ports.positions import Position
 
 
 class InMemoryCheckpointRepository:
@@ -149,16 +150,16 @@ class InMemoryCheckpointRepository:
             async with self._lock:
                 self._checkpoints.pop(projection_name, None)
 
-    async def get_position(self, subscription_id: str) -> int | None:
+    async def get_position(self, subscription_id: str) -> Position | None:
         """
-        Get last processed global position for a subscription.
+        Get last processed global-feed position for a subscription.
 
         Args:
             subscription_id: Identifier for the subscription (typically projection name)
 
         Returns:
-            Last processed global position, or None if no checkpoint exists
-            or if checkpoint doesn't have position data.
+            Last processed position, or None if no checkpoint exists
+            or if the checkpoint doesn't have position data.
         """
         with self._tracer.span(
             "eventsource.checkpoint.get_position",
@@ -166,24 +167,25 @@ class InMemoryCheckpointRepository:
         ):
             async with self._lock:
                 checkpoint = self._checkpoints.get(subscription_id)
-                return checkpoint.global_position if checkpoint else None
+                return checkpoint.position if checkpoint else None
 
     async def save_position(
         self,
         subscription_id: str,
-        position: int,
+        position: Position,
         event_id: UUID,
         event_type: str,
     ) -> None:
         """
-        Save checkpoint with global position.
+        Save checkpoint with an opaque global-feed position.
 
         Updates the position, event_id, and event_type for the checkpoint.
-        Uses UPSERT pattern for idempotency.
+        Uses UPSERT pattern for idempotency. This adapter holds objects,
+        so the value object itself is stored -- no serialization.
 
         Args:
             subscription_id: Identifier for the subscription (typically projection name)
-            position: Global position of the event
+            position: Opaque global-feed position of the event
             event_id: Event ID that was processed
             event_type: Type of event processed
         """
@@ -192,7 +194,7 @@ class InMemoryCheckpointRepository:
             {
                 ATTR_PROJECTION_NAME: subscription_id,
                 ATTR_EVENT_TYPE: event_type,
-                "global_position": position,
+                "position_token": position.to_str(),
             },
         ):
             now = datetime.now(UTC)
@@ -206,7 +208,7 @@ class InMemoryCheckpointRepository:
                     last_event_type=event_type,
                     last_processed_at=now,
                     events_processed=events_processed,
-                    global_position=position,
+                    position=position,
                 )
 
     async def get_all_checkpoints(self) -> list[CheckpointData]:

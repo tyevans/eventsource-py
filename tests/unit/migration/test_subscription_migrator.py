@@ -28,6 +28,18 @@ from eventsource.migration.subscription_migrator import (
     SubscriptionMigrator,
 )
 from eventsource.ports.checkpoints import CheckpointData
+from eventsource.ports.positions import Position
+
+SOURCE_STORE_ID = "source-store"
+
+
+def source_pos(n: int) -> Position:
+    """A source-store position token for the int the mapper is keyed on.
+
+    The migrator converts token<->int at the slice-(c) seam, so the store_id
+    here must match the source_store_id the migrator is built with.
+    """
+    return Position(store_id=SOURCE_STORE_ID, key=(n,))
 
 
 class TestSubscriptionMigratorInit:
@@ -41,6 +53,8 @@ class TestSubscriptionMigratorInit:
         migrator = SubscriptionMigrator(
             position_mapper=mock_position_mapper,
             checkpoint_repo=mock_checkpoint_repo,
+            source_store_id=SOURCE_STORE_ID,
+            target_store_id="target-store",
         )
 
         assert migrator._position_mapper == mock_position_mapper
@@ -54,6 +68,8 @@ class TestSubscriptionMigratorInit:
         migrator = SubscriptionMigrator(
             position_mapper=mock_position_mapper,
             checkpoint_repo=mock_checkpoint_repo,
+            source_store_id=SOURCE_STORE_ID,
+            target_store_id="target-store",
             enable_tracing=True,
         )
 
@@ -67,6 +83,8 @@ class TestSubscriptionMigratorInit:
         migrator = SubscriptionMigrator(
             position_mapper=mock_position_mapper,
             checkpoint_repo=mock_checkpoint_repo,
+            source_store_id=SOURCE_STORE_ID,
+            target_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -96,6 +114,8 @@ class TestSubscriptionMigratorPlanMigration:
         return SubscriptionMigrator(
             position_mapper=mock_position_mapper,
             checkpoint_repo=mock_checkpoint_repo,
+            source_store_id=SOURCE_STORE_ID,
+            target_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -110,7 +130,7 @@ class TestSubscriptionMigratorPlanMigration:
         migration_id = uuid4()
         tenant_id = uuid4()
 
-        mock_checkpoint_repo.get_position = AsyncMock(return_value=1000)
+        mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
         mock_position_mapper.translate_position = AsyncMock(
             return_value=TranslationResult(
                 source_position=1000,
@@ -165,7 +185,7 @@ class TestSubscriptionMigratorPlanMigration:
         migration_id = uuid4()
         tenant_id = uuid4()
 
-        mock_checkpoint_repo.get_position = AsyncMock(return_value=1000)
+        mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
         mock_position_mapper.translate_position = AsyncMock(
             side_effect=PositionMappingError(
                 "No mapping found",
@@ -198,7 +218,7 @@ class TestSubscriptionMigratorPlanMigration:
         migration_id = uuid4()
         tenant_id = uuid4()
 
-        mock_checkpoint_repo.get_position = AsyncMock(return_value=1050)
+        mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1050))
         mock_position_mapper.translate_position = AsyncMock(
             return_value=TranslationResult(
                 source_position=1050,
@@ -234,8 +254,8 @@ class TestSubscriptionMigratorPlanMigration:
 
         # Return different positions for each subscription
         positions = {
-            "OrderProjection": 1000,
-            "InventoryProjection": 2000,
+            "OrderProjection": source_pos(1000),
+            "InventoryProjection": source_pos(2000),
             "NoCheckpoint": None,
         }
         mock_checkpoint_repo.get_position = AsyncMock(side_effect=lambda name: positions.get(name))
@@ -281,6 +301,8 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         return SubscriptionMigrator(
             position_mapper=mock_position_mapper,
             checkpoint_repo=mock_checkpoint_repo,
+            source_store_id=SOURCE_STORE_ID,
+            target_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -295,7 +317,7 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         migration_id = uuid4()
         tenant_id = uuid4()
 
-        mock_checkpoint_repo.get_position = AsyncMock(return_value=1000)
+        mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
         mock_position_mapper.translate_position = AsyncMock(
             return_value=TranslationResult(
                 source_position=1000,
@@ -330,14 +352,14 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         tenant_id = uuid4()
         event_id = uuid4()
 
-        mock_checkpoint_repo.get_position = AsyncMock(return_value=1000)
+        mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
         mock_checkpoint_repo.get_all_checkpoints = AsyncMock(
             return_value=[
                 CheckpointData(
                     projection_name="OrderProjection",
                     last_event_id=event_id,
                     last_event_type="OrderCreated",
-                    global_position=1000,
+                    position=source_pos(1000),
                 )
             ]
         )
@@ -360,7 +382,7 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         # Should call save_position
         mock_checkpoint_repo.save_position.assert_called_once_with(
             subscription_id="OrderProjection",
-            position=500,
+            position=Position(store_id="target-store", key=(500,)),
             event_id=event_id,
             event_type="OrderCreated",
         )
@@ -380,14 +402,14 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         migration_id = uuid4()
         tenant_id = uuid4()
 
-        mock_checkpoint_repo.get_position = AsyncMock(return_value=1000)
+        mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
         mock_checkpoint_repo.get_all_checkpoints = AsyncMock(
             return_value=[
                 CheckpointData(
                     projection_name="OrderProjection",
                     last_event_id=None,  # Missing event_id
                     last_event_type=None,
-                    global_position=1000,
+                    position=source_pos(1000),
                 )
             ]
         )
@@ -415,14 +437,14 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         tenant_id = uuid4()
         event_id = uuid4()
 
-        mock_checkpoint_repo.get_position = AsyncMock(return_value=1000)
+        mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
         mock_checkpoint_repo.get_all_checkpoints = AsyncMock(
             return_value=[
                 CheckpointData(
                     projection_name="OrderProjection",
                     last_event_id=event_id,
                     last_event_type="OrderCreated",
-                    global_position=1000,
+                    position=source_pos(1000),
                 )
             ]
         )
@@ -459,14 +481,14 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         tenant_id = uuid4()
         event_id = uuid4()
 
-        mock_checkpoint_repo.get_position = AsyncMock(return_value=1000)
+        mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
         mock_checkpoint_repo.get_all_checkpoints = AsyncMock(
             return_value=[
                 CheckpointData(
                     projection_name="OrderProjection",
                     last_event_id=event_id,
                     last_event_type="OrderCreated",
-                    global_position=1000,
+                    position=source_pos(1000),
                 )
             ]
         )
@@ -514,6 +536,8 @@ class TestSubscriptionMigratorMigrateTenantSubscriptions:
         return SubscriptionMigrator(
             position_mapper=mock_position_mapper,
             checkpoint_repo=mock_checkpoint_repo,
+            source_store_id=SOURCE_STORE_ID,
+            target_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -529,14 +553,14 @@ class TestSubscriptionMigratorMigrateTenantSubscriptions:
         tenant_id = uuid4()
         event_id = uuid4()
 
-        mock_checkpoint_repo.get_position = AsyncMock(return_value=1000)
+        mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
         mock_checkpoint_repo.get_all_checkpoints = AsyncMock(
             return_value=[
                 CheckpointData(
                     projection_name="OrderProjection",
                     last_event_id=event_id,
                     last_event_type="OrderCreated",
-                    global_position=1000,
+                    position=source_pos(1000),
                 )
             ]
         )
@@ -575,17 +599,17 @@ class TestSubscriptionMigratorMigrateTenantSubscriptions:
                     projection_name="OrderProjection",
                     last_event_id=event_id,
                     last_event_type="OrderCreated",
-                    global_position=1000,
+                    position=source_pos(1000),
                 ),
                 CheckpointData(
                     projection_name="InventoryProjection",
                     last_event_id=event_id,
                     last_event_type="InventoryUpdated",
-                    global_position=2000,
+                    position=source_pos(2000),
                 ),
             ]
         )
-        mock_checkpoint_repo.get_position = AsyncMock(return_value=1000)
+        mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
         mock_checkpoint_repo.save_position = AsyncMock()
         mock_position_mapper.translate_position = AsyncMock(
             return_value=TranslationResult(
@@ -628,6 +652,8 @@ class TestSubscriptionMigratorVerifyMigration:
         return SubscriptionMigrator(
             position_mapper=mock_position_mapper,
             checkpoint_repo=mock_checkpoint_repo,
+            source_store_id=SOURCE_STORE_ID,
+            target_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -640,7 +666,7 @@ class TestSubscriptionMigratorVerifyMigration:
         """Test verify_migration returns True for all present checkpoints."""
         migration_id = uuid4()
 
-        mock_checkpoint_repo.get_position = AsyncMock(return_value=500)
+        mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(500))
 
         results = await migrator.verify_migration(
             migration_id=migration_id,
@@ -660,7 +686,7 @@ class TestSubscriptionMigratorVerifyMigration:
         migration_id = uuid4()
 
         positions = {
-            "OrderProjection": 500,
+            "OrderProjection": source_pos(500),
             "InventoryProjection": None,
         }
         mock_checkpoint_repo.get_position = AsyncMock(side_effect=lambda name: positions.get(name))
@@ -973,6 +999,8 @@ class TestSubscriptionMigratorWorkflows:
         return SubscriptionMigrator(
             position_mapper=mock_position_mapper,
             checkpoint_repo=mock_checkpoint_repo,
+            source_store_id=SOURCE_STORE_ID,
+            target_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -989,14 +1017,14 @@ class TestSubscriptionMigratorWorkflows:
         event_id = uuid4()
 
         # Setup mocks
-        mock_checkpoint_repo.get_position = AsyncMock(return_value=1000)
+        mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
         mock_checkpoint_repo.get_all_checkpoints = AsyncMock(
             return_value=[
                 CheckpointData(
                     projection_name="OrderProjection",
                     last_event_id=event_id,
                     last_event_type="OrderCreated",
-                    global_position=1000,
+                    position=source_pos(1000),
                 )
             ]
         )
@@ -1031,7 +1059,7 @@ class TestSubscriptionMigratorWorkflows:
 
         # Step 3: Verify migration
         # Update mock to return new position
-        mock_checkpoint_repo.get_position = AsyncMock(return_value=500)
+        mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(500))
 
         verification = await migrator.verify_migration(
             migration_id=migration_id,
@@ -1054,8 +1082,8 @@ class TestSubscriptionMigratorWorkflows:
 
         # Setup mocks - one succeeds, one fails
         positions = {
-            "OrderProjection": 1000,
-            "FailingProjection": 2000,
+            "OrderProjection": source_pos(1000),
+            "FailingProjection": source_pos(2000),
         }
         mock_checkpoint_repo.get_position = AsyncMock(side_effect=lambda name: positions.get(name))
         mock_checkpoint_repo.get_all_checkpoints = AsyncMock(
@@ -1064,13 +1092,13 @@ class TestSubscriptionMigratorWorkflows:
                     projection_name="OrderProjection",
                     last_event_id=event_id,
                     last_event_type="OrderCreated",
-                    global_position=1000,
+                    position=source_pos(1000),
                 ),
                 CheckpointData(
                     projection_name="FailingProjection",
                     last_event_id=event_id,
                     last_event_type="OrderCreated",
-                    global_position=2000,
+                    position=source_pos(2000),
                 ),
             ]
         )

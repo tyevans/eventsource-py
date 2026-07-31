@@ -14,6 +14,8 @@ from datetime import datetime
 from typing import Protocol, runtime_checkable
 from uuid import UUID
 
+from eventsource.ports.positions import Position
+
 
 @dataclass(frozen=True)
 class CheckpointData:
@@ -26,7 +28,8 @@ class CheckpointData:
         last_event_type: Type of the last processed event
         last_processed_at: When the last event was processed
         events_processed: Total count of events processed
-        global_position: Last processed global position in the event stream
+        position: Last processed global-feed position, as an opaque token.
+            None when no position has been recorded.
     """
 
     projection_name: str
@@ -34,7 +37,7 @@ class CheckpointData:
     last_event_type: str | None = None
     last_processed_at: datetime | None = None
     events_processed: int = 0
-    global_position: int | None = None
+    position: Position | None = None
 
 
 @dataclass(frozen=True)
@@ -137,37 +140,41 @@ class ProjectionCheckpoints(Protocol):
 
 @runtime_checkable
 class SubscriptionPositions(Protocol):
-    """Global-position persistence for subscription runners."""
+    """Opaque global-feed position persistence for subscription runners."""
 
-    async def get_position(self, subscription_id: str) -> int | None:
+    async def get_position(self, subscription_id: str) -> Position | None:
         """
-        Get last processed global position for a subscription.
+        Get last processed global-feed position for a subscription.
+
+        The position is an opaque token: implementations store and return
+        it verbatim and never interpret its contents.
 
         Args:
             subscription_id: Identifier for the subscription (typically projection name)
 
         Returns:
-            Last processed global position, or None if no checkpoint exists
-            or if checkpoint doesn't have position data.
+            Last processed position, or None both when no checkpoint exists
+            and when the stored row predates position tokens.
         """
         ...
 
     async def save_position(
         self,
         subscription_id: str,
-        position: int,
+        position: Position,
         event_id: UUID,
         event_type: str,
     ) -> None:
         """
-        Save checkpoint with global position.
+        Save checkpoint with an opaque global-feed position.
 
         Updates the position, event_id, and event_type for the checkpoint.
-        Uses UPSERT pattern for idempotency.
+        Uses UPSERT pattern for idempotency. The position is persisted
+        verbatim; implementations do not validate its `store_id`.
 
         Args:
             subscription_id: Identifier for the subscription (typically projection name)
-            position: Global position of the event
+            position: Opaque global-feed position of the event
             event_id: Event ID that was processed
             event_type: Type of event processed
         """

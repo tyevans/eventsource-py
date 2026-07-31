@@ -16,6 +16,7 @@ from sqlalchemy import text
 
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
 from eventsource.ports.checkpoints import CheckpointData, CheckpointRepository, LagMetrics
+from eventsource.ports.positions import Position
 
 
 class TestInMemoryCheckpointRepository:
@@ -393,8 +394,9 @@ class TestSQLCheckpointRepository:
         from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository
 
         repo = SQLCheckpointRepository(sqlite_engine)
-        await repo.save_position("sub-1", 42, uuid4(), "Created")
-        assert await repo.get_position("sub-1") == 42
+        position = Position(store_id="test", key=(42,))
+        await repo.save_position("sub-1", position, uuid4(), "Created")
+        assert await repo.get_position("sub-1") == position
 
     async def test_update_checkpoint_increments_count(self, sqlite_engine):
         from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository

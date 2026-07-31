@@ -13,10 +13,12 @@ import pytest
 import pytest_asyncio
 
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
+from eventsource.adapters.memory.store import MemoryEventStore
 from eventsource.bus.memory import InMemoryEventBus
+from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.events.registry import register_event
-from eventsource.stores.in_memory import InMemoryEventStore
+from eventsource.ports.positions import ExpectedVersion
 from eventsource.subscriptions import SubscriptionManager
 
 # =============================================================================
@@ -189,9 +191,9 @@ class SlowProjection:
 
 
 @pytest_asyncio.fixture
-async def in_memory_event_store() -> AsyncGenerator[InMemoryEventStore, None]:
+async def in_memory_event_store() -> AsyncGenerator[MemoryEventStore, None]:
     """Create an in-memory event store for testing."""
-    store = InMemoryEventStore(enable_tracing=False)
+    store = MemoryEventStore()
     yield store
 
 
@@ -212,7 +214,7 @@ async def in_memory_checkpoint_repo() -> AsyncGenerator[InMemoryCheckpointReposi
 
 @pytest_asyncio.fixture
 async def subscription_manager(
-    in_memory_event_store: InMemoryEventStore,
+    in_memory_event_store: MemoryEventStore,
     in_memory_event_bus: InMemoryEventBus,
     in_memory_checkpoint_repo: InMemoryCheckpointRepository,
 ) -> AsyncGenerator[SubscriptionManager, None]:
@@ -239,7 +241,7 @@ def collecting_projection() -> CollectingProjection:
 
 
 async def populate_event_store(
-    store: InMemoryEventStore,
+    store: MemoryEventStore,
     count: int,
     start_index: int = 0,
 ) -> list[DomainEvent]:
@@ -261,18 +263,17 @@ async def populate_event_store(
             order_number=f"ORD-{start_index + i:05d}",
             amount=100.0 + i,
         )
-        await store.append_events(
-            aggregate_id=event.aggregate_id,
-            aggregate_type="SubTestOrder",
-            events=[event],
-            expected_version=0,
+        await store.append(
+            StreamId(aggregate_id=event.aggregate_id, category="SubTestOrder"),
+            [event],
+            ExpectedVersion.no_stream(),
         )
         events.append(event)
     return events
 
 
 async def populate_event_store_with_types(
-    store: InMemoryEventStore,
+    store: MemoryEventStore,
     created_count: int,
     shipped_count: int,
     cancelled_count: int = 0,
@@ -298,11 +299,10 @@ async def populate_event_store_with_types(
             order_number=f"ORD-{total:05d}",
             amount=100.0 + i,
         )
-        await store.append_events(
-            aggregate_id=event.aggregate_id,
-            aggregate_type="SubTestOrder",
-            events=[event],
-            expected_version=0,
+        await store.append(
+            StreamId(aggregate_id=event.aggregate_id, category="SubTestOrder"),
+            [event],
+            ExpectedVersion.no_stream(),
         )
         events.append(event)
         total += 1
@@ -312,11 +312,10 @@ async def populate_event_store_with_types(
             aggregate_id=uuid4(),
             tracking_number=f"TRK-{total:05d}",
         )
-        await store.append_events(
-            aggregate_id=event.aggregate_id,
-            aggregate_type="SubTestOrder",
-            events=[event],
-            expected_version=0,
+        await store.append(
+            StreamId(aggregate_id=event.aggregate_id, category="SubTestOrder"),
+            [event],
+            ExpectedVersion.no_stream(),
         )
         events.append(event)
         total += 1
@@ -326,11 +325,10 @@ async def populate_event_store_with_types(
             aggregate_id=uuid4(),
             reason=f"Reason {total}",
         )
-        await store.append_events(
-            aggregate_id=event.aggregate_id,
-            aggregate_type="SubTestOrder",
-            events=[event],
-            expected_version=0,
+        await store.append(
+            StreamId(aggregate_id=event.aggregate_id, category="SubTestOrder"),
+            [event],
+            ExpectedVersion.no_stream(),
         )
         events.append(event)
         total += 1
@@ -339,7 +337,7 @@ async def populate_event_store_with_types(
 
 
 async def publish_live_event(
-    store: InMemoryEventStore,
+    store: MemoryEventStore,
     bus: InMemoryEventBus,
     order_number: str,
     amount: float = 100.0,
@@ -361,11 +359,10 @@ async def publish_live_event(
         order_number=order_number,
         amount=amount,
     )
-    await store.append_events(
-        aggregate_id=event.aggregate_id,
-        aggregate_type="SubTestOrder",
-        events=[event],
-        expected_version=0,
+    await store.append(
+        StreamId(aggregate_id=event.aggregate_id, category="SubTestOrder"),
+        [event],
+        ExpectedVersion.no_stream(),
     )
     await bus.publish([event])
     return event

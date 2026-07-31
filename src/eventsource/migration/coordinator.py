@@ -197,6 +197,8 @@ class MigrationCoordinator:
         router: TenantStoreRouter,
         *,
         source_store_id: str = "default",
+        source_position_store_id: str,
+        target_position_store_id: str,
         lock_manager: PostgreSQLLockManager | None = None,
         position_mapper: PositionMapper | None = None,
         checkpoint_repo: CheckpointRepository | None = None,
@@ -211,7 +213,17 @@ class MigrationCoordinator:
             migration_repo: Repository for migration state
             routing_repo: Repository for tenant routing
             router: TenantStoreRouter for routing management
-            source_store_id: Identifier for the source store
+            source_store_id: Routing identifier for the source store. This is
+                a routing label, a different namespace from the `store_id`
+                stamped into positions -- see source_position_store_id.
+            source_position_store_id: `store_id` stamped into positions by the
+                source store. In slice (c), migration moves onto the ports
+                store surface and these ids will be derived from the stores'
+                own store_id attributes; until then the caller declares them.
+            target_position_store_id: `store_id` stamped into positions by the
+                target store. In slice (c), migration moves onto the ports
+                store surface and these ids will be derived from the stores'
+                own store_id attributes; until then the caller declares them.
             lock_manager: PostgreSQL advisory lock manager for cutover coordination.
                 Required for cutover operations in dual-write phase.
             position_mapper: PositionMapper for subscription checkpoint translation.
@@ -229,6 +241,8 @@ class MigrationCoordinator:
         self._routing_repo = routing_repo
         self._router = router
         self._source_store_id = source_store_id
+        self._source_position_store_id = source_position_store_id
+        self._target_position_store_id = target_position_store_id
         self._lock_manager = lock_manager
 
         # Active copiers by migration_id
@@ -1619,6 +1633,8 @@ class MigrationCoordinator:
             migrator = SubscriptionMigrator(
                 position_mapper=self._position_mapper,
                 checkpoint_repo=self._checkpoint_repo,
+                source_store_id=self._source_position_store_id,
+                target_store_id=self._target_position_store_id,
                 enable_tracing=self._enable_tracing,
             )
 

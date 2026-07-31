@@ -128,7 +128,7 @@ class InMemoryTestHarness:
             InMemoryCheckpointRepository instance for projection checkpoints
 
         Example:
-            >>> await harness.checkpoint_repo.save_position("my-projection", 42, event_id, "EventType")
+            >>> await harness.checkpoint_repo.save_position("my-projection", position, event_id, "EventType")
             >>> position = await harness.checkpoint_repo.get_position("my-projection")
         """
         return self._checkpoint_repo

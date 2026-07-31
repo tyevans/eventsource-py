@@ -15,6 +15,7 @@ from uuid import uuid4
 
 import pytest
 
+from eventsource.ports.positions import Position
 from eventsource.subscriptions.error_handling import (
     ErrorCategory,
     ErrorClassification,
@@ -32,6 +33,11 @@ from eventsource.subscriptions.error_handling import (
 # =============================================================================
 # Error Classification Tests
 # =============================================================================
+
+
+def pos(n: int) -> Position:
+    """Build a test-store position token standing in for an int position."""
+    return Position(store_id="test", key=(n,))
 
 
 class TestErrorClassification:
@@ -247,7 +253,7 @@ class TestErrorInfo:
         return ErrorInfo(
             event_id=uuid4(),
             event_type="TestEvent",
-            position=100,
+            position=pos(100),
             error_type="ValueError",
             error_message="Test error message",
             error_stacktrace="Traceback...",
@@ -263,7 +269,7 @@ class TestErrorInfo:
     def test_error_info_fields(self, error_info: ErrorInfo):
         """Test error info fields are accessible."""
         assert error_info.event_type == "TestEvent"
-        assert error_info.position == 100
+        assert error_info.position == pos(100)
         assert error_info.error_type == "ValueError"
         assert error_info.subscription_name == "TestSubscription"
         assert error_info.retry_count == 2
@@ -274,7 +280,7 @@ class TestErrorInfo:
         data = error_info.to_dict()
 
         assert data["event_type"] == "TestEvent"
-        assert data["position"] == 100
+        assert data["position"] == pos(100).to_str()
         assert data["error_type"] == "ValueError"
         assert data["category"] == "application"
         assert data["severity"] == "medium"
@@ -304,7 +310,7 @@ class TestErrorStats:
         error_info = ErrorInfo(
             event_id=uuid4(),
             event_type="TestEvent",
-            position=1,
+            position=pos(1),
             error_type="ConnectionError",
             error_message="Connection refused",
             error_stacktrace="...",
@@ -330,7 +336,7 @@ class TestErrorStats:
         error_info = ErrorInfo(
             event_id=uuid4(),
             event_type="TestEvent",
-            position=1,
+            position=pos(1),
             error_type="ValueError",
             error_message="Invalid data",
             error_stacktrace="...",
@@ -353,7 +359,7 @@ class TestErrorStats:
         error_info = ErrorInfo(
             event_id=uuid4(),
             event_type="TestEvent",
-            position=1,
+            position=pos(1),
             error_type="ValueError",
             error_message="Invalid data",
             error_stacktrace="...",
@@ -400,7 +406,7 @@ class TestErrorHandlerRegistry:
         return ErrorInfo(
             event_id=uuid4(),
             event_type="TestEvent",
-            position=1,
+            position=pos(1),
             error_type="ValueError",
             error_message="Test error",
             error_stacktrace="...",
@@ -465,7 +471,7 @@ class TestErrorHandlerRegistry:
         error_info = ErrorInfo(
             event_id=uuid4(),
             event_type="TestEvent",
-            position=1,
+            position=pos(1),
             error_type="ValueError",
             error_message="Test error",
             error_stacktrace="...",
@@ -638,24 +644,35 @@ class TestSubscriptionErrorHandler:
         assert error_info.subscription_name == "TestSubscription"
 
     @pytest.mark.asyncio
-    async def test_handle_error_with_stored_event(
+    async def test_handle_error_with_envelope(
         self,
         handler: SubscriptionErrorHandler,
     ):
-        """Test error handling with stored event context."""
+        """Test error handling with envelope context."""
         error = ValueError("Test error")
 
-        # Create mock stored event
-        stored_event = MagicMock()
-        stored_event.event_id = uuid4()
-        stored_event.event_type = "OrderCreated"
-        stored_event.global_position = 42
+        event = MagicMock()
+        event.event_id = uuid4()
+        event.event_type = "OrderCreated"
+        envelope = MagicMock()
+        envelope.event = event
+        envelope.position = pos(42)
 
-        error_info = await handler.handle_error(error, stored_event=stored_event)
+        error_info = await handler.handle_error(error, envelope=envelope)
 
-        assert error_info.event_id == stored_event.event_id
+        assert error_info.event_id == event.event_id
         assert error_info.event_type == "OrderCreated"
-        assert error_info.position == 42
+        assert error_info.position == pos(42)
+
+    @pytest.mark.asyncio
+    async def test_handle_error_without_envelope_has_no_position(
+        self,
+        handler: SubscriptionErrorHandler,
+    ):
+        """With no envelope there is no position -- None, not a sentinel."""
+        error_info = await handler.handle_error(ValueError("Test error"))
+
+        assert error_info.position is None
 
     @pytest.mark.asyncio
     async def test_handle_error_updates_stats(

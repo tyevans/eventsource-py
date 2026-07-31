@@ -6,6 +6,7 @@ Tests all configuration classes, validation, and exception hierarchy.
 
 import pytest
 
+from eventsource.ports.positions import Position
 from eventsource.subscriptions import (
     CheckpointNotFoundError,
     CheckpointStrategy,
@@ -94,15 +95,20 @@ class TestSubscriptionConfigCustomValues:
         config = SubscriptionConfig(start_from="checkpoint")
         assert config.start_from == "checkpoint"
 
-    def test_start_from_integer_position(self):
-        """Test start_from with integer position is valid."""
-        config = SubscriptionConfig(start_from=500)
-        assert config.start_from == 500
+    def test_start_from_explicit_position(self):
+        """Test start_from with an explicit position token is valid."""
+        position = Position(store_id="test", key=(500,))
+        config = SubscriptionConfig(start_from=position)
+        assert config.start_from == position
 
-    def test_start_from_zero(self):
-        """Test start_from=0 is valid."""
-        config = SubscriptionConfig(start_from=0)
-        assert config.start_from == 0
+    def test_start_from_rejects_int_at_type_check_time(self):
+        """An int start_from is no longer part of StartPosition.
+
+        There is no runtime rejection to assert: the int member was deleted
+        from the type alias, so `SubscriptionConfig(start_from=500)` is a
+        mypy error, not a ValueError. A Position validates itself on
+        construction, which leaves no negative case to reject here.
+        """
 
     def test_custom_batch_size(self):
         """Test custom batch_size."""
@@ -180,13 +186,6 @@ class TestSubscriptionConfigValidation:
             SubscriptionConfig(max_in_flight=-100)
         assert "max_in_flight must be positive" in str(exc_info.value)
         assert "got -100" in str(exc_info.value)
-
-    def test_invalid_start_from_negative_integer(self):
-        """Test negative integer start_from raises ValueError."""
-        with pytest.raises(ValueError) as exc_info:
-            SubscriptionConfig(start_from=-5)
-        assert "start_from position must be >= 0" in str(exc_info.value)
-        assert "got -5" in str(exc_info.value)
 
     def test_invalid_processing_timeout_zero(self):
         """Test processing_timeout=0 raises ValueError."""

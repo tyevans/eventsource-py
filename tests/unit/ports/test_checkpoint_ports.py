@@ -10,6 +10,7 @@ from eventsource.ports.checkpoints import (
     ProjectionCheckpoints,
     SubscriptionPositions,
 )
+from eventsource.ports.positions import Position
 
 
 class TestCheckpointData:
@@ -19,7 +20,7 @@ class TestCheckpointData:
         assert data.last_event_type is None
         assert data.last_processed_at is None
         assert data.events_processed == 0
-        assert data.global_position is None
+        assert data.position is None
 
     def test_is_frozen(self) -> None:
         import dataclasses
@@ -39,9 +40,13 @@ class TestCheckpointData:
             last_event_type="Created",
             last_processed_at=now,
             events_processed=3,
-            global_position=17,
+            position=Position(store_id="test", key=(17,)),
         )
-        assert (data.last_event_id, data.events_processed, data.global_position) == (eid, 3, 17)
+        assert (data.last_event_id, data.events_processed, data.position) == (
+            eid,
+            3,
+            Position(store_id="test", key=(17,)),
+        )
 
 
 class TestLagMetrics:
@@ -55,11 +60,11 @@ class TestLagMetrics:
 
 
 class PositionsOnly:
-    async def get_position(self, subscription_id: str) -> int | None:
+    async def get_position(self, subscription_id: str) -> Position | None:
         return None
 
     async def save_position(
-        self, subscription_id: str, position: int, event_id: UUID, event_type: str
+        self, subscription_id: str, position: Position, event_id: UUID, event_type: str
     ) -> None:
         return None
 

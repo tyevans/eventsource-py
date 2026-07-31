@@ -11,6 +11,8 @@ Tests cover:
 
 import pytest
 
+from eventsource.domain import StreamId
+from eventsource.ports.positions import ExpectedVersion
 from eventsource.subscriptions import SubscriptionConfig
 
 from .conftest import (
@@ -21,6 +23,14 @@ from .conftest import (
 )
 
 pytestmark = pytest.mark.asyncio
+
+
+async def position_after(store, n: int):
+    """The token of the nth (1-based) event in the feed."""
+    envelopes = [e async for e in store.read_all()]
+    position = envelopes[n - 1].position
+    assert position is not None
+    return position
 
 
 class TestCatchUpFromBeginning:
@@ -127,7 +137,7 @@ class TestCatchUpFromCheckpoint:
         # Set checkpoint at position 50 (meaning we've processed up to position 50)
         await in_memory_checkpoint_repo.save_position(
             subscription_id="CollectingProjection",
-            position=50,
+            position=await position_after(in_memory_event_store, 50),
             event_id=events[49].event_id,
             event_type="TestOrderCreated",
         )
@@ -183,8 +193,8 @@ class TestCatchUpFromCheckpoint:
 
         projection = CollectingProjection()
 
-        # Act: Subscribe starting from position 75
-        config = SubscriptionConfig(start_from=75)
+        # Act: Subscribe starting from the 75th event's position
+        config = SubscriptionConfig(start_from=await position_after(in_memory_event_store, 75))
         await subscription_manager.subscribe(projection, config)
         await subscription_manager.start()
 
@@ -317,11 +327,10 @@ class TestEmptyEventStore:
             order_number="LIVE-00001",
             amount=500.0,
         )
-        await in_memory_event_store.append_events(
-            aggregate_id=live_event.aggregate_id,
-            aggregate_type="SubTestOrder",
-            events=[live_event],
-            expected_version=0,
+        await in_memory_event_store.append(
+            StreamId(aggregate_id=live_event.aggregate_id, category="SubTestOrder"),
+            [live_event],
+            ExpectedVersion.no_stream(),
         )
         await in_memory_event_bus.publish([live_event])
 

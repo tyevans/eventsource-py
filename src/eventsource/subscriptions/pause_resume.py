@@ -21,7 +21,11 @@ from typing import TYPE_CHECKING
 
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import ATTR_SUBSCRIPTION_NAME
-from eventsource.subscriptions.subscription import PauseReason, Subscription
+from eventsource.subscriptions.subscription import (
+    PauseReason,
+    Subscription,
+    render_position,
+)
 
 if TYPE_CHECKING:
     from eventsource.subscriptions.lifecycle import SubscriptionLifecycleManager
@@ -118,7 +122,7 @@ class PauseResumeController:
                     extra={
                         "subscription": name,
                         "reason": pause_reason.value,
-                        "position": subscription.last_processed_position,
+                        "position": render_position(subscription.last_processed_position),
                     },
                 )
                 return True
@@ -183,7 +187,7 @@ class PauseResumeController:
                     "Subscription resumed",
                     extra={
                         "subscription": name,
-                        "position": subscription.last_processed_position,
+                        "position": render_position(subscription.last_processed_position),
                         "state": subscription.state.value,
                     },
                 )

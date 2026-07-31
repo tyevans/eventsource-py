@@ -16,6 +16,8 @@ from uuid import uuid4
 
 import pytest
 
+from eventsource.domain import StreamId
+from eventsource.ports.positions import ExpectedVersion, Position
 from eventsource.subscriptions import (
     SubscriptionConfig,
     SubscriptionManager,
@@ -32,6 +34,14 @@ from .conftest import (
 )
 
 pytestmark = pytest.mark.asyncio
+
+
+async def position_after(store, n: int):
+    """The token of the nth (1-based) event in the feed."""
+    envelopes = [e async for e in store.read_all()]
+    position = envelopes[n - 1].position
+    assert position is not None
+    return position
 
 
 class TestFullLifecycle:
@@ -125,7 +135,7 @@ class TestCheckpointPersistence:
         # Assert: Checkpoint saved
         position = await in_memory_checkpoint_repo.get_position("CollectingProjection")
         assert position is not None
-        assert position >= 100
+        assert position >= await position_after(in_memory_event_store, 100)
 
     async def test_checkpoint_persisted_periodically(
         self,
@@ -148,7 +158,8 @@ class TestCheckpointPersistence:
         # Check checkpoint was updated
         position = await in_memory_checkpoint_repo.get_position("CollectingProjection")
         assert position is not None
-        assert position >= 50  # At least one batch checkpointed
+        # At least one batch checkpointed
+        assert position >= await position_after(in_memory_event_store, 50)
 
         await subscription_manager.stop()
 
@@ -186,11 +197,10 @@ class TestResumeAfterRestart:
                 order_number=f"ORD-{i:05d}",
                 amount=100.0 + i,
             )
-            await in_memory_event_store.append_events(
-                aggregate_id=event.aggregate_id,
-                aggregate_type="TestOrder",
-                events=[event],
-                expected_version=0,
+            await in_memory_event_store.append(
+                StreamId(aggregate_id=event.aggregate_id, category="TestOrder"),
+                [event],
+                ExpectedVersion.no_stream(),
             )
 
         # Second run: Resume from checkpoint
@@ -221,7 +231,7 @@ class TestResumeAfterRestart:
         # Create checkpoint
         await in_memory_checkpoint_repo.save_position(
             subscription_id="TestProjection",
-            position=50,
+            position=Position(store_id="memory", key=(50,)),
             event_id=uuid4(),
             event_type="TestOrderCreated",
         )
@@ -347,7 +357,7 @@ class TestMultipleConcurrentSubscribers:
         # Set up checkpoint for one subscriber
         await in_memory_checkpoint_repo.save_position(
             subscription_id="ProjectionWithCheckpoint",
-            position=75,
+            position=await position_after(in_memory_event_store, 75),
             event_id=events[74].event_id,
             event_type="TestOrderCreated",
         )
@@ -633,11 +643,10 @@ class TestEdgeCases:
                 order_number=f"ORD-{i:05d}",
                 amount=100.0 + i,
             )
-            await in_memory_event_store.append_events(
-                aggregate_id=event.aggregate_id,
-                aggregate_type="TestOrder",
-                events=[event],
-                expected_version=0,
+            await in_memory_event_store.append(
+                StreamId(aggregate_id=event.aggregate_id, category="TestOrder"),
+                [event],
+                ExpectedVersion.no_stream(),
             )
 
         # Can't restart same manager (would need new instance)

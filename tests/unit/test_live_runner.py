@@ -21,6 +21,7 @@ import pytest
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
 from eventsource.bus.memory import InMemoryEventBus
 from eventsource.events.base import DomainEvent
+from eventsource.ports.positions import Position
 from eventsource.subscriptions import (
     CheckpointStrategy,
     Subscription,
@@ -30,6 +31,11 @@ from eventsource.subscriptions import (
 from eventsource.subscriptions.runners import LiveRunner, LiveRunnerStats
 
 # --- Sample Event Classes ---
+
+
+def pos(n: int) -> Position:
+    """Build a test-store position token standing in for an int position."""
+    return Position(store_id="test", key=(n,))
 
 
 class LiveTestEvent(DomainEvent):
@@ -442,13 +448,13 @@ class TestLiveRunnerDuplicateDetection:
     ):
         """Test events with position <= last_processed_position are skipped."""
         # Set last processed position
-        subscription.last_processed_position = 100
+        subscription.last_processed_position = pos(100)
 
         await runner.start()
 
         # Create an event with position attached (simulating position metadata)
         event = LiveTestEvent(aggregate_id=uuid4(), data="old_event")
-        event._global_position = 50  # Position before last processed
+        event._position = pos(50)  # Position before last processed
 
         # Process directly through internal method
         await runner._handle_live_event(event)
@@ -464,13 +470,13 @@ class TestLiveRunnerDuplicateDetection:
         subscriber: MockLiveSubscriber,
     ):
         """Test events with position > last_processed_position are processed."""
-        subscription.last_processed_position = 100
+        subscription.last_processed_position = pos(100)
 
         await runner.start()
 
         # Create an event with position after last processed
         event = LiveTestEvent(aggregate_id=uuid4(), data="new_event")
-        event._global_position = 150
+        event._position = pos(150)
 
         await runner._handle_live_event(event)
 
@@ -524,13 +530,13 @@ class TestLiveRunnerCheckpointStrategies:
 
         # Create event with position
         event = LiveTestEvent(aggregate_id=uuid4(), data="checkpoint_test")
-        event._global_position = 42
+        event._position = pos(42)
 
         await runner._handle_live_event(event)
 
         # Check checkpoint was saved
         position = await checkpoint_repo.get_position("EveryEventLive")
-        assert position == 42
+        assert position == pos(42)
 
     @pytest.mark.asyncio
     async def test_every_batch_strategy_checkpoints_live(
@@ -557,13 +563,13 @@ class TestLiveRunnerCheckpointStrategies:
 
         # Create event with position
         event = LiveTestEvent(aggregate_id=uuid4(), data="batch_test")
-        event._global_position = 55
+        event._position = pos(55)
 
         await runner._handle_live_event(event)
 
         # In live mode, EVERY_BATCH behaves like EVERY_EVENT
         position = await checkpoint_repo.get_position("EveryBatchLive")
-        assert position == 55
+        assert position == pos(55)
 
     @pytest.mark.asyncio
     async def test_periodic_strategy_respects_interval(
@@ -591,7 +597,7 @@ class TestLiveRunnerCheckpointStrategies:
 
         # First event - should not checkpoint (interval not elapsed)
         event1 = LiveTestEvent(aggregate_id=uuid4(), data="first")
-        event1._global_position = 10
+        event1._position = pos(10)
         await runner._handle_live_event(event1)
 
         position = await checkpoint_repo.get_position("PeriodicLive")
@@ -602,11 +608,11 @@ class TestLiveRunnerCheckpointStrategies:
 
         # Second event - should checkpoint now
         event2 = LiveTestEvent(aggregate_id=uuid4(), data="second")
-        event2._global_position = 20
+        event2._position = pos(20)
         await runner._handle_live_event(event2)
 
         position = await checkpoint_repo.get_position("PeriodicLive")
-        assert position == 20
+        assert position == pos(20)
 
     @pytest.mark.asyncio
     async def test_no_checkpoint_without_position(
@@ -754,11 +760,11 @@ class TestLiveRunnerEdgeCases:
         await runner.start()
 
         event = LiveTestEvent(aggregate_id=uuid4(), data="positioned")
-        event._global_position = 999
+        event._position = pos(999)
 
         await runner._handle_live_event(event)
 
-        assert subscription.last_processed_position == 999
+        assert subscription.last_processed_position == pos(999)
         assert subscription.last_event_id == event.event_id
         assert subscription.last_event_type == "LiveTestEvent"
 
@@ -837,12 +843,12 @@ class TestLiveRunnerEdgeCases:
         await runner.start()
 
         positions = [10, 20, 30]
-        for pos in positions:
-            event = LiveTestEvent(aggregate_id=uuid4(), data=f"pos_{pos}")
-            event._global_position = pos
+        for n in positions:
+            event = LiveTestEvent(aggregate_id=uuid4(), data=f"pos_{n}")
+            event._position = pos(n)
             await runner._handle_live_event(event)
 
-        assert subscription.last_processed_position == 30
+        assert subscription.last_processed_position == pos(30)
 
     @pytest.mark.asyncio
     async def test_config_accessible_on_runner(

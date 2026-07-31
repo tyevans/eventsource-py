@@ -11,7 +11,9 @@ from uuid import uuid4
 
 import pytest
 
+from eventsource.exceptions import PositionForeignError
 from eventsource.ports.checkpoints import ProjectionCheckpoints, SubscriptionPositions
+from eventsource.ports.positions import Position
 
 
 class ProjectionCheckpointsConformance(ABC):
@@ -106,25 +108,82 @@ class SubscriptionPositionsConformance(ABC):
         """Yield a fresh adapter instance implementing `SubscriptionPositions`."""
         raise NotImplementedError
 
+    def make_position(self, n: int) -> Position:
+        """A comparable, persistable position for this adapter's store.
+
+        Overridable: adapters that only accept their own store's tokens
+        supply them here. The default is a synthetic single-key token,
+        which any checkpoint adapter must round-trip verbatim -- the
+        checkpoint table stores an opaque string and never interprets it.
+        """
+        return Position(store_id="conformance", key=(n,))
+
+    async def write_legacy_int_row(
+        self,
+        store: SubscriptionPositions,
+        subscription_id: str,
+        value: int,
+    ) -> None:
+        """Write a row carrying only a legacy integer position, no token.
+
+        Overridable: adapters with a legacy integer column write one here
+        directly. The default opts out, because an adapter with no such
+        column has no legacy row to read.
+        """
+        pytest.skip("adapter has no legacy int column")
+
     async def test_absent_position_reads_none(self, store: SubscriptionPositions) -> None:
         assert await store.get_position("Missing") is None
 
     async def test_save_then_get_round_trips(self, store: SubscriptionPositions) -> None:
-        await store.save_position("S", 42, uuid4(), "Created")
-        assert await store.get_position("S") == 42
+        position = self.make_position(42)
+        await store.save_position("S", position, uuid4(), "Created")
+        assert await store.get_position("S") == position
 
     async def test_last_saved_position_wins(self, store: SubscriptionPositions) -> None:
-        await store.save_position("S", 1, uuid4(), "Created")
-        await store.save_position("S", 99, uuid4(), "Updated")
-        assert await store.get_position("S") == 99
+        await store.save_position("S", self.make_position(1), uuid4(), "Created")
+        latest = self.make_position(99)
+        await store.save_position("S", latest, uuid4(), "Updated")
+        assert await store.get_position("S") == latest
 
     async def test_distinct_subscriptions_do_not_interfere(
         self, store: SubscriptionPositions
     ) -> None:
-        await store.save_position("A", 1, uuid4(), "Created")
-        await store.save_position("B", 2, uuid4(), "Created")
-        assert await store.get_position("A") == 1
-        assert await store.get_position("B") == 2
+        a, b = self.make_position(1), self.make_position(2)
+        await store.save_position("A", a, uuid4(), "Created")
+        await store.save_position("B", b, uuid4(), "Created")
+        assert await store.get_position("A") == a
+        assert await store.get_position("B") == b
+
+    async def test_multi_element_token_round_trips_verbatim(
+        self, store: SubscriptionPositions
+    ) -> None:
+        # The checkpoint table stores an opaque string: a compound key
+        # must survive save/get with every element intact and in order.
+        position = Position(store_id="s", key=(7, "abc"))
+        await store.save_position("S", position, uuid4(), "Created")
+        assert await store.get_position("S") == position
+
+    async def test_legacy_int_only_row_reads_none(self, store: SubscriptionPositions) -> None:
+        # A row predating tokens carries no token to return. Reading None
+        # restarts catch-up rather than inventing a store_id.
+        await self.write_legacy_int_row(store, "Legacy", 42)
+        assert await store.get_position("Legacy") is None
+
+    async def test_tokens_from_another_store_are_returned_but_not_comparable(
+        self, store: SubscriptionPositions
+    ) -> None:
+        # The repository stores and returns tokens verbatim and never
+        # validates store_id; the mismatch surfaces at the comparison,
+        # which is the honest place for it.
+        foreign = Position(store_id="A", key=(1,))
+        await store.save_position("S", foreign, uuid4(), "Created")
+
+        stored = await store.get_position("S")
+        assert stored == foreign
+
+        with pytest.raises(PositionForeignError):
+            _ = stored < Position(store_id="B", key=(2,))
 
 
 class CheckpointRepositoryConformance(
@@ -141,6 +200,7 @@ class CheckpointRepositoryConformance(
 
     async def test_save_position_also_advances_the_checkpoint(self, store: object) -> None:
         event_id = uuid4()
-        await store.save_position("P", 7, event_id, "Created")  # type: ignore[attr-defined]
+        position = self.make_position(7)
+        await store.save_position("P", position, event_id, "Created")  # type: ignore[attr-defined]
         assert await store.get_checkpoint("P") == event_id  # type: ignore[attr-defined]
-        assert await store.get_position("P") == 7  # type: ignore[attr-defined]
+        assert await store.get_position("P") == position  # type: ignore[attr-defined]

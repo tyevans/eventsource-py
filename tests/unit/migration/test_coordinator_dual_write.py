@@ -51,6 +51,8 @@ class TestTransitionToDualWrite:
             "migration_repo": AsyncMock(),
             "routing_repo": AsyncMock(),
             "router": MagicMock(),
+            "source_position_store_id": "source-store",
+            "target_position_store_id": "target-store",
         }
 
     @pytest.mark.asyncio
@@ -165,6 +167,8 @@ class TestTriggerCutover:
             "migration_repo": AsyncMock(),
             "routing_repo": AsyncMock(),
             "router": MagicMock(),
+            "source_position_store_id": "source-store",
+            "target_position_store_id": "target-store",
             "lock_manager": lock_manager,
         }
 
@@ -378,6 +382,8 @@ class TestGetSyncLag:
             migration_repo=migration_repo,
             routing_repo=MagicMock(),
             router=MagicMock(),
+            source_position_store_id="source-store",
+            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -419,6 +425,8 @@ class TestGetSyncLag:
             migration_repo=migration_repo,
             routing_repo=MagicMock(),
             router=MagicMock(),
+            source_position_store_id="source-store",
+            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -439,6 +447,8 @@ class TestGetSyncLag:
             migration_repo=migration_repo,
             routing_repo=MagicMock(),
             router=MagicMock(),
+            source_position_store_id="source-store",
+            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -472,6 +482,8 @@ class TestIsCutoverReady:
             migration_repo=migration_repo,
             routing_repo=MagicMock(),
             router=MagicMock(),
+            source_position_store_id="source-store",
+            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -509,6 +521,8 @@ class TestIsCutoverReady:
             migration_repo=migration_repo,
             routing_repo=MagicMock(),
             router=MagicMock(),
+            source_position_store_id="source-store",
+            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -552,6 +566,8 @@ class TestIsCutoverReady:
             migration_repo=migration_repo,
             routing_repo=MagicMock(),
             router=MagicMock(),
+            source_position_store_id="source-store",
+            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -584,6 +600,8 @@ class TestBuildStatusWithSyncLag:
             migration_repo=MagicMock(),
             routing_repo=MagicMock(),
             router=MagicMock(),
+            source_position_store_id="source-store",
+            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -621,6 +639,8 @@ class TestBuildStatusWithSyncLag:
             migration_repo=MagicMock(),
             routing_repo=MagicMock(),
             router=MagicMock(),
+            source_position_store_id="source-store",
+            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -644,6 +664,8 @@ class TestCleanupMigrationResources:
             migration_repo=MagicMock(),
             routing_repo=MagicMock(),
             router=MagicMock(),
+            source_position_store_id="source-store",
+            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -664,6 +686,8 @@ class TestCleanupMigrationResources:
             migration_repo=MagicMock(),
             routing_repo=MagicMock(),
             router=MagicMock(),
+            source_position_store_id="source-store",
+            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -704,6 +728,8 @@ class TestAbortMigrationCleansUpP2Resources:
             migration_repo=migration_repo,
             routing_repo=routing_repo,
             router=MagicMock(),
+            source_position_store_id="source-store",
+            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -747,6 +773,8 @@ class TestFailMigrationCleansUpP2Resources:
             migration_repo=migration_repo,
             routing_repo=routing_repo,
             router=MagicMock(),
+            source_position_store_id="source-store",
+            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -773,6 +801,8 @@ class TestGetCutoverManager:
             migration_repo=MagicMock(),
             routing_repo=MagicMock(),
             router=MagicMock(),
+            source_position_store_id="source-store",
+            target_position_store_id="target-store",
             lock_manager=lock_manager,
             enable_tracing=False,
         )
@@ -791,6 +821,8 @@ class TestGetCutoverManager:
             migration_repo=MagicMock(),
             routing_repo=MagicMock(),
             router=MagicMock(),
+            source_position_store_id="source-store",
+            target_position_store_id="target-store",
             lock_manager=lock_manager,
             enable_tracing=False,
         )
@@ -807,6 +839,8 @@ class TestGetCutoverManager:
             migration_repo=MagicMock(),
             routing_repo=MagicMock(),
             router=MagicMock(),
+            source_position_store_id="source-store",
+            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -841,6 +875,8 @@ class TestRollbackCutover:
             migration_repo=migration_repo,
             routing_repo=MagicMock(),
             router=MagicMock(),
+            source_position_store_id="source-store",
+            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -877,6 +913,8 @@ class TestRollbackCutover:
             migration_repo=migration_repo,
             routing_repo=MagicMock(),
             router=MagicMock(),
+            source_position_store_id="source-store",
+            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -918,6 +956,8 @@ class TestCompleteCutover:
             migration_repo=migration_repo,
             routing_repo=MagicMock(),
             router=MagicMock(),
+            source_position_store_id="source-store",
+            target_position_store_id="target-store",
             enable_tracing=False,
         )
 
@@ -971,6 +1011,8 @@ class TestStartMigrationStoresTargetStore:
             migration_repo=migration_repo,
             routing_repo=routing_repo,
             router=MagicMock(),
+            source_position_store_id="source-store",
+            target_position_store_id="target-store",
             enable_tracing=False,
         )
 

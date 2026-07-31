@@ -52,11 +52,26 @@ from eventsource.migration.subscription_migrator import (
     SubscriptionMigrator,
 )
 from eventsource.migration.write_pause import WritePauseManager
+from eventsource.ports.positions import Position
 from eventsource.stores.in_memory import InMemoryEventStore
 
 # =============================================================================
 # Test Event Classes
 # =============================================================================
+
+
+SOURCE_STORE_ID = "source-store"
+TARGET_STORE_ID = "target-store"
+
+
+def source_pos(n: int) -> Position:
+    """A source-store position token for the int the mapper is keyed on."""
+    return Position(store_id=SOURCE_STORE_ID, key=(n,))
+
+
+def target_pos(n: int) -> Position:
+    """A target-store position token, as the migrator writes back."""
+    return Position(store_id=TARGET_STORE_ID, key=(n,))
 
 
 class SampleTestEvent(DomainEvent):
@@ -225,7 +240,7 @@ class InMemoryCheckpointRepository:
     def __init__(self) -> None:
         self._checkpoints: dict[str, dict] = {}
 
-    async def get_position(self, subscription_id: str) -> int | None:
+    async def get_position(self, subscription_id: str) -> Position | None:
         """Get checkpoint position for subscription."""
         checkpoint = self._checkpoints.get(subscription_id)
         if checkpoint:
@@ -235,7 +250,7 @@ class InMemoryCheckpointRepository:
     async def save_position(
         self,
         subscription_id: str,
-        position: int,
+        position: Position,
         event_id: UUID | None = None,
         event_type: str | None = None,
     ) -> None:
@@ -254,7 +269,7 @@ class InMemoryCheckpointRepository:
         @dataclass
         class CheckpointData:
             projection_name: str
-            position: int
+            position: Position
             last_event_id: UUID | None
             last_event_type: str | None
 
@@ -1192,7 +1207,7 @@ class TestSubscriptionCheckpointMigration:
         # Setup checkpoint at source position 100
         await checkpoint_repo.save_position(
             subscription_id="OrderProjection",
-            position=100,
+            position=source_pos(100),
             event_id=uuid4(),
             event_type="OrderCreated",
         )
@@ -1200,6 +1215,8 @@ class TestSubscriptionCheckpointMigration:
         migrator = SubscriptionMigrator(
             position_mapper=position_mapper,
             checkpoint_repo=checkpoint_repo,
+            source_store_id=SOURCE_STORE_ID,
+            target_store_id=TARGET_STORE_ID,
             enable_tracing=False,
         )
 
@@ -1215,7 +1232,7 @@ class TestSubscriptionCheckpointMigration:
 
         # Verify checkpoint was updated
         new_position = await checkpoint_repo.get_position("OrderProjection")
-        assert new_position == 50
+        assert new_position == target_pos(50)
 
     @pytest.mark.asyncio
     async def test_migrate_subscription_with_nearest_mapping(
@@ -1243,7 +1260,7 @@ class TestSubscriptionCheckpointMigration:
         # Setup checkpoint at position between mappings
         await checkpoint_repo.save_position(
             subscription_id="OrderProjection",
-            position=150,
+            position=source_pos(150),
             event_id=uuid4(),
             event_type="OrderCreated",
         )
@@ -1251,6 +1268,8 @@ class TestSubscriptionCheckpointMigration:
         migrator = SubscriptionMigrator(
             position_mapper=position_mapper,
             checkpoint_repo=checkpoint_repo,
+            source_store_id=SOURCE_STORE_ID,
+            target_store_id=TARGET_STORE_ID,
             enable_tracing=False,
         )
 
@@ -1291,13 +1310,13 @@ class TestSubscriptionCheckpointMigration:
         # Setup checkpoints
         await checkpoint_repo.save_position(
             subscription_id="OrderProjection",
-            position=100,
+            position=source_pos(100),
             event_id=uuid4(),
             event_type="OrderCreated",
         )
         await checkpoint_repo.save_position(
             subscription_id="InventoryProjection",
-            position=200,
+            position=source_pos(200),
             event_id=uuid4(),
             event_type="InventoryUpdated",
         )
@@ -1305,6 +1324,8 @@ class TestSubscriptionCheckpointMigration:
         migrator = SubscriptionMigrator(
             position_mapper=position_mapper,
             checkpoint_repo=checkpoint_repo,
+            source_store_id=SOURCE_STORE_ID,
+            target_store_id=TARGET_STORE_ID,
             enable_tracing=False,
         )
 
@@ -1329,6 +1350,8 @@ class TestSubscriptionCheckpointMigration:
         migrator = SubscriptionMigrator(
             position_mapper=position_mapper,
             checkpoint_repo=checkpoint_repo,
+            source_store_id=SOURCE_STORE_ID,
+            target_store_id=TARGET_STORE_ID,
             enable_tracing=False,
         )
 
@@ -1364,7 +1387,7 @@ class TestDryRunSubscriptionMigration:
         )
 
         # Setup checkpoint
-        original_position = 100
+        original_position = source_pos(100)
         await checkpoint_repo.save_position(
             subscription_id="OrderProjection",
             position=original_position,
@@ -1375,6 +1398,8 @@ class TestDryRunSubscriptionMigration:
         migrator = SubscriptionMigrator(
             position_mapper=position_mapper,
             checkpoint_repo=checkpoint_repo,
+            source_store_id=SOURCE_STORE_ID,
+            target_store_id=TARGET_STORE_ID,
             enable_tracing=False,
         )
 
@@ -1414,7 +1439,7 @@ class TestDryRunSubscriptionMigration:
         # Setup checkpoint at position without exact mapping
         await checkpoint_repo.save_position(
             subscription_id="OrderProjection",
-            position=150,  # No exact mapping exists
+            position=source_pos(150),  # No exact mapping exists
             event_id=uuid4(),
             event_type="OrderCreated",
         )
@@ -1422,6 +1447,8 @@ class TestDryRunSubscriptionMigration:
         migrator = SubscriptionMigrator(
             position_mapper=position_mapper,
             checkpoint_repo=checkpoint_repo,
+            source_store_id=SOURCE_STORE_ID,
+            target_store_id=TARGET_STORE_ID,
             enable_tracing=False,
         )
 
@@ -1470,6 +1497,8 @@ class TestFullMigrationWithVerificationAndSubscriptions:
             migration_repo=migration_repo,
             routing_repo=routing_repo,
             router=router,
+            source_position_store_id="source-store",
+            target_position_store_id="target-store",
             lock_manager=lock_manager,
             position_mapper=position_mapper,
             checkpoint_repo=checkpoint_repo,
@@ -1536,6 +1565,8 @@ class TestFullMigrationWithVerificationAndSubscriptions:
             migration_repo=migration_repo,
             routing_repo=routing_repo,
             router=router,
+            source_position_store_id="source-store",
+            target_position_store_id="target-store",
             lock_manager=lock_manager,
             position_mapper=position_mapper,
             source_store_id="default",
@@ -1596,7 +1627,7 @@ class TestFullMigrationWithVerificationAndSubscriptions:
         # Setup checkpoint
         await checkpoint_repo.save_position(
             subscription_id="OrderProjection",
-            position=100,
+            position=source_pos(100),
             event_id=uuid4(),
             event_type="OrderCreated",
         )
@@ -1606,6 +1637,8 @@ class TestFullMigrationWithVerificationAndSubscriptions:
             migration_repo=migration_repo,
             routing_repo=routing_repo,
             router=router,
+            source_position_store_id="source-store",
+            target_position_store_id="target-store",
             lock_manager=lock_manager,
             position_mapper=position_mapper,
             checkpoint_repo=checkpoint_repo,
@@ -1694,7 +1727,7 @@ class TestMissingMappingErrors:
         # Setup checkpoint without any position mappings
         await checkpoint_repo.save_position(
             subscription_id="OrderProjection",
-            position=100,
+            position=source_pos(100),
             event_id=uuid4(),
             event_type="OrderCreated",
         )
@@ -1702,6 +1735,8 @@ class TestMissingMappingErrors:
         migrator = SubscriptionMigrator(
             position_mapper=position_mapper,
             checkpoint_repo=checkpoint_repo,
+            source_store_id=SOURCE_STORE_ID,
+            target_store_id=TARGET_STORE_ID,
             enable_tracing=False,
         )
 
@@ -1806,6 +1841,8 @@ class TestCoordinatorErrorHandling:
             migration_repo=migration_repo,
             routing_repo=routing_repo,
             router=router,
+            source_position_store_id="source-store",
+            target_position_store_id="target-store",
             lock_manager=lock_manager,
             source_store_id="default",
             enable_tracing=False,
@@ -1842,6 +1879,8 @@ class TestCoordinatorErrorHandling:
             migration_repo=migration_repo,
             routing_repo=routing_repo,
             router=router,
+            source_position_store_id="source-store",
+            target_position_store_id="target-store",
             lock_manager=lock_manager,
             # No position_mapper provided
             source_store_id="default",
@@ -1881,6 +1920,8 @@ class TestCoordinatorErrorHandling:
             migration_repo=migration_repo,
             routing_repo=routing_repo,
             router=router,
+            source_position_store_id="source-store",
+            target_position_store_id="target-store",
             lock_manager=lock_manager,
             position_mapper=position_mapper,
             # No checkpoint_repo provided
@@ -2118,7 +2159,7 @@ class TestMigrationSummary:
         )
         await checkpoint_repo.save_position(
             subscription_id="TestProjection",
-            position=100,
+            position=source_pos(100),
             event_id=uuid4(),
             event_type="TestEvent",
         )
@@ -2126,6 +2167,8 @@ class TestMigrationSummary:
         migrator = SubscriptionMigrator(
             position_mapper=position_mapper,
             checkpoint_repo=checkpoint_repo,
+            source_store_id=SOURCE_STORE_ID,
+            target_store_id=TARGET_STORE_ID,
             enable_tracing=False,
         )
 
@@ -2163,14 +2206,14 @@ class TestMigrationSummary:
 
         await checkpoint_repo.save_position(
             subscription_id="Projection1",
-            position=100,
+            position=source_pos(100),
             event_id=uuid4(),
             event_type="TestEvent",
         )
         # Position 50 is BEFORE the first mapping (100), so no nearest mapping exists
         await checkpoint_repo.save_position(
             subscription_id="Projection2",
-            position=50,  # Before any mapping, will fail
+            position=source_pos(50),  # Before any mapping, will fail
             event_id=uuid4(),
             event_type="TestEvent",
         )
@@ -2178,6 +2221,8 @@ class TestMigrationSummary:
         migrator = SubscriptionMigrator(
             position_mapper=position_mapper,
             checkpoint_repo=checkpoint_repo,
+            source_store_id=SOURCE_STORE_ID,
+            target_store_id=TARGET_STORE_ID,
             enable_tracing=False,
         )
 

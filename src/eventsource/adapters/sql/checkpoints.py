@@ -21,6 +21,7 @@ from eventsource.observability.attributes import (
     ATTR_PROJECTION_NAME,
 )
 from eventsource.ports.checkpoints import CheckpointData, LagMetrics
+from eventsource.ports.positions import Position
 
 
 class SQLCheckpointRepository:
@@ -256,23 +257,29 @@ class SQLCheckpointRepository:
             async with sql_connection(self._conn, write=True) as conn:
                 await conn.execute(query, params)
 
-    async def get_position(self, subscription_id: str) -> int | None:
+    async def get_position(self, subscription_id: str) -> Position | None:
         """
-        Get last processed global position for a subscription.
+        Get last processed global-feed position for a subscription.
+
+        The token is stored opaquely: this repository never inspects its
+        `store_id`.
 
         Args:
             subscription_id: Identifier for the subscription (typically projection name)
 
         Returns:
-            Last processed global position, or None if no checkpoint exists
-            or if checkpoint doesn't have position data.
+            Last processed position, or None if no checkpoint exists or the
+            row carries no token. A row holding only the legacy integer
+            position therefore reads None and the subscription restarts
+            catch-up -- reconstructing a token would require inventing a
+            store_id.
         """
         with self._tracer.span(
             "eventsource.checkpoint.get_position",
             {ATTR_PROJECTION_NAME: subscription_id},
         ):
             query = text("""
-                SELECT global_position
+                SELECT position_token
                 FROM projection_checkpoints
                 WHERE projection_name = :subscription_id
             """)
@@ -281,24 +288,25 @@ class SQLCheckpointRepository:
             async with sql_connection(self._conn, write=False) as conn:
                 result = await conn.execute(query, params)
                 row = result.fetchone()
-                return row[0] if row and row[0] is not None else None
+                return Position.from_str(row[0]) if row and row[0] is not None else None
 
     async def save_position(
         self,
         subscription_id: str,
-        position: int,
+        position: Position,
         event_id: UUID,
         event_type: str,
     ) -> None:
         """
-        Save checkpoint with global position.
+        Save checkpoint with an opaque global-feed position.
 
         Updates the position, event_id, and event_type for the checkpoint.
-        Uses UPSERT pattern for idempotency.
+        Uses UPSERT pattern for idempotency. The token is written verbatim;
+        its `store_id` is not validated here.
 
         Args:
             subscription_id: Identifier for the subscription (typically projection name)
-            position: Global position of the event
+            position: Opaque global-feed position of the event
             event_id: Event ID that was processed
             event_type: Type of event processed
         """
@@ -307,7 +315,7 @@ class SQLCheckpointRepository:
             {
                 ATTR_PROJECTION_NAME: subscription_id,
                 ATTR_EVENT_TYPE: event_type,
-                "global_position": position,
+                "position_token": position.to_str(),
             },
         ):
             now = datetime.now(UTC)
@@ -317,17 +325,17 @@ class SQLCheckpointRepository:
                 query = text("""
                     INSERT INTO projection_checkpoints
                         (projection_name, last_event_id, last_event_type,
-                         last_processed_at, events_processed, global_position,
+                         last_processed_at, events_processed, position_token,
                          created_at, updated_at)
                     VALUES
                         (:subscription_id, :event_id, :event_type, :now,
-                         1, :position, :now, :now)
+                         1, :position_token, :now, :now)
                     ON CONFLICT (projection_name) DO UPDATE
                     SET last_event_id = EXCLUDED.last_event_id,
                         last_event_type = EXCLUDED.last_event_type,
                         last_processed_at = EXCLUDED.last_processed_at,
                         events_processed = projection_checkpoints.events_processed + 1,
-                        global_position = EXCLUDED.global_position,
+                        position_token = EXCLUDED.position_token,
                         updated_at = EXCLUDED.updated_at
                 """)
                 params = {
@@ -335,7 +343,7 @@ class SQLCheckpointRepository:
                     "event_id": uuid_param(event_id, dialect),
                     "event_type": event_type,
                     "now": ts_param(now, dialect),
-                    "position": position,
+                    "position_token": position.to_str(),
                 }
                 await conn.execute(query, params)
 
@@ -352,7 +360,7 @@ class SQLCheckpointRepository:
         ):
             query = text("""
                 SELECT projection_name, last_event_id, last_event_type,
-                       last_processed_at, events_processed, global_position
+                       last_processed_at, events_processed, position_token
                 FROM projection_checkpoints
                 ORDER BY projection_name
             """)
@@ -368,7 +376,7 @@ class SQLCheckpointRepository:
                     last_event_type=row[2],
                     last_processed_at=ts_result(row[3]),
                     events_processed=row[4] or 0,
-                    global_position=row[5],
+                    position=Position.from_str(row[5]) if row[5] else None,
                 )
                 for row in rows
             ]

@@ -6,6 +6,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from eventsource.adapters.memory import InMemoryCheckpointRepository
+from eventsource.ports.positions import Position
 
 uuids = st.builds(uuid4)
 
@@ -32,10 +33,11 @@ async def test_events_processed_equals_the_update_count(event_ids: list[UUID]) -
 @given(positions=st.lists(st.integers(min_value=0, max_value=10**9), min_size=1, max_size=20))
 async def test_get_position_is_the_last_position_written(positions: list[int]) -> None:
     repo = InMemoryCheckpointRepository()
-    for position in positions:
-        await repo.save_position("S", position, uuid4(), "Created")
+    tokens = [Position(store_id="test", key=(n,)) for n in positions]
+    for token in tokens:
+        await repo.save_position("S", token, uuid4(), "Created")
 
-    assert await repo.get_position("S") == positions[-1]
+    assert await repo.get_position("S") == tokens[-1]
 
 
 @given(event_ids=st.lists(uuids, max_size=20))

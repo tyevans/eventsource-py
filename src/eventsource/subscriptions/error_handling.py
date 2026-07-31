@@ -24,10 +24,13 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
+from eventsource.ports.positions import Position
+from eventsource.subscriptions.subscription import render_position
+
 if TYPE_CHECKING:
     from eventsource.events.base import DomainEvent
     from eventsource.ports.dlq import DLQRepository
-    from eventsource.stores.interface import StoredEvent
+    from eventsource.ports.envelopes import EventEnvelope
 
 logger = logging.getLogger(__name__)
 
@@ -305,7 +308,7 @@ class ErrorInfo:
 
     event_id: UUID
     event_type: str
-    position: int
+    position: Position | None
     error_type: str
     error_message: str
     error_stacktrace: str
@@ -321,7 +324,7 @@ class ErrorInfo:
         return {
             "event_id": str(self.event_id),
             "event_type": self.event_type,
-            "position": self.position,
+            "position": render_position(self.position),
             "error_type": self.error_type,
             "error_message": self.error_message,
             "error_stacktrace": self.error_stacktrace,
@@ -645,7 +648,7 @@ class SubscriptionErrorHandler:
         >>> try:
         ...     await process_event(event)
         ... except Exception as e:
-        ...     await handler.handle_error(e, stored_event)
+        ...     await handler.handle_error(e, envelope)
     """
 
     def __init__(
@@ -722,7 +725,7 @@ class SubscriptionErrorHandler:
     async def handle_error(
         self,
         error: Exception,
-        stored_event: "StoredEvent | None" = None,
+        envelope: "EventEnvelope | None" = None,
         event: "DomainEvent | None" = None,
         retry_count: int = 0,
     ) -> ErrorInfo:
@@ -739,7 +742,7 @@ class SubscriptionErrorHandler:
 
         Args:
             error: The exception that occurred
-            stored_event: The stored event being processed (if available)
+            envelope: The event envelope being processed (if available)
             event: The domain event being processed (if available)
             retry_count: Number of retry attempts made
 
@@ -751,9 +754,9 @@ class SubscriptionErrorHandler:
 
         # Build error info
         error_info = ErrorInfo(
-            event_id=self._get_event_id(stored_event, event),
-            event_type=self._get_event_type(stored_event, event),
-            position=self._get_position(stored_event),
+            event_id=self._get_event_id(envelope, event),
+            event_type=self._get_event_type(envelope, event),
+            position=self._get_position(envelope),
             error_type=type(error).__name__,
             error_message=str(error),
             error_stacktrace=traceback.format_exc(),
@@ -776,7 +779,7 @@ class SubscriptionErrorHandler:
 
         # Send to DLQ if configured and appropriate
         if self._should_send_to_dlq(error_info):
-            await self._send_to_dlq(error_info, stored_event, event)
+            await self._send_to_dlq(error_info, envelope, event)
 
         # Notify callbacks
         if error_info.classification.severity.value >= self.config.notify_on_severity.value:
@@ -786,12 +789,12 @@ class SubscriptionErrorHandler:
 
     def _get_event_id(
         self,
-        stored_event: "StoredEvent | None",
+        envelope: "EventEnvelope | None",
         event: "DomainEvent | None",
     ) -> UUID:
-        """Extract event ID from stored event or domain event."""
-        if stored_event:
-            return stored_event.event_id
+        """Extract event ID from envelope or domain event."""
+        if envelope:
+            return envelope.event.event_id
         if event:
             return event.event_id
         from uuid import uuid4
@@ -800,21 +803,21 @@ class SubscriptionErrorHandler:
 
     def _get_event_type(
         self,
-        stored_event: "StoredEvent | None",
+        envelope: "EventEnvelope | None",
         event: "DomainEvent | None",
     ) -> str:
-        """Extract event type from stored event or domain event."""
-        if stored_event:
-            return stored_event.event_type
+        """Extract event type from envelope or domain event."""
+        if envelope:
+            return envelope.event.event_type
         if event:
             return event.event_type
         return "Unknown"
 
-    def _get_position(self, stored_event: "StoredEvent | None") -> int:
-        """Extract global position from stored event."""
-        if stored_event:
-            return stored_event.global_position
-        return -1
+    def _get_position(self, envelope: "EventEnvelope | None") -> Position | None:
+        """Extract the global-feed position from an envelope, if any."""
+        if envelope:
+            return envelope.position
+        return None
 
     def _log_error(self, error_info: ErrorInfo) -> None:
         """Log the error with appropriate level."""
@@ -823,7 +826,7 @@ class SubscriptionErrorHandler:
             "subscription": self.subscription_name,
             "event_id": str(error_info.event_id),
             "event_type": error_info.event_type,
-            "position": error_info.position,
+            "position": render_position(error_info.position),
             "error_type": error_info.error_type,
             "category": error_info.classification.category.value,
             "severity": severity.value,
@@ -878,7 +881,7 @@ class SubscriptionErrorHandler:
     async def _send_to_dlq(
         self,
         error_info: ErrorInfo,
-        stored_event: "StoredEvent | None",
+        envelope: "EventEnvelope | None",
         event: "DomainEvent | None",
     ) -> None:
         """Send failed event to dead letter queue."""
@@ -890,8 +893,8 @@ class SubscriptionErrorHandler:
             event_data: dict[str, Any] = {}
             if event:
                 event_data = event.model_dump(mode="json")
-            elif stored_event and stored_event.event:
-                event_data = stored_event.event.model_dump(mode="json")
+            elif envelope:
+                event_data = envelope.event.model_dump(mode="json")
 
             await self._dlq_repo.add_failed_event(
                 event_id=error_info.event_id,
