@@ -1,7 +1,7 @@
-"""Regression test: MemoryEventStore must be safe under cross-loop contention.
+"""Regression test: InMemoryEventStore must be safe under cross-loop contention.
 
 `SyncEventStoreAdapter` runs each call in a fresh event loop (`asyncio.run`).
-`MemoryEventStore` used to guard its append critical section with an
+`InMemoryEventStore` used to guard its append critical section with an
 `asyncio.Lock`, which is bound to whichever loop first acquires it -- a lock
 acquired from one `asyncio.run()` call raises `RuntimeError` when awaited from
 a different loop on another thread. The append critical section never awaits
@@ -16,7 +16,7 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.adapters.memory.store import MemoryEventStore
+from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.exceptions import OptimisticLockError
@@ -36,7 +36,7 @@ class TestCrossLoopLockSafety:
     expected OptimisticLockError from losing the race."""
 
     def test_concurrent_sync_appends_never_raise_loop_errors(self) -> None:
-        store = MemoryEventStore()
+        store = InMemoryEventStore()
         sync_store = SyncEventStoreAdapter(store, timeout=5.0)
         agg_id = uuid4()
         stream = StreamId(aggregate_id=agg_id, category="Thing")

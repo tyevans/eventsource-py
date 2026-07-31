@@ -25,14 +25,14 @@ from eventsource.ports import (
 )
 
 # Sentinel ints preserved for OptimisticLockError's expected_version field, which
-# predates ExpectedVersion and is still int-typed. Mirrors stores/interface.py's
-# ExpectedVersion.ANY / NO_STREAM / STREAM_EXISTS constants for message fidelity.
+# predates ExpectedVersion and is still int-typed. The values match the integer
+# sentinels the store surface has always reported for message fidelity.
 _ANY_SENTINEL = -1
 _NO_STREAM_SENTINEL = 0
 _STREAM_EXISTS_SENTINEL = -2
 
 
-class MemoryEventStore:
+class InMemoryEventStore:
     """In-memory implementation of `FullEventStore`.
 
     Structural conformance only -- no inheritance from the port protocols.

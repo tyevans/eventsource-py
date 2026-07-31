@@ -13,7 +13,7 @@ including:
 - Recovery after simulated failures
 - Integration of all Phase 4 components
 
-These tests use MemoryEventStore and in-memory implementations of all
+These tests use InMemoryEventStore and in-memory implementations of all
 repositories for unit-level integration testing without requiring PostgreSQL.
 """
 
@@ -29,7 +29,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from eventsource.adapters.memory import MemoryEventStore
+from eventsource.adapters.memory import InMemoryEventStore
 from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.migration.consistency import (
@@ -673,15 +673,15 @@ class MockLockManager:
 
 
 @pytest.fixture
-def source_store() -> MemoryEventStore:
+def source_store() -> InMemoryEventStore:
     """Create source (shared) event store."""
-    return MemoryEventStore("source")
+    return InMemoryEventStore("source")
 
 
 @pytest.fixture
-def target_store() -> MemoryEventStore:
+def target_store() -> InMemoryEventStore:
     """Create target (dedicated) event store."""
-    return MemoryEventStore("target")
+    return InMemoryEventStore("target")
 
 
 @pytest.fixture
@@ -740,7 +740,7 @@ def migration_id() -> UUID:
 
 @pytest.fixture
 def router(
-    source_store: MemoryEventStore,
+    source_store: InMemoryEventStore,
     routing_repo: InMemoryRoutingRepository,
     write_pause_manager: WritePauseManager,
 ) -> TenantStoreRouter:
@@ -777,7 +777,7 @@ def cleanup_metrics():
 
 
 async def create_test_events(
-    store: MemoryEventStore,
+    store: InMemoryEventStore,
     tenant_id: UUID,
     count: int = 10,
     aggregate_type: str = "Order",
@@ -806,8 +806,8 @@ async def create_test_events(
 
 
 async def copy_events_between_stores(
-    source_store: MemoryEventStore,
-    target_store: MemoryEventStore,
+    source_store: InMemoryEventStore,
+    target_store: InMemoryEventStore,
     tenant_id: UUID,
 ) -> int:
     """Copy events from source to target store."""
@@ -840,8 +840,8 @@ class TestCompleteMigrationLifecycleWithOperationalFeatures:
     @pytest.mark.asyncio
     async def test_full_lifecycle_with_audit_logging(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         audit_log_repo: InMemoryAuditLogRepository,
@@ -918,8 +918,8 @@ class TestCompleteMigrationLifecycleWithOperationalFeatures:
     @pytest.mark.asyncio
     async def test_full_lifecycle_with_metrics_collection(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         tenant_id: UUID,
         migration_id: UUID,
     ) -> None:
@@ -971,8 +971,8 @@ class TestCompleteMigrationLifecycleWithOperationalFeatures:
     @pytest.mark.asyncio
     async def test_full_lifecycle_phases_tracked(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
@@ -1408,8 +1408,8 @@ class TestStatusStreamingDuringMigration:
     @pytest.mark.asyncio
     async def test_status_streamer_yields_initial_status(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
@@ -1461,8 +1461,8 @@ class TestStatusStreamingDuringMigration:
     @pytest.mark.asyncio
     async def test_status_stream_manager_creates_streamers(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
@@ -1511,8 +1511,8 @@ class TestStatusStreamingDuringMigration:
     @pytest.mark.asyncio
     async def test_status_streamer_subscriber_count(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
@@ -1778,8 +1778,8 @@ class TestRecoveryAfterSimulatedFailures:
     @pytest.mark.asyncio
     async def test_recovery_from_bulk_copy_failure(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
@@ -1845,8 +1845,8 @@ class TestRecoveryAfterSimulatedFailures:
     @pytest.mark.asyncio
     async def test_recovery_from_cutover_rollback(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
         lock_manager: MockLockManager,
@@ -1942,8 +1942,8 @@ class TestRecoveryAfterSimulatedFailures:
     @pytest.mark.asyncio
     async def test_pause_resume_recovery(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
@@ -2027,8 +2027,8 @@ class TestRecoveryAfterSimulatedFailures:
     @pytest.mark.asyncio
     async def test_abort_recovery(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
@@ -2110,8 +2110,8 @@ class TestIntegrationOfAllPhase4Components:
     @pytest.mark.asyncio
     async def test_all_components_work_together(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         audit_log_repo: InMemoryAuditLogRepository,
@@ -2259,8 +2259,8 @@ class TestIntegrationOfAllPhase4Components:
     @pytest.mark.asyncio
     async def test_end_to_end_migration_smoke_test(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,

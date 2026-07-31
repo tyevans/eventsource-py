@@ -18,7 +18,7 @@ import asyncio
 from typing import Any
 from uuid import uuid4
 
-from eventsource.adapters.memory.store import MemoryEventStore
+from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.ports.positions import ExpectedVersion
@@ -32,7 +32,7 @@ class TestEventStoreAppendBenchmarks:
     def test_append_single_event(
         self,
         benchmark: Any,
-        benchmark_store: MemoryEventStore,
+        benchmark_store: InMemoryEventStore,
         event_generator: Any,
     ) -> None:
         """
@@ -78,7 +78,7 @@ class TestEventStoreAppendBenchmarks:
         ]
 
         def append_batch() -> Any:
-            store = MemoryEventStore()
+            store = InMemoryEventStore()
             stream_id = StreamId(str(aggregate_id), "TestAggregate")
             return run_async(
                 store.append(
@@ -110,7 +110,7 @@ class TestEventStoreAppendBenchmarks:
         ]
 
         def append_batch() -> Any:
-            store = MemoryEventStore()
+            store = InMemoryEventStore()
             stream_id = StreamId(str(aggregate_id), "TestAggregate")
             return run_async(
                 store.append(
@@ -135,7 +135,7 @@ class TestEventStoreAppendBenchmarks:
         """
 
         def append_sequential() -> None:
-            store = MemoryEventStore()
+            store = InMemoryEventStore()
             aggregate_id = uuid4()
 
             async def do_appends() -> None:
@@ -163,7 +163,7 @@ class TestEventStoreReadBenchmarks:
     def test_read_100_events(
         self,
         benchmark: Any,
-        populated_benchmark_store_100: MemoryEventStore,
+        populated_benchmark_store_100: InMemoryEventStore,
         sample_events_100: list[DomainEvent],
     ) -> None:
         """
@@ -187,7 +187,7 @@ class TestEventStoreReadBenchmarks:
     def test_read_1000_events(
         self,
         benchmark: Any,
-        populated_benchmark_store_1000: MemoryEventStore,
+        populated_benchmark_store_1000: InMemoryEventStore,
         sample_events_1000: list[DomainEvent],
     ) -> None:
         """
@@ -211,7 +211,7 @@ class TestEventStoreReadBenchmarks:
     def test_read_events_by_type(
         self,
         benchmark: Any,
-        populated_benchmark_store_100: MemoryEventStore,
+        populated_benchmark_store_100: InMemoryEventStore,
     ) -> None:
         """
         Benchmark: Read all events of a specific aggregate type.
@@ -232,7 +232,7 @@ class TestEventStoreReadBenchmarks:
     def test_read_stream_iterator(
         self,
         benchmark: Any,
-        populated_benchmark_store_100: MemoryEventStore,
+        populated_benchmark_store_100: InMemoryEventStore,
         sample_events_100: list[DomainEvent],
     ) -> None:
         """
@@ -257,7 +257,7 @@ class TestEventStoreReadBenchmarks:
     def test_get_stream_version(
         self,
         benchmark: Any,
-        populated_benchmark_store_1000: MemoryEventStore,
+        populated_benchmark_store_1000: InMemoryEventStore,
         sample_events_1000: list[DomainEvent],
     ) -> None:
         """
@@ -290,7 +290,7 @@ class TestEventStoreConcurrencyBenchmarks:
         """
 
         def concurrent_appends() -> None:
-            store = MemoryEventStore()
+            store = InMemoryEventStore()
 
             async def do_concurrent() -> None:
                 tasks = []
@@ -314,7 +314,7 @@ class TestEventStoreConcurrencyBenchmarks:
     def test_concurrent_reads(
         self,
         benchmark: Any,
-        populated_benchmark_store_100: MemoryEventStore,
+        populated_benchmark_store_100: InMemoryEventStore,
         sample_events_100: list[DomainEvent],
     ) -> None:
         """
@@ -356,7 +356,7 @@ class TestEventStoreConcurrencyBenchmarks:
         """
 
         def mixed_workload() -> None:
-            store = MemoryEventStore()
+            store = InMemoryEventStore()
             aggregate_ids = [uuid4() for _ in range(10)]
 
             # Pre-populate with some events
@@ -421,7 +421,7 @@ class TestEventStoreIdempotencyBenchmarks:
     def test_event_exists_check(
         self,
         benchmark: Any,
-        populated_benchmark_store_100: MemoryEventStore,
+        populated_benchmark_store_100: InMemoryEventStore,
         sample_events_100: list[DomainEvent],
     ) -> None:
         """
@@ -439,7 +439,7 @@ class TestEventStoreIdempotencyBenchmarks:
     def test_event_exists_check_not_found(
         self,
         benchmark: Any,
-        populated_benchmark_store_100: MemoryEventStore,
+        populated_benchmark_store_100: InMemoryEventStore,
     ) -> None:
         """
         Benchmark: Check for non-existent event ID.

@@ -11,7 +11,7 @@ run against.
 
 Kept sqlalchemy-free and independent of any adapter: the expected-version
 dispatch below is a deliberate copy of the pattern in
-`eventsource.adapters.memory.store.MemoryEventStore._check_expected`, not an
+`eventsource.adapters.memory.store.InMemoryEventStore._check_expected`, not an
 import from it -- the testing package must not depend on a specific adapter.
 """
 

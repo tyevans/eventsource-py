@@ -20,7 +20,7 @@ stores' timestamp handling. Both die with the legacy surface (spec §5.2):
 `test_get_events_by_type_none_timestamp` is retained below: "no filter
 returns every event" is a genuinely uncovered case in
 `CategoryQueryConformance` (its suite always supplies a `from_timestamp`
-when testing the filter), so it is retargeted onto `MemoryEventStore`
+when testing the filter), so it is retargeted onto `InMemoryEventStore`
 rather than deleted.
 """
 
@@ -29,7 +29,7 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.adapters.memory import MemoryEventStore
+from eventsource.adapters.memory import InMemoryEventStore
 from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.ports import ExpectedVersion, collect
@@ -43,13 +43,13 @@ class SampleEvent(DomainEvent):
     data: str = "test"
 
 
-class TestMemoryEventStoreTimestampTypes:
-    """Tests for timestamp handling in MemoryEventStore."""
+class TestInMemoryEventStoreTimestampTypes:
+    """Tests for timestamp handling in InMemoryEventStore."""
 
     @pytest.mark.asyncio
     async def test_get_events_by_type_none_timestamp(self) -> None:
         """read_category with no from_timestamp filter returns all events."""
-        store = MemoryEventStore()
+        store = InMemoryEventStore()
 
         event1 = SampleEvent(
             aggregate_id=uuid4(),

@@ -10,7 +10,7 @@ Tests cover:
 - Error scenarios: missing mappings, verification failures
 - Dry-run subscription migration
 
-These tests use MemoryEventStore for unit-level integration testing
+These tests use InMemoryEventStore for unit-level integration testing
 without requiring PostgreSQL.
 """
 
@@ -25,7 +25,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from eventsource.adapters.memory import MemoryEventStore
+from eventsource.adapters.memory import InMemoryEventStore
 from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.migration.consistency import (
@@ -617,15 +617,15 @@ class MockLockManager:
 
 
 @pytest.fixture
-def source_store() -> MemoryEventStore:
+def source_store() -> InMemoryEventStore:
     """Create source (shared) event store."""
-    return MemoryEventStore("source")
+    return InMemoryEventStore("source")
 
 
 @pytest.fixture
-def target_store() -> MemoryEventStore:
+def target_store() -> InMemoryEventStore:
     """Create target (dedicated) event store."""
-    return MemoryEventStore("target")
+    return InMemoryEventStore("target")
 
 
 @pytest.fixture
@@ -678,7 +678,7 @@ def migration_id() -> UUID:
 
 @pytest.fixture
 def router(
-    source_store: MemoryEventStore,
+    source_store: InMemoryEventStore,
     routing_repo: InMemoryRoutingRepository,
     write_pause_manager: WritePauseManager,
 ) -> TenantStoreRouter:
@@ -707,7 +707,7 @@ def position_mapper(
 
 
 async def create_test_events(
-    store: MemoryEventStore,
+    store: InMemoryEventStore,
     tenant_id: UUID,
     count: int = 10,
     aggregate_type: str = "Order",
@@ -736,7 +736,7 @@ async def create_test_events(
 
 
 async def get_all_tenant_events(
-    store: MemoryEventStore,
+    store: InMemoryEventStore,
     tenant_id: UUID,
 ) -> list[DomainEvent]:
     """Get all events for a tenant from a store."""
@@ -748,8 +748,8 @@ async def get_all_tenant_events(
 
 
 async def copy_events_with_position_mapping(
-    source_store: MemoryEventStore,
-    target_store: MemoryEventStore,
+    source_store: InMemoryEventStore,
+    target_store: InMemoryEventStore,
     tenant_id: UUID,
     migration_id: UUID,
     position_mapper: PositionMapper,
@@ -844,8 +844,8 @@ class TestPositionMappingRecording:
     @pytest.mark.asyncio
     async def test_position_mapping_during_bulk_copy(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         position_mapper: PositionMapper,
         tenant_id: UUID,
         migration_id: UUID,
@@ -989,8 +989,8 @@ class TestConsistencyVerificationLevels:
     @pytest.mark.asyncio
     async def test_count_level_verification_passes(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test COUNT level verification passes when counts match."""
@@ -1022,8 +1022,8 @@ class TestConsistencyVerificationLevels:
     @pytest.mark.asyncio
     async def test_count_level_verification_detects_mismatch(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test COUNT level verification detects count mismatch."""
@@ -1056,8 +1056,8 @@ class TestConsistencyVerificationLevels:
     @pytest.mark.asyncio
     async def test_hash_level_verification_passes(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test HASH level verification passes with identical data."""
@@ -1087,8 +1087,8 @@ class TestConsistencyVerificationLevels:
     @pytest.mark.asyncio
     async def test_full_level_verification_passes(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test FULL level verification passes with identical data."""
@@ -1120,8 +1120,8 @@ class TestConsistencyVerificationWithSampling:
     @pytest.mark.asyncio
     async def test_verification_with_50_percent_sampling(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test verification with 50% sampling."""
@@ -1151,8 +1151,8 @@ class TestConsistencyVerificationWithSampling:
     @pytest.mark.asyncio
     async def test_invalid_sample_percentage_raises(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test that invalid sample percentage raises ValueError."""
@@ -1456,8 +1456,8 @@ class TestFullMigrationWithVerificationAndSubscriptions:
     @pytest.mark.asyncio
     async def test_full_lifecycle_with_verification_enabled(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         position_mapping_repo: InMemoryPositionMappingRepository,
@@ -1515,8 +1515,8 @@ class TestFullMigrationWithVerificationAndSubscriptions:
     @pytest.mark.asyncio
     async def test_verify_consistency_on_coordinator(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         position_mapping_repo: InMemoryPositionMappingRepository,
@@ -1578,8 +1578,8 @@ class TestFullMigrationWithVerificationAndSubscriptions:
     @pytest.mark.asyncio
     async def test_migrate_subscriptions_on_coordinator(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         position_mapping_repo: InMemoryPositionMappingRepository,
@@ -1730,8 +1730,8 @@ class TestVerificationFailures:
     @pytest.mark.asyncio
     async def test_verification_detects_missing_events(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test verification detects missing events in target."""
@@ -1755,8 +1755,8 @@ class TestVerificationFailures:
     @pytest.mark.asyncio
     async def test_verification_detects_extra_events_in_target(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test verification detects extra events in target."""
@@ -1778,8 +1778,8 @@ class TestVerificationFailures:
     @pytest.mark.asyncio
     async def test_verification_passes_with_empty_stores(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test verification passes when both stores are empty."""
@@ -1801,7 +1801,7 @@ class TestCoordinatorErrorHandling:
     @pytest.mark.asyncio
     async def test_verify_consistency_without_target_store(
         self,
-        source_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
@@ -1837,7 +1837,7 @@ class TestCoordinatorErrorHandling:
     @pytest.mark.asyncio
     async def test_migrate_subscriptions_without_position_mapper(
         self,
-        source_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
@@ -1873,7 +1873,7 @@ class TestCoordinatorErrorHandling:
     @pytest.mark.asyncio
     async def test_migrate_subscriptions_without_checkpoint_repo(
         self,
-        source_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         position_mapping_repo: InMemoryPositionMappingRepository,
@@ -2038,8 +2038,8 @@ class TestVerificationReport:
     @pytest.mark.asyncio
     async def test_report_to_dict_serialization(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test report can be serialized to dictionary."""
@@ -2072,8 +2072,8 @@ class TestVerificationReport:
     @pytest.mark.asyncio
     async def test_report_consistency_percentage(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test consistency percentage calculation."""

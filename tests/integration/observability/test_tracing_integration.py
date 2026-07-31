@@ -17,7 +17,7 @@ from uuid import uuid4
 import pytest
 
 from eventsource import DomainEvent, InMemoryEventBus
-from eventsource.adapters.memory.store import MemoryEventStore
+from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.domain import StreamId
 from eventsource.observability import (
@@ -238,7 +238,7 @@ class TestRepositoryTracing:
         find_span: Callable[[str], Any | None],
     ):
         """AggregateRepository.save creates a span."""
-        store = MemoryEventStore()
+        store = InMemoryEventStore()
         repo = AggregateRepository(
             event_store=store,
             aggregate_factory=TracingTestAggregate,
@@ -267,7 +267,7 @@ class TestRepositoryTracing:
         find_span: Callable[[str], Any | None],
     ):
         """AggregateRepository.load creates a span."""
-        store = MemoryEventStore()
+        store = InMemoryEventStore()
         repo = AggregateRepository(
             event_store=store,
             aggregate_factory=TracingTestAggregate,
@@ -347,7 +347,7 @@ class TestTracingGracefulDegradation:
         sample_aggregate_id,
     ):
         """Event store operations work correctly when tracing is disabled."""
-        store = MemoryEventStore()
+        store = InMemoryEventStore()
 
         event = TracingTestEvent(
             aggregate_id=sample_aggregate_id,
@@ -388,7 +388,7 @@ class TestTracingGracefulDegradation:
     @pytest.mark.asyncio
     async def test_repository_works_without_tracing(self):
         """Repository operations work correctly when tracing is disabled."""
-        store = MemoryEventStore()
+        store = InMemoryEventStore()
         repo = AggregateRepository(
             event_store=store,
             aggregate_factory=TracingTestAggregate,
@@ -421,7 +421,7 @@ class TestTraceIdConsistency:
         get_spans: Callable[[], list[Any]],
     ):
         """All spans created during a single logical operation share the same trace ID."""
-        store = MemoryEventStore()
+        store = InMemoryEventStore()
         bus = InMemoryEventBus(enable_tracing=True)
         repo = AggregateRepository(
             event_store=store,
@@ -508,7 +508,7 @@ class TestStandardAttributes:
         find_span: Callable[[str], Any | None],
     ):
         """Repository spans use standard ATTR_* attribute keys."""
-        store = MemoryEventStore()
+        store = InMemoryEventStore()
         repo = AggregateRepository(
             event_store=store,
             aggregate_factory=TracingTestAggregate,

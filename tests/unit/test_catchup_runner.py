@@ -18,7 +18,7 @@ from uuid import uuid4
 import pytest
 
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
-from eventsource.adapters.memory.store import MemoryEventStore
+from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.ports.positions import ExpectedVersion, Position
@@ -72,9 +72,9 @@ class MockSubscriber:
 
 
 @pytest.fixture
-def event_store() -> MemoryEventStore:
-    """Create a fresh MemoryEventStore (a real GlobalEventFeed)."""
-    return MemoryEventStore()
+def event_store() -> InMemoryEventStore:
+    """Create a fresh InMemoryEventStore (a real GlobalEventFeed)."""
+    return InMemoryEventStore()
 
 
 @pytest.fixture
@@ -110,7 +110,7 @@ def subscription(subscriber: MockSubscriber, config: SubscriptionConfig) -> Subs
 
 @pytest.fixture
 def runner(
-    event_store: MemoryEventStore,
+    event_store: InMemoryEventStore,
     checkpoint_repo: InMemoryCheckpointRepository,
     subscription: Subscription,
 ) -> CatchUpRunner:
@@ -119,7 +119,7 @@ def runner(
 
 
 async def add_events_to_store(
-    store: MemoryEventStore,
+    store: InMemoryEventStore,
     count: int,
 ) -> list[DomainEvent]:
     """Helper to add events to the store."""
@@ -136,14 +136,14 @@ async def add_events_to_store(
     return events
 
 
-async def current(store: MemoryEventStore) -> Position:
+async def current(store: InMemoryEventStore) -> Position:
     """The feed's current position, asserted present (the store is non-empty)."""
     position = await store.current_position()
     assert position is not None
     return position
 
 
-async def position_after(store: MemoryEventStore, n: int) -> Position:
+async def position_after(store: InMemoryEventStore, n: int) -> Position:
     """The token of the nth (1-based) event in the feed."""
     envelopes = [e async for e in store.read_all()]
     position = envelopes[n - 1].position
@@ -211,7 +211,7 @@ class TestCatchUpRunnerBasic:
     @pytest.mark.asyncio
     async def test_runner_initialization(
         self,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
         checkpoint_repo: InMemoryCheckpointRepository,
         subscription: Subscription,
     ):
@@ -229,7 +229,7 @@ class TestCatchUpRunnerBasic:
     async def test_empty_event_store_returns_completed(
         self,
         runner: CatchUpRunner,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test catch-up on empty store returns completed with 0 events.
 
@@ -269,7 +269,7 @@ class TestCatchUpRunnerBasic:
     async def test_processes_all_events(
         self,
         runner: CatchUpRunner,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
         subscriber: MockSubscriber,
     ):
         """Test runner processes all events up to target position."""
@@ -288,7 +288,7 @@ class TestCatchUpRunnerBasic:
     async def test_subscription_state_transitions_to_catching_up(
         self,
         runner: CatchUpRunner,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
         subscription: Subscription,
     ):
         """Test subscription transitions to CATCHING_UP state."""
@@ -305,7 +305,7 @@ class TestCatchUpRunnerBasic:
     async def test_is_running_during_processing(
         self,
         runner: CatchUpRunner,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test is_running is True during processing."""
         await add_events_to_store(event_store, 5)
@@ -331,7 +331,7 @@ class TestCatchUpRunnerBatching:
     @pytest.mark.asyncio
     async def test_respects_batch_size(
         self,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
         checkpoint_repo: InMemoryCheckpointRepository,
         subscriber: MockSubscriber,
     ):
@@ -363,7 +363,7 @@ class TestCatchUpRunnerBatching:
     @pytest.mark.asyncio
     async def test_batch_smaller_than_remaining(
         self,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
         checkpoint_repo: InMemoryCheckpointRepository,
         subscriber: MockSubscriber,
     ):
@@ -396,7 +396,7 @@ class TestCatchUpRunnerCheckpointStrategies:
     @pytest.mark.asyncio
     async def test_every_event_strategy(
         self,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
         checkpoint_repo: InMemoryCheckpointRepository,
         subscriber: MockSubscriber,
     ):
@@ -427,7 +427,7 @@ class TestCatchUpRunnerCheckpointStrategies:
     @pytest.mark.asyncio
     async def test_every_batch_strategy(
         self,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
         checkpoint_repo: InMemoryCheckpointRepository,
         subscriber: MockSubscriber,
     ):
@@ -457,7 +457,7 @@ class TestCatchUpRunnerCheckpointStrategies:
     @pytest.mark.asyncio
     async def test_periodic_strategy(
         self,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
         checkpoint_repo: InMemoryCheckpointRepository,
     ):
         """Test PERIODIC strategy saves checkpoint on time intervals.
@@ -517,7 +517,7 @@ class TestCatchUpRunnerErrorHandling:
     @pytest.mark.asyncio
     async def test_continue_on_error_true(
         self,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
         checkpoint_repo: InMemoryCheckpointRepository,
     ):
         """Test continue_on_error=True continues after handler failure."""
@@ -551,7 +551,7 @@ class TestCatchUpRunnerErrorHandling:
     @pytest.mark.asyncio
     async def test_continue_on_error_false_raises(
         self,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
         checkpoint_repo: InMemoryCheckpointRepository,
     ):
         """Test continue_on_error=False propagates handler failure."""
@@ -584,7 +584,7 @@ class TestCatchUpRunnerErrorHandling:
     @pytest.mark.asyncio
     async def test_error_recorded_in_subscription(
         self,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
         checkpoint_repo: InMemoryCheckpointRepository,
     ):
         """Test that errors are recorded in subscription statistics."""
@@ -629,7 +629,7 @@ class TestCatchUpRunnerStop:
     @pytest.mark.asyncio
     async def test_stop_halts_processing(
         self,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
         checkpoint_repo: InMemoryCheckpointRepository,
         subscriber: MockSubscriber,
     ):
@@ -666,7 +666,7 @@ class TestCatchUpRunnerStop:
     @pytest.mark.asyncio
     async def test_lag_clears_after_stop_mid_batch_and_resume(
         self,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
         checkpoint_repo: InMemoryCheckpointRepository,
         subscriber: MockSubscriber,
     ):
@@ -728,7 +728,7 @@ class TestCatchUpRunnerPositionTracking:
     async def test_subscription_position_updated(
         self,
         runner: CatchUpRunner,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
         subscription: Subscription,
     ):
         """Test subscription.last_processed_position is updated correctly."""
@@ -745,7 +745,7 @@ class TestCatchUpRunnerPositionTracking:
     async def test_subscription_event_metadata_updated(
         self,
         runner: CatchUpRunner,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
         subscription: Subscription,
     ):
         """Test subscription tracks last event ID and type."""
@@ -762,7 +762,7 @@ class TestCatchUpRunnerPositionTracking:
     async def test_events_seen_tracked_for_lag(
         self,
         runner: CatchUpRunner,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
         subscription: Subscription,
     ):
         """Test subscription lag is tracked by counting events seen vs delivered."""
@@ -781,7 +781,7 @@ class TestCatchUpRunnerPositionTracking:
     async def test_checkpoint_persisted_correctly(
         self,
         runner: CatchUpRunner,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
         checkpoint_repo: InMemoryCheckpointRepository,
     ):
         """Test checkpoint is persisted with correct data."""
@@ -831,7 +831,7 @@ class TestCatchUpRunnerEdgeCases:
     async def test_target_behind_the_feed_delivers_nothing(
         self,
         runner: CatchUpRunner,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
         subscriber: MockSubscriber,
     ):
         """A target behind every stored event stops before the first one.
@@ -853,7 +853,7 @@ class TestCatchUpRunnerEdgeCases:
     @pytest.mark.asyncio
     async def test_resume_from_checkpoint(
         self,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
         checkpoint_repo: InMemoryCheckpointRepository,
         subscriber: MockSubscriber,
     ):
@@ -882,7 +882,7 @@ class TestCatchUpRunnerEdgeCases:
     @pytest.mark.asyncio
     async def test_single_event(
         self,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
         checkpoint_repo: InMemoryCheckpointRepository,
         subscriber: MockSubscriber,
     ):
@@ -908,7 +908,7 @@ class TestCatchUpRunnerEdgeCases:
     async def test_last_processed_at_updated(
         self,
         runner: CatchUpRunner,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
         subscription: Subscription,
     ):
         """Test last_processed_at timestamp is updated."""

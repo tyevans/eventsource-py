@@ -26,7 +26,7 @@ from hypothesis import HealthCheck, settings
 
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
 from eventsource.adapters.memory.dlq import InMemoryDLQRepository
-from eventsource.adapters.memory.store import MemoryEventStore
+from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.ports import ExpectedVersion
@@ -302,25 +302,25 @@ def order_event_stream(aggregate_id: UUID, customer_id: UUID) -> list[DomainEven
 
 
 @pytest.fixture
-def in_memory_store() -> MemoryEventStore:
+def in_memory_store() -> InMemoryEventStore:
     """
-    Provide a fresh MemoryEventStore instance.
+    Provide a fresh InMemoryEventStore instance.
 
     Each test gets its own isolated event store.
 
     Returns:
-        A new MemoryEventStore instance.
+        A new InMemoryEventStore instance.
     """
-    return MemoryEventStore()
+    return InMemoryEventStore()
 
 
 @pytest_asyncio.fixture
 async def populated_store(
-    in_memory_store: MemoryEventStore,
+    in_memory_store: InMemoryEventStore,
     event_stream: list[DomainEvent],
-) -> AsyncGenerator[MemoryEventStore, None]:
+) -> AsyncGenerator[InMemoryEventStore, None]:
     """
-    Provide a MemoryEventStore pre-populated with sample events.
+    Provide a InMemoryEventStore pre-populated with sample events.
 
     Contains 3 counter events for a single aggregate (final value = 12).
 
@@ -601,39 +601,6 @@ async def sqlite_connection() -> AsyncGenerator[Any, None]:
     yield conn
 
     await conn.close()
-
-
-@pytest_asyncio.fixture
-async def sqlite_event_store() -> AsyncGenerator[Any, None]:
-    """
-    Provide an initialized SQLiteEventStore with in-memory database.
-
-    Creates a fresh in-memory SQLite event store for each test.
-    The store is automatically initialized with the schema and
-    cleaned up after the test.
-
-    Yields:
-        SQLiteEventStore: Initialized event store ready for use
-    """
-    if not AIOSQLITE_AVAILABLE:
-        pytest.skip("aiosqlite not installed")
-
-    from eventsource import EventRegistry
-    from eventsource.stores.sqlite import SQLiteEventStore
-
-    # Create fresh registry for tests
-    registry = EventRegistry()
-
-    store = SQLiteEventStore(
-        database=":memory:",
-        event_registry=registry,
-        wal_mode=False,  # WAL mode not supported in-memory
-        busy_timeout=5000,
-    )
-
-    async with store:
-        await store.initialize()
-        yield store
 
 
 @pytest_asyncio.fixture

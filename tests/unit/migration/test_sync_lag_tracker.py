@@ -17,7 +17,7 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.adapters.memory.store import MemoryEventStore
+from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.migration.models import MigrationConfig, SyncLag
@@ -46,7 +46,7 @@ def sid(category: str = "LagTestAggregate") -> StreamId:
     return StreamId(aggregate_id=uuid4(), category=category)
 
 
-async def seed_events(store: MemoryEventStore, count: int) -> Position | None:
+async def seed_events(store: InMemoryEventStore, count: int) -> Position | None:
     """Append `count` events (one per stream) to `store`.
 
     Returns the position of the last appended event, or None if count == 0.
@@ -67,15 +67,15 @@ async def seed_events(store: MemoryEventStore, count: int) -> Position | None:
 
 
 @pytest.fixture
-def source_store() -> MemoryEventStore:
+def source_store() -> InMemoryEventStore:
     """Create an empty source event store."""
-    return MemoryEventStore(store_id="source")
+    return InMemoryEventStore(store_id="source")
 
 
 @pytest.fixture
-def target_store() -> MemoryEventStore:
+def target_store() -> InMemoryEventStore:
     """Create an empty target event store."""
-    return MemoryEventStore(store_id="target")
+    return InMemoryEventStore(store_id="target")
 
 
 @pytest.fixture
@@ -92,8 +92,8 @@ def strict_config() -> MigrationConfig:
 
 @pytest.fixture
 def tracker(
-    source_store: MemoryEventStore,
-    target_store: MemoryEventStore,
+    source_store: InMemoryEventStore,
+    target_store: InMemoryEventStore,
     config: MigrationConfig,
 ) -> SyncLagTracker:
     """Create a SyncLagTracker with real in-memory stores, source 50 events ahead."""
@@ -222,8 +222,8 @@ class TestSyncLagTrackerInit:
 
     def test_init_with_defaults(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
     ) -> None:
         """Test initialization with default parameters."""
         tracker = SyncLagTracker(
@@ -240,8 +240,8 @@ class TestSyncLagTrackerInit:
 
     def test_init_with_config(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         strict_config: MigrationConfig,
     ) -> None:
         """Test initialization with custom config."""
@@ -256,8 +256,8 @@ class TestSyncLagTrackerInit:
 
     def test_init_with_tenant_id(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
     ) -> None:
         """Test initialization with tenant ID."""
         tenant_id = uuid4()
@@ -271,8 +271,8 @@ class TestSyncLagTrackerInit:
 
     def test_init_with_custom_sample_history(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
     ) -> None:
         """Test initialization with custom max sample history."""
         tracker = SyncLagTracker(
@@ -285,8 +285,8 @@ class TestSyncLagTrackerInit:
 
     def test_init_with_tracing_disabled(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
     ) -> None:
         """Test initialization with tracing disabled."""
         tracker = SyncLagTracker(
@@ -300,8 +300,8 @@ class TestSyncLagTrackerInit:
     def test_properties(
         self,
         tracker: SyncLagTracker,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         config: MigrationConfig,
     ) -> None:
         """Test property accessors."""
@@ -323,8 +323,8 @@ class TestCalculateLag:
     async def test_calculate_lag_basic(
         self,
         tracker: SyncLagTracker,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
     ) -> None:
         """Source feed has 50 events and nothing has been copied (since=None):
         the tracker counts all of them."""
@@ -342,7 +342,7 @@ class TestCalculateLag:
     async def test_calculate_lag_updates_current(
         self,
         tracker: SyncLagTracker,
-        source_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
     ) -> None:
         """Test that calculate_lag updates current_lag property."""
         await seed_events(source_store, 5)
@@ -356,7 +356,7 @@ class TestCalculateLag:
     async def test_calculate_lag_adds_sample(
         self,
         tracker: SyncLagTracker,
-        source_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
     ) -> None:
         """Test that calculate_lag adds to sample history."""
         await seed_events(source_store, 5)
@@ -369,8 +369,8 @@ class TestCalculateLag:
     @pytest.mark.asyncio
     async def test_calculate_lag_zero_when_since_is_head(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         config: MigrationConfig,
     ) -> None:
         """Target has copied everything: `since` is the source's current head,
@@ -391,8 +391,8 @@ class TestCalculateLag:
     @pytest.mark.asyncio
     async def test_calculate_lag_empty_source(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         config: MigrationConfig,
     ) -> None:
         """An empty source feed reports zero lag regardless of `since`."""
@@ -411,8 +411,8 @@ class TestCalculateLag:
     @pytest.mark.asyncio
     async def test_calculate_lag_at_bound_reports_and_stops(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         strict_config: MigrationConfig,
     ) -> None:
         """With `threshold + 1` (or more) events behind, the tracker caps the
@@ -433,8 +433,8 @@ class TestCalculateLag:
     @pytest.mark.asyncio
     async def test_calculate_lag_multiple_calls(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         config: MigrationConfig,
     ) -> None:
         """Test multiple lag calculations as the source feed grows."""
@@ -474,8 +474,8 @@ class TestConvergenceDetection:
     @pytest.mark.asyncio
     async def test_is_converged_within_threshold(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         config: MigrationConfig,
     ) -> None:
         """Test is_converged returns True when within threshold."""
@@ -494,8 +494,8 @@ class TestConvergenceDetection:
     @pytest.mark.asyncio
     async def test_is_converged_exceeds_threshold(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         strict_config: MigrationConfig,
     ) -> None:
         """Test is_converged returns False when exceeding threshold."""
@@ -515,7 +515,7 @@ class TestConvergenceDetection:
     async def test_is_converged_custom_threshold(
         self,
         tracker: SyncLagTracker,
-        source_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
     ) -> None:
         """Test is_converged with a custom (tightening) max_lag parameter."""
         await seed_events(source_store, 50)
@@ -530,7 +530,7 @@ class TestConvergenceDetection:
     async def test_is_converged_rejects_looser_threshold(
         self,
         tracker: SyncLagTracker,
-        source_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
     ) -> None:
         """max_lag may only tighten: the count is bounded, so a looser
         threshold could be satisfied by a bounded count standing for an
@@ -552,8 +552,8 @@ class TestConvergenceDetection:
     @pytest.mark.asyncio
     async def test_is_sync_ready_within_threshold(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         config: MigrationConfig,
     ) -> None:
         """Test is_sync_ready returns True when within threshold."""
@@ -572,8 +572,8 @@ class TestConvergenceDetection:
     @pytest.mark.asyncio
     async def test_is_sync_ready_exceeds_threshold(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         strict_config: MigrationConfig,
     ) -> None:
         """Test is_sync_ready returns False when exceeding threshold."""
@@ -601,7 +601,7 @@ class TestConvergenceDetection:
     async def test_is_fully_converged_with_lag(
         self,
         tracker: SyncLagTracker,
-        source_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
     ) -> None:
         """Test is_fully_converged returns False when there is lag."""
         await seed_events(source_store, 50)
@@ -612,8 +612,8 @@ class TestConvergenceDetection:
     @pytest.mark.asyncio
     async def test_is_fully_converged_zero_lag(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         config: MigrationConfig,
     ) -> None:
         """Test is_fully_converged returns True when target has copied everything."""
@@ -658,7 +658,7 @@ class TestTrackerLagStats:
     async def test_get_lag_stats_single_sample(
         self,
         tracker: SyncLagTracker,
-        source_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
     ) -> None:
         """Test get_lag_stats with single sample."""
         await seed_events(source_store, 50)
@@ -677,8 +677,8 @@ class TestTrackerLagStats:
     @pytest.mark.asyncio
     async def test_get_lag_stats_multiple_samples(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         config: MigrationConfig,
     ) -> None:
         """Test get_lag_stats with multiple samples as target catches up."""
@@ -717,8 +717,8 @@ class TestTrackerLagStats:
     @pytest.mark.asyncio
     async def test_convergence_trend_detection(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         config: MigrationConfig,
     ) -> None:
         """Test that convergence trend is detected correctly."""
@@ -751,8 +751,8 @@ class TestTrackerLagStats:
     @pytest.mark.asyncio
     async def test_non_convergence_trend_detection(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         config: MigrationConfig,
     ) -> None:
         """Test that non-convergence (diverging) is detected."""
@@ -794,8 +794,8 @@ class TestSampleHistoryManagement:
     @pytest.mark.asyncio
     async def test_get_sample_history(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         config: MigrationConfig,
     ) -> None:
         """Test getting sample history."""
@@ -851,8 +851,8 @@ class TestSampleHistoryManagement:
     @pytest.mark.asyncio
     async def test_sample_history_max_size(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         config: MigrationConfig,
     ) -> None:
         """Test that sample history respects max size."""
@@ -950,8 +950,8 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_empty_stores(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         config: MigrationConfig,
     ) -> None:
         """Test with an empty source feed."""
@@ -971,8 +971,8 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_large_lag_is_bounded(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         strict_config: MigrationConfig,
     ) -> None:
         """A very large backlog is capped at threshold + 1 and marked bounded."""
@@ -998,8 +998,8 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_exact_threshold(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         config: MigrationConfig,
     ) -> None:
         """Test when lag is exactly at threshold."""
@@ -1049,8 +1049,8 @@ class TestWithTenantId:
     @pytest.mark.asyncio
     async def test_tracker_with_tenant_id(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         config: MigrationConfig,
     ) -> None:
         """Test tracker operations with tenant ID set."""
@@ -1093,8 +1093,8 @@ class TestIntegrationScenarios:
     @pytest.mark.asyncio
     async def test_typical_migration_scenario(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         config: MigrationConfig,
     ) -> None:
         """Test a typical migration scenario with decreasing lag as the
@@ -1135,8 +1135,8 @@ class TestIntegrationScenarios:
     @pytest.mark.asyncio
     async def test_fluctuating_lag_scenario(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         config: MigrationConfig,
     ) -> None:
         """Test scenario where lag fluctuates but generally improves."""

@@ -19,7 +19,7 @@ from uuid import UUID, uuid4
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
-from eventsource.adapters.memory import MemoryEventStore
+from eventsource.adapters.memory import InMemoryEventStore
 from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.migration.bulk_copier import BulkCopier
@@ -55,7 +55,7 @@ class FakePositionMappingRepository:
 
 
 async def _append_streams(
-    store: MemoryEventStore,
+    store: InMemoryEventStore,
     tenant_id: UUID,
     streams: list[int],
 ) -> None:
@@ -116,8 +116,8 @@ async def test_bulk_copy_resumes_to_a_source_equal_target(
     events_total = sum(streams)
     crash_after = min(crash_after, events_total)
 
-    source_store = MemoryEventStore("source")
-    target_store = MemoryEventStore("target")
+    source_store = InMemoryEventStore("source")
+    target_store = InMemoryEventStore("target")
     await _append_streams(source_store, tenant_id, streams)
 
     mapping_repo = FakePositionMappingRepository()

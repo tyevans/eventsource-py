@@ -15,7 +15,7 @@ Responsibilities:
     - Write to target store second (best-effort)
     - Handle target write failures gracefully without failing the operation
     - Track failed target writes for monitoring and background recovery
-    - Implement EventStore protocol for transparent integration
+    - Satisfy the `FullEventStore` port for transparent integration
 
 Consistency Guarantees:
     - Source write always succeeds or operation fails

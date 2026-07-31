@@ -79,7 +79,7 @@ logger = logging.getLogger(__name__)
 
 class StoreNotFoundError(Exception):
     """
-    Raised when a store ID cannot be resolved to an EventStore.
+    Raised when a store ID cannot be resolved to a registered store.
 
     This error indicates that a routing configuration references a store ID
     that has not been registered with the router.

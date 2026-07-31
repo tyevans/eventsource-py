@@ -15,7 +15,7 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
-from eventsource.adapters.memory.store import MemoryEventStore
+from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.ports.positions import ExpectedVersion
@@ -45,7 +45,7 @@ class RecordingSubscriber:
         self.delivered.append(event)
 
 
-async def _populate(store: MemoryEventStore, batches: list[int]) -> None:
+async def _populate(store: InMemoryEventStore, batches: list[int]) -> None:
     """Append `sum(batches)` events across distinct streams, one stream per batch."""
     for batch_len in batches:
         aggregate_id = uuid4()
@@ -55,7 +55,7 @@ async def _populate(store: MemoryEventStore, batches: list[int]) -> None:
 
 
 def _make_runner(
-    event_store: MemoryEventStore,
+    event_store: InMemoryEventStore,
     checkpoint_repo: InMemoryCheckpointRepository,
     subscriber: RecordingSubscriber,
     batch_size: int,
@@ -96,7 +96,7 @@ async def test_catchup_delivers_every_event_exactly_once_across_a_restart(
     redeliver; one that advances past an undelivered event would skip. Both
     are single-comparison errors in the batch loop, and both fail here.
     """
-    event_store = MemoryEventStore()
+    event_store = InMemoryEventStore()
     checkpoint_repo = InMemoryCheckpointRepository(enable_tracing=False)
 
     await _populate(event_store, batches)

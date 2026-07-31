@@ -20,7 +20,7 @@ from uuid import uuid4
 import pytest
 
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
-from eventsource.adapters.memory.store import MemoryEventStore
+from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.bus.memory import InMemoryEventBus
 from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
@@ -91,9 +91,9 @@ class CustomerProjection(MockSubscriber):
 
 
 @pytest.fixture
-def event_store() -> MemoryEventStore:
-    """Create a fresh MemoryEventStore (a real GlobalEventFeed)."""
-    return MemoryEventStore()
+def event_store() -> InMemoryEventStore:
+    """Create a fresh InMemoryEventStore (a real GlobalEventFeed)."""
+    return InMemoryEventStore()
 
 
 @pytest.fixture
@@ -110,7 +110,7 @@ def checkpoint_repo() -> InMemoryCheckpointRepository:
 
 @pytest.fixture
 def manager(
-    event_store: MemoryEventStore,
+    event_store: InMemoryEventStore,
     event_bus: InMemoryEventBus,
     checkpoint_repo: InMemoryCheckpointRepository,
 ) -> SubscriptionManager:
@@ -134,7 +134,7 @@ def config() -> SubscriptionConfig:
 
 
 async def add_events_to_store(
-    store: MemoryEventStore,
+    store: InMemoryEventStore,
     count: int,
 ) -> list[DomainEvent]:
     """Helper to add events to the store."""
@@ -159,7 +159,7 @@ class TestManagerInitialization:
 
     def test_manager_initialization(
         self,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
         event_bus: InMemoryEventBus,
         checkpoint_repo: InMemoryCheckpointRepository,
     ):
@@ -294,7 +294,7 @@ class TestSubscriptionRemoval:
     async def test_unsubscribe_stops_running_subscription(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
         subscriber: MockSubscriber,
     ):
         """Test unsubscribe stops a running subscription."""
@@ -384,7 +384,7 @@ class TestManagerStart:
     async def test_start_all_subscriptions(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test start() starts all registered subscriptions."""
         await add_events_to_store(event_store, 5)
@@ -406,7 +406,7 @@ class TestManagerStart:
     async def test_start_specific_subscriptions(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test start() with specific subscription names."""
         await add_events_to_store(event_store, 5)
@@ -455,7 +455,7 @@ class TestManagerStart:
     async def test_start_processes_events_from_beginning(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test start processes all events from beginning by default."""
         await add_events_to_store(event_store, 10)
@@ -479,7 +479,7 @@ class TestManagerStop:
     async def test_stop_all_subscriptions(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test stop() stops all subscriptions."""
         await add_events_to_store(event_store, 5)
@@ -505,7 +505,7 @@ class TestManagerStop:
     async def test_stop_specific_subscriptions(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test stop() with specific subscription names."""
         await add_events_to_store(event_store, 5)
@@ -543,7 +543,7 @@ class TestManagerStop:
     async def test_stop_with_timeout(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
         subscriber: MockSubscriber,
     ):
         """Test stop() with custom timeout."""
@@ -565,7 +565,7 @@ class TestContextManager:
     @pytest.mark.asyncio
     async def test_context_manager_start_stop(
         self,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
         event_bus: InMemoryEventBus,
         checkpoint_repo: InMemoryCheckpointRepository,
     ):
@@ -585,7 +585,7 @@ class TestContextManager:
     @pytest.mark.asyncio
     async def test_context_manager_stop_on_exception(
         self,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
         event_bus: InMemoryEventBus,
         checkpoint_repo: InMemoryCheckpointRepository,
     ):
@@ -630,7 +630,7 @@ class TestHealthStatus:
     async def test_health_when_running(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
         subscriber: MockSubscriber,
     ):
         """Test health status when running."""
@@ -652,7 +652,7 @@ class TestHealthStatus:
     async def test_health_with_error_subscription(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test health status with errored subscription."""
         await add_events_to_store(event_store, 5)
@@ -676,7 +676,7 @@ class TestHealthStatus:
     async def test_health_subscription_details(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
         subscriber: MockSubscriber,
     ):
         """Test health includes subscription details."""
@@ -705,7 +705,7 @@ class TestErrorHandling:
     async def test_start_with_failing_subscriber(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test start handles subscriber failure with isolation.
 
@@ -742,7 +742,7 @@ class TestErrorHandling:
     async def test_continue_on_error_mode(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test continue_on_error allows processing to continue."""
         await add_events_to_store(event_store, 5)
@@ -774,7 +774,7 @@ class TestLiveEvents:
     async def test_receives_live_events_after_start(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
         event_bus: InMemoryEventBus,
     ):
         """Test manager receives live events after transition."""
@@ -877,7 +877,7 @@ class TestEdgeCases:
     async def test_subscribe_after_start(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test subscribing after start is allowed but doesn't auto-start."""
         await add_events_to_store(event_store, 5)
@@ -918,7 +918,7 @@ class TestEdgeCases:
     async def test_large_number_of_events(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test manager handles large number of events."""
         await add_events_to_store(event_store, 500)
@@ -944,7 +944,7 @@ class TestMultipleSubscriptionsConcurrent:
     async def test_concurrent_start_all_subscriptions(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test that multiple subscriptions start concurrently."""
         await add_events_to_store(event_store, 10)
@@ -976,7 +976,7 @@ class TestMultipleSubscriptionsConcurrent:
     async def test_concurrent_start_returns_results(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test that start() returns a dictionary of results."""
         await add_events_to_store(event_store, 5)
@@ -1001,7 +1001,7 @@ class TestMultipleSubscriptionsConcurrent:
     async def test_sequential_start_mode(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test sequential start mode (concurrent=False)."""
         await add_events_to_store(event_store, 5)
@@ -1031,7 +1031,7 @@ class TestSubscriptionIsolation:
     async def test_one_failing_subscription_does_not_stop_others(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test that one subscription failing during start doesn't prevent others."""
         await add_events_to_store(event_store, 5)
@@ -1077,7 +1077,7 @@ class TestSubscriptionIsolation:
     async def test_multiple_failing_subscriptions(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test multiple subscriptions failing independently."""
         await add_events_to_store(event_store, 5)
@@ -1123,7 +1123,7 @@ class TestSubscriptionIsolation:
     async def test_failed_subscription_has_error_details(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test that failed subscriptions have proper error information."""
         await add_events_to_store(event_store, 5)
@@ -1193,7 +1193,7 @@ class TestGetAllStatuses:
     async def test_get_all_statuses_shows_different_states(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test get_all_statuses shows different subscription states."""
         await add_events_to_store(event_store, 5)
@@ -1228,7 +1228,7 @@ class TestGetAllStatuses:
     async def test_get_all_statuses_includes_statistics(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test get_all_statuses includes event processing statistics."""
         await add_events_to_store(event_store, 10)
@@ -1254,7 +1254,7 @@ class TestMultipleSubscriptionsHealth:
     async def test_health_status_all_healthy(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test health shows healthy when all subscriptions are live."""
         await add_events_to_store(event_store, 5)
@@ -1279,7 +1279,7 @@ class TestMultipleSubscriptionsHealth:
     async def test_health_status_with_mixed_states(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test health shows appropriate status with mixed subscription states."""
         await add_events_to_store(event_store, 5)
@@ -1316,7 +1316,7 @@ class TestMultipleSubscriptionsHealth:
     async def test_is_healthy_property_with_multiple_subscriptions(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test is_healthy property with multiple subscriptions."""
         await add_events_to_store(event_store, 5)
@@ -1341,7 +1341,7 @@ class TestMultipleSubscriptionsLifecycle:
     async def test_stop_stops_all_subscriptions(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test that stop() stops all subscriptions."""
         await add_events_to_store(event_store, 5)
@@ -1366,7 +1366,7 @@ class TestMultipleSubscriptionsLifecycle:
     async def test_unsubscribe_one_keeps_others(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test unsubscribing one subscription doesn't affect others."""
         await add_events_to_store(event_store, 5)
@@ -1398,7 +1398,7 @@ class TestMultipleSubscriptionsLifecycle:
     async def test_independent_checkpoint_per_subscription(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
         checkpoint_repo: InMemoryCheckpointRepository,
     ):
         """Test that each subscription has independent checkpoint."""
@@ -1428,7 +1428,7 @@ class TestConcurrentStartPerformance:
     @pytest.mark.asyncio
     async def test_concurrent_start_is_faster_than_sequential(
         self,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
         event_bus: InMemoryEventBus,
         checkpoint_repo: InMemoryCheckpointRepository,
     ):
@@ -1470,7 +1470,7 @@ class TestConcurrentStartPerformance:
     async def test_start_returns_empty_dict_if_already_running(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test start returns empty dict if already running."""
         await add_events_to_store(event_store, 5)

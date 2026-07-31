@@ -12,7 +12,7 @@ Tests cover:
 - Error handling and recovery
 - Concurrent operations during migration
 
-These tests use MemoryEventStore for unit-level integration testing
+These tests use InMemoryEventStore for unit-level integration testing
 without requiring PostgreSQL.
 """
 
@@ -29,7 +29,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from eventsource.adapters.memory import MemoryEventStore
+from eventsource.adapters.memory import InMemoryEventStore
 from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.migration.bulk_copier import BulkCopier
@@ -424,15 +424,15 @@ class MockLockManager:
 
 
 @pytest.fixture
-def source_store() -> MemoryEventStore:
+def source_store() -> InMemoryEventStore:
     """Create source (shared) event store."""
-    return MemoryEventStore("source")
+    return InMemoryEventStore("source")
 
 
 @pytest.fixture
-def target_store() -> MemoryEventStore:
+def target_store() -> InMemoryEventStore:
     """Create target (dedicated) event store."""
-    return MemoryEventStore("target")
+    return InMemoryEventStore("target")
 
 
 @pytest.fixture
@@ -467,7 +467,7 @@ def tenant_id() -> UUID:
 
 @pytest.fixture
 def router(
-    source_store: MemoryEventStore,
+    source_store: InMemoryEventStore,
     routing_repo: InMemoryRoutingRepository,
     write_pause_manager: WritePauseManager,
 ) -> TenantStoreRouter:
@@ -484,7 +484,7 @@ def router(
 
 @pytest.fixture
 def coordinator(
-    source_store: MemoryEventStore,
+    source_store: InMemoryEventStore,
     migration_repo: InMemoryMigrationRepository,
     routing_repo: InMemoryRoutingRepository,
     router: TenantStoreRouter,
@@ -508,7 +508,7 @@ def coordinator(
 
 
 async def create_test_events(
-    store: MemoryEventStore,
+    store: InMemoryEventStore,
     tenant_id: UUID,
     count: int = 10,
     aggregate_type: str = "Order",
@@ -537,7 +537,7 @@ async def create_test_events(
 
 
 async def get_all_tenant_events(
-    store: MemoryEventStore,
+    store: InMemoryEventStore,
     tenant_id: UUID,
 ) -> list[DomainEvent]:
     """Get all events for a tenant from a store."""
@@ -559,8 +559,8 @@ class TestFullMigrationLifecycle:
     @pytest.mark.asyncio
     async def test_full_lifecycle_with_events(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
@@ -627,8 +627,8 @@ class TestFullMigrationLifecycle:
     @pytest.mark.asyncio
     async def test_migration_phases_are_tracked(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
@@ -675,8 +675,8 @@ class TestDualWriteBehavior:
     @pytest.mark.asyncio
     async def test_dual_write_writes_to_both_stores(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test that dual-write interceptor writes to both stores."""
@@ -712,8 +712,8 @@ class TestDualWriteBehavior:
     @pytest.mark.asyncio
     async def test_dual_write_reads_from_source(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test that reads during dual-write come from source store."""
@@ -746,13 +746,13 @@ class TestDualWriteBehavior:
     @pytest.mark.asyncio
     async def test_dual_write_handles_target_failure(
         self,
-        source_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test that dual-write handles target store failure gracefully."""
 
         # Create a target store that will fail on append
-        class FailingStore(MemoryEventStore):
+        class FailingStore(InMemoryEventStore):
             async def append(self, *args, **kwargs):
                 raise RuntimeError("Target store failure")
 
@@ -788,8 +788,8 @@ class TestDualWriteBehavior:
     @pytest.mark.asyncio
     async def test_dual_write_multiple_events_same_aggregate(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test dual-write with multiple events on same aggregate."""
@@ -836,8 +836,8 @@ class TestSyncLagTracking:
     @pytest.mark.asyncio
     async def test_sync_lag_calculation(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test sync lag is calculated correctly."""
@@ -886,8 +886,8 @@ class TestSyncLagTracking:
     @pytest.mark.asyncio
     async def test_sync_lag_converged_when_equal(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test sync lag shows converged when the target has caught up."""
@@ -923,8 +923,8 @@ class TestSyncLagTracking:
     @pytest.mark.asyncio
     async def test_sync_ready_within_threshold(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test is_sync_ready returns True when lag is within threshold."""
@@ -964,8 +964,8 @@ class TestSyncLagTracking:
     @pytest.mark.asyncio
     async def test_lag_statistics_tracking(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test lag statistics are properly tracked over time."""
@@ -1009,7 +1009,7 @@ class FlakyTarget:
 
     max_append_batch: int | None = None
 
-    def __init__(self, inner: MemoryEventStore, *, reject_first: int = 0) -> None:
+    def __init__(self, inner: InMemoryEventStore, *, reject_first: int = 0) -> None:
         self._inner = inner
         self._reject_first = reject_first
         self.append_calls = 0
@@ -1056,8 +1056,8 @@ async def drive_dual_writes(
 
 
 async def seed_copied_prefix(
-    source_store: MemoryEventStore,
-    target_store: MemoryEventStore,
+    source_store: InMemoryEventStore,
+    target_store: InMemoryEventStore,
     tenant_id: UUID,
     count: int,
 ) -> Position | None:
@@ -1089,8 +1089,8 @@ class TestSyncLagAnchorOnWriteActiveTenant:
     @pytest.mark.asyncio
     async def test_healthy_tenant_converges_unbounded(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """All writes mirrored and the checkpoint covers the install window:
@@ -1143,8 +1143,8 @@ class TestSyncLagAnchorOnWriteActiveTenant:
     @pytest.mark.asyncio
     async def test_failed_prefix_never_reads_as_converged(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         tenant_id: UUID,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
@@ -1217,8 +1217,8 @@ class TestSyncLagAnchorOnWriteActiveTenant:
     @pytest.mark.asyncio
     async def test_first_failure_watermark_does_not_move_on_recovery(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Later successes never clear or advance the first-failure mark."""
@@ -1246,8 +1246,8 @@ class TestSyncLagAnchorOnWriteActiveTenant:
     @pytest.mark.asyncio
     async def test_install_window_gap_blocks_cutover(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         tenant_id: UUID,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
@@ -1342,8 +1342,8 @@ class TestSyncLagAnchorOnWriteActiveTenant:
     @pytest.mark.asyncio
     async def test_anchor_advances_when_interceptor_covers_the_checkpoint(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """The install-window clamp is a gate, not a veto.
@@ -1373,8 +1373,8 @@ class TestSyncLagAnchorOnWriteActiveTenant:
     @pytest.mark.asyncio
     async def test_restart_refuses_until_a_fresh_copy_pass(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """A restarted orchestrator has no watermarks, so it refuses cutover.
@@ -1421,8 +1421,8 @@ class TestSyncLagAnchorOnWriteActiveTenant:
     @pytest.mark.asyncio
     async def test_overlap_mirror_conflict_is_absorbed_by_the_copy_pass(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """A mirror refused on a behind stream never leapfrogs the copier.
@@ -1496,8 +1496,8 @@ class TestSyncLagAnchorOnWriteActiveTenant:
     @pytest.mark.asyncio
     async def test_failures_beyond_the_checkpoint_stay_unabsorbed(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """`mark_copy_pass_complete` only absorbs what the checkpoint covers.
@@ -1537,8 +1537,8 @@ class TestSyncLagAnchorOnWriteActiveTenant:
     @pytest.mark.asyncio
     async def test_attested_pass_releases_the_install_window_clamp(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """The coordinator's completed-pass attestation replaces the
@@ -1567,8 +1567,8 @@ class TestSyncLagAnchorOnWriteActiveTenant:
     @pytest.mark.asyncio
     async def test_saturated_failure_history_never_reports_clean(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Once tracked failures exceed `max_failure_history`, the fail-closed
@@ -1621,7 +1621,7 @@ class GatedFeedStore:
 
     max_append_batch: int | None = None
 
-    def __init__(self, inner: MemoryEventStore, *, gate_after: int = 3) -> None:
+    def __init__(self, inner: InMemoryEventStore, *, gate_after: int = 3) -> None:
         self._inner = inner
         self._gate_after = gate_after
         self._read_all_calls = 0
@@ -1684,8 +1684,8 @@ class TestWriteActiveTenantFirstPassCutover:
         write_pause_manager: WritePauseManager,
     ) -> None:
         """Writes landing mid-copy are mirrored, and cutover fires first pass."""
-        inner_source = MemoryEventStore("source")
-        target_store = MemoryEventStore("target")
+        inner_source = InMemoryEventStore("source")
+        target_store = InMemoryEventStore("target")
         source = GatedFeedStore(inner_source, gate_after=3)
 
         router = TenantStoreRouter(
@@ -1769,8 +1769,8 @@ class TestCatchUpRoundsCap:
     @pytest.mark.asyncio
     async def test_cap_hit_still_transitions_with_anchor_clamped(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
@@ -1860,8 +1860,8 @@ class TestCutoverSuccess:
     @pytest.mark.asyncio
     async def test_cutover_success_when_synced(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
         lock_manager: MockLockManager,
@@ -1937,8 +1937,8 @@ class TestCutoverFailureAndRollback:
     @pytest.mark.asyncio
     async def test_cutover_fails_when_lag_too_high(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
         lock_manager: MockLockManager,
@@ -2020,8 +2020,8 @@ class TestCutoverFailureAndRollback:
     @pytest.mark.asyncio
     async def test_cutover_fails_on_lock_acquisition_failure(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
         tenant_id: UUID,
@@ -2077,8 +2077,8 @@ class TestAbortDuringDifferentPhases:
     @pytest.mark.asyncio
     async def test_abort_during_bulk_copy(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
@@ -2125,8 +2125,8 @@ class TestAbortDuringDifferentPhases:
     @pytest.mark.asyncio
     async def test_abort_clears_routing_state(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
@@ -2171,8 +2171,8 @@ class TestPauseResumeDuringMigration:
     @pytest.mark.asyncio
     async def test_pause_migration(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
@@ -2209,8 +2209,8 @@ class TestPauseResumeDuringMigration:
     @pytest.mark.asyncio
     async def test_resume_migration(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
@@ -2257,8 +2257,8 @@ class TestErrorHandlingAndRecovery:
     @pytest.mark.asyncio
     async def test_duplicate_migration_raises_error(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
@@ -2297,7 +2297,7 @@ class TestErrorHandlingAndRecovery:
     @pytest.mark.asyncio
     async def test_get_status_nonexistent_migration(
         self,
-        source_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
@@ -2322,8 +2322,8 @@ class TestErrorHandlingAndRecovery:
     @pytest.mark.asyncio
     async def test_abort_completed_migration_raises_error(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         migration_repo: InMemoryMigrationRepository,
         routing_repo: InMemoryRoutingRepository,
         router: TenantStoreRouter,
@@ -2372,8 +2372,8 @@ class TestConcurrentOperations:
     @pytest.mark.asyncio
     async def test_concurrent_writes_during_dual_write(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
         tenant_id: UUID,
     ) -> None:
         """Test concurrent writes during dual-write phase."""
@@ -2467,8 +2467,8 @@ class TestConcurrentOperations:
     @pytest.mark.asyncio
     async def test_multiple_tenants_independent(
         self,
-        source_store: MemoryEventStore,
-        target_store: MemoryEventStore,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
     ) -> None:
         """Test that multiple tenants operate independently."""
         tenant1 = uuid4()

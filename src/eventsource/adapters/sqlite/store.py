@@ -1,11 +1,8 @@
-"""SQLite adapter implementing the five new store ports.
+"""SQLite adapter implementing the five store ports.
 
-Ported from `eventsource.stores.sqlite.SQLiteEventStore` (untouched --
-that module remains the legacy `EventStore` ABC implementation). This
-adapter targets the `eventsource.ports.store` protocols instead: it
-reuses the old store's SQL and connection-configuration patterns, but
-maps rows to `EventEnvelope` / `AppendResult` / `Position` value objects
-and dispatches on `ExpectedVersion.kind` rather than integer sentinels.
+Targets the `eventsource.ports.store` protocols: rows map to
+`EventEnvelope` / `AppendResult` / `Position` value objects, and append
+dispatches on `ExpectedVersion.kind` rather than integer sentinels.
 
 Positions are minted from the `events.global_position` autoincrement
 column via `IntPositionCodec`.

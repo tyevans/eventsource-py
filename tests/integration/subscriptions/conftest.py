@@ -13,7 +13,7 @@ import pytest
 import pytest_asyncio
 
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
-from eventsource.adapters.memory.store import MemoryEventStore
+from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.bus.memory import InMemoryEventBus
 from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
@@ -191,9 +191,9 @@ class SlowProjection:
 
 
 @pytest_asyncio.fixture
-async def in_memory_event_store() -> AsyncGenerator[MemoryEventStore, None]:
+async def in_memory_event_store() -> AsyncGenerator[InMemoryEventStore, None]:
     """Create an in-memory event store for testing."""
-    store = MemoryEventStore()
+    store = InMemoryEventStore()
     yield store
 
 
@@ -214,7 +214,7 @@ async def in_memory_checkpoint_repo() -> AsyncGenerator[InMemoryCheckpointReposi
 
 @pytest_asyncio.fixture
 async def subscription_manager(
-    in_memory_event_store: MemoryEventStore,
+    in_memory_event_store: InMemoryEventStore,
     in_memory_event_bus: InMemoryEventBus,
     in_memory_checkpoint_repo: InMemoryCheckpointRepository,
 ) -> AsyncGenerator[SubscriptionManager, None]:
@@ -241,7 +241,7 @@ def collecting_projection() -> CollectingProjection:
 
 
 async def populate_event_store(
-    store: MemoryEventStore,
+    store: InMemoryEventStore,
     count: int,
     start_index: int = 0,
 ) -> list[DomainEvent]:
@@ -273,7 +273,7 @@ async def populate_event_store(
 
 
 async def populate_event_store_with_types(
-    store: MemoryEventStore,
+    store: InMemoryEventStore,
     created_count: int,
     shipped_count: int,
     cancelled_count: int = 0,
@@ -337,7 +337,7 @@ async def populate_event_store_with_types(
 
 
 async def publish_live_event(
-    store: MemoryEventStore,
+    store: InMemoryEventStore,
     bus: InMemoryEventBus,
     order_number: str,
     amount: float = 100.0,

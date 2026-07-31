@@ -15,7 +15,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from eventsource.adapters.memory import MemoryEventStore
+from eventsource.adapters.memory import InMemoryEventStore
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
 from eventsource.adapters.memory.dlq import InMemoryDLQRepository
 from eventsource.bus.memory import InMemoryEventBus
@@ -53,14 +53,14 @@ class SampleOrderEvent(DomainEvent):
 
 
 class TestInMemoryEventStoreEdgeCases:
-    """Edge case tests for MemoryEventStore."""
+    """Edge case tests for InMemoryEventStore."""
 
     @pytest.fixture
-    def store(self) -> MemoryEventStore:
-        return MemoryEventStore()
+    def store(self) -> InMemoryEventStore:
+        return InMemoryEventStore()
 
     @pytest.mark.asyncio
-    async def test_get_events_by_type_with_timestamp_filter(self, store: MemoryEventStore):
+    async def test_get_events_by_type_with_timestamp_filter(self, store: InMemoryEventStore):
         """Test read_category with a from_timestamp filter."""
         aggregate_id = uuid4()
         old_timestamp = datetime.now(UTC) - timedelta(hours=1)
@@ -79,7 +79,7 @@ class TestInMemoryEventStoreEdgeCases:
         assert len(envelopes) == 1
 
     @pytest.mark.asyncio
-    async def test_get_events_by_type_with_tenant_filter(self, store: MemoryEventStore):
+    async def test_get_events_by_type_with_tenant_filter(self, store: InMemoryEventStore):
         """Test read_category with a tenant_id filter."""
         aggregate_id = uuid4()
         tenant_id = uuid4()
@@ -115,7 +115,7 @@ class TestInMemoryEventStoreEdgeCases:
         assert envelopes[0].event.tenant_id == tenant_id
 
     @pytest.mark.asyncio
-    async def test_read_stream_backward(self, store: MemoryEventStore):
+    async def test_read_stream_backward(self, store: InMemoryEventStore):
         """Test reading stream in backward direction."""
         aggregate_id = uuid4()
 
@@ -132,7 +132,7 @@ class TestInMemoryEventStoreEdgeCases:
         assert "event_0" in envelopes[4].event.data
 
     @pytest.mark.asyncio
-    async def test_read_all_stream_position_calculation(self, store: MemoryEventStore):
+    async def test_read_all_stream_position_calculation(self, store: InMemoryEventStore):
         """Test that stream version is correctly calculated in read_all."""
         aggregate_id = uuid4()
 
@@ -151,7 +151,7 @@ class TestInMemoryEventStoreEdgeCases:
             assert envelope.stream_version >= 0
 
     @pytest.mark.asyncio
-    async def test_concurrent_appends(self, store: MemoryEventStore):
+    async def test_concurrent_appends(self, store: InMemoryEventStore):
         """Test concurrent appends to different aggregates."""
         aggregate_ids = [uuid4() for _ in range(10)]
 
@@ -469,7 +469,7 @@ class TestConcurrentAccess:
     @pytest.mark.asyncio
     async def test_concurrent_event_store_reads_writes(self):
         """Test concurrent reads and writes to event store with asyncio.Lock."""
-        store = MemoryEventStore()
+        store = InMemoryEventStore()
         aggregate_ids = [uuid4() for _ in range(5)]
 
         async def write_events(agg_id: uuid4):
@@ -508,7 +508,7 @@ class TestSerializationEdgeCases:
     @pytest.mark.asyncio
     async def test_event_with_special_characters(self):
         """Test event with special characters in data."""
-        store = MemoryEventStore()
+        store = InMemoryEventStore()
         aggregate_id = uuid4()
         stream = StreamId(aggregate_id=aggregate_id, category="Test")
 
@@ -525,7 +525,7 @@ class TestSerializationEdgeCases:
     @pytest.mark.asyncio
     async def test_event_with_unicode_characters(self):
         """Test event with Unicode characters."""
-        store = MemoryEventStore()
+        store = InMemoryEventStore()
         aggregate_id = uuid4()
         stream = StreamId(aggregate_id=aggregate_id, category="Test")
 
@@ -541,7 +541,7 @@ class TestSerializationEdgeCases:
     @pytest.mark.asyncio
     async def test_event_with_empty_string(self):
         """Test event with empty string data."""
-        store = MemoryEventStore()
+        store = InMemoryEventStore()
         aggregate_id = uuid4()
         stream = StreamId(aggregate_id=aggregate_id, category="Test")
 

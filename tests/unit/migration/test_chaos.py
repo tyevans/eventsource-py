@@ -10,7 +10,7 @@ These tests verify system resilience under various failure conditions:
 - Timeout scenarios during cutover
 - Recovery after various failure modes
 
-The tests use a FailureInjectableStore wrapper around MemoryEventStore
+The tests use a FailureInjectableStore wrapper around InMemoryEventStore
 to simulate various failure scenarios without requiring actual network
 or process failures.
 
@@ -31,7 +31,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from eventsource.adapters.memory import MemoryEventStore
+from eventsource.adapters.memory import InMemoryEventStore
 from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.migration.coordinator import MigrationCoordinator
@@ -121,11 +121,11 @@ class InjectedFailureError(Exception):
 
 class FailureInjectableStore:
     """
-    `FullEventStore`-shaped wrapper around `MemoryEventStore` that can
+    `FullEventStore`-shaped wrapper around `InMemoryEventStore` that can
     inject failures.
 
     Structural conformance only -- delegates all eight `FullEventStore`
-    members to an inner `MemoryEventStore` and injects failures only on
+    members to an inner `InMemoryEventStore` and injects failures only on
     the operations under test.
 
     Example:
@@ -138,17 +138,17 @@ class FailureInjectableStore:
 
     def __init__(
         self,
-        inner_store: MemoryEventStore | None = None,
+        inner_store: InMemoryEventStore | None = None,
     ) -> None:
         """Initialize with optional inner store."""
-        self._inner = inner_store or MemoryEventStore()
+        self._inner = inner_store or InMemoryEventStore()
         self._failure_config = FailureConfig()
         self._is_available = True
         self._available_event = asyncio.Event()
         self._available_event.set()
 
     @property
-    def inner_store(self) -> MemoryEventStore:
+    def inner_store(self) -> InMemoryEventStore:
         """Get the underlying store."""
         return self._inner
 
@@ -701,7 +701,7 @@ def router(
 
 
 async def create_test_events(
-    store: FailureInjectableStore | MemoryEventStore,
+    store: FailureInjectableStore | InMemoryEventStore,
     tenant_id: UUID,
     count: int = 10,
 ) -> list[UUID]:
@@ -732,7 +732,7 @@ async def create_test_events(
 
 
 async def count_tenant_events(
-    store: FailureInjectableStore | MemoryEventStore,
+    store: FailureInjectableStore | InMemoryEventStore,
     tenant_id: UUID,
 ) -> int:
     """Count events for a tenant in a store."""
@@ -828,8 +828,8 @@ class TestNetworkPartitionSimulation:
         tenant_id: UUID,
     ) -> None:
         """Test dual-write continues to source when target is partitioned."""
-        # Use regular MemoryEventStore for source (no failure injection)
-        source_store = MemoryEventStore()
+        # Use regular InMemoryEventStore for source (no failure injection)
+        source_store = InMemoryEventStore()
         target_store = FailureInjectableStore()
 
         interceptor = DualWriteInterceptor(
@@ -876,7 +876,7 @@ class TestProcessCrashDuringDualWrite:
     ) -> None:
         """Test that dual-write ensures no data loss on source during failures."""
         # Use regular store for source, failing store for target
-        source_store = MemoryEventStore()
+        source_store = InMemoryEventStore()
         target_store = FailureInjectableStore()
 
         interceptor = DualWriteInterceptor(
@@ -1156,7 +1156,7 @@ class TestTargetStoreFailures:
         tenant_id: UUID,
     ) -> None:
         """Test that source writes succeed even when target completely fails."""
-        source_store = MemoryEventStore()
+        source_store = InMemoryEventStore()
         target_store = FailureInjectableStore()
 
         interceptor = DualWriteInterceptor(
@@ -1212,7 +1212,7 @@ class TestTargetStoreFailures:
         tenant_id: UUID,
     ) -> None:
         """Test that target failure rate is tracked for monitoring."""
-        source_store = MemoryEventStore()
+        source_store = InMemoryEventStore()
         target_store = FailureInjectableStore()
 
         interceptor = DualWriteInterceptor(
@@ -1256,7 +1256,7 @@ class TestTargetStoreFailures:
         tenant_id: UUID,
     ) -> None:
         """Test that writes to target resume after recovery."""
-        source_store = MemoryEventStore()
+        source_store = InMemoryEventStore()
         target_store = FailureInjectableStore()
 
         interceptor = DualWriteInterceptor(
@@ -1403,7 +1403,7 @@ class TestTimeoutScenarios:
         tenant_id: UUID,
     ) -> None:
         """Test that slow target causes sync lag to accumulate."""
-        source_store = MemoryEventStore()
+        source_store = InMemoryEventStore()
         target_store = FailureInjectableStore()
 
         # Target with delays
@@ -1573,7 +1573,7 @@ class TestComprehensiveFailureScenarios:
         tenant_id: UUID,
     ) -> None:
         """Test handling of multiple failure types during dual-write."""
-        source_store = MemoryEventStore()
+        source_store = InMemoryEventStore()
         target_store = FailureInjectableStore()
 
         interceptor = DualWriteInterceptor(

@@ -8,7 +8,7 @@ from uuid import uuid4
 from bench.adapters._postgres import asyncpg_dsn, ensure_schema, ping, postgres_url, truncate
 from bench.adapters.base import BenchAdapter
 from bench.core.domain import make_registry
-from eventsource.adapters.memory.store import MemoryEventStore
+from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.adapters.postgresql import PostgreSQLEventStore
 from eventsource.adapters.sqlite import SQLiteEventStore
 from eventsource.ports import FullEventStore
@@ -18,7 +18,7 @@ class MemoryStoreAdapter(BenchAdapter[FullEventStore]):
     name = "memory"
 
     async def create(self) -> FullEventStore:
-        return MemoryEventStore()
+        return InMemoryEventStore()
 
 
 class PostgresStoreAdapter(BenchAdapter[FullEventStore]):

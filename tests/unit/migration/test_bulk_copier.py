@@ -21,7 +21,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from eventsource.adapters.memory import MemoryEventStore
+from eventsource.adapters.memory import InMemoryEventStore
 from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.exceptions import DuplicateEventError, OptimisticLockError
@@ -1094,7 +1094,7 @@ class TestBulkCopierOverlapWithLiveMirror:
         """A batched group straddling an already-present event must not be
         skipped wholesale: the absent events still reach the target, in
         source stream order."""
-        target_store = MemoryEventStore("target")
+        target_store = InMemoryEventStore("target")
         tenant_id = uuid4()
         aggregate_id = uuid4()
         stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")

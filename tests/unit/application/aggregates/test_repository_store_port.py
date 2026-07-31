@@ -14,7 +14,7 @@ from hypothesis import strategies as st
 from pydantic import BaseModel
 
 from eventsource.adapters.memory.snapshots import InMemorySnapshotStore
-from eventsource.adapters.memory.store import MemoryEventStore
+from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.domain import StreamId
 from eventsource.domain.aggregate import AggregateRoot
@@ -71,13 +71,13 @@ def _stream(aggregate_id: UUID) -> StreamId:
 
 @pytest.mark.asyncio
 async def test_memory_store_satisfies_aggregate_store_port() -> None:
-    store: AggregateStore = MemoryEventStore()
+    store: AggregateStore = InMemoryEventStore()
     assert store is not None
 
 
 @pytest.mark.asyncio
 async def test_save_writes_stream_version_equal_to_event_count() -> None:
-    store = MemoryEventStore()
+    store = InMemoryEventStore()
     repo = AggregateRepository(
         event_store=store,
         aggregate_factory=CounterAggregate,
@@ -95,7 +95,7 @@ async def test_save_writes_stream_version_equal_to_event_count() -> None:
 
 @pytest.mark.asyncio
 async def test_save_twice_uses_correct_expected_version() -> None:
-    store = MemoryEventStore()
+    store = InMemoryEventStore()
     repo = AggregateRepository(
         event_store=store,
         aggregate_factory=CounterAggregate,
@@ -113,7 +113,7 @@ async def test_save_twice_uses_correct_expected_version() -> None:
 
 @pytest.mark.asyncio
 async def test_save_stale_aggregate_raises_optimistic_lock_error() -> None:
-    store = MemoryEventStore()
+    store = InMemoryEventStore()
     repo = AggregateRepository(
         event_store=store,
         aggregate_factory=CounterAggregate,
@@ -132,7 +132,7 @@ async def test_save_stale_aggregate_raises_optimistic_lock_error() -> None:
 
 @pytest.mark.asyncio
 async def test_save_with_no_uncommitted_events_is_a_noop() -> None:
-    store = MemoryEventStore()
+    store = InMemoryEventStore()
     repo = AggregateRepository(
         event_store=store,
         aggregate_factory=CounterAggregate,
@@ -144,7 +144,7 @@ async def test_save_with_no_uncommitted_events_is_a_noop() -> None:
 
 @pytest.mark.asyncio
 async def test_load_with_no_events_and_no_snapshot_raises_not_found() -> None:
-    store = MemoryEventStore()
+    store = InMemoryEventStore()
     repo = AggregateRepository(
         event_store=store,
         aggregate_factory=CounterAggregate,
@@ -156,7 +156,7 @@ async def test_load_with_no_events_and_no_snapshot_raises_not_found() -> None:
 
 @pytest.mark.asyncio
 async def test_load_after_snapshot_replays_only_events_after_snapshot_version() -> None:
-    store = MemoryEventStore()
+    store = InMemoryEventStore()
     snapshot_store = InMemorySnapshotStore()
     repo = AggregateRepository(
         event_store=store,
@@ -185,7 +185,7 @@ async def test_load_after_snapshot_replays_only_events_after_snapshot_version() 
 
 @pytest.mark.asyncio
 async def test_exists_false_before_save_true_after() -> None:
-    store = MemoryEventStore()
+    store = InMemoryEventStore()
     repo = AggregateRepository(
         event_store=store,
         aggregate_factory=CounterAggregate,
@@ -202,7 +202,7 @@ async def test_exists_false_before_save_true_after() -> None:
 
 @pytest.mark.asyncio
 async def test_get_version_zero_for_unknown_and_true_version_after_save() -> None:
-    store = MemoryEventStore()
+    store = InMemoryEventStore()
     repo = AggregateRepository(
         event_store=store,
         aggregate_factory=CounterAggregate,
@@ -234,7 +234,7 @@ async def test_load_reconstructs_version_regardless_of_snapshot_point(
     the executable form of the from_version translation rule -- an off-by-one
     in either direction breaks it for some (batches, snapshot_after) pair.
     """
-    store = MemoryEventStore()
+    store = InMemoryEventStore()
     snapshot_store = InMemorySnapshotStore()
     repo = AggregateRepository(
         event_store=store,

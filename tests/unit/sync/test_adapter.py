@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 
 import eventsource.sync.adapter as adapter_module
-from eventsource.adapters.memory.store import MemoryEventStore
+from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.exceptions import OptimisticLockError
@@ -35,7 +35,7 @@ class TestSyncEventStoreAdapterInit:
 
     def test_init_with_valid_store(self) -> None:
         """Adapter initializes with valid store."""
-        store = MemoryEventStore()
+        store = InMemoryEventStore()
         adapter = SyncEventStoreAdapter(store, timeout=5.0)
 
         assert adapter.wrapped_store is store
@@ -43,7 +43,7 @@ class TestSyncEventStoreAdapterInit:
 
     def test_init_with_default_timeout(self) -> None:
         """Adapter uses default timeout of 30.0."""
-        store = MemoryEventStore()
+        store = InMemoryEventStore()
         adapter = SyncEventStoreAdapter(store)
 
         assert adapter.timeout == 30.0
@@ -58,12 +58,12 @@ class TestSyncEventStoreAdapterInit:
 
     def test_repr(self) -> None:
         """Adapter has useful string representation."""
-        store = MemoryEventStore()
+        store = InMemoryEventStore()
         adapter = SyncEventStoreAdapter(store, timeout=10.0)
 
         repr_str = repr(adapter)
         assert "SyncEventStoreAdapter" in repr_str
-        assert "MemoryEventStore" in repr_str
+        assert "InMemoryEventStore" in repr_str
         assert "timeout=10.0" in repr_str
 
 
@@ -71,12 +71,12 @@ class TestSyncEventStoreAdapterAppend:
     """Tests for append method."""
 
     @pytest.fixture
-    def async_store(self) -> MemoryEventStore:
+    def async_store(self) -> InMemoryEventStore:
         """Create an async event store."""
-        return MemoryEventStore()
+        return InMemoryEventStore()
 
     @pytest.fixture
-    def sync_store(self, async_store: MemoryEventStore) -> SyncEventStoreAdapter:
+    def sync_store(self, async_store: InMemoryEventStore) -> SyncEventStoreAdapter:
         """Create a sync adapter."""
         return SyncEventStoreAdapter(async_store, timeout=5.0)
 
@@ -136,7 +136,7 @@ class TestSyncEventStoreAdapterAppend:
         with pytest.raises(ValueError, match="empty batch"):
             sync_store.append(stream, [], ExpectedVersion.no_stream())
 
-    def test_append_with_timeout_override(self, async_store: MemoryEventStore) -> None:
+    def test_append_with_timeout_override(self, async_store: InMemoryEventStore) -> None:
         """append respects timeout override."""
         sync_store = SyncEventStoreAdapter(async_store, timeout=30.0)
         agg_id = uuid4()
@@ -161,12 +161,12 @@ class TestSyncEventStoreAdapterReadStream:
     """Tests for read_stream method."""
 
     @pytest.fixture
-    def async_store(self) -> MemoryEventStore:
+    def async_store(self) -> InMemoryEventStore:
         """Create an async event store."""
-        return MemoryEventStore()
+        return InMemoryEventStore()
 
     @pytest.fixture
-    def sync_store(self, async_store: MemoryEventStore) -> SyncEventStoreAdapter:
+    def sync_store(self, async_store: InMemoryEventStore) -> SyncEventStoreAdapter:
         """Create a sync adapter."""
         return SyncEventStoreAdapter(async_store, timeout=5.0)
 
@@ -219,12 +219,12 @@ class TestSyncEventStoreAdapterGetStreamVersion:
     """Tests for get_stream_version method."""
 
     @pytest.fixture
-    def async_store(self) -> MemoryEventStore:
+    def async_store(self) -> InMemoryEventStore:
         """Create an async event store."""
-        return MemoryEventStore()
+        return InMemoryEventStore()
 
     @pytest.fixture
-    def sync_store(self, async_store: MemoryEventStore) -> SyncEventStoreAdapter:
+    def sync_store(self, async_store: InMemoryEventStore) -> SyncEventStoreAdapter:
         """Create a sync adapter."""
         return SyncEventStoreAdapter(async_store, timeout=5.0)
 
@@ -259,12 +259,12 @@ class TestSyncEventStoreAdapterEventExists:
     """Tests for event_exists method."""
 
     @pytest.fixture
-    def async_store(self) -> MemoryEventStore:
+    def async_store(self) -> InMemoryEventStore:
         """Create an async event store."""
-        return MemoryEventStore()
+        return InMemoryEventStore()
 
     @pytest.fixture
-    def sync_store(self, async_store: MemoryEventStore) -> SyncEventStoreAdapter:
+    def sync_store(self, async_store: InMemoryEventStore) -> SyncEventStoreAdapter:
         """Create a sync adapter."""
         return SyncEventStoreAdapter(async_store, timeout=5.0)
 
@@ -295,12 +295,12 @@ class TestSyncEventStoreAdapterReadAll:
     """Tests for read_all method."""
 
     @pytest.fixture
-    def async_store(self) -> MemoryEventStore:
+    def async_store(self) -> InMemoryEventStore:
         """Create an async event store."""
-        return MemoryEventStore()
+        return InMemoryEventStore()
 
     @pytest.fixture
-    def sync_store(self, async_store: MemoryEventStore) -> SyncEventStoreAdapter:
+    def sync_store(self, async_store: InMemoryEventStore) -> SyncEventStoreAdapter:
         """Create a sync adapter."""
         return SyncEventStoreAdapter(async_store, timeout=5.0)
 
@@ -357,12 +357,12 @@ class TestSyncEventStoreAdapterCurrentPosition:
     """Tests for current_position method."""
 
     @pytest.fixture
-    def async_store(self) -> MemoryEventStore:
+    def async_store(self) -> InMemoryEventStore:
         """Create an async event store."""
-        return MemoryEventStore()
+        return InMemoryEventStore()
 
     @pytest.fixture
-    def sync_store(self, async_store: MemoryEventStore) -> SyncEventStoreAdapter:
+    def sync_store(self, async_store: InMemoryEventStore) -> SyncEventStoreAdapter:
         """Create a sync adapter."""
         return SyncEventStoreAdapter(async_store, timeout=5.0)
 
@@ -396,7 +396,7 @@ class TestSyncEventStoreAdapterTimeout:
     def test_timeout_raises_error(self) -> None:
         """Operations timeout correctly."""
 
-        class SlowStore(MemoryEventStore):
+        class SlowStore(InMemoryEventStore):
             async def read_stream(self, *args: object, **kwargs: object):  # type: ignore[override]
                 await asyncio.sleep(1.0)
                 async for envelope in super().read_stream(*args, **kwargs):  # type: ignore[arg-type]
@@ -411,7 +411,7 @@ class TestSyncEventStoreAdapterTimeout:
     def test_per_call_timeout_override(self) -> None:
         """Per-call timeout overrides default."""
 
-        class SlowStore(MemoryEventStore):
+        class SlowStore(InMemoryEventStore):
             async def event_exists(self, event_id: object) -> bool:  # type: ignore[override]
                 await asyncio.sleep(0.5)
                 return False
@@ -428,7 +428,7 @@ class TestSyncEventStoreAdapterExecutorManagement:
 
     def test_shutdown_executor(self) -> None:
         """shutdown_executor cleans up executor."""
-        store = MemoryEventStore()
+        store = InMemoryEventStore()
         _adapter = SyncEventStoreAdapter(store)
 
         executor = SyncEventStoreAdapter._get_executor()
@@ -444,8 +444,8 @@ class TestSyncEventStoreAdapterExecutorManagement:
 
     def test_executor_is_shared(self) -> None:
         """Executor is shared across adapter instances."""
-        store1 = MemoryEventStore()
-        store2 = MemoryEventStore()
+        store1 = InMemoryEventStore()
+        store2 = InMemoryEventStore()
 
         _adapter1 = SyncEventStoreAdapter(store1)
         _adapter2 = SyncEventStoreAdapter(store2)
@@ -490,7 +490,7 @@ class TestRunSyncRunningLoopBranch:
     def test_success_returns_future_result_without_asyncio_run_fallback(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        store = MemoryEventStore()
+        store = InMemoryEventStore()
         sync_store = SyncEventStoreAdapter(store, timeout=5.0)
 
         fake_loop = object()
@@ -517,7 +517,7 @@ class TestRunSyncRunningLoopBranch:
         """A RuntimeError raised by the wrapped store must propagate as-is,
         not be swallowed and retried via `asyncio.run()` on an
         already-consumed coroutine."""
-        store = MemoryEventStore()
+        store = InMemoryEventStore()
         sync_store = SyncEventStoreAdapter(store, timeout=5.0)
 
         fake_loop = object()

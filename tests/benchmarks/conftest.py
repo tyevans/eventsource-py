@@ -14,7 +14,7 @@ import pytest
 
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
 from eventsource.adapters.memory.dlq import InMemoryDLQRepository
-from eventsource.adapters.memory.store import MemoryEventStore
+from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.ports.positions import ExpectedVersion
@@ -176,20 +176,20 @@ def order_events_100(benchmark_aggregate_id: UUID) -> list[DomainEvent]:
 
 
 @pytest.fixture
-def benchmark_store() -> MemoryEventStore:
+def benchmark_store() -> InMemoryEventStore:
     """
-    Provide a fresh MemoryEventStore for benchmarking.
+    Provide a fresh InMemoryEventStore for benchmarking.
     """
-    return MemoryEventStore()
+    return InMemoryEventStore()
 
 
 @pytest.fixture
 def populated_benchmark_store_100(
-    benchmark_store: MemoryEventStore,
+    benchmark_store: InMemoryEventStore,
     sample_events_100: list[DomainEvent],
-) -> Generator[MemoryEventStore, None, None]:
+) -> Generator[InMemoryEventStore, None, None]:
     """
-    Provide a MemoryEventStore pre-populated with 100 events.
+    Provide a InMemoryEventStore pre-populated with 100 events.
     """
     aggregate_id = sample_events_100[0].aggregate_id
 
@@ -207,11 +207,11 @@ def populated_benchmark_store_100(
 
 @pytest.fixture
 def populated_benchmark_store_1000(
-    benchmark_store: MemoryEventStore,
+    benchmark_store: InMemoryEventStore,
     sample_events_1000: list[DomainEvent],
-) -> Generator[MemoryEventStore, None, None]:
+) -> Generator[InMemoryEventStore, None, None]:
     """
-    Provide a MemoryEventStore pre-populated with 1000 events.
+    Provide a InMemoryEventStore pre-populated with 1000 events.
     """
     aggregate_id = sample_events_1000[0].aggregate_id
 

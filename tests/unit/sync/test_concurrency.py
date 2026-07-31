@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.adapters.memory.store import MemoryEventStore
+from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.exceptions import OptimisticLockError
@@ -28,7 +28,7 @@ class TestThreadSafety:
 
     def test_concurrent_access_from_multiple_threads(self) -> None:
         """Multiple threads can use adapter concurrently."""
-        store = MemoryEventStore()
+        store = InMemoryEventStore()
         sync_store = SyncEventStoreAdapter(store, timeout=10.0)
 
         errors: list[tuple[int, Exception]] = []
@@ -79,7 +79,7 @@ class TestThreadSafety:
 
     def test_concurrent_appends_to_different_aggregates(self) -> None:
         """Concurrent appends to different aggregates work correctly."""
-        store = MemoryEventStore()
+        store = InMemoryEventStore()
         sync_store = SyncEventStoreAdapter(store, timeout=10.0)
 
         streams: list[StreamId] = []
@@ -122,7 +122,7 @@ class TestThreadSafety:
 
     def test_concurrent_reads_and_writes(self) -> None:
         """Concurrent reads and writes work correctly."""
-        store = MemoryEventStore()
+        store = InMemoryEventStore()
         sync_store = SyncEventStoreAdapter(store, timeout=10.0)
 
         # Create some initial data
@@ -190,7 +190,7 @@ class TestEventLoopScenarios:
 
         def run_in_thread() -> None:
             try:
-                store = MemoryEventStore()
+                store = InMemoryEventStore()
                 sync_store = SyncEventStoreAdapter(store, timeout=5.0)
 
                 agg_id = uuid4()
@@ -220,7 +220,7 @@ class TestEventLoopScenarios:
 
     def test_multiple_threads_without_event_loops(self) -> None:
         """Multiple threads without event loops work correctly."""
-        store = MemoryEventStore()
+        store = InMemoryEventStore()
         sync_store = SyncEventStoreAdapter(store, timeout=10.0)
 
         results: list[str] = []
@@ -261,7 +261,7 @@ class TestExceptionPropagation:
 
     def test_exceptions_propagate_from_threads(self) -> None:
         """Exceptions from the store propagate correctly."""
-        store = MemoryEventStore()
+        store = InMemoryEventStore()
         sync_store = SyncEventStoreAdapter(store, timeout=5.0)
 
         agg_id = uuid4()
@@ -308,7 +308,7 @@ class TestStressTest:
     @pytest.mark.slow
     def test_high_concurrency_stress(self) -> None:
         """High concurrency stress test."""
-        store = MemoryEventStore()
+        store = InMemoryEventStore()
         sync_store = SyncEventStoreAdapter(store, timeout=30.0)
 
         total_operations = [0]

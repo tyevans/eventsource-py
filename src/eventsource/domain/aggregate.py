@@ -304,7 +304,7 @@ class AggregateRoot(Generic[TState], ABC):
 
         Example:
             >>> # After persisting events
-            >>> await event_store.append_events(...)
+            >>> await event_store.append(...)
             >>> aggregate.mark_events_as_committed()
         """
         self._uncommitted_events.clear()

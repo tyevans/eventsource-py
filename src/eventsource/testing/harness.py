@@ -26,7 +26,7 @@ import threading
 from typing import TYPE_CHECKING
 
 from eventsource.adapters.memory import InMemoryCheckpointRepository, InMemoryDLQRepository
-from eventsource.adapters.memory.store import MemoryEventStore
+from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.bus.memory import InMemoryEventBus
 from eventsource.events.base import DomainEvent
 
@@ -43,7 +43,7 @@ class InMemoryTestHarness:
     in tests and ensures consistent configuration.
 
     Components provided:
-    - event_store: MemoryEventStore (the ports adapter) for persisting events
+    - event_store: InMemoryEventStore (the ports adapter) for persisting events
     - event_bus: InMemoryEventBus for publishing/subscribing to events
     - checkpoint_repo: InMemoryCheckpointRepository for projection checkpoints
     - dlq_repo: InMemoryDLQRepository for dead letter queue
@@ -74,7 +74,7 @@ class InMemoryTestHarness:
         Tracing is disabled by default for test performance and
         to avoid polluting traces.
         """
-        self._event_store = MemoryEventStore()
+        self._event_store = InMemoryEventStore()
         self._event_bus = InMemoryEventBus(enable_tracing=False)
         self._checkpoint_repo = InMemoryCheckpointRepository(enable_tracing=False)
         self._dlq_repo = InMemoryDLQRepository(enable_tracing=False)
@@ -89,12 +89,12 @@ class InMemoryTestHarness:
             self._published.append(event)
 
     @property
-    def event_store(self) -> MemoryEventStore:
+    def event_store(self) -> InMemoryEventStore:
         """
         Get the in-memory event store.
 
         Returns:
-            MemoryEventStore instance for persisting and retrieving events
+            InMemoryEventStore instance for persisting and retrieving events
 
         Example:
             >>> await harness.event_store.append(
@@ -185,7 +185,7 @@ class InMemoryTestHarness:
             ...     yield h
             ...     h.reset()  # Clean up after test
         """
-        self._event_store = MemoryEventStore()
+        self._event_store = InMemoryEventStore()
         self._event_bus = InMemoryEventBus(enable_tracing=False)
         self._checkpoint_repo = InMemoryCheckpointRepository(enable_tracing=False)
         self._dlq_repo = InMemoryDLQRepository(enable_tracing=False)

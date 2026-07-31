@@ -16,7 +16,7 @@ from uuid import uuid4
 import pytest
 
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
-from eventsource.adapters.memory.store import MemoryEventStore
+from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.bus.memory import InMemoryEventBus
 from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
@@ -71,9 +71,9 @@ class CustomerProjection(MockSubscriber):
 
 
 @pytest.fixture
-def event_store() -> MemoryEventStore:
-    """Create a fresh MemoryEventStore (a real GlobalEventFeed)."""
-    return MemoryEventStore()
+def event_store() -> InMemoryEventStore:
+    """Create a fresh InMemoryEventStore (a real GlobalEventFeed)."""
+    return InMemoryEventStore()
 
 
 @pytest.fixture
@@ -90,7 +90,7 @@ def checkpoint_repo() -> InMemoryCheckpointRepository:
 
 @pytest.fixture
 def manager(
-    event_store: MemoryEventStore,
+    event_store: InMemoryEventStore,
     event_bus: InMemoryEventBus,
     checkpoint_repo: InMemoryCheckpointRepository,
 ) -> SubscriptionManager:
@@ -99,7 +99,7 @@ def manager(
 
 
 async def add_events_to_store(
-    store: MemoryEventStore,
+    store: InMemoryEventStore,
     count: int,
 ) -> list[DomainEvent]:
     """Helper to add events to the store."""
@@ -126,7 +126,7 @@ class TestManagerPauseSubscription:
     async def test_pause_running_subscription(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test pausing a running subscription."""
         await add_events_to_store(event_store, 5)
@@ -149,7 +149,7 @@ class TestManagerPauseSubscription:
     async def test_pause_with_reason(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test pausing with specific reason."""
         await add_events_to_store(event_store, 5)
@@ -195,7 +195,7 @@ class TestManagerPauseSubscription:
     async def test_pause_already_paused_returns_false(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test pausing already paused subscription returns False."""
         await add_events_to_store(event_store, 5)
@@ -216,7 +216,7 @@ class TestManagerPauseSubscription:
     async def test_pause_maintains_position(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test pause maintains checkpoint position."""
         await add_events_to_store(event_store, 10)
@@ -245,7 +245,7 @@ class TestManagerResumeSubscription:
     async def test_resume_paused_subscription(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test resuming a paused subscription."""
         await add_events_to_store(event_store, 5)
@@ -278,7 +278,7 @@ class TestManagerResumeSubscription:
     async def test_resume_not_paused_subscription_returns_false(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test resuming subscription that is not paused returns False."""
         await add_events_to_store(event_store, 5)
@@ -297,7 +297,7 @@ class TestManagerResumeSubscription:
     async def test_resume_continues_from_position(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test resume continues from paused position."""
         await add_events_to_store(event_store, 10)
@@ -328,7 +328,7 @@ class TestManagerPauseAll:
     async def test_pause_all_subscriptions(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test pausing all running subscriptions."""
         await add_events_to_store(event_store, 5)
@@ -356,7 +356,7 @@ class TestManagerPauseAll:
     async def test_pause_all_with_reason(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test pause_all with specific reason."""
         await add_events_to_store(event_store, 5)
@@ -376,7 +376,7 @@ class TestManagerPauseAll:
     async def test_pause_all_skips_non_running(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test pause_all skips subscriptions not in running state."""
         await add_events_to_store(event_store, 5)
@@ -417,7 +417,7 @@ class TestManagerResumeAll:
     async def test_resume_all_subscriptions(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test resuming all paused subscriptions."""
         await add_events_to_store(event_store, 5)
@@ -447,7 +447,7 @@ class TestManagerResumeAll:
     async def test_resume_all_skips_non_paused(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test resume_all skips subscriptions not in paused state."""
         await add_events_to_store(event_store, 5)
@@ -489,7 +489,7 @@ class TestPausedSubscriptionsProperties:
     async def test_paused_subscriptions_property(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test paused_subscriptions returns paused subscriptions."""
         await add_events_to_store(event_store, 5)
@@ -514,7 +514,7 @@ class TestPausedSubscriptionsProperties:
     async def test_paused_subscriptions_empty_when_none_paused(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test paused_subscriptions is empty when no subscriptions are paused."""
         await add_events_to_store(event_store, 5)
@@ -532,7 +532,7 @@ class TestPausedSubscriptionsProperties:
     async def test_paused_subscription_names_property(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test paused_subscription_names returns names of paused subscriptions."""
         await add_events_to_store(event_store, 5)
@@ -562,7 +562,7 @@ class TestPauseResumeLifecycle:
     async def test_multiple_pause_resume_cycles(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test multiple pause/resume cycles."""
         await add_events_to_store(event_store, 5)
@@ -585,7 +585,7 @@ class TestPauseResumeLifecycle:
     async def test_pause_does_not_affect_other_subscriptions(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test pausing one subscription does not affect others."""
         await add_events_to_store(event_store, 5)
@@ -611,7 +611,7 @@ class TestPauseResumeLifecycle:
     async def test_stop_while_paused(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test stopping manager while subscriptions are paused."""
         await add_events_to_store(event_store, 5)
@@ -639,7 +639,7 @@ class TestHealthStatusWithPaused:
     async def test_health_shows_paused_state(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test health status includes paused state."""
         await add_events_to_store(event_store, 5)
@@ -660,7 +660,7 @@ class TestHealthStatusWithPaused:
     async def test_subscription_status_shows_paused(
         self,
         manager: SubscriptionManager,
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ):
         """Test subscription status shows paused state."""
         await add_events_to_store(event_store, 5)

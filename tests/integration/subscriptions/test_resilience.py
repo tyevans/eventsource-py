@@ -24,7 +24,7 @@ import pytest_asyncio
 
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
 from eventsource.adapters.memory.dlq import InMemoryDLQRepository
-from eventsource.adapters.memory.store import MemoryEventStore
+from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.bus.memory import InMemoryEventBus
 from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
@@ -274,7 +274,7 @@ async def in_memory_dlq_repo() -> AsyncGenerator[InMemoryDLQRepository, None]:
 
 @pytest_asyncio.fixture
 async def subscription_manager_with_dlq(
-    in_memory_event_store: MemoryEventStore,
+    in_memory_event_store: InMemoryEventStore,
     in_memory_event_bus: InMemoryEventBus,
     in_memory_checkpoint_repo: InMemoryCheckpointRepository,
     in_memory_dlq_repo: InMemoryDLQRepository,

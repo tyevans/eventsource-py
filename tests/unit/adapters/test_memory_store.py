@@ -2,7 +2,7 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.adapters.memory import MemoryEventStore
+from eventsource.adapters.memory import InMemoryEventStore
 from eventsource.domain import StreamId
 from eventsource.events import DomainEvent
 from eventsource.exceptions import DuplicateEventError, OptimisticLockError
@@ -18,12 +18,12 @@ def sid() -> StreamId:
 
 
 @pytest.fixture
-def store() -> MemoryEventStore:
-    return MemoryEventStore()
+def store() -> InMemoryEventStore:
+    return InMemoryEventStore()
 
 
 class TestAppend:
-    async def test_append_returns_one_based_version(self, store: MemoryEventStore) -> None:
+    async def test_append_returns_one_based_version(self, store: InMemoryEventStore) -> None:
         stream = sid()
         result = await store.append(
             stream,
@@ -33,10 +33,10 @@ class TestAppend:
         assert result.new_version == 1
         assert await store.get_stream_version(stream) == 1
 
-    async def test_absent_stream_version_zero(self, store: MemoryEventStore) -> None:
+    async def test_absent_stream_version_zero(self, store: InMemoryEventStore) -> None:
         assert await store.get_stream_version(sid()) == 0
 
-    async def test_exact_conflict_raises(self, store: MemoryEventStore) -> None:
+    async def test_exact_conflict_raises(self, store: InMemoryEventStore) -> None:
         stream = sid()
         await store.append(
             stream,
@@ -50,7 +50,7 @@ class TestAppend:
                 ExpectedVersion.exact(0),
             )
 
-    async def test_duplicate_event_id_rejected_atomically(self, store: MemoryEventStore) -> None:
+    async def test_duplicate_event_id_rejected_atomically(self, store: InMemoryEventStore) -> None:
         stream = sid()
         event = ThingHappened(aggregate_id=stream.aggregate_id)
         await store.append(stream, [event], ExpectedVersion.no_stream())
@@ -59,13 +59,13 @@ class TestAppend:
             await store.append(stream, [fresh, event], ExpectedVersion.exact(1))
         assert await store.get_stream_version(stream) == 1  # atomic: fresh not written
 
-    async def test_empty_batch_rejected(self, store: MemoryEventStore) -> None:
+    async def test_empty_batch_rejected(self, store: InMemoryEventStore) -> None:
         with pytest.raises(ValueError):
             await store.append(sid(), [], ExpectedVersion.any_())
 
 
 class TestFeed:
-    async def test_exclusive_resumption(self, store: MemoryEventStore) -> None:
+    async def test_exclusive_resumption(self, store: InMemoryEventStore) -> None:
         stream = sid()
         await store.append(
             stream,
@@ -76,12 +76,12 @@ class TestFeed:
         resumed = [env async for env in store.read_all(from_position=first_two[-1].position)]
         assert len(resumed) == 1
 
-    async def test_current_position_none_when_empty(self, store: MemoryEventStore) -> None:
+    async def test_current_position_none_when_empty(self, store: InMemoryEventStore) -> None:
         assert await store.current_position() is None
 
 
 class TestStreamRead:
-    async def test_read_stream_forward(self, store: MemoryEventStore) -> None:
+    async def test_read_stream_forward(self, store: InMemoryEventStore) -> None:
         stream = sid()
         await store.append(
             stream,
@@ -91,7 +91,7 @@ class TestStreamRead:
         envs = await collect(store.read_stream(stream))
         assert [e.stream_version for e in envs] == [1, 2, 3]
 
-    async def test_read_stream_backward(self, store: MemoryEventStore) -> None:
+    async def test_read_stream_backward(self, store: InMemoryEventStore) -> None:
         from eventsource.ports import ReadDirection, StreamReadOptions
 
         stream = sid()
@@ -105,7 +105,7 @@ class TestStreamRead:
         )
         assert [e.stream_version for e in envs] == [3, 2, 1]
 
-    async def test_event_exists(self, store: MemoryEventStore) -> None:
+    async def test_event_exists(self, store: InMemoryEventStore) -> None:
         stream = sid()
         event = ThingHappened(aggregate_id=stream.aggregate_id)
         assert await store.event_exists(event.event_id) is False
@@ -114,7 +114,7 @@ class TestStreamRead:
 
 
 class TestCategory:
-    async def test_read_category(self, store: MemoryEventStore) -> None:
+    async def test_read_category(self, store: InMemoryEventStore) -> None:
         stream = sid()
         await store.append(
             stream,

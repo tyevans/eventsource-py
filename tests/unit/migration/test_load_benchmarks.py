@@ -1,7 +1,7 @@
 """
 Load Testing and Benchmarks for Migration Operations (P4-005).
 
-This module contains synthetic benchmarks using MemoryEventStore to establish
+This module contains synthetic benchmarks using InMemoryEventStore to establish
 baseline performance characteristics for migration system components.
 
 Performance Targets:
@@ -44,7 +44,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from eventsource.adapters.memory import MemoryEventStore
+from eventsource.adapters.memory import InMemoryEventStore
 from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.migration.bulk_copier import BulkCopier
@@ -184,7 +184,7 @@ class MemoryResult:
 
 class RaisingTargetStore:
     """
-    `FullEventStore`-shaped wrapper around `MemoryEventStore` whose
+    `FullEventStore`-shaped wrapper around `InMemoryEventStore` whose
     `append` always raises.
 
     Structural conformance only -- delegates the other seven members to
@@ -193,8 +193,8 @@ class RaisingTargetStore:
 
     max_append_batch: int | None = None
 
-    def __init__(self, inner: MemoryEventStore | None = None) -> None:
-        self._inner = inner or MemoryEventStore()
+    def __init__(self, inner: InMemoryEventStore | None = None) -> None:
+        self._inner = inner or InMemoryEventStore()
 
     async def append(
         self,
@@ -450,7 +450,7 @@ class InMemoryPositionMappingRepository:
 
 
 async def create_test_events(
-    store: MemoryEventStore,
+    store: InMemoryEventStore,
     tenant_id: UUID,
     count: int,
     aggregate_count: int = 100,
@@ -534,8 +534,8 @@ class TestBulkCopyThroughput:
         Measures events/second for different batch size configurations.
         """
         tenant_id = uuid4()
-        source_store = MemoryEventStore()
-        target_store = MemoryEventStore()
+        source_store = InMemoryEventStore()
+        target_store = InMemoryEventStore()
         migration_repo = InMemoryMigrationRepository()
 
         # Create test events in source
@@ -592,8 +592,8 @@ class TestBulkCopyThroughput:
     async def test_bulk_copy_with_large_payload(self) -> None:
         """Test bulk copy performance with larger event payloads."""
         tenant_id = uuid4()
-        source_store = MemoryEventStore()
-        target_store = MemoryEventStore()
+        source_store = InMemoryEventStore()
+        target_store = InMemoryEventStore()
         migration_repo = InMemoryMigrationRepository()
 
         event_count = 5_000
@@ -657,8 +657,8 @@ class TestDualWriteOverhead:
 
         Measures the overhead introduced by dual-write mode.
         """
-        source_store = MemoryEventStore()
-        target_store = MemoryEventStore()
+        source_store = InMemoryEventStore()
+        target_store = InMemoryEventStore()
         tenant_id = uuid4()
 
         # Number of operations for statistical significance
@@ -736,7 +736,7 @@ class TestDualWriteOverhead:
 
         Verifies that target failures don't significantly impact latency.
         """
-        source_store = MemoryEventStore()
+        source_store = InMemoryEventStore()
         tenant_id = uuid4()
         num_operations = 200
 
@@ -787,8 +787,8 @@ class TestDualWriteOverhead:
         """
         Test dual-write performance with batches of multiple events.
         """
-        source_store = MemoryEventStore()
-        target_store = MemoryEventStore()
+        source_store = InMemoryEventStore()
+        target_store = InMemoryEventStore()
         tenant_id = uuid4()
 
         interceptor = DualWriteInterceptor(
@@ -855,8 +855,8 @@ class TestMemoryUsage:
         not total event count.
         """
         tenant_id = uuid4()
-        source_store = MemoryEventStore()
-        target_store = MemoryEventStore()
+        source_store = InMemoryEventStore()
+        target_store = InMemoryEventStore()
         migration_repo = InMemoryMigrationRepository()
 
         event_count = 10_000
@@ -974,8 +974,8 @@ class TestConcurrentMigrations:
 
         async def run_migration(index: int) -> BenchmarkResult:
             tenant_id = uuid4()
-            source_store = MemoryEventStore()
-            target_store = MemoryEventStore()
+            source_store = InMemoryEventStore()
+            target_store = InMemoryEventStore()
             migration_repo = InMemoryMigrationRepository()
 
             await create_test_events(source_store, tenant_id, events_per_migration)
@@ -1039,8 +1039,8 @@ class TestConcurrentMigrations:
         """
         Test concurrent dual-write operations.
         """
-        source_store = MemoryEventStore()
-        target_store = MemoryEventStore()
+        source_store = InMemoryEventStore()
+        target_store = InMemoryEventStore()
 
         num_tenants = 5
         ops_per_tenant = 100
@@ -1366,8 +1366,8 @@ class TestPerformanceRegression:
 
     @pytest.mark.asyncio
     async def test_event_store_append_regression(self) -> None:
-        """Ensure MemoryEventStore append performance hasn't regressed."""
-        store = MemoryEventStore()
+        """Ensure InMemoryEventStore append performance hasn't regressed."""
+        store = InMemoryEventStore()
         tenant_id = uuid4()
         num_operations = 1_000
 
@@ -1397,8 +1397,8 @@ class TestPerformanceRegression:
 
     @pytest.mark.asyncio
     async def test_event_store_read_all_regression(self) -> None:
-        """Ensure MemoryEventStore read_all performance hasn't regressed."""
-        store = MemoryEventStore()
+        """Ensure InMemoryEventStore read_all performance hasn't regressed."""
+        store = InMemoryEventStore()
         tenant_id = uuid4()
 
         # Create 10K events
@@ -1430,8 +1430,8 @@ class TestPerformanceRegression:
     @pytest.mark.asyncio
     async def test_dual_write_regression(self) -> None:
         """Ensure DualWriteInterceptor performance hasn't regressed."""
-        source_store = MemoryEventStore()
-        target_store = MemoryEventStore()
+        source_store = InMemoryEventStore()
+        target_store = InMemoryEventStore()
         tenant_id = uuid4()
 
         interceptor = DualWriteInterceptor(
@@ -1492,8 +1492,8 @@ class TestBenchmarkSummary:
 
         # Bulk copy benchmark
         tenant_id = uuid4()
-        source_store = MemoryEventStore()
-        target_store = MemoryEventStore()
+        source_store = InMemoryEventStore()
+        target_store = InMemoryEventStore()
         migration_repo = InMemoryMigrationRepository()
 
         await create_test_events(source_store, tenant_id, 5_000)
@@ -1527,8 +1527,8 @@ class TestBenchmarkSummary:
         summary.append(f"  Throughput: {events_copied / bulk_copy_time:,.0f} events/s")
 
         # Dual-write benchmark
-        source_store2 = MemoryEventStore()
-        target_store2 = MemoryEventStore()
+        source_store2 = InMemoryEventStore()
+        target_store2 = InMemoryEventStore()
         tenant_id2 = uuid4()
 
         interceptor = DualWriteInterceptor(

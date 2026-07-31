@@ -10,7 +10,7 @@ Tests cover comprehensive scenarios for:
 - OpenTelemetry metrics recording (if available)
 
 These tests verify that all Phase 3 features work together correctly
-in realistic integration scenarios using MemoryEventStore,
+in realistic integration scenarios using InMemoryEventStore,
 InMemoryEventBus, and InMemoryCheckpointRepository.
 """
 

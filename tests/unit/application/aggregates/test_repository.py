@@ -10,7 +10,7 @@ Tests cover:
 - Existence checking (exists, get_version)
 - Creating new aggregate instances (create_new)
 - Error handling (AggregateNotFoundError, OptimisticLockError)
-- Integration with MemoryEventStore
+- Integration with InMemoryEventStore
 """
 
 from uuid import UUID, uuid4
@@ -18,7 +18,7 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import BaseModel, Field
 
-from eventsource.adapters.memory.store import MemoryEventStore
+from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.domain import StreamId
 from eventsource.domain.aggregate import AggregateRoot
@@ -223,13 +223,13 @@ class MockEventPublisher:
 
 
 @pytest.fixture
-def event_store() -> MemoryEventStore:
-    """Create a fresh MemoryEventStore for each test."""
-    return MemoryEventStore()
+def event_store() -> InMemoryEventStore:
+    """Create a fresh InMemoryEventStore for each test."""
+    return InMemoryEventStore()
 
 
 @pytest.fixture
-def counter_repository(event_store: MemoryEventStore) -> AggregateRepository[CounterAggregate]:
+def counter_repository(event_store: InMemoryEventStore) -> AggregateRepository[CounterAggregate]:
     """Create a repository for CounterAggregate."""
     return AggregateRepository(
         event_store=event_store,
@@ -239,7 +239,7 @@ def counter_repository(event_store: MemoryEventStore) -> AggregateRepository[Cou
 
 
 @pytest.fixture
-def order_repository(event_store: MemoryEventStore) -> AggregateRepository[OrderAggregate]:
+def order_repository(event_store: InMemoryEventStore) -> AggregateRepository[OrderAggregate]:
     """Create a repository for OrderAggregate."""
     return AggregateRepository(
         event_store=event_store,
@@ -256,7 +256,7 @@ def mock_publisher() -> MockEventPublisher:
 
 @pytest.fixture
 def counter_repository_with_publisher(
-    event_store: MemoryEventStore, mock_publisher: MockEventPublisher
+    event_store: InMemoryEventStore, mock_publisher: MockEventPublisher
 ) -> AggregateRepository[CounterAggregate]:
     """Create a repository with event publisher."""
     return AggregateRepository(
@@ -275,7 +275,7 @@ def counter_repository_with_publisher(
 class TestRepositoryInitialization:
     """Tests for repository initialization and properties."""
 
-    def test_repository_stores_event_store(self, event_store: MemoryEventStore) -> None:
+    def test_repository_stores_event_store(self, event_store: InMemoryEventStore) -> None:
         """Repository should store the event store reference."""
         repo: AggregateRepository[CounterAggregate] = AggregateRepository(
             event_store=event_store,
@@ -284,7 +284,7 @@ class TestRepositoryInitialization:
         )
         assert repo.event_store is event_store
 
-    def test_repository_stores_aggregate_type(self, event_store: MemoryEventStore) -> None:
+    def test_repository_stores_aggregate_type(self, event_store: InMemoryEventStore) -> None:
         """Repository should store the aggregate type."""
         repo: AggregateRepository[CounterAggregate] = AggregateRepository(
             event_store=event_store,
@@ -294,7 +294,7 @@ class TestRepositoryInitialization:
         assert repo.aggregate_type == "Counter"
 
     def test_repository_stores_event_publisher(
-        self, event_store: MemoryEventStore, mock_publisher: MockEventPublisher
+        self, event_store: InMemoryEventStore, mock_publisher: MockEventPublisher
     ) -> None:
         """Repository should store the event publisher if provided."""
         repo: AggregateRepository[CounterAggregate] = AggregateRepository(
@@ -305,7 +305,7 @@ class TestRepositoryInitialization:
         )
         assert repo.event_publisher is mock_publisher
 
-    def test_repository_without_publisher(self, event_store: MemoryEventStore) -> None:
+    def test_repository_without_publisher(self, event_store: InMemoryEventStore) -> None:
         """Repository without publisher should have None event_publisher."""
         repo: AggregateRepository[CounterAggregate] = AggregateRepository(
             event_store=event_store,
@@ -322,7 +322,7 @@ class TestLoadAggregate:
     async def test_load_existing_aggregate(
         self,
         counter_repository: AggregateRepository[CounterAggregate],
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ) -> None:
         """load() should reconstitute aggregate from events."""
         agg_id = uuid4()
@@ -379,7 +379,7 @@ class TestLoadAggregate:
     async def test_load_aggregate_has_no_uncommitted_events(
         self,
         counter_repository: AggregateRepository[CounterAggregate],
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ) -> None:
         """Loaded aggregate should have no uncommitted events."""
         agg_id = uuid4()
@@ -409,7 +409,7 @@ class TestLoadOrCreate:
     async def test_load_or_create_loads_existing(
         self,
         counter_repository: AggregateRepository[CounterAggregate],
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ) -> None:
         """load_or_create() should load existing aggregate."""
         agg_id = uuid4()
@@ -469,7 +469,7 @@ class TestGetOrRaise:
     async def test_get_or_raise_returns_existing(
         self,
         counter_repository: AggregateRepository[CounterAggregate],
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ) -> None:
         """get_or_raise() should return existing aggregate."""
         agg_id = uuid4()
@@ -509,7 +509,7 @@ class TestSaveAggregate:
     async def test_save_new_aggregate(
         self,
         counter_repository: AggregateRepository[CounterAggregate],
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ) -> None:
         """save() should persist uncommitted events."""
         agg_id = uuid4()
@@ -560,7 +560,7 @@ class TestSaveAggregate:
     async def test_save_no_op_when_no_uncommitted_events(
         self,
         counter_repository: AggregateRepository[CounterAggregate],
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ) -> None:
         """save() should be no-op when there are no uncommitted events."""
         agg_id = uuid4()
@@ -578,7 +578,7 @@ class TestSaveAggregate:
     async def test_save_existing_aggregate_with_new_events(
         self,
         counter_repository: AggregateRepository[CounterAggregate],
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ) -> None:
         """save() should append new events to existing aggregate."""
         agg_id = uuid4()
@@ -607,7 +607,7 @@ class TestOptimisticConcurrency:
     async def test_concurrent_modification_raises_error(
         self,
         counter_repository: AggregateRepository[CounterAggregate],
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ) -> None:
         """Concurrent modification should raise OptimisticLockError."""
         agg_id = uuid4()
@@ -640,7 +640,7 @@ class TestOptimisticConcurrency:
     async def test_expected_version_calculated_correctly(
         self,
         counter_repository: AggregateRepository[CounterAggregate],
-        event_store: MemoryEventStore,
+        event_store: InMemoryEventStore,
     ) -> None:
         """Expected version should be current version minus uncommitted events."""
         agg_id = uuid4()
@@ -893,7 +893,7 @@ class TestGenericTyping:
 
     @pytest.mark.asyncio
     async def test_different_aggregate_types_in_different_repos(
-        self, event_store: MemoryEventStore
+        self, event_store: InMemoryEventStore
     ) -> None:
         """Different repositories should handle different aggregate types."""
         counter_repo: AggregateRepository[CounterAggregate] = AggregateRepository(

@@ -1,11 +1,8 @@
-"""PostgreSQL adapter implementing the five new store ports.
+"""PostgreSQL adapter implementing the five store ports.
 
-Ported from `eventsource.stores.postgresql.PostgreSQLEventStore` (untouched
--- that module remains the legacy `EventStore` ABC implementation). This
-adapter targets the `eventsource.ports.store` protocols instead: it reuses
-the old store's SQL and session patterns, but maps rows to `EventEnvelope`
-/ `AppendResult` / `Position` value objects and dispatches on
-`ExpectedVersion.kind` rather than integer sentinels.
+Targets the `eventsource.ports.store` protocols: rows map to
+`EventEnvelope` / `AppendResult` / `Position` value objects, and append
+dispatches on `ExpectedVersion.kind` rather than integer sentinels.
 
 Positions are minted from the `events.global_position` BIGSERIAL column via
 `IntPositionCodec`.
@@ -158,8 +155,7 @@ class PostgreSQLEventStore:
 
         No-op otherwise (the default): production deployments manage schema
         via `migrations/`, and queries against a missing table fail
-        naturally -- same behavior as the legacy `EventStore` ABC
-        implementation.
+        naturally.
 
         Runs the canonical `migrations/schemas/events.sql` (the same file
         `get_schema("events")` serves to Alembic/manual setup) as a single
@@ -361,8 +357,7 @@ class PostgreSQLEventStore:
     ) -> None:
         """Write one outbox row for `event`, on `session`, before commit.
 
-        Ported from `eventsource.stores.postgresql.PostgreSQLEventStore
-        ._write_to_outbox`. Must run on the same `AsyncSession` as the
+        Must run on the same `AsyncSession` as the
         event `INSERT`, before `append`'s single `await session.commit()`
         -- that is the atomicity guarantee the transactional outbox
         pattern exists to provide. The outbox *reader* lives in

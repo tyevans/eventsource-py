@@ -13,7 +13,7 @@ import pytest
 
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
 from eventsource.adapters.memory.dlq import InMemoryDLQRepository
-from eventsource.adapters.memory.store import MemoryEventStore
+from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.bus.memory import InMemoryEventBus
 from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
@@ -63,8 +63,8 @@ class TestHarnessProperties:
         return InMemoryTestHarness()
 
     def test_event_store_type(self, harness: InMemoryTestHarness) -> None:
-        """event_store returns MemoryEventStore."""
-        assert isinstance(harness.event_store, MemoryEventStore)
+        """event_store returns InMemoryEventStore."""
+        assert isinstance(harness.event_store, InMemoryEventStore)
 
     def test_event_bus_type(self, harness: InMemoryTestHarness) -> None:
         """event_bus returns InMemoryEventBus."""
