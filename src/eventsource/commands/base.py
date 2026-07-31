@@ -4,7 +4,7 @@ Command base model for CQRS-style command handling.
 Commands are immutable intents. Unlike events they are never persisted:
 a rejected command leaves no trace in the event store by design. There is
 no command registry, no serialization support, and no command bus — see
-ADR-0021 for the rationale and non-goals.
+ADR-0022 for the rationale and non-goals.
 
 Subclassing DomainCommand is opt-in. ``DeciderAggregate.execute()`` and
 ``AggregateRoot.create_event(command=...)`` accept any object as a command;
@@ -54,6 +54,6 @@ class DomainCommand(BaseModel):
 
         Copies only the event's correlation_id. Commands deliberately have
         no causation_id field — event -> command -> event linkage within a
-        workflow is by correlation (ADR-0021).
+        workflow is by correlation (ADR-0022).
         """
         return self.model_copy(update={"correlation_id": event.correlation_id})

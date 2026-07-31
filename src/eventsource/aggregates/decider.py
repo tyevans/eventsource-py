@@ -3,7 +3,7 @@ DeciderAggregate: the decider pattern as a first-class aggregate style.
 
 The domain is three pure functions — initial_state, decide, evolve — and
 this class is the imperative shell that adapts them to the AggregateRoot
-machinery (repositories, snapshots, replay). See ADR-0021 and
+machinery (repositories, snapshots, replay). See ADR-0022 and
 docs/explanation/decider-pattern.md.
 """
 
