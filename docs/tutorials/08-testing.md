@@ -519,7 +519,7 @@ directly, and its handlers take `(self, conn, event)` -- for a non-database proj
 the connection argument is `None`.
 
 ```python
-from eventsource.projections import DeclarativeProjection
+from eventsource import DeclarativeProjection
 
 
 class OrderSummaryProjection(DeclarativeProjection):

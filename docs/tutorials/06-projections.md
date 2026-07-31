@@ -266,8 +266,7 @@ are filled in for you.
 Create `order_projection.py`:
 
 ```python
-from eventsource import handles
-from eventsource.projections import DeclarativeProjection
+from eventsource import DeclarativeProjection, handles
 
 from order_events import OrderCreated, OrderShipped
 
@@ -724,8 +723,7 @@ Now the projection itself:
 ```python
 from sqlalchemy import text
 
-from eventsource import handles
-from eventsource.projections import DatabaseProjection
+from eventsource import DatabaseProjection, handles
 
 from order_events import OrderCreated, OrderShipped
 
@@ -1012,7 +1010,7 @@ support tickets.
 ```python
 from sqlalchemy import text
 
-from eventsource.projections import DatabaseProjection, handles
+from eventsource import DatabaseProjection, handles
 
 
 class OrderSummaryProjection(DatabaseProjection):
@@ -1052,8 +1050,8 @@ class OrderSummaryProjection(DatabaseProjection):
 
 Four things are worth pausing on.
 
-**`handles` comes from `eventsource.projections`** (re-exported from
-`eventsource.handlers`, and also available from the top-level `eventsource` package). It
+**`handles` comes from `eventsource.handlers`** (re-exported from the top-level
+`eventsource` package, and also from `eventsource.application.projections`). It
 is the same decorator `DeclarativeAggregate` uses.
 
 **The handler signature is `(self, conn, event)`.** `DatabaseProjection` inspects each
@@ -1396,7 +1394,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from eventsource.bus.memory import InMemoryEventBus
-from eventsource.repositories.checkpoint import InMemoryCheckpointRepository
+from eventsource import InMemoryCheckpointRepository
 from eventsource.stores.in_memory import InMemoryEventStore
 from eventsource.subscriptions import SubscriptionConfig, SubscriptionManager
 
@@ -1628,21 +1626,18 @@ from eventsource.migrations import get_schema
 ddl = get_schema("checkpoints", backend="sqlite")  # or backend="postgresql"
 ```
 
-Mind the constructor arguments, which differ by backend:
+`SQLCheckpointRepository` (`eventsource.adapters.sql`) is dialect-parameterized -- the
+same class serves both backends -- and always takes a SQLAlchemy `AsyncConnection` or
+`AsyncEngine`, never a raw driver connection:
 
 ```python
-import aiosqlite
-from eventsource.repositories.checkpoint import (
-    PostgreSQLCheckpointRepository,
-    SQLiteCheckpointRepository,
-)
+from eventsource import SQLCheckpointRepository
 
-# SQLite: an aiosqlite connection -- NOT a SQLAlchemy engine or session factory.
-db = await aiosqlite.connect("checkpoints.db")
-checkpoints = SQLiteCheckpointRepository(db)
+# SQLite: a SQLAlchemy AsyncEngine created against sqlite+aiosqlite://...
+checkpoints = SQLCheckpointRepository(sqlite_engine)
 
 # PostgreSQL: a SQLAlchemy AsyncConnection or AsyncEngine.
-checkpoints = PostgreSQLCheckpointRepository(engine)
+checkpoints = SQLCheckpointRepository(engine)
 ```
 
 Nothing else changes. The projection and the manager both take `checkpoint_repo` as a

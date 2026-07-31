@@ -454,7 +454,7 @@ zero-argument callable returning `UUID | None` instead of a fixed `UUID`:
 
 ```python
 from eventsource.multitenancy import get_current_tenant, tenant_scope
-from eventsource.projections import DeclarativeProjection
+from eventsource.application.projections import DeclarativeProjection
 
 
 projection = OrderSummaryProjection(tenant_filter=get_current_tenant)
@@ -618,8 +618,8 @@ consequences:
   `unregistered_event_handling="error"` cannot fire for a skipped event: a
   filtered-out event of an otherwise unhandled type is simply dropped.
 - **The checkpoint still advances.** After `_process_event` returns,
-  `_handle_with_retry` calls `await self._checkpoint_manager.update(event)` and
-  logs its usual "processed event" DEBUG line — a skip is indistinguishable
+  `_handle_with_retry` calls `record_checkpoint(...)` (when `checkpoint_repo`
+  is configured) and logs its usual "processed event" DEBUG line — a skip is indistinguishable
   from a successful handle at that layer. That is the behaviour you want for a
   per-tenant reader: it must not stall or rewind on another tenant's traffic.
   It also means resuming from the checkpoint will not replay skipped events, so
@@ -638,7 +638,7 @@ model that is missing rows:
 ```python
 import logging
 
-logging.getLogger("eventsource.projections").setLevel(logging.DEBUG)
+logging.getLogger("eventsource.application.projections").setLevel(logging.DEBUG)
 ```
 
 Note that the filter value is resolved again while building the message and the

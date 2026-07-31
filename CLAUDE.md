@@ -63,9 +63,14 @@ pre-commit run --all-files
 ```
 src/eventsource/
   domain/           # Entities ring: AggregateRoot, DeclarativeAggregate, StreamId (pure: stdlib + pydantic only)
-  application/      # Use-case ring: AggregateRepository, snapshot policy/scheduler collaborators
-  ports/            # Boundary interfaces: Snapshot/SnapshotStore, store/bus/envelope/position ports
-  adapters/         # Interface adapters: memory/postgresql/sqlite snapshot + event store implementations
+  application/      # Use-case ring: AggregateRepository, snapshot policy/scheduler collaborators;
+                    #   application/projections/: Projection, DeclarativeProjection, coordinator,
+                    #   checkpoint/DLQ functions, retry policies (DatabaseProjection is an adapter, not here)
+  ports/            # Boundary interfaces: Snapshot/SnapshotStore, ProjectionCheckpoints/SubscriptionPositions/
+                    #   CheckpointRepository, DLQRepository, store/bus/envelope/position ports
+  adapters/         # Interface adapters: memory/postgresql/sqlite snapshot + event store implementations;
+                    #   adapters/sql/: dialect-parameterized checkpoint, DLQ, and DatabaseProjection (both
+                    #   PostgreSQL and SQLite); adapters/memory/: in-memory checkpoint and DLQ repositories
   bus/              # EventBus interface + InMemory, Redis, RabbitMQ, Kafka backends (implementations colocated)
   events/           # DomainEvent (pydantic BaseModel), EventRegistry
   handlers/         # @handles decorator for declarative event routing
@@ -74,9 +79,9 @@ src/eventsource/
   migrations/       # SQL schema files (append-only)
   multitenancy/     # Tenant context (contextvars), scopes, TenantDomainEvent
   observability/    # OpenTelemetry tracing integration (optional dep)
-  projections/      # Projection, DeclarativeProjection, DatabaseProjection
   readmodels/       # ReadModelProjection
-  repositories/     # Checkpoint, DLQ, Outbox repos (postgres, sqlite, memory backends)
+  repositories/     # Outbox repository only (postgres, sqlite, memory backends) -- checkpoint and
+                    #   DLQ moved to ports/ + adapters/ (ADR 0024)
   serialization/    # JSON encoding (EventSourceJSONEncoder)
   stores/           # EventStore interface + PostgreSQL, SQLite, InMemory implementations
   subscriptions/    # Subscription lifecycle: manager, runners, retry, health, flow control

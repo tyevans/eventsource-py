@@ -1,27 +1,35 @@
 # Projections API Reference
 
-Technical reference for the `eventsource.projections` package: the projection base
-classes, the checkpoint/retry/DLQ pipeline they build on, the retry policies, and the
-registries and coordinators that drive them.
+Technical reference for the `eventsource.application.projections` package: the projection
+base classes, the checkpoint/retry/DLQ pipeline they build on, the retry policies, and
+the registries and coordinators that drive them. `DatabaseProjection` is documented here
+too, even though it lives in `eventsource.adapters.sql` rather than this package — its
+constructor takes a SQLAlchemy `async_sessionmaker`, which makes it an adapter (ADR
+0024), but it subclasses `DeclarativeProjection` and is part of the same class hierarchy
+a reader of this page needs.
 
 The package is organized into five source modules:
 
 | Module | Contains |
 | --- | --- |
-| `eventsource.projections.base` | `Projection`, `SyncProjection`, `EventHandlerBase`, `CheckpointTrackingProjection`, `DeclarativeProjection`, `DatabaseProjection`, `TenantFilter` |
-| `eventsource.projections.coordinator` | `ProjectionRegistry`, `ProjectionCoordinator`, `SubscriberRegistry` |
-| `eventsource.projections.retry` | `RetryPolicy`, `ExponentialBackoffRetryPolicy`, `NoRetryPolicy`, `FilteredRetryPolicy`, `DEFAULT_RETRY_POLICY` |
-| `eventsource.projections.checkpoint_manager` | `ProjectionCheckpointManager` |
-| `eventsource.projections.dlq_manager` | `ProjectionDLQManager` |
-| `eventsource.projections.protocols` | `AsyncEventHandler` |
+| `eventsource.application.projections.base` | `Projection`, `SyncProjection`, `EventHandlerBase`, `CheckpointTrackingProjection`, `DeclarativeProjection`, `TenantFilter` |
+| `eventsource.application.projections.coordinator` | `ProjectionRegistry`, `ProjectionCoordinator`, `SubscriberRegistry` |
+| `eventsource.application.projections.retry` | `RetryPolicy`, `ExponentialBackoffRetryPolicy`, `NoRetryPolicy`, `FilteredRetryPolicy`, `DEFAULT_RETRY_POLICY` |
+| `eventsource.application.projections.checkpoints` | `record_checkpoint`, `read_checkpoint`, `lag_metrics_dict`, `reset_checkpoint` |
+| `eventsource.application.projections.dlq` | `send_to_dlq`, `read_failed_events` |
+| `eventsource.protocols` | `AsyncEventHandler` |
 
-Only the first two modules plus the protocols and the `@handles` helpers are re-exported
-from the `eventsource.projections` barrel; the retry policies and the two managers must
-be imported from their own modules. The `handles`, `get_handled_event_type`, and
-`is_event_handler` names re-exported here are aliases for the canonical definitions in
-`eventsource.handlers`, kept for backward compatibility — new code should import them
-from `eventsource.handlers`. The `EventHandler`, `SyncEventHandler`, and
-`EventSubscriber` names are likewise re-exports from `eventsource.protocols`.
+`DatabaseProjection` itself lives in `eventsource.adapters.sql.projection`.
+
+The barrel `eventsource.application.projections` re-exports `base`, `coordinator`,
+`checkpoints`, and `dlq` — everything except `DatabaseProjection` (which lives in
+`eventsource.adapters.sql.projection`, not this package) and the retry policies, which
+must still be imported from `eventsource.application.projections.retry`. The `handles`,
+`get_handled_event_type`, and `is_event_handler` names re-exported here are aliases for
+the canonical definitions in `eventsource.handlers`, kept for backward compatibility —
+new code should import them from `eventsource.handlers`. The `EventHandler`,
+`SyncEventHandler`, and `EventSubscriber` names are likewise re-exports from
+`eventsource.protocols`.
 
 The class hierarchy is linear: `CheckpointTrackingProjection` extends `Projection` and
 adds checkpointing, retry, and dead-letter handling; `DeclarativeProjection` extends
@@ -50,12 +58,12 @@ declare `subscribed_to()`) and implements `handle()` as a fixed pipeline:
 1. Open a `eventsource.projection.handle` span (a no-op unless tracing is enabled).
 2. Loop for `retry_policy.max_retries + 1` attempts, calling the subclass hook
    `_process_event(event)` on each.
-3. On success, record the event in the checkpoint via `ProjectionCheckpointManager` and
-   return.
+3. On success, record the event in the checkpoint via `record_checkpoint()` (skipped
+   entirely when `checkpoint_repo` is `None`) and return.
 4. On failure, consult `retry_policy.should_retry(attempt, exception)`. If it says
    retry, `asyncio.sleep(retry_policy.get_backoff(attempt))` and try again. If not,
-   write the event to the dead-letter queue via `ProjectionDLQManager` and **re-raise**
-   the original exception.
+   write the event to the dead-letter queue via `send_to_dlq()` (skipped when `dlq_repo`
+   is `None`) and **re-raise** the original exception.
 
 Two consequences of step 4 are worth stating up front: a permanently failing event is
 sent to the DLQ *and* propagated to the caller, and the checkpoint is not advanced for
@@ -80,64 +88,71 @@ accept `checkpoint_repo`, `dlq_repo`, `enable_tracing`, and (keyword-only)
 to `CheckpointTrackingProjection.__init__`. Any projection built on those two classes
 therefore always runs the inline default policy — `ExponentialBackoffRetryPolicy` with
 `max_retries=2` (three total attempts), `initial_delay=2.0`, `exponential_base=2.0`,
-`jitter=0.1` — regardless of what is in `eventsource.projections.retry`. This is called
+`jitter=0.1` — regardless of what is in `eventsource.application.projections.retry`. This is called
 out again under each class because it is the most common surprise in the package.
 
-Storage defaults are in-memory. Omitting `checkpoint_repo` yields an
-`InMemoryCheckpointRepository` and omitting `dlq_repo` yields an
-`InMemoryDLQRepository`, so checkpoints and dead-lettered events vanish with the
-process unless durable repositories are passed in. Tracing is likewise off by default
-(`enable_tracing=False`), a deliberate choice given how frequently projections run.
+Storage defaults are disabled, not in-memory (ADR 0024). Omitting `checkpoint_repo`
+means no checkpoint is ever written — `get_checkpoint()` / `get_lag_metrics()` return
+`None` — and omitting `dlq_repo` means a permanently failed event is logged at
+`critical` and re-raised with no DLQ write attempted. Pass
+`InMemoryCheckpointRepository()` / `InMemoryDLQRepository()` (from `eventsource`)
+explicitly for the old vanish-on-restart behavior; it is suitable for tests, not for
+production, which is exactly why it is no longer the default. Tracing is likewise off
+by default (`enable_tracing=False`), a deliberate choice given how frequently
+projections run.
 
 Nothing in these classes drives itself. Something else must call `handle()` — a
 subscription runner, or the `ProjectionCoordinator`/`ProjectionRegistry` pair in
-`eventsource.projections.coordinator`, which fan a single event out to the registered
-projections that subscribe to its type.
+`eventsource.application.projections.coordinator`, which fan a single event out to the
+registered projections that subscribe to its type.
 
-## Import Surface (`eventsource.projections`)
+## Import Surface (`eventsource.application.projections`)
 
-The barrel module `eventsource/projections/__init__.py` re-exports 15 names. This is the
-complete `__all__`, grouped as the source groups it:
+The barrel module `eventsource/application/projections/__init__.py` re-exports 20 names.
+This is the complete `__all__`, grouped as the source groups it:
 
 | Group | Names | Defined in |
 | --- | --- | --- |
-| Base classes | `Projection`, `SyncProjection`, `EventHandlerBase`, `CheckpointTrackingProjection`, `DeclarativeProjection`, `DatabaseProjection` | `eventsource.projections.base` |
-| Type aliases | `TenantFilter` | `eventsource.projections.base` |
+| Base classes | `Projection`, `SyncProjection`, `EventHandlerBase`, `CheckpointTrackingProjection`, `DeclarativeProjection` | `eventsource.application.projections.base` |
+| Type aliases | `TenantFilter` | `eventsource.application.projections.base` |
 | Decorators | `handles`, `get_handled_event_type`, `is_event_handler` | `eventsource.handlers` (re-export) |
-| Coordinators and registries | `ProjectionRegistry`, `ProjectionCoordinator`, `SubscriberRegistry` | `eventsource.projections.coordinator` |
+| Coordinators and registries | `ProjectionRegistry`, `ProjectionCoordinator`, `SubscriberRegistry` | `eventsource.application.projections.coordinator` |
+| Checkpoint functions | `record_checkpoint`, `read_checkpoint`, `lag_metrics_dict`, `reset_checkpoint` | `eventsource.application.projections.checkpoints` |
+| DLQ functions | `send_to_dlq`, `read_failed_events` | `eventsource.application.projections.dlq` |
 | Protocols | `EventHandler`, `SyncEventHandler`, `EventSubscriber` | `eventsource.protocols` (re-export) |
-| Protocols | `AsyncEventHandler` | `eventsource.projections.protocols`, itself a re-export of `eventsource.protocols` |
+
+`DatabaseProjection` is **not** in this barrel — it lives in
+`eventsource.adapters.sql.projection` because its constructor takes a SQLAlchemy
+`async_sessionmaker`.
 
 ```python
-from eventsource.projections import (
+from eventsource.application.projections import (
     CheckpointTrackingProjection,
-    DatabaseProjection,
     DeclarativeProjection,
     ProjectionCoordinator,
     ProjectionRegistry,
     TenantFilter,
     handles,
 )
+from eventsource.adapters.sql import DatabaseProjection
 ```
 
 ### What is *not* in the barrel
 
-Three modules in the package are not re-exported at all and must be imported by their
+The retry policies are not re-exported at all and must be imported by their
 full path:
 
 ```python
-from eventsource.projections.retry import (
+from eventsource.application.projections.retry import (
     DEFAULT_RETRY_POLICY,
     ExponentialBackoffRetryPolicy,
     FilteredRetryPolicy,
     NoRetryPolicy,
     RetryPolicy,
 )
-from eventsource.projections.checkpoint_manager import ProjectionCheckpointManager
-from eventsource.projections.dlq_manager import ProjectionDLQManager
 ```
 
-`from eventsource.projections import ExponentialBackoffRetryPolicy` raises
+`from eventsource.application.projections import ExponentialBackoffRetryPolicy` raises
 `ImportError`. Since `retry_policy` is the one constructor parameter that materially
 changes failure behavior, the deep import is the normal case, not an edge case.
 
@@ -146,25 +161,25 @@ changes failure behavior, the deep import is the normal case, not an edge case.
 The top-level `eventsource/__init__.py` re-exports a strict subset: `Projection`,
 `CheckpointTrackingProjection`, `DeclarativeProjection`, `DatabaseProjection`, and
 `handles`. It does **not** export `SyncProjection`, `EventHandlerBase`, `TenantFilter`,
-`get_handled_event_type`, `is_event_handler`, or any of the coordinator classes — those
-require `eventsource.projections`. The protocols (`EventHandler`, `SyncEventHandler`,
-`EventSubscriber`, `AsyncEventHandler`) are available from both places, plus
-`eventsource.protocols`, because all three paths resolve to the same objects.
+`get_handled_event_type`, `is_event_handler`, or any of the coordinator classes, the
+checkpoint functions, or the DLQ functions — those require
+`eventsource.application.projections`. The protocols (`EventHandler`, `SyncEventHandler`,
+`EventSubscriber`) are available from both places, plus `eventsource.protocols`,
+because all three paths resolve to the same objects.
 
 ### Aliases, not duplicates
 
 `handles`, `get_handled_event_type`, and `is_event_handler` are bound directly from
 `eventsource.handlers`; `EventHandler`, `SyncEventHandler`, and `EventSubscriber` from
-`eventsource.protocols`; and `eventsource.projections.protocols` contains nothing but a
-re-export of `AsyncEventHandler` from `eventsource.protocols`. Identity comparisons and
-`isinstance`/`issubclass` checks behave identically whichever path you import through.
-The projections-package copies exist for backward compatibility. New code should prefer
-the canonical modules: `eventsource.handlers` for the decorator helpers and
+`eventsource.protocols`. Identity comparisons and `isinstance`/`issubclass` checks
+behave identically whichever path you import through. The
+`application.projections`-package copies exist for backward compatibility. New code
+should prefer the canonical modules: `eventsource.handlers` for the decorator helpers and
 `eventsource.protocols` for the protocols.
 
 ## Abstract Base Classes
 
-Three ABCs in `eventsource.projections.base` define the minimal contracts. They contain
+Three ABCs in `eventsource.application.projections.base` define the minimal contracts. They contain
 no implementation at all — every method is `@abstractmethod` with a `pass` body — so
 instantiating any of them, or a subclass that leaves a method unimplemented, raises
 `TypeError` from `abc`.
@@ -231,7 +246,7 @@ a subclass that implements `handle()` but omits `reset()` (or vice versa), raise
 `TypeError` from `abc`.
 
 ```python
-from eventsource.projections import SyncProjection
+from eventsource.application.projections import SyncProjection
 
 class OrderCountProjection(SyncProjection):
     def __init__(self) -> None:
@@ -258,7 +273,7 @@ infrastructure, wrap it yourself: have an async `Projection.handle()` call the s
 using `asyncio.to_thread` if the work could block.
 
 It is also not exported from the top-level `eventsource` package; import it from
-`eventsource.projections`.
+`eventsource.application.projections`.
 
 ### `EventHandlerBase`
 
@@ -288,7 +303,7 @@ list of types the way `EventSubscriber.subscribed_to()` does, so filters can dep
 the event payload, not just the event class:
 
 ```python
-from eventsource.projections import EventHandlerBase, ProjectionRegistry
+from eventsource.application.projections import EventHandlerBase, ProjectionRegistry
 
 class LargeOrderAlertHandler(EventHandlerBase):
     def can_handle(self, event: DomainEvent) -> bool:
@@ -322,7 +337,7 @@ handler knows nothing about. Guard with `isinstance` before touching any type-sp
 attribute, as in the example above.
 
 `EventHandlerBase` is not exported from the top-level `eventsource` package; import it
-from `eventsource.projections`. It is also unrelated to the `EventHandler` and
+from `eventsource.application.projections`. It is also unrelated to the `EventHandler` and
 `AsyncEventHandler` names in `eventsource.protocols`, despite the similar spelling —
 those describe bus-level callables and subscribers, not registry-dispatched handlers.
 
@@ -340,8 +355,8 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
     ) -> None: ...
 ```
 
-Defined in `eventsource.projections.base`; exported from both `eventsource` and
-`eventsource.projections`. This is the base every durable projection in the library is
+Defined in `eventsource.application.projections.base`; exported from both `eventsource` and
+`eventsource.application.projections`. This is the base every durable projection in the library is
 built on — `DeclarativeProjection` and `DatabaseProjection` both descend from it — and
 the only one that supplies checkpointing, retry, dead-lettering, and tracing.
 
@@ -367,7 +382,7 @@ Leaving either abstract method unimplemented makes the class uninstantiable
 (`TypeError` from `abc`).
 
 ```python
-from eventsource.projections import CheckpointTrackingProjection
+from eventsource.application.projections import CheckpointTrackingProjection
 
 class OrderProjection(CheckpointTrackingProjection):
     def subscribed_to(self) -> list[type[DomainEvent]]:
@@ -393,10 +408,11 @@ parameter belongs to `@handles` handler methods on `DatabaseProjection`, not to 
   success, dead-letter and re-raise on final failure. The retry loop lives in
   `_handle_with_retry()`, which `DatabaseProjection` overrides so each attempt gets a
   fresh transaction.
-- **Checkpointing** via a `ProjectionCheckpointManager` keyed on the projection name,
-  advanced only after `_process_event()` returns without raising.
-- **Dead-lettering** via a `ProjectionDLQManager`, invoked when the policy declines a
-  further retry.
+- **Checkpointing** via `record_checkpoint()`, called against `self._checkpoint_repo`
+  and keyed on the projection name, advanced only after `_process_event()` returns
+  without raising -- skipped entirely when `checkpoint_repo` was `None`.
+- **Dead-lettering** via `send_to_dlq()`, called against `self._dlq_repo`, invoked when
+  the policy declines a further retry -- skipped when `dlq_repo` was `None`.
 - **`get_checkpoint()`, `get_lag_metrics()`, `reset()`** — read and rewind checkpoint
   state.
 - **Tracing** through a composed `Tracer` (`self._tracer`), off unless `enable_tracing=True`
@@ -425,30 +441,36 @@ modules — share a checkpoint key and will corrupt each other's position.
 | `_projection_name` | `self.__class__.__name__` |
 | `_tracer` | the `tracer` argument, else `create_tracer(__name__, enable_tracing)` |
 | `_enable_tracing` | `self._tracer.enabled` — the *effective* state, which is `False` when tracing was requested but OpenTelemetry is not installed |
-| `_checkpoint_manager` | `ProjectionCheckpointManager(projection_name, checkpoint_repo or InMemoryCheckpointRepository(), enable_tracing=enable_tracing)` |
-| `_dlq_manager` | `ProjectionDLQManager(projection_name, dlq_repo or InMemoryDLQRepository(), enable_tracing=enable_tracing)` |
+| `_checkpoint_repo` | the `checkpoint_repo` argument, unchanged — `None` means checkpoint tracking is disabled |
+| `_dlq_repo` | the `dlq_repo` argument, unchanged — `None` means DLQ capture is disabled |
 | `_retry_policy` | the `retry_policy` argument, else the inline default described below |
-| `_checkpoint_repo` / `_dlq_repo` | the repositories held by the two managers, re-exposed for convenience |
 
-One asymmetry to be aware of: an explicitly supplied `tracer` is used for the
-projection's own spans but is **not** passed to the two managers — they are constructed
-with the raw `enable_tracing` flag and build their own tracers. Passing
-`tracer=my_tracer, enable_tracing=False` therefore leaves checkpoint and DLQ spans
-disabled while projection spans are enabled.
+There is no wrapper object here. `record_checkpoint()` and `send_to_dlq()` are called
+directly against `self._checkpoint_repo` / `self._dlq_repo` (and `self._tracer`) at the
+call sites in `_handle_with_retry()`, guarded by an `is not None` check — the functions
+themselves take the repository and tracer as explicit parameters rather than holding
+them (ADR 0024). One consequence of that: there is no separate tracer for checkpoint and
+DLQ spans the way the old manager objects had — every span, whichever function opens it,
+uses `self._tracer`, so `tracer=my_tracer` covers projection, checkpoint, and DLQ spans
+uniformly.
 
-### Defaults are in-memory
+### Defaults disable the concern
 
-Omitting `checkpoint_repo` yields an `InMemoryCheckpointRepository`; omitting `dlq_repo`
-yields an `InMemoryDLQRepository`. Both are per-instance and per-process: checkpoints do
-not survive a restart, so the projection reprocesses from wherever the caller starts it,
-and dead-lettered events are lost entirely. Fine for tests; pass durable repositories in
-production.
+Omitting `checkpoint_repo` means checkpoint tracking is off: no checkpoint is ever
+written, and `get_checkpoint()` / `get_lag_metrics()` return `None`. Omitting `dlq_repo`
+means DLQ capture is off: a permanently failed event is logged at `critical` and
+re-raised, with no DLQ write attempted. This changed with ADR 0024 — both used to default
+to a fresh in-memory repository, which looked durable (`get_checkpoint()` returned a
+value, `get_lag_metrics()` returned real-looking numbers) while silently reprocessing
+the entire event stream on every restart. Pass `InMemoryCheckpointRepository()` /
+`InMemoryDLQRepository()` (from `eventsource`) explicitly to get that old behavior back;
+it remains fine for tests, and remains wrong for production.
 
 ### Constructor
 
 ```python
 CheckpointTrackingProjection(
-    checkpoint_repo: CheckpointRepository | None = None,
+    checkpoint_repo: ProjectionCheckpoints | None = None,
     dlq_repo: DLQRepository | None = None,
     retry_policy: RetryPolicy | None = None,
     tracer: Tracer | None = None,
@@ -457,34 +479,34 @@ CheckpointTrackingProjection(
 ```
 
 All five parameters are optional and positional-or-keyword, so
-`MyProjection()` is valid and produces a fully functional, entirely in-memory
-projection. This is the widest constructor in the hierarchy — the two subclasses
-accept strictly fewer parameters.
+`MyProjection()` is valid and produces a fully functional projection with checkpoint
+tracking and DLQ capture both disabled. This is the widest constructor in the
+hierarchy — the two subclasses accept strictly fewer parameters.
 
 | Parameter | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `checkpoint_repo` | `CheckpointRepository \| None` | `None` | Backing store for the projection's checkpoint. `None` → a fresh `InMemoryCheckpointRepository`. |
-| `dlq_repo` | `DLQRepository \| None` | `None` | Backing store for dead-lettered events. `None` → a fresh `InMemoryDLQRepository`. |
+| `checkpoint_repo` | `ProjectionCheckpoints \| None` | `None` | Backing store for the projection's checkpoint. `None` → checkpoint tracking disabled. |
+| `dlq_repo` | `DLQRepository \| None` | `None` | Backing store for dead-lettered events. `None` → DLQ capture disabled. |
 | `retry_policy` | `RetryPolicy \| None` | `None` | Governs attempt count and backoff. `None` → the inline `ExponentialBackoffRetryPolicy` described in the next section (**not** `DEFAULT_RETRY_POLICY`). |
-| `tracer` | `Tracer \| None` | `None` | Custom tracer for the projection's own spans. When given, `enable_tracing` is ignored for those spans. |
+| `tracer` | `Tracer \| None` | `None` | Custom tracer, shared by the projection's own spans and the checkpoint/DLQ spans. When given, `enable_tracing` is ignored. |
 | `enable_tracing` | `bool` | `False` | When `True` and OpenTelemetry is installed, builds a live tracer via `create_tracer(__name__, enable_tracing)`. |
 
-Both repository parameters take the interfaces from
-`eventsource.repositories.checkpoint` and `eventsource.repositories.dlq`; any
-implementation of those (PostgreSQL, SQLite, in-memory) is accepted. The constructor
-never validates them beyond typing, and never touches the store — no schema check, no
-connection attempt happens until the first `handle()` call.
+`checkpoint_repo` takes the `ProjectionCheckpoints` interface from
+`eventsource.ports.checkpoints`; `dlq_repo` takes `DLQRepository` from
+`eventsource.ports.dlq`. Any implementation of those (the dialect-parameterized SQL
+adapter, or in-memory) is accepted. The constructor never validates them beyond typing,
+and never touches the store — no schema check, no connection attempt happens until the
+first `handle()` call.
 
 ```python
-from eventsource.projections import CheckpointTrackingProjection
-from eventsource.projections.retry import ExponentialBackoffRetryPolicy
-from eventsource.repositories.checkpoint import PostgresCheckpointRepository
-from eventsource.repositories.dlq import PostgresDLQRepository
+from eventsource.application.projections import CheckpointTrackingProjection
+from eventsource.application.projections.retry import ExponentialBackoffRetryPolicy
+from eventsource import SQLCheckpointRepository, SQLDLQRepository
 from eventsource.subscriptions.retry import RetryConfig
 
 projection = OrderProjection(
-    checkpoint_repo=PostgresCheckpointRepository(pool),
-    dlq_repo=PostgresDLQRepository(pool),
+    checkpoint_repo=SQLCheckpointRepository(pool),
+    dlq_repo=SQLDLQRepository(pool),
     retry_policy=ExponentialBackoffRetryPolicy(RetryConfig(max_retries=5)),
     enable_tracing=True,
 )
@@ -496,10 +518,11 @@ configuration type is shared with the subscription machinery.
 
 #### Interactions worth knowing
 
-- **`tracer` wins over `enable_tracing` — but only for projection spans.** `self._tracer`
-  is `tracer or create_tracer(__name__, enable_tracing)`, while the checkpoint and DLQ
-  managers are constructed with the raw `enable_tracing` value. Passing a `tracer` with
-  `enable_tracing=False` gives you projection spans without checkpoint or DLQ spans.
+- **`tracer` covers checkpoint and DLQ spans too.** `self._tracer` is `tracer or
+  create_tracer(__name__, enable_tracing)`, and `record_checkpoint()` / `send_to_dlq()`
+  are called with that same tracer instance — unlike the old manager objects, there is
+  no separate `enable_tracing` value for checkpoint/DLQ spans to disagree with the
+  projection's own spans.
 - **`_enable_tracing` reflects reality, not the request.** It is assigned
   `self._tracer.enabled`, so it stays `False` when `enable_tracing=True` was passed but
   the optional OpenTelemetry dependency is missing. Read this attribute, not the
@@ -508,5 +531,5 @@ configuration type is shared with the subscription machinery.
   `self.__class__.__name__`; see *Naming and identity* above for the consequences.
 - **Subclasses must call it.** `DeclarativeProjection` and `DatabaseProjection` both
   invoke `super().__init__()`, but a hand-written subclass that overrides `__init__`
-  without chaining leaves `_checkpoint_manager`, `_dlq_manager`, and `_retry_policy`
+  without chaining leaves `_checkpoint_repo`, `_dlq_repo`, and `_retry_policy`
   unset, and `handle()` fails with `AttributeError` on the first event.

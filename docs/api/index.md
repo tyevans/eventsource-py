@@ -241,7 +241,7 @@ short-circuited by a snapshot, consumed by a projection, and distributed over a 
 | Event Stores | `eventsource.stores` | 9 (10 with the SQLite extra) |
 | [Aggregates](aggregates.md) | `eventsource.domain.aggregate`, `eventsource.application.aggregates`, `eventsource.handlers` | 4 |
 | [Snapshots](snapshots.md) | `eventsource.ports.snapshots`, `eventsource.application.aggregates.snapshotting`, `eventsource.adapters.{memory,postgresql,sqlite}` | 7 of 11 |
-| [Projections](projections.md) | `eventsource.projections`, `eventsource.readmodels` | 5 of 21 |
+| [Projections](projections.md) | `eventsource.application.projections`, `eventsource.readmodels` | 5 of 21 |
 | [Event Bus](bus.md) | `eventsource.bus` | 20 |
 
 Where a page documents more names than the barrel exports — snapshots, projections and
@@ -353,18 +353,22 @@ The page's central invariant: a snapshot is an optimization artifact, never the 
 truth. A missing, unreadable, or schema-mismatched snapshot degrades to a full event
 replay rather than surfacing an error.
 
-### Projections — `api/projections.md` (`eventsource.projections.base`, `eventsource.readmodels`)
+### Projections — `api/projections.md` (`eventsource.application.projections.base`, `eventsource.readmodels`)
 
-Covers the read side. From `eventsource.projections`: the `Projection` base class,
-`CheckpointTrackingProjection` for resumable consumers, `DeclarativeProjection` for
-`@handles`-based routing, and `DatabaseProjection` for projections that write through a
-SQLAlchemy session. The barrel exports those four plus `ReadModelProjection`; the
-projections module additionally exports `SyncProjection`, `EventHandlerBase`, the
-`TenantFilter` alias, the `handles` / `get_handled_event_type` / `is_event_handler`
-helpers, and the `ProjectionRegistry`, `ProjectionCoordinator`, and `SubscriberRegistry`
-that drive projections as a group. The retry policies
-(`eventsource.projections.retry`) and the checkpoint and DLQ managers are documented on
-the same page but must be imported from their own submodules.
+Covers the read side. From `eventsource.application.projections`: the `Projection` base
+class, `CheckpointTrackingProjection` for resumable consumers, and `DeclarativeProjection`
+for `@handles`-based routing. `DatabaseProjection` lives in `eventsource.adapters.sql`
+instead -- its constructor takes a SQLAlchemy `async_sessionmaker`, which makes it an
+adapter, not an application-ring class. The barrel exports `Projection`,
+`CheckpointTrackingProjection`, `DeclarativeProjection`, and `DatabaseProjection` plus
+`ReadModelProjection`; the `application.projections` package additionally exports
+`SyncProjection`, `EventHandlerBase`, the `TenantFilter` alias, the `handles` /
+`get_handled_event_type` / `is_event_handler` helpers, and the `ProjectionRegistry`,
+`ProjectionCoordinator`, and `SubscriberRegistry` that drive projections as a group. The
+retry policies (`eventsource.application.projections.retry`) and the checkpoint/DLQ
+functions (`eventsource.application.projections.checkpoints`,
+`eventsource.application.projections.dlq`) are documented on the same page but must be
+imported from their own submodules.
 
 From `eventsource.readmodels`: the `ReadModel` base class, the `ReadModelRepository`
 protocol with its in-memory, PostgreSQL, and SQLite implementations, the `Query` and

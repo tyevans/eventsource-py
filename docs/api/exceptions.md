@@ -537,8 +537,8 @@ Note the differences from the hand-written loop: you must pass
 `retryable_exceptions` explicitly (the default `TRANSIENT_EXCEPTIONS` does not
 include `OptimisticLockError`), and exhausting the retries raises `RetryError`
 wrapping the last failure rather than the `OptimisticLockError` itself. The
-retry policies in `eventsource.projections.retry` are for projection delivery
-and do not apply to the command side at all.
+retry policies in `eventsource.application.projections.retry` are for
+projection delivery and do not apply to the command side at all.
 
 If you deliberately do not want the version check — bulk import, replay into a
 fresh store — pass `ExpectedVersion.ANY` to `append_events` rather than catching

@@ -16,6 +16,8 @@ The preceding change under this decision was demoting `redis` from a core depend
 
 One part of the decision is knowingly unimplemented: asyncpg has no `*_AVAILABLE` guard, so the PostgreSQL paths import their driver unconditionally and surface a missing `postgresql` extra later, at driver-URL resolution, instead of at the guard. That inconsistency is documented under Consequences rather than treated as a bug to be silently fixed, because closing it changes the failure mode users currently see.
 
+Amended by [ADR 0024](0024-projection-persistence-ports.md).
+
 ## Context
 
 ### The dependency surface before the split
@@ -90,3 +92,7 @@ Naming them this way puts the smaller, more conservative set behind the more spe
 `dev` (pytest and its asyncio/cov plugins, mypy, ruff, testcontainers, pre-commit), `docs` (mkdocs, mkdocs-material, mkdocstrings, pymdown-extensions), and `benchmark` (pytest-benchmark) are extras of the same package but are never referenced by an aggregate and never imported by anything under `src/eventsource/`. They exist so contributors can provision a working environment from `pyproject.toml`, not because any library code path can reach them.
 
 Keeping them out of `all` is the point. An aggregate that mixed toolchain packages into a runtime install would put ruff, mypy, and a container runtime helper into production dependency trees and audit reports, which is precisely the outcome the core/backend split exists to prevent.
+
+## Consequences
+
+[ADR 0024](0024-projection-persistence-ports.md) split the checkpoint and DLQ repositories out of `repositories/` and into `ports/` + `adapters/sql/`; they now go through `adapters/_sql/connection.py`, while the outbox, read-model, and migration repositories keep going through `repositories/_connection.py`. The rationale above named `repositories/_connection.py` as the single shared connection-normalization layer for every SQL-backed implementation -- that is no longer true by file name, since two such layers now exist. The shared-abstraction argument the rationale actually rests on (every SQL-backed implementation is written against sqlalchemy's async engine rather than a driver API, which is what reduces "PostgreSQL" and "SQLite" to a URL-scheme choice) is unaffected by which module does the normalizing, so the conclusion -- sqlalchemy stays a core dependency -- is unchanged.

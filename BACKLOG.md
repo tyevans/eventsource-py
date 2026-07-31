@@ -16,15 +16,30 @@ Prerequisite (done): drop redis from core dependencies.
 ## Add CI boundary check for core surface purity (P2)
 
 Add a test that imports only core surface modules (events, aggregates, protocols,
-`stores/interface`, `projections/base`, handlers, exceptions, types) and asserts no
-sqlalchemy/redis modules are in `sys.modules` afterward. This prevents accidental
-coupling from creeping in and makes a future Tier 0 extraction cheap.
+`stores/interface`, `application/projections/base`, handlers, exceptions, types) and
+asserts no sqlalchemy/redis modules are in `sys.modules` afterward. This prevents
+accidental coupling from creeping in and makes a future Tier 0 extraction cheap.
 
 Note: import-linter contracts were added in commit 260c662 — check whether they
-already cover this before doing more work here.
+already cover this before doing more work here. As of ADR 0024, import-linter now
+covers the whole `eventsource.application` ring plus the memory adapters, so the
+remaining question is narrower than it was: whether a runtime `sys.modules` assertion
+adds anything over the static contract, or whether the static contract alone is
+sufficient and this item can be closed.
 
 Prerequisite (done): document core surface boundary for future Tier 0 extraction
 (`docs/core-surface.md`).
+
+## Migrate outbox repository to ports/adapters (P2)
+
+`src/eventsource/repositories/outbox.py` still mixes the `OutboxRepository` Protocol
+with its three implementations (PostgreSQL, SQLite, in-memory) in one file — the same
+defect ADR 0024 just fixed for the checkpoint and DLQ repositories. Moving it the same
+way (Protocol + dataclasses to `ports/outbox.py`, SQL implementation to
+`adapters/sql/outbox.py`, in-memory implementation to `adapters/memory/outbox.py`) is
+what finally lets `repositories/` disappear as a package, and lets the two SQL
+connection helpers (`adapters/_sql/connection.py` and `repositories/_connection.py`)
+merge into one.
 
 ## Deterministic or scheduled coverage for bus performance assertions (P3)
 

@@ -248,8 +248,6 @@ Because the driver is resolved by the dialect name in the URL, a missing `asyncp
 
 ```python
 try:
-    from eventsource.repositories.checkpoint import SQLiteCheckpointRepository
-    from eventsource.repositories.dlq import SQLiteDLQRepository
     from eventsource.repositories.outbox import SQLiteOutboxRepository
     from eventsource.stores.sqlite import SQLiteEventStore
 
@@ -257,6 +255,8 @@ try:
 except ImportError:
     SQLITE_AVAILABLE = False
 ```
+
+`SQLCheckpointRepository` and `SQLDLQRepository` (`eventsource.adapters.sql`) are not behind this guard: they are dialect-parameterized over the same SQLAlchemy async API PostgreSQL and SQLite both already require through the core `sqlalchemy` dependency, so they're unconditional exports regardless of which optional driver extra is installed.
 
 The practical consequence: without the `sqlite` extra, `from eventsource import SQLiteEventStore` raises `ImportError` -- the name is simply not bound. Check `SQLITE_AVAILABLE` if you need to branch. `SQLiteSnapshotStore` is the exception; it guards `aiosqlite` internally and raises `SQLiteNotAvailableError` (a subclass of `ImportError`) from its constructor instead.
 

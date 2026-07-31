@@ -43,17 +43,16 @@ pip install "eventsource-py[all]"
 
 For a database-backed deployment, apply the SQL schema first. The checkpoint recipes need the `projection_checkpoints` table and the DLQ recipes need `dead_letter_queue`; both ship in `src/eventsource/migrations/schemas/` (`checkpoints.sql`, `dlq.sql`, or `all.sql` / `sqlite_all.sql` for the full set).
 
-The PostgreSQL and SQLite repositories take a SQLAlchemy `AsyncConnection` or `AsyncEngine`:
+The SQL repositories are dialect-parameterized -- the same classes serve PostgreSQL and SQLite -- and take a SQLAlchemy `AsyncConnection` or `AsyncEngine`:
 
 ```python
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from eventsource.repositories.checkpoint import PostgreSQLCheckpointRepository
-from eventsource.repositories.dlq import PostgreSQLDLQRepository
+from eventsource import SQLCheckpointRepository, SQLDLQRepository
 
 engine = create_async_engine("postgresql+asyncpg://localhost/app")
-checkpoint_repo = PostgreSQLCheckpointRepository(engine)
-dlq_repo = PostgreSQLDLQRepository(engine)
+checkpoint_repo = SQLCheckpointRepository(engine)
+dlq_repo = SQLDLQRepository(engine)
 ```
 
 If you just want to follow along without infrastructure, swap in the in-memory implementations — `InMemoryCheckpointRepository()` and `InMemoryDLQRepository()` take no arguments, and `InMemoryEventStore` / `InMemoryEventBus` need no services. They lose all state when the process exits, so use them for tests and local exploration only.

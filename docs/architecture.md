@@ -248,19 +248,24 @@ without it, and the same shape repeats for `stores/interface.py`,
 `exceptions.py`, and `types.py`. `snapshots/interface.py` is the odd one out,
 with no in-library imports at all.
 
-Tier 0 is also where the layering is currently leaky, and the leak is worth
-knowing before you plan around it. All three modules under `repositories/` --
-`checkpoint.py`, `dlq.py`, `outbox.py` -- pack four layers into one file: the
-`runtime_checkable` Protocol, the data-transfer dataclasses, a stdlib-only
-in-memory implementation, and both SQL backends, under a module-level
-`from sqlalchemy import text`. Importing the Protocol therefore imports
-SQLAlchemy. That single decision propagates: `projections/base.py`,
-`projections/checkpoint_manager.py`, `projections/dlq_manager.py`,
-`testing/harness.py`, `testing/bdd.py`, and `readmodels/projection.py` are all
-outside Tier 0 for no reason of their own. Splitting the three repository
-modules is the pre-extraction cleanup `docs/core-surface.md` recommends, and it
-is the only structural work standing between the current package and an
-`eventsource-core` distribution.
+Tier 0 used to be leaky here, and it's worth knowing what changed. All three
+modules under `repositories/` -- `checkpoint.py`, `dlq.py`, `outbox.py` --
+used to pack four layers into one file: the `runtime_checkable` Protocol, the
+data-transfer dataclasses, a stdlib-only in-memory implementation, and both
+SQL backends, under a module-level `from sqlalchemy import text`. Importing
+the Protocol therefore imported SQLAlchemy, and that single decision
+propagated: `projections/base.py`, `projections/checkpoint_manager.py`,
+`projections/dlq_manager.py`, `testing/harness.py`, `testing/bdd.py`, and
+`readmodels/projection.py` were all outside Tier 0 for no reason of their own.
+[ADR 0024](adrs/0024-projection-persistence-ports.md) closed the checkpoint
+and DLQ half of that gap the same way ADR 0019 closed it for the event store:
+the Protocols and dataclasses moved to `ports/checkpoints.py` and
+`ports/dlq.py` (stdlib and typing only), the SQL implementations moved to
+`adapters/sql/`, and the in-memory ones to `adapters/memory/`.
+`application/projections/*` -- the module `projections/` became -- is now
+Tier-0-clean as a whole ring. `repositories/` now holds the outbox alone, and
+splitting it the same way is the one piece of pre-extraction cleanup that
+remains between the current package and an `eventsource-core` distribution.
 
 ### Tier 1: backend implementations
 
@@ -339,9 +344,10 @@ coordination, pause and resume, error classification, health and metrics, and a
 `shutdown.py` that is longer than any store implementation. `migration/` --
 live store-to-store migration through the phases `PENDING`, `BULK_COPY`,
 `DUAL_WRITE`, `CUTOVER`, `COMPLETED` -- belongs here too, as do the
-projection-side helpers extracted out of `CheckpointTrackingProjection`:
-`ProjectionCheckpointManager`, `ProjectionDLQManager`, the `RetryPolicy`
-protocol, and `ProjectionCoordinator`.
+projection-side collaborators `CheckpointTrackingProjection` calls into:
+the `record_checkpoint()` / `read_checkpoint()` / `lag_metrics_dict()` /
+`reset_checkpoint()` functions and the `send_to_dlq()` / `read_failed_events()`
+functions, the `RetryPolicy` protocol, and `ProjectionCoordinator`.
 
 What separates this tier from Tier 1 is not infrastructure but *time*. Tier 1
 answers "how is an event written down"; Tier 2 answers "what happens on the
@@ -898,12 +904,12 @@ answer questions the write side never asks:
 - **Should this be tried again, and when?** A `RetryPolicy` decides, and
   `_handle_with_retry` runs the attempt loop for `max_retries + 1` tries,
   sleeping `get_backoff(attempt)` between them.
-- **What happens when trying again stops helping?** `ProjectionDLQManager`
-  parks the event, and only then -- after the policy has said `should_retry`
-  is false -- does the loop `raise`.
-- **Where is this projection up to?** `ProjectionCheckpointManager.update` runs
-  after `_process_event` returns cleanly, so the checkpoint records attempts
-  that succeeded rather than events that arrived.
+- **What happens when trying again stops helping?** `send_to_dlq()` parks the
+  event, and only then -- after the policy has said `should_retry` is false --
+  does the loop `raise`.
+- **Where is this projection up to?** `record_checkpoint()` runs after
+  `_process_event` returns cleanly, so the checkpoint records attempts that
+  succeeded rather than events that arrived.
 - **How does the next attempt get a clean database?** `DatabaseProjection`
   overrides the retry loop rather than the handler, so each attempt gets its
   own session -- a necessity, not a nicety, once PostgreSQL has aborted the
@@ -1242,9 +1248,9 @@ freshness is not guaranteed.
 The read side is not one class doing five jobs; it is five small pieces, each
 answerable for one question, wired together by a single method. That shape is
 recent and deliberate -- the module docstrings in `retry.py`,
-`checkpoint_manager.py`, and `dlq_manager.py` all say the same thing, that the
-extraction exists to undo a Single Responsibility violation in which retry,
-checkpointing, and DLQ handling all lived inside
+`checkpoints.py`, and `dlq.py` (under `application/projections/`) all say the
+same thing, that the extraction exists to undo a Single Responsibility
+violation in which retry, checkpointing, and DLQ handling all lived inside
 `CheckpointTrackingProjection`. What is left in the projection is the ordering
 of those pieces, and only that.
 
@@ -1293,30 +1299,39 @@ with `max_retries=2` (three attempts total) and `jitter=0.1`. So the backoff a
 default projection actually experiences is jittered, not deterministic, and it
 gives you one fewer attempt than the policy class's own defaults suggest.
 
-**`ProjectionCheckpointManager` (`checkpoint_manager.py`)** answers *where is
-this projection up to?* It wraps a `CheckpointRepository` -- in-memory unless
-you supply one -- and exposes `update(event)`, `get_checkpoint()`,
-`get_lag_metrics(event_types)`, and `reset()`. `update` records
-`(projection_name, event_id, event_type)`; it is called from exactly one place,
-immediately after `_process_event` returns without raising, which is what makes
-the checkpoint mean "an attempt succeeded" rather than "an event arrived".
-`get_lag_metrics` is the operational window: last processed id, latest relevant
-id in the store, lag in seconds, count processed. `reset` deletes the
-checkpoint so the projection replays from the beginning -- the rebuild
-primitive.
+**Checkpoint functions (`application/projections/checkpoints.py`)** answer
+*where is this projection up to?* `record_checkpoint`, `read_checkpoint`,
+`lag_metrics_dict`, and `reset_checkpoint` each take a `ProjectionCheckpoints`
+repository and a `Tracer` as explicit parameters -- `CheckpointTrackingProjection`
+passes its own `checkpoint_repo` and `tracer` through, and either can be `None`
+(checkpoint tracking disabled) or omitted respectively.
+`record_checkpoint` records `(projection_name, event_id, event_type)`; it is
+called from exactly one place, immediately after `_process_event` returns
+without raising, which is what makes the checkpoint mean "an attempt
+succeeded" rather than "an event arrived". `lag_metrics_dict` is the
+operational window: last processed id, latest relevant id in the store, lag in
+seconds, count processed. `reset_checkpoint` deletes the checkpoint so the
+projection replays from the beginning -- the rebuild primitive. These four
+functions replace `ProjectionCheckpointManager`, which held no state beyond a
+repository reference and a tracer (see [ADR 0024](adrs/0024-projection-persistence-ports.md)); span names still read
+`eventsource.checkpoint_manager.*` deliberately, so existing dashboards keep
+working.
 
-**`ProjectionDLQManager` (`dlq_manager.py`)** answers *where does an event go
-when trying again has stopped helping?* `send_to_dlq(event, error,
-retry_count)` serialises the event with `model_dump(mode="json")` and stores it
-next to the error and the attempt count, so the entry is replayable rather than
-merely a log line. Its return type is the interesting part: `bool`, not `None`.
-A successful write logs a warning and returns `True`; a failed write is caught,
-logged with `logger.critical` and `exc_info=True`, and returns `False`. The DLQ
-manager never raises. That is a deliberate transfer of responsibility -- the
-pipeline's job at that moment is to re-raise the *original* handler error, and
-a secondary failure in the parking lot must not displace it. The cost is that
-the return value is currently ignored by `_handle_with_retry`, so a lost event
-is visible only in the logs.
+**DLQ functions (`application/projections/dlq.py`)** answer *where does an
+event go when trying again has stopped helping?* `send_to_dlq(repo,
+projection_name, event, error, retry_count, tracer)` serialises the event with
+`model_dump(mode="json")` and stores it next to the error and the attempt
+count, so the entry is replayable rather than merely a log line. Its return
+type is the interesting part: `bool`, not `None`. A successful write logs a
+warning and returns `True`; a failed write is caught, logged with
+`logger.critical` and `exc_info=True`, and returns `False`. It never raises.
+That is a deliberate transfer of responsibility -- the pipeline's job at that
+moment is to re-raise the *original* handler error, and a secondary failure in
+the parking lot must not displace it. The cost is that the return value is
+currently ignored by `_handle_with_retry`, so a lost event is visible only in
+the logs. `send_to_dlq` replaces `ProjectionDLQManager` for the same reason
+`record_checkpoint` replaces `ProjectionCheckpointManager`; its span names
+still read `eventsource.dlq_manager.*` deliberately.
 
 **`ProjectionCoordinator`, `ProjectionRegistry`, and `SubscriberRegistry`
 (`coordinator.py`)** answer *who gets this event?* The three are layered.
@@ -1360,7 +1375,7 @@ whether the event is interesting, typically with an `isinstance` check. `reset`
 is the rebuild primitive at this level: clear the read model so it can be
 refolded from the start of history. It is also the only one of the three
 exported from the top-level `eventsource` package; `SyncProjection` and
-`EventHandlerBase` must be imported from `eventsource.projections`.
+`EventHandlerBase` must be imported from `eventsource.application.projections`.
 
 `SyncProjection` is the same pair of methods without `await`. It exists for
 projections that do no I/O -- in-memory counters, test doubles, anything whose
@@ -1433,22 +1448,30 @@ happily "reset" by clearing its checkpoint and leaving stale rows in place.
 
 #### The constructor is where the defaults bite
 
-Four collaborators are injected, each with a fallback:
-`checkpoint_repo` defaults to `InMemoryCheckpointRepository`, `dlq_repo` to
-`InMemoryDLQRepository`, `tracer` to whatever `create_tracer(__name__,
-enable_tracing)` returns (a no-op unless you opt in), and `retry_policy` to a
-locally constructed `ExponentialBackoffRetryPolicy`. The repositories are then
-wrapped: a `ProjectionCheckpointManager` and a `ProjectionDLQManager`, both
-stamped with `self._projection_name`, which is simply
-`self.__class__.__name__`. That naming choice is quiet but consequential — the
-checkpoint key is your class name, so renaming a projection class orphans its
-checkpoint and the projection replays from the beginning.
+Four collaborators are injected: `checkpoint_repo`, `dlq_repo`, `tracer`, and
+`retry_policy`. `tracer` defaults to whatever `create_tracer(__name__,
+enable_tracing)` returns (a no-op unless you opt in), and `retry_policy`
+defaults to a locally constructed `ExponentialBackoffRetryPolicy`.
+`checkpoint_repo` and `dlq_repo` default to `None`, and `None` means the
+concern is disabled, not "construct an in-memory repository for me" ([ADR
+0024](adrs/0024-projection-persistence-ports.md)): with `checkpoint_repo=None`
+no checkpoint is written and `get_checkpoint()` / `get_lag_metrics()` return
+`None`; with `dlq_repo=None` a permanently failed event is logged at
+`critical` and re-raised, with no DLQ write attempted. Both are stored as
+plain attributes -- `self._checkpoint_repo`, `self._dlq_repo` -- alongside
+`self._projection_name`, which is simply `self.__class__.__name__`. That
+naming choice is quiet but consequential — the checkpoint key is your class
+name, so renaming a projection class orphans its checkpoint and the
+projection replays from the beginning.
 
-The in-memory defaults exist so a projection is constructible in a unit test
-with no database and no Docker. The cost is that they are not obviously wrong
-at construction time: a production projection that is never handed real
-repositories checkpoints into a dictionary that vanishes on restart, and parks
-its dead letters in the same dictionary.
+An in-memory default used to exist here, so a projection was constructible in
+a unit test with no database and no Docker, but it was a production footgun:
+a projection that never gets handed real repositories still *looks* durable
+from the outside -- `get_checkpoint()` returns a value, `get_lag_metrics()`
+returns real-looking numbers -- while silently checkpointing into a dictionary
+that vanishes on restart and reprocessing the entire event stream every time
+the process comes back up. Tests that want the old behavior pass
+`InMemoryCheckpointRepository()` / `InMemoryDLQRepository()` explicitly.
 
 The retry default deserves its own warning, because there are two of them and
 they disagree. `ExponentialBackoffRetryPolicy()` constructed with no argument —
@@ -1476,14 +1499,16 @@ each pass is the whole pipeline:
 ```python
 for attempt in range(max_attempts):
     try:
-        await self._process_event(event)          # 1. do the work
-        await self._checkpoint_manager.update(event)  # 2. only then advance
-        return                                     # 3. success ends the loop
+        await self._process_event(event)             # 1. do the work
+        if self._checkpoint_repo is not None:
+            await record_checkpoint(...)              # 2. only then advance
+        return                                        # 3. success ends the loop
     except Exception as e:
         if not self._retry_policy.should_retry(attempt, e):
-            await self._dlq_manager.send_to_dlq(event, e, attempt + 1)
+            if self._dlq_repo is not None:
+                await send_to_dlq(...)
             logger.critical(...)
-            raise                                  # 4. caller still sees the error
+            raise                                     # 4. caller still sees the error
         await asyncio.sleep(self._retry_policy.get_backoff(attempt))
 ```
 
@@ -1492,9 +1517,9 @@ Read that as five commitments rather than five statements.
 The checkpoint update sits *inside* the `try`, immediately after
 `_process_event` returns and before the `return`. That placement is the reason
 the checkpoint means "an attempt succeeded" and not "an event arrived" — and
-also the reason a failure in `_checkpoint_manager.update` itself is caught by
-the same handler and retried as though the projection work had failed, which
-will re-run `_process_event` on the next pass.
+also the reason a failure in `record_checkpoint()` itself is caught by the
+same handler and retried as though the projection work had failed, which will
+re-run `_process_event` on the next pass.
 
 The policy, not the loop, decides whether to continue. `should_retry(attempt,
 e)` receives both the attempt index and the exception, which is what makes
@@ -1653,58 +1678,74 @@ circuit the DLQ write — `send_to_dlq` runs whenever `should_retry` returns
 and "do not record" are different statements, and the protocol can only make
 the first.
 
-### ProjectionCheckpointManager (checkpoint_manager.py) — where the projection is
+### Checkpoint functions (application/projections/checkpoints.py) — where the projection is
 
 A checkpoint is the read side's answer to "if this process dies now, where does
-the next one start?" `ProjectionCheckpointManager` owns that answer, and — like
-`RetryPolicy` — it was extracted from `CheckpointTrackingProjection` for the
-reason its module docstring names outright: the projection was doing too many
-jobs. What is left here is small. The manager holds a projection name and a
-`CheckpointRepository`, wraps four calls in tracing spans and log lines, and
-forwards. It contains no policy of its own.
+the next one start?" Four module-level functions own that answer — like
+`RetryPolicy`, they were extracted from `CheckpointTrackingProjection` for the
+reason the module docstring names outright: the projection was doing too many
+jobs. Each function is small on purpose: it takes a `ProjectionCheckpoints`
+repository, a projection name, and a `Tracer` as explicit parameters, wraps one
+call in a tracing span and a log line, and forwards. None of the four hold
+state of their own, and none contain policy — that is what replaces
+`ProjectionCheckpointManager` (see [ADR 0024](adrs/0024-projection-persistence-ports.md)), which held the same
+repository reference and tracer as instance state but decided nothing either.
 
 #### Four operations, one key
 
-The name given at construction is the key for everything the manager does, and
-it comes from `self.__class__.__name__` when a projection builds its own. Every
-call below is scoped to that one string.
+The projection name passed to every call is the key for everything these
+functions do, and it comes from `self.__class__.__name__` when
+`CheckpointTrackingProjection` calls them. Every call below is scoped to that
+one string.
 
-`update(event)` is the write. It calls
-`update_checkpoint(projection_name, event_id, event_type)` and logs at `debug`.
-It is invoked from exactly one place in the whole library — the line
-immediately after `_process_event` returns without raising — and that single
-call site is what gives the checkpoint its meaning. It records *the last event
-an attempt succeeded on*, not the last event that arrived, and not the last
-event the store holds.
+`record_checkpoint(repo, projection_name, event, tracer)` is the write. It
+calls `update_checkpoint(projection_name, event_id, event_type)` on the
+repository and logs at `debug`. It is invoked from exactly one place in the
+whole library — the line immediately after `_process_event` returns without
+raising — and that single call site is what gives the checkpoint its meaning.
+It records *the last event an attempt succeeded on*, not the last event that
+arrived, and not the last event the store holds.
 
-`get_checkpoint()` is the read, returning `str(event_id)` or `None`. Note the
-type change: the repository deals in `UUID`, the manager hands back a string.
+`read_checkpoint(repo, projection_name, tracer)` is the read, returning
+`str(event_id)` or `None`. Note the type change: the repository deals in
+`UUID`, the function hands back a string.
 
-`get_lag_metrics(event_types)` is the operational window, returning a plain
-dict — `projection_name`, `last_event_id`, `latest_event_id`, `lag_seconds`,
-`events_processed`, `last_processed_at` — or `None` when no checkpoint exists
-yet. The `None` is worth internalising: a projection that has never
-successfully processed anything is indistinguishable, through this API, from
-one that does not exist. There is no "zero events, infinitely behind" reading.
+`lag_metrics_dict(repo, projection_name, event_types, tracer)` is the
+operational window, returning a plain dict — `projection_name`,
+`last_event_id`, `latest_event_id`, `lag_seconds`, `events_processed`,
+`last_processed_at` — or `None` when no checkpoint exists yet. The `None` is
+worth internalising: a projection that has never successfully processed
+anything is indistinguishable, through this API, from one that does not
+exist. There is no "zero events, infinitely behind" reading.
 
-`reset()` deletes the checkpoint and logs at `info`. That is the rebuild
-primitive: with no checkpoint, the projection starts from the beginning of
-history. It does not touch your read model — `CheckpointTrackingProjection.reset`
-calls `_truncate_read_models()` separately, and in that order.
+`reset_checkpoint(repo, projection_name, tracer)` deletes the checkpoint and
+logs at `info`. That is the rebuild primitive: with no checkpoint, the
+projection starts from the beginning of history. It does not touch your read
+model — `CheckpointTrackingProjection.reset` calls `_truncate_read_models()`
+separately, and in that order.
+
+All four are no-ops from the projection's point of view when
+`checkpoint_repo=None`: `CheckpointTrackingProjection` checks
+`self._checkpoint_repo is not None` before calling `record_checkpoint`, and
+`get_checkpoint()` / `get_lag_metrics()` short-circuit to `None` without
+calling `read_checkpoint()` / `lag_metrics_dict()` at all.
 
 #### An event id is a position only if something can order it
 
 The checkpoint stores a UUID, not an offset. On its own a UUID says nothing
 about *how far* along the stream you are — it is a bookmark that only the store
 can dereference. That is why lag is computed in the repository rather than in
-the manager, and why the two shipped repositories give such different answers.
+the calling function, and why the two shipped repositories give such different
+answers.
 
-`PostgreSQLCheckpointRepository.get_lag_metrics` runs a single query that finds
-the most recent event whose `event_type = ANY(:event_types)`, joins it against
-the checkpoint row, and takes `EXTRACT(EPOCH FROM (le.max_time -
-pc.last_processed_at))`. So the lag reported is **wall-clock distance between
-when the newest relevant event was written and when this projection last
-committed a checkpoint** — a staleness measure, not a count of unprocessed
+`SQLCheckpointRepository.get_lag_metrics` runs a single query that finds the
+most recent event whose type is one of `event_types`, joins it against the
+checkpoint row, and computes the elapsed time between that event and the
+checkpoint's `last_processed_at` (the PostgreSQL dialect via `EXTRACT(EPOCH
+FROM (le.max_time - pc.last_processed_at))`; SQLite via the equivalent
+dialect-resolved expression). So the lag reported is **wall-clock distance
+between when the newest relevant event was written and when this projection
+last committed a checkpoint** — a staleness measure, not a count of unprocessed
 events. Two guards flatten it to `0.0`: when `last_event_id` equals
 `latest_event_id` (caught up), and when the raw value is negative (the
 projection checkpointed after the newest event's timestamp, which clock skew
@@ -1713,10 +1754,11 @@ and out-of-order writes both produce).
 `InMemoryCheckpointRepository.get_lag_metrics` cannot do any of that. It has no
 event store to look at, so it returns `latest_event_id=None` and
 `lag_seconds=0.0` unconditionally, with a comment saying as much. The
-`event_types` argument is accepted and ignored. This matters because the
-in-memory repository is the *default* — a projection constructed with no
-arguments reports zero lag forever, and that zero is a placeholder rather than
-a measurement.
+`event_types` argument is accepted and ignored. Since `checkpoint_repo=None`
+is now the constructor default (not an in-memory repository), reaching this
+path requires deliberately passing `InMemoryCheckpointRepository()` — but if
+you do, the same caveat applies: that zero is a placeholder rather than a
+measurement.
 
 The `event_types` list itself comes from the projection:
 `get_lag_metrics()` on `CheckpointTrackingProjection` passes `[et.__name__ for
@@ -1730,27 +1772,29 @@ numbers.
 
 #### Counting, concurrency, and the other position API
 
-`events_processed` is incremented by the repository, not the manager — `+ 1` on
-every `update_checkpoint`, in the Postgres `ON CONFLICT` clause and in the
-in-memory dict alike. Because `update` is called once per *successful* attempt,
-the counter follows the same rule the checkpoint does: it counts successes, and
-a redelivered event that succeeds twice increments it twice. It is a throughput
-signal, not a distinct-event count.
+`events_processed` is incremented by the repository, not the calling function —
+`+ 1` on every `update_checkpoint`, in the SQL `ON CONFLICT` clause and in the
+in-memory dict alike. Because `record_checkpoint` is called once per
+*successful* attempt, the counter follows the same rule the checkpoint does:
+it counts successes, and a redelivered event that succeeds twice increments it
+twice. It is a throughput signal, not a distinct-event count.
 
 The in-memory repository guards its dict with an `asyncio.Lock`, so concurrent
-updates within one process are serialised. Nothing in the manager or either
-repository coordinates *across* processes: two instances of the same projection
-class share a checkpoint key and will overwrite each other's position. Running
-one projection in more than one place is a subscription-runtime concern, not
-something the checkpoint layer solves.
+updates within one process are serialised. Nothing in these functions or
+either repository coordinates *across* processes: two instances of the same
+projection class share a checkpoint key and will overwrite each other's
+position. Running one projection in more than one place is a
+subscription-runtime concern, not something the checkpoint layer solves.
 
-Finally, `CheckpointRepository` carries a second, parallel position API that
-the manager never touches: `get_position(subscription_id)` and
-`save_position(subscription_id, position, event_id, event_type)`, backed by a
-`global_position` column. That pair exists for the subscription runtime, which
-resumes from an integer offset rather than an event id. Be aware they share
-storage but not discipline — `update_checkpoint` on the in-memory repository
-rebuilds `CheckpointData` without carrying `global_position` forward, so a
-projection checkpointing through the manager will clear a position previously
-saved by a subscription under the same key. Keep the two names distinct unless
-you have checked the backend you are using.
+Finally, the composed `CheckpointRepository` protocol carries a second,
+parallel position API that these functions never touch:
+`get_position(subscription_id)` and `save_position(subscription_id, position,
+event_id, event_type)` from `SubscriptionPositions` — a segregated port in its
+own right (ADR 0024), backed by a `global_position` column. That pair exists
+for the subscription runtime, which resumes from an integer offset rather than
+an event id. Be aware they share storage but not discipline —
+`update_checkpoint` on the in-memory repository rebuilds `CheckpointData`
+without carrying `global_position` forward, so a projection checkpointing
+through `record_checkpoint` will clear a position previously saved by a
+subscription under the same key. Keep the two names distinct unless you have
+checked the backend you are using.

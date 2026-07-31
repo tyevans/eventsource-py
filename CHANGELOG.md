@@ -26,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`AggregateRoot` and `DeclarativeAggregate` re-homed** to `eventsource.domain.aggregate`; the `eventsource.aggregates` import path is gone (see Removed). Top-level `eventsource` imports are unaffected.
 - **`AggregateRepository` re-homed** to `eventsource.application.aggregates`. Top-level `eventsource` imports are unaffected.
 - **`EventPublisher` re-homed** to `eventsource.ports.bus`; still re-exported from `eventsource.stores.interface` for existing callers.
+- **Projection persistence re-homed** (ADR 0024): `eventsource.projections` -> `eventsource.application.projections`; the checkpoint and DLQ Protocols -> `eventsource.ports.checkpoints` (`ProjectionCheckpoints`, `SubscriptionPositions`, `CheckpointRepository`) and `eventsource.ports.dlq` (`DLQRepository`); the checkpoint and DLQ implementations -> `eventsource.adapters.sql` (`SQLCheckpointRepository`, `SQLDLQRepository`, dialect-parameterized for PostgreSQL and SQLite) and `eventsource.adapters.memory` (`InMemoryCheckpointRepository`, `InMemoryDLQRepository`); `DatabaseProjection` -> `eventsource.adapters.sql.projection`. Top-level `eventsource` imports are unaffected.
+- **Behavior change: `checkpoint_repo=None` / `dlq_repo=None` now disable the concern** instead of constructing a per-instance in-memory repository. A `CheckpointTrackingProjection` (and subclasses `DeclarativeProjection`, `DatabaseProjection`) built with no `checkpoint_repo` no longer checkpoints at all -- `get_checkpoint()` / `get_lag_metrics()` return `None` -- and one built with no `dlq_repo` no longer captures failed events to a DLQ; a permanently failed event is logged at `critical` and re-raised either way. To keep the old vanish-on-restart behavior, pass `InMemoryCheckpointRepository()` / `InMemoryDLQRepository()` (from `eventsource`) explicitly.
 
 ### Removed
 
@@ -34,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`KafkaEventBus.record_reconnection()` / `record_rebalance()`**, deprecated in 0.7.0 with removal planned for 0.8.0. Use their replacements directly.
 - **`InMemoryEventBus.published_events` / `clear_published_events()`**, deprecated in 0.6.0 with removal planned for 0.8.0. Use `eventsource.testing.RecordingEventBus` instead.
 - **`eventsource.repositories._json`** internal module.
+- **`CheckpointRepositoryProtocol`, `DLQRepositoryProtocol`, `DLQRepository.list_failed_events`, `DLQRepository.get_failed_event`, `ProjectionCheckpointManager`, `ProjectionDLQManager`, `eventsource.repositories._dialect`** -- removed as part of the projection persistence ports split (ADR 0024). `list_failed_events` / `get_failed_event` were pure aliases for `get_failed_events` / `get_failed_event_by_id`, which remain. `ProjectionCheckpointManager` and `ProjectionDLQManager` are replaced by module-level functions in `eventsource.application.projections.checkpoints` and `.dlq` (see Changed).
 
 ## [0.7.0] - 2026-07-30
 
