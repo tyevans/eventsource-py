@@ -18,7 +18,7 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import BaseModel, Field
 
-from eventsource.aggregates.repository import AggregateRepository
+from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.domain.aggregate import AggregateRoot
 from eventsource.events.base import DomainEvent
 from eventsource.exceptions import AggregateNotFoundError, OptimisticLockError
@@ -930,7 +930,7 @@ class TestImports:
 
     def test_import_from_aggregates_module(self) -> None:
         """Test importing AggregateRepository from aggregates module."""
-        from eventsource.aggregates import AggregateRepository
+        from eventsource.application.aggregates import AggregateRepository
 
         assert AggregateRepository is not None
 

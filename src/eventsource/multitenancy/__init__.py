@@ -59,7 +59,7 @@ For synchronous code:
 
 Example with TenantAwareRepository:
     >>> from eventsource.multitenancy import TenantAwareRepository, tenant_scope
-    >>> from eventsource.aggregates import AggregateRepository
+    >>> from eventsource.application.aggregates import AggregateRepository
     >>>
     >>> # Wrap an existing repository for tenant isolation
     >>> tenant_repo = TenantAwareRepository(order_repository)

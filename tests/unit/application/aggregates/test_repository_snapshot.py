@@ -22,7 +22,7 @@ from uuid import uuid4
 import pytest
 from pydantic import BaseModel, Field
 
-from eventsource.aggregates.repository import AggregateRepository
+from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.domain.aggregate import AggregateRoot
 from eventsource.events.base import DomainEvent
 from eventsource.exceptions import AggregateNotFoundError
@@ -858,12 +858,12 @@ class TestRepositoryBackgroundSnapshot:
 
 
 class TestSnapshotStrategyLogic:
-    """Test snapshot strategy logic via SnapshotStrategy classes.
+    """Test snapshot policy logic via SnapshotPolicy classes.
 
-    Note: These tests validate the strategy logic that was previously in
+    Note: These tests validate the policy logic that was previously in
     AggregateRepository._should_create_snapshot(). The logic was extracted
-    to SnapshotStrategy classes (ThresholdSnapshotStrategy, etc.) for SOLID
-    compliance. We test via the strategy classes directly.
+    to SnapshotPolicy classes (EveryNEvents, Never) for SOLID compliance.
+    We test via the policy classes directly.
     """
 
     @pytest.fixture
@@ -875,7 +875,7 @@ class TestSnapshotStrategyLogic:
         return InMemorySnapshotStore()
 
     def test_returns_false_without_store(self, event_store: InMemoryEventStore) -> None:
-        """Without snapshot store, repository has no snapshot strategy."""
+        """Without snapshot store, repository falls back to Never() policy."""
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,
@@ -883,84 +883,89 @@ class TestSnapshotStrategyLogic:
             snapshot_threshold=100,
         )
 
-        # Without snapshot_store, no strategy is created
-        assert repo._snapshot_manager is None
+        # Without snapshot_store, the policy is irrelevant since no store exists
+        assert repo._snapshot_store is None
 
     def test_returns_false_without_threshold(
         self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
-        """Without threshold, ThresholdSnapshotStrategy.should_snapshot returns False."""
-        from eventsource.snapshots.strategies import ThresholdSnapshotStrategy
+        """Without threshold, repository falls back to Never() policy."""
+        from eventsource.application.aggregates.snapshotting import Never
 
-        # Strategy with no threshold never triggers auto-snapshot
-        strategy = ThresholdSnapshotStrategy(threshold=None)
+        repo = AggregateRepository(
+            event_store=event_store,
+            aggregate_factory=TestAggregate,
+            aggregate_type="Test",
+            snapshot_store=snapshot_store,
+        )
         aggregate = TestAggregate(uuid4())
         aggregate._version = 100
 
-        assert strategy.should_snapshot(aggregate, events_since_snapshot=100) is False
+        assert isinstance(repo._snapshot_policy, Never)
+        assert repo._snapshot_policy.should_snapshot(aggregate, events_since_snapshot=100) is False
 
     def test_returns_false_in_manual_mode(
         self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
-        """Manual mode (NoSnapshotStrategy) doesn't auto-snapshot."""
-        from eventsource.snapshots.strategies import NoSnapshotStrategy
+        """Manual mode (snapshot_mode='manual') doesn't auto-snapshot."""
+        from eventsource.application.aggregates.snapshotting import Never
 
-        strategy = NoSnapshotStrategy()
+        policy = Never()
         aggregate = TestAggregate(uuid4())
         aggregate._version = 100
 
-        # NoSnapshotStrategy.should_snapshot always returns False
-        assert strategy.should_snapshot(aggregate, events_since_snapshot=100) is False
+        # Never().should_snapshot always returns False
+        assert policy.should_snapshot(aggregate, events_since_snapshot=100) is False
 
     def test_returns_true_at_threshold(
         self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """Returns True at exact threshold."""
-        from eventsource.snapshots.strategies import ThresholdSnapshotStrategy
+        from eventsource.application.aggregates.snapshotting import EveryNEvents
 
-        strategy = ThresholdSnapshotStrategy(threshold=100)
+        policy = EveryNEvents(100)
         aggregate = TestAggregate(uuid4())
         aggregate._version = 100
 
-        assert strategy.should_snapshot(aggregate, events_since_snapshot=100) is True
+        assert policy.should_snapshot(aggregate, events_since_snapshot=100) is True
 
     def test_returns_true_at_threshold_multiples(
         self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """Returns True at threshold multiples."""
-        from eventsource.snapshots.strategies import ThresholdSnapshotStrategy
+        from eventsource.application.aggregates.snapshotting import EveryNEvents
 
-        strategy = ThresholdSnapshotStrategy(threshold=100)
+        policy = EveryNEvents(100)
         aggregate = TestAggregate(uuid4())
 
         for version in [100, 200, 300, 500, 1000]:
             aggregate._version = version
-            assert strategy.should_snapshot(aggregate, events_since_snapshot=version) is True
+            assert policy.should_snapshot(aggregate, events_since_snapshot=version) is True
 
     def test_returns_false_between_thresholds(
         self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """Returns False between threshold multiples."""
-        from eventsource.snapshots.strategies import ThresholdSnapshotStrategy
+        from eventsource.application.aggregates.snapshotting import EveryNEvents
 
-        strategy = ThresholdSnapshotStrategy(threshold=100)
+        policy = EveryNEvents(100)
         aggregate = TestAggregate(uuid4())
 
         for version in [1, 50, 99, 101, 150, 199]:
             aggregate._version = version
-            assert strategy.should_snapshot(aggregate, events_since_snapshot=version) is False
+            assert policy.should_snapshot(aggregate, events_since_snapshot=version) is False
 
     def test_returns_false_at_version_zero(
         self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         """Returns False at version zero."""
-        from eventsource.snapshots.strategies import ThresholdSnapshotStrategy
+        from eventsource.application.aggregates.snapshotting import EveryNEvents
 
-        strategy = ThresholdSnapshotStrategy(threshold=100)
+        policy = EveryNEvents(100)
         aggregate = TestAggregate(uuid4())
         aggregate._version = 0
 
-        assert strategy.should_snapshot(aggregate, events_since_snapshot=0) is False
+        assert policy.should_snapshot(aggregate, events_since_snapshot=0) is False
 
 
 # =============================================================================

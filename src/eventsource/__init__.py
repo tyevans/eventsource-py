@@ -38,7 +38,7 @@ except PackageNotFoundError:
 # `eventsource.adapters.postgresql.PostgreSQLEventStore` path-only.
 from eventsource.adapters._sql.positions import IntPositionCodec
 from eventsource.adapters.memory import MemoryEventStore
-from eventsource.aggregates.repository import AggregateRepository
+from eventsource.application.aggregates.repository import AggregateRepository
 
 # Event bus (Task 10)
 from eventsource.bus.base import BaseEventBus

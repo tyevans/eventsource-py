@@ -21,7 +21,7 @@ from uuid import uuid4
 import pytest
 from pydantic import BaseModel, Field
 
-from eventsource.aggregates.repository import AggregateRepository
+from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.domain.aggregate import AggregateRoot
 from eventsource.events.base import DomainEvent
 from eventsource.observability import (
@@ -604,11 +604,11 @@ class TestAggregateRepositoryStandardAttributes:
                 "grep",
                 "-c",
                 "from eventsource.observability import",
-                "src/eventsource/aggregates/repository.py",
+                "src/eventsource/application/aggregates/repository.py",
             ],
             capture_output=True,
             text=True,
-            cwd=Path(__file__).parents[3],
+            cwd=Path(__file__).parents[4],
         )
         # Should be at least 1 - imports from observability
         count = int(result.stdout.strip())
@@ -619,10 +619,10 @@ class TestAggregateRepositoryStandardAttributes:
         import subprocess
 
         result = subprocess.run(
-            ["grep", "-c", "ATTR_", "src/eventsource/aggregates/repository.py"],
+            ["grep", "-c", "ATTR_", "src/eventsource/application/aggregates/repository.py"],
             capture_output=True,
             text=True,
-            cwd=Path(__file__).parents[3],
+            cwd=Path(__file__).parents[4],
         )
         # Should find multiple ATTR_* usages
         count = int(result.stdout.strip())

@@ -9,7 +9,16 @@ import logging
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
 from uuid import UUID
 
-from eventsource.aggregates.snapshot_manager import AggregateSnapshotManager
+from eventsource.application.aggregates.snapshotting import (
+    BackgroundScheduler,
+    EveryNEvents,
+    ImmediateScheduler,
+    Never,
+    SnapshotPolicy,
+    SnapshotScheduler,
+    read_valid_snapshot,
+    take_snapshot,
+)
 from eventsource.domain.aggregate import AggregateRoot
 from eventsource.exceptions import AggregateNotFoundError
 from eventsource.observability import Tracer, create_tracer
@@ -19,14 +28,10 @@ from eventsource.observability.attributes import (
     ATTR_EVENT_COUNT,
     ATTR_VERSION,
 )
-from eventsource.snapshots.strategies import (
-    SnapshotStrategy,
-    create_snapshot_strategy,
-)
 from eventsource.stores.interface import EventPublisher, EventStore
 
 if TYPE_CHECKING:
-    from eventsource.snapshots import Snapshot, SnapshotStore
+    from eventsource.ports.snapshots import Snapshot, SnapshotStore
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +121,8 @@ class AggregateRepository(Generic[TAggregate]):
         snapshot_store: "SnapshotStore | None" = None,
         snapshot_threshold: int | None = None,
         snapshot_mode: Literal["sync", "background", "manual"] = "sync",
+        snapshot_policy: SnapshotPolicy | None = None,
+        snapshot_scheduler: SnapshotScheduler | None = None,
         # Tracing configuration
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
@@ -146,6 +153,13 @@ class AggregateRepository(Generic[TAggregate]):
                           - "background": Asynchronously after save
                           - "manual": Only via explicit create_snapshot() call
                           Default is "sync" for simplicity.
+            snapshot_policy: Optional SnapshotPolicy controlling *when* to
+                          snapshot. Mutually exclusive with snapshot_mode/
+                          snapshot_threshold. Use for custom policies beyond
+                          the built-in mode/threshold knobs.
+            snapshot_scheduler: Optional SnapshotScheduler controlling *how*
+                          the snapshot write executes. Mutually exclusive
+                          with snapshot_mode/snapshot_threshold.
             tracer: Optional custom Tracer instance. If not provided, one is
                    created based on enable_tracing setting.
             enable_tracing: If True and OpenTelemetry is available, emit traces.
@@ -207,22 +221,25 @@ class AggregateRepository(Generic[TAggregate]):
         self._snapshot_threshold = snapshot_threshold
         self._snapshot_mode = snapshot_mode
 
-        # Create snapshot strategy from mode/threshold for OCP compliance
-        self._snapshot_strategy: SnapshotStrategy | None = None
-        if snapshot_store is not None:
-            self._snapshot_strategy = create_snapshot_strategy(snapshot_mode, snapshot_threshold)
-
-            # Create snapshot manager for load/validation operations
-            self._snapshot_manager: AggregateSnapshotManager[TAggregate] | None = (
-                AggregateSnapshotManager(
-                    snapshot_store=snapshot_store,
-                    aggregate_type=aggregate_type,
-                    strategy=self._snapshot_strategy,
-                    enable_tracing=enable_tracing,
-                )
+        if (snapshot_policy is not None or snapshot_scheduler is not None) and (
+            snapshot_threshold is not None or snapshot_mode != "sync"
+        ):
+            raise ValueError(
+                "Pass either snapshot_mode/snapshot_threshold or "
+                "snapshot_policy/snapshot_scheduler, not both."
             )
+        if snapshot_policy is not None:
+            self._snapshot_policy: SnapshotPolicy = snapshot_policy
+        elif snapshot_mode != "manual" and snapshot_threshold is not None:
+            self._snapshot_policy = EveryNEvents(snapshot_threshold)
         else:
-            self._snapshot_manager = None
+            self._snapshot_policy = Never()
+        if snapshot_scheduler is not None:
+            self._snapshot_scheduler: SnapshotScheduler = snapshot_scheduler
+        elif snapshot_mode == "background":
+            self._snapshot_scheduler = BackgroundScheduler()
+        else:
+            self._snapshot_scheduler = ImmediateScheduler()
 
     def _infer_aggregate_type(self, factory: type[TAggregate]) -> str:
         """
@@ -336,10 +353,13 @@ class AggregateRepository(Generic[TAggregate]):
             from_version = 0
             snapshot = None
 
-            # Try to load from snapshot if configured (using manager)
-            if self._snapshot_manager is not None:
-                snapshot = await self._snapshot_manager.load_valid_snapshot(
-                    aggregate_id, self._aggregate_factory
+            # Try to load from snapshot if configured
+            if self._snapshot_store is not None:
+                snapshot = await read_valid_snapshot(
+                    self._snapshot_store,
+                    aggregate_id,
+                    self._aggregate_type,
+                    self._aggregate_factory,
                 )
                 if snapshot is not None:
                     from_version = snapshot.version
@@ -500,12 +520,23 @@ class AggregateRepository(Generic[TAggregate]):
                 if self._event_publisher:
                     await self._event_publisher.publish(uncommitted_events)
 
-                # Create snapshot via strategy if conditions are met (OCP compliant)
-                if self._snapshot_manager is not None:
-                    await self._snapshot_manager.maybe_create_snapshot(
-                        aggregate,
-                        events_since_snapshot=len(uncommitted_events),
-                    )
+                # Create snapshot if the policy says so
+                if self._snapshot_store is not None and self._snapshot_policy.should_snapshot(
+                    aggregate, len(uncommitted_events)
+                ):
+                    with self._tracer.span(
+                        "eventsource.repository.snapshot",
+                        {
+                            ATTR_AGGREGATE_ID: str(aggregate.aggregate_id),
+                            ATTR_AGGREGATE_TYPE: self._aggregate_type,
+                            ATTR_VERSION: aggregate.version,
+                        },
+                    ):
+                        await self._snapshot_scheduler.schedule(
+                            take_snapshot(aggregate, self._aggregate_type, self._snapshot_store),
+                            aggregate_type=self._aggregate_type,
+                            aggregate_id=aggregate.aggregate_id,
+                        )
 
     async def create_snapshot(self, aggregate: TAggregate) -> "Snapshot":
         """
@@ -551,7 +582,7 @@ class AggregateRepository(Generic[TAggregate]):
             If a snapshot already exists for the aggregate, it will be
             replaced (upsert semantics).
         """
-        if self._snapshot_manager is None:
+        if self._snapshot_store is None:
             raise RuntimeError(
                 "Cannot create snapshot: snapshot_store is not configured. "
                 "Provide a snapshot_store when creating the repository."
@@ -565,7 +596,7 @@ class AggregateRepository(Generic[TAggregate]):
                 ATTR_VERSION: aggregate.version,
             },
         ):
-            return await self._snapshot_manager.create_snapshot(aggregate)
+            return await take_snapshot(aggregate, self._aggregate_type, self._snapshot_store)
 
     async def await_pending_snapshots(self) -> int:
         """
@@ -588,10 +619,7 @@ class AggregateRepository(Generic[TAggregate]):
             In production, you typically don't need to call this method.
             Background snapshots complete independently.
         """
-        if self._snapshot_manager is None:
-            return 0
-
-        return await self._snapshot_manager.await_pending()
+        return await self._snapshot_scheduler.await_pending()
 
     @property
     def pending_snapshot_count(self) -> int:
@@ -603,10 +631,7 @@ class AggregateRepository(Generic[TAggregate]):
         Returns:
             Number of background snapshot tasks not yet complete.
         """
-        if self._snapshot_manager is None:
-            return 0
-
-        return self._snapshot_manager.pending_count
+        return self._snapshot_scheduler.pending_count
 
     async def exists(self, aggregate_id: UUID) -> bool:
         """

@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 from bench.adapters.base import BenchAdapter
 from bench.core.domain import BenchCounter
 from bench.core.runner import Measurement, Scenario
-from eventsource.aggregates.repository import AggregateRepository
+from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.snapshots.interface import SnapshotStore
 from eventsource.stores.interface import EventStore
 

@@ -17,7 +17,7 @@ from uuid import uuid4
 import pytest
 
 from eventsource import DomainEvent, InMemoryEventBus
-from eventsource.aggregates.repository import AggregateRepository
+from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.observability import (
     ATTR_AGGREGATE_ID,
     ATTR_AGGREGATE_TYPE,

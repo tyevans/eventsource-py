@@ -5,8 +5,8 @@ This is an internal helper, not part of the public API. It exists because
 two independent pieces of the library needed the same bookkeeping for
 fire-and-forget ``asyncio.Task`` objects:
 
-- ``eventsource.snapshots.strategies.BackgroundSnapshotStrategy`` uses it to
-  track in-flight background snapshot creation and to support
+- ``eventsource.application.aggregates.snapshotting.BackgroundScheduler`` uses
+  it to track in-flight background snapshot creation and to support
   ``await_pending()`` in tests.
 - ``eventsource.bus.base.BaseEventBus`` uses it to track in-flight publish
   work and to support draining on shutdown.
