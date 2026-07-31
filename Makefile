@@ -20,7 +20,7 @@ COMPOSE := docker compose -f docker-compose.test.yml
 BENCH_COMPOSE := docker compose -f docker-compose.bench.yml
 
 .DEFAULT_GOAL := help
-.PHONY: help install check lint format types arch sec audit test cov \
+.PHONY: help install check lint format types arch sec audit test test-changed cov \
         integration integration-up integration-down mutation mutation-cosmic \
         docs docs-examples precommit fix clean \
         bench-up bench-down bench bench-quick bench-report
@@ -74,6 +74,18 @@ audit:  ## pip-audit dependency vulnerability scan
 test:  ## Unit suite with coverage (enforces the fail_under ratchet)
 	uv run pytest -m "$(UNIT_MARKERS)" \
 		--cov=src/eventsource --cov-report=term-missing
+
+# Stamp file recording the last green `make test` run. `test-changed` only
+# re-runs the suite when a file under src/ is newer than the stamp.
+TEST_STAMP := .test-stamp
+SRC_FILES := $(shell find src -name '*.py' -not -path '*/__pycache__/*')
+
+test-changed: $(TEST_STAMP)  ## `make test`, but skipped if src/ is unchanged since the last green run
+	@echo "test-changed: src/ up to date with last green run (rm $(TEST_STAMP) to force)"
+
+$(TEST_STAMP): $(SRC_FILES)
+	@$(MAKE) test
+	@touch $@
 
 cov: test  ## Unit suite with coverage + an HTML report in htmlcov/
 	uv run coverage html
@@ -136,5 +148,5 @@ docs-examples:  ## Syntax-check and execute everything in examples/
 
 clean:  ## Remove build/test/coverage caches
 	rm -rf .pytest_cache .ruff_cache .mypy_cache .benchmarks htmlcov \
-	       .coverage coverage.xml site dist build
+	       .coverage coverage.xml site dist build .test-stamp
 	find . -name __pycache__ -type d -prune -exec rm -rf {} +

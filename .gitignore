@@ -49,6 +49,7 @@ coverage.xml
 .hypothesis/*
 !.hypothesis/examples/
 .pytest_cache/
+.test-stamp
 
 # Translations
 *.mo
