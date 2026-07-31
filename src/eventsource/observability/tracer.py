@@ -97,7 +97,7 @@ class Tracer(Protocol):
         Create a tracing span context manager.
 
         Args:
-            name: Span name (e.g., "event_store.append_events")
+            name: Span name (e.g., "eventsource.snapshot.save")
             attributes: Span attributes (optional)
 
         Returns:
