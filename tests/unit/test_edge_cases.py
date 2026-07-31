@@ -15,16 +15,20 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from eventsource.adapters.memory import MemoryEventStore
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
 from eventsource.adapters.memory.dlq import InMemoryDLQRepository
 from eventsource.bus.memory import InMemoryEventBus
+from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
-from eventsource.repositories.outbox import InMemoryOutboxRepository
-from eventsource.stores.in_memory import InMemoryEventStore
-from eventsource.stores.interface import (
+from eventsource.ports import (
+    CategoryReadOptions,
+    ExpectedVersion,
     ReadDirection,
-    ReadOptions,
+    StreamReadOptions,
+    collect,
 )
+from eventsource.repositories.outbox import InMemoryOutboxRepository
 
 # --- Test Event Classes ---
 
@@ -49,42 +53,34 @@ class SampleOrderEvent(DomainEvent):
 
 
 class TestInMemoryEventStoreEdgeCases:
-    """Edge case tests for InMemoryEventStore."""
+    """Edge case tests for MemoryEventStore."""
 
     @pytest.fixture
-    def store(self) -> InMemoryEventStore:
-        return InMemoryEventStore()
+    def store(self) -> MemoryEventStore:
+        return MemoryEventStore()
 
     @pytest.mark.asyncio
-    async def test_get_events_with_to_timestamp_filter(self, store: InMemoryEventStore):
-        """Test filtering events by to_timestamp."""
-        aggregate_id = uuid4()
-
-        # Create events with different timestamps
-        event1 = EdgeTestEvent(aggregate_id=aggregate_id, data="first")
-        await store.append_events(aggregate_id, "Test", [event1], 0)
-
-        # Get events with future to_timestamp
-        future_time = datetime.now(UTC) + timedelta(hours=1)
-        stream = await store.get_events(aggregate_id, "Test", to_timestamp=future_time)
-        assert len(stream.events) == 1
-
-    @pytest.mark.asyncio
-    async def test_get_events_by_type_with_timestamp_filter(self, store: InMemoryEventStore):
-        """Test get_events_by_type with timestamp filter."""
+    async def test_get_events_by_type_with_timestamp_filter(self, store: MemoryEventStore):
+        """Test read_category with a from_timestamp filter."""
         aggregate_id = uuid4()
         old_timestamp = datetime.now(UTC) - timedelta(hours=1)
 
         event = EdgeTestEvent(aggregate_id=aggregate_id, data="test")
-        await store.append_events(aggregate_id, "Test", [event], 0)
+        await store.append(
+            StreamId(aggregate_id=aggregate_id, category="Test"),
+            [event],
+            ExpectedVersion.no_stream(),
+        )
 
-        # Get events created after old timestamp
-        events = await store.get_events_by_type("Test", from_timestamp=old_timestamp)
-        assert len(events) == 1
+        # Get events stored after old_timestamp (stored_at, inclusive).
+        envelopes = await collect(
+            store.read_category("Test", CategoryReadOptions(from_timestamp=old_timestamp))
+        )
+        assert len(envelopes) == 1
 
     @pytest.mark.asyncio
-    async def test_get_events_by_type_with_tenant_filter(self, store: InMemoryEventStore):
-        """Test get_events_by_type with tenant_id filter."""
+    async def test_get_events_by_type_with_tenant_filter(self, store: MemoryEventStore):
+        """Test read_category with a tenant_id filter."""
         aggregate_id = uuid4()
         tenant_id = uuid4()
         other_tenant = uuid4()
@@ -100,149 +96,79 @@ class TestInMemoryEventStoreEdgeCases:
             data="tenant2",
         )
 
-        await store.append_events(event1.aggregate_id, "Test", [event1], 0)
-        await store.append_events(event2.aggregate_id, "Test", [event2], 0)
+        await store.append(
+            StreamId(aggregate_id=event1.aggregate_id, category="Test"),
+            [event1],
+            ExpectedVersion.no_stream(),
+        )
+        await store.append(
+            StreamId(aggregate_id=event2.aggregate_id, category="Test"),
+            [event2],
+            ExpectedVersion.no_stream(),
+        )
 
         # Filter by tenant_id
-        events = await store.get_events_by_type("Test", tenant_id=tenant_id)
-        assert len(events) == 1
-        assert events[0].tenant_id == tenant_id
+        envelopes = await collect(
+            store.read_category("Test", CategoryReadOptions(tenant_id=tenant_id))
+        )
+        assert len(envelopes) == 1
+        assert envelopes[0].event.tenant_id == tenant_id
 
     @pytest.mark.asyncio
-    async def test_read_stream_backward(self, store: InMemoryEventStore):
+    async def test_read_stream_backward(self, store: MemoryEventStore):
         """Test reading stream in backward direction."""
         aggregate_id = uuid4()
 
         events = [EdgeTestEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(5)]
-        await store.append_events(aggregate_id, "Test", events, 0)
+        stream = StreamId(aggregate_id=aggregate_id, category="Test")
+        await store.append(stream, events, ExpectedVersion.no_stream())
 
-        stream_id = f"{aggregate_id}:Test"
-        options = ReadOptions(direction=ReadDirection.BACKWARD)
-        stored_events = [se async for se in store.read_stream(stream_id, options)]
+        options = StreamReadOptions(direction=ReadDirection.BACKWARD)
+        envelopes = await collect(store.read_stream(stream, options))
 
-        assert len(stored_events) == 5
+        assert len(envelopes) == 5
         # Should be in reverse order (last event first)
-        assert "event_4" in stored_events[0].event.data
-        assert "event_0" in stored_events[4].event.data
+        assert "event_4" in envelopes[0].event.data
+        assert "event_0" in envelopes[4].event.data
 
     @pytest.mark.asyncio
-    async def test_read_stream_without_aggregate_type(self, store: InMemoryEventStore):
-        """Test reading stream with ID only (no aggregate type in stream_id)."""
-        aggregate_id = uuid4()
-
-        event = EdgeTestEvent(aggregate_id=aggregate_id, data="test")
-        await store.append_events(aggregate_id, "Test", [event], 0)
-
-        # Use just the aggregate ID as stream_id
-        stream_id = str(aggregate_id)
-        stored_events = [se async for se in store.read_stream(stream_id)]
-
-        # Should return events (though may not filter by type)
-        assert len(stored_events) >= 1
-
-    @pytest.mark.asyncio
-    async def test_read_stream_with_from_timestamp(self, store: InMemoryEventStore):
-        """Test reading stream with from_timestamp filter."""
-        aggregate_id = uuid4()
-
-        event = EdgeTestEvent(aggregate_id=aggregate_id, data="test")
-        await store.append_events(aggregate_id, "Test", [event], 0)
-
-        stream_id = f"{aggregate_id}:Test"
-        past_time = datetime.now(UTC) - timedelta(hours=1)
-        options = ReadOptions(from_timestamp=past_time)
-
-        stored_events = [se async for se in store.read_stream(stream_id, options)]
-        assert len(stored_events) == 1
-
-    @pytest.mark.asyncio
-    async def test_read_stream_with_to_timestamp(self, store: InMemoryEventStore):
-        """Test reading stream with to_timestamp filter."""
-        aggregate_id = uuid4()
-
-        event = EdgeTestEvent(aggregate_id=aggregate_id, data="test")
-        await store.append_events(aggregate_id, "Test", [event], 0)
-
-        stream_id = f"{aggregate_id}:Test"
-        future_time = datetime.now(UTC) + timedelta(hours=1)
-        options = ReadOptions(to_timestamp=future_time)
-
-        stored_events = [se async for se in store.read_stream(stream_id, options)]
-        assert len(stored_events) == 1
-
-    @pytest.mark.asyncio
-    async def test_read_all_with_from_timestamp(self, store: InMemoryEventStore):
-        """Test read_all with from_timestamp filter."""
-        aggregate_id = uuid4()
-
-        event = EdgeTestEvent(aggregate_id=aggregate_id, data="test")
-        await store.append_events(aggregate_id, "Test", [event], 0)
-
-        past_time = datetime.now(UTC) - timedelta(hours=1)
-        options = ReadOptions(from_timestamp=past_time)
-
-        stored_events = [se async for se in store.read_all(options)]
-        assert len(stored_events) == 1
-
-    @pytest.mark.asyncio
-    async def test_read_all_with_to_timestamp(self, store: InMemoryEventStore):
-        """Test read_all with to_timestamp filter."""
-        aggregate_id = uuid4()
-
-        event = EdgeTestEvent(aggregate_id=aggregate_id, data="test")
-        await store.append_events(aggregate_id, "Test", [event], 0)
-
-        future_time = datetime.now(UTC) + timedelta(hours=1)
-        options = ReadOptions(to_timestamp=future_time)
-
-        stored_events = [se async for se in store.read_all(options)]
-        assert len(stored_events) == 1
-
-    @pytest.mark.asyncio
-    async def test_read_all_backward_direction(self, store: InMemoryEventStore):
-        """Test read_all in backward direction."""
+    async def test_read_all_stream_position_calculation(self, store: MemoryEventStore):
+        """Test that stream version is correctly calculated in read_all."""
         aggregate_id = uuid4()
 
         events = [EdgeTestEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(3)]
-        await store.append_events(aggregate_id, "Test", events, 0)
+        await store.append(
+            StreamId(aggregate_id=aggregate_id, category="Test"),
+            events,
+            ExpectedVersion.no_stream(),
+        )
 
-        options = ReadOptions(direction=ReadDirection.BACKWARD)
-        stored_events = [se async for se in store.read_all(options)]
+        envelopes = await collect(store.read_all())
 
-        assert len(stored_events) == 3
-        # Last event should be first in backward direction
-        assert "event_2" in stored_events[0].event.data
-
-    @pytest.mark.asyncio
-    async def test_read_all_stream_position_calculation(self, store: InMemoryEventStore):
-        """Test that stream position is correctly calculated in read_all."""
-        aggregate_id = uuid4()
-
-        events = [EdgeTestEvent(aggregate_id=aggregate_id, data=f"event_{i}") for i in range(3)]
-        await store.append_events(aggregate_id, "Test", events, 0)
-
-        stored_events = [se async for se in store.read_all()]
-
-        assert len(stored_events) == 3
-        # Each event should have a stream position
-        for se in stored_events:
-            assert se.stream_position >= 0
+        assert len(envelopes) == 3
+        # Each envelope should have a stream version
+        for envelope in envelopes:
+            assert envelope.stream_version >= 0
 
     @pytest.mark.asyncio
-    async def test_concurrent_appends(self, store: InMemoryEventStore):
+    async def test_concurrent_appends(self, store: MemoryEventStore):
         """Test concurrent appends to different aggregates."""
         aggregate_ids = [uuid4() for _ in range(10)]
 
         async def append_event(agg_id: UUID):
             event = EdgeTestEvent(aggregate_id=agg_id, data="concurrent")
-            await store.append_events(agg_id, "Test", [event], 0)
+            await store.append(
+                StreamId(aggregate_id=agg_id, category="Test"), [event], ExpectedVersion.no_stream()
+            )
 
         await asyncio.gather(*[append_event(agg_id) for agg_id in aggregate_ids])
 
         # Verify all events were stored
         for agg_id in aggregate_ids:
-            stream = await store.get_events(agg_id, "Test")
-            assert len(stream.events) == 1
+            envelopes = await collect(
+                store.read_stream(StreamId(aggregate_id=agg_id, category="Test"))
+            )
+            assert len(envelopes) == 1
 
 
 # --- InMemoryEventBus Edge Cases ---
@@ -543,17 +469,19 @@ class TestConcurrentAccess:
     @pytest.mark.asyncio
     async def test_concurrent_event_store_reads_writes(self):
         """Test concurrent reads and writes to event store with asyncio.Lock."""
-        store = InMemoryEventStore()
+        store = MemoryEventStore()
         aggregate_ids = [uuid4() for _ in range(5)]
 
         async def write_events(agg_id: uuid4):
+            stream = StreamId(aggregate_id=agg_id, category="Test")
             for i in range(5):
                 event = EdgeTestEvent(aggregate_id=agg_id, data=f"event_{i}")
-                await store.append_events(agg_id, "Test", [event], expected_version=-1)  # ANY
+                await store.append(stream, [event], ExpectedVersion.any_())
 
         async def read_events(agg_id: uuid4):
+            stream = StreamId(aggregate_id=agg_id, category="Test")
             for _ in range(5):
-                await store.get_events(agg_id, "Test")
+                await collect(store.read_stream(stream))
 
         # Mix reads and writes
         tasks = []
@@ -565,8 +493,10 @@ class TestConcurrentAccess:
 
         # Each aggregate should have 5 events
         for agg_id in aggregate_ids:
-            stream = await store.get_events(agg_id, "Test")
-            assert len(stream.events) == 5
+            envelopes = await collect(
+                store.read_stream(StreamId(aggregate_id=agg_id, category="Test"))
+            )
+            assert len(envelopes) == 5
 
 
 # --- Serialization Edge Cases ---
@@ -578,44 +508,45 @@ class TestSerializationEdgeCases:
     @pytest.mark.asyncio
     async def test_event_with_special_characters(self):
         """Test event with special characters in data."""
-        store = InMemoryEventStore()
+        store = MemoryEventStore()
         aggregate_id = uuid4()
+        stream = StreamId(aggregate_id=aggregate_id, category="Test")
 
         event = EdgeTestEvent(
             aggregate_id=aggregate_id,
             data="Special chars: '\"\n\t\r\\",
         )
-        result = await store.append_events(aggregate_id, "Test", [event], 0)
-        assert result.success
+        # append raises on failure rather than returning success/conflict.
+        await store.append(stream, [event], ExpectedVersion.no_stream())
 
-        stream = await store.get_events(aggregate_id, "Test")
-        assert stream.events[0].data == "Special chars: '\"\n\t\r\\"
+        envelopes = await collect(store.read_stream(stream))
+        assert envelopes[0].event.data == "Special chars: '\"\n\t\r\\"
 
     @pytest.mark.asyncio
     async def test_event_with_unicode_characters(self):
         """Test event with Unicode characters."""
-        store = InMemoryEventStore()
+        store = MemoryEventStore()
         aggregate_id = uuid4()
+        stream = StreamId(aggregate_id=aggregate_id, category="Test")
 
         event = EdgeTestEvent(
             aggregate_id=aggregate_id,
             data="Unicode: 你好世界 ",
         )
-        result = await store.append_events(aggregate_id, "Test", [event], 0)
-        assert result.success
+        await store.append(stream, [event], ExpectedVersion.no_stream())
 
-        stream = await store.get_events(aggregate_id, "Test")
-        assert "" in stream.events[0].data
+        envelopes = await collect(store.read_stream(stream))
+        assert "" in envelopes[0].event.data
 
     @pytest.mark.asyncio
     async def test_event_with_empty_string(self):
         """Test event with empty string data."""
-        store = InMemoryEventStore()
+        store = MemoryEventStore()
         aggregate_id = uuid4()
+        stream = StreamId(aggregate_id=aggregate_id, category="Test")
 
         event = EdgeTestEvent(aggregate_id=aggregate_id, data="")
-        result = await store.append_events(aggregate_id, "Test", [event], 0)
-        assert result.success
+        await store.append(stream, [event], ExpectedVersion.no_stream())
 
-        stream = await store.get_events(aggregate_id, "Test")
-        assert stream.events[0].data == ""
+        envelopes = await collect(store.read_stream(stream))
+        assert envelopes[0].event.data == ""

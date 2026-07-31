@@ -5,11 +5,9 @@ These tests target specific uncovered lines identified in the coverage report:
 - bus/memory.py: background publishing, error handling
 - projections/base.py: abstract methods, DLQ write failures
 - domain/aggregate.py: edge cases
-- stores/interface.py: protocol methods
 """
 
 import asyncio
-from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -33,12 +31,6 @@ from eventsource.protocols import (
 )
 from eventsource.protocols import (
     FlexibleEventHandler as EventHandler,
-)
-from eventsource.stores.interface import (
-    AppendResult,
-    EventStream,
-    ReadOptions,
-    StoredEvent,
 )
 
 # --- Test Event Classes ---
@@ -328,61 +320,6 @@ class TestAsyncEventHandlerABC:
         assert handler.can_handle(another_event) is False
 
 
-# --- EventStore Interface Tests ---
-
-
-class AdditionalTestEventStoreProtocol:
-    """Tests for EventStore protocol methods."""
-
-    @pytest.mark.asyncio
-    async def test_event_stream_dataclass(self):
-        """Test EventStream dataclass creation and usage."""
-        aggregate_id = uuid4()
-        events = [AdditionalTestEvent(aggregate_id=aggregate_id, data=f"e{i}") for i in range(3)]
-
-        stream = EventStream(
-            aggregate_id=aggregate_id,
-            aggregate_type="Test",
-            events=events,
-            version=3,
-        )
-
-        assert stream.aggregate_id == aggregate_id
-        assert len(stream.events) == 3
-        assert stream.version == 3
-
-    def test_append_result_success_factory(self):
-        """Test AppendResult.success() factory method."""
-        result = AppendResult.success(version=5)
-        assert result.success is True
-        assert result.new_version == 5
-
-    def test_append_result_failure_factory(self):
-        """Test AppendResult.failure() factory method."""
-        result = AppendResult.failure(
-            expected_version=3,
-            actual_version=5,
-        )
-        assert result.success is False
-        assert result.expected_version == 3
-        assert result.actual_version == 5
-
-    def test_stored_event_dataclass(self):
-        """Test StoredEvent dataclass."""
-        event = AdditionalTestEvent(aggregate_id=uuid4(), data="test")
-        stored = StoredEvent(
-            event=event,
-            stream_id=f"{event.aggregate_id}:Test",
-            stream_position=1,
-            global_position=100,
-            stored_at=datetime.now(UTC),
-        )
-
-        assert stored.event == event
-        assert stored.stream_position == 1
-        assert stored.global_position == 100
-
-
 # --- Aggregate Base Tests ---
 
 
@@ -462,34 +399,3 @@ class TestProtocolCompliance:
 
         subscriber = MySubscriber()
         assert isinstance(subscriber, FlexibleEventSubscriber)
-
-
-# --- Read Options Tests ---
-
-
-class TestReadOptions:
-    """Tests for ReadOptions dataclass."""
-
-    def test_read_options_defaults(self):
-        """Test ReadOptions default values."""
-        options = ReadOptions()
-
-        assert options.from_position == 0
-        assert options.limit is None
-        assert options.from_timestamp is None
-        assert options.to_timestamp is None
-
-    def test_read_options_with_all_fields(self):
-        """Test ReadOptions with all fields set."""
-        now = datetime.now(UTC)
-        options = ReadOptions(
-            from_position=10,
-            limit=100,
-            from_timestamp=now,
-            to_timestamp=now,
-        )
-
-        assert options.from_position == 10
-        assert options.limit == 100
-        assert options.from_timestamp == now
-        assert options.to_timestamp == now
