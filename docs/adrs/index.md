@@ -121,6 +121,7 @@ The records actually on file, grouped by what they are about. All are **Accepted
 **Aggregates and snapshots**
 
 - [`0017-snapshot-strategy-pattern.md`](0017-snapshot-strategy-pattern.md) — the *when* and *how* of snapshot creation behind a `SnapshotStrategy` protocol instead of inside `AggregateRepository`, three concrete strategies (threshold/sync, background, no-op/manual), and why nearly every snapshot failure path degrades silently: events are authoritative, snapshots are regenerable cache entries. Complete, with candid negatives.
+- [`0022-command-objects-and-decider-style.md`](0022-command-objects-and-decider-style.md) — `DomainCommand` as a frozen pydantic model, `DeciderAggregate` for eager state initialization and provenance-aware event stamping, structural typing for opt-in causation, and the decider as the primary showcased aggregate style. Complete.
 
 **Multi-tenancy**
 

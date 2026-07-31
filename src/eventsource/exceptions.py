@@ -49,6 +49,24 @@ class AggregateNotFoundError(EventSourceError):
         super().__init__(f"Aggregate{type_info} not found: {aggregate_id}")
 
 
+class CommandRejectedError(EventSourceError):
+    """
+    A command was rejected by domain logic.
+
+    Raising this from ``decide()`` (or a command method) is a convention,
+    not a requirement — any exception may be used. It gives application
+    code one catchable type meaning "the domain said no" as distinct from
+    a bug.
+
+    Attributes:
+        command: The rejected command object, when provided.
+    """
+
+    def __init__(self, message: str, command: object | None = None) -> None:
+        self.command = command
+        super().__init__(message)
+
+
 class EventStoreError(EventSourceError):
     """Raised when there's an error in the event store."""
 

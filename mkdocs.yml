@@ -95,6 +95,7 @@ nav:
   - ADRs:
       - adrs/index.md
       - "ADR-0001: Async-First Design": adrs/0001-async-first-design.md
+      - "ADR-0022: Command Objects & Decider Style": adrs/0022-command-objects-and-decider-style.md
   - Development:
       - Code Structure: development/code-structure.md
       - Testing: development/testing.md
