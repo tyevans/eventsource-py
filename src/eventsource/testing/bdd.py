@@ -40,6 +40,7 @@ Note:
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Sequence
 from typing import Any, TypeVar
 from uuid import UUID, uuid4
@@ -423,18 +424,18 @@ class DeciderScenario:
 
     def then_events(self, *event_types: type[DomainEvent]) -> DeciderScenario:
         """Assert the command produced exactly these event types, in order."""
-        assert self._events is not None or self._error is not None, (
-            "call when() before then_events()"
-        )
+        if self._events is None and self._error is None:
+            raise AssertionError("call when() before then_events()")
         if self._error is not None:
             raise AssertionError(
                 f"expected events {[t.__name__ for t in event_types]} but the "
                 f"command was rejected: {self._error!r}"
             )
-        assert self._events is not None
+        assert self._events is not None  # narrows for mypy; guaranteed by the checks above
         actual = [type(e).__name__ for e in self._events]
         expected = [t.__name__ for t in event_types]
-        assert actual == expected, f"expected events {expected}, got {actual}"
+        if actual != expected:
+            raise AssertionError(f"expected events {expected}, got {actual}")
         return self
 
     def then_rejected(
@@ -443,20 +444,16 @@ class DeciderScenario:
         match: str | None = None,
     ) -> DeciderScenario:
         """Assert the command was rejected with exc_type (default CommandRejectedError)."""
-        assert self._events is not None or self._error is not None, (
-            "call when() before then_rejected()"
-        )
+        if self._events is None and self._error is None:
+            raise AssertionError("call when() before then_rejected()")
         if self._error is None:
             raise AssertionError(f"expected rejection but command produced {self.events!r}")
-        assert isinstance(self._error, exc_type), (
-            f"expected {exc_type.__name__}, got {type(self._error).__name__}: {self._error}"
-        )
-        if match is not None:
-            import re
-
-            assert re.search(match, str(self._error)), (
-                f"rejection message {str(self._error)!r} does not match {match!r}"
+        if not isinstance(self._error, exc_type):
+            raise AssertionError(
+                f"expected {exc_type.__name__}, got {type(self._error).__name__}: {self._error}"
             )
+        if match is not None and not re.search(match, str(self._error)):
+            raise AssertionError(f"rejection message {str(self._error)!r} does not match {match!r}")
         return self
 
 
