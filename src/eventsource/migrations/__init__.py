@@ -68,9 +68,11 @@ _ADDITIVE_DIR = _PACKAGE_DIR / "additive"
 _ADDITIVE_FRAGMENTS: dict[tuple[str, str], tuple[str, ...]] = {
     ("checkpoints", "postgresql"): ("checkpoints_position_token",),
     ("checkpoints", "sqlite"): ("checkpoints_position_token",),
-    ("all", "postgresql"): ("checkpoints_position_token",),
+    ("all", "postgresql"): ("checkpoints_position_token", "events_txid"),
     ("all", "sqlite"): ("checkpoints_position_token",),
     ("migration", "postgresql"): ("migration_position_tokens",),
+    ("events", "postgresql"): ("events_txid",),
+    ("events_partitioned", "postgresql"): ("events_txid",),
 }
 
 

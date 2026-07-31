@@ -115,6 +115,27 @@ class TestPostgreSQLGlobalFeed(GlobalFeedConformance):
         yield store
         await store.close()
 
+    @pytest.mark.postgres
+    async def test_rows_with_null_txid_are_returned_by_read_all(
+        self, store: PostgreSQLEventStore
+    ) -> None:
+        """A row predating updates/004 has a NULL txid and is always safe.
+
+        `ALTER TABLE` takes ACCESS EXCLUSIVE, so any transaction that
+        inserted such a row finished before every post-migration snapshot.
+        """
+        from eventsource.ports import ExpectedVersion, collect
+
+        stream = make_stream()
+        await store.append(stream, [make_event(stream.aggregate_id)], ExpectedVersion.no_stream())
+
+        async with store._engine.begin() as conn:  # type: ignore[attr-defined]
+            await conn.execute(text("UPDATE events SET txid = NULL"))
+
+        envelopes = await collect(store.read_all())
+
+        assert len(envelopes) == 1
+
 
 class TestPostgreSQLCategoryQuery(CategoryQueryConformance):
     @pytest.fixture

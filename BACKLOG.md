@@ -178,15 +178,25 @@ apart.
 
 The slice-(b) completion bench (50k events, batch 500, no concurrent writers) measured
 the ports pg adapter's read_all at +27% wall time vs the legacy no-horizon path
-(0.8 ms/batch median) — acceptable at that scale. But EXPLAIN ANALYZE shows the
-safe-horizon predicate defeats the `global_position` index (Seq Scan + top-N heapsort
-instead of Index Scan), so per-batch cost is O(table size) and the regression is
-untested at 1M+ rows and under concurrent writers — the exact conditions spec §11
-risk 1 (legacy-store-retirement design) names. Before a high-throughput production
-catch-up path ships on this adapter: rerun at 1M+ events with concurrent writers, and
-if the Seq Scan persists, restructure the predicate or index so the planner keeps the
-index path (e.g. computing the horizon once per batch in a separate query rather than
-inline). Methodology + numbers: session artifact pg-catchup-bench.md (2026-07-31).
+(0.8 ms/batch median) against the *inline* `xmin::text::bigint <
+pg_snapshot_xmin(...)::text::bigint` predicate — acceptable at that scale, but
+EXPLAIN ANALYZE showed that predicate defeating the `global_position` index
+(Seq Scan + top-N heapsort instead of Index Scan), so per-batch cost was
+O(table size). ADR 0027 part (b) has since replaced that predicate: it was also
+wraparound-unsafe (32-bit `xmin` cast compared against a 64-bit epoch-extended
+`xid8`, universally true past the first xid epoch), and the fix is exactly the
+mitigation this entry proposed — `(txid IS NULL OR txid <
+CAST(:txid_horizon AS text)::xid8)` against a new `events.txid` column, with the
+horizon computed once per read in a separate query rather than inlined per row.
+
+The re-bench is still warranted at 1M+ rows under concurrent writers — the exact
+conditions spec §11 risk 1 (legacy-store-retirement design) names — but must be
+re-run against the new predicate shape, not re-read from the old numbers: a bound
+parameter against an indexed column is a materially different query plan than a
+volatile inline expression, and whether the planner now keeps the `global_position`
+index path is exactly what needs re-measuring. Prior methodology + numbers (now
+describing a predicate that no longer exists): session artifact
+pg-catchup-bench.md (2026-07-31).
 
 ## Wire position_mapper into BulkCopier's coordinator call site (P2)
 

@@ -72,3 +72,26 @@ class TestMigrationPositionTokensReachComposedSchema:
 
         with pytest.raises(ValueError):
             get_schema("migration", backend="sqlite")
+
+
+class TestEventsTxidReachesComposedSchemas:
+    """The feed-horizon column arrives by fragment, PostgreSQL only."""
+
+    def test_base_events_files_are_unmodified(self) -> None:
+        from eventsource.migrations import _SCHEMAS_DIR, _TEMPLATES_DIR
+
+        for path in (
+            _SCHEMAS_DIR / "all.sql",
+            _SCHEMAS_DIR / "events.sql",
+            _TEMPLATES_DIR / "events.sql",
+            _TEMPLATES_DIR / "events_partitioned.sql",
+        ):
+            assert "txid" not in path.read_text(), path
+
+    def test_operator_script_exists_with_the_split_alter(self) -> None:
+        from eventsource.migrations import _PACKAGE_DIR
+
+        script = (_PACKAGE_DIR / "updates" / "004_add_events_txid.sql").read_text()
+        assert "ADD COLUMN IF NOT EXISTS txid xid8" in script
+        assert "ALTER COLUMN txid SET DEFAULT pg_current_xact_id()" in script
+        assert "rewrite" in script  # the rationale for splitting the two statements
