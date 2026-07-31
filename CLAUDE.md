@@ -25,12 +25,18 @@ Every command below also has a `make` target -- run `make help` for the list.
 suite in one go, and is CI parity: CI installs the same locked environment
 and runs the same commands, so green locally means green in CI.
 
+**Running tests: use `make test`** (full unit suite) or `make test-changed`
+(same suite, skipped when nothing under `src/` changed since the last green
+run). Use raw `uv run pytest <path>` only for targeted single-test runs.
+
 ```bash
 # Install
 uv sync --all-extras
 
 # Unit tests (no Docker needed)
-uv run pytest tests/unit/ -v
+make test              # full unit suite with coverage
+make test-changed      # same, but skipped if src/ is unchanged since last green run
+uv run pytest tests/unit/path/to/test_x.py -v   # targeted runs only
 
 # Integration tests (requires Docker services)
 docker compose -f docker-compose.test.yml up -d   # note: `docker compose`, not `docker-compose`
