@@ -181,7 +181,7 @@ smoke test, then the remainder of the wave lands in PR 2.
 
 ## ADR Impact (per definition-of-done)
 
-- **New ADR-0021: Command objects and the decider aggregate style.** Records the
+- **New ADR-0022: Command objects and the decider aggregate style.** Records the
   `DomainCommand` contract, provenance stamping semantics and precedence, tenant
   resolution order, decider-as-primary-style, and non-goals (no command bus, no
   command persistence/registry, structural-typing opt-in).
@@ -189,7 +189,7 @@ smoke test, then the remainder of the wave lands in PR 2.
   same as `_apply` today; all I/O boundaries remain async.
 - ADR-0012 (event-type auto-derivation): **stands** — commands deliberately have no
   registry; nothing about event registration changes.
-- ADR-0018 (tenant isolation): **stands** — ADR-0021 documents the command-then-
+- ADR-0018 (tenant isolation): **stands** — ADR-0022 documents the command-then-
   context tenant resolution order as an extension, not a change.
 - ADR-0019 (clean architecture store ports): **stands** — commands live in the
   entities ring; no port changes.
@@ -197,7 +197,7 @@ smoke test, then the remainder of the wave lands in PR 2.
 ## Staging plan
 
 1. **PR 1 — core feature:** `commands/` package, `DeciderAggregate`,
-   `CommandRejectedError`, `create_event(command=)`, ADR-0021, unit tests, public
+   `CommandRejectedError`, `create_event(command=)`, ADR-0022, unit tests, public
    exports (`DomainCommand`, `DeciderAggregate`, `CommandRejectedError` from
    `eventsource`), `basic_usage.py` conversion as smoke test, import-linter update.
 2. **PR 2 — dogfood wave:** remaining conversion map (examples, tutorials, fixtures,

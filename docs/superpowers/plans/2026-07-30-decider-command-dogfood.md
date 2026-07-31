@@ -38,7 +38,7 @@
 | `examples/imperative_example.py` (new) | Imperative style reference (moved code) |
 | `tests/fixtures/aggregates.py` (modify) | `OrderAggregate` → decider; keep `CounterAggregate`/`DeclarativeCounterAggregate` |
 | `bench/core/domain.py` (modify) | Add `BenchDeciderCounter` |
-| `docs/adrs/0021-command-objects-and-decider-style.md` (new) | ADR-0021 |
+| `docs/adrs/0022-command-objects-and-decider-style.md` (new) | ADR-0022 |
 | `docs/adrs/index.md`, `mkdocs.yml` (modify) | ADR nav entries |
 | `docs/explanation/decider-pattern.md`, `docs/explanation/aggregate-styles.md`, `docs/tutorials/03-first-aggregate.md`, `README.md` (modify) | Dogfood docs wave |
 | `tests/unit/commands/test_domain_command.py` (new) | Command contract tests |
@@ -149,7 +149,7 @@ Command base model for CQRS-style command handling.
 Commands are immutable intents. Unlike events they are never persisted:
 a rejected command leaves no trace in the event store by design. There is
 no command registry, no serialization support, and no command bus — see
-ADR-0021 for the rationale and non-goals.
+ADR-0022 for the rationale and non-goals.
 
 Subclassing DomainCommand is opt-in. ``DeciderAggregate.execute()`` and
 ``AggregateRoot.create_event(command=...)`` accept any object as a command;
@@ -199,7 +199,7 @@ class DomainCommand(BaseModel):
 
         Copies only the event's correlation_id. Commands deliberately have
         no causation_id field — event -> command -> event linkage within a
-        workflow is by correlation (ADR-0021).
+        workflow is by correlation (ADR-0022).
         """
         return self.model_copy(update={"correlation_id": event.correlation_id})
 ```
@@ -525,7 +525,7 @@ DeciderAggregate: the decider pattern as a first-class aggregate style.
 
 The domain is three pure functions — initial_state, decide, evolve — and
 this class is the imperative shell that adapts them to the AggregateRoot
-machinery (repositories, snapshots, replay). See ADR-0021 and
+machinery (repositories, snapshots, replay). See ADR-0022 and
 docs/explanation/decider-pattern.md.
 """
 
@@ -938,16 +938,16 @@ git commit -m "docs: basic_usage example adopts decider style, imperative moves 
 
 ---
 
-### Task 7: ADR-0021
+### Task 7: ADR-0022
 
 **Files:**
-- Create: `docs/adrs/0021-command-objects-and-decider-style.md`
+- Create: `docs/adrs/0022-command-objects-and-decider-style.md`
 - Modify: `docs/adrs/index.md` (add row/entry mirroring existing format), `mkdocs.yml` (add nav entry under ADRs, mirroring the ADR-0001 line format)
 
 - [ ] **Step 1: Write the ADR.** Read `docs/adrs/0001-async-first-design.md` first and mirror its section structure exactly (Status/Context/Decision/Consequences). Content:
 
 ```markdown
-# ADR-0021: Command Objects and the Decider Aggregate Style
+# ADR-0022: Command Objects and the Decider Aggregate Style
 
 ## Status
 
@@ -1014,7 +1014,7 @@ performance, decides.
   stands: commands are entities-ring; no port changes.
 ```
 
-- [ ] **Step 2: Wire navigation.** Add the ADR to `docs/adrs/index.md` (mirror existing row format) and to the `ADRs:` section of `mkdocs.yml` nav as `- "ADR-0021: Command Objects & Decider Style": adrs/0021-command-objects-and-decider-style.md`.
+- [ ] **Step 2: Wire navigation.** Add the ADR to `docs/adrs/index.md` (mirror existing row format) and to the `ADRs:` section of `mkdocs.yml` nav as `- "ADR-0022: Command Objects & Decider Style": adrs/0022-command-objects-and-decider-style.md`.
 
 - [ ] **Step 3: Verify docs build**
 
@@ -1025,7 +1025,7 @@ Expected: PASS
 
 ```bash
 git add docs/adrs/ mkdocs.yml
-git commit -m "docs: ADR-0021 command objects and decider aggregate style"
+git commit -m "docs: ADR-0022 command objects and decider aggregate style"
 ```
 
 ---
@@ -1042,7 +1042,7 @@ Expected: lint, mypy, import-linter, bandit/pip-audit, unit suite all green. Fix
 ```bash
 git push -u origin decider-command-dogfood
 gh pr create --draft --title "feat: DomainCommand, DeciderAggregate, and command provenance" \
-  --body "PR 1 of 3 for docs/superpowers/specs/2026-07-30-decider-command-dogfood-design.md: commands package, DeciderAggregate, CommandRejectedError, create_event(command=), exports, ADR-0021, basic_usage converted as smoke test. PR 2: dogfood wave. PR 3: DeciderScenario BDD harness.
+  --body "PR 1 of 3 for docs/superpowers/specs/2026-07-30-decider-command-dogfood-design.md: commands package, DeciderAggregate, CommandRejectedError, create_event(command=), exports, ADR-0022, basic_usage converted as smoke test. PR 2: dogfood wave. PR 3: DeciderScenario BDD harness.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)"
 ```
@@ -1160,7 +1160,7 @@ git commit -m "feat: bench decider counter variant for style comparison"
 **Files:**
 - Modify: `docs/explanation/decider-pattern.md`, `docs/explanation/aggregate-styles.md`, `README.md`
 
-- [ ] **Step 1: Update `decider-pattern.md`.** The "imperative shell" section now shows `DeciderAggregate` (subclass with three static methods; no hand-rolled `decider_state` property — that gotcha is solved by eager initialization, which the doc should state). Move the old userland shell into a closing "How the shell works underneath" appendix, framed as what `DeciderAggregate` does for you. Replace the "There is currently no first-class `Decider` abstraction…" closing paragraph with a short section on `DomainCommand` provenance (causation/correlation/actor/tenant stamping, precedence) linking to ADR-0021. Keep the benchmark section as-is (numbers are unchanged; they measured the same stamping design).
+- [ ] **Step 1: Update `decider-pattern.md`.** The "imperative shell" section now shows `DeciderAggregate` (subclass with three static methods; no hand-rolled `decider_state` property — that gotcha is solved by eager initialization, which the doc should state). Move the old userland shell into a closing "How the shell works underneath" appendix, framed as what `DeciderAggregate` does for you. Replace the "There is currently no first-class `Decider` abstraction…" closing paragraph with a short section on `DomainCommand` provenance (causation/correlation/actor/tenant stamping, precedence) linking to ADR-0022. Keep the benchmark section as-is (numbers are unchanged; they measured the same stamping design).
 
 - [ ] **Step 2: Update `aggregate-styles.md`.** The intro's third-style pointer paragraph (added in PR #79) now says the decider ships as `DeciderAggregate` and is the primary showcased style; keep the deep-dive delegated to `decider-pattern.md`.
 
@@ -1429,6 +1429,6 @@ gh pr create --draft --title "feat: DeciderScenario BDD harness for decider-styl
 
 ## Self-Review Notes (completed)
 
-- **Spec coverage:** DomainCommand (T1), CommandRejectedError (T2), DeciderAggregate + stamping + atomicity + replay/snapshot (T3), create_event(command=) (T4), exports + import-linter (T5), basic_usage smoke + imperative move + aggregate-styles pointers (T6, pulled forward from PR 2 — rationale in File Structure note), ADR-0021 + stands-verdicts (T7), fixtures (T9), tutorials (T10), bench (T11), decider docs + README (T12), DeciderScenario (T14) + testing docs (T15). Gates per PR (T8/T13/T15).
+- **Spec coverage:** DomainCommand (T1), CommandRejectedError (T2), DeciderAggregate + stamping + atomicity + replay/snapshot (T3), create_event(command=) (T4), exports + import-linter (T5), basic_usage smoke + imperative move + aggregate-styles pointers (T6, pulled forward from PR 2 — rationale in File Structure note), ADR-0022 + stands-verdicts (T7), fixtures (T9), tutorials (T10), bench (T11), decider docs + README (T12), DeciderScenario (T14) + testing docs (T15). Gates per PR (T8/T13/T15).
 - **Known judgment calls for implementers:** fixture `OrderAggregate` keeps `ValueError` where current behavior uses it (behavior-preserving); `CounterAggregate`/`DeclarativeCounterAggregate` intentionally NOT converted (they are the subject under test for their styles).
 - **Type consistency check:** `execute(command: object)`, `decide(command: Any, ...)` — the looseness is deliberate (structural typing); `DeciderScenario.then_rejected` default `CommandRejectedError` matches T2's class name; `caused_by` copies `correlation_id` only (matches spec and ADR text).
