@@ -21,6 +21,7 @@ from uuid import uuid4
 
 import pytest
 
+from eventsource.adapters.memory.snapshots import InMemorySnapshotStore
 from eventsource.observability import (
     ATTR_AGGREGATE_ID,
     ATTR_AGGREGATE_TYPE,
@@ -28,7 +29,7 @@ from eventsource.observability import (
     MockTracer,
     NullTracer,
 )
-from eventsource.snapshots import InMemorySnapshotStore, Snapshot
+from eventsource.ports.snapshots import Snapshot
 
 # ============================================================================
 # Test Fixtures
@@ -490,7 +491,7 @@ class TestPostgreSQLSnapshotStoreTracerComposition:
 
     def test_uses_tracer_composition(self):
         """PostgreSQLSnapshotStore uses Tracer composition pattern."""
-        from eventsource.snapshots import PostgreSQLSnapshotStore
+        from eventsource.adapters.postgresql.snapshots import PostgreSQLSnapshotStore
 
         sig = inspect.signature(PostgreSQLSnapshotStore.__init__)
         params = sig.parameters
@@ -504,7 +505,7 @@ class TestSQLiteSnapshotStoreTracerComposition:
 
     def test_uses_tracer_composition(self):
         """SQLiteSnapshotStore uses Tracer composition pattern."""
-        from eventsource.snapshots import SQLiteSnapshotStore
+        from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
 
         if SQLiteSnapshotStore is not None:
             sig = inspect.signature(SQLiteSnapshotStore.__init__)

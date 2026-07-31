@@ -62,7 +62,7 @@ class AggregateRepository(Generic[TAggregate]):
         To enable snapshotting, provide a snapshot_store and optionally
         configure when snapshots are created:
 
-        >>> from eventsource.snapshots import InMemorySnapshotStore
+        >>> from eventsource.adapters.memory.snapshots import InMemorySnapshotStore
         >>>
         >>> repo = AggregateRepository(
         ...     event_store=event_store,

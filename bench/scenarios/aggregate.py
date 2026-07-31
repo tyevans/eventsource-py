@@ -8,7 +8,7 @@ from bench.adapters.base import BenchAdapter
 from bench.core.domain import BenchCounter
 from bench.core.runner import Measurement, Scenario
 from eventsource.application.aggregates.repository import AggregateRepository
-from eventsource.snapshots.interface import SnapshotStore
+from eventsource.ports.snapshots import SnapshotStore
 from eventsource.stores.interface import EventStore
 
 SNAPSHOT_THRESHOLD = 100

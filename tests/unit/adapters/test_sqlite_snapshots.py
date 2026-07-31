@@ -1,22 +1,62 @@
-"""Unit tests for InMemorySnapshotStore."""
+"""Unit tests for SQLiteSnapshotStore."""
 
 import asyncio
+import os
+import tempfile
 from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
 
-from eventsource.snapshots import Snapshot
-from eventsource.snapshots.in_memory import InMemorySnapshotStore
+from tests.conftest import AIOSQLITE_AVAILABLE, skip_if_no_aiosqlite
+
+if AIOSQLITE_AVAILABLE:
+    import aiosqlite
+
+    from eventsource.adapters.sqlite.snapshots import SQLITE_AVAILABLE, SQLiteSnapshotStore
+    from eventsource.migrations import get_schema
+    from eventsource.ports.snapshots import Snapshot
 
 
-class TestInMemorySnapshotStore:
-    """Tests for the InMemorySnapshotStore implementation."""
+pytestmark = [pytest.mark.sqlite, skip_if_no_aiosqlite]
+
+
+class TestSQLiteSnapshotStoreConfiguration:
+    """Tests for SQLiteSnapshotStore configuration."""
+
+    def test_sqlite_available_flag(self):
+        """Test that SQLITE_AVAILABLE is True when aiosqlite is installed."""
+        assert SQLITE_AVAILABLE is True
+
+    def test_init_with_path(self):
+        """Test initialization with a database path."""
+        store = SQLiteSnapshotStore("/path/to/db.sqlite")
+        assert store.database_path == "/path/to/db.sqlite"
+
+    def test_init_with_memory(self):
+        """Test initialization with in-memory database."""
+        store = SQLiteSnapshotStore(":memory:")
+        assert store.database_path == ":memory:"
+
+
+class TestSQLiteSnapshotStoreOperations:
+    """Tests for SQLiteSnapshotStore CRUD operations."""
 
     @pytest.fixture
-    def store(self):
-        """Create a fresh InMemorySnapshotStore for each test."""
-        return InMemorySnapshotStore()
+    async def db_path(self):
+        """Create temporary database path."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yield os.path.join(tmpdir, "test_snapshots.db")
+
+    @pytest.fixture
+    async def store(self, db_path):
+        """Create store with initialized schema."""
+        # Create schema
+        async with aiosqlite.connect(db_path) as conn:
+            schema = get_schema("snapshots", "sqlite")
+            await conn.executescript(schema)
+
+        return SQLiteSnapshotStore(db_path)
 
     @pytest.fixture
     def sample_snapshot(self):
@@ -40,7 +80,12 @@ class TestInMemorySnapshotStore:
             sample_snapshot.aggregate_type,
         )
 
-        assert loaded == sample_snapshot
+        assert loaded is not None
+        assert loaded.aggregate_id == sample_snapshot.aggregate_id
+        assert loaded.aggregate_type == sample_snapshot.aggregate_type
+        assert loaded.version == sample_snapshot.version
+        assert loaded.state == sample_snapshot.state
+        assert loaded.schema_version == sample_snapshot.schema_version
 
     @pytest.mark.asyncio
     async def test_get_nonexistent_snapshot_returns_none(self, store):
@@ -75,8 +120,9 @@ class TestInMemorySnapshotStore:
         await store.save_snapshot(snapshot_v2)
 
         loaded = await store.get_snapshot(aggregate_id, "Order")
-        assert loaded == snapshot_v2
+        assert loaded is not None
         assert loaded.version == 100
+        assert loaded.state["status"] == "shipped"
 
     @pytest.mark.asyncio
     async def test_delete_snapshot_returns_true_when_exists(self, store, sample_snapshot):
@@ -122,26 +168,6 @@ class TestInMemorySnapshotStore:
         assert await store.snapshot_exists(uuid4(), "Order") is False
 
     @pytest.mark.asyncio
-    async def test_clear_removes_all_snapshots(self, store):
-        """Test clear() removes all snapshots."""
-        for _ in range(5):
-            snapshot = Snapshot(
-                aggregate_id=uuid4(),
-                aggregate_type="Order",
-                version=1,
-                state={},
-                schema_version=1,
-                created_at=datetime.now(UTC),
-            )
-            await store.save_snapshot(snapshot)
-
-        assert store.snapshot_count == 5
-
-        await store.clear()
-
-        assert store.snapshot_count == 0
-
-    @pytest.mark.asyncio
     async def test_delete_snapshots_by_type(self, store):
         """Test bulk deletion by aggregate type."""
         # Create snapshots for different types
@@ -176,16 +202,21 @@ class TestInMemorySnapshotStore:
         deleted = await store.delete_snapshots_by_type("Order")
 
         assert deleted == 3
-        assert store.snapshot_count == 2  # Only User snapshots remain
+        # Verify User snapshots remain
+        for agg_id in user_ids:
+            assert await store.snapshot_exists(agg_id, "User") is True
 
     @pytest.mark.asyncio
     async def test_delete_snapshots_by_type_with_schema_version_filter(self, store):
         """Test bulk deletion with schema version filter."""
         # Create snapshots with different schema versions
+        agg_ids = []
         for schema_v in [1, 2, 3]:
+            agg_id = uuid4()
+            agg_ids.append((agg_id, schema_v))
             await store.save_snapshot(
                 Snapshot(
-                    aggregate_id=uuid4(),
+                    aggregate_id=agg_id,
                     aggregate_type="Order",
                     version=1,
                     state={},
@@ -198,7 +229,13 @@ class TestInMemorySnapshotStore:
         deleted = await store.delete_snapshots_by_type("Order", schema_version_below=3)
 
         assert deleted == 2
-        assert store.snapshot_count == 1
+        # Verify schema_version=3 snapshot remains
+        for agg_id, schema_v in agg_ids:
+            exists = await store.snapshot_exists(agg_id, "Order")
+            if schema_v < 3:
+                assert exists is False
+            else:
+                assert exists is True
 
     @pytest.mark.asyncio
     async def test_delete_snapshots_by_type_no_matches(self, store):
@@ -219,31 +256,6 @@ class TestInMemorySnapshotStore:
         deleted = await store.delete_snapshots_by_type("User")
 
         assert deleted == 0
-        assert store.snapshot_count == 1
-
-    @pytest.mark.asyncio
-    async def test_concurrent_operations(self, store):
-        """Test thread safety with concurrent operations."""
-        aggregate_id = uuid4()
-
-        async def save_and_read():
-            for i in range(10):
-                snapshot = Snapshot(
-                    aggregate_id=aggregate_id,
-                    aggregate_type="Order",
-                    version=i,
-                    state={"iteration": i},
-                    schema_version=1,
-                    created_at=datetime.now(UTC),
-                )
-                await store.save_snapshot(snapshot)
-                await store.get_snapshot(aggregate_id, "Order")
-
-        # Run multiple concurrent tasks
-        await asyncio.gather(*[save_and_read() for _ in range(5)])
-
-        # Should have one snapshot (last write wins)
-        assert store.snapshot_count == 1
 
     @pytest.mark.asyncio
     async def test_different_aggregate_types_are_separate(self, store):
@@ -274,56 +286,135 @@ class TestInMemorySnapshotStore:
         order_loaded = await store.get_snapshot(aggregate_id, "Order")
         user_loaded = await store.get_snapshot(aggregate_id, "User")
 
+        assert order_loaded is not None
+        assert user_loaded is not None
         assert order_loaded.state["type"] == "order"
         assert user_loaded.state["type"] == "user"
 
     @pytest.mark.asyncio
-    async def test_snapshot_count_property(self, store):
-        """Test the snapshot_count property."""
-        assert store.snapshot_count == 0
+    async def test_complex_state_serialization(self, store):
+        """Test that complex nested state is properly serialized/deserialized."""
+        aggregate_id = uuid4()
 
-        for i in range(3):
-            await store.save_snapshot(
-                Snapshot(
-                    aggregate_id=uuid4(),
-                    aggregate_type="Order",
-                    version=i,
-                    state={},
-                    schema_version=1,
-                    created_at=datetime.now(UTC),
-                )
-            )
+        complex_state = {
+            "string": "value",
+            "number": 42,
+            "float": 3.14,
+            "boolean": True,
+            "null": None,
+            "list": [1, 2, 3],
+            "nested": {"deep": {"value": "found"}},
+        }
 
-        assert store.snapshot_count == 3
-
-    def test_repr(self, store):
-        """Test string representation."""
-        assert "InMemorySnapshotStore" in repr(store)
-        assert "snapshots=0" in repr(store)
-
-    @pytest.mark.asyncio
-    async def test_delete_snapshots_by_type_schema_version_edge_case(self, store):
-        """Test schema version filter boundary condition."""
-        # Create snapshot with exactly the boundary version
-        await store.save_snapshot(
-            Snapshot(
-                aggregate_id=uuid4(),
-                aggregate_type="Order",
-                version=1,
-                state={},
-                schema_version=5,
-                created_at=datetime.now(UTC),
-            )
+        snapshot = Snapshot(
+            aggregate_id=aggregate_id,
+            aggregate_type="Complex",
+            version=1,
+            state=complex_state,
+            schema_version=1,
+            created_at=datetime.now(UTC),
         )
 
-        # Delete schema_version < 5 should NOT delete this snapshot
-        deleted = await store.delete_snapshots_by_type("Order", schema_version_below=5)
+        await store.save_snapshot(snapshot)
+        loaded = await store.get_snapshot(aggregate_id, "Complex")
 
-        assert deleted == 0
-        assert store.snapshot_count == 1
+        assert loaded is not None
+        assert loaded.state == complex_state
 
-        # Delete schema_version < 6 SHOULD delete this snapshot
-        deleted = await store.delete_snapshots_by_type("Order", schema_version_below=6)
+    @pytest.mark.asyncio
+    async def test_datetime_serialization(self, store):
+        """Test that datetime is properly serialized/deserialized."""
+        aggregate_id = uuid4()
+        created_time = datetime(2024, 6, 15, 12, 30, 45, tzinfo=UTC)
 
-        assert deleted == 1
-        assert store.snapshot_count == 0
+        snapshot = Snapshot(
+            aggregate_id=aggregate_id,
+            aggregate_type="Order",
+            version=1,
+            state={},
+            schema_version=1,
+            created_at=created_time,
+        )
+
+        await store.save_snapshot(snapshot)
+        loaded = await store.get_snapshot(aggregate_id, "Order")
+
+        assert loaded is not None
+        assert loaded.created_at == created_time
+
+
+class TestSQLiteSnapshotStoreFilePersistence:
+    """Tests for file-based SQLite persistence."""
+
+    @pytest.mark.asyncio
+    async def test_file_based_persistence(self):
+        """Test that snapshots persist to file and survive restart."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "persist_test.db")
+
+            aggregate_id = uuid4()
+
+            # First session: create schema and save snapshot
+            async with aiosqlite.connect(db_path) as conn:
+                schema = get_schema("snapshots", "sqlite")
+                await conn.executescript(schema)
+
+            store1 = SQLiteSnapshotStore(db_path)
+            snapshot = Snapshot(
+                aggregate_id=aggregate_id,
+                aggregate_type="Order",
+                version=100,
+                state={"persisted": True},
+                schema_version=1,
+                created_at=datetime.now(UTC),
+            )
+            await store1.save_snapshot(snapshot)
+
+            # Second session: verify snapshot persisted
+            store2 = SQLiteSnapshotStore(db_path)
+            loaded = await store2.get_snapshot(aggregate_id, "Order")
+
+            assert loaded is not None
+            assert loaded.state["persisted"] is True
+
+
+class TestSQLiteSnapshotStoreConcurrency:
+    """Tests for concurrent operations."""
+
+    @pytest.fixture
+    async def db_path(self):
+        """Create temporary database path."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yield os.path.join(tmpdir, "concurrent_test.db")
+
+    @pytest.fixture
+    async def store(self, db_path):
+        """Create store with initialized schema."""
+        async with aiosqlite.connect(db_path) as conn:
+            schema = get_schema("snapshots", "sqlite")
+            await conn.executescript(schema)
+
+        return SQLiteSnapshotStore(db_path)
+
+    @pytest.mark.asyncio
+    async def test_concurrent_save_operations(self, store):
+        """Test concurrent save operations."""
+        aggregate_id = uuid4()
+
+        async def save_snapshot(version: int):
+            snapshot = Snapshot(
+                aggregate_id=aggregate_id,
+                aggregate_type="Order",
+                version=version,
+                state={"version": version},
+                schema_version=1,
+                created_at=datetime.now(UTC),
+            )
+            await store.save_snapshot(snapshot)
+
+        # Run multiple concurrent saves
+        await asyncio.gather(*[save_snapshot(i) for i in range(10)])
+
+        # Should have one snapshot (last write wins)
+        loaded = await store.get_snapshot(aggregate_id, "Order")
+        assert loaded is not None

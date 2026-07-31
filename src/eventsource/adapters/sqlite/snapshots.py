@@ -26,7 +26,7 @@ from eventsource.observability.attributes import (
     ATTR_AGGREGATE_TYPE,
     ATTR_VERSION,
 )
-from eventsource.snapshots.interface import Snapshot, SnapshotStore
+from eventsource.ports.snapshots import Snapshot, SnapshotStore
 
 # Optional dependency handling
 try:
@@ -68,7 +68,7 @@ class SQLiteSnapshotStore(SnapshotStore):
     - Optional OpenTelemetry tracing
 
     Example:
-        >>> from eventsource.snapshots import SQLiteSnapshotStore
+        >>> from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
         >>>
         >>> store = SQLiteSnapshotStore("snapshots.db")
         >>>

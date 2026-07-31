@@ -260,7 +260,7 @@ source_modules = [
     "eventsource.protocols",
     "eventsource.stores.interface",
     "eventsource.bus.interface",
-    "eventsource.snapshots.interface",
+    "eventsource.ports.snapshots",
     "eventsource.application.aggregates.snapshotting",
     "eventsource.handlers.decorators",
     "eventsource.handlers.registry",
@@ -269,7 +269,7 @@ source_modules = [
     "eventsource.types",
     "eventsource.stores.in_memory",
     "eventsource.bus.memory",
-    "eventsource.snapshots.in_memory",
+    "eventsource.adapters.memory.snapshots",
     "eventsource.projections.protocols",
     "eventsource.testing.builder",
     "eventsource.testing.assertions",
@@ -301,13 +301,13 @@ forbidden_modules = ["sqlalchemy"]
 #
 # 2. docs/core-surface.md lists eventsource.aggregates.repository and (via it)
 #    eventsource.multitenancy.repository as Tier 0, on the theory that snapshot
-#    types are imported lazily/under TYPE_CHECKING. That is true of the module
-#    itself, but eventsource/snapshots/__init__.py unconditionally does
-#    `from eventsource.snapshots.postgresql import PostgreSQLSnapshotStore` at
-#    module level (unguarded by try/except, unlike the sqlite import a few lines
-#    below it) -- so `import eventsource.snapshots` always pulls in sqlalchemy,
-#    and both repository modules import `eventsource.snapshots`. They are
-#    excluded from the contract's source_modules above for this reason.
+#    types are imported lazily/under TYPE_CHECKING. This was true against the
+#    old eventsource/snapshots/__init__.py, which unconditionally imported
+#    PostgreSQLSnapshotStore (pulling in sqlalchemy) the moment anything touched
+#    eventsource.snapshots. The snapshots-package dissolution (Task 4 of the
+#    aggregates/application-ring redesign) removed that module; the two modules
+#    remain excluded from the contract's source_modules above pending
+#    re-verification that they are now clean.
 #
 # Per task instructions: report the drift, do not weaken the contract to hide
 # it, and do not fix the violations here.

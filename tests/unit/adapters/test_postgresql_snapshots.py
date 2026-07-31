@@ -20,8 +20,9 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from eventsource.adapters.postgresql.snapshots import PostgreSQLSnapshotStore
 from eventsource.observability import MockTracer
-from eventsource.snapshots import PostgreSQLSnapshotStore, Snapshot
+from eventsource.ports.snapshots import Snapshot
 
 # --- Fixtures ---
 
@@ -614,17 +615,15 @@ class TestImports:
 
     def test_import_from_snapshots_module(self) -> None:
         """Test importing PostgreSQLSnapshotStore from snapshots module."""
-        from eventsource.snapshots import PostgreSQLSnapshotStore
+        from eventsource.adapters.postgresql.snapshots import PostgreSQLSnapshotStore
 
         assert PostgreSQLSnapshotStore is not None
 
-    def test_import_from_main_module(self) -> None:
-        """Test importing from main eventsource module."""
-        # Note: PostgreSQLSnapshotStore may not be in main exports
-        # This test verifies the snapshots module is accessible
-        from eventsource import snapshots
+    def test_import_from_adapters_package(self) -> None:
+        """Test importing PostgreSQLSnapshotStore from the adapters package."""
+        from eventsource.adapters.postgresql import PostgreSQLSnapshotStore
 
-        assert hasattr(snapshots, "PostgreSQLSnapshotStore")
+        assert PostgreSQLSnapshotStore is not None
 
 
 # --- Complex State Tests ---

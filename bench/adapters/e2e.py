@@ -3,7 +3,7 @@
 from bench.adapters.base import BenchAdapter
 from bench.adapters.snapshots import SNAPSHOT_ADAPTERS
 from bench.adapters.stores import STORE_ADAPTERS
-from eventsource.snapshots.interface import SnapshotStore
+from eventsource.ports.snapshots import SnapshotStore
 from eventsource.stores.interface import EventStore
 
 

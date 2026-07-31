@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.snapshots import Snapshot, SnapshotStore
+from eventsource.ports.snapshots import Snapshot, SnapshotStore
 
 
 class TestSnapshotStoreInterface:
