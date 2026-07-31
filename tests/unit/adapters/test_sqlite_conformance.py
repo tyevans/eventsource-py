@@ -152,28 +152,6 @@ class TestSQLiteDLQRepository(DLQRepositoryConformance):
         yield SQLDLQRepository(engine)
         await engine.dispose()
 
-    async def test_sqlite_delete_resolved_events_removes_past_cutoff_entries(
-        self, store: SQLDLQRepository
-    ) -> None:
-        # Unlike the memory adapter, the SQL adapter's cutoff is `now`
-        # minus `older_than_days`, not truncated to midnight -- an entry
-        # resolved moments ago is already past an `older_than_days=0`
-        # cutoff by the time the delete query runs.
-        await store.add_failed_event(
-            event_id=uuid4(),
-            projection_name="P",
-            event_type="Created",
-            event_data={},
-            error=RuntimeError("boom"),
-        )
-        (entry,) = await store.get_failed_events()
-        await store.mark_resolved(entry.id, "alice")
-
-        deleted = await store.delete_resolved_events(older_than_days=0)
-
-        assert deleted == 1
-        assert await store.get_failed_event_by_id(entry.id) is None
-
 
 class TestSQLiteOutboxRepository(OutboxRepositoryConformance):
     @pytest.fixture

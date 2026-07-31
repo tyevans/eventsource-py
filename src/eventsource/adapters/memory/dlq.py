@@ -327,9 +327,7 @@ class InMemoryDLQRepository:
                 ATTR_DB_SYSTEM: "memory",
             },
         ):
-            cutoff = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
-            # Subtract days (simplified for in-memory implementation)
-            cutoff = cutoff - timedelta(days=older_than_days)
+            cutoff = datetime.now(UTC) - timedelta(days=older_than_days)
 
             deleted = 0
             async with self._lock:

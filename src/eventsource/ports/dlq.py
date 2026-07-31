@@ -187,6 +187,14 @@ class DLQRepository(Protocol):
         """
         Delete resolved events older than specified days.
 
+        The cutoff is exactly `datetime.now(UTC) -
+        timedelta(days=older_than_days)`, evaluated when the call runs. An
+        entry is deleted if and only if its `status` is `"resolved"` and
+        its `resolved_at` is strictly before that cutoff. It is a rolling
+        instant, not a calendar boundary: `older_than_days=0` therefore
+        deletes every already-resolved entry, including one resolved a
+        moment ago. Failed and retrying entries are never touched.
+
         Useful for periodic cleanup to prevent DLQ table growth.
 
         Args:

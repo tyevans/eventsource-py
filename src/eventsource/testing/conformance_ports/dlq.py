@@ -1,9 +1,10 @@
 """Conformance suite for the `DLQRepository` port.
 
 Subclass and provide a `store` fixture yielding a fresh adapter instance.
-Time-sensitive cleanup semantics that differ per backend (the memory
-adapter truncates its cutoff to midnight; the SQL adapter does not) are
-intentionally excluded here -- see the backend-specific test modules.
+Cleanup retention is pinned here rather than per backend: the cutoff is
+exactly `datetime.now(UTC) - timedelta(days=older_than_days)`, so
+`older_than_days=0` deletes every already-resolved entry on every
+backend.
 """
 
 from abc import ABC, abstractmethod
@@ -242,3 +243,27 @@ class DLQRepositoryConformance(ABC):
 
         assert deleted == 0
         assert len(await store.get_failed_events()) == 1
+
+    async def test_delete_resolved_events_day_zero_deletes_resolved_entries(
+        self, store: DLQRepository
+    ) -> None:
+        """`older_than_days=0` means "resolved before now", not "before midnight".
+
+        The cutoff is exactly `datetime.now(UTC) - timedelta(days=N)`, so a
+        moments-ago resolution is already past a day-zero cutoff by the time
+        the delete runs.
+        """
+        await store.add_failed_event(
+            event_id=uuid4(),
+            projection_name="P",
+            event_type="Created",
+            event_data={},
+            error=RuntimeError("boom"),
+        )
+        (entry,) = await store.get_failed_events()
+        await store.mark_resolved(entry.id, "alice")
+
+        deleted = await store.delete_resolved_events(older_than_days=0)
+
+        assert deleted == 1
+        assert await store.get_failed_event_by_id(entry.id) is None
