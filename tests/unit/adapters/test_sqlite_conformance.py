@@ -9,6 +9,7 @@ from uuid import uuid4
 import aiosqlite
 import pytest
 from hypothesis import settings
+from sqlalchemy import text
 
 from tests.conftest import skip_if_no_aiosqlite
 
@@ -119,6 +120,24 @@ class TestSQLiteCheckpointRepository(CheckpointRepositoryConformance):
             await raw.driver_connection.executescript(get_schema("events", backend="sqlite"))
         yield SQLCheckpointRepository(engine)
         await engine.dispose()
+
+    async def write_legacy_int_row(
+        self,
+        store: SQLCheckpointRepository,
+        subscription_id: str,
+        value: int,
+    ) -> None:
+        # A row as written before position tokens existed: an integer
+        # global_position and no token. The adapter must read it as None.
+        async with store._conn.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO projection_checkpoints "
+                    "(projection_name, global_position, events_processed) "
+                    "VALUES (:name, :value, 1)"
+                ),
+                {"name": subscription_id, "value": value},
+            )
 
 
 class TestSQLiteDLQRepository(DLQRepositoryConformance):

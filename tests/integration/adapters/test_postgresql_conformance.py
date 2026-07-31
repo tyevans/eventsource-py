@@ -164,6 +164,7 @@ _CHECKPOINTS_DDL = [
         last_processed_at TIMESTAMPTZ,
         events_processed BIGINT NOT NULL DEFAULT 0,
         global_position BIGINT,
+        position_token TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
@@ -210,6 +211,24 @@ class TestPostgreSQLCheckpointRepository(CheckpointRepositoryConformance):
             await driver_connection.execute(get_schema("events", "postgresql"))
         yield SQLCheckpointRepository(engine)
         await engine.dispose()
+
+    async def write_legacy_int_row(
+        self,
+        store: SQLCheckpointRepository,
+        subscription_id: str,
+        value: int,
+    ) -> None:
+        # A row as written before position tokens existed: an integer
+        # global_position and no token. The adapter must read it as None.
+        async with store._conn.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO projection_checkpoints "
+                    "(projection_name, global_position, events_processed) "
+                    "VALUES (:name, :value, 1)"
+                ),
+                {"name": subscription_id, "value": value},
+            )
 
 
 class TestPostgreSQLDLQRepository(DLQRepositoryConformance):

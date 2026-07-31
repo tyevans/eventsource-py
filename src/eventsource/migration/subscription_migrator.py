@@ -66,6 +66,7 @@ from uuid import UUID
 from eventsource.adapters._sql.positions import IntPositionCodec
 from eventsource.migration.exceptions import MigrationError, PositionMappingError
 from eventsource.observability import Tracer, create_tracer
+from eventsource.subscriptions.subscription import render_position
 
 if TYPE_CHECKING:
     from eventsource.migration.position_mapper import PositionMapper
@@ -875,7 +876,7 @@ class SubscriptionMigrator:
                         extra={
                             "subscription": name,
                             "migration_id": str(migration_id),
-                            "position": position,
+                            "position": render_position(position),
                         },
                     )
 
