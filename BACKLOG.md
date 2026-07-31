@@ -230,3 +230,66 @@ outbox schema with `id TEXT PRIMARY KEY` (matching postgres UUID semantics) or
 change the adapter to stop generating ids and surface the rowid. Whichever way,
 retarget the conftest fixture onto `get_schema()` so the migration is actually
 under test, then drop the xfail.
+
+## Migrate locks/ to ports/adapters (P2)
+
+`locks/` still bundles the lock interface with its PostgreSQL advisory-lock
+implementation in one package, pre-ring style. Split per the campaign pattern:
+`DistributedLock` Protocol into `ports/`, the postgres implementation into
+`adapters/postgresql/`, memory implementation into `adapters/memory/`, with a
+conformance suite in `testing/conformance_ports/`. Campaign residue item
+(2026-07-31, ADRs 0021/0024/0025/0026 establish the pattern).
+
+## Split readmodels/ into port + adapter (P2)
+
+`readmodels/postgresql.py` mixes the ReadModelProjection base contract with its
+PostgreSQL implementation (16 `sql_connection` call sites). Move the contract
+beside the other projection surfaces in `application/projections/`, the pg
+implementation to `adapters/`, mirroring how DatabaseProjection landed in
+`adapters/sql/projection.py` (ADR 0024). Campaign residue item (2026-07-31).
+
+## Migrate bus/ interface and backends to ports/adapters (P2)
+
+`bus/` colocates the EventBus interface with InMemory, Redis, RabbitMQ, and
+Kafka backends. Ring migration: EventBus port into `ports/`, backends into
+`adapters/<backend>/bus.py`, guarded optional imports preserved, conformance
+suite already exists to anchor behavior. Coordinate with the existing "Remove
+bus facade compat shims (P2)" entry — shim removal scheduled for 0.8.0 should
+land first or together to avoid double-moving. Campaign residue item (2026-07-31).
+
+## Move migration/repositories onto the adapters ring (P2)
+
+`migration/repositories/{audit_log,migration,position_mapping,routing}.py` are
+sqlalchemy implementations living inside a use-case-shaped package, and since
+the outbox slice they import `eventsource.adapters._sql.connection` directly —
+accepted debt with no import-linter contract covering it (spec §2.3 of the
+outbox ring design). Relocate them under `adapters/` (or split port protocols
+out first), then add the missing contract so the application ring can't name
+adapters. Campaign residue item (2026-07-31).
+
+## Relocate subscriptions/ into the application ring (P2)
+
+`subscriptions/` (manager, runners, retry, health, flow control) is use-case
+orchestration operating purely on ports since the store retirement, but still
+lives as a top-level package outside `application/`. Relocate under
+`application/subscriptions/` with deprecation shims for public names, and
+extend the Tier-0 import-linter contract to cover it. Campaign residue item
+(2026-07-31).
+
+## Decide engine.py's ring placement (P3)
+
+Top-level `engine.py` predates the ring structure and is imported eagerly by
+`eventsource/__init__` (part of the sqlalchemy-on-import chain noted in
+docs/core-surface.md finding 12). Decide whether it belongs in `adapters/_sql/`
+or dissolves into the existing connection helpers, and update the lazy-init
+backlog item's import-chain notes accordingly. Campaign residue item (2026-07-31).
+
+## Small ring-consistency cleanups (P3)
+
+Batch of low-risk campaign leftovers (2026-07-31): (a) consider renaming
+`testing/conformance_ports/` now that it is the only conformance package —
+folding it into `testing/conformance.py`'s namespace or documenting the split;
+(b) move the tracing decorator used by adapters up to a ports-level helper so
+adapters stop importing `observability/` internals directly; (c) consolidate
+`protocols.py`'s remaining ABCs/Protocols with their ring homes (several now
+duplicate `ports/` definitions in spirit) with deprecation re-exports.
