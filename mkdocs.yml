@@ -166,6 +166,7 @@ nav:
       - "ADR-0040: Out-of-Ring Settlement": adrs/0040-out-of-ring-settlement.md
       - "ADR-0041: Infrastructure Exceptions to Ports": adrs/0041-infrastructure-exceptions-to-ports.md
       - "ADR-0042: Domain Event and Handler Strictness": adrs/0042-domain-event-strictness.md
+      - "ADR-0043: Domain Model Guards and Vocabulary": adrs/0043-domain-model-guards-and-vocabulary.md
   - Development:
       - development/index.md
       - Contributing: development/contributing.md

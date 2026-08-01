@@ -19,9 +19,16 @@ The rings, innermost first:
    rules — domain events, the event registry, domain value objects, domain
    exceptions. Pure: stdlib + pydantic only. No I/O. `domain/aggregate.py`
    (`AggregateRoot`, `DeclarativeAggregate`) lives here now; `aggregates/` is no
-   longer a transitional location for it. `domain/types.py` (type aliases:
-   `AggregateId`, `EventId`, `TenantId`, `CorrelationId`, `CausationId`, `Version`,
-   `StreamPosition`, `GlobalPosition`, `TState`), `domain/exceptions.py` (the
+   longer a transitional location for it. `aggregate_type` is a required
+   `ClassVar[str]` on `AggregateRoot` — a concrete subclass that does not set
+   it raises `AggregateTypeNotSetError` at construction — and
+   `DomainEvent.aggregate_type` is validated against `CATEGORY_PATTERN` at
+   construction (ADR 0043). `domain/types.py` (type aliases:
+   `AggregateId`, `EventId`, `TenantId`, `CorrelationId`, `CausationId`, `TState`
+   — all plain `UUID` aliases threaded through `DomainEvent`/`DomainCommand`
+   annotations; `Version`, `StreamPosition`, and `GlobalPosition` are deleted,
+   positions being opaque adapter-owned tokens per `ports/positions.py`, ADR
+   0043), `domain/exceptions.py` (the
    domain exception hierarchy — `EventSourceError` root, aggregate/event/
    snapshot/tenant errors; infrastructure error types live in
    `ports/exceptions.py`, ADR 0041), and `domain/command.py` (`DomainCommand`) are settled, not

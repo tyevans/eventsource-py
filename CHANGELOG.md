@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING: aggregates must declare `aggregate_type`.** The silent `"Unknown"` default on `AggregateRoot` is removed; constructing a concrete aggregate class that does not set the attribute raises the new `AggregateTypeNotSetError`. Aggregate identity is not optional — the old default silently created `"Unknown"`-typed streams.
+- **BREAKING: `DomainEvent.aggregate_type` is validated as a stream category** (must match `CATEGORY_PATTERN`); values that would corrupt a `StreamId` (e.g. containing `:`) now fail at event construction instead of detonating at stream-render time.
+- **BREAKING: `DeclarativeAggregate.unregistered_event_handling` now defaults to `"error"`** (was `"ignore"`). An aggregate replaying an event it has no `@handles` method for raises `UnhandledEventError` instead of silently skipping it — silent skips let command handlers reason over divergent state. Opt down explicitly with `unregistered_event_handling = "ignore"`. Projections are unaffected.
+- **BREAKING: `eventsource.domain.types` reshaped.** `Version`, `StreamPosition`, and `GlobalPosition` are deleted (global positions are opaque adapter-owned tokens — use `eventsource.ports.positions.Position`); `TenantId` and `CausationId` are now plain `UUID` aliases (optionality belongs to the referencing field, not the identity type). The identity aliases are now threaded through `DomainEvent`/`DomainCommand` annotations, so the published vocabulary matches the real signatures.
+
+- **BREAKING: Python 3.13+ is now required** (`requires-python = ">=3.13"`; was `>=3.11`). The typed decider uses native PEP 696 TypeVar defaults, and the project now targets one modern floor instead of carrying compatibility imports. CI tests 3.13.
+
+### Added
+- `DeciderAggregate[TState, TCommand]`: optional second type parameter (PEP 696 default `object`) so `decide` can be typed against a userland command union and mypy flags unhandled commands. Single-parameter subscripts keep working unchanged.
+- `AggregateTypeNotSetError` exception.
+
+### Docs
+- The teaching layer is now decider-first per ADR-0022 §5: getting-started and index lead with `DeciderAggregate` + `DomainCommand` + `CommandRejectedError`; `explanation/aggregate-styles.md` is a three-style comparison with the decider first; the testing tutorial leads with `DeciderScenario`. The quickstart no longer recommends hand-declaring `event_type` (auto-derived; explicit only for versioned wire names) and uses `Decimal` money. Stale docstrings in `aggregate.py`/`event_registry.py` updated to current practice.
+
 ### Fixed
 - **`DomainEvent.__init_subclass__` no longer mutates the parent class's shared `event_type` FieldInfo.** Subclassing a concrete event corrupted the parent's registry key: `register_event(Parent)` after `class Child(Parent)` filed Parent under "Child", making stored `"Parent"` events undeserializable (or raising a spurious `DuplicateEventTypeError`). Event-type derivation is now unified on the new `DomainEvent.event_type_name()` classmethod, used by both instance construction and `EventRegistry`.
 - **BREAKING (behavioral): `clear_tenant_context()` now actually clears.** Previously it left the token stack intact, so any enclosing `tenant_scope()` exit silently resurrected the "cleared" tenant — a cross-tenant leakage vector. It now invalidates all outstanding tokens in the current context; a subsequent `reset_tenant_context()` (including a scope exit) raises `TenantContextResetError` instead of restoring a stale tenant. Code that relied on the old restore-after-clear behavior (there should be none, since it was the leakage vector this fixes) must stop calling `clear_tenant_context()` inside an active scope.
