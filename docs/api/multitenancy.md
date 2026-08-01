@@ -1,40 +1,43 @@
 # Multi-Tenancy API Reference
 
-Technical reference for the `eventsource.multitenancy` package: the
+Technical reference for the library's multi-tenancy support: the
 `contextvars`-based tenant context, the `TenantDomainEvent` base class that
 requires a `tenant_id`, the `TenantAwareRepository` wrapper that validates tenant
-ownership around an `AggregateRepository`, and the two tenant exceptions.
+ownership around an `AggregateRepository`, and the three tenant exceptions.
 
-The package is organized into four source modules, all of whose public names are
-re-exported from the `eventsource.multitenancy` barrel:
+There is no single package for this feature — it was dissolved into the ring
+architecture under [ADR 0038](../adrs/0038-multitenancy-dissolution.md). The
+pieces live across four modules:
 
 | Module | Contains |
 | --- | --- |
-| `eventsource.multitenancy.context` | `tenant_context`, `get_current_tenant`, `get_required_tenant`, `set_current_tenant`, `clear_tenant_context`, `tenant_scope`, `tenant_scope_sync` |
-| `eventsource.multitenancy.events` | `TenantDomainEvent` |
-| `eventsource.multitenancy.repository` | `TenantAwareRepository` |
-| `eventsource.multitenancy.exceptions` | `TenantContextNotSetError`, `TenantMismatchError` |
+| `eventsource.domain.tenant_context` | `tenant_context`, `get_current_tenant`, `get_required_tenant`, `set_current_tenant`, `clear_tenant_context`, `tenant_scope`, `tenant_scope_sync` |
+| `eventsource.domain.tenant_events` | `TenantDomainEvent` |
+| `eventsource.application.aggregates.tenant_repository` | `TenantAwareRepository` |
+| `eventsource.domain.exceptions` | `TenantContextNotSetError`, `TenantContextResetError`, `TenantMismatchError` (merged in alongside the rest of the exception hierarchy) |
 
-Every name except `TenantAwareRepository` is additionally re-exported from the
-top-level `eventsource` package, so `from eventsource import tenant_scope` and
-`from eventsource.multitenancy import tenant_scope` are equivalent. The
-repository wrapper must be imported from `eventsource.multitenancy`.
+Every name except `TenantAwareRepository` is re-exported from the top-level
+`eventsource` package, so `from eventsource import tenant_scope` is the way to
+reach it — there is no dotted-path equivalent to fall back to, since the old
+`eventsource.multitenancy` barrel no longer exists. `TenantAwareRepository` is
+the one name that must be imported from its full module path:
+`from eventsource.application.aggregates.tenant_repository import TenantAwareRepository`.
 
 ## Overview
 
-The package supplies three cooperating pieces plus their error types. A
+The feature supplies three cooperating pieces plus their error types. A
 `ContextVar` carries the active tenant UUID through async tasks and threads;
 `TenantDomainEvent` turns the optional `DomainEvent.tenant_id` into a required
 field and can read that field from the context; `TenantAwareRepository` wraps an
 `AggregateRepository` and checks, before each save, that every uncommitted event
 belongs to the tenant currently in context.
 
-Nothing in the package touches the event store's SQL. Isolation is enforced in
+Nothing in this feature touches the event store's SQL. Isolation is enforced in
 Python, on the write path, against values already present on the events. Read
 isolation -- filtering loaded events by tenant -- is not implemented here; see
 the known limitation under `TenantAwareRepository`.
 
-### Import Surface (`eventsource.multitenancy.__all__`)
+### Import Surface
 
 | Name | Kind / signature | One-line role |
 | --- | --- | --- |
@@ -48,21 +51,24 @@ the known limitation under `TenantAwareRepository`.
 | `TenantDomainEvent` | class, subclass of `DomainEvent` | Event base with required `tenant_id` |
 | `TenantAwareRepository` | `Generic[TAggregate]` class | Validating wrapper over `AggregateRepository` |
 | `TenantContextNotSetError` | exception, subclass of `EventSourceError` | No tenant in context where one was required |
+| `TenantContextResetError` | exception, subclass of `EventSourceError` | A context token was reset out of LIFO order, or reset twice |
 | `TenantMismatchError` | exception, subclass of `EventSourceError` | Events carry a tenant other than the active one |
 
-Each source module also declares its own `__all__` containing exactly the names
-listed for it in the module table above, and the barrel's `__all__` is the union
-of those four lists -- there are no private-but-importable extras worth relying
-on.
+Each source module declares its own `__all__` containing exactly the names
+listed for it in the module table above -- there is no barrel module anymore,
+so there is no union `__all__` to speak of; each name is reached either
+through `eventsource`'s own `__all__` or, for `TenantAwareRepository`, through
+its module directly.
 
-The ten names other than `TenantAwareRepository` also appear in
-`eventsource.__all__`; `TenantAwareRepository` does not, so it is only reachable
-as `from eventsource.multitenancy import TenantAwareRepository` (or from
-`eventsource.multitenancy.repository`).
+The eleven names other than `TenantAwareRepository` also appear in
+`eventsource.__all__`; `TenantAwareRepository` does not (it never did, even
+when the feature lived in `eventsource.multitenancy`), so it is only reachable
+as `from eventsource.application.aggregates.tenant_repository import
+TenantAwareRepository`.
 
-### When to Use This Module
+### When to Use This Feature
 
-Reach for `eventsource.multitenancy` when a single deployment serves several
+Reach for this multi-tenancy support when a single deployment serves several
 tenants out of one event store and you want tenant ownership recorded on every
 event and re-checked before it is appended.
 
@@ -93,7 +99,7 @@ It is *not* the right tool when:
   Pair this module with database-level isolation (for example PostgreSQL row
   level security) when read isolation matters.
 - **You need projection or subscription filtering.** Projections and
-  subscriptions have no tenant awareness in this package; a projection reads
+  subscriptions have no tenant awareness in this feature; a projection reads
   every tenant's events unless you filter inside the handler.
 
 Events that lack a `tenant_id` entirely are skipped by save-time validation, so
@@ -103,8 +109,8 @@ same reason.
 
 ## Tenant Context
 
-`eventsource.multitenancy.context` is a thin, typed wrapper around a single
-`ContextVar`. Everything else in the package -- `with_tenant_context()`,
+`eventsource.domain.tenant_context` is a thin, typed wrapper around a single
+`ContextVar`. Everything else in the feature -- `with_tenant_context()`,
 `TenantAwareRepository` -- reads the tenant through these functions, so the
 semantics below are the semantics of tenant propagation library-wide.
 
@@ -122,14 +128,12 @@ The module-level variable holding the active tenant. Its default is `None`,
 which means "no tenant context established" -- reading it before any set never
 raises `LookupError`.
 
-Defined in `eventsource.multitenancy.context` and re-exported from both
-`eventsource.multitenancy` and the top-level `eventsource` package, so all three
-of these bind the same object:
+Defined in `eventsource.domain.tenant_context` and re-exported from the
+top-level `eventsource` package, so both of these bind the same object:
 
 ```python
 from eventsource import tenant_context
-from eventsource.multitenancy import tenant_context
-from eventsource.multitenancy.context import tenant_context
+from eventsource.domain.tenant_context import tenant_context
 ```
 
 There is one instance for the whole process. The `ContextVar` name argument is
@@ -286,7 +290,7 @@ use `get_current_tenant()`, which cannot raise.
 
 Sets the tenant for the current execution context and returns the `Token`
 produced by `ContextVar.set`. Also emits a `logger.debug` line
-(`eventsource.multitenancy.context` logger) recording the tenant.
+(`eventsource.domain.tenant_context` logger) recording the tenant.
 
 The function performs no validation: it does not check that `tenant_id` is
 non-null or that it differs from the current value. Calling it repeatedly
@@ -306,7 +310,7 @@ The token is the only way to restore what was there *before* the set, which is
 not necessarily `None`:
 
 ```python
-from eventsource.multitenancy import tenant_context, set_current_tenant
+from eventsource import tenant_context, set_current_tenant
 
 token = set_current_tenant(tenant_b)
 try:
@@ -344,7 +348,7 @@ that reuses a thread across jobs.
 
 `ContextVar` values are per-execution-context, and asyncio copies the current
 context when a task is created. Three consequences, all covered by the tests in
-`tests/unit/multitenancy/test_context.py`:
+`tests/unit/domain/test_tenant_context.py`:
 
 - **Sibling tasks are isolated.** Coroutines gathered with `asyncio.gather()`
   each get their own copy of the context, so a tenant set inside one task is

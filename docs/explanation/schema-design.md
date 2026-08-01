@@ -7,7 +7,7 @@ concurrency arbiter, and the contract that every replay, projection rebuild and
 tenant migration depends on. A column added carelessly is inconvenient. A
 primary key chosen carelessly is a rewrite.
 
-This page explains *why* the schemas shipped in `eventsource.migrations` look
+This page explains *why* the schemas shipped in `eventsource.adapters.sql.schemas` look
 the way they do — why the events table carries two identities rather than one,
 why optimistic locking is a unique constraint instead of application logic, why
 the payload is opaque JSON, and what each of those choices costs. It is not a
@@ -23,11 +23,11 @@ PostgreSQL and SQLite forms.
 ## Why this page exists
 
 The library has carried an in-tree design note at
-`src/eventsource/migrations/SCHEMA_DESIGN.md` since the schemas were first
+`src/eventsource/adapters/sql/schemas/SCHEMA_DESIGN.md` since the schemas were first
 written. It sat next to the SQL, which made it easy to update while writing DDL
 and easy to forget afterwards — and it drifted. It still describes the events
 table as having `event_id` for a primary key, while
-`src/eventsource/migrations/schemas/events.sql` has used
+`src/eventsource/adapters/sql/schemas/schemas/events.sql` has used
 `global_position BIGSERIAL PRIMARY KEY` with `event_id UUID NOT NULL UNIQUE`
 for some time. That is not a cosmetic difference: it is the difference between
 a store that can be replayed in a total order and one that cannot. A design
@@ -41,7 +41,7 @@ documentation rather than reviewed only by whoever happens to be editing SQL.
 
 The split of responsibilities is deliberate:
 
-- **The SQL files** in `src/eventsource/migrations/schemas/` (and
+- **The SQL files** in `src/eventsource/adapters/sql/schemas/schemas/` (and
   `templates/`, `updates/`) are the authority on *what* the schema is. If this
   page and a `.sql` file disagree, the `.sql` file is right and this page is a
   bug.
@@ -59,7 +59,7 @@ delivery — depends on it in a way that is not visible from the DDL alone.
 ## Scope
 
 This page covers the SQL that ships inside the library — the seven schema names
-exposed by `eventsource.migrations` and nothing else:
+exposed by `eventsource.adapters.sql.schemas` and nothing else:
 
 | Schema name | Objects it creates | Backends |
 | --- | --- | --- |
@@ -72,7 +72,7 @@ exposed by `eventsource.migrations` and nothing else:
 | `migration` | `tenant_migrations`, `tenant_routing`, `migration_position_mappings`, `migration_audit_log` | postgresql |
 
 These names are not documentation labels; they are the values of the
-`SchemaName` literal in `src/eventsource/migrations/__init__.py`, and they are
+`SchemaName` literal in `src/eventsource/adapters/sql/schemas/__init__.py`, and they are
 what you pass to `get_schema(name, backend=...)`. There is one further name,
 `"all"`, which is not a table but a pre-combined file — and its contents are
 narrower than the list above, which is a distinction worth holding onto:
@@ -90,13 +90,13 @@ tables. SQLite exists for tests and small single-process deployments and
 carries five of the seven schemas; `events_partitioned` and `migration` have
 no SQLite form at all. That gap is expressed in the layout rather than in a
 compatibility shim: PostgreSQL templates live directly in
-`src/eventsource/migrations/templates/`, SQLite templates in
+`src/eventsource/adapters/sql/schemas/templates/`, SQLite templates in
 `templates/sqlite/`, and a schema simply has no file under the backend that
 does not support it. Asking for one you do not get a degraded substitute; you
 get a `ValueError` naming what is available.
 
 Also in scope, though it sits slightly outside the `get_schema()` surface, is
-`src/eventsource/migrations/updates/` — currently the pair of
+`src/eventsource/adapters/sql/schemas/updates/` — currently the pair of
 `001_add_global_position` files that retrofit position-based resume onto an
 existing `projection_checkpoints` table. New installs get that column from the
 shipped template already; the update files exist for databases created before

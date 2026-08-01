@@ -204,7 +204,7 @@ Optional extensions for partitioned deployments:
 ### Using Raw SQL
 
 ```python
-from eventsource.migrations import get_all_schemas
+from eventsource.adapters.sql.schemas import get_all_schemas
 from sqlalchemy import text
 
 async with engine.begin() as conn:
@@ -216,7 +216,7 @@ async with engine.begin() as conn:
 Copy the appropriate template from `migrations/templates/alembic/` and customize:
 
 ```python
-from eventsource.migrations import get_alembic_template
+from eventsource.adapters.sql.schemas import get_alembic_template
 
 template = get_alembic_template("all_tables")
 # Customize with your revision ID and create migration file

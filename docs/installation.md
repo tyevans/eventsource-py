@@ -44,7 +44,7 @@ External services only become a requirement when you install and use the matchin
 
 | Backend | Extra | Service requirement |
 | --- | --- | --- |
-| PostgreSQL event store, snapshots, outbox, advisory locks | `postgresql` | PostgreSQL 12 or newer. The bundled schema (`src/eventsource/migrations/schemas/all.sql`) documents 12+ as the target, uses `JSONB` columns, and creates the `uuid-ossp` extension, which requires privileges to run `CREATE EXTENSION`. |
+| PostgreSQL event store, snapshots, outbox, advisory locks | `postgresql` | PostgreSQL 12 or newer. The bundled schema (`src/eventsource/adapters/sql/schemas/schemas/all.sql`) documents 12+ as the target, uses `JSONB` columns, and creates the `uuid-ossp` extension, which requires privileges to run `CREATE EXTENSION`. |
 | SQLite event store and snapshots | `sqlite` | No server. A file (or `:memory:`) accessed through `aiosqlite`; JSON payloads are stored as `TEXT` since SQLite has no native `JSONB` type. |
 | Redis event bus | `redis` | A reachable Redis server. The integration environment uses Redis 7. |
 | RabbitMQ event bus | `rabbitmq` | A RabbitMQ broker reachable over AMQP (`aio-pika`). |

@@ -52,10 +52,10 @@ You need three things in place before any recipe in this guide will run:
 1. **The tables exist.** All three repositories read and write dedicated
    tables -- `event_outbox`, `dead_letter_queue`, and `projection_checkpoints`.
    None of the implementations create their own schema. Load the DDL from
-   `eventsource.migrations` and apply it once, at deploy time:
+   `eventsource.adapters.sql.schemas` and apply it once, at deploy time:
 
    ```python
-   from eventsource.migrations import get_schema
+   from eventsource.adapters.sql.schemas import get_schema
 
    ddl = get_schema("all", backend="postgresql")  # or backend="sqlite"
    ```

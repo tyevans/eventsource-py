@@ -33,10 +33,14 @@ Six of these are re-exported from the package root (`AggregateNotCreatedError`,
 imported from `eventsource.domain.exceptions`. See
 [Import paths and public exports](#import-paths-and-public-exports).
 
-Other subsystems — multi-tenancy, snapshots, migration, the read-model layer,
-and the optional bus backends — define their own error types in their own
-modules. (`SubscriptionError` used to be one of these; ADR 0032 rebased it
-onto `EventSourceError` -- see below.) Those are catalogued under
+Other subsystems — snapshots, migration, the read-model layer, and the
+optional bus backends — define their own error types in their own modules.
+(`SubscriptionError` used to be one of these; ADR 0032 rebased it onto
+`EventSourceError` -- see below. The three tenant exceptions used to be one
+of these too, defined in `eventsource.multitenancy.exceptions`; ADR 0038
+merged them into the core hierarchy alongside this relocation, though they
+were already `EventSourceError`-rooted before the merge, so no rebase was
+needed.) Those are catalogued under
 [Related exceptions outside the core hierarchy](#related-exceptions-outside-the-core-hierarchy);
 note in particular that `eventsource.ports.readmodels.exceptions` defines a
 *second*, unrelated `OptimisticLockError`.
@@ -55,8 +59,8 @@ group.
 **Subsystem errors** live beside the code that raises them (or, for
 `SnapshotError`, alongside the core hierarchy in `eventsource.domain.exceptions`
 despite not deriving from it) — `eventsource.application.migration`,
-`eventsource.multitenancy`, `eventsource.ports.readmodels.exceptions`, and the
-optional bus backends each define their own families. These are *not*
+`eventsource.ports.readmodels.exceptions`, and the optional bus backends each
+define their own families. These are *not*
 subclasses of `EventSourceError`; catching the core base class will not catch
 them. (`LockAcquisitionError` and `LockNotHeldError` moved onto
 `EventSourceError` under ADR 0029, and `SubscriptionError` moved the same way
@@ -93,18 +97,14 @@ raise it, then catalogue the subsystem families and their import paths.
 
 ## Exception hierarchy
 
-`eventsource.domain.exceptions` defines fourteen classes: `EventSourceError` and
-thirteen direct subclasses (including `LockAcquisitionError` and
-`LockNotHeldError`, moved here from a standalone `Exception` base under ADR
-0029). There are no intermediate base classes inside the module — every error
-is exactly one level below the root.
-
-Two classes defined elsewhere also derive from `EventSourceError`:
-`TenantContextNotSetError` and `TenantMismatchError`, both in
-`eventsource.multitenancy.exceptions`. They are the only members of the
-`EventSourceError` tree that live outside `eventsource/exceptions.py`, so
-`except EventSourceError:` catches tenant-context failures as well as the core
-eleven.
+`eventsource.domain.exceptions` defines the whole `EventSourceError` tree in
+one module, including the three tenant exceptions merged in under ADR 0038
+(`TenantContextNotSetError`, `TenantContextResetError`,
+`TenantMismatchError` — already `EventSourceError`-rooted before the merge,
+so no rebase was needed) and `LockAcquisitionError`/`LockNotHeldError`
+(moved here from a standalone `Exception` base under ADR 0029). There are no
+intermediate base classes beyond `SubscriptionError` — every other error is
+exactly one level below the root.
 
 Every other error family in the library is rooted at a plain Python builtin,
 not at `EventSourceError`:
@@ -140,8 +140,9 @@ Exception
 │   ├── EventVersionError
 │   ├── UnhandledEventError
 │   ├── AggregateNotCreatedError
-│   ├── TenantContextNotSetError               eventsource.multitenancy.exceptions
-│   ├── TenantMismatchError                    eventsource.multitenancy.exceptions
+│   ├── TenantContextNotSetError                (ADR 0038: merged here; formerly in eventsource.multitenancy)
+│   ├── TenantContextResetError                 (ADR 0038: merged here; formerly in eventsource.multitenancy)
+│   ├── TenantMismatchError                     (ADR 0038: merged here; formerly in eventsource.multitenancy)
 │   ├── LockAcquisitionError                   (ADR 0029: rebased here, was a bare Exception)
 │   ├── LockNotHeldError                       (ADR 0029: rebased here, was a bare Exception)
 │   ├── SubscriptionError                      (ADR 0032: rebased here, was a bare Exception)
@@ -249,10 +250,11 @@ traceback as coming from application code, not from the library.
 
 ### What catching it covers
 
-`except EventSourceError:` catches the eleven concrete subclasses in
-`eventsource.domain.exceptions` plus `TenantContextNotSetError` and
-`TenantMismatchError` from `eventsource.multitenancy.exceptions`, which also
-derive from it. It does **not** catch the snapshot, read-model, subscription,
+`except EventSourceError:` catches every concrete subclass defined in
+`eventsource.domain.exceptions`, including `TenantContextNotSetError`,
+`TenantContextResetError`, and `TenantMismatchError` (merged in from
+`eventsource.multitenancy` under ADR 0038). It does **not** catch the
+snapshot, read-model, subscription,
 migration, event-registry, or optional-backend families — those are rooted at
 `Exception`, `KeyError`, `ValueError`, and `ImportError` respectively. See
 [Exception hierarchy](#exception-hierarchy).

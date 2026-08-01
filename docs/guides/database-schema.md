@@ -3,7 +3,7 @@
 The PostgreSQL and SQLite backends do not create their own tables. Before
 `PostgreSQLEventStore`, `SQLiteEventStore`, or any of the outbox, checkpoint, DLQ,
 and snapshot repositories will work, the tables they read and write have to
-exist. `eventsource.migrations` ships the SQL that creates them, plus helpers for
+exist. `eventsource.adapters.sql.schemas` ships the SQL that creates them, plus helpers for
 loading that SQL from the installed package instead of copying it into your repo.
 
 This guide shows you how to:
@@ -34,7 +34,7 @@ strict subset.
 You need:
 
 - **Python 3.11 or newer** with `eventsource-py` installed. The SQL and Alembic
-  templates ship inside the `eventsource.migrations` package, so the helpers
+  templates ship inside the `eventsource.adapters.sql.schemas` package, so the helpers
   read them out of your site-packages -- there is nothing to download or vendor.
 - **A running database you can create tables in.** PostgreSQL 12 or newer for
   the PostgreSQL schema, SQLite 3.8 or newer for the SQLite schema.
@@ -146,12 +146,12 @@ provisioning script, and your project has no Alembic chain to fold into. You run
 one file and you are done.
 
 The two combined files ship inside the installed package, at
-`eventsource/migrations/schemas/all.sql` (PostgreSQL) and
-`eventsource/migrations/schemas/sqlite_all.sql` (SQLite). You do not have to
+`eventsource/adapters/sql/schemas/schemas/all.sql` (PostgreSQL) and
+`eventsource/adapters/sql/schemas/schemas/sqlite_all.sql` (SQLite). You do not have to
 guess where site-packages put them -- ask Python:
 
 ```bash
-python -c "from importlib.resources import files; print(files('eventsource.migrations').joinpath('schemas/all.sql'))"
+python -c "from importlib.resources import files; print(files('eventsource.adapters.sql.schemas').joinpath('schemas/all.sql'))"
 ```
 
 That prints an absolute path you can hand to `psql -f`. If you would rather not
@@ -171,7 +171,7 @@ in `BEGIN; ... COMMIT;` you can end up watching a long cascade of "current
 transaction is aborted" messages scroll past a failure you have already missed.
 
 ```bash
-SCHEMA=$(python -c "from importlib.resources import files; print(files('eventsource.migrations').joinpath('schemas/all.sql'))")
+SCHEMA=$(python -c "from importlib.resources import files; print(files('eventsource.adapters.sql.schemas').joinpath('schemas/all.sql'))")
 
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$SCHEMA"
 ```
@@ -180,7 +180,7 @@ Or pipe the SQL straight from the helper, which avoids resolving a path and
 works identically when the package is installed inside a container image:
 
 ```bash
-python -c "from eventsource.migrations import get_all_schemas; print(get_all_schemas())" \
+python -c "from eventsource.adapters.sql.schemas import get_all_schemas; print(get_all_schemas())" \
   | psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f -
 ```
 
@@ -242,7 +242,7 @@ own -- no `BEGIN;`/`COMMIT;` -- so `sqlite3` applies each statement as it reads
 it. A failure partway through leaves the tables created up to that point.
 
 ```bash
-SCHEMA=$(python -c "from importlib.resources import files; print(files('eventsource.migrations').joinpath('schemas/sqlite_all.sql'))")
+SCHEMA=$(python -c "from importlib.resources import files; print(files('eventsource.adapters.sql.schemas').joinpath('schemas/sqlite_all.sql'))")
 
 sqlite3 events.db < "$SCHEMA"
 ```
@@ -252,7 +252,7 @@ migrations helper defaults to `postgresql`, so omitting `backend="sqlite"` gets
 you the PostgreSQL file:
 
 ```bash
-python -c "from eventsource.migrations import get_all_schemas; print(get_all_schemas(backend='sqlite'))" \
+python -c "from eventsource.adapters.sql.schemas import get_all_schemas; print(get_all_schemas(backend='sqlite'))" \
   | sqlite3 events.db
 ```
 
@@ -314,7 +314,7 @@ by a person at a shell: test fixtures that need a throwaway database, a
 container entrypoint that runs before the app serves traffic, or a
 `bootstrap`/`init-db` subcommand you ship with the service. Everything Option 1
 does with `psql` and `sqlite3` is reachable from Python through
-`eventsource.migrations`, which reads the same SQL files out of the installed
+`eventsource.adapters.sql.schemas`, which reads the same SQL files out of the installed
 package.
 
 The helpers only *load* SQL -- none of them touch a database. You choose the
@@ -327,7 +327,7 @@ one place this gets fiddly.
 `get_all_schemas()` returns the contents of the combined file as a string:
 
 ```python
-from eventsource.migrations import get_all_schemas
+from eventsource.adapters.sql.schemas import get_all_schemas
 
 pg_sql = get_all_schemas()                    # schemas/all.sql
 sqlite_sql = get_all_schemas(backend="sqlite")  # schemas/sqlite_all.sql
@@ -366,7 +366,7 @@ the simple query protocol and accepts a whole script:
 ```python
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from eventsource.migrations import get_all_schemas
+from eventsource.adapters.sql.schemas import get_all_schemas
 
 
 async def create_schema(dsn: str) -> None:
@@ -390,7 +390,7 @@ If you have no engine to begin with, skip SQLAlchemy entirely:
 ```python
 import asyncpg
 
-from eventsource.migrations import get_all_schemas
+from eventsource.adapters.sql.schemas import get_all_schemas
 
 conn = await asyncpg.connect(dsn)
 try:
@@ -424,7 +424,7 @@ at a time.`; `executescript()` takes the whole file:
 ```python
 import aiosqlite
 
-from eventsource.migrations import get_all_schemas
+from eventsource.adapters.sql.schemas import get_all_schemas
 
 
 async def create_schema(path: str = "events.db") -> None:
@@ -472,7 +472,7 @@ want an event store and nothing else, or when you want a table the combined
 schema does not include:
 
 ```python
-from eventsource.migrations import get_schema
+from eventsource.adapters.sql.schemas import get_schema
 
 events_sql = get_schema("events")
 events_sql_lite = get_schema("events", backend="sqlite")
@@ -519,7 +519,7 @@ without reading it.
 Two helpers let you enumerate rather than hard-code:
 
 ```python
-from eventsource.migrations import list_backends, list_schemas
+from eventsource.adapters.sql.schemas import list_backends, list_schemas
 
 list_backends()
 # ['postgresql', 'sqlite']

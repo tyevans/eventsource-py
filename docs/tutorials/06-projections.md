@@ -585,7 +585,7 @@ async with postgres_engine.begin() as conn:
     await conn.execute(text(ORDERS_SCHEMA))
 ```
 
-Keep it clearly separate from `src/eventsource/migrations/`, which holds the framework's
+Keep it clearly separate from `src/eventsource/adapters/sql/schemas/`, which holds the framework's
 own schema (events, checkpoints, outbox, DLQ) and is append-only by design. Your read
 models are yours, and unlike the framework's tables they can be dropped and recreated at
 will.
@@ -1359,7 +1359,7 @@ One more routing knob, if you use the multitenancy support: `DeclarativeProjecti
 a `tenant_filter` in its constructor, checked before handler lookup.
 
 ```python
-from eventsource.multitenancy import get_current_tenant
+from eventsource import get_current_tenant
 
 # Static: only ever this tenant's events.
 projection = OrderSummaryProjection(session_factory=sf, tenant_filter=tenant_uuid)
@@ -1624,7 +1624,7 @@ manager in the same process. For real durability, swap the repository. The table
 of the shipped schema:
 
 ```python
-from eventsource.migrations import get_schema
+from eventsource.adapters.sql.schemas import get_schema
 
 ddl = get_schema("checkpoints", backend="sqlite")  # or backend="postgresql"
 ```

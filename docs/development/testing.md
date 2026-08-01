@@ -314,7 +314,7 @@ something ready to use:
 | `redis_event_bus_factory` / `redis_event_bus` | function | An unconnected `RedisEventBus` builder / a connected bus on a clean Redis |
 
 `postgres_engine` creates the schema itself rather than running the files in
-`src/eventsource/migrations/`: `events`, `projection_checkpoints`, `dead_letter_queue`,
+`src/eventsource/adapters/sql/schemas/`: `events`, `projection_checkpoints`, `dead_letter_queue`,
 and `event_outbox`, each as a list of single statements (`EVENTS_SCHEMA_STATEMENTS` and
 friends) because asyncpg will not accept multi-statement strings. It runs once per
 session; per-test isolation comes from `clean_postgres_tables` truncating, not from

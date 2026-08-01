@@ -7,12 +7,12 @@ PostgreSQL, so that appended events survive restarts.
 
 The important idea here is that you never write the schema by hand, and you
 never copy SQL out of the repository. EventSource ships its table definitions
-*inside the installed package*, under `eventsource.migrations`. You ask the
+*inside the installed package*, under `eventsource.adapters.sql.schemas`. You ask the
 library for the SQL and execute it against your database:
 
 ```python
 from sqlalchemy import text
-from eventsource.migrations import get_all_schemas
+from eventsource.adapters.sql.schemas import get_all_schemas
 
 async with engine.begin() as conn:
     await conn.execute(text(get_all_schemas()))
@@ -257,13 +257,13 @@ The database is running and empty — no tables at all. Step 2 fills it.
 ## Step 2: Load the packaged schema with `get_all_schemas()`
 
 The SQL that creates EventSource's tables is installed alongside the Python
-code, in `eventsource/migrations/`. You never author it and you never copy it;
+code, in `eventsource/adapters/sql/schemas/`. You never author it and you never copy it;
 you ask the library for it as a string and execute that string.
 
 Start by looking at what you are about to run:
 
 ```bash
-uv run python -c "from eventsource.migrations import get_all_schemas; print(get_all_schemas())" | head -30
+uv run python -c "from eventsource.adapters.sql.schemas import get_all_schemas; print(get_all_schemas())" | head -30
 ```
 
 You should see a comment banner, then:
@@ -318,7 +318,7 @@ provisioning script — resolve its real location rather than guessing at
 site-packages. For a single table, the package hands you the path directly:
 
 ```bash
-uv run python -c "from eventsource.migrations import get_template_path; print(get_template_path('events'))"
+uv run python -c "from eventsource.adapters.sql.schemas import get_template_path; print(get_template_path('events'))"
 ```
 
 The combined schema is the one exception: `get_template_path` looks in the
@@ -327,7 +327,7 @@ package's `templates/` directory, and `all.sql` lives next door in
 that one through `importlib.resources`:
 
 ```bash
-uv run python -c "from importlib.resources import files; print(files('eventsource.migrations').joinpath('schemas/all.sql'))"
+uv run python -c "from importlib.resources import files; print(files('eventsource.adapters.sql.schemas').joinpath('schemas/all.sql'))"
 ```
 
 Both print a path inside your virtualenv, which is the point — it is the SQL
@@ -355,7 +355,7 @@ import asyncio
 
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from eventsource.migrations import get_all_schemas
+from eventsource.adapters.sql.schemas import get_all_schemas
 
 DATABASE_URL = "postgresql+asyncpg://test:test@localhost:5433/eventsource_test"
 
@@ -392,7 +392,7 @@ If you prefer to keep Python out of the deployment path entirely, the
 equivalent one-liner pipes the same string into `psql`:
 
 ```bash
-uv run python -c "from eventsource.migrations import get_all_schemas; print(get_all_schemas())" \
+uv run python -c "from eventsource.adapters.sql.schemas import get_all_schemas; print(get_all_schemas())" \
   | psql "postgresql://test:test@localhost:5433/eventsource_test" -v ON_ERROR_STOP=1 -f -
 ```
 

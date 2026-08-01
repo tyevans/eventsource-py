@@ -4,7 +4,11 @@ Use this guide to run one event-sourced application for many tenants: bind a
 tenant to the current request, stamp that tenant onto every event you emit, and
 have the repository reject writes that mix tenants.
 
-The `eventsource.multitenancy` package gives you four pieces to wire together:
+Multi-tenancy support gives you four pieces to wire together, split across
+`domain/tenant_context.py`, `domain/tenant_events.py`,
+`application/aggregates/tenant_repository.py`, and `domain/exceptions.py` —
+all reachable from the top-level `eventsource` package except
+`TenantAwareRepository`, which was never re-exported from the front door:
 
 - **Tenant context** — `tenant_scope`, `tenant_scope_sync`,
   `set_current_tenant`, `clear_tenant_context`, `get_current_tenant`, and
@@ -51,7 +55,7 @@ from eventsource import (
     TenantDomainEvent,
     TenantMismatchError,
 )
-from eventsource.multitenancy import (
+from eventsource import (
     TenantAwareRepository,
     clear_tenant_context,
     get_current_tenant,
@@ -63,9 +67,11 @@ from eventsource.multitenancy import (
 )
 ```
 
-`TenantDomainEvent` and both tenant exceptions are re-exported from the
-top-level `eventsource` package. `TenantAwareRepository` and the context helpers
-are not — import those from `eventsource.multitenancy`.
+`TenantDomainEvent`, both tenant exceptions, and every context helper shown
+above are re-exported from the top-level `eventsource` package.
+`TenantAwareRepository` is the one exception — it is not re-exported from
+the front door; import it directly from
+`eventsource.application.aggregates.tenant_repository`.
 
 No extra dependency is required: multi-tenancy is part of the core install and
 uses nothing beyond pydantic and the standard library's `contextvars`.
@@ -113,7 +119,7 @@ it, and resets it on exit:
 ```python
 from uuid import UUID
 
-from eventsource.multitenancy import tenant_scope
+from eventsource import tenant_scope
 
 
 async def handle_request(request) -> Response:
@@ -147,7 +153,7 @@ reset is token-based (`tenant_context.reset(token)`), not a clear, so it
 restores whatever was set before — `None` at the top level, the outer tenant
 inside a nested scope. See "Nesting tenant scopes" below.
 
-Entry and exit are logged at `DEBUG` on `eventsource.multitenancy.context`
+Entry and exit are logged at `DEBUG` on `eventsource.domain.tenant_context`
 (`"Tenant scope entered: %s"` / `"Tenant scope exited: %s"`), which is the
 quickest way to confirm the scope wraps the whole request rather than part of
 it.
@@ -161,7 +167,7 @@ yields it, and resets it in a `finally` on exit:
 ```python
 from uuid import UUID
 
-from eventsource.multitenancy import tenant_scope_sync
+from eventsource import tenant_scope_sync
 
 
 def run_report(tenant_id: UUID) -> Report:
@@ -198,7 +204,7 @@ not wrap an `await` in `tenant_scope_sync`: a synchronous `with` block does not
 survive a suspension point, so a second task resuming on the same event loop can
 observe your tenant. Use `async with tenant_scope(...)` in any coroutine.
 
-Entry and exit log at `DEBUG` on `eventsource.multitenancy.context` as
+Entry and exit log at `DEBUG` on `eventsource.domain.tenant_context` as
 `"Tenant scope (sync) entered: %s"` / `"Tenant scope (sync) exited: %s"` —
 distinct strings from the async variant, so you can tell from a log which one a
 given code path took.
@@ -211,7 +217,7 @@ test fixture with setup and teardown phases. Everywhere else, prefer the scope
 managers above; they do exactly this, correctly, in a `finally`.
 
 ```python
-from eventsource.multitenancy import (
+from eventsource import (
     clear_tenant_context,
     set_current_tenant,
     tenant_context,
@@ -227,8 +233,9 @@ finally:
 `set_current_tenant(tenant_id)` is a thin wrapper over
 `tenant_context.set(tenant_id)` that logs and returns the
 `contextvars.Token[UUID | None]` the `ContextVar` produced. Note the import:
-`tenant_context` itself is exported from `eventsource.multitenancy`, and you
-need it — the package exposes no `reset_tenant_context(token)` helper, so
+`tenant_context` itself is exported from `eventsource` (defined in
+`eventsource.domain.tenant_context`), and you need it — the example above
+bypasses `reset_tenant_context(token)`, so
 restoring goes through the `ContextVar` directly.
 
 **Keep the token.** Passing it to `tenant_context.reset(token)` restores
@@ -268,7 +275,7 @@ Its docstring carries one more caveat worth repeating: clearing affects only the
 current execution context. Concurrent tasks each hold their own copy, so
 clearing in one does not clear the others.
 
-Both functions log at `DEBUG` on the `eventsource.multitenancy.context` logger
+Both functions log at `DEBUG` on the `eventsource.domain.tenant_context` logger
 (`"Tenant context set: %s"` and `"Tenant context cleared"`), distinct from the
 scope managers' messages, so a debug log tells you which mechanism a code path
 used.
@@ -290,7 +297,7 @@ it never raises, which also makes it the safe choice in `except` blocks and
 teardown paths:
 
 ```python
-from eventsource.multitenancy import get_current_tenant
+from eventsource import get_current_tenant
 
 tenant_id = get_current_tenant()
 if tenant_id is None:
@@ -315,7 +322,7 @@ never by matching the string.
 from uuid import UUID
 
 from eventsource import TenantContextNotSetError
-from eventsource.multitenancy import get_required_tenant
+from eventsource import get_required_tenant
 
 
 def audit_prefix() -> str:
@@ -327,7 +334,7 @@ Both readers see exactly what the enclosing scope set, and nothing once it
 exits:
 
 ```python
-from eventsource.multitenancy import (
+from eventsource import (
     get_current_tenant,
     get_required_tenant,
     tenant_scope,
@@ -357,7 +364,7 @@ that silently produces untenanted rows.
 
 ### How context propagates across `await`, `asyncio.create_task`, and thread pools
 
-Nothing in `eventsource.multitenancy` implements propagation — `tenant_context`
+Nothing in `eventsource.domain.tenant_context` implements propagation — `tenant_context`
 is a plain `ContextVar[UUID | None]`, and standard `contextvars` semantics
 decide where the tenant is visible. Internalise those semantics, because the
 failure mode is silent: a task that sees the wrong tenant, or none, produces
@@ -453,7 +460,7 @@ or a single reader whose tenant is decided by the ambient context — pass a
 zero-argument callable returning `UUID | None` instead of a fixed `UUID`:
 
 ```python
-from eventsource.multitenancy import get_current_tenant, tenant_scope
+from eventsource import get_current_tenant, tenant_scope
 from eventsource.application.projections import DeclarativeProjection
 
 
@@ -542,7 +549,7 @@ Use the method directly when you want to see what a projection would filter on
 right now, without dispatching an event:
 
 ```python
-from eventsource.multitenancy import get_current_tenant, tenant_scope
+from eventsource import get_current_tenant, tenant_scope
 
 projection = OrderSummaryProjection(tenant_filter=get_current_tenant)
 
@@ -693,7 +700,8 @@ async def _handle_order_created(self, event: OrderCreated) -> None:
 ```
 
 Or remove the case at the source by deriving your events from
-`TenantDomainEvent` (`eventsource.multitenancy`), which redeclares `tenant_id`
+`TenantDomainEvent` (`eventsource.domain.tenant_events`, re-exported from
+`eventsource`), which redeclares `tenant_id`
 as a required `UUID`; construction without a tenant then fails validation
 rather than producing an unfiltered event. Note that the guard only helps for
 events you control — replayed history written before the switch still carries

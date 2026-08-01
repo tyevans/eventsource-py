@@ -95,23 +95,6 @@ so a read scheduled between two of an append's INSERTs can observe uncommitted r
 of the in-flight batch. Inherited from the legacy sqlite store design. Take reads on
 a separate connection (or under the write lock) so partial appends are never visible.
 
-## Reconcile events.tenant_id schema drift (P2)
-
-`tests/integration/conftest.py` provisions `events.tenant_id VARCHAR(255)` but
-`migrations/schemas/events.sql` declares `UUID`; the legacy postgres store binds
-`str(...)` and fails with DatatypeMismatchError against a migrations-provisioned
-database (surfaced when the ports conformance tests recreated the shared table from
-the canonical schema — they now use a private `ports_conformance` database instead).
-Verify the legacy store against the real migrations schema and reconcile.
-
-## Make the postgres safe-horizon predicate wraparound-safe (P2)
-
-`xmin::text::bigint < pg_snapshot_xmin(pg_current_snapshot())::text::bigint`
-compares a 32-bit xid against an epoch-extended xid8: after the cluster's first xid
-epoch, the predicate becomes universally true and no-skip protection silently
-disappears. Add an xid8 insert-time column or compare with age(); today it degrades
-silently.
-
 ## Share ExpectedVersion dispatch across store adapters (P3)
 
 All three adapters reimplement `_check_expected`/`_expected_sentinel` verbatim; the
@@ -197,24 +180,6 @@ need: an operator-triggered resync entry point that runs a bounded catch-up copy
 pass while already in `DUAL_WRITE`, so a transient mirror failure late in a long
 migration doesn't force starting over. Surfaced by the store retirement slice (c)
 Task 6 review (2026-07-31); noted in `docs/guides/live-migration.md`.
-
-## SQLite outbox adapter incompatible with its shipped migration schema (P1)
-
-`migrations/templates/sqlite/outbox.sql` declares `id INTEGER PRIMARY KEY
-AUTOINCREMENT`, but `SQLiteOutboxRepository.add_event` inserts `str(uuid4())`
-into that column — `sqlite3.IntegrityError: datatype mismatch` on every insert
-against the real schema (INTEGER PRIMARY KEY is the strictly-typed rowid alias).
-The divergence predates the ring migration and was masked because
-`tests/conftest.py::sqlite_outbox_repo` hand-rolls an `id TEXT PRIMARY KEY`
-table instead of using `get_schema()`. Surfaced by the outbox conformance suite
-(2026-07-31); the real-schema binding is `xfail(strict=False)` in
-`tests/unit/adapters/test_sqlite_conformance.py` until fixed. Decision needed:
-migrations/ is append-only, so either ship a new additive/replacement sqlite
-outbox schema with `id TEXT PRIMARY KEY` (matching postgres UUID semantics) or
-change the adapter to stop generating ids and surface the rowid. Whichever way,
-retarget the conftest fixture onto `get_schema()` so the migration is actually
-under test, then drop the xfail.
-
 
 ## Migrate bus/ interface and backends to ports/adapters (P2) -- DONE via ADR 0031
 

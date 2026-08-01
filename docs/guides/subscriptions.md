@@ -41,7 +41,7 @@ pip install "eventsource-py[redis]"
 pip install "eventsource-py[all]"
 ```
 
-For a database-backed deployment, apply the SQL schema first. The checkpoint recipes need the `projection_checkpoints` table and the DLQ recipes need `dead_letter_queue`; both ship in `src/eventsource/migrations/schemas/` (`checkpoints.sql`, `dlq.sql`, or `all.sql` / `sqlite_all.sql` for the full set).
+For a database-backed deployment, apply the SQL schema first. The checkpoint recipes need the `projection_checkpoints` table and the DLQ recipes need `dead_letter_queue`; both ship in `src/eventsource/adapters/sql/schemas/schemas/` (`checkpoints.sql`, `dlq.sql`, or `all.sql` / `sqlite_all.sql` for the full set).
 
 The SQL repositories are dialect-parameterized -- the same classes serve PostgreSQL and SQLite -- and take a SQLAlchemy `AsyncConnection` or `AsyncEngine`:
 

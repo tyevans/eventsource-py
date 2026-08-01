@@ -115,8 +115,8 @@ The SQLite store is an optional import: if `aiosqlite` is missing,
 For the durable stores, create the `snapshots` table before first use. The
 schema ships with the library:
 
-- PostgreSQL: `src/eventsource/migrations/templates/snapshots.sql`
-- SQLite: `src/eventsource/migrations/templates/sqlite/snapshots.sql`
+- PostgreSQL: `src/eventsource/adapters/sql/schemas/templates/snapshots.sql`
+- SQLite: `src/eventsource/adapters/sql/schemas/templates/sqlite/snapshots.sql`
 
 Both keep **one snapshot per `(aggregate_id, aggregate_type)`**, upserted on
 save, so a newer snapshot replaces the older one rather than accumulating
@@ -533,7 +533,7 @@ The DDL ships with the library. Load it with `get_schema()` and execute it:
 ```python
 from sqlalchemy import text
 
-from eventsource.migrations import get_schema
+from eventsource.adapters.sql.schemas import get_schema
 
 async with engine.begin() as conn:
     await conn.execute(text(get_schema("snapshots")))            # PostgreSQL

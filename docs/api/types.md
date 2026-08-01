@@ -105,7 +105,7 @@ untenanted unless you pass a tenant explicitly — hence the optional alias.
 
 Two ways to make the tenant non-optional in practice:
 
-- **`TenantDomainEvent`** (`eventsource.multitenancy`) narrows the field to a
+- **`TenantDomainEvent`** (`eventsource.domain.tenant_events`) narrows the field to a
   required `tenant_id: UUID`. Construction fails validation if no tenant is
   supplied.
 - **Tenant context** — `set_current_tenant()`, `tenant_scope()`, and

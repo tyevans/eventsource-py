@@ -310,7 +310,7 @@ use GitHub's default PR format.
 ### Files that must not be modified
 
 - `py.typed` — the marker that makes the package's inline types visible to consumers.
-- `src/eventsource/migrations/` SQL files — append-only by design; add a new file rather than
+- `src/eventsource/adapters/sql/schemas/` SQL files — append-only by design; add a new file rather than
   editing an existing one.
 - Public exports in `src/eventsource/__init__.py` — do not remove or rename without an explicit
   backward-compatibility decision.

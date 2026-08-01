@@ -45,7 +45,7 @@ This guide assumes you already have a working `eventsource` install and some
   back out.
 - **For `PostgreSQLEventStore`: a reachable PostgreSQL server and its schema
   already provisioned**, unless you pass `create_schema=True`. Apply the SQL
-  under `src/eventsource/migrations/schemas/` (or your own migration tool)
+  under `src/eventsource/adapters/sql/schemas/schemas/` (or your own migration tool)
   before first use, or let the adapter create it for you. For local work, the
   repo's `docker-compose.test.yml` brings up a suitable instance.
 
@@ -308,7 +308,7 @@ def __init__(
 
 By default the store assumes the schema (`events`, and — if
 `outbox_enabled=True` — `event_outbox`) already exists, applied via the SQL
-under `src/eventsource/migrations/schemas/` or your own migration tool. Pass
+under `src/eventsource/adapters/sql/schemas/schemas/` or your own migration tool. Pass
 `create_schema=True` to have the adapter provision it lazily on first use
 instead.
 
