@@ -1,7 +1,7 @@
 """Property: DomainEvent payload survives the library's canonical wire round trip.
 
 Canonical pair identified by reading `src/eventsource/serialization/`:
-`eventsource.serialization.json_dumps`/`json_loads` (orjson-backed) is the
+`eventsource.adapters.serialization.json_dumps`/`json_loads` (orjson-backed) is the
 pair the adapters actually use on the wire (e.g.
 `eventsource.adapters._sql.dialect`), combined with
 `DomainEvent.to_dict()`/`from_dict()` (pydantic `model_dump(mode="json")`
@@ -17,9 +17,9 @@ from uuid import uuid4
 from hypothesis import given
 from hypothesis import strategies as st
 
+from eventsource.adapters.serialization import json_dumps, json_loads
 from eventsource.events import DomainEvent
 from eventsource.events.registry import default_registry, get_event_class
-from eventsource.serialization import json_dumps, json_loads
 
 
 class RoundTripEvent(DomainEvent):

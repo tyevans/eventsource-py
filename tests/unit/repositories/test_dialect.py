@@ -95,7 +95,7 @@ def test_json_param_none_roundtrips_as_sql_null():
 
 def test_json_result_routes_through_project_json_loads(monkeypatch):
     """
-    json_result must decode via `eventsource.serialization.json_loads`, not
+    json_result must decode via `eventsource.adapters.serialization.json_loads`, not
     stdlib `json.loads` directly -- otherwise if `json_loads` is later
     rerouted to orjson, this call site silently keeps using stdlib and the
     module ends up with two decoders.

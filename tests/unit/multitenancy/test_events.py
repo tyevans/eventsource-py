@@ -369,7 +369,7 @@ class TestTenantMismatchError:
 
     def test_error_is_eventsource_error(self) -> None:
         """TenantMismatchError inherits from EventSourceError."""
-        from eventsource.exceptions import EventSourceError
+        from eventsource.domain.exceptions import EventSourceError
         from eventsource.multitenancy import TenantMismatchError
 
         error = TenantMismatchError(

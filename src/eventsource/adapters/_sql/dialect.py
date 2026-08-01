@@ -18,7 +18,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from eventsource.serialization import json_dumps, json_loads
+from eventsource.adapters.serialization import json_dumps, json_loads
 
 
 class Dialect(Enum):
@@ -100,7 +100,7 @@ def json_param(value: object, dialect: Dialect) -> str | None:
     written. This keeps SQL NULL and stored JSON null distinguishable on
     read -- `json_result` cannot tell them apart once both are ambiguous.
 
-    Delegates to `eventsource.serialization.json_dumps` (rather than plain
+    Delegates to `eventsource.adapters.serialization.json_dumps` (rather than plain
     `json.dumps`) so payloads containing UUID and datetime values encode
     without raising `TypeError`.
 
@@ -117,7 +117,7 @@ def json_result(value: object) -> Any:
     """
     Decode a JSON value from a result row, accepting text or parsed JSON.
 
-    Delegates to `eventsource.serialization.json_loads` (rather than plain
+    Delegates to `eventsource.adapters.serialization.json_loads` (rather than plain
     `json.loads`) so decoding routes through the same encoder that
     `json_param` used to encode -- if `json_loads` is later backed by
     orjson, this call site moves with it instead of silently continuing to

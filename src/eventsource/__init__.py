@@ -42,6 +42,9 @@ from eventsource.adapters.postgresql import (
     PostgreSQLEventStore,
     PostgreSQLOutboxRepository,
 )
+
+# Serialization utilities
+from eventsource.adapters.serialization import EventSourceJSONEncoder
 from eventsource.adapters.sql import SQLCheckpointRepository, SQLDLQRepository
 
 # Projections (Task 09)
@@ -54,6 +57,9 @@ from eventsource.adapters.sqlite import (
     SQLITE_AVAILABLE,
     SQLiteEventStore,
 )
+
+# Sync adapters (DX-005)
+from eventsource.adapters.sync import SyncEventStoreAdapter
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.application.projections.base import (
     CheckpointTrackingProjection,
@@ -97,29 +103,11 @@ from eventsource.bus.redis import (
 )
 from eventsource.bus.registry import SubscriptionRegistry
 from eventsource.bus.retry import RetryPolicy
-
-# Commands (Task 05 - decider feature)
-from eventsource.commands import DomainCommand
 from eventsource.domain import StreamId
 from eventsource.domain.aggregate import AggregateRoot, DeclarativeAggregate
+from eventsource.domain.command import DomainCommand
 from eventsource.domain.decider import DeciderAggregate
-
-# Core event primitives (Task 02)
-from eventsource.events.base import DomainEvent
-
-# Event registry (Task 03)
-from eventsource.events.registry import (
-    DuplicateEventTypeError,
-    EventRegistry,
-    EventTypeNotFoundError,
-    default_registry,
-    get_event_class,
-    get_event_class_or_none,
-    is_event_registered,
-    list_registered_events,
-    register_event,
-)
-from eventsource.exceptions import (
+from eventsource.domain.exceptions import (
     AggregateNotCreatedError,
     AggregateNotFoundError,
     CommandRejectedError,
@@ -136,6 +124,22 @@ from eventsource.exceptions import (
     SnapshotError,
     SnapshotNotFoundError,
     SnapshotSchemaVersionError,
+)
+
+# Core event primitives (Task 02)
+from eventsource.events.base import DomainEvent
+
+# Event registry (Task 03)
+from eventsource.events.registry import (
+    DuplicateEventTypeError,
+    EventRegistry,
+    EventTypeNotFoundError,
+    default_registry,
+    get_event_class,
+    get_event_class_or_none,
+    is_event_registered,
+    list_registered_events,
+    register_event,
 )
 
 # Decorators - canonical location for @handles (TD-006)
@@ -185,10 +189,9 @@ from eventsource.ports.dlq import (
     DLQStats,
     ProjectionFailureCount,
 )
-from eventsource.ports.snapshots import Snapshot, SnapshotStore
 
 # Protocols - canonical location (TD-007)
-from eventsource.protocols import (
+from eventsource.ports.handlers import (
     AsyncEventHandler,
     EventHandler,
     EventSubscriber,
@@ -196,12 +199,7 @@ from eventsource.protocols import (
     FlexibleEventSubscriber,
     SyncEventHandler,
 )
-
-# Serialization utilities
-from eventsource.serialization import EventSourceJSONEncoder
-
-# Sync adapters (DX-005)
-from eventsource.sync import SyncEventStoreAdapter
+from eventsource.ports.snapshots import Snapshot, SnapshotStore
 
 # SQLite outbox repository (optional - requires aiosqlite at import time,
 # unlike the SQLite store adapter, which imports cleanly without it).
@@ -209,8 +207,7 @@ with contextlib.suppress(ImportError):
     from eventsource.adapters.sqlite import SQLiteOutboxRepository  # noqa: F401
 
 # Types - available immediately
-from eventsource.testing.recording import RecordingEventBus
-from eventsource.types import (
+from eventsource.domain.types import (
     AggregateId,
     CausationId,
     CorrelationId,
@@ -218,6 +215,7 @@ from eventsource.types import (
     TenantId,
     TState,
 )
+from eventsource.testing.recording import RecordingEventBus
 
 __all__ = [
     # Version

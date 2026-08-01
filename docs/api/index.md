@@ -12,6 +12,21 @@ import eventsource
 print(eventsource.__version__)  # "0.5.0" for the current release
 ```
 
+### Moved and removed top-level modules
+
+Six top-level modules moved onto their ring homes (ADR 0030): `eventsource.types` ->
+`eventsource.domain.types`, `eventsource.exceptions` -> `eventsource.domain.exceptions`,
+`eventsource.protocols` -> `eventsource.ports.handlers`, `eventsource.commands` ->
+`eventsource.domain.command`, `eventsource.sync` -> `eventsource.adapters.sync`, and
+`eventsource.serialization` -> `eventsource.adapters.serialization`. The old paths are
+gone -- importing any of them raises `ModuleNotFoundError`, with no deprecation shim
+and no transition window. `eventsource.locks` and `eventsource.readmodels` are gone
+the same way (ADR 0030 also removed those two shims ahead of the 0.8.0 schedule ADR
+0029 originally set). `eventsource.config` is deleted outright; it was an empty
+placeholder with no importers anywhere in the codebase. Top-level
+`from eventsource import ...` imports are unaffected by any of this; only direct
+submodule imports need updating.
+
 `__version__` is resolved at import time from installed distribution metadata via
 `importlib.metadata.version("eventsource-py")`, falling back to `"0.0.0.dev0"` when the
 package is used from a source checkout that has not been installed.
@@ -67,9 +82,11 @@ Several public subsystems ship in the package but are **not** re-exported at the
 level. They are imported from their own modules: `eventsource.testing`,
 `eventsource.subscriptions`, `eventsource.observability`, `eventsource.migration`,
 `eventsource.ports.locks` / `eventsource.adapters.postgresql.locks`,
-`eventsource.gdpr`, `eventsource.config`, and the raw SQL under
-`eventsource.migrations`. (`eventsource.locks` still resolves every name, deprecated,
-until 0.8.0.)
+`eventsource.gdpr`, and the raw SQL under `eventsource.migrations`.
+(`eventsource.locks` no longer exists -- see ADR 0030; import
+`eventsource.ports.locks` / `eventsource.adapters.postgresql.locks` instead.
+`eventsource.config` no longer exists either -- it was an empty placeholder
+with no importers.)
 
 A few names are also narrower at the barrel than in their defining adapter package.
 Snapshots are the clearest case: `PostgreSQLSnapshotStore` (`eventsource.adapters.postgresql`)
@@ -79,7 +96,7 @@ top-level `SQLITE_AVAILABLE` flag does cover the SQLite snapshot store along wit
 SQLite event store. Persistent snapshot stores are therefore imported path-only, e.g.
 `from eventsource.adapters.postgresql import PostgreSQLSnapshotStore`.
 
-`eventsource.protocols`, `eventsource.exceptions`, and `eventsource.types` are partly
+`eventsource.ports.handlers`, `eventsource.domain.exceptions`, and `eventsource.domain.types` are partly
 re-exported: the barrel carries the commonly used names from each, while the modules
 themselves remain the canonical definition sites and contain additional members.
 
@@ -205,7 +222,7 @@ exposes configuration properties (`aggregate_type`, `snapshot_mode`,
 `has_snapshot_support`, `pending_snapshot_count`) and the purely local `create_new`.
 
 For callers that cannot `await` at all — Celery tasks, Django management commands, RQ
-workers — `SyncEventStoreAdapter` (`eventsource.sync.adapter`) wraps any `FullEventStore`
+workers — `SyncEventStoreAdapter` (`eventsource.adapters.sync.adapter`) wraps any `FullEventStore`
 and exposes plain-`def` counterparts of the same port methods (`append`, `read_stream`,
 `get_stream_version`, `event_exists`, `read_all`, `read_category`, `current_position`),
 plus a `wrapped_store` property. See `eventsource/sync/adapter.py` for exact signatures
@@ -213,7 +230,7 @@ before relying on details beyond this summary — a parallel effort keeps `docs/
 in sync with it in more depth.
 
 ```python
-from eventsource.sync import SyncEventStoreAdapter
+from eventsource.adapters.sync import SyncEventStoreAdapter
 
 sync_store = SyncEventStoreAdapter(async_store, timeout=30.0)
 version = sync_store.get_stream_version(stream_id)
@@ -318,7 +335,7 @@ an aggregate by replaying its stream, saves uncommitted events with an
 is one ring out, at `eventsource.application.aggregates.repository`.
 
 `eventsource.application.aggregates.__all__` adds the type variable `TAggregate`
-alongside `AggregateRepository`; `TState` is declared in `eventsource.types` and
+alongside `AggregateRepository`; `TState` is declared in `eventsource.domain.types` and
 re-exported from the top-level barrel. The `handles` decorator itself is defined in
 `eventsource.handlers` and re-exported from the barrel; the same decorator is used by
 `DeclarativeProjection`.
@@ -332,7 +349,7 @@ the aggregate.
 
 Covers the `Snapshot` value object, the `SnapshotStore` interface (both in
 `eventsource.ports.snapshots`), its three backend adapters, the four-member exception
-hierarchy (`eventsource.exceptions`), and the `SnapshotPolicy` / `SnapshotScheduler`
+hierarchy (`eventsource.domain.exceptions`), and the `SnapshotPolicy` / `SnapshotScheduler`
 collaborators in `eventsource.application.aggregates.snapshotting` — the composable
 replacement for ADR 0017's `SnapshotStrategy` — that decide when and how a snapshot is
 written (see [ADR 0021](../adrs/0021-snapshot-policy-scheduler-composition.md)).
@@ -375,15 +392,14 @@ exception types. The in-memory, PostgreSQL, and SQLite implementations and the
 schema-generation helpers live in their adapter modules
 (`eventsource.adapters.{memory,postgresql,sqlite}.readmodels`,
 `eventsource.adapters.sql.readmodel_schema`). Only `ReadModelProjection` reaches the
-top-level barrel. (`eventsource.readmodels` still resolves every name, deprecated,
-until 0.8.0.)
+top-level barrel. (`eventsource.readmodels` no longer exists -- see ADR 0030.)
 
 ### Event Bus — `api/bus.md` (`eventsource.bus.interface`, `memory`, `redis`, `rabbitmq`, `kafka`)
 
 Covers the `EventBus` abstract base class — `async def publish`, plus the synchronous
 `subscribe`, `unsubscribe`, `subscribe_all`, `subscribe_to_all_events`, and
 `unsubscribe_from_all_events` — the `EventHandlerFunc` alias its subscribe methods
-accept, and the handler and subscriber protocols re-exported from `eventsource.protocols`
+accept, and the handler and subscriber protocols re-exported from `eventsource.ports.handlers`
 (`EventHandler`, `AsyncEventHandler`, `SyncEventHandler`, `FlexibleEventHandler`,
 `EventSubscriber`, `FlexibleEventSubscriber`).
 
@@ -446,7 +462,7 @@ Several public subsystems are intentionally *not* re-exported. They have their o
 The size difference is the reason for the split: `subscriptions` and `migration` alone
 would more than double the barrel, and most applications need neither.
 
-`eventsource.protocols`, `eventsource.exceptions`, and `eventsource.types` sit in
+`eventsource.ports.handlers`, `eventsource.domain.exceptions`, and `eventsource.domain.types` sit in
 between. Their commonly used members are re-exported, but the modules remain the
 canonical definition sites — import from the module when you need a member the barrel
 does not carry.
@@ -799,17 +815,16 @@ Import these from their module:
 
 | Module | Contents |
 | --- | --- |
-| `eventsource.ports.locks` / `eventsource.adapters.postgresql.locks` | `PostgreSQLLockManager` (adapter); `LockInfo`, `migration_lock_key` (port); `LockAcquisitionError`, `LockNotHeldError` (`eventsource.exceptions`) |
+| `eventsource.ports.locks` / `eventsource.adapters.postgresql.locks` | `PostgreSQLLockManager` (adapter); `LockInfo`, `migration_lock_key` (port); `LockAcquisitionError`, `LockNotHeldError` (`eventsource.domain.exceptions`) |
 | `eventsource.subscriptions` | Subscription manager, runners, retry policy, health, and flow control |
 | `eventsource.testing` | Assertions, BDD helpers, the test harness, builders, and the conformance suites |
 | `eventsource.observability` | OpenTelemetry tracing integration (`telemetry` extra) |
 | `eventsource.migration` | Live event-store migration tooling: dual-write, cutover, sync tracking |
 | `eventsource.gdpr` | GDPR compliance utilities |
-| `eventsource.config` | Configuration helpers |
 
 Two modules are re-exported *and* importable directly, because they are canonical
 homes rather than optional add-ons: `eventsource.handlers` (`handles`) and
-`eventsource.protocols` (the handler and subscriber protocols). Prefer the barrel.
+`eventsource.ports.handlers` (the handler and subscriber protocols). Prefer the barrel.
 
 `eventsource._internal` is private. Nothing under it is part of the public API, and its
 contents may change in any release.
@@ -1133,7 +1148,7 @@ as ISO-8601 text, and payloads as JSON text.
 
 #### Synchronous access
 
-`SyncEventStoreAdapter` (from the barrel, defined in `eventsource.sync.adapter`) wraps
+`SyncEventStoreAdapter` (from the barrel, defined in `eventsource.adapters.sync.adapter`) wraps
 any `FullEventStore` for callers that cannot await. It exposes plain-`def` counterparts
 of the port methods (`append`, `read_stream`, `get_stream_version`, `event_exists`,
 `read_all`, `read_category`, `current_position`), a `wrapped_store` property, and a
@@ -1359,11 +1374,11 @@ is a no-op.
 | `OptimisticLockError` | The store rejects the append in `save` because the stream moved on |
 
 All five subclass `EventSourceError` and are re-exported from the barrel except
-`UnhandledEventError`, which is imported from `eventsource.exceptions`.
+`UnhandledEventError`, which is imported from `eventsource.domain.exceptions`.
 
 ### Types (`TState`, `AggregateId`, `EventId`, `TenantId`, `CorrelationId`, `CausationId`)
 
-Six names from `eventsource.types` are re-exported at the top level. Five are plain
+Six names from `eventsource.domain.types` are re-exported at the top level. Five are plain
 type aliases; `TState` is a `TypeVar`. The full module definition is three lines of
 imports and eight assignments:
 
@@ -1478,16 +1493,16 @@ type is a static error rather than a runtime one — but snapshot round-tripping
 
 #### Aliases not re-exported at the top level
 
-`eventsource.types` defines three further aliases that are **not** in the package-level
+`eventsource.domain.types` defines three further aliases that are **not** in the package-level
 `__all__`:
 
 ```python
-from eventsource.types import GlobalPosition, StreamPosition, Version
+from eventsource.domain.types import GlobalPosition, StreamPosition, Version
 ```
 
 All three are `int`: `Version` for optimistic-locking versions, `StreamPosition` for a
 position within one stream, and `GlobalPosition` for a position in the global ordering.
-Import them from `eventsource.types` directly; see the
+Import them from `eventsource.domain.types` directly; see the
 [types and protocols reference](types.md) for the whole module.
 
 ### Events and event registry (`DomainEvent`, `EventRegistry`, `default_registry`, registry helpers, `EventTypeNotFoundError`, `DuplicateEventTypeError`)

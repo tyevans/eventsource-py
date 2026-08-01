@@ -12,7 +12,7 @@ sqlite,sql}`.
 Note: `OptimisticLockError` here is the read-model one
 (`model_id`, `expected_version`, `actual_version`), a `ReadModelError`
 subclass. It is a **different class** from
-`eventsource.exceptions.OptimisticLockError`, which is raised on event
+`eventsource.domain.exceptions.OptimisticLockError`, which is raised on event
 append and derives from `EventSourceError`. Neither catches the other. See
 ADR 0029's recorded exception and the backlog item that resolves the name
 collision.

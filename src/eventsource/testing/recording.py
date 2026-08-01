@@ -12,7 +12,7 @@ from collections import deque
 
 from eventsource.bus.interface import EventBus, EventHandlerFunc
 from eventsource.events.base import DomainEvent
-from eventsource.protocols import FlexibleEventHandler, FlexibleEventSubscriber
+from eventsource.ports.handlers import FlexibleEventHandler, FlexibleEventSubscriber
 
 
 class RecordingEventBus(EventBus):

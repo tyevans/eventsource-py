@@ -13,8 +13,8 @@ from abc import abstractmethod
 from typing import Any
 from uuid import UUID
 
-from eventsource.commands.base import DomainCommand
 from eventsource.domain.aggregate import AggregateRoot, TState
+from eventsource.domain.command import DomainCommand
 from eventsource.events.base import DomainEvent
 
 

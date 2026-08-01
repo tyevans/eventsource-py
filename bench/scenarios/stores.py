@@ -8,9 +8,9 @@ from uuid import UUID, uuid4
 from bench.adapters.base import BenchAdapter
 from bench.core.domain import make_events
 from bench.core.runner import Measurement, Scenario
+from eventsource.domain.exceptions import OptimisticLockError
 from eventsource.domain.stream_id import StreamId
 from eventsource.events.base import DomainEvent
-from eventsource.exceptions import OptimisticLockError
 from eventsource.ports import ExpectedVersion, FullEventStore, collect
 
 

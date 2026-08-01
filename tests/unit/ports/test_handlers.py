@@ -20,7 +20,7 @@ import pytest
 from pydantic import Field
 
 from eventsource.events.base import DomainEvent
-from eventsource.protocols import (
+from eventsource.ports.handlers import (
     AsyncEventHandler,
     EventHandler,
     EventSubscriber,
@@ -253,7 +253,7 @@ class TestDeprecationWarnings:
         """Importing from canonical location does not warn."""
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            from eventsource.protocols import (  # noqa: F401
+            from eventsource.ports.handlers import (  # noqa: F401
                 EventHandler,
                 EventSubscriber,
                 FlexibleEventHandler,
@@ -331,6 +331,59 @@ class TestCanonicalExports:
         import eventsource
 
         assert hasattr(eventsource, "AsyncEventHandler")
+
+    def test_all_six_names_importable_from_ports_handlers(self) -> None:
+        """All six names are importable directly from eventsource.ports.handlers."""
+        from eventsource.ports.handlers import (
+            AsyncEventHandler,
+            EventHandler,
+            EventSubscriber,
+            FlexibleEventHandler,
+            FlexibleEventSubscriber,
+            SyncEventHandler,
+        )
+
+        for obj in (
+            EventHandler,
+            SyncEventHandler,
+            FlexibleEventHandler,
+            EventSubscriber,
+            FlexibleEventSubscriber,
+            AsyncEventHandler,
+        ):
+            assert obj is not None
+
+    def test_all_six_names_reexported_from_ports_package(self) -> None:
+        """All six names are re-exported from eventsource.ports."""
+        from eventsource import ports
+        from eventsource.ports import handlers as ports_handlers
+
+        for name in (
+            "EventHandler",
+            "SyncEventHandler",
+            "FlexibleEventHandler",
+            "EventSubscriber",
+            "FlexibleEventSubscriber",
+            "AsyncEventHandler",
+        ):
+            assert hasattr(ports, name)
+            assert getattr(ports, name) is getattr(ports_handlers, name)
+
+    def test_all_six_names_reexported_from_top_level(self) -> None:
+        """All six names are re-exported from the top-level eventsource package."""
+        import eventsource
+        from eventsource.ports import handlers as ports_handlers
+
+        for name in (
+            "EventHandler",
+            "SyncEventHandler",
+            "FlexibleEventHandler",
+            "EventSubscriber",
+            "FlexibleEventSubscriber",
+            "AsyncEventHandler",
+        ):
+            assert hasattr(eventsource, name)
+            assert getattr(eventsource, name) is getattr(ports_handlers, name)
 
 
 class TestAsyncEventHandler:
@@ -418,20 +471,20 @@ class TestAsyncEventHandlerImports:
     def test_top_level_import_works(self) -> None:
         """Top-level eventsource import works."""
         from eventsource import AsyncEventHandler
-        from eventsource.protocols import AsyncEventHandler as Canonical
+        from eventsource.ports.handlers import AsyncEventHandler as Canonical
 
         assert AsyncEventHandler is Canonical
 
     def test_handlers_adapter_import_works(self) -> None:
         """Import from handlers.adapter works."""
         from eventsource.handlers.adapter import AsyncEventHandler
-        from eventsource.protocols import AsyncEventHandler as Canonical
+        from eventsource.ports.handlers import AsyncEventHandler as Canonical
 
         assert AsyncEventHandler is Canonical
 
     def test_bus_import_works(self) -> None:
         """Import from bus module works."""
         from eventsource.bus import AsyncEventHandler
-        from eventsource.protocols import AsyncEventHandler as Canonical
+        from eventsource.ports.handlers import AsyncEventHandler as Canonical
 
         assert AsyncEventHandler is Canonical

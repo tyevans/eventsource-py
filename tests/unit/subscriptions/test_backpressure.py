@@ -10,7 +10,7 @@ import asyncio
 import pytest
 
 from eventsource.events.base import DomainEvent
-from eventsource.protocols import EventSubscriber
+from eventsource.ports.handlers import EventSubscriber
 from eventsource.subscriptions import (
     FlowControlContext,
     FlowController,

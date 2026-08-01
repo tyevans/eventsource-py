@@ -75,8 +75,8 @@ if TYPE_CHECKING:
     from eventsource.bus.interface import EventBus
     from eventsource.ports.checkpoints import SubscriptionPositions
     from eventsource.ports.dlq import DLQRepository
+    from eventsource.ports.handlers import EventSubscriber
     from eventsource.ports.store import GlobalEventFeed
-    from eventsource.protocols import EventSubscriber
 
 logger = logging.getLogger(__name__)
 

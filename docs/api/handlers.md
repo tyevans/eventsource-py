@@ -42,7 +42,7 @@ annotate the policy argument.
 
 `HandlerRegistry.dispatch()` and `HandlerAdapter.handle()` are `async`;
 everything else on this page is synchronous. The module depends only on
-`eventsource.events`, `eventsource.exceptions`, and `eventsource.protocols`, so
+`eventsource.events`, `eventsource.domain.exceptions`, and `eventsource.ports.handlers`, so
 it imports with the core dependencies alone.
 
 The two consumers of this machinery are `DeclarativeAggregate` (sync handlers
@@ -114,7 +114,7 @@ policy: UnregisteredEventHandling = "warn"
 
 `eventsource.handlers.adapter` also re-exports the `AsyncEventHandler` and
 `SyncEventHandler` protocols for backward compatibility; their canonical home is
-`eventsource.protocols`.
+`eventsource.ports.handlers`.
 
 ## `handles(event_type)`
 

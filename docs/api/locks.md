@@ -5,10 +5,9 @@ Technical reference for `eventsource.ports.locks` and
 advisory-lock manager, the `LockInfo` value object, the `migration_lock_key`
 helper, and the two lock-specific exceptions.
 
-`eventsource.locks` -- the pre-slice-A import path for all of the above -- is
-**deprecated**. Every name still resolves from it with a `DeprecationWarning`
-naming its new home; the package is removed in 0.8.0. Update imports to the
-paths this page documents.
+`eventsource.locks` -- the pre-slice-A import path for all of the above --
+**no longer exists** (ADR 0030). Importing it raises `ModuleNotFoundError`,
+with no deprecation shim. Update imports to the paths this page documents.
 
 The package provides mutual exclusion *across processes* — one holder at a time
 for a given string key, regardless of which application instance asks. It is
@@ -25,8 +24,8 @@ The names split across three modules along ring boundaries (ADR 0029):
 | `PostgreSQLLockManager` | Lock manager class | `eventsource.adapters.postgresql.locks` |
 | `LockInfo` | Frozen dataclass describing an acquired lock | `eventsource.ports.locks` |
 | `migration_lock_key` | Lock-key naming helper | `eventsource.ports.locks` |
-| `LockAcquisitionError` | Raised when a lock cannot be acquired | `eventsource.exceptions` |
-| `LockNotHeldError` | Raised when releasing a lock this manager does not hold | `eventsource.exceptions` |
+| `LockAcquisitionError` | Raised when a lock cannot be acquired | `eventsource.domain.exceptions` |
+| `LockNotHeldError` | Raised when releasing a lock this manager does not hold | `eventsource.domain.exceptions` |
 
 The package's primary in-tree consumer is the live migration tooling
 (`eventsource.migration`), where a lock guards cutover so that only one instance
@@ -144,7 +143,7 @@ discoverable only by attempting an acquisition.
 Note also that the lock names are not re-exported from the top-level
 `eventsource` package. **They are not reachable via `eventsource`.** Import
 them from `eventsource.ports.locks` / `eventsource.adapters.postgresql.locks`
-/ `eventsource.exceptions` (see [Import Surface](#import-surface)).
+/ `eventsource.domain.exceptions` (see [Import Surface](#import-surface)).
 
 ### Effect on migration cutover
 
@@ -205,12 +204,12 @@ The five public names split across three modules by ring (ADR 0029):
 
 ```python
 from eventsource.ports.locks import LockInfo, migration_lock_key
-from eventsource.exceptions import LockAcquisitionError, LockNotHeldError
+from eventsource.domain.exceptions import LockAcquisitionError, LockNotHeldError
 from eventsource.adapters.postgresql.locks import PostgreSQLLockManager
 ```
 
-`eventsource.locks` (the pre-slice-A path) still resolves all five, lazily,
-each with a `DeprecationWarning` naming the module above -- removed in 0.8.0.
+`eventsource.locks` (the pre-slice-A path) no longer exists (ADR 0030);
+importing it raises `ModuleNotFoundError`.
 
 ### Not exported from the top-level package
 
@@ -221,21 +220,21 @@ public API from `eventsource/__init__.py`, and it is consistent with the
 locks' PostgreSQL-only production nature — they are a backend-specific tool
 rather than part of the core surface.
 
-### The exceptions live in `eventsource.exceptions` now
+### The exceptions live in `eventsource.domain.exceptions` now
 
 `LockAcquisitionError` and `LockNotHeldError` moved to
-`eventsource.exceptions` and now subclass `EventSourceError` (ADR 0029, the
+`eventsource.domain.exceptions` and now subclass `EventSourceError` (ADR 0029, the
 one semantic change in the slice A structure work -- widening only). Two
 consequences for calling code:
 
-- Import them from `eventsource.exceptions`, not from the locks modules.
+- Import them from `eventsource.domain.exceptions`, not from the locks modules.
 - **`except EventSourceError` now catches a lock failure too.** Every
   existing `except LockAcquisitionError` and `except Exception` still catches
   exactly as before; the newly-catching clause is `except EventSourceError`,
   which caught nothing lock-related prior to this change.
 
 In-tree, `eventsource.migration.cutover` follows this pattern, importing
-`LockAcquisitionError` from `eventsource.exceptions` and `migration_lock_key`
+`LockAcquisitionError` from `eventsource.domain.exceptions` and `migration_lock_key`
 from `eventsource.ports.locks`.
 
 ### Typing-only imports
@@ -308,7 +307,7 @@ Bounded — polls `pg_try_advisory_lock` every `retry_interval` seconds until th
 deadline, then raises:
 
 ```python
-from eventsource.exceptions import LockAcquisitionError
+from eventsource.domain.exceptions import LockAcquisitionError
 
 try:
     async with lock_manager.acquire("cutover:tenant-123", timeout=5.0):

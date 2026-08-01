@@ -18,7 +18,7 @@ import pytest
 import pytest_asyncio
 
 from eventsource.adapters.postgresql.locks import PostgreSQLLockManager
-from eventsource.exceptions import LockAcquisitionError, LockNotHeldError
+from eventsource.domain.exceptions import LockAcquisitionError, LockNotHeldError
 from eventsource.ports.locks import migration_lock_key
 
 if TYPE_CHECKING:

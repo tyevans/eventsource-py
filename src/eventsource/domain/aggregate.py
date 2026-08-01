@@ -12,14 +12,14 @@ from collections.abc import Callable
 from typing import Any, ClassVar, Generic, TypeVar, cast, get_args, get_origin
 from uuid import UUID
 
-from eventsource.commands.base import DomainCommand
-from eventsource.events.base import DomainEvent
-from eventsource.exceptions import (
+from eventsource.domain.command import DomainCommand
+from eventsource.domain.exceptions import (
     AggregateNotCreatedError,
     EventVersionError,
     UnhandledEventError,
 )
-from eventsource.types import TState
+from eventsource.domain.types import TState
+from eventsource.events.base import DomainEvent
 
 # Type alias for unregistered event handling mode
 UnregisteredEventHandling = str  # "ignore" | "warn" | "error"

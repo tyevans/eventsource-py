@@ -100,7 +100,7 @@ from eventsource.bus.redis import (
 )
 
 # Protocols from canonical location
-from eventsource.protocols import (
+from eventsource.ports.handlers import (
     AsyncEventHandler,
     EventHandler,
     EventSubscriber,

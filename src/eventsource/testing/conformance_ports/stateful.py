@@ -21,7 +21,7 @@ from hypothesis import strategies as st
 from hypothesis.stateful import RuleBasedStateMachine, invariant, precondition, rule
 
 from eventsource.domain import StreamId
-from eventsource.exceptions import OptimisticLockError
+from eventsource.domain.exceptions import OptimisticLockError
 from eventsource.ports import ExpectedVersion
 from eventsource.testing.conformance_ports._fixtures import make_event
 from eventsource.testing.sync_facade import SyncStoreFacade

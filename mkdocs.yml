@@ -153,6 +153,7 @@ nav:
       - "ADR-0027: Schema Correctness Fixes": adrs/0027-schema-correctness-fixes.md
       - "ADR-0028: Strict Cutover and In-Phase Resync": adrs/0028-strict-cutover-and-in-phase-resync.md
       - "ADR-0029: Locks, Read Models, and Engine Rings": adrs/0029-locks-readmodels-and-engine-rings.md
+      - "ADR-0030: Top-Level Module Ring Consolidation": adrs/0030-top-level-module-ring-consolidation.md
   - Development:
       - development/index.md
       - Contributing: development/contributing.md

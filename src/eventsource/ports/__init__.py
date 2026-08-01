@@ -22,6 +22,14 @@ from eventsource.ports.envelopes import (
     ReadDirection,
     StreamReadOptions,
 )
+from eventsource.ports.handlers import (
+    AsyncEventHandler,
+    EventHandler,
+    EventSubscriber,
+    FlexibleEventHandler,
+    FlexibleEventSubscriber,
+    SyncEventHandler,
+)
 from eventsource.ports.locks import (
     DistributedLock,
     LockInfo,
@@ -94,4 +102,11 @@ __all__ = [
     "LockManager",
     "LockRegistry",
     "migration_lock_key",
+    # Handler protocols / ABCs
+    "EventHandler",
+    "SyncEventHandler",
+    "FlexibleEventHandler",
+    "EventSubscriber",
+    "FlexibleEventSubscriber",
+    "AsyncEventHandler",
 ]

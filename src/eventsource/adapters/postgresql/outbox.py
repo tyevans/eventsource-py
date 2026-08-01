@@ -19,6 +19,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from eventsource.adapters._sql.connection import sql_connection
+from eventsource.adapters.serialization import EventSourceJSONEncoder
 from eventsource.events.base import DomainEvent
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
@@ -30,7 +31,6 @@ from eventsource.observability.attributes import (
     ATTR_EVENT_TYPE,
 )
 from eventsource.ports.outbox import OutboxEntry, OutboxStats, outbox_event_data
-from eventsource.serialization import EventSourceJSONEncoder
 
 
 class PostgreSQLOutboxRepository:

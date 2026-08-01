@@ -5,7 +5,7 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import ValidationError
 
-from eventsource.commands import DomainCommand
+from eventsource.domain.command import DomainCommand
 from eventsource.events.base import DomainEvent
 
 
@@ -72,7 +72,7 @@ class TestMatchSupport:
 
 class TestCommandRejectedError:
     def test_is_eventsource_error_and_carries_command(self) -> None:
-        from eventsource.exceptions import CommandRejectedError, EventSourceError
+        from eventsource.domain.exceptions import CommandRejectedError, EventSourceError
 
         cmd = OpenAccount(owner_name="alice")
         err = CommandRejectedError("account already open", command=cmd)
@@ -81,7 +81,7 @@ class TestCommandRejectedError:
         assert "already open" in str(err)
 
     def test_command_defaults_to_none(self) -> None:
-        from eventsource.exceptions import CommandRejectedError
+        from eventsource.domain.exceptions import CommandRejectedError
 
         assert CommandRejectedError("no").command is None
 

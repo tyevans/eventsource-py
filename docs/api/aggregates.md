@@ -14,7 +14,7 @@ The package exposes three public classes and two type variables:
 | `DeclarativeAggregate[TState]` | Abstract base class (subclass of `AggregateRoot`) | `eventsource.domain.aggregate` |
 | `AggregateRepository[TAggregate]` | Concrete generic class | `eventsource.application.aggregates.repository` |
 | `TAggregate` | `TypeVar` bound to `AggregateRoot[Any]` | `eventsource.application.aggregates.repository` |
-| `TState` | `TypeVar` for the aggregate state model | `eventsource.types` |
+| `TState` | `TypeVar` for the aggregate state model | `eventsource.domain.types` |
 
 `AggregateRoot` is `Generic[TState], ABC`: `TState` is the Pydantic model that
 holds the aggregate's state, and subclasses must implement the abstract methods
@@ -76,10 +76,10 @@ Their defining modules are:
 | `DeclarativeAggregate` | `eventsource.domain.aggregate` |
 | `AggregateRepository` | `eventsource.application.aggregates.repository` |
 | `TAggregate` | `eventsource.application.aggregates.repository` |
-| `TState` | `eventsource.types` |
+| `TState` | `eventsource.domain.types` |
 
 `TState` is not defined in either ring package; both re-export it (indirectly,
-via `AggregateRoot`'s own import) from `eventsource.types`, where it is
+via `AggregateRoot`'s own import) from `eventsource.domain.types`, where it is
 declared as `TypeVar("TState", bound=BaseModel)`. `TAggregate` is declared in
 `eventsource.application.aggregates.repository` as
 `TypeVar("TAggregate", bound="AggregateRoot[Any]")`.
@@ -114,7 +114,7 @@ Symbols that support these classes but live elsewhere — the `@handles`
 decorator (`eventsource.handlers`), `DomainEvent` (`eventsource.events`), the
 `AggregateStore` / `EventPublisher` / `SnapshotStore` contracts
 (`eventsource.ports.store`, `eventsource.ports.bus`, `eventsource.ports.snapshots`),
-and the exceptions raised by this package (`eventsource.exceptions`) — are all
+and the exceptions raised by this package (`eventsource.domain.exceptions`) — are all
 re-exported from the top level and are referenced by their public names
 throughout this page.
 
@@ -243,7 +243,7 @@ and stores it on the `Snapshot` record (the `snapshots` table has a
 On load, `read_valid_snapshot()` compares the stored value against the
 aggregate class's current value; on mismatch it logs at INFO level, discards
 the snapshot, and falls back to a full event replay. **Nothing raises** —
-`SnapshotSchemaVersionError` exists in `eventsource.exceptions` but
+`SnapshotSchemaVersionError` exists in `eventsource.domain.exceptions` but
 is not raised by this comparison. See
 [ADR 0021](../adrs/0021-snapshot-policy-scheduler-composition.md) for the
 collaborators that replaced `AggregateSnapshotManager`.

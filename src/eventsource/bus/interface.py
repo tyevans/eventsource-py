@@ -6,15 +6,15 @@ for publishing and subscribing to domain events.
 The event bus decouples event producers from consumers, allowing projections
 and other handlers to react to events independently.
 
-Protocol definitions are in eventsource.protocols.
-Use `from eventsource.protocols import EventHandler` instead.
+Protocol definitions are in eventsource.ports.handlers.
+Use `from eventsource.ports.handlers import EventHandler` instead.
 """
 
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 
 from eventsource.events.base import DomainEvent
-from eventsource.protocols import (
+from eventsource.ports.handlers import (
     FlexibleEventHandler,
     FlexibleEventSubscriber,
 )

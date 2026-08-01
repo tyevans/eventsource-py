@@ -15,11 +15,17 @@ Source-code dependencies point only inward, toward higher-level policy. Nothing 
 inner ring may know anything about an outer ring — no names, no types, no imports.
 The rings, innermost first:
 
-1. **Entities** (`domain/` — during transition also `events/`, `types.py`,
-   `exceptions.py`): Enterprise business rules — domain events, the event registry,
-   domain value objects, domain exceptions. Pure: stdlib + pydantic only. No I/O.
-   `domain/aggregate.py` (`AggregateRoot`, `DeclarativeAggregate`) lives here now;
-   `aggregates/` is no longer a transitional location for it.
+1. **Entities** (`domain/` — during transition also `events/`): Enterprise business
+   rules — domain events, the event registry, domain value objects, domain
+   exceptions. Pure: stdlib + pydantic only. No I/O. `domain/aggregate.py`
+   (`AggregateRoot`, `DeclarativeAggregate`) lives here now; `aggregates/` is no
+   longer a transitional location for it. `domain/types.py` (type aliases:
+   `AggregateId`, `EventId`, `TenantId`, `CorrelationId`, `CausationId`, `Version`,
+   `StreamPosition`, `GlobalPosition`, `TState`), `domain/exceptions.py` (the full
+   exception hierarchy, including the `SnapshotError` family and the lock
+   exceptions), and `domain/command.py` (`DomainCommand`) are settled, not
+   transitional; `types.py`, `exceptions.py`, and `commands/` at the top level are
+   no longer transitional locations for any of it (ADR 0030).
 2. **Use cases** (`application/` — during transition `subscriptions/`,
    `migration/`, `handlers/`): Application business rules —
    aggregate repositories, projection engines, subscription lifecycle, migration
@@ -32,7 +38,7 @@ The rings, innermost first:
    the checkpoint and DLQ functions, and the retry policies) — `projections/` is no
    longer a transitional location for any of it.
 3. **Interface adapters** (`adapters/` — during transition `stores/`,
-   `bus/`, `locks/` backend modules): Gateways that
+   `bus/` backend modules): Gateways that
    implement the ports for a specific technology, converting between the use-case
    format (value objects, domain events) and the storage/wire format (rows, JSON,
    frames). Snapshot store backends (`InMemorySnapshotStore`,
@@ -46,7 +52,14 @@ The rings, innermost first:
    `adapters/sqlite/`, since the SQLite implementation takes a raw
    `aiosqlite.Connection` rather than a sqlalchemy engine or session. The
    `repositories/` package no longer exists — it is not a transitional
-   location for anything.
+   location for anything. `adapters/sync/` (`SyncEventStoreAdapter`) and
+   `adapters/serialization/` (`EventSourceJSONEncoder`, `json_dumps`,
+   `json_loads`) are settled, not transitional; top-level `sync/` and
+   `serialization/` no longer exist (ADR 0030). Distributed lock adapters
+   (`PostgreSQLLockManager`, `InMemoryLockManager`) live under
+   `adapters/postgresql/` and `adapters/memory/`; read-model adapters live
+   under `adapters/{memory,postgresql,sqlite}/`; top-level `locks/` and
+   `readmodels/` no longer exist — there is no shim at either path (ADR 0030).
 4. **Frameworks & drivers**: sqlalchemy, asyncpg, aiosqlite, redis, aiokafka,
    aio-pika. Imported only inside the adapter that needs them, always guarded
    (see below). Driver types never appear in port signatures.
@@ -59,8 +72,11 @@ re-exports from all rings and is the only module users import from.
 Ports are owned by the inner rings and implemented by adapters — dependencies are
 inverted at every boundary crossing (the D in SOLID).
 
-- Ports live in `ports/` (during transition also `protocols.py`, `*/interface.py`),
-  depend only on entities, and contain no implementation code, ever.
+- Ports live in `ports/` (during transition also `*/interface.py`), depend only on
+  entities, and contain no implementation code, ever. `ports/handlers.py`
+  (`EventHandler`, `SyncEventHandler`, `FlexibleEventHandler`, `EventSubscriber`,
+  `AsyncEventHandler`, `FlexibleEventSubscriber`) is settled, not transitional;
+  top-level `protocols.py` is no longer a transitional location for it (ADR 0030).
 - Our store/repository/bus ports are **output ports** (gateways) in Clean
   Architecture terms: the use-case ring calls them; adapters implement them.
 - Ports are small, composed `Protocol` classes — one capability per port

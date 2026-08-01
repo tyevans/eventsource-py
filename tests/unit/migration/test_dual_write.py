@@ -19,8 +19,8 @@ from uuid import uuid4
 import pytest
 
 from eventsource.domain import StreamId
+from eventsource.domain.exceptions import OptimisticLockError
 from eventsource.events.base import DomainEvent
-from eventsource.exceptions import OptimisticLockError
 from eventsource.migration.dual_write import (
     DualWriteInterceptor,
     FailedWrite,

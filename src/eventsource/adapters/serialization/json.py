@@ -58,7 +58,7 @@ list of this encoder's constraints (integer range, non-finite floats,
 subclass handling, output format, unsupported types).
 
 Example:
-    >>> from eventsource.serialization import json_dumps, json_loads
+    >>> from eventsource.adapters.serialization import json_dumps, json_loads
     >>> from uuid import uuid4
     >>>
     >>> data = {"id": uuid4()}
@@ -86,7 +86,7 @@ class EventSourceJSONEncoder(json.JSONEncoder):
     `json.dumps(event_data, cls=EventSourceJSONEncoder)` directly at their
     `add_event` call sites (bypassing `json_dumps` entirely) -- migrating
     those call sites is out of scope for this change. It is also public
-    API, re-exported from `eventsource.serialization` and the top-level
+    API, re-exported from `eventsource.adapters.serialization` and the top-level
     `eventsource` package.
 
     Example:

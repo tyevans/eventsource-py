@@ -1,6 +1,6 @@
 # Serialization limits
 
-`eventsource.serialization.json_dumps`/`json_loads` are backed by
+`eventsource.adapters.serialization.json_dumps`/`json_loads` are backed by
 [orjson](https://github.com/ijl/orjson), a core dependency of this library (not
 optional). The constraints below are the limits of **orjson as this library's
 encoder** — not a general statement about JSON. They matter because every
@@ -176,5 +176,5 @@ reconstruction: a UUID or datetime that was serialized comes back as a plain
 
 - `serialization/` README (`src/eventsource/serialization/README.md`) —
   package overview and usage.
-- `eventsource.serialization.json` module docstring — the same constraints,
+- `eventsource.adapters.serialization.json` module docstring — the same constraints,
   documented at the source.

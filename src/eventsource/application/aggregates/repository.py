@@ -21,7 +21,7 @@ from eventsource.application.aggregates.snapshotting import (
 )
 from eventsource.domain import StreamId
 from eventsource.domain.aggregate import AggregateRoot
-from eventsource.exceptions import AggregateNotFoundError
+from eventsource.domain.exceptions import AggregateNotFoundError
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_AGGREGATE_ID,

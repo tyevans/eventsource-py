@@ -25,7 +25,7 @@ from eventsource.observability.attributes import (
     ATTR_EVENT_ID,
     ATTR_EVENT_TYPE,
 )
-from eventsource.protocols import EventSubscriber
+from eventsource.ports.handlers import EventSubscriber
 
 logger = logging.getLogger(__name__)
 

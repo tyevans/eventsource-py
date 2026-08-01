@@ -5,7 +5,7 @@ Backend adapters subclass a suite and provide `store`, yielding a fresh
 adapter instance, to verify conformance to the corresponding port
 contract. Suites are sqlalchemy-free: they import only from
 `eventsource.ports`, `eventsource.domain`, `eventsource.events`,
-`eventsource.exceptions`, and pytest/stdlib.
+`eventsource.domain.exceptions`, and pytest/stdlib.
 
 Suites: `AppenderConformance`, `StreamReaderConformance`,
 `EventLookupConformance`, `GlobalFeedConformance`, `CategoryQueryConformance`,

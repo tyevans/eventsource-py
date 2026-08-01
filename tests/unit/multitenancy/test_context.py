@@ -350,7 +350,7 @@ class TestTenantContextNotSetError:
 
     def test_error_is_eventsource_error(self) -> None:
         """TenantContextNotSetError inherits from EventSourceError."""
-        from eventsource.exceptions import EventSourceError
+        from eventsource.domain.exceptions import EventSourceError
 
         error = TenantContextNotSetError()
         assert isinstance(error, EventSourceError)

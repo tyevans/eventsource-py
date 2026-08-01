@@ -688,11 +688,11 @@ The argument is a `FlexibleEventSubscriber` — anything with two methods:
 
 That is a runtime-checkable `Protocol`, so you do not have to inherit from
 anything. If you want the checked version, subclass the `EventSubscriber` ABC in
-`eventsource.protocols`, which declares both methods abstract:
+`eventsource.ports.handlers`, which declares both methods abstract:
 
 ```python
 from eventsource import DomainEvent
-from eventsource.protocols import EventSubscriber
+from eventsource.ports.handlers import EventSubscriber
 
 
 class OrderProjection(EventSubscriber):

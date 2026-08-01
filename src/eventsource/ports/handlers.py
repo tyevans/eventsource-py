@@ -13,7 +13,7 @@ Protocols:
 - FlexibleEventSubscriber: Protocol version of EventSubscriber for flexible typing
 
 Example:
-    >>> from eventsource.protocols import EventHandler, EventSubscriber
+    >>> from eventsource.ports.handlers import EventHandler, EventSubscriber
     >>>
     >>> class MyHandler:
     ...     async def handle(self, event: DomainEvent) -> None:
@@ -32,7 +32,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Awaitable
 from typing import Protocol, runtime_checkable
 
-from eventsource.events.base import DomainEvent
+from eventsource.events import DomainEvent
 
 
 @runtime_checkable
@@ -179,7 +179,7 @@ class AsyncEventHandler(ABC):
     This is the canonical location for AsyncEventHandler.
 
     Example:
-        >>> from eventsource.protocols import AsyncEventHandler
+        >>> from eventsource.ports.handlers import AsyncEventHandler
         >>>
         >>> class OrderEmailHandler(AsyncEventHandler):
         ...     def event_types(self) -> list[type[DomainEvent]]:

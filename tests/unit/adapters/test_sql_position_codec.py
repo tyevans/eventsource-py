@@ -1,7 +1,7 @@
 import pytest
 
 from eventsource.adapters._sql.positions import IntPositionCodec
-from eventsource.exceptions import PositionDecodeError, PositionForeignError
+from eventsource.domain.exceptions import PositionDecodeError, PositionForeignError
 from eventsource.ports.positions import Position
 
 

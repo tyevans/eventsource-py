@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from eventsource.exceptions import EventSourceError
+from eventsource.domain.exceptions import EventSourceError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

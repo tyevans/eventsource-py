@@ -122,7 +122,7 @@ imports only `DomainEvent`; `EventAssertions` only `DomainEvent`; `bdd` imports
 `AggregateRoot`, `DomainEvent`, and `InMemoryTestHarness`; `EventBusConformanceSuite`
 imports the `EventBus` interface; the `conformance_ports` suites import only from
 `eventsource.ports`, `eventsource.domain`, `eventsource.events`,
-`eventsource.exceptions`, and pytest/stdlib (they are sqlalchemy-free); and
+`eventsource.domain.exceptions`, and pytest/stdlib (they are sqlalchemy-free); and
 `InMemoryTestHarness` imports the four in-memory implementations. None of the
 backend extras (`postgresql`, `sqlite`, `redis`, `rabbitmq`, `kafka`,
 `telemetry`) are required to use anything in this package — you only need them

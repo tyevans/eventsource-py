@@ -9,7 +9,7 @@ Example:
     >>> from sqlalchemy.ext.asyncio import create_async_engine
     >>> from eventsource.adapters.postgresql import PostgreSQLEventStore
     >>> from eventsource.domain import StreamId
-    >>> from eventsource.sync import SyncEventStoreAdapter
+    >>> from eventsource.adapters.sync import SyncEventStoreAdapter
     >>>
     >>> engine = create_async_engine(database_url)
     >>> sync_store = SyncEventStoreAdapter(PostgreSQLEventStore(engine), timeout=30.0)
@@ -22,6 +22,6 @@ Example:
     ...     # Process events...
 """
 
-from eventsource.sync.adapter import SyncEventStoreAdapter
+from eventsource.adapters.sync.adapter import SyncEventStoreAdapter
 
 __all__ = ["SyncEventStoreAdapter"]

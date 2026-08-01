@@ -16,7 +16,7 @@ are written to be read while you work, not read end to end.
 
 Because the library is async-first, every guide's code is written against `async`
 APIs. If you are calling from synchronous code, read the guide for the feature you
-need and then apply `SyncEventStoreAdapter` (see `eventsource.sync`) at the boundary.
+need and then apply `SyncEventStoreAdapter` (see `eventsource.adapters.sync`) at the boundary.
 
 Use the [guide index](#guide-index) below to find the page for your task, or
 [Choosing a backend](#choosing-a-backend) if you are still deciding which

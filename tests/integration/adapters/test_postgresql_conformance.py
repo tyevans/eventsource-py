@@ -324,7 +324,7 @@ class TestPostgreSQLConcurrency:
     async def test_concurrent_appends_to_same_stream_only_one_succeeds(
         self, store: PostgreSQLEventStore
     ) -> None:
-        from eventsource.exceptions import OptimisticLockError
+        from eventsource.domain.exceptions import OptimisticLockError
         from eventsource.ports import ExpectedVersion
 
         stream = make_stream()
