@@ -45,11 +45,16 @@ The rings, innermost first:
    `BatchSubscriber` (in `ports/subscribers.py`) and `LeaderElector`/
    `LeaderElectorWithLease` (in `ports/coordination.py`) are Protocols, not
    part of this ring — see the ports entry below.
-3. **Interface adapters** (`adapters/` — during transition `stores/`,
-   `bus/` backend modules): Gateways that
+3. **Interface adapters** (`adapters/` — during transition `stores/`):
+   Gateways that
    implement the ports for a specific technology, converting between the use-case
    format (value objects, domain events) and the storage/wire format (rows, JSON,
-   frames). Snapshot store backends (`InMemorySnapshotStore`,
+   frames). Event bus backends (`InMemoryEventBus`, `RedisEventBus`, `KafkaEventBus`,
+   `RabbitMQEventBus`) live under `adapters/memory/bus.py`, `adapters/redis/`,
+   `adapters/kafka/`, `adapters/rabbitmq/`; shared bus collaborators
+   (`BaseEventBus`, `SubscriptionRegistry`) live under adapters-internal
+   `adapters/_bus/`, the same pattern as `adapters/_sql/`; top-level `bus/` no
+   longer exists (ADR 0031). Snapshot store backends (`InMemorySnapshotStore`,
    `PostgreSQLSnapshotStore`, `SQLiteSnapshotStore`) live under `adapters/memory/`,
    `adapters/postgresql/`, `adapters/sqlite/`; `snapshots/` is no longer a
    transitional adapter location. Checkpoint and DLQ adapters (dialect-parameterized
@@ -83,20 +88,22 @@ re-exports from all rings and is the only module users import from.
 Ports are owned by the inner rings and implemented by adapters — dependencies are
 inverted at every boundary crossing (the D in SOLID).
 
-- Ports live in `ports/` (during transition also `*/interface.py`), depend only on
+- Ports live in `ports/`, depend only on
   entities, and contain no implementation code, ever. `ports/handlers.py`
   (`EventHandler`, `SyncEventHandler`, `FlexibleEventHandler`, `EventSubscriber`,
-  `AsyncEventHandler`, `FlexibleEventSubscriber`, `EventHandlerFunc`) is settled,
-  not transitional; top-level `protocols.py` is no longer a transitional location
-  for it (ADR 0030). `ports/subscribers.py` (`Subscriber`, `SyncSubscriber`,
-  `BatchSubscriber`, `supports_batch_handling()`, `get_subscribed_event_types()`)
-  and `ports/coordination.py` (`LeaderElector`, `LeaderElectorWithLease`,
-  `LeaderChangeCallback`) are settled, not transitional; `ports/bus.py`'s
+  `AsyncEventHandler`, `FlexibleEventSubscriber`) is settled, not transitional;
+  top-level `protocols.py` is no longer a transitional location for it (ADR 0030).
+  `ports/bus.py` (`EventBus`, `EventPublisher`, `EventHandlerFunc`,
+  `SubscribableEventBus`) is settled, not transitional; top-level
+  `bus/interface.py` is no longer a transitional location for it (ADR 0031).
   `SubscribableEventBus` — a two-method Protocol (`subscribe`/`unsubscribe`)
-  `EventBus` satisfies structurally — is what lets `application/subscriptions/`
-  type its bus dependency without importing `adapters/`. Top-level
-  `subscriptions/` is no longer a transitional location for any of these
-  (ADR 0032).
+  `EventBus` satisfies structurally — is what `application/subscriptions/`
+  type-hints for its bus dependency (narrowest-port rule). `ports/subscribers.py`
+  (`Subscriber`, `SyncSubscriber`, `BatchSubscriber`, `supports_batch_handling()`,
+  `get_subscribed_event_types()`) and `ports/coordination.py` (`LeaderElector`,
+  `LeaderElectorWithLease`, `LeaderChangeCallback`) are settled, not transitional;
+  top-level `subscriptions/` is no longer a transitional location for any of
+  these (ADR 0032).
 - Our store/repository/bus ports are **output ports** (gateways) in Clean
   Architecture terms: the use-case ring calls them; adapters implement them.
 - Ports are small, composed `Protocol` classes — one capability per port

@@ -204,15 +204,15 @@ only_mutate = [
     "src/eventsource/adapters/_sql/engine.py",
     "src/eventsource/adapters/_sql/dialect.py",
     "src/eventsource/adapters/serialization/json.py",
-    "src/eventsource/bus/registry.py",
-    "src/eventsource/bus/retry.py",
-    "src/eventsource/bus/base.py",
-    "src/eventsource/bus/rabbitmq/death_headers.py",
-    "src/eventsource/bus/rabbitmq/serialization.py",
-    "src/eventsource/bus/kafka/serialization.py",
-    "src/eventsource/bus/rabbitmq/consumer.py",
-    "src/eventsource/bus/kafka/consumer.py",
-    "src/eventsource/bus/memory.py",
+    "src/eventsource/adapters/_bus/registry.py",
+    "src/eventsource/adapters/_bus/retry.py",
+    "src/eventsource/adapters/_bus/base.py",
+    "src/eventsource/adapters/rabbitmq/death_headers.py",
+    "src/eventsource/adapters/rabbitmq/serialization.py",
+    "src/eventsource/adapters/kafka/serialization.py",
+    "src/eventsource/adapters/rabbitmq/consumer.py",
+    "src/eventsource/adapters/kafka/consumer.py",
+    "src/eventsource/adapters/memory/bus.py",
     # Core-rings surface (Task 14): entities, ports, and adapters
     "src/eventsource/domain",
     "src/eventsource/ports",
@@ -226,11 +226,11 @@ pytest_add_cli_args_test_selection = [
     "tests/unit/test_engine.py",
     "tests/unit/repositories/test_dialect.py",
     "tests/unit/adapters/serialization/",
-    "tests/unit/bus/test_registry.py",
-    "tests/unit/bus/test_retry.py",
-    "tests/unit/bus/test_base.py",
-    "tests/unit/bus/rabbitmq/",
-    "tests/unit/bus/kafka/",
+    "tests/unit/adapters/_bus/test_registry.py",
+    "tests/unit/adapters/_bus/test_retry.py",
+    "tests/unit/adapters/_bus/test_base.py",
+    "tests/unit/adapters/rabbitmq/",
+    "tests/unit/adapters/kafka/",
     # Core-rings surface (Task 14)
     "tests/unit/adapters/",
     "tests/unit/application/",
@@ -254,10 +254,9 @@ modules = [
     "eventsource.adapters.postgresql",
     "eventsource.adapters.sqlite",
     "eventsource.adapters.memory",
-    "eventsource.bus.redis",
-    "eventsource.bus.kafka",
-    "eventsource.bus.rabbitmq",
-    "eventsource.bus.memory",
+    "eventsource.adapters.redis",
+    "eventsource.adapters.kafka",
+    "eventsource.adapters.rabbitmq",
 ]
 
 [[tool.importlinter.contracts]]
@@ -269,7 +268,6 @@ source_modules = [
     "eventsource.domain.aggregate",
     "eventsource.domain.decider",
     "eventsource.domain.command",
-    "eventsource.bus.interface",
     "eventsource.ports",
     "eventsource.application",
     "eventsource.handlers.decorators",
@@ -277,7 +275,7 @@ source_modules = [
     "eventsource.handlers.adapter",
     "eventsource.domain.exceptions",
     "eventsource.domain.types",
-    "eventsource.bus.memory",
+    "eventsource.adapters.memory.bus",
     "eventsource.adapters.memory.snapshots",
     "eventsource.adapters.memory.checkpoints",
     "eventsource.adapters.memory.dlq",
@@ -301,16 +299,15 @@ forbidden_modules = ["sqlalchemy"]
 name = "Application ring must not import adapters"
 type = "forbidden"
 source_modules = ["eventsource.application"]
-forbidden_modules = ["eventsource.adapters", "eventsource.bus"]
+forbidden_modules = ["eventsource.adapters"]
 
 [[tool.importlinter.contracts]]
-name = "Ports must not import adapters, application, or bus"
+name = "Ports must not import adapters, application, or migration"
 type = "forbidden"
 source_modules = ["eventsource.ports"]
 forbidden_modules = [
     "eventsource.adapters",
     "eventsource.application",
-    "eventsource.bus",
     "eventsource.migration",
 ]
 
@@ -321,8 +318,10 @@ forbidden_modules = [
 # inside ports/readmodels/model.py would be a real regression the existing Tier 0
 # sqlalchemy-only contract cannot catch -- readmodel_schema.py imports no sqlalchemy, so
 # nothing there trips "must not import sqlalchemy." This contract closes that gap
-# directly: the ports ring may not name an adapter, an application-ring module, the bus,
-# or migration/, regardless of what those modules do or do not import themselves.
+# directly: the ports ring may not name an adapter, an application-ring module, or
+# migration/, regardless of what those modules do or do not import themselves. (The
+# eventsource.bus package itself was deleted by ADR 0031 -- its backends now live under
+# eventsource.adapters and are covered by the adapters entry.)
 
 # The projections/ Tier-0 blocker documented in docs/core-surface.md (projections/base.py
 # and the checkpoint/dlq managers pulling in sqlalchemy-backed repositories.checkpoint and

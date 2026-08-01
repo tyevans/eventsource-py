@@ -11,10 +11,10 @@ from uuid import uuid4
 
 import pytest
 
+from eventsource.adapters.memory.bus import InMemoryEventBus
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
 from eventsource.adapters.memory.dlq import InMemoryDLQRepository
 from eventsource.adapters.memory.store import InMemoryEventStore
-from eventsource.bus.memory import InMemoryEventBus
 from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.ports import ExpectedVersion

@@ -72,9 +72,10 @@ src/eventsource/
                     #   health, flow control, coordination messages/WorkRedistributionCoordinator
   ports/            # Boundary interfaces: Snapshot/SnapshotStore, ProjectionCheckpoints/SubscriptionPositions/
                     #   CheckpointRepository, DLQRepository, OutboxRepository/outbox_event_data,
-                    #   store/bus/envelope/position ports (incl. SubscribableEventBus), handlers.py (canonical
-                    #   handler/subscriber Protocols + ABCs, see note below), subscribers.py (Subscriber/
-                    #   SyncSubscriber/BatchSubscriber Protocols), coordination.py (LeaderElector Protocols)
+                    #   store/envelope/position ports, bus.py (EventBus, EventPublisher, EventHandlerFunc,
+                    #   SubscribableEventBus), handlers.py (canonical handler/subscriber Protocols + ABCs,
+                    #   see note below), subscribers.py (Subscriber/SyncSubscriber/BatchSubscriber
+                    #   Protocols), coordination.py (LeaderElector Protocols)
   adapters/         # Interface adapters: memory/postgresql/sqlite snapshot + event store implementations;
                     #   adapters/sql/: dialect-parameterized checkpoint, DLQ, and DatabaseProjection (both
                     #   PostgreSQL and SQLite); adapters/memory/: in-memory checkpoint, DLQ, outbox, and
@@ -82,8 +83,10 @@ src/eventsource/
                     #   adapters/postgresql/ and adapters/sqlite/: per-technology outbox
                     #   repositories (not dialect-parameterized -- SQLite takes a raw aiosqlite.Connection);
                     #   adapters/sync/ (SyncEventStoreAdapter, wraps a FullEventStore for sync callers);
-                    #   adapters/serialization/ (JSON encoding, EventSourceJSONEncoder)
-  bus/              # EventBus interface + InMemory, Redis, RabbitMQ, Kafka backends (implementations colocated)
+                    #   adapters/serialization/ (JSON encoding, EventSourceJSONEncoder); event bus backends --
+                    #   adapters/memory/bus.py, adapters/redis/, adapters/kafka/, adapters/rabbitmq/ (InMemory/
+                    #   Redis/Kafka/RabbitMQ EventBus), with shared collaborators (BaseEventBus,
+                    #   SubscriptionRegistry) in adapters-internal adapters/_bus/
   events/           # DomainEvent (pydantic BaseModel), EventRegistry
   handlers/         # @handles decorator for declarative event routing
   migration/        # Live event store migration tooling (dual-write, cutover, sync tracking)
@@ -98,8 +101,9 @@ src/eventsource/
 ```
 
 `types.py`, `exceptions.py`, `protocols.py`, `commands/`, `sync/`, `serialization/`,
-`locks/`, `readmodels/`, and `config.py` no longer exist at the top level (ADR 0030) --
-no shims, clean breaks. See `domain/`, `ports/`, and `adapters/` above for their homes.
+`locks/`, `readmodels/`, and `config.py` no longer exist at the top level (ADR 0030),
+and `bus/` no longer exists at the top level (ADR 0031) -- no shims, clean breaks.
+See `domain/`, `ports/`, and `adapters/` above for their homes.
 
 ## Architecture
 

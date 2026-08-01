@@ -1,11 +1,14 @@
 # Event Bus API Reference
 
-Reference documentation for the event distribution layer exported from
-`eventsource.bus`: the abstract `EventBus` base class, the handler and subscriber
-types its methods accept, and the four bundled implementations —
+Reference documentation for the event distribution layer: the `EventBus`
+port (`eventsource.ports.bus`), the handler and subscriber types its methods
+accept (`eventsource.ports.handlers`), and the four bundled implementations —
 `InMemoryEventBus`, `RedisEventBus`, `RabbitMQEventBus`, and `KafkaEventBus` —
-together with their config objects, stats objects, availability flags, and
-backend-specific errors.
+each in its own per-technology adapter package, together with their config
+objects, stats objects, availability flags, and backend-specific errors.
+Since ADR 0031 there is no single `eventsource.bus` facade module; `EventBus`
+is a port and each backend is an adapter, following the same
+one-package-per-technology shape as the store and snapshot adapters.
 
 Public names covered here:
 
@@ -13,7 +16,7 @@ Public names covered here:
 | --- | --- | --- |
 | `EventBus` | ABC | Abstract publish/subscribe contract implemented by every bus |
 | `EventHandlerFunc` | type alias | Callable signature accepted by the subscribe methods |
-| `EventHandler` / `AsyncEventHandler` / `FlexibleEventHandler` | protocol / ABC | Handler contracts re-exported from `eventsource.ports.handlers` |
+| `EventHandler` / `AsyncEventHandler` / `FlexibleEventHandler` | protocol / ABC | Handler contracts from `eventsource.ports.handlers` |
 | `EventSubscriber` / `FlexibleEventSubscriber` | protocol | Multi-event subscriber contracts used by `subscribe_all()` |
 | `InMemoryEventBus` | class | In-process bus for development, tests, and single-instance deployments |
 | `RedisEventBus`, `RedisEventBusConfig`, `RedisEventBusStats` | classes | Redis Streams bus, its configuration, and its counters |
@@ -24,25 +27,30 @@ Public names covered here:
 | `KafkaNotAvailableError`, `KAFKA_AVAILABLE` | exception / flag | `aiokafka` dependency guard |
 
 ```python
-from eventsource.bus import (
-    EventBus,
-    EventHandlerFunc,
+from eventsource.ports.bus import EventBus, EventHandlerFunc
+from eventsource.ports.handlers import (
     EventHandler,
     AsyncEventHandler,
     FlexibleEventHandler,
     EventSubscriber,
     FlexibleEventSubscriber,
-    InMemoryEventBus,
+)
+from eventsource.adapters.memory.bus import InMemoryEventBus
+from eventsource.adapters.redis import (
     RedisEventBus,
     RedisEventBusConfig,
     RedisEventBusStats,
     RedisNotAvailableError,
     REDIS_AVAILABLE,
+)
+from eventsource.adapters.rabbitmq import (
     RabbitMQEventBus,
     RabbitMQEventBusConfig,
     RabbitMQEventBusStats,
     RabbitMQNotAvailableError,
     RABBITMQ_AVAILABLE,
+)
+from eventsource.adapters.kafka import (
     KafkaEventBus,
     KafkaEventBusConfig,
     KafkaEventBusStats,
@@ -51,20 +59,24 @@ from eventsource.bus import (
 )
 ```
 
-The bus classes, config objects, and stats objects are also re-exported from the
-top-level `eventsource` package; the handler and subscriber protocols live
-canonically in `eventsource.ports.handlers` and are re-exported by `eventsource.bus`.
+Every name above is also re-exported from the top-level `eventsource`
+package, so `from eventsource import EventBus, InMemoryEventBus,
+RedisEventBus, ...` works for all of them without reaching into `ports/` or
+`adapters/` directly.
 
 `EventBus.publish()` is `async`; the subscription methods (`subscribe`,
 `unsubscribe`, `subscribe_all`, `subscribe_to_all_events`,
-`unsubscribe_from_all_events`) are ordinary synchronous methods. Every
-implementation module is imported unconditionally, so all names above import
-successfully with only the core dependencies installed — the optional backends
-fail at construction time instead, via their `*NotAvailableError`.
+`unsubscribe_from_all_events`) are ordinary synchronous methods. Each
+adapter package's `__init__.py` is imported unconditionally, so all names
+above import successfully with only the core dependencies installed — the
+optional backends fail at construction time instead, via their
+`*NotAvailableError`.
 
 Behavior described below is that of the current source in
-`src/eventsource/bus/interface.py`, `memory.py`, `redis.py`, `rabbitmq.py`, and
-`kafka.py`, plus the protocols in `src/eventsource/protocols.py`.
+`src/eventsource/ports/bus.py`, `src/eventsource/adapters/_bus/` (shared
+`BaseEventBus`/`SubscriptionRegistry` collaborators), and
+`src/eventsource/adapters/{memory/bus.py,redis,rabbitmq,kafka}`, plus the
+protocols in `src/eventsource/ports/handlers.py`.
 
 ## Overview
 
@@ -76,45 +88,44 @@ construction; the three distributed buses must be connected with `await
 bus.connect()` before publishing and started with `await bus.start_consuming()`
 before they will deliver events to their handlers.
 
-### Import surface (`eventsource.bus.__all__`)
+### Import surface
 
-`eventsource.bus.__all__` contains 23 names, grouped as follows.
+There is no single facade module enumerating every bus name (see ADR 0031);
+each package below exports its own names, all of which are also re-exported
+from top-level `eventsource`.
 
-| Group | Count | Names |
-| --- | --- | --- |
-| Interface | 2 | `EventBus`, `EventHandlerFunc` |
-| Handler / subscriber contracts | 5 | `EventHandler`, `AsyncEventHandler`, `FlexibleEventHandler`, `EventSubscriber`, `FlexibleEventSubscriber` |
-| In-memory | 1 | `InMemoryEventBus` |
-| Redis | 5 | `RedisEventBus`, `RedisEventBusConfig`, `RedisEventBusStats`, `RedisNotAvailableError`, `REDIS_AVAILABLE` |
-| RabbitMQ | 5 | `RabbitMQEventBus`, `RabbitMQEventBusConfig`, `RabbitMQEventBusStats`, `RabbitMQNotAvailableError`, `RABBITMQ_AVAILABLE` |
-| Kafka | 5 | `KafkaEventBus`, `KafkaEventBusConfig`, `KafkaEventBusStats`, `KafkaNotAvailableError`, `KAFKA_AVAILABLE` |
+| Group | Count | Names | Module |
+| --- | --- | --- | --- |
+| Port | 2 | `EventBus`, `EventHandlerFunc` | `eventsource.ports.bus` |
+| Handler / subscriber contracts | 5 | `EventHandler`, `AsyncEventHandler`, `FlexibleEventHandler`, `EventSubscriber`, `FlexibleEventSubscriber` | `eventsource.ports.handlers` |
+| In-memory | 1 | `InMemoryEventBus` | `eventsource.adapters.memory.bus` |
+| Redis | 5 | `RedisEventBus`, `RedisEventBusConfig`, `RedisEventBusStats`, `RedisNotAvailableError`, `REDIS_AVAILABLE` | `eventsource.adapters.redis` |
+| RabbitMQ | 5 | `RabbitMQEventBus`, `RabbitMQEventBusConfig`, `RabbitMQEventBusStats`, `RabbitMQNotAvailableError`, `RABBITMQ_AVAILABLE` | `eventsource.adapters.rabbitmq` |
+| Kafka | 5 | `KafkaEventBus`, `KafkaEventBusConfig`, `KafkaEventBusStats`, `KafkaNotAvailableError`, `KAFKA_AVAILABLE` | `eventsource.adapters.kafka` |
 
-`EventBus` and `EventHandlerFunc` come from `eventsource.bus.interface`. All
-five handler and subscriber contracts are re-exports from the canonical
-`eventsource.ports.handlers` module — `EventHandler`, `FlexibleEventHandler`, and
-`FlexibleEventSubscriber` are `Protocol`s; `EventSubscriber` and
-`AsyncEventHandler` are ABCs. Each backend module contributes exactly five
-names: its bus class, config dataclass, stats dataclass, dependency-guard
-error, and availability flag.
+`EventHandler`, `FlexibleEventHandler`, and `FlexibleEventSubscriber` are
+`Protocol`s; `EventSubscriber` and `AsyncEventHandler` are ABCs. Each backend
+package contributes exactly five names: its bus class, config dataclass,
+stats dataclass, dependency-guard error, and availability flag.
 
-Some names documented in this reference are *not* in `__all__` and must be
-imported from their defining module rather than from the package root:
+Some names documented in this reference are *not* re-exported from top-level
+`eventsource` and must be imported from their defining adapter module:
 
 | Name | Kind | Module |
 | --- | --- | --- |
-| `KafkaEventBusMetrics` | metrics holder | `eventsource.bus.kafka` |
-| `EventSerializer`, `DeserializationError` | serialization | `eventsource.bus.kafka` |
-| `KafkaRebalanceListener` | consumer rebalance hook | `eventsource.bus.kafka` |
-| `DLQMessage`, `QueueInfo`, `HealthCheckResult` | inspection results | `eventsource.bus.rabbitmq` |
-| `ShutdownError`, `BatchPublishError` | errors | `eventsource.bus.rabbitmq` |
+| `KafkaEventBusMetrics` | metrics holder | `eventsource.adapters.kafka` |
+| `EventSerializer`, `DeserializationError` | serialization | `eventsource.adapters.kafka` |
+| `KafkaRebalanceListener` | consumer rebalance hook | `eventsource.adapters.kafka` |
+| `DLQMessage`, `QueueInfo`, `HealthCheckResult` | inspection results | `eventsource.adapters.rabbitmq` |
+| `ShutdownError`, `BatchPublishError` | errors | `eventsource.adapters.rabbitmq` |
 
-`eventsource/bus/__init__.py` imports all four implementation modules
-unconditionally. Each optional backend wraps its third-party import in
-`try`/`except ImportError`, sets its `*_AVAILABLE` flag accordingly, and binds
-the missing symbols to `None`. The consequence is that `from eventsource.bus
-import KafkaEventBus` always succeeds, even with no Kafka client installed —
-`KafkaEventBus(...)` is what raises `KafkaNotAvailableError` (an `ImportError`
-subclass). Check the flag if you need to branch before construction.
+Each optional backend's `__init__.py` wraps its third-party import in
+`try`/`except ImportError`, sets its `*_AVAILABLE` flag accordingly, and
+binds the missing symbols to `None`. The consequence is that
+`from eventsource.adapters.kafka import KafkaEventBus` always succeeds, even
+with no Kafka client installed — `KafkaEventBus(...)` is what raises
+`KafkaNotAvailableError` (an `ImportError` subclass). Check the flag if you
+need to branch before construction.
 
 ### Choosing an implementation (in-memory vs Redis vs RabbitMQ vs Kafka)
 
@@ -171,10 +182,10 @@ distributed buses take `tracer` as a keyword argument and read
 ## `EventBus` (abstract base class)
 
 ```python
-from eventsource.bus import EventBus
+from eventsource.ports.bus import EventBus
 ```
 
-Defined in `src/eventsource/bus/interface.py`. `EventBus` is an
+Defined in `src/eventsource/ports/bus.py`. `EventBus` is an
 `abc.ABC` with six abstract methods and no concrete behavior, no
 constructor, and no state of its own — subclasses must implement all six
 before they can be instantiated.
@@ -212,7 +223,7 @@ call and not its peers.
 ### Implementing a custom bus
 
 ```python
-from eventsource.bus import EventBus, EventHandlerFunc
+from eventsource.ports.bus import EventBus, EventHandlerFunc
 from eventsource.events.base import DomainEvent
 from eventsource.ports.handlers import FlexibleEventHandler, FlexibleEventSubscriber
 

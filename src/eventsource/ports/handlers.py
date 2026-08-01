@@ -29,13 +29,10 @@ Example:
 """
 
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable
 from typing import Protocol, runtime_checkable
 
 from eventsource.events import DomainEvent
-
-# Type alias for simple function-based handlers
-EventHandlerFunc = Callable[[DomainEvent], Awaitable[None] | None]
 
 
 @runtime_checkable
@@ -239,5 +236,4 @@ __all__ = [
     "EventSubscriber",
     "FlexibleEventSubscriber",
     "AsyncEventHandler",
-    "EventHandlerFunc",
 ]

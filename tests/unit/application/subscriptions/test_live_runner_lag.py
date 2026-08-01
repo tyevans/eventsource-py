@@ -12,6 +12,7 @@ from uuid import uuid4
 
 import pytest
 
+from eventsource.adapters.memory.bus import InMemoryEventBus
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
 from eventsource.application.subscriptions import (
     CheckpointStrategy,
@@ -19,7 +20,6 @@ from eventsource.application.subscriptions import (
     SubscriptionConfig,
 )
 from eventsource.application.subscriptions.runners import LiveRunner
-from eventsource.bus import InMemoryEventBus
 from eventsource.events.base import DomainEvent
 
 pytestmark = pytest.mark.asyncio

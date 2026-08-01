@@ -13,6 +13,7 @@ from uuid import uuid4
 
 import pytest
 
+from eventsource.adapters.memory.bus import InMemoryEventBus
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
 from eventsource.application.projections.base import (
     CheckpointTrackingProjection,
@@ -21,7 +22,6 @@ from eventsource.application.projections.base import (
     Projection,
     SyncProjection,
 )
-from eventsource.bus.memory import InMemoryEventBus
 from eventsource.domain.aggregate import AggregateRoot, DeclarativeAggregate
 from eventsource.events.base import DomainEvent
 from eventsource.handlers import handles

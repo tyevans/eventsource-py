@@ -85,7 +85,7 @@ def event_registry() -> EventRegistry:
 @pytest.fixture
 def config():
     """Create a test configuration."""
-    from eventsource.bus.redis import RedisEventBusConfig
+    from eventsource.adapters.redis.bus import RedisEventBusConfig
 
     return RedisEventBusConfig(
         redis_url="redis://localhost:6379",
@@ -143,11 +143,11 @@ def mock_tracer():
 @pytest.fixture
 async def bus(config, event_registry: EventRegistry, mock_redis: AsyncMock):
     """Create a RedisEventBus with mocked Redis client."""
-    from eventsource.bus.redis import RedisEventBus
+    from eventsource.adapters.redis.bus import RedisEventBus
 
     with (
-        patch("eventsource.bus.redis.REDIS_AVAILABLE", True),
-        patch("eventsource.bus.redis.aioredis") as mock_aioredis,
+        patch("eventsource.adapters.redis.bus.REDIS_AVAILABLE", True),
+        patch("eventsource.adapters.redis.bus.aioredis") as mock_aioredis,
     ):
         mock_aioredis.from_url = AsyncMock(return_value=mock_redis)
 
@@ -171,7 +171,7 @@ class TestRedisEventBusTracerComposition:
 
     def test_uses_tracer_composition(self):
         """RedisEventBus uses composition-based Tracer instead of inheritance."""
-        from eventsource.bus.redis import RedisEventBus
+        from eventsource.adapters.redis.bus import RedisEventBus
 
         # RedisEventBus should use Tracer composition
         # Check that it has a _tracer attribute (set in __init__)
@@ -181,14 +181,14 @@ class TestRedisEventBusTracerComposition:
         self, event_registry: EventRegistry, mock_redis: AsyncMock
     ):
         """Tracing is enabled by default when OTEL is available."""
-        from eventsource.bus.redis import RedisEventBus, RedisEventBusConfig
+        from eventsource.adapters.redis.bus import RedisEventBus, RedisEventBusConfig
 
         config = RedisEventBusConfig()
         assert config.enable_tracing is True
 
         with (
-            patch("eventsource.bus.redis.REDIS_AVAILABLE", True),
-            patch("eventsource.bus.redis.aioredis") as mock_aioredis,
+            patch("eventsource.adapters.redis.bus.REDIS_AVAILABLE", True),
+            patch("eventsource.adapters.redis.bus.aioredis") as mock_aioredis,
         ):
             mock_aioredis.from_url = AsyncMock(return_value=mock_redis)
             bus = RedisEventBus(config=config, event_registry=event_registry)
@@ -202,13 +202,13 @@ class TestRedisEventBusTracerComposition:
         self, event_registry: EventRegistry, mock_redis: AsyncMock
     ):
         """Tracing can be disabled via config parameter."""
-        from eventsource.bus.redis import RedisEventBus, RedisEventBusConfig
+        from eventsource.adapters.redis.bus import RedisEventBus, RedisEventBusConfig
 
         config = RedisEventBusConfig(enable_tracing=False)
 
         with (
-            patch("eventsource.bus.redis.REDIS_AVAILABLE", True),
-            patch("eventsource.bus.redis.aioredis") as mock_aioredis,
+            patch("eventsource.adapters.redis.bus.REDIS_AVAILABLE", True),
+            patch("eventsource.adapters.redis.bus.aioredis") as mock_aioredis,
         ):
             mock_aioredis.from_url = AsyncMock(return_value=mock_redis)
             bus = RedisEventBus(config=config, event_registry=event_registry)
@@ -533,7 +533,7 @@ class TestRedisEventBusTracingDisabled:
         self, event_registry: EventRegistry, mock_redis: AsyncMock
     ):
         """publish works correctly when tracing is disabled."""
-        from eventsource.bus.redis import RedisEventBus, RedisEventBusConfig
+        from eventsource.adapters.redis.bus import RedisEventBus, RedisEventBusConfig
 
         config = RedisEventBusConfig(
             redis_url="redis://localhost:6379",
@@ -541,8 +541,8 @@ class TestRedisEventBusTracingDisabled:
         )
 
         with (
-            patch("eventsource.bus.redis.REDIS_AVAILABLE", True),
-            patch("eventsource.bus.redis.aioredis") as mock_aioredis,
+            patch("eventsource.adapters.redis.bus.REDIS_AVAILABLE", True),
+            patch("eventsource.adapters.redis.bus.aioredis") as mock_aioredis,
         ):
             mock_aioredis.from_url = AsyncMock(return_value=mock_redis)
 
@@ -564,7 +564,7 @@ class TestRedisEventBusTracingDisabled:
         self, event_registry: EventRegistry, mock_redis: AsyncMock
     ):
         """_dispatch_event works correctly when tracing is disabled."""
-        from eventsource.bus.redis import RedisEventBus, RedisEventBusConfig
+        from eventsource.adapters.redis.bus import RedisEventBus, RedisEventBusConfig
 
         config = RedisEventBusConfig(
             redis_url="redis://localhost:6379",
@@ -572,8 +572,8 @@ class TestRedisEventBusTracingDisabled:
         )
 
         with (
-            patch("eventsource.bus.redis.REDIS_AVAILABLE", True),
-            patch("eventsource.bus.redis.aioredis") as mock_aioredis,
+            patch("eventsource.adapters.redis.bus.REDIS_AVAILABLE", True),
+            patch("eventsource.adapters.redis.bus.aioredis") as mock_aioredis,
         ):
             mock_aioredis.from_url = AsyncMock(return_value=mock_redis)
 
@@ -607,7 +607,7 @@ class TestRedisEventBusStandardAttributes:
         import subprocess
 
         result = subprocess.run(
-            ["grep", "-c", "OTEL_AVAILABLE = ", "src/eventsource/bus/redis.py"],
+            ["grep", "-c", "OTEL_AVAILABLE = ", "src/eventsource/adapters/redis/bus.py"],
             capture_output=True,
             text=True,
             cwd=Path(__file__).parents[2],
@@ -622,7 +622,12 @@ class TestRedisEventBusStandardAttributes:
         import subprocess
 
         result = subprocess.run(
-            ["grep", "-c", "from eventsource.observability import", "src/eventsource/bus/redis.py"],
+            [
+                "grep",
+                "-c",
+                "from eventsource.observability import",
+                "src/eventsource/adapters/redis/bus.py",
+            ],
             capture_output=True,
             text=True,
             cwd=Path(__file__).parents[2],
@@ -636,7 +641,7 @@ class TestRedisEventBusStandardAttributes:
         import subprocess
 
         result = subprocess.run(
-            ["grep", "-c", "ATTR_", "src/eventsource/bus/redis.py"],
+            ["grep", "-c", "ATTR_", "src/eventsource/adapters/redis/bus.py"],
             capture_output=True,
             text=True,
             cwd=Path(__file__).parents[2],
@@ -650,7 +655,7 @@ class TestRedisEventBusStandardAttributes:
         import subprocess
 
         result = subprocess.run(
-            ["grep", "-c", "_tracer.span", "src/eventsource/bus/redis.py"],
+            ["grep", "-c", "_tracer.span", "src/eventsource/adapters/redis/bus.py"],
             capture_output=True,
             text=True,
             cwd=Path(__file__).parents[2],

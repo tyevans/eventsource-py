@@ -3,7 +3,8 @@
 The event bus is how a published `DomainEvent` reaches the code that reacts to
 it. Aggregates and the event store are only responsible for *recording* what
 happened; projections, read models, integrations, and audit logs subscribe to
-the bus to *act* on it. `eventsource.bus` ships one in-process implementation
+the bus to *act* on it. `eventsource.ports.bus` defines the `EventBus`
+contract and `eventsource.adapters` ships one in-process implementation
 and three distributed ones behind a single `EventBus` abstract base class, so
 the code that publishes and subscribes stays the same when you move from a
 single process to Redis, RabbitMQ, or Kafka.
@@ -27,14 +28,16 @@ Two properties of the distributed backends shape everything below: they make no
 ordering guarantee across handlers, and they deliver at least once. Write
 handlers to be idempotent.
 
-All names in this guide are importable from `eventsource.bus` (and the
-user-facing ones from the top-level `eventsource` package).
+All names in this guide are importable from the top-level `eventsource`
+package; see [the API reference](../api/bus.md) for each name's defining
+module under `eventsource.ports.bus` / `eventsource.adapters.{memory,redis,
+rabbitmq,kafka}`.
 
 ## What the event bus does
 
 An event bus takes a list of `DomainEvent` objects from a producer and delivers
 each one to every handler registered for its type. `EventBus` is an abstract
-base class in `eventsource.bus.interface` with six abstract methods, and every
+base class in `eventsource.ports.bus` with six abstract methods, and every
 backend implements exactly that surface:
 
 | Method | Purpose |
@@ -214,7 +217,7 @@ Two extras are worth knowing about beyond the buses themselves:
 Installing the wrong extra is not a startup crash. Each backend module wraps its
 third-party import in `try` / `except ImportError` and sets a module-level flag
 — `REDIS_AVAILABLE`, `RABBITMQ_AVAILABLE`, `KAFKA_AVAILABLE` — so
-`from eventsource.bus import RedisEventBus` succeeds whether or not `redis` is
+`from eventsource.adapters.redis import RedisEventBus` succeeds whether or not `redis` is
 installed. The failure is deferred to construction: the constructor checks the
 flag and raises `RedisNotAvailableError`, `RabbitMQNotAvailableError`, or
 `KafkaNotAvailableError` (all subclasses of `ImportError`) with the install
@@ -230,7 +233,7 @@ configuration possible; see
 ### Verify the extra landed
 
 ```bash
-python -c "from eventsource.bus import REDIS_AVAILABLE, RABBITMQ_AVAILABLE, KAFKA_AVAILABLE; print(REDIS_AVAILABLE, RABBITMQ_AVAILABLE, KAFKA_AVAILABLE)"
+python -c "from eventsource import REDIS_AVAILABLE, RABBITMQ_AVAILABLE, KAFKA_AVAILABLE; print(REDIS_AVAILABLE, RABBITMQ_AVAILABLE, KAFKA_AVAILABLE)"
 ```
 
 Each flag is `True` only when that backend's client library imported cleanly. A

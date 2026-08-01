@@ -1393,7 +1393,7 @@ import asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from eventsource.bus.memory import InMemoryEventBus
+from eventsource.adapters.memory.bus import InMemoryEventBus
 from eventsource import InMemoryCheckpointRepository
 from eventsource.adapters.memory import InMemoryEventStore
 from eventsource.domain import StreamId

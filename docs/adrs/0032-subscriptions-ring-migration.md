@@ -139,18 +139,19 @@ class SubscribableEventBus(Protocol):
                     handler: FlexibleEventHandler | EventHandlerFunc) -> bool: ...
 ```
 
-`EventBus` satisfies it structurally with no changes to `bus/interface.py`
-beyond the signatures it already had. This is an Interface Segregation
-Principle application, not a special case: the runners' entire contract with
-the bus is two methods, so the port names exactly that, and the dependency
-that would have required a contract exception disappears instead of being
-excused. `EventHandlerFunc`, the type alias `SubscribableEventBus` depends
-on, moves from `bus/interface.py` to `ports/handlers.py` -- the same module
-ADR 0030 already relocated the rest of the handler Protocols to -- and every
-importer (`bus/__init__.py`, `bus/base.py`, `testing/recording.py`, and the
-top-level `eventsource/__init__.py`) repoints to the new source. The
+`EventBus` satisfies it structurally with the signatures it already had.
+This is an Interface Segregation Principle application, not a special case:
+the runners' entire contract with the bus is two methods, so the port names
+exactly that, and the dependency that would have required a contract
+exception disappears instead of being excused. This decision was taken while
+`EventBus` still lived in the pre-ring `bus/interface.py`; ADR 0031's bus
+ring split landed first and moved `EventBus` (and the `EventHandlerFunc`
+type alias `SubscribableEventBus` depends on) into the same `ports/bus.py`,
+so both ports now share a module. `SubscribableEventBus` is retained
+regardless: consumers type-hint the narrowest port they use, and the
+runners' contract remains two methods, not the full `EventBus` ABC. The
 top-level barrel's public surface is unaffected: `__all__` is
-byte-identical, and exactly one import-source line changes.
+byte-identical.
 
 ### 5. Exceptions merge into `domain/exceptions.py`, `SubscriptionError` rebased
 

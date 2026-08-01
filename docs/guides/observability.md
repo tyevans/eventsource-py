@@ -368,7 +368,7 @@ Three consequences follow:
   `eventsource.observability.tracing.OTEL_AVAILABLE` does *not* affect
   `create_tracer`. To exercise the "not installed" branch you must patch the
   name in the module that reads it — `eventsource.observability.tracer` for
-  `create_tracer`, `eventsource.bus.kafka` for the Kafka bus, and so on:
+  `create_tracer`, `eventsource.adapters.kafka` for the Kafka bus, and so on:
 
   ```python
   from unittest.mock import patch
@@ -445,7 +445,7 @@ The `name` argument becomes the OpenTelemetry *instrumentation scope* name via
 `trace.get_tracer(tracer_name)`. Components pass their own module's `__name__`,
 so spans from the in-memory snapshot store are scoped to
 `eventsource.adapters.memory.snapshots`, spans from the in-memory event bus to
-`eventsource.bus.memory`, and so on. This is the scope your backend shows
+`eventsource.adapters.memory.bus`, and so on. This is the scope your backend shows
 as the instrumentation library — it is not the span name.
 
 Every instrumented component follows the identical two-line idiom in its

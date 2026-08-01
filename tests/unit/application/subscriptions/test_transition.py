@@ -17,6 +17,7 @@ from uuid import uuid4
 
 import pytest
 
+from eventsource.adapters.memory.bus import InMemoryEventBus
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
 from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.application.subscriptions import (
@@ -31,7 +32,6 @@ from eventsource.application.subscriptions.transition import (
     TransitionPhase,
     TransitionResult,
 )
-from eventsource.bus.memory import InMemoryEventBus
 from eventsource.domain import StreamId
 from eventsource.events.base import DomainEvent
 from eventsource.ports.positions import ExpectedVersion, Position

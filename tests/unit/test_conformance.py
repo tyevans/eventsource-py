@@ -13,9 +13,9 @@ from uuid import UUID
 
 import pytest
 
-from eventsource.bus.interface import EventBus
-from eventsource.bus.memory import InMemoryEventBus
+from eventsource.adapters.memory.bus import InMemoryEventBus
 from eventsource.events.base import DomainEvent
+from eventsource.ports.bus import EventBus
 from eventsource.testing.conformance import EventBusConformanceSuite
 
 

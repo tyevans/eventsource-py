@@ -25,9 +25,9 @@ expensive and hard to notice by other means:
 | `src/eventsource/adapters/_sql/engine.py` | `tests/unit/test_engine.py` |
 | `src/eventsource/repositories/_dialect.py` | `tests/unit/repositories/test_dialect.py` |
 | `src/eventsource/serialization/json.py` | `tests/unit/serialization/` |
-| `src/eventsource/bus/registry.py` | `tests/unit/bus/test_registry.py` |
-| `src/eventsource/bus/retry.py` | `tests/unit/bus/test_retry.py` |
-| `src/eventsource/bus/base.py` | `tests/unit/bus/test_base.py` |
+| `src/eventsource/adapters/_bus/registry.py` | `tests/unit/adapters/_bus/test_registry.py` |
+| `src/eventsource/adapters/_bus/retry.py` | `tests/unit/adapters/_bus/test_retry.py` |
+| `src/eventsource/adapters/_bus/base.py` | `tests/unit/adapters/_bus/test_base.py` |
 
 As further modules stabilize, they become candidates for this set — but only added
 one module at a time, each with its own pinned test subset, and only if a run stays

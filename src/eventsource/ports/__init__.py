@@ -1,6 +1,11 @@
 """Boundary ports (Clean Architecture output ports). Depends on domain only."""
 
-from eventsource.ports.bus import EventPublisher, SubscribableEventBus
+from eventsource.ports.bus import (
+    EventBus,
+    EventHandlerFunc,
+    EventPublisher,
+    SubscribableEventBus,
+)
 from eventsource.ports.checkpoints import (
     CheckpointData,
     CheckpointRepository,
@@ -30,7 +35,6 @@ from eventsource.ports.envelopes import (
 from eventsource.ports.handlers import (
     AsyncEventHandler,
     EventHandler,
-    EventHandlerFunc,
     EventSubscriber,
     FlexibleEventHandler,
     FlexibleEventSubscriber,
@@ -92,9 +96,11 @@ __all__ = [
     # Snapshot port (TRANSITION re-home)
     "Snapshot",
     "SnapshotStore",
-    # Bus port (TRANSITION re-home)
+    # Bus port
     "EventPublisher",
     "SubscribableEventBus",
+    "EventBus",
+    "EventHandlerFunc",
     # Outbox port
     "OutboxEntry",
     "OutboxRepository",
@@ -123,7 +129,6 @@ __all__ = [
     "EventSubscriber",
     "FlexibleEventSubscriber",
     "AsyncEventHandler",
-    "EventHandlerFunc",
     # Subscriber protocols / utilities
     "Subscriber",
     "SyncSubscriber",

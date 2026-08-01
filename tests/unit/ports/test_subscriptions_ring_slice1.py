@@ -11,19 +11,18 @@ objects as their old re-exports, not copies, and that the new
 ``SubscribableEventBus`` port and the exception rebase behave as designed.
 """
 
+from eventsource.adapters.memory.bus import InMemoryEventBus
 from eventsource.adapters.memory.coordination import (
     InMemoryLeaderElector,
     SharedLeaderState,
 )
-from eventsource.bus.memory import InMemoryEventBus
 from eventsource.domain.exceptions import EventSourceError, SubscriptionError
-from eventsource.ports.bus import SubscribableEventBus
+from eventsource.ports.bus import EventHandlerFunc, SubscribableEventBus
 from eventsource.ports.coordination import (
     LeaderChangeCallback,
     LeaderElector,
     LeaderElectorWithLease,
 )
-from eventsource.ports.handlers import EventHandlerFunc
 from eventsource.ports.subscribers import (
     BatchSubscriber,
     Subscriber,
@@ -134,15 +133,10 @@ class TestInMemoryLeaderElectorRelocated:
 
 
 class TestEventHandlerFuncIdentity:
-    """EventHandlerFunc's canonical home is ports.handlers; all re-exports match."""
+    """EventHandlerFunc's canonical home is ports.bus; all re-exports match."""
 
-    def test_bus_interface_reexports_same_object(self) -> None:
-        from eventsource.bus.interface import EventHandlerFunc as ReExported
-
-        assert ReExported is EventHandlerFunc
-
-    def test_bus_package_reexports_same_object(self) -> None:
-        from eventsource.bus import EventHandlerFunc as ReExported
+    def test_ports_package_reexports_same_object(self) -> None:
+        from eventsource.ports import EventHandlerFunc as ReExported
 
         assert ReExported is EventHandlerFunc
 

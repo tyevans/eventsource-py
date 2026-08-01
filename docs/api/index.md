@@ -257,7 +257,7 @@ short-circuited by a snapshot, consumed by a projection, and distributed over a 
 | [Aggregates](aggregates.md) | `eventsource.domain.aggregate`, `eventsource.application.aggregates`, `eventsource.handlers` | 4 |
 | [Snapshots](snapshots.md) | `eventsource.ports.snapshots`, `eventsource.application.aggregates.snapshotting`, `eventsource.adapters.{memory,postgresql,sqlite}` | 7 of 11 |
 | [Projections](projections.md) | `eventsource.application.projections`, `eventsource.ports.readmodels` | 5 of 21 |
-| [Event Bus](bus.md) | `eventsource.bus` | 20 |
+| [Event Bus](bus.md) | `eventsource.ports.bus`, `eventsource.adapters.{memory,redis,rabbitmq,kafka}` | 20 |
 
 Where a page documents more names than the barrel exports — snapshots, projections and
 read models — the extra names are imported from their own module. Each page states which.
@@ -394,7 +394,7 @@ schema-generation helpers live in their adapter modules
 `eventsource.adapters.sql.readmodel_schema`). Only `ReadModelProjection` reaches the
 top-level barrel. (`eventsource.readmodels` no longer exists -- see ADR 0030.)
 
-### Event Bus — `api/bus.md` (`eventsource.bus.interface`, `memory`, `redis`, `rabbitmq`, `kafka`)
+### Event Bus — `api/bus.md` (`eventsource.ports.bus`, `eventsource.adapters.{memory,redis,rabbitmq,kafka}`)
 
 Covers the `EventBus` abstract base class — `async def publish`, plus the synchronous
 `subscribe`, `unsubscribe`, `subscribe_all`, `subscribe_to_all_events`, and
@@ -407,7 +407,7 @@ Four implementations are documented: `InMemoryEventBus` for in-process delivery,
 Redis Streams, RabbitMQ, and Kafka buses. Each of the three external backends contributes
 a consistent quartet — `<Backend>EventBus`, `<Backend>EventBusConfig`,
 `<Backend>EventBusStats`, and `<Backend>NotAvailableError` — alongside its availability
-flag. All twenty names are in both `eventsource.bus.__all__` and the top-level barrel,
+flag. All twenty names are exported from their own adapter package and the top-level barrel,
 whether or not the drivers are installed; see
 [Optional Backends and `*_AVAILABLE` Flags](#optional-backends-and-available-flags) for
 why construction rather than import is where a missing driver is reported.

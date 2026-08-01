@@ -46,8 +46,7 @@ nosetests.xml
 coverage.xml
 *.cover
 *.py,cover
-.hypothesis/*
-!.hypothesis/examples/
+.hypothesis/
 .pytest_cache/
 .test-stamp
 
@@ -102,6 +101,9 @@ mutants/
 
 # Claude Code plugin state
 .claude/tackline/
+
+# Claude Code session worktrees (machine-local)
+.claude/worktrees/
 
 # Doc-sync state (per-checkout, never shared)
 .claude/last-docs-run

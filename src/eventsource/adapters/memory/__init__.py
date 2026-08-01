@@ -1,5 +1,6 @@
 """In-process memory adapters implementing the store, snapshot, checkpoint, DLQ, outbox, read model, lock, and leader-election ports."""
 
+from eventsource.adapters.memory.bus import InMemoryEventBus
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
 from eventsource.adapters.memory.coordination import (
     InMemoryLeaderElector,
@@ -15,6 +16,7 @@ from eventsource.adapters.memory.store import InMemoryEventStore
 __all__ = [
     "InMemoryCheckpointRepository",
     "InMemoryDLQRepository",
+    "InMemoryEventBus",
     "InMemoryEventStore",
     "InMemoryLeaderElector",
     "InMemoryLockManager",
