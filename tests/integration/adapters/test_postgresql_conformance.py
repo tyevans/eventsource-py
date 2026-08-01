@@ -73,7 +73,9 @@ async def _fresh_store(connection_url: str) -> PostgreSQLEventStore:
     engine = create_async_engine(connection_url)
     async with engine.begin() as conn:
         await conn.execute(text("DROP TABLE IF EXISTS events CASCADE"))
-    return PostgreSQLEventStore(engine, event_registry=_make_registry(), create_schema=True)
+    return PostgreSQLEventStore(
+        engine, event_registry=_make_registry(), create_schema=True, owns_engine=True
+    )
 
 
 class TestPostgreSQLAppender(AppenderConformance):

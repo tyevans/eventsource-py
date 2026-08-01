@@ -40,6 +40,7 @@ from eventsource.ports.handlers import (
     FlexibleEventSubscriber,
     SyncEventHandler,
 )
+from eventsource.ports.lifecycle import SupportsClose
 from eventsource.ports.locks import (
     DistributedLock,
     LockInfo,
@@ -117,6 +118,8 @@ __all__ = [
     "DLQRepository",
     "DLQStats",
     "ProjectionFailureCount",
+    # Lifecycle port
+    "SupportsClose",
     # Lock port
     "DistributedLock",
     "LockInfo",
