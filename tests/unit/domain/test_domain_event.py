@@ -785,6 +785,20 @@ class TestDomainEventMultiTenancy:
         assert restored.tenant_id == tenant_id
 
 
+class TestExtraForbid:
+    """Tests for strict field validation."""
+
+    def test_unknown_field_raises_validation_error(self) -> None:
+        """Passing unknown fields to event constructor raises ValidationError."""
+
+        class PaymentTaken(DomainEvent):
+            aggregate_type: str = "Payment"
+            amount: int
+
+        with pytest.raises(ValidationError):
+            PaymentTaken(aggregate_id=uuid4(), amount=5, amonut=7)  # typo must not be swallowed
+
+
 class TestDomainEventEquality:
     """Tests for event equality and hashing."""
 

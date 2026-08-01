@@ -75,7 +75,7 @@ class DomainEvent(BaseModel):
         >>> assert event.event_type == "order_created_v2"
     """
 
-    model_config = ConfigDict(frozen=True, allow_inf_nan=False)
+    model_config = ConfigDict(frozen=True, allow_inf_nan=False, extra="forbid")
 
     # Class variable to suppress mismatch warning when event_type differs from class name
     suppress_event_type_warning: ClassVar[bool] = False

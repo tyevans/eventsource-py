@@ -196,6 +196,30 @@ class TestSnapshotRoundTrip:
         assert restored.version == 1
 
 
+class TestStateInvariant:
+    def test_none_state_raises_even_without_assertions(self) -> None:
+        """Accessing state when initial_state returns None raises RuntimeError."""
+
+        class BrokenDecider(DeciderAggregate[dict]):
+            aggregate_type = "Broken"
+
+            @staticmethod
+            def initial_state(aggregate_id: UUID) -> dict:
+                return None  # type: ignore[return-value]  # deliberate contract violation
+
+            @staticmethod
+            def decide(command: object, state: dict) -> list[DomainEvent]:
+                return []
+
+            @staticmethod
+            def evolve(state: dict, event: DomainEvent) -> dict:
+                return state
+
+        agg = BrokenDecider(uuid4())
+        with pytest.raises(RuntimeError, match="initial_state"):
+            _ = agg.state
+
+
 class TestCreateEventCommandProvenance:
     def test_create_event_stamps_provenance_from_command(self) -> None:
         from eventsource.domain.aggregate import AggregateRoot

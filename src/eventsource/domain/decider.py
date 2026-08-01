@@ -56,7 +56,12 @@ class DeciderAggregate(AggregateRoot[TState]):
     @property
     def state(self) -> TState:
         """Current state. Never None: eagerly initialized from initial_state()."""
-        assert self._state is not None  # established in __init__, maintained by _apply
+        if self._state is None:
+            raise RuntimeError(
+                f"{type(self).__name__} has no state: initial_state() must "
+                f"return a non-None state (established in __init__, "
+                f"maintained by _apply)."
+            )
         return self._state
 
     def _get_initial_state(self) -> TState:
