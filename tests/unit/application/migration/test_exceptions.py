@@ -5,14 +5,21 @@ Tests cover:
 - MigrationError base exception
 - All exception subclasses
 - Exception attributes and string representations
+- Exception classification (severity, recoverability, error_code)
+- CircuitBreakerOpenError
 """
 
 from uuid import uuid4
 
 import pytest
 
+from eventsource.application.migration.error_classification import (
+    ErrorRecoverability,
+    ErrorSeverity,
+)
 from eventsource.application.migration.exceptions import (
     BulkCopyError,
+    CircuitBreakerOpenError,
     ConsistencyError,
     CutoverError,
     CutoverLagError,
@@ -481,3 +488,142 @@ class TestExceptionHierarchy:
             raise non_cutover
         # Verify it's not a CutoverError
         assert not isinstance(non_cutover, CutoverError)
+
+
+class TestExceptionClassification:
+    """Tests for exception classification integration."""
+
+    def test_migration_error_classification(self) -> None:
+        """Test base MigrationError classification."""
+        error = MigrationError("Test error")
+        assert error.severity == ErrorSeverity.ERROR
+        assert error.recoverability_type == ErrorRecoverability.FATAL
+        assert error.error_code == "MIGRATION_ERROR"
+
+    def test_migration_not_found_classification(self) -> None:
+        """Test MigrationNotFoundError classification."""
+        error = MigrationNotFoundError(uuid4())
+        assert error.severity == ErrorSeverity.ERROR
+        assert error.recoverability_type == ErrorRecoverability.FATAL
+        assert error.error_code == "MIGRATION_NOT_FOUND"
+
+    def test_migration_already_exists_classification(self) -> None:
+        """Test MigrationAlreadyExistsError classification."""
+        error = MigrationAlreadyExistsError(uuid4(), uuid4())
+        assert error.severity == ErrorSeverity.WARNING
+        assert error.recoverability_type == ErrorRecoverability.RECOVERABLE
+        assert error.error_code == "MIGRATION_ALREADY_EXISTS"
+
+    def test_migration_state_error_classification(self) -> None:
+        """Test MigrationStateError classification."""
+        error = MigrationStateError(
+            "Invalid state",
+            migration_id=uuid4(),
+            current_phase=MigrationPhase.PENDING,
+        )
+        assert error.severity == ErrorSeverity.ERROR
+        assert error.recoverability_type == ErrorRecoverability.FATAL
+        assert error.error_code == "MIGRATION_STATE_ERROR"
+
+    def test_invalid_phase_transition_classification(self) -> None:
+        """Test InvalidPhaseTransitionError classification."""
+        error = InvalidPhaseTransitionError(
+            uuid4(),
+            current_phase=MigrationPhase.PENDING,
+            target_phase=MigrationPhase.CUTOVER,
+        )
+        assert error.severity == ErrorSeverity.ERROR
+        assert error.recoverability_type == ErrorRecoverability.FATAL
+        assert error.error_code == "INVALID_PHASE_TRANSITION"
+
+    def test_cutover_error_classification(self) -> None:
+        """Test CutoverError classification."""
+        error = CutoverError("Cutover failed", migration_id=uuid4())
+        assert error.severity == ErrorSeverity.ERROR
+        assert error.recoverability_type == ErrorRecoverability.RECOVERABLE
+        assert error.error_code == "CUTOVER_ERROR"
+        assert error.retry_config is not None
+
+    def test_cutover_timeout_classification(self) -> None:
+        """Test CutoverTimeoutError classification."""
+        error = CutoverTimeoutError(uuid4(), elapsed_ms=150.0, timeout_ms=100.0)
+        assert error.severity == ErrorSeverity.ERROR
+        assert error.recoverability_type == ErrorRecoverability.TRANSIENT
+        assert error.error_code == "CUTOVER_TIMEOUT"
+        assert error.retry_config is not None
+
+    def test_cutover_lag_classification(self) -> None:
+        """Test CutoverLagError classification."""
+        error = CutoverLagError(uuid4(), current_lag=500, max_lag=100)
+        assert error.severity == ErrorSeverity.WARNING
+        assert error.recoverability_type == ErrorRecoverability.TRANSIENT
+        assert error.error_code == "CUTOVER_LAG_TOO_HIGH"
+        assert error.retry_config is not None
+
+    def test_consistency_error_classification(self) -> None:
+        """Test ConsistencyError classification."""
+        error = ConsistencyError("Data mismatch", migration_id=uuid4())
+        assert error.severity == ErrorSeverity.CRITICAL
+        assert error.recoverability_type == ErrorRecoverability.RECOVERABLE
+        assert error.error_code == "CONSISTENCY_ERROR"
+
+    def test_bulk_copy_error_classification(self) -> None:
+        """Test BulkCopyError classification."""
+        error = BulkCopyError(
+            uuid4(), last_position=Position(store_id="source", key=(1000,)), error="Connection lost"
+        )
+        assert error.severity == ErrorSeverity.ERROR
+        assert error.recoverability_type == ErrorRecoverability.TRANSIENT
+        assert error.error_code == "BULK_COPY_ERROR"
+        assert error.retry_config is not None
+
+    def test_dual_write_error_classification(self) -> None:
+        """Test DualWriteError classification."""
+        error = DualWriteError(uuid4(), target_error="Write failed")
+        assert error.severity == ErrorSeverity.WARNING
+        assert error.recoverability_type == ErrorRecoverability.TRANSIENT
+        assert error.error_code == "DUAL_WRITE_ERROR"
+        assert error.retry_config is not None
+
+    def test_position_mapping_error_classification(self) -> None:
+        """Test PositionMappingError classification."""
+        error = PositionMappingError("Position not found", migration_id=uuid4())
+        assert error.severity == ErrorSeverity.ERROR
+        assert error.recoverability_type == ErrorRecoverability.RECOVERABLE
+        assert error.error_code == "POSITION_MAPPING_ERROR"
+
+    def test_routing_error_classification(self) -> None:
+        """Test RoutingError classification."""
+        error = RoutingError("No route", tenant_id=uuid4())
+        assert error.severity == ErrorSeverity.ERROR
+        assert error.recoverability_type == ErrorRecoverability.FATAL
+        assert error.error_code == "ROUTING_ERROR"
+
+    def test_error_to_dict(self) -> None:
+        """Test exception to_dict includes classification."""
+        error = CutoverTimeoutError(uuid4(), elapsed_ms=150.0, timeout_ms=100.0)
+        data = error.to_dict()
+
+        assert "message" in data
+        assert "classification" in data
+        assert data["classification"]["error_code"] == "CUTOVER_TIMEOUT"
+        assert data["classification"]["severity"] == "error"
+
+
+class TestCircuitBreakerOpenError:
+    """Tests for CircuitBreakerOpenError exception."""
+
+    def test_classification(self) -> None:
+        """Test CircuitBreakerOpenError classification."""
+        error = CircuitBreakerOpenError("test_op", time_until_retry=30.0)
+        assert error.severity == ErrorSeverity.WARNING
+        assert error.recoverability_type == ErrorRecoverability.TRANSIENT
+        assert error.error_code == "CIRCUIT_BREAKER_OPEN"
+
+    def test_attributes(self) -> None:
+        """Test CircuitBreakerOpenError attributes."""
+        error = CircuitBreakerOpenError("my_operation", time_until_retry=15.5, migration_id=uuid4())
+        assert error.operation_name == "my_operation"
+        assert error.time_until_retry == 15.5
+        assert "my_operation" in str(error)
+        assert "15.5s" in str(error)
