@@ -4,6 +4,11 @@
 
 Accepted (2026-07-29)
 
+**Amended by [ADR 0031](0031-bus-ring-split.md)** -- for module locations
+only: the Rabbit/Kafka collaborator packages live under
+`eventsource.adapters.{rabbitmq,kafka}` now, not `eventsource.bus`. This
+ADR's collaborator decomposition Decision is unchanged.
+
 ## Context
 
 RabbitMQEventBus (~3,570-line class) and KafkaEventBus (~2,195-line class)

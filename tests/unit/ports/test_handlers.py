@@ -317,14 +317,12 @@ class TestCanonicalExports:
         assert hasattr(eventsource, "EventSubscriber")
         assert hasattr(eventsource, "FlexibleEventSubscriber")
 
-    def test_eventsource_bus_exports_protocols(self) -> None:
-        """Bus module exports protocols."""
-        from eventsource import bus
+    def test_eventsource_bus_package_removed(self) -> None:
+        """The eventsource.bus package no longer exists (ADR-0031)."""
+        import importlib
 
-        assert hasattr(bus, "EventHandler")
-        assert hasattr(bus, "EventSubscriber")
-        assert hasattr(bus, "FlexibleEventHandler")
-        assert hasattr(bus, "FlexibleEventSubscriber")
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module("eventsource.bus")
 
     def test_eventsource_root_exports_async_event_handler(self) -> None:
         """Root eventsource module exports AsyncEventHandler."""
@@ -478,13 +476,6 @@ class TestAsyncEventHandlerImports:
     def test_handlers_adapter_import_works(self) -> None:
         """Import from handlers.adapter works."""
         from eventsource.handlers.adapter import AsyncEventHandler
-        from eventsource.ports.handlers import AsyncEventHandler as Canonical
-
-        assert AsyncEventHandler is Canonical
-
-    def test_bus_import_works(self) -> None:
-        """Import from bus module works."""
-        from eventsource.bus import AsyncEventHandler
         from eventsource.ports.handlers import AsyncEventHandler as Canonical
 
         assert AsyncEventHandler is Canonical

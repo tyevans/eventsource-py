@@ -8,7 +8,7 @@ backend they run on.
 from abc import ABC, abstractmethod
 from typing import Generic, TypeVar
 
-from eventsource.bus.interface import EventBus
+from eventsource.ports.bus import EventBus
 
 T = TypeVar("T")
 

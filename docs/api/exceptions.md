@@ -186,19 +186,19 @@ Exception
 │   │                                          (distinct from the migration one)
 │   ├── StoreNotFoundError                    eventsource.migration.router
 │   ├── WritePausedError                      eventsource.migration.write_pause
-│   ├── ShutdownError                         eventsource.bus.rabbitmq
-│   └── BatchPublishError                     eventsource.bus.rabbitmq
+│   ├── ShutdownError                         eventsource.adapters.rabbitmq
+│   └── BatchPublishError                     eventsource.adapters.rabbitmq
 │
 ├── KeyError
 │   └── EventTypeNotFoundError                eventsource.events.registry
 ├── ValueError
 │   ├── DuplicateEventTypeError               eventsource.events.registry
 │   ├── HandlerSignatureError                 eventsource.handlers.registry
-│   └── DeserializationError                  eventsource.bus.kafka
+│   └── DeserializationError                  eventsource.adapters.kafka
 └── ImportError
-    ├── RedisNotAvailableError                eventsource.bus.redis
-    ├── RabbitMQNotAvailableError             eventsource.bus.rabbitmq
-    ├── KafkaNotAvailableError                eventsource.bus.kafka
+    ├── RedisNotAvailableError                eventsource.adapters.redis
+    ├── RabbitMQNotAvailableError             eventsource.adapters.rabbitmq
+    ├── KafkaNotAvailableError                eventsource.adapters.kafka
     └── SQLiteNotAvailableError               eventsource.adapters.sqlite.snapshots
 ```
 

@@ -7,7 +7,7 @@ from uuid import uuid4
 from bench.adapters.base import BusAdapter
 from bench.core.domain import make_registry
 from eventsource import InMemoryEventBus
-from eventsource.bus.interface import EventBus
+from eventsource.ports.bus import EventBus
 
 
 class MemoryBusAdapter(BusAdapter):
@@ -58,7 +58,7 @@ class RedisBusAdapter(BusAdapter):
         return await _tcp_probe(host or "localhost", int(port or 6379), "redis")
 
     async def create(self) -> EventBus:
-        from eventsource.bus.redis import RedisEventBus, RedisEventBusConfig
+        from eventsource.adapters.redis.bus import RedisEventBus, RedisEventBusConfig
 
         suffix = uuid4().hex[:8]
         config = RedisEventBusConfig(
@@ -72,7 +72,7 @@ class RedisBusAdapter(BusAdapter):
         return bus
 
     async def start_delivery(self, bus: EventBus) -> None:
-        from eventsource.bus.redis import RedisEventBus
+        from eventsource.adapters.redis.bus import RedisEventBus
 
         assert isinstance(bus, RedisEventBus)
         task = asyncio.create_task(bus.start_consuming())
@@ -80,7 +80,7 @@ class RedisBusAdapter(BusAdapter):
         await asyncio.sleep(0.5)  # let the consumer join the group
 
     async def stop_delivery(self, bus: EventBus) -> None:
-        from eventsource.bus.redis import RedisEventBus
+        from eventsource.adapters.redis.bus import RedisEventBus
 
         assert isinstance(bus, RedisEventBus)
         if bus.is_consuming:
@@ -90,7 +90,7 @@ class RedisBusAdapter(BusAdapter):
             task.cancel()
 
     async def destroy(self, resource: EventBus) -> None:
-        from eventsource.bus.redis import RedisEventBus
+        from eventsource.adapters.redis.bus import RedisEventBus
 
         await self.stop_delivery(resource)
         assert isinstance(resource, RedisEventBus)
@@ -112,7 +112,7 @@ class KafkaBusAdapter(BusAdapter):
         return await _tcp_probe(host or "localhost", int(port or 9092), "kafka")
 
     async def create(self) -> EventBus:
-        from eventsource.bus.kafka import KafkaEventBus, KafkaEventBusConfig
+        from eventsource.adapters.kafka import KafkaEventBus, KafkaEventBusConfig
 
         suffix = uuid4().hex[:8]
         config = KafkaEventBusConfig(
@@ -127,21 +127,21 @@ class KafkaBusAdapter(BusAdapter):
         return bus
 
     async def start_delivery(self, bus: EventBus) -> None:
-        from eventsource.bus.kafka import KafkaEventBus
+        from eventsource.adapters.kafka import KafkaEventBus
 
         assert isinstance(bus, KafkaEventBus)
         bus.start_consuming_in_background()
         await asyncio.sleep(0.5)  # let the consumer join the group
 
     async def stop_delivery(self, bus: EventBus) -> None:
-        from eventsource.bus.kafka import KafkaEventBus
+        from eventsource.adapters.kafka import KafkaEventBus
 
         assert isinstance(bus, KafkaEventBus)
         if bus.is_consuming:
             await bus.stop_consuming()
 
     async def destroy(self, resource: EventBus) -> None:
-        from eventsource.bus.kafka import KafkaEventBus
+        from eventsource.adapters.kafka import KafkaEventBus
 
         assert isinstance(resource, KafkaEventBus)
         await self.stop_delivery(resource)
@@ -167,7 +167,7 @@ class RabbitMQBusAdapter(BusAdapter):
         return await _tcp_probe(host or "localhost", int(port or 5672), "rabbitmq")
 
     async def create(self) -> EventBus:
-        from eventsource.bus.rabbitmq import RabbitMQEventBus, RabbitMQEventBusConfig
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus, RabbitMQEventBusConfig
 
         suffix = uuid4().hex[:8]
         config = RabbitMQEventBusConfig(
@@ -183,21 +183,21 @@ class RabbitMQBusAdapter(BusAdapter):
         return bus
 
     async def start_delivery(self, bus: EventBus) -> None:
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         assert isinstance(bus, RabbitMQEventBus)
         bus.start_consuming_in_background()
         await asyncio.sleep(0.5)
 
     async def stop_delivery(self, bus: EventBus) -> None:
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         assert isinstance(bus, RabbitMQEventBus)
         if bus.is_consuming:
             await bus.stop_consuming()
 
     async def destroy(self, resource: EventBus) -> None:
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         assert isinstance(resource, RabbitMQEventBus)
         await self.stop_delivery(resource)

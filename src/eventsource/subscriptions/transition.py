@@ -33,7 +33,7 @@ from eventsource.subscriptions.runners.live import LiveRunner
 from eventsource.subscriptions.subscription import Subscription, render_position
 
 if TYPE_CHECKING:
-    from eventsource.bus.interface import EventBus
+    from eventsource.ports.bus import EventBus
     from eventsource.ports.checkpoints import SubscriptionPositions
     from eventsource.ports.store import GlobalEventFeed
     from eventsource.subscriptions.flow_control import FlowController

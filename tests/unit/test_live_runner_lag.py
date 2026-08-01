@@ -12,8 +12,8 @@ from uuid import uuid4
 
 import pytest
 
+from eventsource.adapters.memory.bus import InMemoryEventBus
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
-from eventsource.bus import InMemoryEventBus
 from eventsource.events.base import DomainEvent
 from eventsource.subscriptions import CheckpointStrategy, Subscription, SubscriptionConfig
 from eventsource.subscriptions.runners import LiveRunner

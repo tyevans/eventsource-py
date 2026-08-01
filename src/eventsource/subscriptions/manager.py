@@ -72,7 +72,7 @@ from eventsource.subscriptions.subscription import (
 )
 
 if TYPE_CHECKING:
-    from eventsource.bus.interface import EventBus
+    from eventsource.ports.bus import EventBus
     from eventsource.ports.checkpoints import SubscriptionPositions
     from eventsource.ports.dlq import DLQRepository
     from eventsource.ports.handlers import EventSubscriber

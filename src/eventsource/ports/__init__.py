@@ -1,6 +1,6 @@
 """Boundary ports (Clean Architecture output ports). Depends on domain only."""
 
-from eventsource.ports.bus import EventPublisher
+from eventsource.ports.bus import EventBus, EventHandlerFunc, EventPublisher
 from eventsource.ports.checkpoints import (
     CheckpointData,
     CheckpointRepository,
@@ -79,8 +79,10 @@ __all__ = [
     # Snapshot port (TRANSITION re-home)
     "Snapshot",
     "SnapshotStore",
-    # Bus port (TRANSITION re-home)
+    # Bus port
     "EventPublisher",
+    "EventBus",
+    "EventHandlerFunc",
     # Outbox port
     "OutboxEntry",
     "OutboxRepository",

@@ -16,7 +16,7 @@ property to paper over the difference.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID
 
 from hypothesis import given
@@ -63,8 +63,19 @@ def test_uuid_result_agrees_across_representations(value: UUID) -> None:
 
 @given(value=st.datetimes(timezones=st.timezones()))
 def test_ts_roundtrip_sqlite_preserves_instant(value: datetime) -> None:
-    """Aware datetimes round-trip to an equal instant through the SQLite path."""
-    assert ts_result(ts_param(value, Dialect.SQLITE)) == value
+    """
+    Aware datetimes round-trip to an equal instant through the SQLite path.
+
+    Compared as instants (both sides normalized to UTC), not with bare `==`:
+    for wall times whose UTC offset is fold-dependent (a DST gap or fold),
+    PEP 495 defines interzone `==` as always False even when the instants
+    match, so a bare `==` would reject correct round-trips of such inputs
+    (e.g. 02:00 inside a spring-forward gap).
+    """
+    result = ts_result(ts_param(value, Dialect.SQLITE))
+    assert result is not None
+    assert result.tzinfo is not None
+    assert result.astimezone(UTC) == value.astimezone(UTC)
 
 
 @given(value=st.datetimes())

@@ -154,6 +154,7 @@ nav:
       - "ADR-0028: Strict Cutover and In-Phase Resync": adrs/0028-strict-cutover-and-in-phase-resync.md
       - "ADR-0029: Locks, Read Models, and Engine Rings": adrs/0029-locks-readmodels-and-engine-rings.md
       - "ADR-0030: Top-Level Module Ring Consolidation": adrs/0030-top-level-module-ring-consolidation.md
+      - "ADR-0031: Bus Ring Split": adrs/0031-bus-ring-split.md
   - Development:
       - development/index.md
       - Contributing: development/contributing.md

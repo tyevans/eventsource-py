@@ -24,8 +24,21 @@ except PackageNotFoundError:
 # Aggregates (Task 07, Task 08)
 # Core-rings surface: domain value objects, boundary ports, and the adapters.
 # Shared async engine factory
+# Event bus (Task 10)
+from eventsource.adapters._bus.base import BaseEventBus
+from eventsource.adapters._bus.registry import SubscriptionRegistry
+from eventsource.adapters._bus.retry import RetryPolicy
 from eventsource.adapters._sql.engine import create_async_engine
 from eventsource.adapters._sql.positions import IntPositionCodec
+
+# Kafka Event bus
+from eventsource.adapters.kafka import (
+    KAFKA_AVAILABLE,
+    KafkaEventBus,
+    KafkaEventBusConfig,
+    KafkaEventBusStats,
+    KafkaNotAvailableError,
+)
 
 # Repository infrastructure (Task 12)
 from eventsource.adapters.memory import (
@@ -34,6 +47,7 @@ from eventsource.adapters.memory import (
     InMemoryEventStore,
     InMemoryOutboxRepository,
 )
+from eventsource.adapters.memory.bus import InMemoryEventBus
 
 # Snapshots
 from eventsource.adapters.memory.snapshots import InMemorySnapshotStore
@@ -41,6 +55,24 @@ from eventsource.adapters.postgresql import (
     ASYNCPG_AVAILABLE,
     PostgreSQLEventStore,
     PostgreSQLOutboxRepository,
+)
+
+# RabbitMQ Event bus
+from eventsource.adapters.rabbitmq import (
+    RABBITMQ_AVAILABLE,
+    RabbitMQEventBus,
+    RabbitMQEventBusConfig,
+    RabbitMQEventBusStats,
+    RabbitMQNotAvailableError,
+)
+
+# Redis Event bus (Task 11)
+from eventsource.adapters.redis import (
+    REDIS_AVAILABLE,
+    RedisEventBus,
+    RedisEventBusConfig,
+    RedisEventBusStats,
+    RedisNotAvailableError,
 )
 
 # Serialization utilities
@@ -66,43 +98,6 @@ from eventsource.application.projections.base import (
     DeclarativeProjection,
     Projection,
 )
-
-# Event bus (Task 10)
-from eventsource.bus.base import BaseEventBus
-from eventsource.bus.interface import (
-    EventBus,
-    EventHandlerFunc,
-)
-
-# Kafka Event bus
-from eventsource.bus.kafka import (
-    KAFKA_AVAILABLE,
-    KafkaEventBus,
-    KafkaEventBusConfig,
-    KafkaEventBusStats,
-    KafkaNotAvailableError,
-)
-from eventsource.bus.memory import InMemoryEventBus
-
-# RabbitMQ Event bus
-from eventsource.bus.rabbitmq import (
-    RABBITMQ_AVAILABLE,
-    RabbitMQEventBus,
-    RabbitMQEventBusConfig,
-    RabbitMQEventBusStats,
-    RabbitMQNotAvailableError,
-)
-
-# Redis Event bus (Task 11)
-from eventsource.bus.redis import (
-    REDIS_AVAILABLE,
-    RedisEventBus,
-    RedisEventBusConfig,
-    RedisEventBusStats,
-    RedisNotAvailableError,
-)
-from eventsource.bus.registry import SubscriptionRegistry
-from eventsource.bus.retry import RetryPolicy
 from eventsource.domain import StreamId
 from eventsource.domain.aggregate import AggregateRoot, DeclarativeAggregate
 from eventsource.domain.command import DomainCommand
@@ -165,7 +160,9 @@ from eventsource.ports import (
     CategoryQuery,
     CategoryReadOptions,
     EventAppender,
+    EventBus,
     EventEnvelope,
+    EventHandlerFunc,
     EventLookup,
     EventPublisher,
     ExpectedVersion,

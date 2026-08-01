@@ -63,13 +63,19 @@ Either rewrite the assertions as deterministic proxies (count instrumentation ca
 rather than elapsed time) or add a scheduled, non-blocking benchmark workflow that
 runs `-m benchmark` and reports results.
 
-## Remove bus facade compat shims (P2)
+## Remove bus facade compat shims (P2) -- DONE via ADR 0031
 
 0.8.0: remove bus facade compat shims -- migrate ~90 white-box test call sites to
 collaborator access (`bus._connection_manager.*` etc.), delete the facade property
 shims and thin delegations on both backends. (The scheduled
 `record_reconnection`/`record_rebalance` removal landed with the
 aggregates-application-ring branch.)
+
+Resolved by the bus ring split (ADR 0031, 2026-07-31): `bus/` and its facade
+`__init__.py` are deleted outright, so there is no facade left to shim -- the
+~90 call sites are retargeted onto `eventsource.adapters._bus` and the
+per-backend collaborator modules directly, in the same pass as the ring
+move, rather than as a separate 0.8.0 migration.
 
 ## Redesign SnapshotStore port as composed Protocols (P2)
 
@@ -273,7 +279,7 @@ retarget the conftest fixture onto `get_schema()` so the migration is actually
 under test, then drop the xfail.
 
 
-## Migrate bus/ interface and backends to ports/adapters (P2)
+## Migrate bus/ interface and backends to ports/adapters (P2) -- DONE via ADR 0031
 
 `bus/` colocates the EventBus interface with InMemory, Redis, RabbitMQ, and
 Kafka backends. Ring migration: EventBus port into `ports/`, backends into
@@ -281,6 +287,13 @@ Kafka backends. Ring migration: EventBus port into `ports/`, backends into
 suite already exists to anchor behavior. Coordinate with the existing "Remove
 bus facade compat shims (P2)" entry — shim removal scheduled for 0.8.0 should
 land first or together to avoid double-moving. Campaign residue item (2026-07-31).
+
+Resolved by ADR 0031 (2026-07-31): `EventBus` moved to `ports/bus.py`,
+`BaseEventBus`/`SubscriptionRegistry` to adapters-internal `adapters/_bus/`,
+and the four backends to `adapters/memory/bus.py`, `adapters/redis/`,
+`adapters/kafka/`, `adapters/rabbitmq/` (guarded optional imports preserved).
+Landed together with "Remove bus facade compat shims" above, per the
+coordination note.
 
 ## Move migration/repositories onto the adapters ring (P2)
 

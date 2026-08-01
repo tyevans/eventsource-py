@@ -562,9 +562,9 @@ def reset_kafka_meter():
     issues between tests. This fixture resets it.
     """
     try:
-        import eventsource.bus.kafka.bus as kafka_module
+        import eventsource.adapters.kafka.bus as kafka_module
     except ImportError:
-        pytest.skip("eventsource.bus.kafka not available")
+        pytest.skip("eventsource.adapters.kafka not available")
         return
 
     # Reset cached meter

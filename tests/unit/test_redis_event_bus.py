@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from eventsource.bus.redis import (
+from eventsource.adapters.redis.bus import (
     RedisEventBus,
     RedisEventBusConfig,
     RedisEventBusStats,
@@ -163,8 +163,8 @@ def mock_redis() -> AsyncMock:
 async def bus(config: RedisEventBusConfig, event_registry: EventRegistry, mock_redis: AsyncMock):
     """Create a RedisEventBus with mocked Redis client."""
     with (
-        patch("eventsource.bus.redis.REDIS_AVAILABLE", True),
-        patch("eventsource.bus.redis.aioredis") as mock_aioredis,
+        patch("eventsource.adapters.redis.bus.REDIS_AVAILABLE", True),
+        patch("eventsource.adapters.redis.bus.aioredis") as mock_aioredis,
     ):
         mock_aioredis.from_url = AsyncMock(return_value=mock_redis)
 
@@ -276,8 +276,8 @@ class TestRedisEventBusConnection:
     async def test_connect(self, config: RedisEventBusConfig, mock_redis: AsyncMock):
         """Test connecting to Redis."""
         with (
-            patch("eventsource.bus.redis.REDIS_AVAILABLE", True),
-            patch("eventsource.bus.redis.aioredis") as mock_aioredis,
+            patch("eventsource.adapters.redis.bus.REDIS_AVAILABLE", True),
+            patch("eventsource.adapters.redis.bus.aioredis") as mock_aioredis,
         ):
             mock_aioredis.from_url = AsyncMock(return_value=mock_redis)
 
@@ -293,8 +293,8 @@ class TestRedisEventBusConnection:
     async def test_disconnect(self, config: RedisEventBusConfig, mock_redis: AsyncMock):
         """Test disconnecting from Redis."""
         with (
-            patch("eventsource.bus.redis.REDIS_AVAILABLE", True),
-            patch("eventsource.bus.redis.aioredis") as mock_aioredis,
+            patch("eventsource.adapters.redis.bus.REDIS_AVAILABLE", True),
+            patch("eventsource.adapters.redis.bus.aioredis") as mock_aioredis,
         ):
             mock_aioredis.from_url = AsyncMock(return_value=mock_redis)
 
@@ -310,8 +310,8 @@ class TestRedisEventBusConnection:
     ):
         """Test that connecting when already connected logs a warning."""
         with (
-            patch("eventsource.bus.redis.REDIS_AVAILABLE", True),
-            patch("eventsource.bus.redis.aioredis") as mock_aioredis,
+            patch("eventsource.adapters.redis.bus.REDIS_AVAILABLE", True),
+            patch("eventsource.adapters.redis.bus.aioredis") as mock_aioredis,
         ):
             mock_aioredis.from_url = AsyncMock(return_value=mock_redis)
 
@@ -329,16 +329,16 @@ class TestRedisEventBusConnection:
         self, config: RedisEventBusConfig, mock_redis: AsyncMock
     ):
         """Test handling when consumer group already exists."""
-        # Import ResponseError from the eventsource.bus.redis module to use its fallback
-        from eventsource.bus.redis import ResponseError
+        # Import ResponseError from the eventsource.adapters.redis.bus module to use its fallback
+        from eventsource.adapters.redis.bus import ResponseError
 
         mock_redis.xgroup_create = AsyncMock(
             side_effect=ResponseError("BUSYGROUP Consumer Group name already exists")
         )
 
         with (
-            patch("eventsource.bus.redis.REDIS_AVAILABLE", True),
-            patch("eventsource.bus.redis.aioredis") as mock_aioredis,
+            patch("eventsource.adapters.redis.bus.REDIS_AVAILABLE", True),
+            patch("eventsource.adapters.redis.bus.aioredis") as mock_aioredis,
         ):
             mock_aioredis.from_url = AsyncMock(return_value=mock_redis)
 
@@ -1029,8 +1029,8 @@ class TestRedisEventBusStreamInfo:
     async def test_get_stream_info_not_connected(self, config: RedisEventBusConfig):
         """Test getting stream info when not connected."""
         with (
-            patch("eventsource.bus.redis.REDIS_AVAILABLE", True),
-            patch("eventsource.bus.redis.aioredis"),
+            patch("eventsource.adapters.redis.bus.REDIS_AVAILABLE", True),
+            patch("eventsource.adapters.redis.bus.aioredis"),
         ):
             bus = RedisEventBus(config=config)
             info = await bus.get_stream_info()
@@ -1086,7 +1086,7 @@ class TestRedisEventBusErrorHandling:
     def test_redis_not_available_error(self):
         """Test error when redis is not available."""
         with (
-            patch("eventsource.bus.redis.REDIS_AVAILABLE", False),
+            patch("eventsource.adapters.redis.bus.REDIS_AVAILABLE", False),
             pytest.raises(RedisNotAvailableError),
         ):
             # Need to reimport to pick up the patched value
@@ -1118,8 +1118,8 @@ class TestRedisEventBusIntegration:
         handler = OrderHandler()
 
         with (
-            patch("eventsource.bus.redis.REDIS_AVAILABLE", True),
-            patch("eventsource.bus.redis.aioredis") as mock_aioredis,
+            patch("eventsource.adapters.redis.bus.REDIS_AVAILABLE", True),
+            patch("eventsource.adapters.redis.bus.aioredis") as mock_aioredis,
         ):
             mock_aioredis.from_url = AsyncMock(return_value=mock_redis)
 
@@ -1166,8 +1166,8 @@ class TestRedisEventBusIntegration:
         subscriber = SampleSubscriber()
 
         with (
-            patch("eventsource.bus.redis.REDIS_AVAILABLE", True),
-            patch("eventsource.bus.redis.aioredis") as mock_aioredis,
+            patch("eventsource.adapters.redis.bus.REDIS_AVAILABLE", True),
+            patch("eventsource.adapters.redis.bus.aioredis") as mock_aioredis,
         ):
             mock_aioredis.from_url = AsyncMock(return_value=mock_redis)
 
