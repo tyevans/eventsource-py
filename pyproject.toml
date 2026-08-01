@@ -218,9 +218,6 @@ only_mutate = [
     "src/eventsource/ports",
     "src/eventsource/adapters",
     "src/eventsource/application",
-    # Store retirement slice (c): resume/duplicate-skip and binary-search surfaces
-    "src/eventsource/migration/bulk_copier.py",
-    "src/eventsource/migration/position_mapper.py",
 ]
 pytest_add_cli_args_test_selection = [
     "tests/unit/test_engine.py",
@@ -237,9 +234,6 @@ pytest_add_cli_args_test_selection = [
     "tests/unit/domain/",
     "tests/unit/ports/",
     "tests/unit/test_public_api.py",
-    # Store retirement slice (c)
-    "tests/unit/migration/test_bulk_copier.py",
-    "tests/unit/migration/test_position_mapper.py",
 ]
 pytest_add_cli_args = ["--no-cov", "-x", "-q", "-p", "no:randomly"]
 
@@ -307,7 +301,6 @@ source_modules = ["eventsource.ports"]
 forbidden_modules = [
     "eventsource.adapters",
     "eventsource.application",
-    "eventsource.migration",
 ]
 
 # Slice A (ADR 0029) created the first port with a sibling that moved to adapters/:

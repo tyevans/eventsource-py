@@ -212,3 +212,7 @@ class TestLegacyStoreSurfaceIsGone:
     def test_legacy_internal_package_is_not_importable(self) -> None:
         with pytest.raises(ModuleNotFoundError):
             import eventsource._internal  # noqa: F401
+
+    def test_legacy_migration_package_is_not_importable(self) -> None:
+        with pytest.raises(ModuleNotFoundError):
+            import eventsource.migration  # noqa: F401
