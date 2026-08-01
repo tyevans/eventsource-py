@@ -1,20 +1,39 @@
-"""Conformance suite for the `SnapshotStore` port.
+"""Conformance suites for the `SnapshotStore` port.
 
-Subclass and provide a `store` fixture yielding a fresh adapter instance
-implementing `SnapshotStore` (`InMemorySnapshotStore`, `SQLiteSnapshotStore`,
-`PostgreSQLSnapshotStore`, ...). The `SnapshotStore` contract is unchanged by
-the core-rings redesign; this suite ports the save/get/delete round-trip and
-schema-version filtering cases exercised individually against each backend
-into a single reusable suite.
+`SnapshotStore` (save/get/delete/exists) is a core capability every
+snapshot adapter implements. `SnapshotTypeInvalidation` (bulk delete by
+aggregate type) is optional -- a store either implements the Protocol or
+it doesn't, with no default body or `NotImplementedError` fallback. As
+with `ProjectionCheckpointsConformance`/`SubscriptionPositionsConformance`/
+`CheckpointRepositoryConformance` in `checkpoints.py`, each capability gets
+its own ABC mixin; `SnapshotStoreConformance` combines both for adapters
+(all three ship with the library today) that implement both Protocols.
+
+Subclass `SnapshotConformance` alone for a store that only implements the
+core Protocol, or `SnapshotStoreConformance` for one that also implements
+`SnapshotTypeInvalidation`, and provide a `store` fixture yielding a fresh
+adapter instance.
 """
 
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime
+from typing import Protocol, runtime_checkable
 from uuid import uuid4
 
 import pytest
 
-from eventsource.ports.snapshots import Snapshot, SnapshotStore
+from eventsource.ports.snapshots import Snapshot, SnapshotStore, SnapshotTypeInvalidation
+
+
+@runtime_checkable
+class _InvalidatableSnapshotStore(SnapshotStore, SnapshotTypeInvalidation, Protocol):
+    """Test-only intersection: a store satisfying both Protocols.
+
+    Lets the bulk-invalidation tests below call both `save_snapshot`/
+    `get_snapshot` (core) and `delete_snapshots_by_type` (optional
+    capability) on the same `store` parameter without `type: ignore`
+    scattered through the test bodies.
+    """
 
 
 def make_snapshot(
@@ -35,7 +54,7 @@ def make_snapshot(
 
 
 class SnapshotConformance(ABC):
-    """Conformance suite for `SnapshotStore` implementations."""
+    """Conformance suite for the core `SnapshotStore` Protocol."""
 
     @abstractmethod
     @pytest.fixture
@@ -114,8 +133,26 @@ class SnapshotConformance(ABC):
         assert await store.get_snapshot(aggregate_id, "Order") == order_snapshot
         assert await store.get_snapshot(aggregate_id, "User") is None
 
+    def test_store_satisfies_snapshot_store_protocol(self, store: SnapshotStore) -> None:
+        assert isinstance(store, SnapshotStore)
+
+
+class SnapshotTypeInvalidationConformance(ABC):
+    """Conformance suite for the optional `SnapshotTypeInvalidation` capability."""
+
+    @abstractmethod
+    @pytest.fixture
+    def store(self) -> object:
+        """Yield a fresh adapter instance implementing `SnapshotTypeInvalidation`."""
+        raise NotImplementedError
+
+    def test_store_satisfies_snapshot_type_invalidation_protocol(
+        self, store: SnapshotTypeInvalidation
+    ) -> None:
+        assert isinstance(store, SnapshotTypeInvalidation)
+
     async def test_delete_snapshots_by_type_removes_matching_type_only(
-        self, store: SnapshotStore
+        self, store: _InvalidatableSnapshotStore
     ) -> None:
         order_snapshot = make_snapshot(aggregate_type="Order")
         user_snapshot = make_snapshot(aggregate_type="User")
@@ -135,7 +172,7 @@ class SnapshotConformance(ABC):
         )
 
     async def test_delete_snapshots_by_type_filters_by_schema_version(
-        self, store: SnapshotStore
+        self, store: _InvalidatableSnapshotStore
     ) -> None:
         old = make_snapshot(aggregate_type="Order", schema_version=1)
         new = make_snapshot(aggregate_type="Order", schema_version=2)
@@ -147,3 +184,11 @@ class SnapshotConformance(ABC):
         assert count == 1
         assert await store.get_snapshot(old.aggregate_id, old.aggregate_type) is None
         assert await store.get_snapshot(new.aggregate_id, new.aggregate_type) == new
+
+
+class SnapshotStoreConformance(SnapshotConformance, SnapshotTypeInvalidationConformance):
+    """Both capabilities: core `SnapshotStore` plus `SnapshotTypeInvalidation`.
+
+    All three snapshot adapters shipped with the library (in-memory,
+    SQLite, PostgreSQL) implement both Protocols today.
+    """

@@ -26,7 +26,7 @@ from eventsource.observability.attributes import (
     ATTR_AGGREGATE_TYPE,
     ATTR_VERSION,
 )
-from eventsource.ports.snapshots import Snapshot, SnapshotStore
+from eventsource.ports.snapshots import Snapshot
 
 # Optional dependency handling
 try:
@@ -50,7 +50,7 @@ class SQLiteNotAvailableError(ImportError):
         )
 
 
-class SQLiteSnapshotStore(SnapshotStore):
+class SQLiteSnapshotStore:
     """
     SQLite implementation of SnapshotStore.
 

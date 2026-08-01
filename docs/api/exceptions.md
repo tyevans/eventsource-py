@@ -54,7 +54,7 @@ group.
 
 **Subsystem errors** live beside the code that raises them (or, for
 `SnapshotError`, alongside the core hierarchy in `eventsource.domain.exceptions`
-despite not deriving from it) — `eventsource.migration`,
+despite not deriving from it) — `eventsource.application.migration`,
 `eventsource.multitenancy`, `eventsource.ports.readmodels.exceptions`, and the
 optional bus backends each define their own families. These are *not*
 subclasses of `EventSourceError`; catching the core base class will not catch
@@ -114,7 +114,6 @@ not at `EventSourceError`:
 | Snapshots | `SnapshotError` | `Exception` (defined in `eventsource.domain.exceptions`, alongside but not part of the core hierarchy) |
 | Read models | `ReadModelError` | `Exception` |
 | Subscriptions | `SubscriptionError` | `Exception` |
-| Migration | `MigrationError` | `Exception` |
 | Event registry | `EventTypeNotFoundError` | `KeyError` |
 | Event registry | `DuplicateEventTypeError` | `ValueError` |
 | Optional backends | `RedisNotAvailableError`, `RabbitMQNotAvailableError`, `KafkaNotAvailableError`, `SQLiteNotAvailableError` | `ImportError` |
@@ -155,7 +154,23 @@ Exception
 │   │   └── TransitionError
 │   ├── EventTypeNotFoundError                 (ADR 0033: rebased here, still also a KeyError)
 │   ├── DuplicateEventTypeError                (ADR 0033: rebased here, still also a ValueError)
-│   └── HandlerSignatureError                  (ADR 0033: rebased here, still also a ValueError)
+│   ├── HandlerSignatureError                  (ADR 0033: rebased here, still also a ValueError)
+│   └── MigrationError                         (ADR 0034: rebased here, was a bare Exception)
+│       eventsource.application.migration.exceptions
+│       ├── MigrationNotFoundError
+│       ├── MigrationAlreadyExistsError
+│       ├── MigrationStateError
+│       │   └── InvalidPhaseTransitionError
+│       ├── CutoverError
+│       │   ├── CutoverTimeoutError
+│       │   └── CutoverLagError
+│       ├── ConsistencyError
+│       ├── BulkCopyError
+│       ├── DualWriteError
+│       ├── PositionMappingError
+│       ├── RoutingError
+│       ├── CircuitBreakerOpenError
+│       └── SubscriptionMigrationError          eventsource.application.migration.subscription_migrator
 │
 ├── SnapshotError                             eventsource.domain.exceptions
 │   │                                          (not a subclass of EventSourceError)
@@ -167,28 +182,12 @@ Exception
 │   ├── OptimisticLockError                    (distinct from the core one)
 │   └── ReadModelNotFoundError
 │
-├── MigrationError                            eventsource.migration.exceptions
-│   ├── MigrationNotFoundError
-│   ├── MigrationAlreadyExistsError
-│   ├── MigrationStateError
-│   │   └── InvalidPhaseTransitionError
-│   ├── CutoverError
-│   │   ├── CutoverTimeoutError
-│   │   └── CutoverLagError
-│   ├── ConsistencyError
-│   ├── BulkCopyError
-│   ├── DualWriteError
-│   ├── PositionMappingError
-│   ├── RoutingError
-│   ├── CircuitBreakerOpenError
-│   └── SubscriptionMigrationError             eventsource.migration.subscription_migrator
-│
 ├── (standalone, direct Exception subclasses)
 │   ├── RetryError                            eventsource.application.subscriptions.retry
 │   ├── CircuitBreakerOpenError               eventsource.application.subscriptions.retry
 │   │                                          (distinct from the migration one)
-│   ├── StoreNotFoundError                    eventsource.migration.router
-│   ├── WritePausedError                      eventsource.migration.write_pause
+│   ├── StoreNotFoundError                    eventsource.application.migration.router
+│   ├── WritePausedError                      eventsource.application.migration.write_pause
 │   ├── ShutdownError                         eventsource.adapters.rabbitmq
 │   └── BatchPublishError                     eventsource.adapters.rabbitmq
 │
@@ -210,7 +209,7 @@ Two names appear twice in the tree. `OptimisticLockError` is defined both in
 `eventsource.ports.readmodels.exceptions` (read-model row conflicts), and the
 two are unrelated classes — catching one will not catch the other. (This
 collision predates ADR 0029 and is tracked in `BACKLOG.md`.) `CircuitBreakerOpenError`
-is likewise defined twice, in `eventsource.migration.exceptions` (a
+is likewise defined twice, in `eventsource.application.migration.exceptions` (a
 `MigrationError`) and in `eventsource.application.subscriptions.retry` (a bare `Exception`).
 Import these by module rather than pulling both into one namespace.
 

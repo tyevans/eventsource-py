@@ -569,9 +569,9 @@ async def postgres_event_store(
         outbox_enabled=False,
     )
 
-    # postgres_engine is session-scoped; this adapter's close() disposes the
-    # engine, so it must NOT be called here -- that would break every later
-    # test in the session.
+    # postgres_engine is session-scoped and caller-owned (owns_engine
+    # defaults False, so store.close() would be a safe no-op here anyway);
+    # not calling it at all keeps the intent explicit.
     yield store
 
 
@@ -598,7 +598,9 @@ async def postgres_event_store_with_outbox(
         outbox_enabled=True,
     )
 
-    # postgres_engine is session-scoped -- do not call store.close() here.
+    # postgres_engine is session-scoped and caller-owned (owns_engine
+    # defaults False, so store.close() would be a safe no-op here anyway);
+    # not calling it at all keeps the intent explicit.
     yield store
 
 

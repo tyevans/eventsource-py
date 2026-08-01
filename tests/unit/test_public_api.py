@@ -195,7 +195,9 @@ class TestLegacyStoreSurfaceIsGone:
             import eventsource.repositories  # noqa: F401
 
     def test_outbox_repository_protocol_has_no_list_pending_events(self) -> None:
-        assert not hasattr(eventsource.ports.OutboxRepository, "list_pending_events")
+        from eventsource.ports import OutboxRepository
+
+        assert not hasattr(OutboxRepository, "list_pending_events")
 
     def test_legacy_subscriptions_package_is_not_importable(self) -> None:
         with pytest.raises(ModuleNotFoundError):
@@ -212,3 +214,7 @@ class TestLegacyStoreSurfaceIsGone:
     def test_legacy_internal_package_is_not_importable(self) -> None:
         with pytest.raises(ModuleNotFoundError):
             import eventsource._internal  # noqa: F401
+
+    def test_legacy_migration_package_is_not_importable(self) -> None:
+        with pytest.raises(ModuleNotFoundError):
+            import eventsource.migration  # noqa: F401

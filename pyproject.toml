@@ -218,9 +218,6 @@ only_mutate = [
     "src/eventsource/ports",
     "src/eventsource/adapters",
     "src/eventsource/application",
-    # Store retirement slice (c): resume/duplicate-skip and binary-search surfaces
-    "src/eventsource/migration/bulk_copier.py",
-    "src/eventsource/migration/position_mapper.py",
 ]
 pytest_add_cli_args_test_selection = [
     "tests/unit/test_engine.py",
@@ -237,9 +234,6 @@ pytest_add_cli_args_test_selection = [
     "tests/unit/domain/",
     "tests/unit/ports/",
     "tests/unit/test_public_api.py",
-    # Store retirement slice (c)
-    "tests/unit/migration/test_bulk_copier.py",
-    "tests/unit/migration/test_position_mapper.py",
 ]
 pytest_add_cli_args = ["--no-cov", "-x", "-q", "-p", "no:randomly"]
 
@@ -294,33 +288,25 @@ source_modules = [
 ]
 forbidden_modules = ["sqlalchemy"]
 
+# Full ring layering (ADR 0034). Higher layers may import lower, never the
+# reverse: adapters -> application -> ports -> domain. This subsumes the two
+# targeted forbidden contracts that previously guarded application->adapters
+# and ports->{adapters,application}, and adds the domain ring (domain may not
+# name ports, application, or adapters). Packages outside the four rings
+# (observability, multitenancy, testing, migrations, serialization) are
+# deliberately unconstrained here. Note this catches by-name dependencies the
+# Tier 0 sqlalchemy contract cannot: e.g. ports/readmodels importing
+# eventsource.adapters.sql.readmodel_schema would break layering even though
+# readmodel_schema itself imports no sqlalchemy (ADR 0029 gap, closed here).
 [[tool.importlinter.contracts]]
-name = "Application ring must not import adapters"
-type = "forbidden"
-source_modules = ["eventsource.application"]
-forbidden_modules = ["eventsource.adapters"]
-
-[[tool.importlinter.contracts]]
-name = "Ports must not import adapters, application, or migration"
-type = "forbidden"
-source_modules = ["eventsource.ports"]
-forbidden_modules = [
+name = "Ring layering: adapters over application over ports over domain"
+type = "layers"
+layers = [
     "eventsource.adapters",
     "eventsource.application",
-    "eventsource.migration",
+    "eventsource.ports",
+    "eventsource.domain",
 ]
-
-# Slice A (ADR 0029) created the first port with a sibling that moved to adapters/:
-# eventsource.ports.readmodels (the ReadModel/Query/Filter/ReadModelRepository contract)
-# beside eventsource.adapters.sql.readmodel_schema (DDL generation, dialect-specific).
-# An accidental "from eventsource.adapters.sql.readmodel_schema import generate_schema"
-# inside ports/readmodels/model.py would be a real regression the existing Tier 0
-# sqlalchemy-only contract cannot catch -- readmodel_schema.py imports no sqlalchemy, so
-# nothing there trips "must not import sqlalchemy." This contract closes that gap
-# directly: the ports ring may not name an adapter, an application-ring module, or
-# migration/, regardless of what those modules do or do not import themselves. (The
-# eventsource.bus package itself was deleted by ADR 0031 -- its backends now live under
-# eventsource.adapters and are covered by the adapters entry.)
 
 # The projections/ Tier-0 blocker documented in docs/core-surface.md (projections/base.py
 # and the checkpoint/dlq managers pulling in sqlalchemy-backed repositories.checkpoint and

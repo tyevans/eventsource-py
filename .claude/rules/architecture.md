@@ -32,7 +32,7 @@ The rings, innermost first:
    `DeclarativeAggregate` is their only consumer) are settled, not transitional;
    top-level `events/` and `handlers/` are no longer transitional locations for
    any of it (ADR 0033).
-2. **Use cases** (`application/` — during transition `migration/`):
+2. **Use cases** (`application/`):
    Application business rules —
    aggregate repositories, projection engines, subscription lifecycle, migration
    orchestration. Depends on entities and on the boundary ports it owns. Never on a
@@ -58,7 +58,13 @@ The rings, innermost first:
    the Dependency Rule lets an outer ring depend inward but never the reverse, so
    a utility used by both application and adapters is owned by the innermost of
    the two) are settled, not transitional; top-level `handlers/` and `_internal/`
-   are gone (ADR 0033).
+   are gone (ADR 0033). `application/migration/` (fourteen orchestration modules
+   — `bulk_copier.py`, `consistency.py`, `coordinator.py`, `cutover.py`,
+   `dual_write.py`, `exceptions.py`, `metrics.py`, `position_mapper.py`,
+   `router.py`, `status_streamer.py`, `subscription_migrator.py`,
+   `sync_lag_tracker.py`, `write_pause.py`, plus `__init__.py`) is settled, not
+   transitional; top-level `migration/` no longer exists (ADR 0034) — it was the
+   last top-level package outside the ring map.
 3. **Interface adapters** (`adapters/` — during transition `stores/`):
    Gateways that
    implement the ports for a specific technology, converting between the use-case
@@ -94,6 +100,12 @@ The rings, innermost first:
    importer is a bus adapter, so it joins `adapters/_bus/base.py` and
    `adapters/_bus/registry.py` as adapters-internal shared code; top-level
    `handlers/` is no longer a transitional location for it (ADR 0033).
+   `adapters/sql/migration/` (`PostgreSQLMigrationRepository`,
+   `PostgreSQLTenantRoutingRepository`, `PostgreSQLPositionMappingRepository`,
+   `PostgreSQLMigrationAuditLogRepository`, `VALID_TRANSITIONS`) is settled, not
+   transitional — the sqlalchemy-backed implementations of the four Protocols
+   in `ports/migration/repositories.py`; top-level `migration/repositories/` no
+   longer exists (ADR 0034).
 4. **Frameworks & drivers**: sqlalchemy, asyncpg, aiosqlite, redis, aiokafka,
    aio-pika. Imported only inside the adapter that needs them, always guarded
    (see below). Driver types never appear in port signatures.
@@ -121,7 +133,19 @@ inverted at every boundary crossing (the D in SOLID).
   `get_subscribed_event_types()`) and `ports/coordination.py` (`LeaderElector`,
   `LeaderElectorWithLease`, `LeaderChangeCallback`) are settled, not transitional;
   top-level `subscriptions/` is no longer a transitional location for any of
-  these (ADR 0032).
+  these (ADR 0032). `ports/migration/` (`models.py` — `Migration`,
+  `MigrationConfig`, `MigrationPhase`, `MigrationStatus`, `MigrationResult`,
+  `TenantRouting`, `TenantMigrationState`, `PositionMapping`, `SyncLag`,
+  `CutoverResult`, `MigrationAuditEntry`, `AuditEventType`; `repositories.py` —
+  `MigrationRepository`, `TenantRoutingRepository`, `PositionMappingRepository`,
+  `MigrationAuditLogRepository` Protocols) is settled, not transitional — a
+  subpackage rather than a flat module, following the `ports/readmodels/`
+  precedent; top-level `migration/` and `migration/models.py` are no longer
+  transitional locations for any of it (ADR 0034). `ports/snapshots.py`
+  (`Snapshot`, `SnapshotStore` — a `Protocol`, not an `ABC` — and
+  `SnapshotTypeInvalidation`, the optional bulk-invalidation capability port)
+  is settled (ADR 0036). `ports/lifecycle.py` (`SupportsClose`, the optional
+  resource-release capability port) is settled (ADR 0037).
 - Our store/repository/bus ports are **output ports** (gateways) in Clean
   Architecture terms: the use-case ring calls them; adapters implement them.
 - Ports are small, composed `Protocol` classes — one capability per port

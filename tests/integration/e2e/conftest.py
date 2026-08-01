@@ -75,6 +75,8 @@ async def postgres_event_store(
     async with engine.begin() as conn:
         await conn.execute(text("DROP TABLE IF EXISTS events CASCADE"))
 
-    store = PostgreSQLEventStore(engine, event_registry=_make_registry(), create_schema=True)
+    store = PostgreSQLEventStore(
+        engine, event_registry=_make_registry(), create_schema=True, owns_engine=True
+    )
     yield store
     await store.close()

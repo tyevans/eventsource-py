@@ -82,7 +82,7 @@ serves many customers without leaking rows between them. A distributed event bus
 Kafka, or RabbitMQ, whichever fits, each behind the same `EventBus` interface you already
 know. OpenTelemetry traces that follow a command from HTTP request through append,
 publish, and projection. And the advanced aggregate patterns: process managers, sagas,
-and the live migration tooling in `eventsource.migration` for moving a running system from
+and the live migration tooling in `eventsource.application.migration` for moving a running system from
 one event store to another with dual-write and cutover.
 
 Two things worth setting expectations on. First, these later phases are a menu, not a

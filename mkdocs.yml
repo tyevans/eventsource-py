@@ -156,6 +156,11 @@ nav:
       - "ADR-0030: Top-Level Module Ring Consolidation": adrs/0030-top-level-module-ring-consolidation.md
       - "ADR-0031: Bus Ring Split": adrs/0031-bus-ring-split.md
       - "ADR-0032: Subscriptions Ring Migration": adrs/0032-subscriptions-ring-migration.md
+      - "ADR-0033: Events, Handlers, and Internal Ring Migration": adrs/0033-events-handlers-internal-ring-migration.md
+      - "ADR-0034: Migration Ring and Layers Contract": adrs/0034-migration-ring-and-layers-contract.md
+      - "ADR-0035: Lazy Front Door": adrs/0035-lazy-front-door.md
+      - "ADR-0036: Snapshot Port Composed Protocols": adrs/0036-snapshot-port-composed-protocols.md
+      - "ADR-0037: Store Lifecycle Port": adrs/0037-store-lifecycle-port.md
   - Development:
       - development/index.md
       - Contributing: development/contributing.md

@@ -56,7 +56,7 @@ from eventsource.testing.conformance_ports import (  # noqa: E402
     DLQRepositoryConformance,
     EventLookupConformance,
     GlobalFeedConformance,
-    SnapshotConformance,
+    SnapshotStoreConformance,
     StreamReaderConformance,
 )
 from eventsource.testing.conformance_ports._fixtures import make_event, make_stream  # noqa: E402
@@ -73,7 +73,9 @@ async def _fresh_store(connection_url: str) -> PostgreSQLEventStore:
     engine = create_async_engine(connection_url)
     async with engine.begin() as conn:
         await conn.execute(text("DROP TABLE IF EXISTS events CASCADE"))
-    return PostgreSQLEventStore(engine, event_registry=_make_registry(), create_schema=True)
+    return PostgreSQLEventStore(
+        engine, event_registry=_make_registry(), create_schema=True, owns_engine=True
+    )
 
 
 class TestPostgreSQLAppender(AppenderConformance):
@@ -147,7 +149,7 @@ class TestPostgreSQLCategoryQuery(CategoryQueryConformance):
         await store.close()
 
 
-class TestPostgreSQLSnapshotStore(SnapshotConformance):
+class TestPostgreSQLSnapshotStore(SnapshotStoreConformance):
     @pytest.fixture
     async def store(
         self, ports_postgres_connection_url: str

@@ -49,7 +49,7 @@ from eventsource.testing.conformance_ports import (  # noqa: E402
     EventLookupConformance,
     GlobalFeedConformance,
     OutboxRepositoryConformance,
-    SnapshotConformance,
+    SnapshotStoreConformance,
     StreamReaderConformance,
 )
 from eventsource.testing.conformance_ports._fixtures import (  # noqa: E402
@@ -100,7 +100,7 @@ class TestSQLiteCategoryQuery(CategoryQueryConformance):
         await store.close()
 
 
-class TestSQLiteSnapshotStore(SnapshotConformance):
+class TestSQLiteSnapshotStore(SnapshotStoreConformance):
     @pytest.fixture
     async def store(self) -> AsyncIterator[SQLiteSnapshotStore]:
         with tempfile.TemporaryDirectory() as tmpdir:

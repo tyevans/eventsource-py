@@ -21,11 +21,13 @@ current importers, per `grep -rlE '^(from|import) sqlalchemy' src/eventsource/`:
 `adapters/postgresql/outbox.py`, `adapters/postgresql/snapshots.py`,
 `adapters/postgresql/store.py`, `adapters/sql/checkpoints.py`,
 `adapters/_sql/connection.py`, `adapters/_sql/dialect.py`, `adapters/sql/dlq.py`,
-`engine.py`, `locks/postgresql.py`, `migration/repositories/audit_log.py`,
-`migration/repositories/migration.py`, `migration/repositories/position_mapping.py`,
-`migration/repositories/routing.py`, and `readmodels/postgresql.py`. (`stores/` and
+`engine.py`, `locks/postgresql.py`, `adapters/sql/migration/audit_log.py`,
+`adapters/sql/migration/migration.py`, `adapters/sql/migration/position_mapping.py`,
+`adapters/sql/migration/routing.py`, and `readmodels/postgresql.py`. (`stores/` and
 `repositories/` no longer exist — both were deleted by the store retirement and
-outbox ring migration slices.) The key question: do any core interfaces import
+outbox ring migration slices; `migration/repositories/*.py` moved to
+`adapters/sql/migration/` when `eventsource.migration` joined the ring map,
+ADR 0034.) The key question: do any core interfaces import
 sqlalchemy at module level? If the interfaces are clean (pydantic-only), sqlalchemy
 can become optional. If not, identify what needs to change. This further lightens
 the base install toward the Tier 0 goal.
@@ -76,71 +78,6 @@ Resolved by the bus ring split (ADR 0031, 2026-07-31): `bus/` and its facade
 ~90 call sites are retargeted onto `eventsource.adapters._bus` and the
 per-backend collaborator modules directly, in the same pass as the ring
 move, rather than as a separate 0.8.0 migration.
-
-## Redesign SnapshotStore port as composed Protocols (P2)
-
-`ports/snapshots.py` now permanently hosts `SnapshotStore`, but it moved verbatim
-as an ABC with concrete default bodies (`snapshot_exists`) and a
-`delete_snapshots_by_type` that raises `NotImplementedError` by default -- both
-violate the settled ports rules ("no implementation code, ever"; optional
-capability = not implementing a port, never NotImplementedError). Split into small
-composed Protocols (save/get/delete; bulk invalidation as a separate optional
-capability port), update the three snapshot adapters and the conformance suite,
-and drop the NotImplementedError default. Flagged by the
-aggregates-application-ring final review (deliberately out of scope there).
-
-## Lazy top-level eventsource/__init__ (P3)
-
-`import eventsource` eagerly loads sqlalchemy through the public front door.
-`stores/` and `repositories/` are both gone now (legacy store retirement and the
-outbox ring migration), so the chain `docs/core-surface.md` records post-slice is
-`eventsource/__init__.py` -> `eventsource.adapters._sql.engine` /
-`eventsource.adapters.postgresql` directly at module level — one module deeper
-than the `eventsource.engine` path this note previously recorded (structure
-slice A / ADR 0029 moved `engine.py` under `adapters/_sql/`), but no cheaper:
-still exactly two module-level imports in the top-level `__init__` itself,
-same sqlalchemy cost either way. Structure slice A did not change this
-conclusion, but not because the moved adapters stayed lazy — they didn't.
-`eventsource/__init__.py` imports `eventsource.adapters.memory`,
-`eventsource.adapters.postgresql`, and `eventsource.adapters.sql` at module
-level (for the store/checkpoint/DLQ/outbox exports it already had), and those
-package `__init__.py` files now also import `readmodels`/`locks` submodules
-eagerly — so the read-model and lock adapters are loaded through the front
-door's existing eager `adapters` imports, not through their `eventsource.readmodels`
-/ `eventsource.locks` shims' lazy `__getattr__` (the shims are lazy, but the
-front door never goes through them). For read models this is the same eager
-cost as pre-slice, just by a different path — `ReadModelProjection`'s
-top-level re-export already pulled sqlalchemy in via
-`adapters/sql/projection.py` (now `adapters/sql/readmodel_projection.py`)
-before this slice. For locks it is newly eager — `PostgreSQLLockManager`
-was not previously imported by the front door — but it is pure Python with
-no new third-party import, so it adds no new dependency weight. Do not
-expand this entry's scope on the strength of that slice landing. Correctness
-is unaffected (sqlalchemy is a core dep) but import time and the Tier 0 story
-would benefit from a PEP 562 lazy `__getattr__` front door. Pairs with the
-"Investigate making sqlalchemy an optional dependency" item above.
-
-Note for whoever picks this up: the readmodels port-purity test
-(`tests/unit/ports/test_readmodels_port_surface.py`) had to be written as a
-static `ast` check — parsing the module source for import statements — rather
-than a runtime `sys.modules` check, precisely because the front door is
-eager. A runtime check (`import eventsource.ports.readmodels; assert
-"sqlalchemy" not in sys.modules`) would fail today for a reason unrelated to
-`ports/readmodels/` itself: importing `eventsource` at all, which
-`eventsource.ports` sits under, already loads sqlalchemy through this exact
-chain. That is a second, independent cost of the eager `__init__` beyond
-import time — it also makes runtime Tier-0 purity unverifiable for anything
-reached through the top-level package, forcing static analysis instead.
-
-## Define store lifecycle in the ports layer (P2)
-
-`close()` is not part of any store port, yet consumers duck-type it:
-`SyncStoreFacade.close()` calls `getattr(store, "close", None)`, `MemoryEventStore`
-has no `close()`, and `PostgreSQLEventStore.close()` disposes an engine the caller
-injected and still owns — `SyncStoreFacade(PostgreSQLEventStore(shared_engine))`
-quietly tears down the caller's pool. Add an optional close/lifecycle port with
-documented ownership semantics; make engine ownership an explicit constructor flag
-on the postgres adapter (or stop disposing caller-provided engines).
 
 ## Document store_id uniqueness expectations (P3)
 
@@ -294,25 +231,6 @@ and the four backends to `adapters/memory/bus.py`, `adapters/redis/`,
 `adapters/kafka/`, `adapters/rabbitmq/` (guarded optional imports preserved).
 Landed together with "Remove bus facade compat shims" above, per the
 coordination note.
-
-## Move migration/repositories onto the adapters ring (P2)
-
-`migration/repositories/{audit_log,migration,position_mapping,routing}.py` are
-sqlalchemy implementations living inside a use-case-shaped package, and since
-the outbox slice they import `eventsource.adapters._sql.connection` directly —
-accepted debt with no import-linter contract covering it (spec §2.3 of the
-outbox ring design; also recorded as still-open in `docs/core-surface.md`
-finding 7, alongside `readmodels/postgresql.py`'s now-resolved instance of
-the same debt). Relocate them under `adapters/` (or split port protocols out
-first), then add the missing contract so the application ring can't name
-adapters. Campaign residue item (2026-07-31). Structure slice A (ADR 0029,
-2026-07-31) added the general "Ports must not import adapters, application,
-or bus" import-linter contract, narrower than the `layers` contract this
-entry originally called for — it covers `ports/` only, not `application/`'s
-inability to name adapters (already covered separately by "Application ring
-must not import adapters") or a full ring-order pin. Whether a single
-`layers`-type contract subsuming both is still worth adding is this entry's
-remaining scope.
 
 ## Relocate subscriptions/ into the application ring (P2)
 

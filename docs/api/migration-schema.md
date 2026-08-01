@@ -1,7 +1,7 @@
 # Migration Schema Reference
 
 The `migration` schema template defines the four PostgreSQL tables that back the
-live tenant migration system in `eventsource.migration`: `tenant_migrations`,
+live tenant migration system in `eventsource.application.migration`: `tenant_migrations`,
 `tenant_routing`, `migration_position_mappings`, and `migration_audit_log`.
 
 The canonical definition is `src/eventsource/migrations/templates/migration.sql`,
@@ -18,7 +18,7 @@ system stays online. It documents the physical schema only — table structure,
 constraints, indexes, triggers, and which repository class touches which table.
 
 It does not describe the migration workflow (bulk copy, dual write, cutover) or
-the orchestration API; those live with the `eventsource.migration` package and
+the orchestration API; those live with the `eventsource.application.migration` package and
 its `README.md`. Use this page when you need to answer "what does the database
 look like, and what will the database reject?"
 
@@ -149,7 +149,7 @@ row per migration attempt; history is retained after completion.
 The last three are the terminal phases, and the partial indexes below treat
 `('completed', 'aborted', 'failed')` as "not active". Legal transitions between
 phases are enforced in Python by `VALID_TRANSITIONS` in
-`eventsource.migration.repositories`, not by the database — the `CHECK`
+`eventsource.adapters.sql.migration`, not by the database — the `CHECK`
 constraint only validates the value itself.
 
 ### Progress and position columns
@@ -342,7 +342,7 @@ Fifteen values are permitted:
 `verification_failed`, `progress_checkpoint`.
 
 These correspond one-to-one with the `AuditEventType` enum in
-`eventsource.migration.models`. Adding a new audit event type requires changing
+`eventsource.ports.migration.models`. Adding a new audit event type requires changing
 both the enum and this `CHECK` constraint.
 
 ### Indexes for compliance and time-range queries
@@ -391,10 +391,10 @@ comments and of the documented column comments.
 
 ## Which repository classes read and write each table
 
-All live in `eventsource.migration.repositories`. Each has a `Protocol`
-defining the interface and a PostgreSQL implementation constructed from a
-SQLAlchemy `AsyncConnection` or `AsyncEngine`, with optional OpenTelemetry
-tracing.
+Each table has a `Protocol` defining the interface, in
+`eventsource.ports.migration.repositories`, and a PostgreSQL implementation
+in `eventsource.adapters.sql.migration`, constructed from a SQLAlchemy
+`AsyncConnection` or `AsyncEngine`, with optional OpenTelemetry tracing.
 
 | Table | Repository | Representative operations |
 | --- | --- | --- |
@@ -405,7 +405,7 @@ tracing.
 
 No repository writes to a table it does not own; cross-table consistency comes
 from the foreign keys and from the coordinator in
-`eventsource.migration.coordinator`.
+`eventsource.application.migration.coordinator`.
 
 The routing repository's cache is process-local with a short TTL by design.
 Multi-instance deployments see a bounded inconsistency window equal to that TTL

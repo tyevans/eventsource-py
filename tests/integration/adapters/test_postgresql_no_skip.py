@@ -37,7 +37,9 @@ async def _run_no_skip_scenario(ports_postgres_connection_url: str) -> None:
     async with engine.begin() as conn:
         await conn.execute(text("DROP TABLE IF EXISTS events CASCADE"))
 
-    store = PostgreSQLEventStore(engine, event_registry=_make_registry(), create_schema=True)
+    store = PostgreSQLEventStore(
+        engine, event_registry=_make_registry(), create_schema=True, owns_engine=True
+    )
     # Force schema creation before the two writers race.
     await store.current_position()
 

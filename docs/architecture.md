@@ -82,7 +82,7 @@ and that design is explained, while the tables themselves belong to the
 reference material.
 
 Several neighbours are named and then left alone. Live store-to-store migration
-(`eventsource.migration`), GDPR erasure (`eventsource.gdpr`), the BDD and
+(`eventsource.application.migration`), GDPR erasure (`eventsource.gdpr`), the BDD and
 harness helpers in `eventsource.testing`, and the internal details of the
 conformance suites are all real parts of the package and all out of scope,
 mentioned only where they illustrate a boundary. Deeper single-topic arguments

@@ -30,6 +30,7 @@ from eventsource.ports import (
     FullEventStore,
     Position,
     StreamReadOptions,
+    SupportsClose,
     collect,
 )
 
@@ -82,11 +83,10 @@ class SyncStoreFacade:
         return self._loop.run_until_complete(self._store.event_exists(event_id))
 
     def close(self) -> None:
-        """Close the underlying store (if it has a close()), then release the private loop. Idempotent."""
+        """Close the underlying store (if it implements SupportsClose), then release the private loop. Idempotent."""
         if not self._loop.is_closed():
-            close = getattr(self._store, "close", None)
-            if close is not None:
-                self._loop.run_until_complete(close())
+            if isinstance(self._store, SupportsClose):
+                self._loop.run_until_complete(self._store.close())
             self._loop.close()
 
 

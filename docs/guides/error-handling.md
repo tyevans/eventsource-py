@@ -167,7 +167,7 @@ except ReadModelConflict as exc:
     logger.warning("read model %s conflicted at v%s", exc.model_id, exc.expected_version)
 ```
 
-Two more trees exist outside all of this and are only relevant if you use those features: `MigrationError` (`eventsource.migration.exceptions`, for the live-migration tooling) and the event registry's `EventTypeNotFoundError` (a `KeyError`) and `DuplicateEventTypeError` (a `ValueError`), neither of which is an `EventSourceError`.
+`MigrationError` (`eventsource.application.migration.exceptions`, for the live-migration tooling), the event registry's `EventTypeNotFoundError` (a `KeyError`), and `DuplicateEventTypeError` (a `ValueError`) are all `EventSourceError` subclasses too (rebased in ADR 0034 and ADR 0033 respectively), but sit far enough from everyday append/read paths that they are only relevant if you use those specific features.
 
 ## Deciding how to react: retryable vs. bug vs. fatal
 

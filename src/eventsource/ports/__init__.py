@@ -40,6 +40,7 @@ from eventsource.ports.handlers import (
     FlexibleEventSubscriber,
     SyncEventHandler,
 )
+from eventsource.ports.lifecycle import SupportsClose
 from eventsource.ports.locks import (
     DistributedLock,
     LockInfo,
@@ -54,7 +55,7 @@ from eventsource.ports.outbox import (
     outbox_event_data,
 )
 from eventsource.ports.positions import ExpectedVersion, Position
-from eventsource.ports.snapshots import Snapshot, SnapshotStore
+from eventsource.ports.snapshots import Snapshot, SnapshotStore, SnapshotTypeInvalidation
 from eventsource.ports.store import (
     AggregateStore,
     CategoryQuery,
@@ -96,6 +97,7 @@ __all__ = [
     # Snapshot port (TRANSITION re-home)
     "Snapshot",
     "SnapshotStore",
+    "SnapshotTypeInvalidation",
     # Bus port
     "EventPublisher",
     "SubscribableEventBus",
@@ -116,6 +118,8 @@ __all__ = [
     "DLQRepository",
     "DLQStats",
     "ProjectionFailureCount",
+    # Lifecycle port
+    "SupportsClose",
     # Lock port
     "DistributedLock",
     "LockInfo",

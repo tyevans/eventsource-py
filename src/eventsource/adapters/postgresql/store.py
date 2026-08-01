@@ -133,6 +133,15 @@ class PostgreSQLEventStore:
     production also avoids concurrent `CREATE INDEX IF NOT EXISTS` racing
     across processes ("tuple concurrently updated").
 
+    Engine ownership: the `AsyncEngine` is always caller-supplied. This
+    store does not own it by default (`owns_engine=False`), so `close()`
+    is a no-op -- disposing a pool the caller still holds would be a
+    surprising side effect, especially for a caller sharing one engine
+    across several stores/consumers. Pass `owns_engine=True` if this store
+    should dispose the engine when `close()` is called (see `close()` for
+    details). Satisfies `eventsource.ports.lifecycle.SupportsClose`
+    structurally.
+
     Structural conformance only -- no inheritance from the port protocols.
 
     Attributes:
@@ -149,6 +158,7 @@ class PostgreSQLEventStore:
         store_id: str | None = None,
         create_schema: bool = False,
         outbox_enabled: bool = False,
+        owns_engine: bool = False,
     ) -> None:
         if not ASYNCPG_AVAILABLE:
             raise ImportError(
@@ -165,6 +175,7 @@ class PostgreSQLEventStore:
         self._codec = IntPositionCodec(self._store_id)
         self._create_schema = create_schema
         self._schema_ready = False
+        self._owns_engine = owns_engine
         self._schema_lock = asyncio.Lock()
         self._outbox_enabled = outbox_enabled
 
@@ -215,8 +226,18 @@ class PostgreSQLEventStore:
             self._schema_ready = True
 
     async def close(self) -> None:
-        """Dispose the underlying engine. Safe to call multiple times."""
-        await self._engine.dispose()
+        """Dispose the underlying engine, but only if this store owns it.
+
+        The engine is always caller-supplied to the constructor; by default
+        this store does not own it and `close()` is a safe no-op, since
+        disposing a pool the caller still holds (and may share with other
+        stores/consumers) would tear it out from under them. Pass
+        `owns_engine=True` at construction to opt in -- for example, a
+        caller that constructs the engine solely for this store and wants
+        `close()` to release it. Idempotent either way.
+        """
+        if self._owns_engine:
+            await self._engine.dispose()
 
     def _check_expected(self, current: int, expected: ExpectedVersion, stream: StreamId) -> None:
         if expected.kind == "any":
