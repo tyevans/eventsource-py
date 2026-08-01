@@ -6,6 +6,12 @@ Accepted. Implemented in `src/eventsource/multitenancy/` (`context.py`, `events.
 `repository.py`, `exceptions.py`). This ADR describes the model as it exists today,
 including the parts that are deliberately incomplete.
 
+**Amended by ADR 0038** (the four modules named above relocate to
+`domain/tenant_context.py`, `domain/tenant_events.py`,
+`application/aggregates/tenant_repository.py`, and a merge into
+`domain/exceptions.py`; the isolation model and Decision described below
+are unchanged).
+
 ## Context
 
 ### What multi-tenancy has to solve in an event-sourced system

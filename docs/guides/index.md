@@ -264,7 +264,7 @@ If you are moving an existing deployment between stores, do it with
 
 | Guide | Use it to |
 | --- | --- |
-| [Set up the database schema](database-schema.md) | Create the tables the SQL backends read and write, from the SQL bundled in `eventsource.migrations` -- by CLI, from Python, or as an Alembic revision |
+| [Set up the database schema](database-schema.md) | Create the tables the SQL backends read and write, from the SQL bundled in `eventsource.adapters.sql.schemas` -- by CLI, from Python, or as an Alembic revision |
 | [Choose an event store backend](../how-to/choose-an-event-store-backend.md) | Pick between `InMemoryEventStore`, `SQLiteEventStore`, and `PostgreSQLEventStore`, and wire the one you picked |
 | [Use the event store from synchronous code](sync-usage.md) | Call an async `EventStore` from Celery tasks, Django views and management commands, RQ workers, notebooks, and scripts, via `SyncEventStoreAdapter` |
 | [Live tenant store migration](live-migration.md) | Move one tenant's events between stores with bulk copy, dual-write, sync-lag tracking, and a gated cutover, without downtime |

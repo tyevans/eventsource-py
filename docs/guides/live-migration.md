@@ -203,7 +203,7 @@ the tables already exist and do not create them on demand.
 The DDL ships with the library:
 
 ```python
-from eventsource.migrations import get_schema
+from eventsource.adapters.sql.schemas import get_schema
 
 schema_sql = get_schema("migration")
 ```

@@ -241,7 +241,7 @@ before the first call, or the statement fails with a database error:
 | --- | --- | --- |
 | `PostgreSQLOutboxRepository` | `event_outbox` | `migrations/templates/outbox.sql` |
 
-Templates live under `src/eventsource/migrations/templates/`; apply them with
+Templates live under `src/eventsource/adapters/sql/schemas/templates/`; apply them with
 your own migration tooling, or use the Alembic scaffold provided alongside them
 in `migrations/templates/alembic/`.
 
@@ -323,7 +323,7 @@ separate directory from the PostgreSQL templates:
 | --- | --- | --- |
 | `SQLiteOutboxRepository` | `event_outbox` | `migrations/templates/sqlite/outbox.sql` |
 
-Templates are under `src/eventsource/migrations/templates/sqlite/`, alongside
+Templates are under `src/eventsource/adapters/sql/schemas/templates/sqlite/`, alongside
 `events.sql` and `snapshots.sql`.
 
 #### What differs from PostgreSQL

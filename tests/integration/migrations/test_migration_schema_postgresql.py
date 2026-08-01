@@ -13,7 +13,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import text
 
-from eventsource.migrations import get_schema
+from eventsource.adapters.sql.schemas import get_schema
 
 from ..conftest import skip_if_no_postgres_infra
 

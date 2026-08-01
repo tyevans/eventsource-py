@@ -1,7 +1,7 @@
 # Tutorial 16: Multi-Tenancy
 
 In this tutorial you will make one event-sourced aggregate safe to share between several
-tenants, using the `eventsource.multitenancy` module: `TenantDomainEvent`,
+tenants, using the library's multi-tenancy support: `TenantDomainEvent`,
 `tenant_scope()`, and `TenantAwareRepository`.
 
 A *tenant* is a customer whose data must never mix with another customer's. In an
@@ -98,11 +98,12 @@ wrong:
   `set_current_tenant`, `clear_tenant_context`, `get_required_tenant`,
   `TenantContextNotSetError`, and `TenantMismatchError` are all re-exported from the
   top-level `eventsource` package.
-- `TenantAwareRepository` is **not**. Import it from `eventsource.multitenancy`.
+- `TenantAwareRepository` is **not**. Import it from
+  `eventsource.application.aggregates.tenant_repository`.
 
 ```python
 from eventsource import TenantDomainEvent, tenant_scope
-from eventsource.multitenancy import TenantAwareRepository
+from eventsource.application.aggregates.tenant_repository import TenantAwareRepository
 ```
 
 Create a file called `multi_tenancy.py` in an empty directory and add to it as you go.
@@ -151,7 +152,7 @@ alone reaches a store.
 
 **Second, stop passing the tenant by hand.** Required-ness only guarantees that *some*
 UUID is present, not that it is the right one. This is what `tenant_context` -- a
-`ContextVar[UUID | None]` in `eventsource.multitenancy.context` -- is for. You set it once
+`ContextVar[UUID | None]` in `eventsource.domain.tenant_context` -- is for. You set it once
 at the edge of a request with `async with tenant_scope(tenant_id)`, and everything inside
 that block reads the tenant from context rather than from an argument:
 `TenantDomainEvent.with_tenant_context()` fills the field from it, `create_event()` on a
@@ -339,7 +340,7 @@ manager that publishes the current tenant to everything running inside its block
 call site has to be handed a UUID.
 
 Underneath it is a single module-level `ContextVar`, declared in
-`eventsource.multitenancy.context`:
+`eventsource.domain.tenant_context`:
 
 ```python
 tenant_context: ContextVar[UUID | None] = ContextVar("tenant_context", default=None)
@@ -641,11 +642,10 @@ if "tenant_id" not in kwargs:
 Two differences from `with_tenant_context()` are worth noticing, because they change what
 failure looks like.
 
-First, `_get_tenant_from_context()` imports `eventsource.multitenancy` lazily and calls
-the *permissive* `get_current_tenant()`, returning `None` if the module is unavailable or
-no scope is set. `create_event()` is on the base `AggregateRoot`, shared by tenant and
-non-tenant aggregates alike, so it cannot demand a tenant the way the tenant-specific
-classmethod can.
+First, `_get_tenant_from_context()` calls the *permissive* `get_current_tenant()`
+directly, returning `None` if no scope is currently set. `create_event()` is on the base
+`AggregateRoot`, shared by tenant and non-tenant aggregates alike, so it cannot demand a
+tenant the way the tenant-specific classmethod can.
 
 Second, when that lookup yields `None` the key is simply omitted -- and for a
 `TenantDomainEvent` subclass Pydantic then rejects the construction:

@@ -19,6 +19,7 @@ from eventsource.domain.exceptions import (
     EventVersionError,
     UnhandledEventError,
 )
+from eventsource.domain.tenant_context import get_current_tenant
 from eventsource.domain.types import TState
 
 # Type alias for unregistered event handling mode
@@ -464,29 +465,12 @@ class AggregateRoot(Generic[TState], ABC):
 
     def _get_tenant_from_context(self) -> UUID | None:
         """
-        Get tenant ID from context if multitenancy module is available.
-
-        This method performs a lazy import of the multitenancy module
-        to avoid a hard dependency. If the module is not installed or
-        no tenant context is set, returns None.
+        Get tenant ID from the current tenant context, if any is set.
 
         Returns:
-            Tenant ID from context, or None if not available
+            Tenant ID from context, or None if no tenant context is set
         """
-        try:
-            # Dynamic import to avoid hard dependency on multitenancy module
-            import importlib
-
-            multitenancy = importlib.import_module("eventsource.multitenancy")
-            get_current_tenant = getattr(multitenancy, "get_current_tenant", None)
-            if get_current_tenant is not None:
-                result = get_current_tenant()
-                if isinstance(result, UUID):
-                    return result
-            return None
-        except (ImportError, ModuleNotFoundError):
-            # Multitenancy module not installed/used
-            return None
+        return get_current_tenant()
 
     def _serialize_state(self) -> dict[str, Any]:
         """

@@ -82,7 +82,7 @@ Several public subsystems ship in the package but are **not** re-exported at the
 level. They are imported from their own modules: `eventsource.testing`,
 `eventsource.application.subscriptions`, `eventsource.observability`, `eventsource.application.migration`,
 `eventsource.ports.locks` / `eventsource.adapters.postgresql.locks`,
-`eventsource.gdpr`, and the raw SQL under `eventsource.migrations`.
+`eventsource.gdpr`, and the raw SQL under `eventsource.adapters.sql.schemas`.
 (`eventsource.locks` no longer exists -- see ADR 0030; import
 `eventsource.ports.locks` / `eventsource.adapters.postgresql.locks` instead.
 `eventsource.config` no longer exists either -- it was an empty placeholder
@@ -298,8 +298,8 @@ registry exceptions extend builtins rather than `EventSourceError`:
 `DuplicateEventTypeError` is a `ValueError` raised only when a *different* class claims an
 already-registered name (re-registering the same class is a no-op).
 
-`TenantDomainEvent` — the tenant-scoped subclass — lives in `eventsource.multitenancy`
-and is described there.
+`TenantDomainEvent` — the tenant-scoped subclass — lives in
+`eventsource.domain.tenant_events` and is described there.
 
 ### Event Stores — `eventsource.ports.store`, `eventsource.ports.envelopes`, `eventsource.ports.positions`, `eventsource.adapters.{memory,postgresql,sqlite}`
 
@@ -492,7 +492,7 @@ mix of relative and `sys.path`-relative imports) is not.
 
 `eventsource._internal` no longer exists as a package; its one module,
 `BackgroundTaskManager`, moved to `eventsource.application.background_tasks`. Likewise, treat the raw SQL under
-`eventsource.migrations` as data applied by tooling rather than an importable API.
+`eventsource.adapters.sql.schemas` as data applied by tooling rather than an importable API.
 
 ## Version metadata (`__version__`, `importlib.metadata`, and the `0.0.0.dev0` source fallback)
 
@@ -924,12 +924,12 @@ version=…)`; `__repr__` additionally includes `event_type`, `aggregate_type`,
 
 #### `TenantDomainEvent`
 
-`eventsource.multitenancy` provides `TenantDomainEvent`, a `DomainEvent` subclass that
-narrows `tenant_id` to required and validates it is not `None`. Its
+`eventsource.domain.tenant_events` provides `TenantDomainEvent`, a `DomainEvent` subclass
+that narrows `tenant_id` to required and validates it is not `None`. Its
 `with_tenant_context(...)` constructor reads the tenant from the ambient `contextvar`
 established by `tenant_scope` / `tenant_context`, so request handlers do not have to pass
-the tenant explicitly. It is exported from the barrel alongside the tenant-context
-functions.
+the tenant explicitly. It is exported from the top-level `eventsource` package alongside
+the tenant-context functions.
 
 #### `EventRegistry`
 
@@ -1229,9 +1229,9 @@ class OrderAggregate(DeclarativeAggregate[OrderState]):
         self.create_event(OrderShipped, tracking_number=tracking_number)
 ```
 
-The tenant lookup is a lazy `importlib` import of `eventsource.multitenancy` inside a
-`try`/`except ImportError`, so aggregates carry no hard dependency on the multitenancy
-module and simply see `None` when it is unavailable or no tenant is set.
+The tenant lookup is a direct call to `eventsource.domain.tenant_context.get_current_tenant()`
+(a same-ring, always-available domain sibling since ADR 0038 dissolved the multitenancy
+package into `domain`/`application`), returning `None` when no tenant context is set.
 
 **Committing.** `mark_events_as_committed()` clears the uncommitted list;
 `clear_uncommitted_events()` clears it and returns what it cleared. The repository calls

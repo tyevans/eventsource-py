@@ -52,8 +52,9 @@ Exception
 │   ├── EventStoreError
 │   ├── EventBusError
 │   ├── CheckpointError
-│   ├── TenantContextNotSetError        (eventsource.multitenancy.exceptions)
-│   ├── TenantMismatchError             (eventsource.multitenancy.exceptions)
+│   ├── TenantContextNotSetError        (eventsource.domain.exceptions -- merged under ADR 0038)
+│   ├── TenantContextResetError         (eventsource.domain.exceptions -- merged under ADR 0038)
+│   ├── TenantMismatchError             (eventsource.domain.exceptions -- merged under ADR 0038)
 │   ├── LockAcquisitionError            key, reason, timeout
 │   ├── LockNotHeldError                key
 │   └── SubscriptionError               (eventsource.domain.exceptions)

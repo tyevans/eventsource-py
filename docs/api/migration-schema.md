@@ -4,8 +4,8 @@ The `migration` schema template defines the four PostgreSQL tables that back the
 live tenant migration system in `eventsource.application.migration`: `tenant_migrations`,
 `tenant_routing`, `migration_position_mappings`, and `migration_audit_log`.
 
-The canonical definition is `src/eventsource/migrations/templates/migration.sql`,
-loaded through `eventsource.migrations.get_schema("migration")`. Everything below
+The canonical definition is `src/eventsource/adapters/sql/schemas/templates/migration.sql`,
+loaded through `eventsource.adapters.sql.schemas.get_schema("migration")`. Everything below
 describes that file exactly as it ships; where a value is enforced by a `CHECK`
 constraint or a unique index, the constraint is named so you can match it against
 database errors.
@@ -29,7 +29,7 @@ and for the partial and `DESC`-ordered indexes it declares. It also uses `UUID`,
 `JSONB`, `BIGSERIAL`, `TIMESTAMP WITH TIME ZONE`, and `plpgsql` trigger
 functions.
 
-There is no SQLite variant. `src/eventsource/migrations/templates/sqlite/`
+There is no SQLite variant. `src/eventsource/adapters/sql/schemas/templates/sqlite/`
 contains only `checkpoints.sql`, `dlq.sql`, `events.sql`, `outbox.sql`, and
 `snapshots.sql`. Calling `get_schema("migration", backend="sqlite")` raises
 `ValueError` with the list of schemas available for that backend, and
@@ -40,7 +40,7 @@ migration system is PostgreSQL-only at the storage layer.
 
 ```python
 from sqlalchemy import text
-from eventsource.migrations import get_schema
+from eventsource.adapters.sql.schemas import get_schema
 
 async with engine.begin() as conn:
     await conn.execute(text(get_schema("migration")))
@@ -48,7 +48,7 @@ async with engine.begin() as conn:
 
 `get_schema` returns the raw SQL text; it does not execute anything. The default
 backend is `"postgresql"`, so the `backend` argument can be omitted. The
-convenience constant `MIGRATION_SCHEMA` (exported from `eventsource.migrations`)
+convenience constant `MIGRATION_SCHEMA` (exported from `eventsource.adapters.sql.schemas`)
 equals `"migration"`, and `get_template_path("migration")` returns the on-disk
 `Path` to `templates/migration.sql` if you would rather feed the file to `psql`
 or copy it into an Alembic revision.
@@ -62,7 +62,7 @@ database is therefore safe.
 ### Why `get_all_schemas()` does not include it
 
 `get_all_schemas()` reads the pre-combined file
-`src/eventsource/migrations/schemas/all.sql`, which creates only `events`,
+`src/eventsource/adapters/sql/schemas/schemas/all.sql`, which creates only `events`,
 `event_outbox`, `projection_checkpoints`, `dead_letter_queue`, and `snapshots`.
 The migration tables are not in it.
 
@@ -72,7 +72,7 @@ triggers and functions that most installations never need. Apply the migration
 schema as an explicit, separate step:
 
 ```python
-from eventsource.migrations import get_all_schemas, get_schema
+from eventsource.adapters.sql.schemas import get_all_schemas, get_schema
 
 async with engine.begin() as conn:
     await conn.execute(text(get_all_schemas()))
@@ -466,8 +466,8 @@ recreates whatever is missing.
 
 ## Related documentation
 
-- `src/eventsource/migrations/templates/migration.sql` — the authoritative schema.
-- `src/eventsource/migrations/SCHEMA_DESIGN.md` — design notes for the schema templates.
+- `src/eventsource/adapters/sql/schemas/templates/migration.sql` — the authoritative schema.
+- `src/eventsource/adapters/sql/schemas/SCHEMA_DESIGN.md` — design notes for the schema templates.
 - `src/eventsource/migration/README.md` — the migration system and its workflow.
 - [Repositories reference](repositories.md) — checkpoint, outbox, and DLQ repositories.
 - [Multitenancy reference](multitenancy.md) — tenant context and scoping.

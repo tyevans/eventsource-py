@@ -17,7 +17,7 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.multitenancy import (
+from eventsource import (
     TenantContextNotSetError,
     clear_tenant_context,
     get_current_tenant,

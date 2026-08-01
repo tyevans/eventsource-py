@@ -5,7 +5,7 @@ time, never by editing a base schema file (migrations/ is append-only by
 file). These cases pin that the column reaches every composed schema.
 """
 
-from eventsource.migrations import get_all_schemas, get_schema
+from eventsource.adapters.sql.schemas import get_all_schemas, get_schema
 
 
 class TestPositionTokenReachesComposedSchemas:
@@ -23,7 +23,7 @@ class TestPositionTokenReachesComposedSchemas:
 
     def test_base_schema_files_are_unmodified(self) -> None:
         """The column must come from a fragment, never from an edited base file."""
-        from eventsource.migrations import _SCHEMAS_DIR, _TEMPLATES_DIR
+        from eventsource.adapters.sql.schemas import _SCHEMAS_DIR, _TEMPLATES_DIR
 
         for path in (
             _SCHEMAS_DIR / "all.sql",
@@ -55,7 +55,7 @@ class TestMigrationPositionTokensReachComposedSchema:
 
     def test_base_migration_template_is_unmodified(self) -> None:
         """The column must come from a fragment, never from an edited base file."""
-        from eventsource.migrations import _TEMPLATES_DIR
+        from eventsource.adapters.sql.schemas import _TEMPLATES_DIR
 
         text = (_TEMPLATES_DIR / "migration.sql").read_text()
         for column in self._TOKEN_COLUMNS:
@@ -78,7 +78,7 @@ class TestEventsTxidReachesComposedSchemas:
     """The feed-horizon column arrives by fragment, PostgreSQL only."""
 
     def test_base_events_files_are_unmodified(self) -> None:
-        from eventsource.migrations import _SCHEMAS_DIR, _TEMPLATES_DIR
+        from eventsource.adapters.sql.schemas import _SCHEMAS_DIR, _TEMPLATES_DIR
 
         for path in (
             _SCHEMAS_DIR / "all.sql",
@@ -89,7 +89,7 @@ class TestEventsTxidReachesComposedSchemas:
             assert "txid" not in path.read_text(), path
 
     def test_operator_script_exists_with_the_split_alter(self) -> None:
-        from eventsource.migrations import _PACKAGE_DIR
+        from eventsource.adapters.sql.schemas import _PACKAGE_DIR
 
         script = (_PACKAGE_DIR / "updates" / "004_add_events_txid.sql").read_text()
         assert "ADD COLUMN IF NOT EXISTS txid xid8" in script

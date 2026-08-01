@@ -17,15 +17,15 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from eventsource.domain.event import DomainEvent
-from eventsource.multitenancy import (
-    TenantAwareRepository,
+from eventsource import (
     TenantContextNotSetError,
     TenantDomainEvent,
     TenantMismatchError,
     clear_tenant_context,
     tenant_scope,
 )
+from eventsource.application.aggregates.tenant_repository import TenantAwareRepository
+from eventsource.domain.event import DomainEvent
 
 
 # Test events

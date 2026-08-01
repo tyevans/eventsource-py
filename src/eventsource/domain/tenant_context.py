@@ -32,7 +32,7 @@ right by hand.
 Example:
     >>> import asyncio
     >>> from uuid import uuid4
-    >>> from eventsource.multitenancy import tenant_scope, get_current_tenant
+    >>> from eventsource import tenant_scope, get_current_tenant
     >>>
     >>> async def main():
     ...     tenant_id = uuid4()
@@ -52,7 +52,7 @@ from contextvars import ContextVar, Token
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from eventsource.multitenancy.exceptions import (
+from eventsource.domain.exceptions import (
     TenantContextNotSetError,
     TenantContextResetError,
 )
@@ -121,7 +121,7 @@ def get_current_tenant() -> UUID | None:
 
     Example:
         >>> from uuid import uuid4
-        >>> from eventsource.multitenancy import (
+        >>> from eventsource import (
         ...     set_current_tenant,
         ...     get_current_tenant,
         ...     clear_tenant_context,
@@ -150,7 +150,7 @@ def get_required_tenant() -> UUID:
 
     Example:
         >>> from uuid import uuid4
-        >>> from eventsource.multitenancy import (
+        >>> from eventsource import (
         ...     set_current_tenant,
         ...     get_required_tenant,
         ...     clear_tenant_context,
@@ -189,12 +189,12 @@ def set_current_tenant(tenant_id: UUID) -> TenantContextToken:
 
     Example:
         >>> from uuid import uuid4
-        >>> from eventsource.multitenancy import (
+        >>> from eventsource import (
         ...     set_current_tenant,
         ...     get_current_tenant,
         ...     clear_tenant_context,
         ... )
-        >>> from eventsource.multitenancy.context import reset_tenant_context
+        >>> from eventsource.domain.tenant_context import reset_tenant_context
         >>> tenant_id = uuid4()
         >>> token = set_current_tenant(tenant_id)
         >>> assert get_current_tenant() == tenant_id
@@ -258,7 +258,7 @@ def reset_tenant_context(token: TenantContextToken) -> None:
 
     Example:
         >>> from uuid import uuid4
-        >>> from eventsource.multitenancy.context import (
+        >>> from eventsource.domain.tenant_context import (
         ...     set_current_tenant,
         ...     reset_tenant_context,
         ... )
@@ -290,7 +290,7 @@ def clear_tenant_context() -> None:
 
     Example:
         >>> from uuid import uuid4
-        >>> from eventsource.multitenancy import (
+        >>> from eventsource import (
         ...     set_current_tenant,
         ...     clear_tenant_context,
         ...     get_current_tenant,
@@ -327,7 +327,7 @@ async def tenant_scope(tenant_id: UUID) -> AsyncGenerator[UUID, None]:
     Example:
         >>> import asyncio
         >>> from uuid import uuid4
-        >>> from eventsource.multitenancy import tenant_scope, get_current_tenant
+        >>> from eventsource import tenant_scope, get_current_tenant
         >>>
         >>> async def process_tenant_request():
         ...     tenant_id = uuid4()
@@ -382,7 +382,7 @@ def tenant_scope_sync(tenant_id: UUID) -> Generator[UUID, None, None]:
 
     Example:
         >>> from uuid import uuid4
-        >>> from eventsource.multitenancy import (
+        >>> from eventsource import (
         ...     tenant_scope_sync,
         ...     get_current_tenant,
         ... )

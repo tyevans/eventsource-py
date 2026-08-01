@@ -14,7 +14,7 @@ commit first. `read_all` and `current_position` both apply the horizon
 predicate documented on `_HORIZON_PREDICATE` below, filtering on the
 `events.txid` column against a per-read horizon, to avoid skipping a
 lower position that is still in flight. Operators must have applied
-`migrations/updates/004_add_events_txid.sql` before upgrading -- the
+`adapters/sql/schemas/updates/004_add_events_txid.sql` before upgrading -- the
 predicate fails loudly with an undefined-column error otherwise.
 """
 
@@ -34,11 +34,11 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from eventsource.adapters._sql.positions import IntPositionCodec
 from eventsource.adapters.serialization import json_dumps, json_loads
+from eventsource.adapters.sql.schemas import get_schema
 from eventsource.domain import StreamId
 from eventsource.domain.event import DomainEvent
 from eventsource.domain.event_registry import EventRegistry, default_registry
 from eventsource.domain.exceptions import DuplicateEventError, OptimisticLockError
-from eventsource.migrations import get_schema
 from eventsource.ports import (
     AppendResult,
     CategoryReadOptions,
@@ -87,7 +87,7 @@ _SELECT_COLUMNS = """
 # bound parameter is a plain filter the planner can reason about, where
 # the inline volatile expression was not.
 #
-# `txid IS NULL` rows predate `migrations/updates/004_add_events_txid.sql`.
+# `txid IS NULL` rows predate `adapters/sql/schemas/updates/004_add_events_txid.sql`.
 # `ALTER TABLE` takes ACCESS EXCLUSIVE, so every transaction that inserted
 # one finished before any post-migration snapshot: NULL is always
 # definitely-committed and always safe to read.
@@ -110,7 +110,7 @@ _HORIZON_PREDICATE = "(txid IS NULL OR txid < CAST(:txid_horizon AS text)::xid8)
 # underlying snapshot lookup this wraps.
 _HORIZON_QUERY = "SELECT eventsource_feed_horizon()"
 
-# Constraint names from the canonical `migrations/schemas/events.sql` (verified
+# Constraint names from the canonical `adapters/sql/schemas/schemas/events.sql` (verified
 # against a live PostgreSQL 15 by introspecting `asyncpg.exceptions
 # .UniqueViolationError.constraint_name` on both conflict paths -- see
 # `_classify_integrity_error`).
@@ -125,7 +125,7 @@ class PostgreSQLEventStore:
 
     Schema ownership: like the legacy `stores/postgresql.py`, this adapter
     does NOT create the `events` table by default -- production deployments
-    apply the canonical `migrations/schemas/events.sql` (via `migrations/`
+    apply the canonical `adapters/sql/schemas/schemas/events.sql` (via `adapters/sql/schemas/`
     tooling) out of band, and this store simply queries an existing table.
     Pass `create_schema=True` (tests, local dev only) to opt into lazy
     `CREATE TABLE IF NOT EXISTS` schema creation on first use, guarded by an
@@ -197,10 +197,10 @@ class PostgreSQLEventStore:
         """Lazily create the `events` table, only when `create_schema=True`.
 
         No-op otherwise (the default): production deployments manage schema
-        via `migrations/`, and queries against a missing table fail
+        via `adapters/sql/schemas/`, and queries against a missing table fail
         naturally.
 
-        Runs the canonical `migrations/schemas/events.sql` (the same file
+        Runs the canonical `adapters/sql/schemas/schemas/events.sql` (the same file
         `get_schema("events")` serves to Alembic/manual setup) as a single
         script via the raw asyncpg driver connection. SQLAlchemy's
         `Connection.execute()` cannot run a multi-statement script through

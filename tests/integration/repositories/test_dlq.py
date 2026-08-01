@@ -480,7 +480,7 @@ class TestSQLDLQRepositoryCrossDialectAgreement:
         tmp_path,
     ) -> None:
         from eventsource import create_async_engine
-        from eventsource.migrations import get_schema
+        from eventsource.adapters.sql.schemas import get_schema
 
         sqlite_engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/dlq_cross.db")
         async with sqlite_engine.begin() as conn:
@@ -521,7 +521,7 @@ class TestSQLDLQRepositoryCrossDialectAgreement:
         identically on both dialects -- empty/None filters are exactly
         where an unconditional dialect branch would silently diverge."""
         from eventsource import create_async_engine
-        from eventsource.migrations import get_schema
+        from eventsource.adapters.sql.schemas import get_schema
 
         sqlite_engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/dlq_cross2.db")
         async with sqlite_engine.begin() as conn:

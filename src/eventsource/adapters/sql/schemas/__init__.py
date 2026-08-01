@@ -15,7 +15,7 @@ Supported backends:
     - sqlite: SQLite-compatible schemas
 
 Usage:
-    from eventsource.migrations import get_schema, get_all_schemas
+    from eventsource.adapters.sql.schemas import get_schema, get_all_schemas
 
     # Get a specific schema (PostgreSQL by default)
     events_sql = get_schema("events")
@@ -34,7 +34,7 @@ Usage:
         await conn.execute(text(get_all_schemas()))
 
 For Alembic migrations, see the templates in:
-    eventsource.migrations.templates.alembic
+    eventsource.adapters.sql.schemas.templates.alembic
 """
 
 from pathlib import Path
@@ -185,7 +185,7 @@ def get_schema(
         ValueError: If the schema is not available for the specified backend
 
     Example:
-        >>> from eventsource.migrations import get_schema
+        >>> from eventsource.adapters.sql.schemas import get_schema
         >>> # PostgreSQL schemas (default)
         >>> events_sql = get_schema("events")
         >>> checkpoints_sql = get_schema("checkpoints")
@@ -249,7 +249,7 @@ def get_all_schemas(backend: BackendName = "postgresql") -> str:
         Combined SQL schema definition
 
     Example:
-        >>> from eventsource.migrations import get_all_schemas
+        >>> from eventsource.adapters.sql.schemas import get_all_schemas
         >>> # PostgreSQL (default)
         >>> async with engine.begin() as conn:
         ...     await conn.execute(text(get_all_schemas()))
@@ -272,7 +272,7 @@ def list_schemas(backend: BackendName = "postgresql") -> list[str]:
         List of schema names available for the specified backend
 
     Example:
-        >>> from eventsource.migrations import list_schemas
+        >>> from eventsource.adapters.sql.schemas import list_schemas
         >>> print(list_schemas())
         ['checkpoints', 'dlq', 'events', 'events_partitioned', 'outbox']
         >>> print(list_schemas(backend="sqlite"))
@@ -293,7 +293,7 @@ def list_backends() -> list[str]:
         List of backend names that have schema templates available
 
     Example:
-        >>> from eventsource.migrations import list_backends
+        >>> from eventsource.adapters.sql.schemas import list_backends
         >>> print(list_backends())
         ['postgresql', 'sqlite']
     """
@@ -321,7 +321,7 @@ def get_alembic_template(name: str) -> str:
         FileNotFoundError: If the template doesn't exist
 
     Example:
-        >>> from eventsource.migrations import get_alembic_template
+        >>> from eventsource.adapters.sql.schemas import get_alembic_template
         >>> template = get_alembic_template("events")
         >>> # Customize template with revision ID
         >>> migration = template.replace("${revision_id}", "abc123")
@@ -343,7 +343,7 @@ def list_alembic_templates() -> list[str]:
         List of template names available
 
     Example:
-        >>> from eventsource.migrations import list_alembic_templates
+        >>> from eventsource.adapters.sql.schemas import list_alembic_templates
         >>> print(list_alembic_templates())
         ['all_tables', 'checkpoints', 'dlq', 'events', 'outbox']
     """

@@ -119,7 +119,7 @@ nav:
       - Distributed Locks: api/locks.md
       - Migration: api/migration.md
       - Migration Schema: api/migration-schema.md
-      - Migrations: api/migrations.md
+      - Schema DDL: api/migrations.md
       - Observability: api/observability.md
       - Sync: api/sync.md
       - Testing: api/testing.md
@@ -161,6 +161,9 @@ nav:
       - "ADR-0035: Lazy Front Door": adrs/0035-lazy-front-door.md
       - "ADR-0036: Snapshot Port Composed Protocols": adrs/0036-snapshot-port-composed-protocols.md
       - "ADR-0037: Store Lifecycle Port": adrs/0037-store-lifecycle-port.md
+      - "ADR-0038: Multi-Tenancy Ring Dissolution": adrs/0038-multitenancy-dissolution.md
+      - "ADR-0039: Schema DDL Package Relocated to Adapters": adrs/0039-schema-ddl-to-adapters.md
+      - "ADR-0040: Out-of-Ring Settlement": adrs/0040-out-of-ring-settlement.md
   - Development:
       - development/index.md
       - Contributing: development/contributing.md

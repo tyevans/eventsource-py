@@ -34,7 +34,7 @@ async def ping(dsn: str) -> str | None:
 async def ensure_schema(dsn: str) -> None:
     import asyncpg
 
-    from eventsource.migrations import get_schema
+    from eventsource.adapters.sql.schemas import get_schema
 
     conn = await asyncpg.connect(dsn, timeout=10)
     try:

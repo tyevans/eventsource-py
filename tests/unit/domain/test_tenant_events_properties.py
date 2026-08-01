@@ -14,7 +14,7 @@ from uuid import UUID
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
-from eventsource.multitenancy import TenantDomainEvent, clear_tenant_context, tenant_scope_sync
+from eventsource import TenantDomainEvent, clear_tenant_context, tenant_scope_sync
 
 
 class Widget(TenantDomainEvent):

@@ -69,7 +69,7 @@ class DatabaseProjection(DeclarativeProjection):
         >>> await projection.handle(event)
 
     Example with tenant filter:
-        >>> from eventsource.multitenancy import get_current_tenant
+        >>> from eventsource import get_current_tenant
         >>> projection = OrderProjection(
         ...     session_factory=async_session_factory,
         ...     tenant_filter=get_current_tenant,

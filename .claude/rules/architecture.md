@@ -38,7 +38,8 @@ The rings, innermost first:
    orchestration. Depends on entities and on the boundary ports it owns. Never on a
    concrete adapter, driver, or framework. `application/aggregates/`
    (`AggregateRepository` plus the `SnapshotPolicy`/`SnapshotScheduler`
-   collaborators) is settled, not transitional; so is `application/projections/`
+   collaborators, and `tenant_repository.py`'s `TenantAwareRepository`,
+   settled there since ADR 0038) is settled, not transitional; so is `application/projections/`
    (`Projection`/`CheckpointTrackingProjection`/`DeclarativeProjection`, the
    `ProjectionCoordinator`/`ProjectionRegistry`/`SubscriberRegistry` collaborators,
    the checkpoint and DLQ functions, and the retry policies) — `projections/` is no
@@ -64,8 +65,16 @@ The rings, innermost first:
    `router.py`, `status_streamer.py`, `subscription_migrator.py`,
    `sync_lag_tracker.py`, `write_pause.py`, plus `__init__.py`) is settled, not
    transitional; top-level `migration/` no longer exists (ADR 0034) — it was the
-   last top-level package outside the ring map.
-3. **Interface adapters** (`adapters/` — during transition `stores/`):
+   last top-level package outside the ring map. `domain/tenant_context.py`
+   (`tenant_context`, `TenantContextToken`, `get_current_tenant`,
+   `get_required_tenant`, `set_current_tenant`, `reset_tenant_context`,
+   `clear_tenant_context`, `tenant_scope`, `tenant_scope_sync`) and
+   `domain/tenant_events.py` (`TenantDomainEvent`) are settled, not
+   transitional; top-level `multitenancy/` no longer exists (ADR 0038). The
+   three tenant exceptions (`TenantContextNotSetError`,
+   `TenantContextResetError`, `TenantMismatchError`) merged into
+   `domain/exceptions.py` as part of the same move.
+3. **Interface adapters** (`adapters/`):
    Gateways that
    implement the ports for a specific technology, converting between the use-case
    format (value objects, domain events) and the storage/wire format (rows, JSON,
@@ -105,7 +114,12 @@ The rings, innermost first:
    `PostgreSQLMigrationAuditLogRepository`, `VALID_TRANSITIONS`) is settled, not
    transitional — the sqlalchemy-backed implementations of the four Protocols
    in `ports/migration/repositories.py`; top-level `migration/repositories/` no
-   longer exists (ADR 0034).
+   longer exists (ADR 0034). `adapters/sql/schemas/` (the SQL schema DDL, Alembic
+   templates, and append-only update scripts consumed by the PostgreSQL and
+   SQLite store adapters' `get_schema()` calls) is settled, not transitional —
+   the storage format is an adapters-ring concern by definition; top-level
+   `migrations/` (plural — distinct from the singular `migration/` above) no
+   longer exists (ADR 0039).
 4. **Frameworks & drivers**: sqlalchemy, asyncpg, aiosqlite, redis, aiokafka,
    aio-pika. Imported only inside the adapter that needs them, always guarded
    (see below). Driver types never appear in port signatures.
@@ -198,6 +212,27 @@ Export an `*_AVAILABLE` flag so users can check at runtime.
   needs it); there is no auto-registration.
 - Event types are immutable after creation — never modify event schema, add new event
   types instead.
+
+## Out-of-Ring Packages
+
+Two top-level packages are settled *outside* the four rings, not transitional
+and not future ring candidates (ADR 0040): `observability/` (`attributes.py`,
+`tracer.py`, `tracing.py`) is the cross-cutting, guarded-optional telemetry
+toolkit consumed by `application/` and `adapters/` wherever a span or metric
+is recorded — `domain/` and `ports/` must never import it. `testing/`
+(`assertions.py`, `bdd.py`, `builder.py`, `conformance.py`,
+`conformance_ports/`, `harness.py`, `partitioned_memory.py`, `recording.py`,
+`sync_facade.py`) is the public test toolkit; it imports adapters by design,
+so no ring — `domain`, `ports`, `application`, or `adapters` — may import it
+back. Both boundaries are `import-linter` forbidden contracts. With these two
+exceptions recorded, every top-level package under `src/eventsource/` is
+either one of the four rings or one of these two settled packages — the
+ring-migration campaign's completion criterion.
+
+Logger names, meter names, and OTel attribute-string constants
+(`"eventsource.bus.*"`, `"eventsource.migration.*"`) are a stable public
+telemetry schema, deliberately decoupled from Python import paths — never
+rename one of these strings just because the module emitting it moves.
 
 ## Enforcement
 

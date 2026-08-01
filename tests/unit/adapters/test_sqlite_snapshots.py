@@ -13,8 +13,8 @@ from tests.conftest import AIOSQLITE_AVAILABLE, skip_if_no_aiosqlite
 if AIOSQLITE_AVAILABLE:
     import aiosqlite
 
+    from eventsource.adapters.sql.schemas import get_schema
     from eventsource.adapters.sqlite.snapshots import SQLITE_AVAILABLE, SQLiteSnapshotStore
-    from eventsource.migrations import get_schema
     from eventsource.ports.snapshots import Snapshot
 
 

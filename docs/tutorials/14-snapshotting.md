@@ -535,7 +535,7 @@ library:
 ```python
     import aiosqlite
 
-    from eventsource.migrations import get_schema
+    from eventsource.adapters.sql.schemas import get_schema
     from eventsource.adapters.sqlite import SQLiteSnapshotStore
 
     db_path = "snapshots.db"

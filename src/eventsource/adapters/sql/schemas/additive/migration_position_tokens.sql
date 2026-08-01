@@ -1,6 +1,6 @@
 -- Additive fragment: opaque position tokens for migration bookkeeping.
 -- Appended to the migration schema at composition time
--- (eventsource.migrations.get_schema). Idempotent on PostgreSQL.
+-- (eventsource.adapters.sql.schemas.get_schema). Idempotent on PostgreSQL.
 --
 -- The legacy BIGINT position columns are left in place and are neither
 -- written nor read by the library after slice (c); they die with their

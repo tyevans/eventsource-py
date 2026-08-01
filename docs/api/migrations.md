@@ -1,6 +1,6 @@
-# Migrations API Reference
+# Schema DDL API Reference
 
-Technical reference for the `eventsource.migrations` package: the loader
+Technical reference for the `eventsource.adapters.sql.schemas` package: the loader
 functions that return SQL text, the schema-name and backend type aliases, the
 tables each schema creates, and the Alembic templates shipped alongside them.
 
@@ -10,7 +10,7 @@ text — through SQLAlchemy, `aiosqlite`, `psql`, or an Alembic revision you
 generate from a template — is the caller's job. Nothing in this package opens a
 database connection.
 
-Three directories inside `src/eventsource/migrations/` hold the shipped SQL:
+Three directories inside `src/eventsource/adapters/sql/schemas/` hold the shipped SQL:
 
 | Directory | Contains |
 | --- | --- |
@@ -24,7 +24,7 @@ stays compatible.
 
 ## Overview
 
-Every public function in `eventsource.migrations` resolves a path under the
+Every public function in `eventsource.adapters.sql.schemas` resolves a path under the
 package directory and returns what it finds there. Two of them return SQL text
 (`get_schema`, `get_all_schemas`), one returns a `Path` (`get_template_path`),
 one returns Alembic template text (`get_alembic_template`), and three enumerate
@@ -66,14 +66,14 @@ connection, while SQLite text contains multiple statements and needs
 `db.executescript(...)` on an `aiosqlite` connection. Both patterns are shown
 under [Usage Examples](#usage-examples).
 
-## Import Surface (`from eventsource.migrations import ...`)
+## Import Surface (`from eventsource.adapters.sql.schemas import ...`)
 
-Everything public lives in `eventsource.migrations/__init__.py` and is listed in
+Everything public lives in `eventsource.adapters.sql.schemas/__init__.py` and is listed in
 its `__all__`. The package is not re-exported from the top-level `eventsource`
-namespace — import from `eventsource.migrations` directly.
+namespace — import from `eventsource.adapters.sql.schemas` directly.
 
 ```python
-from eventsource.migrations import (
+from eventsource.adapters.sql.schemas import (
     # Type aliases
     SchemaName,
     BackendName,
@@ -120,14 +120,14 @@ Module-level names prefixed with an underscore — `_PACKAGE_DIR`,
 `get_template_path` when you need a filesystem path.
 
 The only imports the module itself pulls in are `pathlib.Path` and
-`typing.Literal`, so `eventsource.migrations` is importable without SQLAlchemy,
+`typing.Literal`, so `eventsource.adapters.sql.schemas` is importable without SQLAlchemy,
 `asyncpg`, or `aiosqlite` installed. The database driver is only needed at the
 point where you apply the returned text.
 
 ## Type Aliases
 
 Both aliases are `typing.Literal` definitions declared at module scope in
-`eventsource/migrations/__init__.py`. They exist for static checking and
+`eventsource/adapters/sql/schemas/__init__.py`. They exist for static checking and
 editor completion only: nothing in the module validates arguments against
 them at runtime, so an out-of-range string reaches the path lookup and fails
 there with `ValueError` or `FileNotFoundError` rather than a `TypeError`.
@@ -243,7 +243,7 @@ the Alembic stubs under `templates/alembic/` emit PostgreSQL DDL only.
 ### `EVENTS_SCHEMA`, `EVENTS_PARTITIONED_SCHEMA`, `OUTBOX_SCHEMA`, `CHECKPOINTS_SCHEMA`, `DLQ_SCHEMA`, `SNAPSHOTS_SCHEMA`, `MIGRATION_SCHEMA`
 
 Seven module-level `str` constants, defined at the bottom of
-`eventsource/migrations/__init__.py` under a `# Convenience exports` comment
+`eventsource/adapters/sql/schemas/__init__.py` under a `# Convenience exports` comment
 and listed in `__all__`. Each holds the schema name it is named after:
 
 ```python
@@ -274,7 +274,7 @@ symbol, so a typo becomes an `ImportError` at module load instead of a
 `ValueError` or `FileNotFoundError` at call time:
 
 ```python
-from eventsource.migrations import DLQ_SCHEMA, SNAPSHOTS_SCHEMA, get_schema
+from eventsource.adapters.sql.schemas import DLQ_SCHEMA, SNAPSHOTS_SCHEMA, get_schema
 
 for schema in (DLQ_SCHEMA, SNAPSHOTS_SCHEMA):
     sql = get_schema(schema, backend="sqlite")

@@ -295,7 +295,7 @@ class TestSQLCheckpointRepositoryPosition:
     async def sqlite_engine(self, tmp_path):
         """Create a SQLite engine with schema for each test."""
         from eventsource import create_async_engine
-        from eventsource.migrations import get_schema
+        from eventsource.adapters.sql.schemas import get_schema
 
         engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/position.db")
         async with engine.begin() as conn:

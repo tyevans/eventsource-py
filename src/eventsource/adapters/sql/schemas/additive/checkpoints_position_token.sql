@@ -1,6 +1,6 @@
 -- Additive fragment: opaque position token for subscription checkpoints.
 -- Appended to the checkpoints schema at composition time
--- (eventsource.migrations.get_schema). Idempotent on PostgreSQL.
+-- (eventsource.adapters.sql.schemas.get_schema). Idempotent on PostgreSQL.
 --
 -- The legacy projection_checkpoints.global_position BIGINT column is left
 -- in place and is neither written nor read by the library after slice (b);
