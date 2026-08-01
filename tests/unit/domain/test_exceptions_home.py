@@ -124,3 +124,21 @@ class TestNoBuiltinBases:
 
         err = EventTypeNotFoundError("OrderCreated", ["A", "B"])
         assert not str(err).startswith("'")  # KeyError.__str__ used to re-quote
+
+
+class TestDomainFacadeComplete:
+    def test_every_public_domain_exception_is_exported(self) -> None:
+        import eventsource.domain as domain
+        from eventsource.domain import exceptions as ex
+
+        public = {
+            name
+            for name in dir(ex)
+            if isinstance(getattr(ex, name), type)
+            and issubclass(getattr(ex, name), Exception)
+            and not name.startswith("_")
+            and getattr(ex, name).__module__ == "eventsource.domain.exceptions"
+        }
+        exported = set(domain.__all__)
+        missing = public - exported
+        assert not missing, f"domain/__init__ is missing: {sorted(missing)}"
