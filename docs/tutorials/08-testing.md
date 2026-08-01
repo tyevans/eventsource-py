@@ -122,7 +122,7 @@ def initial_state(order_id: UUID) -> OrderState:
     return OrderState(order_id=order_id, status="new")
 
 
-def decide(command: object, state: OrderState) -> list[DomainEvent]:
+def decide(command: ShipOrder, state: OrderState) -> list[DomainEvent]:
     """Given a command and the current state, decide what events to produce."""
     match command:
         case ShipOrder(tracking_number=tn):
@@ -148,7 +148,7 @@ def evolve(state: OrderState, event: DomainEvent) -> OrderState:
             return state
 
 
-class Order(DeciderAggregate[OrderState]):
+class Order(DeciderAggregate[OrderState, ShipOrder]):
     aggregate_type = "Order"
 
     @staticmethod
@@ -156,7 +156,7 @@ class Order(DeciderAggregate[OrderState]):
         return initial_state(aggregate_id)
 
     @staticmethod
-    def decide(command: object, state: OrderState) -> list[DomainEvent]:
+    def decide(command: ShipOrder, state: OrderState) -> list[DomainEvent]:
         return decide(command, state)
 
     @staticmethod

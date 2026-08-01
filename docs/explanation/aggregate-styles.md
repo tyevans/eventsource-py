@@ -80,11 +80,14 @@ class Pay(DomainCommand):
     amount: Decimal
 
 
+InvoiceCommand = Draft | Send | Pay
+
+
 def initial_state(invoice_id: UUID) -> InvoiceState:
     return InvoiceState(invoice_id=invoice_id)
 
 
-def decide(command: object, state: InvoiceState) -> list[DomainEvent]:
+def decide(command: InvoiceCommand, state: InvoiceState) -> list[DomainEvent]:
     match command, state:
         case Draft(customer_id=cid, amount=amt), InvoiceState(status="draft", customer_id=None):
             return [InvoiceDrafted(aggregate_id=state.invoice_id, customer_id=cid, amount=amt)]
@@ -110,7 +113,7 @@ def evolve(state: InvoiceState, event: DomainEvent) -> InvoiceState:
             return state
 
 
-class Invoice(DeciderAggregate[InvoiceState]):
+class Invoice(DeciderAggregate[InvoiceState, InvoiceCommand]):
     aggregate_type = "Invoice"
 
     @staticmethod
@@ -118,13 +121,22 @@ class Invoice(DeciderAggregate[InvoiceState]):
         return initial_state(aggregate_id)
 
     @staticmethod
-    def decide(command: object, state: InvoiceState) -> list[DomainEvent]:
+    def decide(command: InvoiceCommand, state: InvoiceState) -> list[DomainEvent]:
         return decide(command, state)
 
     @staticmethod
     def evolve(state: InvoiceState, event: DomainEvent) -> InvoiceState:
         return evolve(state, event)
 ```
+
+`DeciderAggregate[TState, TCommand]` takes two type parameters, and the example above
+supplies both: `InvoiceCommand` is a union of the three command classes, and passing it
+as the second parameter is what lets a type checker verify `decide`'s `match` covers
+every command your aggregate accepts, not just every branch you happened to write.
+`TCommand` defaults to `object` — `DeciderAggregate[InvoiceState]` alone is valid and
+you'll see it in code that hasn't opted into command-exhaustiveness checking — but the
+two-parameter form is the one to reach for on a new aggregate, since it's the only
+difference that costs nothing at runtime and buys mypy strictness.
 
 Business rules read as a state-transition table in `decide`, invariants (payment must
 match the invoice amount, an invoice can't be paid before it's sent) live entirely in
