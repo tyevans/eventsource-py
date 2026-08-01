@@ -4,6 +4,11 @@
 
 Accepted (2026-07-30)
 
+**Amended by [ADR 0030](0030-top-level-module-ring-consolidation.md)**
+(`DomainCommand` relocates from `eventsource.commands.base` to
+`eventsource.domain.command`; the decider pattern and command-object design
+below are unchanged).
+
 ## Context
 
 The library shipped two aggregate styles (hand-written `_apply` on

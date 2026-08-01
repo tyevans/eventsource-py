@@ -23,9 +23,9 @@ from eventsource.bus.kafka import (
     KafkaEventBusStats,
     KafkaNotAvailableError,
 )
+from eventsource.domain.exceptions import HandlerDispatchError
 from eventsource.events.base import DomainEvent
 from eventsource.events.registry import EventRegistry
-from eventsource.exceptions import HandlerDispatchError
 
 # --- Test Events ---
 # Prefixed with Sample to avoid pytest collection warnings

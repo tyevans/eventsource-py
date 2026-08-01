@@ -18,7 +18,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
-from eventsource.exceptions import LockAcquisitionError, LockNotHeldError
+from eventsource.domain.exceptions import LockAcquisitionError, LockNotHeldError
 from eventsource.ports.locks import LockInfo
 
 

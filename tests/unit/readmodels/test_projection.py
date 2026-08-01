@@ -787,7 +787,7 @@ class TestUnregisteredEventHandling:
         self, mock_postgresql_session_factory, checkpoint_repo, dlq_repo
     ) -> None:
         """Test error mode raises UnhandledEventError for unhandled events."""
-        from eventsource.exceptions import UnhandledEventError
+        from eventsource.domain.exceptions import UnhandledEventError
 
         factory, _, _ = mock_postgresql_session_factory
 

@@ -8,9 +8,9 @@ implementations, the `ReadModelProjection` bridge between events and stored
 rows, and the DDL generation helpers.
 
 `eventsource.readmodels` -- the pre-slice-A import path for all sixteen names
-below -- is **deprecated**. Every name still resolves from it with a
-`DeprecationWarning` naming its new home; the package is removed in 0.8.0.
-Update imports to the paths this page documents.
+below -- **no longer exists** (ADR 0030). Importing it raises
+`ModuleNotFoundError`, with no deprecation shim. Update imports to the paths
+this page documents.
 
 Public names covered here (everything the old `eventsource.readmodels.__all__`
 listed, now split across `eventsource.ports.readmodels` and three adapter
@@ -179,7 +179,7 @@ work** — it is not something the port split introduced — and is tracked in
 
 | Symbol | Base | Raised by |
 | --- | --- | --- |
-| `eventsource.OptimisticLockError` (from `eventsource.exceptions`) | `EventSourceError` | aggregate/event-store concurrency conflicts |
+| `eventsource.OptimisticLockError` (from `eventsource.domain.exceptions`) | `EventSourceError` | aggregate/event-store concurrency conflicts |
 | `eventsource.ports.readmodels.OptimisticLockError` | `ReadModelError` | `save_with_version_check()` on a read model repository |
 
 An `except eventsource.OptimisticLockError` block will **not** catch a read

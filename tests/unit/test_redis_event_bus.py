@@ -17,9 +17,9 @@ from eventsource.bus.redis import (
     RedisEventBusStats,
     RedisNotAvailableError,
 )
+from eventsource.domain.exceptions import HandlerDispatchError
 from eventsource.events.base import DomainEvent
 from eventsource.events.registry import EventRegistry
-from eventsource.exceptions import HandlerDispatchError
 
 # Note: Tests use mocks and don't require actual Redis, so we don't skip.
 # REDIS_AVAILABLE needs to be True for the RedisEventBus class to be importable.

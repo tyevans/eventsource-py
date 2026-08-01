@@ -26,8 +26,8 @@ from eventsource.bus.kafka.consumer import KafkaConsumerLoop  # noqa: E402
 from eventsource.bus.kafka.models import KafkaEventBusStats  # noqa: E402
 from eventsource.bus.kafka.serialization import EventSerializer  # noqa: E402
 from eventsource.bus.retry import RetryPolicy  # noqa: E402
+from eventsource.domain.exceptions import HandlerDispatchError  # noqa: E402
 from eventsource.events.base import DomainEvent  # noqa: E402
-from eventsource.exceptions import HandlerDispatchError  # noqa: E402
 from eventsource.handlers.adapter import HandlerAdapter  # noqa: E402
 from eventsource.observability import create_tracer  # noqa: E402
 

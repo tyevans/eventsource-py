@@ -4251,7 +4251,7 @@ class TestRabbitMQDispatchEvent:
     @pytest.mark.asyncio
     async def test_dispatch_raises_on_handler_error(self, bus: RabbitMQEventBus) -> None:
         """Test that _dispatch_event raises an aggregate HandlerDispatchError."""
-        from eventsource.exceptions import HandlerDispatchError
+        from eventsource.domain.exceptions import HandlerDispatchError
 
         async def failing_handler(event: DomainEvent) -> None:
             raise ValueError("Handler error")
@@ -4279,7 +4279,7 @@ class TestRabbitMQDispatchEvent:
         aggregate HandlerDispatchError (not the underlying exception
         directly), so the message is still left unacked for redelivery.
         """
-        from eventsource.exceptions import HandlerDispatchError
+        from eventsource.domain.exceptions import HandlerDispatchError
 
         call_order = []
 
@@ -4457,7 +4457,7 @@ class TestRabbitMQConsumerStatistics:
 
         initial_errors = bus.stats.handler_errors
 
-        from eventsource.exceptions import HandlerDispatchError
+        from eventsource.domain.exceptions import HandlerDispatchError
 
         with pytest.raises(HandlerDispatchError):
             await bus._dispatch_event(event, mock_message)
@@ -9647,7 +9647,7 @@ class TestOpenTelemetryConsumerTracing:
         mock_tracer.start_span.return_value = mock_handler_span
         bus._tracer = mock_tracer
 
-        from eventsource.exceptions import HandlerDispatchError
+        from eventsource.domain.exceptions import HandlerDispatchError
 
         with pytest.raises(HandlerDispatchError):
             await bus._dispatch_event(event, mock_message, mock_parent_span)

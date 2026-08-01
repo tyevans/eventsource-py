@@ -16,7 +16,7 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.serialization import (
+from eventsource.adapters.serialization import (
     EventSourceJSONEncoder,
     json_dumps,
     json_loads,
@@ -158,6 +158,54 @@ class TestJsonLoads:
         result = json_loads(data)
 
         assert result == [1, 2, 3, "four"]
+
+    def test_loads_accepts_bytes(self):
+        """json_loads accepts bytes directly (orjson natively supports both)."""
+        data = b'{"key": "value", "number": 42}'
+        result = json_loads(data)
+
+        assert result == {"key": "value", "number": 42}
+
+    def test_loads_bytes_and_str_agree(self):
+        """Decoding the same payload as bytes or str yields identical results."""
+        payload = '{"id": "abc", "items": [1, 2, 3]}'
+
+        assert json_loads(payload) == json_loads(payload.encode())
+
+
+class TestJsonDumpsUnsupportedTypes:
+    """json_dumps has no special-case handling for Decimal -- it raises."""
+
+    def test_dumps_decimal_raises_type_error(self):
+        """Decimal is not natively supported by orjson and has no default
+        handler here, so it raises TypeError (undocumented as a supported
+        type -- this pins the current, unsupported behavior)."""
+        from decimal import Decimal
+
+        with pytest.raises(TypeError):
+            json_dumps({"amount": Decimal("1.50")})
+
+
+class TestJsonDumpsPydanticModels:
+    """json_dumps on nested pydantic models (via model_dump(), not model instances directly)."""
+
+    def test_dumps_nested_pydantic_model_dump(self):
+        from pydantic import BaseModel
+
+        class Inner(BaseModel):
+            value: int
+            created_at: datetime
+
+        class Outer(BaseModel):
+            id: object
+            inner: Inner
+
+        outer = Outer(id=uuid4(), inner=Inner(value=1, created_at=datetime.now(UTC)))
+        result = json_dumps(outer.model_dump())
+        parsed = json_loads(result)
+
+        assert parsed["inner"]["value"] == 1
+        assert "created_at" in parsed["inner"]
 
 
 class TestJsonEncoderContract:
@@ -612,8 +660,8 @@ class TestNewModuleExports:
     """Tests to verify the new module structure works correctly."""
 
     def test_import_from_serialization_module(self):
-        """Test importing from eventsource.serialization works."""
-        from eventsource.serialization import (
+        """Test importing from eventsource.adapters.serialization works."""
+        from eventsource.adapters.serialization import (
             EventSourceJSONEncoder,
             json_dumps,
             json_loads,
@@ -630,8 +678,8 @@ class TestNewModuleExports:
         assert isinstance(EventSourceJSONEncoder, type)
 
     def test_import_from_serialization_json_submodule(self):
-        """Test importing from eventsource.serialization.json works."""
-        from eventsource.serialization.json import (
+        """Test importing from eventsource.adapters.serialization.json works."""
+        from eventsource.adapters.serialization.json import (
             EventSourceJSONEncoder,
             json_dumps,
             json_loads,

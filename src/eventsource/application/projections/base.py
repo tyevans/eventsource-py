@@ -47,7 +47,7 @@ from eventsource.observability.attributes import (
 )
 from eventsource.ports.checkpoints import ProjectionCheckpoints
 from eventsource.ports.dlq import DLQRepository
-from eventsource.protocols import EventSubscriber
+from eventsource.ports.handlers import EventSubscriber
 
 logger = logging.getLogger(__name__)
 

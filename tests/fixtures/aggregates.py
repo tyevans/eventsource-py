@@ -15,8 +15,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from eventsource.commands.base import DomainCommand
 from eventsource.domain.aggregate import AggregateRoot, DeclarativeAggregate
+from eventsource.domain.command import DomainCommand
 from eventsource.domain.decider import DeciderAggregate
 from eventsource.events.base import DomainEvent
 from eventsource.handlers import handles

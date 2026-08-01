@@ -15,7 +15,7 @@ from abc import ABC, abstractmethod
 
 import pytest
 
-from eventsource.exceptions import LockAcquisitionError, LockNotHeldError
+from eventsource.domain.exceptions import LockAcquisitionError, LockNotHeldError
 from eventsource.ports.locks import LockManager
 
 

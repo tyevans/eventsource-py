@@ -5,10 +5,10 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import BaseModel
 
-from eventsource.commands import DomainCommand
+from eventsource.domain.command import DomainCommand
 from eventsource.domain.decider import DeciderAggregate
+from eventsource.domain.exceptions import CommandRejectedError
 from eventsource.events.base import DomainEvent
-from eventsource.exceptions import CommandRejectedError
 
 
 class AccountOpened(DomainEvent):

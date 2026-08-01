@@ -2,7 +2,7 @@
 Subscription-specific exceptions.
 
 All exceptions inherit from SubscriptionError for easy catching.
-This module follows the same patterns as eventsource.exceptions.
+This module follows the same patterns as eventsource.domain.exceptions.
 """
 
 

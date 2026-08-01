@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
+from eventsource.adapters.serialization import json_dumps
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_DB_SYSTEM,
@@ -16,7 +17,6 @@ from eventsource.observability.attributes import (
     ATTR_RETRY_COUNT,
 )
 from eventsource.ports.dlq import DLQEntry, DLQStats, ProjectionFailureCount
-from eventsource.serialization import json_dumps
 
 
 class InMemoryDLQRepository:

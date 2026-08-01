@@ -189,7 +189,7 @@ and `unsubscribe` bind a handler to one event type, `subscribe_all`,
 every event, and all five are ordinary synchronous calls, since registering a
 callback is bookkeeping rather than I/O. Handlers themselves may be sync or
 async: the bus accepts a `FlexibleEventHandler` or a plain callable, and the
-canonical handler contracts live in `eventsource.protocols` (`EventHandler`,
+canonical handler contracts live in `eventsource.ports.handlers` (`EventHandler`,
 `SyncEventHandler`, `FlexibleEventHandler`, plus the ABC-based
 `EventSubscriber`). The `background=True` flag makes publication
 fire-and-forget, trading delivery latency for eventual consistency.
@@ -227,7 +227,7 @@ projection's operational machinery behaves the same in a unit test as it does in
 production.
 
 Synchronous callers are served by exactly one explicit escape hatch:
-`SyncEventStoreAdapter` (`eventsource.sync`) wraps a `FullEventStore` and
+`SyncEventStoreAdapter` (`eventsource.adapters.sync`) wraps a `FullEventStore` and
 exposes the same method names as the async ports — `append`, `read_stream`,
 `get_stream_version`, `event_exists`, `read_all`, `read_category`, and
 `current_position` — each accepting an optional `timeout` keyword and running

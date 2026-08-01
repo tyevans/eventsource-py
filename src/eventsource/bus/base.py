@@ -19,7 +19,7 @@ from eventsource.bus.registry import SubscriptionRegistry
 from eventsource.events.base import DomainEvent
 from eventsource.events.registry import EventRegistry
 from eventsource.handlers.adapter import HandlerAdapter
-from eventsource.protocols import FlexibleEventHandler, FlexibleEventSubscriber
+from eventsource.ports.handlers import FlexibleEventHandler, FlexibleEventSubscriber
 
 logger = logging.getLogger(__name__)
 

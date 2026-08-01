@@ -384,12 +384,12 @@ class MockLockManager:
         self._acquire_count += 1
 
         if self._should_fail:
-            from eventsource.exceptions import LockAcquisitionError
+            from eventsource.domain.exceptions import LockAcquisitionError
 
             raise LockAcquisitionError(key, timeout or 0.0, "Mock failure")
 
         if self._fail_after is not None and self._acquire_count > self._fail_after:
-            from eventsource.exceptions import LockAcquisitionError
+            from eventsource.domain.exceptions import LockAcquisitionError
 
             raise LockAcquisitionError(key, timeout or 0.0, "Mock failure after threshold")
 

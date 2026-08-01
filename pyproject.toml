@@ -203,7 +203,7 @@ source_paths = [
 only_mutate = [
     "src/eventsource/adapters/_sql/engine.py",
     "src/eventsource/adapters/_sql/dialect.py",
-    "src/eventsource/serialization/json.py",
+    "src/eventsource/adapters/serialization/json.py",
     "src/eventsource/bus/registry.py",
     "src/eventsource/bus/retry.py",
     "src/eventsource/bus/base.py",
@@ -227,7 +227,7 @@ only_mutate = [
 pytest_add_cli_args_test_selection = [
     "tests/unit/test_engine.py",
     "tests/unit/repositories/test_dialect.py",
-    "tests/unit/serialization/",
+    "tests/unit/adapters/serialization/",
     "tests/unit/bus/test_registry.py",
     "tests/unit/bus/test_retry.py",
     "tests/unit/bus/test_base.py",
@@ -274,16 +274,15 @@ source_modules = [
     "eventsource.events.registry",
     "eventsource.domain.aggregate",
     "eventsource.domain.decider",
-    "eventsource.commands",
-    "eventsource.protocols",
+    "eventsource.domain.command",
     "eventsource.bus.interface",
     "eventsource.ports",
     "eventsource.application",
     "eventsource.handlers.decorators",
     "eventsource.handlers.registry",
     "eventsource.handlers.adapter",
-    "eventsource.exceptions",
-    "eventsource.types",
+    "eventsource.domain.exceptions",
+    "eventsource.domain.types",
     "eventsource.bus.memory",
     "eventsource.adapters.memory.snapshots",
     "eventsource.adapters.memory.checkpoints",
@@ -295,7 +294,7 @@ source_modules = [
     "eventsource.testing.assertions",
     "eventsource.testing.conformance",
     "eventsource.testing.sync_facade",
-    "eventsource.sync.adapter",
+    "eventsource.adapters.sync.adapter",
     "eventsource.multitenancy.context",
     "eventsource.multitenancy.events",
     "eventsource.multitenancy.exceptions",
@@ -307,13 +306,7 @@ forbidden_modules = ["sqlalchemy"]
 name = "Application ring must not import adapters"
 type = "forbidden"
 source_modules = ["eventsource.application"]
-forbidden_modules = ["eventsource.adapters", "eventsource.bus", "eventsource.locks"]
-
-# The eventsource.locks entry above stays correct while the eventsource.locks
-# deprecation shim exists -- the shim's lazy __getattr__ resolves to
-# eventsource.adapters.postgresql.locks, so "eventsource.locks" is still, transitively,
-# an adapters import. It is deleted (not merely made redundant) when the shim itself is
-# removed in 0.8.0; see the BACKLOG.md entry for that removal.
+forbidden_modules = ["eventsource.adapters", "eventsource.bus"]
 
 [[tool.importlinter.contracts]]
 name = "Ports must not import adapters, application, or bus"

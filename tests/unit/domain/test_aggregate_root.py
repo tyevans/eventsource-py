@@ -23,8 +23,8 @@ from eventsource.domain.aggregate import (
     AggregateRoot,
     DeclarativeAggregate,
 )
+from eventsource.domain.exceptions import EventVersionError, UnhandledEventError
 from eventsource.events.base import DomainEvent
-from eventsource.exceptions import EventVersionError, UnhandledEventError
 
 # Use canonical import for @handles (TD-006)
 from eventsource.handlers import handles
@@ -1338,7 +1338,7 @@ class TestEventVersionErrorException:
 
     def test_exception_is_subclass_of_eventsource_error(self) -> None:
         """EventVersionError should be a subclass of EventSourceError."""
-        from eventsource.exceptions import EventSourceError
+        from eventsource.domain.exceptions import EventSourceError
 
         error = EventVersionError(
             expected_version=1,
@@ -1668,7 +1668,7 @@ class TestUnhandledEventErrorException:
 
     def test_exception_is_subclass_of_eventsource_error(self) -> None:
         """UnhandledEventError should be a subclass of EventSourceError."""
-        from eventsource.exceptions import EventSourceError
+        from eventsource.domain.exceptions import EventSourceError
 
         error = UnhandledEventError(
             event_type="OrderShipped",

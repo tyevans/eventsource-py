@@ -42,7 +42,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from eventsource.domain import StreamId
-from eventsource.exceptions import DuplicateEventError, OptimisticLockError
+from eventsource.domain.exceptions import DuplicateEventError, OptimisticLockError
 from eventsource.migration.exceptions import BulkCopyError
 from eventsource.migration.models import Migration
 from eventsource.observability import Tracer, create_tracer

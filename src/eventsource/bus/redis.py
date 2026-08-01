@@ -40,8 +40,8 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from eventsource.bus.base import BaseEventBus
+from eventsource.domain.exceptions import HandlerDispatchError
 from eventsource.events.base import DomainEvent
-from eventsource.exceptions import HandlerDispatchError
 from eventsource.handlers.adapter import HandlerAdapter
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (

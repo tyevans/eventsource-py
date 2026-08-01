@@ -17,7 +17,7 @@ from typing import Any, TypeVar
 from eventsource.events.base import DomainEvent
 
 # Import canonical protocol definitions
-from eventsource.protocols import AsyncEventHandler, SyncEventHandler
+from eventsource.ports.handlers import AsyncEventHandler, SyncEventHandler
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ AsyncHandlerFunc = Callable[[DomainEvent], Awaitable[None]]
 
 
 # Note: AsyncEventHandler and SyncEventHandler are now imported from
-# eventsource.protocols. The imports above re-export them for backward
+# eventsource.ports.handlers. The imports above re-export them for backward
 # compatibility with code that imports from this module.
 
 

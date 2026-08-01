@@ -19,8 +19,8 @@ from uuid import uuid4
 import pytest
 
 from eventsource.events.base import DomainEvent
+from eventsource.ports.handlers import EventSubscriber
 from eventsource.ports.positions import Position
-from eventsource.protocols import EventSubscriber
 from eventsource.subscriptions import (
     PauseReason,
     Subscription,

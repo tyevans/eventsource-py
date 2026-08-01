@@ -22,7 +22,7 @@ from eventsource.application.projections.coordinator import (
     SubscriberRegistry,
 )
 from eventsource.events.base import DomainEvent
-from eventsource.protocols import EventSubscriber
+from eventsource.ports.handlers import EventSubscriber
 
 
 # Sample events for testing

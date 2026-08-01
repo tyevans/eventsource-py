@@ -6,7 +6,7 @@ Event bus implementations for publishing and subscribing to domain events. The e
 
 - `EventBus` -- Abstract base class for event bus implementations
 - `EventHandlerFunc` -- Type alias for handler functions (sync or async)
-- `FlexibleEventHandler` / `FlexibleEventSubscriber` -- Protocols from `eventsource.protocols`
+- `FlexibleEventHandler` / `FlexibleEventSubscriber` -- Protocols from `eventsource.ports.handlers`
 
 ## Module Map
 

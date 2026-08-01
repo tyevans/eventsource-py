@@ -17,7 +17,7 @@ The machinery spans five source modules, across three rings:
 | Module | Ring | Contains |
 | --- | --- | --- |
 | `eventsource.ports.snapshots` | Ports | `Snapshot`, `SnapshotStore` |
-| `eventsource.exceptions` | Entities | `SnapshotError`, `SnapshotDeserializationError`, `SnapshotSchemaVersionError`, `SnapshotNotFoundError` |
+| `eventsource.domain.exceptions` | Entities | `SnapshotError`, `SnapshotDeserializationError`, `SnapshotSchemaVersionError`, `SnapshotNotFoundError` |
 | `eventsource.adapters.memory.snapshots` | Adapters | `InMemorySnapshotStore` |
 | `eventsource.adapters.postgresql.snapshots` | Adapters | `PostgreSQLSnapshotStore` |
 | `eventsource.adapters.sqlite.snapshots` | Adapters | `SQLiteSnapshotStore`, `SQLITE_AVAILABLE`, `SQLiteNotAvailableError` |
@@ -86,7 +86,7 @@ with a traceback, and return `None` — a snapshot that cannot be written never
 fails the save that triggered it. `take_snapshot()` itself does not catch
 anything: the manual path (`AggregateRepository.create_snapshot()`) calls it
 directly, with no scheduler in between, so it propagates errors. The exception
-types in `eventsource.exceptions` (`SnapshotError` and its three subclasses —
+types in `eventsource.domain.exceptions` (`SnapshotError` and its three subclasses —
 note they do *not* derive from `EventSourceError`) name problems on the
 *read* path — corrupt state, a schema version the code no longer understands,
 or a snapshot expected to exist but absent. No in-tree code currently raises

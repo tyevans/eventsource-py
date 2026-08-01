@@ -2,7 +2,7 @@
 
 Reference for the error types raised by `eventsource`.
 
-The core hierarchy lives in `eventsource.exceptions` and is rooted at a single
+The core hierarchy lives in `eventsource.domain.exceptions` and is rooted at a single
 base class, `EventSourceError`. It contains thirteen types:
 
 | Exception | Structured attributes |
@@ -30,7 +30,7 @@ the library raises the error — you can branch on them rather than parsing
 Six of these are re-exported from the package root (`AggregateNotCreatedError`,
 `AggregateNotFoundError`, `EventNotFoundError`, `EventSourceError`,
 `EventVersionError`, `OptimisticLockError`, `ProjectionError`); the rest must be
-imported from `eventsource.exceptions`. See
+imported from `eventsource.domain.exceptions`. See
 [Import paths and public exports](#import-paths-and-public-exports).
 
 Other subsystems — multi-tenancy, snapshots, subscriptions, migration, the
@@ -44,7 +44,7 @@ note in particular that `eventsource.ports.readmodels.exceptions` defines a
 
 Errors in `eventsource` fall into two groups.
 
-**The core hierarchy** in `eventsource.exceptions` covers the failures that
+**The core hierarchy** in `eventsource.domain.exceptions` covers the failures that
 arise from the fundamental event-sourcing operations: appending events under a
 version expectation, loading an aggregate, applying an event to aggregate state,
 serializing an event, and running a projection. Everything there derives from
@@ -52,7 +52,7 @@ serializing an event, and running a projection. Everything there derives from
 group.
 
 **Subsystem errors** live beside the code that raises them (or, for
-`SnapshotError`, alongside the core hierarchy in `eventsource.exceptions`
+`SnapshotError`, alongside the core hierarchy in `eventsource.domain.exceptions`
 despite not deriving from it) — `eventsource.subscriptions`,
 `eventsource.migration`, `eventsource.multitenancy`,
 `eventsource.ports.readmodels.exceptions`, and the optional bus backends each
@@ -92,7 +92,7 @@ raise it, then catalogue the subsystem families and their import paths.
 
 ## Exception hierarchy
 
-`eventsource.exceptions` defines fourteen classes: `EventSourceError` and
+`eventsource.domain.exceptions` defines fourteen classes: `EventSourceError` and
 thirteen direct subclasses (including `LockAcquisitionError` and
 `LockNotHeldError`, moved here from a standalone `Exception` base under ADR
 0029). There are no intermediate base classes inside the module — every error
@@ -110,7 +110,7 @@ not at `EventSourceError`:
 
 | Family | Root | Base class |
 | --- | --- | --- |
-| Snapshots | `SnapshotError` | `Exception` (defined in `eventsource.exceptions`, alongside but not part of the core hierarchy) |
+| Snapshots | `SnapshotError` | `Exception` (defined in `eventsource.domain.exceptions`, alongside but not part of the core hierarchy) |
 | Read models | `ReadModelError` | `Exception` |
 | Subscriptions | `SubscriptionError` | `Exception` |
 | Migration | `MigrationError` | `Exception` |
@@ -128,7 +128,7 @@ entries live in the same module as their nearest annotated ancestor.
 
 ```text
 Exception
-├── EventSourceError                          eventsource.exceptions
+├── EventSourceError                          eventsource.domain.exceptions
 │   ├── OptimisticLockError
 │   ├── EventNotFoundError
 │   ├── ProjectionError
@@ -145,7 +145,7 @@ Exception
 │   ├── LockAcquisitionError                   (ADR 0029: rebased here, was a bare Exception)
 │   └── LockNotHeldError                       (ADR 0029: rebased here, was a bare Exception)
 │
-├── SnapshotError                             eventsource.exceptions
+├── SnapshotError                             eventsource.domain.exceptions
 │   │                                          (not a subclass of EventSourceError)
 │   ├── SnapshotDeserializationError
 │   ├── SnapshotSchemaVersionError
@@ -207,7 +207,7 @@ hierarchy is flat, so specificity comes from the attributes an error carries
 rather than from its position in the tree.
 
 Two names appear twice in the tree. `OptimisticLockError` is defined both in
-`eventsource.exceptions` (aggregate append conflicts) and in
+`eventsource.domain.exceptions` (aggregate append conflicts) and in
 `eventsource.ports.readmodels.exceptions` (read-model row conflicts), and the
 two are unrelated classes — catching one will not catch the other. (This
 collision predates ADR 0029 and is tracked in `BACKLOG.md`.) `CircuitBreakerOpenError`
@@ -222,14 +222,14 @@ class EventSourceError(Exception): ...
 ```
 
 Base class for the core exception hierarchy. Defined in
-`eventsource.exceptions` and re-exported from the package root.
+`eventsource.domain.exceptions` and re-exported from the package root.
 
 **Import**
 
 ```python
 from eventsource import EventSourceError
 # or
-from eventsource.exceptions import EventSourceError
+from eventsource.domain.exceptions import EventSourceError
 ```
 
 **Constructor** — none of its own. The class body is `pass`, so it inherits
@@ -252,7 +252,7 @@ traceback as coming from application code, not from the library.
 ### What catching it covers
 
 `except EventSourceError:` catches the eleven concrete subclasses in
-`eventsource.exceptions` plus `TenantContextNotSetError` and
+`eventsource.domain.exceptions` plus `TenantContextNotSetError` and
 `TenantMismatchError` from `eventsource.multitenancy.exceptions`, which also
 derive from it. It does **not** catch the snapshot, read-model, subscription,
 migration, event-registry, or optional-backend families — those are rooted at
@@ -307,14 +307,14 @@ class OptimisticLockError(EventSourceError):
 ```
 
 Raised when a version conflict is detected while appending events to a stream.
-Defined in `eventsource.exceptions` and re-exported from the package root.
+Defined in `eventsource.domain.exceptions` and re-exported from the package root.
 
 **Import**
 
 ```python
 from eventsource import OptimisticLockError
 # or
-from eventsource.exceptions import OptimisticLockError
+from eventsource.domain.exceptions import OptimisticLockError
 ```
 
 All three constructor arguments are required and positional-friendly; the

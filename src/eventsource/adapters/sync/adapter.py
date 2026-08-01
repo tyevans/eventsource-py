@@ -56,7 +56,7 @@ class SyncEventStoreAdapter:
         >>> from eventsource.adapters.postgresql import PostgreSQLEventStore
         >>> from eventsource.domain import StreamId
         >>> from eventsource.ports import ExpectedVersion
-        >>> from eventsource.sync import SyncEventStoreAdapter
+        >>> from eventsource.adapters.sync import SyncEventStoreAdapter
         >>>
         >>> engine = create_async_engine(database_url)
         >>> sync_store = SyncEventStoreAdapter(PostgreSQLEventStore(engine), timeout=30.0)

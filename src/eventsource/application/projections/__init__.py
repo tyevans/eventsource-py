@@ -29,7 +29,7 @@ from eventsource.handlers import (
     handles,
     is_event_handler,
 )
-from eventsource.protocols import (
+from eventsource.ports.handlers import (
     EventHandler,
     EventSubscriber,
     SyncEventHandler,

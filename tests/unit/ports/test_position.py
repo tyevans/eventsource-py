@@ -2,7 +2,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from eventsource.exceptions import PositionDecodeError, PositionForeignError
+from eventsource.domain.exceptions import PositionDecodeError, PositionForeignError
 from eventsource.ports import Position
 
 keys = st.lists(

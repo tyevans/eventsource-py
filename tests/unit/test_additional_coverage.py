@@ -25,11 +25,11 @@ from eventsource.bus.memory import InMemoryEventBus
 from eventsource.domain.aggregate import AggregateRoot, DeclarativeAggregate
 from eventsource.events.base import DomainEvent
 from eventsource.handlers import handles
-from eventsource.protocols import (
+from eventsource.ports.handlers import (
     AsyncEventHandler,
     FlexibleEventSubscriber,
 )
-from eventsource.protocols import (
+from eventsource.ports.handlers import (
     FlexibleEventHandler as EventHandler,
 )
 

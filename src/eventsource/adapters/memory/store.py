@@ -10,9 +10,9 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from eventsource.domain import StreamId
+from eventsource.domain.exceptions import DuplicateEventError, OptimisticLockError
 from eventsource.events import DomainEvent
 from eventsource.events.registry import EventRegistry
-from eventsource.exceptions import DuplicateEventError, OptimisticLockError
 from eventsource.ports import (
     AppendResult,
     CategoryReadOptions,

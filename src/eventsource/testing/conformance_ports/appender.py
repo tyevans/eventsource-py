@@ -12,7 +12,7 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.exceptions import DuplicateEventError, OptimisticLockError
+from eventsource.domain.exceptions import DuplicateEventError, OptimisticLockError
 from eventsource.ports import AppendResult, ExpectedVersion
 from eventsource.ports.store import EventAppender, StreamReader
 from eventsource.testing.conformance_ports._fixtures import make_event, make_stream

@@ -62,46 +62,47 @@ pre-commit run --all-files
 
 ```
 src/eventsource/
-  domain/           # Entities ring: AggregateRoot, DeclarativeAggregate, StreamId (pure: stdlib + pydantic only)
+  domain/           # Entities ring: AggregateRoot, DeclarativeAggregate, StreamId (pure: stdlib + pydantic only);
+                    #   exceptions.py (all exception types, incl. SnapshotError hierarchy), types.py (type
+                    #   aliases: AggregateId, EventId, TenantId, etc.), command.py (DomainCommand)
   application/      # Use-case ring: AggregateRepository, snapshot policy/scheduler collaborators;
                     #   application/projections/: Projection, DeclarativeProjection, coordinator,
                     #   checkpoint/DLQ functions, retry policies (DatabaseProjection is an adapter, not here)
   ports/            # Boundary interfaces: Snapshot/SnapshotStore, ProjectionCheckpoints/SubscriptionPositions/
                     #   CheckpointRepository, DLQRepository, OutboxRepository/outbox_event_data,
-                    #   store/bus/envelope/position ports
+                    #   store/bus/envelope/position ports, handlers.py (canonical handler/subscriber
+                    #   Protocols + ABCs, see note below)
   adapters/         # Interface adapters: memory/postgresql/sqlite snapshot + event store implementations;
                     #   adapters/sql/: dialect-parameterized checkpoint, DLQ, and DatabaseProjection (both
                     #   PostgreSQL and SQLite); adapters/memory/: in-memory checkpoint, DLQ, and outbox
                     #   repositories; adapters/postgresql/ and adapters/sqlite/: per-technology outbox
-                    #   repositories (not dialect-parameterized -- SQLite takes a raw aiosqlite.Connection)
+                    #   repositories (not dialect-parameterized -- SQLite takes a raw aiosqlite.Connection);
+                    #   adapters/sync/ (SyncEventStoreAdapter, wraps a FullEventStore for sync callers);
+                    #   adapters/serialization/ (JSON encoding, EventSourceJSONEncoder)
   bus/              # EventBus interface + InMemory, Redis, RabbitMQ, Kafka backends (implementations colocated)
   events/           # DomainEvent (pydantic BaseModel), EventRegistry
   handlers/         # @handles decorator for declarative event routing
-  locks/            # Distributed locking (PostgreSQL advisory locks)
   migration/        # Live event store migration tooling (dual-write, cutover, sync tracking)
   migrations/       # SQL schema files (append-only)
   multitenancy/     # Tenant context (contextvars), scopes, TenantDomainEvent
   observability/    # OpenTelemetry tracing integration (optional dep)
-  readmodels/       # ReadModelProjection
-  serialization/    # JSON encoding (EventSourceJSONEncoder)
   subscriptions/    # Subscription lifecycle: manager, runners, retry, health, flow control
-  sync/             # SyncEventStoreAdapter (wraps a FullEventStore for sync callers)
   testing/          # Test helpers: assertions, BDD, builder, harness;
                     #   testing/conformance_ports/: backend conformance suites for the store/snapshot/
                     #   checkpoint/DLQ ports (EventStoreConformanceSuite's replacement)
   gdpr/             # GDPR compliance utilities
   _internal/        # Internal helpers (not public API)
-  config.py         # Configuration utilities
-  protocols.py      # Canonical type contracts (Protocols + ABCs, see note below)
-  exceptions.py     # All exception types (includes the SnapshotError hierarchy)
-  types.py          # Type aliases (AggregateId, EventId, TenantId, etc.)
 ```
+
+`types.py`, `exceptions.py`, `protocols.py`, `commands/`, `sync/`, `serialization/`,
+`locks/`, `readmodels/`, and `config.py` no longer exist at the top level (ADR 0030) --
+no shims, clean breaks. See `domain/`, `ports/`, and `adapters/` above for their homes.
 
 ## Architecture
 
 - **Async-first**: All store/bus/projection interfaces are async. `SyncEventStoreAdapter` wraps async for sync callers.
 - **Pydantic v2**: DomainEvent is a Pydantic BaseModel. Event data validated/serialized via pydantic. `model_config = ConfigDict(frozen=True)`.
-- **Mixed Protocols + ABCs**: `protocols.py` has both Python Protocols (EventHandler, SyncEventHandler, FlexibleEventHandler) and ABCs (EventSubscriber, AsyncEventHandler). Protocols enable structural subtyping; ABCs are used where additional methods are needed.
+- **Mixed Protocols + ABCs**: `ports/handlers.py` has both Python Protocols (EventHandler, SyncEventHandler, FlexibleEventHandler) and ABCs (EventSubscriber, AsyncEventHandler). Protocols enable structural subtyping; ABCs are used where additional methods are needed.
 - **Backend-agnostic**: EventStore, EventBus, repositories all have multiple backend implementations behind shared interfaces defined in `ports/`.
 - **Optimistic locking**: Aggregates use `expected_version` for concurrency control via `OptimisticLockError`.
 

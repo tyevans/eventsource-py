@@ -20,7 +20,7 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.exceptions import LockAcquisitionError
+from eventsource.domain.exceptions import LockAcquisitionError
 from eventsource.migration.cutover import CutoverManager
 from eventsource.migration.models import (
     CutoverResult,

@@ -30,7 +30,7 @@ from datetime import UTC, datetime
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from eventsource.exceptions import LockAcquisitionError, LockNotHeldError
+from eventsource.domain.exceptions import LockAcquisitionError, LockNotHeldError
 from eventsource.observability import Tracer, create_tracer
 from eventsource.ports.locks import LockInfo
 

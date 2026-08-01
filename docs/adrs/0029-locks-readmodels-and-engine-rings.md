@@ -24,8 +24,15 @@ in 0.8.0.
 `src/eventsource/adapters/sql/readmodel_projection.py`, and
 `src/eventsource/adapters/_sql/engine.py`. Conformance suites:
 `DistributedLockConformance` and `ReadModelRepositoryConformance` in
-`src/eventsource/testing/conformance_ports/`. Deprecation shims:
-`src/eventsource/locks/__init__.py`, `src/eventsource/readmodels/__init__.py`.
+`src/eventsource/testing/conformance_ports/`.
+
+**Amended by [ADR 0030](0030-top-level-module-ring-consolidation.md)**: the
+`eventsource.locks` and `eventsource.readmodels` deprecation shims described
+below were removed ahead of the 0.8.0 schedule this ADR originally set,
+as part of a pre-1.0 decision to stop carrying deprecation shims at all.
+`import eventsource.locks` / `import eventsource.readmodels` now raise
+`ModuleNotFoundError`; the ports/adapters split this ADR made is otherwise
+unaffected.
 
 **Amends [ADR 0023](0023-postgresql-advisory-locks.md).** ADR 0023's Decision
 does not change and is not retro-edited: `PostgreSQLLockManager` remains the

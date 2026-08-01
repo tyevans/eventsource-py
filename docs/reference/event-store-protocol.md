@@ -592,7 +592,7 @@ loaded at. Raises `ValueError` at construction time if `n < 0`.
 | `PositionDecodeError` | `Position.from_str()` | Input is not valid, well-shaped JSON for a `Position` |
 | `ValueError` | `EventAppender.append()`, `CategoryQuery.read_category()`, `ExpectedVersion.exact()` | Empty `events` sequence; naive `from_timestamp`; negative `exact()` version |
 
-All of these live in `eventsource.exceptions` and are re-exported from the top-level
+All of these live in `eventsource.domain.exceptions` and are re-exported from the top-level
 `eventsource` package.
 
 ## What Changed From the Retired `EventStore` ABC

@@ -8,11 +8,11 @@ from uuid import uuid4
 import pytest
 
 from eventsource.adapters.memory.store import InMemoryEventStore
+from eventsource.adapters.sync import SyncEventStoreAdapter
 from eventsource.domain import StreamId
+from eventsource.domain.exceptions import OptimisticLockError
 from eventsource.events.base import DomainEvent
-from eventsource.exceptions import OptimisticLockError
 from eventsource.ports import ExpectedVersion
-from eventsource.sync import SyncEventStoreAdapter
 
 
 class SampleEvent(DomainEvent):

@@ -4,7 +4,7 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.exceptions import CommandRejectedError
+from eventsource.domain.exceptions import CommandRejectedError
 from eventsource.testing import DeciderScenario
 from tests.unit.domain.test_decider_aggregate import (
     Account,

@@ -7,11 +7,12 @@ from uuid import uuid4
 
 import pytest
 
-import eventsource.sync.adapter as adapter_module
+import eventsource.adapters.sync.adapter as adapter_module
 from eventsource.adapters.memory.store import InMemoryEventStore
+from eventsource.adapters.sync import SyncEventStoreAdapter
 from eventsource.domain import StreamId
+from eventsource.domain.exceptions import OptimisticLockError
 from eventsource.events.base import DomainEvent
-from eventsource.exceptions import OptimisticLockError
 from eventsource.ports import (
     EventEnvelope,
     ExpectedVersion,
@@ -19,7 +20,6 @@ from eventsource.ports import (
     Position,
     StreamReadOptions,
 )
-from eventsource.sync import SyncEventStoreAdapter
 
 
 class SampleEvent(DomainEvent):

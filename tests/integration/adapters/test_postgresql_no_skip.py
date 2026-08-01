@@ -16,9 +16,9 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from eventsource.adapters.postgresql import PostgreSQLEventStore
+from eventsource.adapters.serialization import json_dumps
 from eventsource.events.registry import EventRegistry
 from eventsource.ports import ExpectedVersion, collect
-from eventsource.serialization import json_dumps
 from eventsource.testing.conformance_ports._fixtures import ConformanceEvent, make_stream
 
 from ..conftest import skip_if_no_postgres_infra

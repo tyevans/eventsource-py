@@ -18,8 +18,8 @@ import pytest
 from pydantic import BaseModel
 
 from eventsource.domain.aggregate import DeclarativeAggregate
+from eventsource.domain.exceptions import AggregateNotCreatedError
 from eventsource.events.base import DomainEvent
-from eventsource.exceptions import AggregateNotCreatedError
 from eventsource.handlers import handles
 
 # =============================================================================
@@ -387,7 +387,7 @@ class TestAggregateNotCreatedError:
 
     def test_error_is_event_source_error(self) -> None:
         """AggregateNotCreatedError is an EventSourceError."""
-        from eventsource.exceptions import EventSourceError
+        from eventsource.domain.exceptions import EventSourceError
 
         error = AggregateNotCreatedError("MyAggregate")
         assert isinstance(error, EventSourceError)

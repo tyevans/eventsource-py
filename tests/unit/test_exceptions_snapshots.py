@@ -4,7 +4,7 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.exceptions import (
+from eventsource.domain.exceptions import (
     SnapshotDeserializationError,
     SnapshotError,
     SnapshotNotFoundError,

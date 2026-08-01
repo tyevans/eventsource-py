@@ -736,7 +736,7 @@ class TestSubscriberProtocolCompatibility:
 
     def test_compatible_with_event_subscriber(self) -> None:
         """Subscriber is compatible with existing EventSubscriber pattern."""
-        from eventsource.protocols import EventSubscriber
+        from eventsource.ports.handlers import EventSubscriber
 
         class MyProjection(EventSubscriber):
             def subscribed_to(self) -> list[type[DomainEvent]]:

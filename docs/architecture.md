@@ -1103,7 +1103,7 @@ when this aggregate was loaded. If the stream has moved since, the append fails
 and `OptimisticLockError` is raised carrying `aggregate_id`, `expected_version`,
 and `actual_version`. Nothing is written.
 
-That error is the write-side one, from `eventsource.exceptions`. Keep it
+That error is the write-side one, from `eventsource.domain.exceptions`. Keep it
 separate in your head from
 `eventsource.ports.readmodels.exceptions.OptimisticLockError`, which is keyed
 by `model_id` and belongs to a different problem; the section below on the two

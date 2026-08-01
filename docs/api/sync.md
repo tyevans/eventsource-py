@@ -1,6 +1,6 @@
 # Sync API Reference
 
-Reference documentation for `eventsource.sync`, which contains a single public
+Reference documentation for `eventsource.adapters.sync`, which contains a single public
 name: `SyncEventStoreAdapter`. The adapter wraps any async, port-shaped event
 store (typed as `FullEventStore` from `eventsource.ports` — the union of the
 `EventAppender`, `StreamReader`, `EventLookup`, `GlobalEventFeed`, and
@@ -15,7 +15,7 @@ Public names covered here:
 | `SyncEventStoreAdapter` | class | Blocking facade over an async `FullEventStore` |
 
 ```python
-from eventsource.sync import SyncEventStoreAdapter
+from eventsource.adapters.sync import SyncEventStoreAdapter
 
 # Also available from the package root:
 from eventsource import SyncEventStoreAdapter
@@ -53,7 +53,7 @@ Do not use it inside an already-async call stack. The adapter detects a running
 loop via `asyncio.get_running_loop()` and, rather than failing, schedules the
 coroutine back onto that loop with `asyncio.run_coroutine_threadsafe()` and
 blocks on the resulting future, while emitting a `logging.WARNING` on the
-`eventsource.sync.adapter` logger:
+`eventsource.adapters.sync.adapter` logger:
 
 ```
 SyncEventStoreAdapter called from running event loop.
@@ -82,14 +82,14 @@ The adapter is exported from both its own module and the package root; the two
 names are the same object.
 
 ```python
-from eventsource.sync import SyncEventStoreAdapter
+from eventsource.adapters.sync import SyncEventStoreAdapter
 from eventsource import SyncEventStoreAdapter  # equivalent
 ```
 
-`eventsource.sync.__all__` is `["SyncEventStoreAdapter"]`, and the package root
-re-exports the same object, so `eventsource.sync.SyncEventStoreAdapter is
+`eventsource.adapters.sync.__all__` is `["SyncEventStoreAdapter"]`, and the package root
+re-exports the same object, so `eventsource.adapters.sync.SyncEventStoreAdapter is
 eventsource.SyncEventStoreAdapter`. The implementation lives in
-`eventsource.sync.adapter`; importing it from there works but is not part of
+`eventsource.adapters.sync.adapter`; importing it from there works but is not part of
 the documented surface.
 
 The module has no optional dependencies of its own. It imports only standard
@@ -98,7 +98,7 @@ library modules (`asyncio`, `logging`, `threading`, `concurrent.futures`,
 [`StreamId`](types.md), and the `AppendResult`, `CategoryReadOptions`,
 `EventEnvelope`, `ExpectedVersion`, `FeedReadOptions`, `FullEventStore`,
 `Position`, `StreamReadOptions`, and `collect` names from
-`eventsource.ports`. Importing `eventsource.sync` is therefore always safe;
+`eventsource.ports`. Importing `eventsource.adapters.sync` is therefore always safe;
 whatever extras the *wrapped* store needs (for example `asyncpg` for
 `PostgreSQLEventStore`) still apply at construction time.
 
@@ -141,7 +141,7 @@ the timeout entirely.
 
 ```python
 from eventsource.adapters.memory import InMemoryEventStore
-from eventsource.sync import SyncEventStoreAdapter
+from eventsource.adapters.sync import SyncEventStoreAdapter
 
 sync_store = SyncEventStoreAdapter(InMemoryEventStore(), timeout=5.0)
 ```
@@ -163,7 +163,7 @@ external services:
 
 ```python
 from eventsource.adapters.memory import InMemoryEventStore
-from eventsource.sync import SyncEventStoreAdapter
+from eventsource.adapters.sync import SyncEventStoreAdapter
 
 sync_store = SyncEventStoreAdapter(InMemoryEventStore())
 ```

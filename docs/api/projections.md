@@ -17,7 +17,7 @@ The package is organized into five source modules:
 | `eventsource.application.projections.retry` | `RetryPolicy`, `ExponentialBackoffRetryPolicy`, `NoRetryPolicy`, `FilteredRetryPolicy`, `DEFAULT_RETRY_POLICY` |
 | `eventsource.application.projections.checkpoints` | `record_checkpoint`, `read_checkpoint`, `lag_metrics_dict`, `reset_checkpoint` |
 | `eventsource.application.projections.dlq` | `send_to_dlq`, `read_failed_events` |
-| `eventsource.protocols` | `AsyncEventHandler` |
+| `eventsource.ports.handlers` | `AsyncEventHandler` |
 
 `DatabaseProjection` itself lives in `eventsource.adapters.sql.projection`.
 
@@ -29,7 +29,7 @@ must still be imported from `eventsource.application.projections.retry`. The `ha
 the canonical definitions in `eventsource.handlers`, kept for backward compatibility —
 new code should import them from `eventsource.handlers`. The `EventHandler`,
 `SyncEventHandler`, and `EventSubscriber` names are likewise re-exports from
-`eventsource.protocols`.
+`eventsource.ports.handlers`.
 
 The class hierarchy is linear: `CheckpointTrackingProjection` extends `Projection` and
 adds checkpointing, retry, and dead-letter handling; `DeclarativeProjection` extends
@@ -119,7 +119,7 @@ This is the complete `__all__`, grouped as the source groups it:
 | Coordinators and registries | `ProjectionRegistry`, `ProjectionCoordinator`, `SubscriberRegistry` | `eventsource.application.projections.coordinator` |
 | Checkpoint functions | `record_checkpoint`, `read_checkpoint`, `lag_metrics_dict`, `reset_checkpoint` | `eventsource.application.projections.checkpoints` |
 | DLQ functions | `send_to_dlq`, `read_failed_events` | `eventsource.application.projections.dlq` |
-| Protocols | `EventHandler`, `SyncEventHandler`, `EventSubscriber` | `eventsource.protocols` (re-export) |
+| Protocols | `EventHandler`, `SyncEventHandler`, `EventSubscriber` | `eventsource.ports.handlers` (re-export) |
 
 `DatabaseProjection` is **not** in this barrel — it lives in
 `eventsource.adapters.sql.projection` because its constructor takes a SQLAlchemy
@@ -164,18 +164,18 @@ The top-level `eventsource/__init__.py` re-exports a strict subset: `Projection`
 `get_handled_event_type`, `is_event_handler`, or any of the coordinator classes, the
 checkpoint functions, or the DLQ functions — those require
 `eventsource.application.projections`. The protocols (`EventHandler`, `SyncEventHandler`,
-`EventSubscriber`) are available from both places, plus `eventsource.protocols`,
+`EventSubscriber`) are available from both places, plus `eventsource.ports.handlers`,
 because all three paths resolve to the same objects.
 
 ### Aliases, not duplicates
 
 `handles`, `get_handled_event_type`, and `is_event_handler` are bound directly from
 `eventsource.handlers`; `EventHandler`, `SyncEventHandler`, and `EventSubscriber` from
-`eventsource.protocols`. Identity comparisons and `isinstance`/`issubclass` checks
+`eventsource.ports.handlers`. Identity comparisons and `isinstance`/`issubclass` checks
 behave identically whichever path you import through. The
 `application.projections`-package copies exist for backward compatibility. New code
 should prefer the canonical modules: `eventsource.handlers` for the decorator helpers and
-`eventsource.protocols` for the protocols.
+`eventsource.ports.handlers` for the protocols.
 
 ## Abstract Base Classes
 
@@ -266,7 +266,7 @@ As with `Projection`, there is no `subscribed_to()` and no dispatch on event typ
 `SyncProjection` is a standalone contract with no consumers inside the library. No
 registry, coordinator, or subscription runner accepts one; nothing bridges it to the
 async `Projection` path, and `await projection.handle(event)` fails because `handle()`
-returns `None` rather than an awaitable. (`SyncEventStoreAdapter` in `eventsource.sync`
+returns `None` rather than an awaitable. (`SyncEventStoreAdapter` in `eventsource.adapters.sync`
 bridges in the opposite direction — a sync caller over an async store — and has nothing
 to do with this class.) If you need a synchronous projection driven by async
 infrastructure, wrap it yourself: have an async `Projection.handle()` call the sync one,
@@ -338,7 +338,7 @@ attribute, as in the example above.
 
 `EventHandlerBase` is not exported from the top-level `eventsource` package; import it
 from `eventsource.application.projections`. It is also unrelated to the `EventHandler` and
-`AsyncEventHandler` names in `eventsource.protocols`, despite the similar spelling —
+`AsyncEventHandler` names in `eventsource.ports.handlers`, despite the similar spelling —
 those describe bus-level callables and subscribers, not registry-dispatched handlers.
 
 ## `CheckpointTrackingProjection`
@@ -360,7 +360,7 @@ Defined in `eventsource.application.projections.base`; exported from both `event
 built on — `DeclarativeProjection` and `DatabaseProjection` both descend from it — and
 the only one that supplies checkpointing, retry, dead-lettering, and tracing.
 
-It inherits from `EventSubscriber` (the ABC in `eventsource.protocols`), **not** from
+It inherits from `EventSubscriber` (the ABC in `eventsource.ports.handlers`), **not** from
 `Projection`. The two hierarchies are disjoint, so `isinstance(p, Projection)` is
 `False` for a checkpoint-tracking projection and `ProjectionRegistry.register_projection()`,
 annotated `Projection`, rejects one under a type checker even though the runtime

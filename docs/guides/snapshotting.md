@@ -252,7 +252,7 @@ repository. If they differ -- in either direction, so a rollback invalidates
 just as a bump does -- it logs at `INFO` ("Snapshot schema version mismatch ...
 Falling back to full event replay") and returns `None`, so the aggregate replays
 its full stream. Nothing is raised: `SnapshotSchemaVersionError` exists in
-`eventsource.exceptions` for your own code to raise, but the load path
+`eventsource.domain.exceptions` for your own code to raise, but the load path
 never does. The stale row is overwritten in place the next time the aggregate is
 snapshotted, since snapshots are upserted per `(aggregate_id, aggregate_type)`.
 
@@ -1038,7 +1038,7 @@ ignores the newer snapshots rather than misreading them.
 A mismatch is not an error. `load_valid_snapshot()` returns `None`, `load()`
 replays the aggregate's full event stream, and the aggregate comes back correct
 -- just more slowly. Nothing raises, and nothing is written to the DLQ.
-`SnapshotSchemaVersionError` exists in `eventsource.exceptions` for
+`SnapshotSchemaVersionError` exists in `eventsource.domain.exceptions` for
 callers that want to signal a mismatch themselves; the load path does not raise
 it.
 

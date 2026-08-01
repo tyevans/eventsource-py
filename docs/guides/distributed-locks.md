@@ -26,13 +26,13 @@ The five names split across three modules by ring (ADR 0029):
 
 ```python
 from eventsource.ports.locks import LockInfo, migration_lock_key
-from eventsource.exceptions import LockAcquisitionError, LockNotHeldError
+from eventsource.domain.exceptions import LockAcquisitionError, LockNotHeldError
 from eventsource.adapters.postgresql.locks import PostgreSQLLockManager
 ```
 
 Note that none of these are exported from the top-level `eventsource`
-package. `eventsource.locks` still resolves all five, lazily, each with a
-`DeprecationWarning` naming the module above — removed in 0.8.0.
+package. `eventsource.locks` (the pre-slice-A path) no longer exists (ADR
+0030); importing it raises `ModuleNotFoundError`.
 
 ## Before you start: PostgreSQL only
 

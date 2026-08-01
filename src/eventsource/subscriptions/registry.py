@@ -29,7 +29,7 @@ from eventsource.subscriptions.subscription import (
 )
 
 if TYPE_CHECKING:
-    from eventsource.protocols import EventSubscriber
+    from eventsource.ports.handlers import EventSubscriber
 
 logger = logging.getLogger(__name__)
 

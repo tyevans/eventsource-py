@@ -322,15 +322,17 @@ predates the structure slice A (locks/readmodels/engine ring migration,
 2026-07-31)** — record that, so a future reader does not attribute it to that
 slice.
 
-## Remove the `eventsource.locks` and `eventsource.readmodels` deprecation shims (P3)
+## Remove the `eventsource.locks` and `eventsource.readmodels` deprecation shims (P3) — Done (ADR 0030)
 
-Scheduled for 0.8.0, alongside the existing `bus/` shim removal entry above.
-Includes: delete both `__init__.py` shims (`src/eventsource/locks/__init__.py`,
-`src/eventsource/readmodels/__init__.py`); delete the `eventsource.locks`
-entry from the "Application ring must not import adapters" `forbidden_modules`
-in `pyproject.toml` (see the comment beside that contract explaining why it
-stays correct only while the shim exists); delete the two shim test modules.
-Structure slice A (ADR 0029, 2026-07-31).
+Originally scheduled for 0.8.0. Removed ahead of schedule as part of the
+top-level module ring consolidation (ADR 0030, 2026-07-31), when the project
+adopted a no-deprecation-shim policy pre-1.0: `src/eventsource/locks/__init__.py`
+and `src/eventsource/readmodels/__init__.py` are deleted; `import
+eventsource.locks` / `import eventsource.readmodels` now raise
+`ModuleNotFoundError`. The `eventsource.locks` entry in the "Application
+ring must not import adapters" `forbidden_modules` contract in
+`pyproject.toml` is removed alongside it (owned by a separate task in the
+same slice).
 
 ## InMemoryReadModelRepository aliases live objects (P3)
 

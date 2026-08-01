@@ -60,7 +60,7 @@ import time
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from eventsource.exceptions import LockAcquisitionError
+from eventsource.domain.exceptions import LockAcquisitionError
 from eventsource.migration.exceptions import (
     CutoverError,
     CutoverLagError,

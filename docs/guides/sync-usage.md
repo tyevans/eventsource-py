@@ -9,7 +9,7 @@ from uuid import UUID
 
 from eventsource.adapters.postgresql import PostgreSQLEventStore
 from eventsource.domain import StreamId
-from eventsource.sync import SyncEventStoreAdapter
+from eventsource.adapters.sync import SyncEventStoreAdapter
 
 async_store = PostgreSQLEventStore(engine)
 sync_store = SyncEventStoreAdapter(async_store, timeout=30.0)
@@ -39,7 +39,7 @@ In these contexts each call takes the fast path: `asyncio.run(asyncio.wait_for(c
 
 ### Do not use it when
 
-**You are already in async code.** Inside FastAPI/Starlette async endpoints, `asyncio.run()`-driven scripts, or any coroutine, `await` the store directly. The adapter detects the running loop, emits a warning through the `eventsource.sync.adapter` logger, and falls back to `run_coroutine_threadsafe` — more overhead, and a deadlock risk if the calling thread *is* the loop thread. See [Warning: do not call the adapter from inside a running event loop](#warning-do-not-call-the-adapter-from-inside-a-running-event-loop).
+**You are already in async code.** Inside FastAPI/Starlette async endpoints, `asyncio.run()`-driven scripts, or any coroutine, `await` the store directly. The adapter detects the running loop, emits a warning through the `eventsource.adapters.sync.adapter` logger, and falls back to `run_coroutine_threadsafe` — more overhead, and a deadlock risk if the calling thread *is* the loop thread. See [Warning: do not call the adapter from inside a running event loop](#warning-do-not-call-the-adapter-from-inside-a-running-event-loop).
 
 **You are bridging from async to sync-only third-party code.** Use your framework's bridge (`asgiref.sync.sync_to_async` in Django, `anyio.to_thread.run_sync`, `loop.run_in_executor`) so the adapter runs on a worker thread with no loop of its own — then it takes the fast path again.
 
@@ -59,7 +59,7 @@ Construct your async store as usual, then hand it to `SyncEventStoreAdapter`. Th
 
 ```python
 from eventsource.adapters.postgresql import PostgreSQLEventStore
-from eventsource.sync import SyncEventStoreAdapter
+from eventsource.adapters.sync import SyncEventStoreAdapter
 
 async_store = PostgreSQLEventStore(engine)
 sync_store = SyncEventStoreAdapter(async_store, timeout=30.0)
@@ -202,7 +202,7 @@ Reserve `ExpectedVersion.any_()` for append-only streams where concurrent writer
 When the stream's actual version does not match the expected version, the store raises `OptimisticLockError` and the adapter propagates it unchanged to your synchronous caller. The exception carries the details you need to decide what to do:
 
 ```python
-from eventsource.exceptions import OptimisticLockError
+from eventsource.domain.exceptions import OptimisticLockError
 
 try:
     sync_store.append(stream, [event], ExpectedVersion.exact(3))
@@ -215,7 +215,7 @@ except OptimisticLockError as exc:
 In a sync worker the fix is a bounded retry that re-reads the stream each time, because the events you want to append may depend on state another writer just added:
 
 ```python
-from eventsource.exceptions import OptimisticLockError
+from eventsource.domain.exceptions import OptimisticLockError
 
 def ship_order(order_id, max_attempts: int = 3):
     stream_id = StreamId(aggregate_id=order_id, category="Order")
@@ -369,7 +369,7 @@ Cheap existence check for one specific event id, distinct from `get_stream_versi
 Every call goes through `_run_sync`, which checks `asyncio.get_running_loop()` first:
 
 - **No running loop (the common case in Celery/Django/RQ/scripts).** `asyncio.run(asyncio.wait_for(coro, timeout))` — a fresh loop per call, torn down afterward.
-- **A running loop on the calling thread.** A warning is logged through the `eventsource.sync.adapter` logger, and the coroutine is scheduled onto that loop with `asyncio.run_coroutine_threadsafe(coro, loop)`, then awaited with a timeout via `future.result(timeout=...)`.
+- **A running loop on the calling thread.** A warning is logged through the `eventsource.adapters.sync.adapter` logger, and the coroutine is scheduled onto that loop with `asyncio.run_coroutine_threadsafe(coro, loop)`, then awaited with a timeout via `future.result(timeout=...)`.
 
 ### Warning: do not call the adapter from inside a running event loop
 

@@ -13,7 +13,7 @@ from typing import Any
 
 from eventsource.events.base import DomainEvent
 from eventsource.handlers.adapter import HandlerAdapter
-from eventsource.protocols import FlexibleEventSubscriber
+from eventsource.ports.handlers import FlexibleEventSubscriber
 
 
 class SubscriptionRegistry:

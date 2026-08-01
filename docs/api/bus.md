@@ -13,7 +13,7 @@ Public names covered here:
 | --- | --- | --- |
 | `EventBus` | ABC | Abstract publish/subscribe contract implemented by every bus |
 | `EventHandlerFunc` | type alias | Callable signature accepted by the subscribe methods |
-| `EventHandler` / `AsyncEventHandler` / `FlexibleEventHandler` | protocol / ABC | Handler contracts re-exported from `eventsource.protocols` |
+| `EventHandler` / `AsyncEventHandler` / `FlexibleEventHandler` | protocol / ABC | Handler contracts re-exported from `eventsource.ports.handlers` |
 | `EventSubscriber` / `FlexibleEventSubscriber` | protocol | Multi-event subscriber contracts used by `subscribe_all()` |
 | `InMemoryEventBus` | class | In-process bus for development, tests, and single-instance deployments |
 | `RedisEventBus`, `RedisEventBusConfig`, `RedisEventBusStats` | classes | Redis Streams bus, its configuration, and its counters |
@@ -53,7 +53,7 @@ from eventsource.bus import (
 
 The bus classes, config objects, and stats objects are also re-exported from the
 top-level `eventsource` package; the handler and subscriber protocols live
-canonically in `eventsource.protocols` and are re-exported by `eventsource.bus`.
+canonically in `eventsource.ports.handlers` and are re-exported by `eventsource.bus`.
 
 `EventBus.publish()` is `async`; the subscription methods (`subscribe`,
 `unsubscribe`, `subscribe_all`, `subscribe_to_all_events`,
@@ -91,7 +91,7 @@ before they will deliver events to their handlers.
 
 `EventBus` and `EventHandlerFunc` come from `eventsource.bus.interface`. All
 five handler and subscriber contracts are re-exports from the canonical
-`eventsource.protocols` module — `EventHandler`, `FlexibleEventHandler`, and
+`eventsource.ports.handlers` module — `EventHandler`, `FlexibleEventHandler`, and
 `FlexibleEventSubscriber` are `Protocol`s; `EventSubscriber` and
 `AsyncEventHandler` are ABCs. Each backend module contributes exactly five
 names: its bus class, config dataclass, stats dataclass, dependency-guard
@@ -214,7 +214,7 @@ call and not its peers.
 ```python
 from eventsource.bus import EventBus, EventHandlerFunc
 from eventsource.events.base import DomainEvent
-from eventsource.protocols import FlexibleEventHandler, FlexibleEventSubscriber
+from eventsource.ports.handlers import FlexibleEventHandler, FlexibleEventSubscriber
 
 
 class MyEventBus(EventBus):

@@ -227,7 +227,7 @@ class TenantOrderProjection(FilteringSubscriber):
         await self._db.insert_order(event.aggregate_id, event.total)
 ```
 
-Import all of these from `eventsource.subscriptions`. The manager's own type hint is the `EventSubscriber` ABC from `eventsource.protocols`, but the runners only ever call `subscribed_to()` and `handle()`, so a plain duck-typed class works.
+Import all of these from `eventsource.subscriptions`. The manager's own type hint is the `EventSubscriber` ABC from `eventsource.ports.handlers`, but the runners only ever call `subscribed_to()` and `handle()`, so a plain duck-typed class works.
 
 ### What `subscribed_to()` controls
 

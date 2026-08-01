@@ -18,7 +18,7 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.exceptions import PositionDecodeError
+from eventsource.domain.exceptions import PositionDecodeError
 from eventsource.migration.models import PositionMapping
 from eventsource.migration.repositories.position_mapping import (
     PositionMappingRepository,

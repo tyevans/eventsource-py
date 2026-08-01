@@ -1,5 +1,5 @@
 """
-Property-based tests for `eventsource.serialization.json`.
+Property-based tests for `eventsource.adapters.serialization.json`.
 
 These complement (not replace) the hand-enumerated cases in `test_json.py`.
 That suite covers UUID, datetime, and a handful of hand-picked non-ASCII
@@ -78,8 +78,8 @@ from hypothesis import given
 from hypothesis import strategies as st
 from pydantic import ValidationError
 
+from eventsource.adapters.serialization import json_dumps, json_loads
 from eventsource.events.base import DomainEvent
-from eventsource.serialization import json_dumps, json_loads
 
 json_values = st.recursive(
     st.none()

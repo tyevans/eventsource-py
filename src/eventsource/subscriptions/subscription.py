@@ -32,7 +32,7 @@ from eventsource.subscriptions.exceptions import SubscriptionStateError
 
 if TYPE_CHECKING:
     from eventsource.events.base import DomainEvent
-    from eventsource.protocols import EventSubscriber
+    from eventsource.ports.handlers import EventSubscriber
 
 
 logger = logging.getLogger(__name__)

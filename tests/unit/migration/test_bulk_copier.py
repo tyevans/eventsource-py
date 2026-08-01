@@ -23,8 +23,8 @@ import pytest
 
 from eventsource.adapters.memory import InMemoryEventStore
 from eventsource.domain import StreamId
+from eventsource.domain.exceptions import DuplicateEventError, OptimisticLockError
 from eventsource.events.base import DomainEvent
-from eventsource.exceptions import DuplicateEventError, OptimisticLockError
 from eventsource.migration.bulk_copier import (
     BulkCopier,
     BulkCopyProgress,

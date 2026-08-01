@@ -16,7 +16,7 @@ from eventsource import (
     EventNotFoundError,
     ProjectionError,
 )
-from eventsource.exceptions import (
+from eventsource.domain.exceptions import (
     UnhandledEventError,
     SerializationError,
     EventStoreError,
@@ -28,7 +28,7 @@ from eventsource.exceptions import (
 Four things are worth knowing before you write your first handler:
 
 - **Not every exception inherits from `EventSourceError`.** The subscription, snapshot, and read-model subsystems each define their own root that derives directly from `Exception`. A bare `except EventSourceError` will not catch them — see [Catching broadly at the application boundary](#catching-broadly-at-the-application-boundary).
-- **There are two `OptimisticLockError` classes.** `eventsource.exceptions.OptimisticLockError` is the aggregate/event-store version conflict; `eventsource.ports.readmodels.exceptions.OptimisticLockError` is the read-model one. They are unrelated classes and neither catches the other. (Pre-existing collision, not introduced by ADR 0029 -- tracked in `BACKLOG.md`.)
+- **There are two `OptimisticLockError` classes.** `eventsource.domain.exceptions.OptimisticLockError` is the aggregate/event-store version conflict; `eventsource.ports.readmodels.exceptions.OptimisticLockError` is the read-model one. They are unrelated classes and neither catches the other. (Pre-existing collision, not introduced by ADR 0029 -- tracked in `BACKLOG.md`.)
 - **Retryability is a property of the exception type, not of the operation.** `OptimisticLockError` is almost always worth retrying; `UnhandledEventError` never is. The sections below group the exceptions by that distinction so you can map each one to an action.
 - **Projections and subscriptions handle failure differently, and the difference decides where your `except` block goes.** A projection owns its own failures: `CheckpointTrackingProjection` retries under its `retry_policy` (by default `ExponentialBackoffRetryPolicy` with `max_retries=2`, so three attempts), writes the event to the DLQ, then re-raises. A subscription escalates instead: `SubscriptionManager` routes every handler failure through a per-subscription `SubscriptionErrorHandler`, which classifies the error and decides — via `ErrorHandlingStrategy` — whether to retry, continue, or route to the DLQ. Configure the projection's policy for projection failures; configure the subscription's handler for everything dispatched by the manager.
 
@@ -40,7 +40,7 @@ There is no single root exception in this library. There are four independent tr
 
 ```
 Exception
-├── EventSourceError                    (eventsource.exceptions)
+├── EventSourceError                    (eventsource.domain.exceptions)
 │   ├── OptimisticLockError             aggregate_id, expected_version, actual_version
 │   ├── EventVersionError               aggregate_id, event_id, expected_version, actual_version
 │   ├── UnhandledEventError             event_type, event_id, handler_class, available_handlers
@@ -57,7 +57,7 @@ Exception
 │   ├── LockAcquisitionError            key, reason, timeout
 │   └── LockNotHeldError                key
 ├── SubscriptionError                   (eventsource.subscriptions.exceptions)
-├── SnapshotError                       (eventsource.exceptions -- not actually a subclass of EventSourceError)
+├── SnapshotError                       (eventsource.domain.exceptions -- not actually a subclass of EventSourceError)
 └── ReadModelError                      (eventsource.ports.readmodels.exceptions)
 ```
 
@@ -67,7 +67,7 @@ in `eventsource.locks.postgresql`). This is a widening change only: every
 existing `except LockAcquisitionError` still catches, and so does
 `except Exception`; the newly-catching clause is `except EventSourceError`,
 which caught nothing lock-related before. Both are now defined in
-`eventsource.exceptions`, importable alongside every other name in this tree.
+`eventsource.domain.exceptions`, importable alongside every other name in this tree.
 
 Write your handlers against this shape: catch the specific type when you can act on it, fall back to the subsystem root, and only then to `EventSourceError`.
 
@@ -97,7 +97,7 @@ except OptimisticLockError as exc:
     )
 ```
 
-Import the common ones from the package root; the rest come from `eventsource.exceptions`:
+Import the common ones from the package root; the rest come from `eventsource.domain.exceptions`:
 
 ```python
 # available from the top-level package
@@ -112,7 +112,7 @@ from eventsource import (
 )
 
 # only from the submodule
-from eventsource.exceptions import (
+from eventsource.domain.exceptions import (
     EventStoreError,
     EventBusError,
     CheckpointError,
@@ -132,12 +132,12 @@ class InsufficientFundsError(EventSourceError):
 
 Three subsystems define their own root, each deriving straight from `Exception`. If your boundary handler only catches `EventSourceError`, these will fly past it and hit whatever generic 500 handler sits above you.
 
-**`SubscriptionError`** — `eventsource.subscriptions.exceptions`. Raised by the subscription manager and runners: `SubscriptionConfigError`, `SubscriptionStateError`, `SubscriptionAlreadyExistsError`, `CheckpointNotFoundError` (has `.projection_name`), `EventStoreConnectionError`, `EventBusConnectionError`, `TransitionError`. Note that `CheckpointNotFoundError` here is unrelated to `eventsource.exceptions.CheckpointError`, which *is* an `EventSourceError`.
+**`SubscriptionError`** — `eventsource.subscriptions.exceptions`. Raised by the subscription manager and runners: `SubscriptionConfigError`, `SubscriptionStateError`, `SubscriptionAlreadyExistsError`, `CheckpointNotFoundError` (has `.projection_name`), `EventStoreConnectionError`, `EventBusConnectionError`, `TransitionError`. Note that `CheckpointNotFoundError` here is unrelated to `eventsource.domain.exceptions.CheckpointError`, which *is* an `EventSourceError`.
 
-**`SnapshotError`** — `eventsource.exceptions` (moved here from its own `snapshots` module in the ring migration; still not part of the `EventSourceError` tree), with `SnapshotDeserializationError` (`aggregate_id`, `aggregate_type`, `original_error`), `SnapshotSchemaVersionError` (adds `snapshot_schema_version` and `expected_schema_version`), and `SnapshotNotFoundError`. These are largely internal: the snapshot path is designed so that a failed load degrades to a full event replay rather than surfacing to you — a *missing* snapshot is not an error at all, `get_snapshot()` simply returns `None`. Catch `SnapshotError` if you want to log the degradation; do not treat it as a request failure.
+**`SnapshotError`** — `eventsource.domain.exceptions` (moved here from its own `snapshots` module in the ring migration; still not part of the `EventSourceError` tree), with `SnapshotDeserializationError` (`aggregate_id`, `aggregate_type`, `original_error`), `SnapshotSchemaVersionError` (adds `snapshot_schema_version` and `expected_schema_version`), and `SnapshotNotFoundError`. These are largely internal: the snapshot path is designed so that a failed load degrades to a full event replay rather than surfacing to you — a *missing* snapshot is not an error at all, `get_snapshot()` simply returns `None`. Catch `SnapshotError` if you want to log the degradation; do not treat it as a request failure.
 
 ```python
-from eventsource.exceptions import SnapshotError
+from eventsource.domain.exceptions import SnapshotError
 
 try:
     snapshot = await snapshot_store.get_snapshot(aggregate_id, "Order")
@@ -145,7 +145,7 @@ except SnapshotError:
     snapshot = None  # fall back to replaying the full stream
 ```
 
-**`ReadModelError`** — `eventsource.ports.readmodels.exceptions`, with `ReadModelNotFoundError` (`model_id`) and its own `OptimisticLockError`. Both are re-exported from `eventsource.ports.readmodels`. (`eventsource.readmodels` still resolves them, deprecated, until 0.8.0.)
+**`ReadModelError`** — `eventsource.ports.readmodels.exceptions`, with `ReadModelNotFoundError` (`model_id`) and its own `OptimisticLockError`. Both are re-exported from `eventsource.ports.readmodels`. (`eventsource.readmodels` no longer exists — see ADR 0030.)
 
 That last one is the trap. `eventsource.ports.readmodels.exceptions.OptimisticLockError` inherits from `ReadModelError`, **not** from `EventSourceError`, and its attributes are different: `model_id`, `expected_version`, and `actual_version` (which may be `None` when the row was missing at check time), versus the aggregate version's `aggregate_id`, `expected_version`, `actual_version`. Neither class catches the other, so alias them on import whenever both are in scope:
 
@@ -219,7 +219,7 @@ If you retry a bucket you should not have, the failure mode is specific and wort
 
 Two kinds of failure are worth retrying in place: a *version conflict*, where another writer committed to the same aggregate between your load and your save, and a *transient infrastructure blip*, where the connection dropped or a call timed out. Everything else in this guide is either a bug or a genuine failure to report.
 
-The version conflict is the one you will actually see under load. Every `EventStore` implementation — PostgreSQL, SQLite, and in-memory alike — re-checks the aggregate's current version inside `append()` and raises `eventsource.exceptions.OptimisticLockError(aggregate_id, expected_version, actual_version)` if it moved. `AggregateRepository.save()` computes `expected_version` as `aggregate.version - len(uncommitted_events)` and passes it straight through, so the conflict surfaces from `save()`:
+The version conflict is the one you will actually see under load. Every `EventStore` implementation — PostgreSQL, SQLite, and in-memory alike — re-checks the aggregate's current version inside `append()` and raises `eventsource.domain.exceptions.OptimisticLockError(aggregate_id, expected_version, actual_version)` if it moved. `AggregateRepository.save()` computes `expected_version` as `aggregate.version - len(uncommitted_events)` and passes it straight through, so the conflict surfaces from `save()`:
 
 ```python
 from eventsource import OptimisticLockError

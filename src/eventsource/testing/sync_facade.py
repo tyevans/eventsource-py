@@ -6,7 +6,7 @@
 `conformance_ports/stateful.py`) that wants a plain, blocking call
 surface.
 
-Both this facade and `eventsource.sync.adapter.SyncEventStoreAdapter` drive
+Both this facade and `eventsource.adapters.sync.adapter.SyncEventStoreAdapter` drive
 a port-shaped `FullEventStore` synchronously. The split is lifecycle: this
 facade owns one private loop for its lifetime and has no timeouts, which
 suits test machinery; the adapter runs `asyncio.run` per call, falls back to

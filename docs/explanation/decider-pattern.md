@@ -221,7 +221,7 @@ command methods during a migration, because `DeciderAggregate` is just an
 
 `decide()` and `execute()` accept any object as a command — plain pydantic models work
 fine, as in every example above. Subclassing `DomainCommand` instead
-(`eventsource.commands.base`) is opt-in, and it buys the events `decide()` produces
+(`eventsource.domain.command`) is opt-in, and it buys the events `decide()` produces
 some free bookkeeping: `DeciderAggregate.execute()` stamps `causation_id` (the
 command's `command_id`), `correlation_id`, `actor_id`, and `tenant_id` onto every event
 it applies, using `isinstance(command, DomainCommand)` to detect that the extra

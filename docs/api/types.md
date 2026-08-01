@@ -1,45 +1,45 @@
 # Types and Protocols
 
 Reference for the type vocabulary of `eventsource`: the semantic aliases in
-`eventsource.types` and the handler/subscriber contracts in
-`eventsource.protocols`.
+`eventsource.domain.types` and the handler/subscriber contracts in
+`eventsource.ports.handlers`.
 
 Two modules cover two different concerns:
 
-- **`eventsource.types`** — plain aliases (`AggregateId`, `EventId`,
+- **`eventsource.domain.types`** — plain aliases (`AggregateId`, `EventId`,
   `Version`, ...) and the `TState` type variable. These name intent in
   signatures; they add no runtime behavior.
-- **`eventsource.protocols`** — the canonical definitions of every handler and
+- **`eventsource.ports.handlers`** — the canonical definitions of every handler and
   subscriber contract in the library: three `runtime_checkable` Protocols
   (`EventHandler`, `SyncEventHandler`, `FlexibleEventHandler`), one Protocol
   subscriber (`FlexibleEventSubscriber`), and two abstract base classes
   (`EventSubscriber`, `AsyncEventHandler`).
 
 Both modules are re-exported from the package root, so
-`from eventsource import EventHandler, AggregateId` works. `eventsource.protocols`
+`from eventsource import EventHandler, AggregateId` works. `eventsource.ports.handlers`
 is the canonical import location for the protocol names; the aliases `Version`,
 `StreamPosition`, and `GlobalPosition` are *not* re-exported at the root and
-must be imported from `eventsource.types`.
+must be imported from `eventsource.domain.types`.
 
 The sections below list each name, its definition, and its required members.
 
 ## Overview
 
 `eventsource` keeps its type vocabulary in two small, dependency-light modules.
-Neither defines runtime machinery: `eventsource.types` is a flat list of
-assignments, and `eventsource.protocols` contains only `Protocol` classes and
+Neither defines runtime machinery: `eventsource.domain.types` is a flat list of
+assignments, and `eventsource.ports.handlers` contains only `Protocol` classes and
 ABCs whose sole import from the library is `DomainEvent`.
 
 Together they answer two questions:
 
 - **What does this `UUID`/`int` mean?** — answered by the aliases and the
-  `TState` type variable in `eventsource.types`.
+  `TState` type variable in `eventsource.domain.types`.
 - **What must my class provide to be used as a handler or subscriber?** —
-  answered by the six contracts in `eventsource.protocols`.
+  answered by the six contracts in `eventsource.ports.handlers`.
 
-### Module layout: `eventsource.types` vs `eventsource.protocols`
+### Module layout: `eventsource.domain.types` vs `eventsource.ports.handlers`
 
-| | `eventsource.types` | `eventsource.protocols` |
+| | `eventsource.domain.types` | `eventsource.ports.handlers` |
 | --- | --- | --- |
 | Contents | `TState` plus the aliases `AggregateId`, `EventId`, `TenantId`, `CorrelationId`, `CausationId`, `Version`, `StreamPosition`, `GlobalPosition` | `EventHandler`, `SyncEventHandler`, `FlexibleEventHandler`, `FlexibleEventSubscriber`, `EventSubscriber`, `AsyncEventHandler` |
 | Kind | Type aliases and one `TypeVar` | Four `Protocol`s (all `@runtime_checkable`) and two ABCs |
@@ -51,11 +51,11 @@ Most names in both modules are re-exported from the package root, so
 `from eventsource import EventHandler, AggregateId, TState` works. The three
 ordering aliases — `Version`, `StreamPosition`, and `GlobalPosition` — are the
 exception: they are not in the root `__all__` and must be imported from
-`eventsource.types` directly.
+`eventsource.domain.types` directly.
 
-## Type Aliases (`eventsource.types`)
+## Type Aliases (`eventsource.domain.types`)
 
-`eventsource.types` contains nine names: eight plain assignments and one
+`eventsource.domain.types` contains nine names: eight plain assignments and one
 `TypeVar`. Every alias resolves to a stdlib type (`UUID`, `UUID | None`, or
 `int`); the module's only third-party import is `pydantic.BaseModel`, used as
 the bound for `TState`.
@@ -199,7 +199,7 @@ The single type variable in the module, declared as
 pydantic model. The `BaseModel` bound is what lets the framework validate,
 copy, and snapshot state generically.
 
-`TState` is re-exported from `eventsource`. It is declared in `eventsource.types`
+`TState` is re-exported from `eventsource`. It is declared in `eventsource.domain.types`
 and imported by `eventsource.domain.aggregate` (`AggregateRoot`); the
 `aggregates` package it used to also be re-exported from no longer exists.
 
@@ -221,4 +221,4 @@ Consequences:
 Import the identity aliases and `TState` from the package root
 (`from eventsource import AggregateId, EventId, TenantId, CorrelationId,
 CausationId, TState`). Import `Version`, `StreamPosition`, and
-`GlobalPosition` from `eventsource.types` — they are not in the root `__all__`.
+`GlobalPosition` from `eventsource.domain.types` — they are not in the root `__all__`.

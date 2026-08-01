@@ -4,8 +4,8 @@ import pytest
 
 from eventsource.adapters.memory import InMemoryEventStore
 from eventsource.domain import StreamId
+from eventsource.domain.exceptions import DuplicateEventError, OptimisticLockError
 from eventsource.events import DomainEvent
-from eventsource.exceptions import DuplicateEventError, OptimisticLockError
 from eventsource.ports import ExpectedVersion, collect
 
 
