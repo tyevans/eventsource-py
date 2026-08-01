@@ -16,6 +16,15 @@ raises `ModuleNotFoundError`, no shim, no transition window — the same
 standing rule ADR 0025, ADR 0026, ADR 0030, ADR 0031, ADR 0032, ADR 0033,
 and ADR 0034 already applied to every other pre-ring package.
 
+**Amended by [ADR 0042](0042-domain-event-strictness.md).** This ADR's
+relocation of `clear_tenant_context()` (and the rest of
+`multitenancy/context.py`) to `domain/tenant_context.py` stands unchanged.
+ADR 0042 changes `clear_tenant_context()`'s semantics at that same
+location: it now empties the token stack, so a subsequent
+`reset_tenant_context()` (including a `tenant_scope()` exit) raises
+`TenantContextResetError` instead of silently restoring a pre-clear
+tenant.
+
 ## Decision Table
 
 | Old module | New home | Ring | Rationale |

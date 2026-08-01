@@ -815,7 +815,7 @@ Import these from their module:
 
 | Module | Contents |
 | --- | --- |
-| `eventsource.ports.locks` / `eventsource.adapters.postgresql.locks` | `PostgreSQLLockManager` (adapter); `LockInfo`, `migration_lock_key` (port); `LockAcquisitionError`, `LockNotHeldError` (`eventsource.domain.exceptions`) |
+| `eventsource.ports.locks` / `eventsource.adapters.postgresql.locks` | `PostgreSQLLockManager` (adapter); `LockInfo`, `migration_lock_key` (port); `LockAcquisitionError`, `LockNotHeldError` (`eventsource.ports.exceptions`) |
 | `eventsource.application.subscriptions` | Subscription manager, runners, retry policy, health, and flow control |
 | `eventsource.testing` | Assertions, BDD helpers, the test harness, builders, and the conformance suites |
 | `eventsource.observability` | OpenTelemetry tracing integration (`telemetry` extra) |

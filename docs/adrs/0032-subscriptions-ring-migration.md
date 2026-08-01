@@ -13,6 +13,15 @@ established for every prior retirement.
 
 ## Status
 
+**Amended by [ADR 0041](0041-infrastructure-exceptions-to-ports.md).**
+This ADR's merge of `SubscriptionError` and its six subclasses into
+`domain/exceptions.py`, and the rebase onto `EventSourceError`, both
+stand — neither is retro-edited. ADR 0041 relocates the same classes from
+`domain/exceptions.py` to a new `ports/exceptions.py`, alongside the lock
+and checkpoint exceptions, because they describe port-contract failures
+rather than domain concepts. The rebase this ADR performed is unaffected;
+only the module changes again.
+
 **Accepted.** Implemented in `src/eventsource/application/subscriptions/`
 (`manager.py`, `lifecycle.py`, `registry.py`, `pause_resume.py`,
 `health_provider.py`, `health.py`, `shutdown.py`, `metrics.py`,

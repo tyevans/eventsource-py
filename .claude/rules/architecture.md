@@ -21,9 +21,10 @@ The rings, innermost first:
    (`AggregateRoot`, `DeclarativeAggregate`) lives here now; `aggregates/` is no
    longer a transitional location for it. `domain/types.py` (type aliases:
    `AggregateId`, `EventId`, `TenantId`, `CorrelationId`, `CausationId`, `Version`,
-   `StreamPosition`, `GlobalPosition`, `TState`), `domain/exceptions.py` (the full
-   exception hierarchy, including the `SnapshotError` family and the lock
-   exceptions), and `domain/command.py` (`DomainCommand`) are settled, not
+   `StreamPosition`, `GlobalPosition`, `TState`), `domain/exceptions.py` (the
+   domain exception hierarchy — `EventSourceError` root, aggregate/event/
+   snapshot/tenant errors; infrastructure error types live in
+   `ports/exceptions.py`, ADR 0041), and `domain/command.py` (`DomainCommand`) are settled, not
    transitional; `types.py`, `exceptions.py`, and `commands/` at the top level are
    no longer transitional locations for any of it (ADR 0030). `domain/event.py`
    (`DomainEvent`), `domain/event_registry.py` (`EventRegistry`, `register_event`,
@@ -159,7 +160,13 @@ inverted at every boundary crossing (the D in SOLID).
   (`Snapshot`, `SnapshotStore` — a `Protocol`, not an `ABC` — and
   `SnapshotTypeInvalidation`, the optional bulk-invalidation capability port)
   is settled (ADR 0036). `ports/lifecycle.py` (`SupportsClose`, the optional
-  resource-release capability port) is settled (ADR 0037).
+  resource-release capability port) is settled (ADR 0037). `ports/exceptions.py`
+  (the thirteen infrastructure-meaning exceptions — `CheckpointError`,
+  `CheckpointNotFoundError`, `EventBusConnectionError`,
+  `EventStoreConnectionError`, `LockAcquisitionError`, `LockNotHeldError`,
+  `PositionDecodeError`, `PositionForeignError`, `SubscriptionError` and its
+  six subclasses — rooted in `EventSourceError`) is settled, not transitional;
+  `domain/exceptions.py` is no longer their location (ADR 0041).
 - Our store/repository/bus ports are **output ports** (gateways) in Clean
   Architecture terms: the use-case ring calls them; adapters implement them.
 - Ports are small, composed `Protocol` classes — one capability per port
