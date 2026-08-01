@@ -1,5 +1,6 @@
 """Tests for DeciderAggregate."""
 
+from dataclasses import dataclass
 from uuid import UUID, uuid4
 
 import pytest
@@ -268,3 +269,37 @@ class TestCreateEventCommandProvenance:
         )
         assert event.correlation_id == explicit
         assert event.causation_id == cmd.command_id
+
+
+class TestAmbientTenantStamping:
+    def test_plain_command_gets_ambient_tenant(self) -> None:
+        from eventsource.domain.tenant_context import tenant_scope_sync
+
+        tenant = uuid4()
+
+        @dataclass
+        class PlainShip:  # deliberately NOT a DomainCommand
+            order_id: UUID
+
+        class ShipDecider(DeciderAggregate[dict]):
+            aggregate_type = "Order"
+
+            @staticmethod
+            def initial_state(aggregate_id: UUID) -> dict:
+                return {"id": aggregate_id}
+
+            @staticmethod
+            def decide(command: object, state: dict) -> list[DomainEvent]:
+                return [Shipped(aggregate_id=state["id"])]
+
+            @staticmethod
+            def evolve(state: dict, event: DomainEvent) -> dict:
+                return state
+
+        class Shipped(DomainEvent):
+            aggregate_type: str = "Order"
+
+        agg = ShipDecider(uuid4())
+        with tenant_scope_sync(tenant):
+            events = agg.execute(PlainShip(order_id=agg.aggregate_id))
+        assert events[0].tenant_id == tenant

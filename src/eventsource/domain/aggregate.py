@@ -9,7 +9,7 @@ when commands are executed.
 import inspect
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from typing import Any, ClassVar, Generic, TypeVar, cast, get_args, get_origin
 from uuid import UUID
 
@@ -438,22 +438,7 @@ class AggregateRoot(Generic[TState], ABC):
             "aggregate_type": self.aggregate_type,
             "aggregate_version": self.get_next_version(),
         }
-
-        # Optionally auto-populate tenant_id from context
-        if "tenant_id" not in kwargs:
-            tenant_id = self._get_tenant_from_context()
-            if tenant_id is not None:
-                event_kwargs["tenant_id"] = tenant_id
-
-        # Optionally auto-populate provenance from a command object
-        if isinstance(command, DomainCommand):
-            event_kwargs["causation_id"] = command.command_id
-            event_kwargs["correlation_id"] = command.correlation_id
-            if command.actor_id is not None:
-                event_kwargs["actor_id"] = command.actor_id
-            if command.tenant_id is not None:
-                event_kwargs["tenant_id"] = command.tenant_id
-
+        event_kwargs.update(self._provenance_updates(command, kwargs.keys()))
         # User kwargs override auto-populated values
         event_kwargs.update(kwargs)
 
@@ -462,6 +447,37 @@ class AggregateRoot(Generic[TState], ABC):
         self.apply_event(event, is_new=True)
 
         return event
+
+    def _provenance_updates(
+        self,
+        command: object,
+        explicitly_set: Collection[str],
+    ) -> dict[str, Any]:
+        """
+        Shared stamping semantics for create_event() and DeciderAggregate._stamp().
+
+        Fields listed in explicitly_set are never overwritten. Tenant
+        precedence: explicit > DomainCommand.tenant_id > ambient tenant
+        context (unconditional fallback regardless of command type).
+        Causation/correlation/actor come only from a DomainCommand.
+        """
+        updates: dict[str, Any] = {}
+        if isinstance(command, DomainCommand):
+            if "causation_id" not in explicitly_set:
+                updates["causation_id"] = command.command_id
+            if "correlation_id" not in explicitly_set:
+                updates["correlation_id"] = command.correlation_id
+            if "actor_id" not in explicitly_set and command.actor_id is not None:
+                updates["actor_id"] = command.actor_id
+        if "tenant_id" not in explicitly_set:
+            tenant: UUID | None = None
+            if isinstance(command, DomainCommand) and command.tenant_id is not None:
+                tenant = command.tenant_id
+            if tenant is None:
+                tenant = self._get_tenant_from_context()
+            if tenant is not None:
+                updates["tenant_id"] = tenant
+        return updates
 
     def _get_tenant_from_context(self) -> UUID | None:
         """
