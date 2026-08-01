@@ -171,26 +171,37 @@ class DomainEvent(BaseModel):
                 has_explicit_type = True
 
         # If explicitly set, check if it matches class name and warn if not
-        if has_explicit_type and explicit_type:
-            if explicit_type != cls.__name__:
-                # Check if warning should be suppressed
-                suppress = getattr(cls, "suppress_event_type_warning", False)
-                if not suppress:
-                    logger.warning(
-                        "Event class %s has event_type='%s' which differs from class name. "
-                        "This may cause confusion. Set suppress_event_type_warning=True "
-                        "to silence this warning.",
-                        cls.__name__,
-                        explicit_type,
-                    )
-        elif not has_explicit_type and "event_type" in cls.model_fields:
-            # No explicit type set - auto-derive from class name
-            # Update the model_fields to set the default
-            # Create a new FieldInfo with updated default
-            field_info = cls.model_fields["event_type"]
-            # We need to update the default value
-            # Pydantic v2 stores field info in model_fields
-            field_info.default = cls.__name__
+        if has_explicit_type and explicit_type and explicit_type != cls.__name__:
+            # Check if warning should be suppressed
+            suppress = getattr(cls, "suppress_event_type_warning", False)
+            if not suppress:
+                logger.warning(
+                    "Event class %s has event_type='%s' which differs from class name. "
+                    "This may cause confusion. Set suppress_event_type_warning=True "
+                    "to silence this warning.",
+                    cls.__name__,
+                    explicit_type,
+                )
+
+    @classmethod
+    def event_type_name(cls) -> str:
+        """
+        Canonical wire name for this event class.
+
+        Resolution: a non-empty explicit ``event_type`` field default
+        (declared on this class or inherited from a parent's explicit
+        declaration), else the class name. Single source of truth shared
+        by instance construction (_ensure_event_type) and EventRegistry —
+        do not derive the name from ``model_fields`` anywhere else.
+
+        Safe to call only after class creation completes (i.e. never from
+        ``__init_subclass__``, where ``cls.model_fields`` still belongs to
+        the parent).
+        """
+        field_info = cls.model_fields.get("event_type")
+        if field_info is not None and isinstance(field_info.default, str) and field_info.default:
+            return field_info.default
+        return cls.__name__
 
     @model_validator(mode="before")
     @classmethod
@@ -199,33 +210,17 @@ class DomainEvent(BaseModel):
         Ensure event_type is set even when constructing from dict.
 
         This validator runs before Pydantic model construction and
-        ensures the event_type field is populated with the class name
-        if not provided in the input data AND the field default is empty.
+        ensures the event_type field is populated with the canonical
+        event_type_name() if not provided in the input data.
 
         This handles cases like:
         - OrderCreated.model_validate({"aggregate_id": ..., ...})
         - OrderCreated.from_dict({...})
         - OrderCreated(**data) where data is a dict without event_type
-
-        The validator respects explicit field defaults set by subclasses:
-        - If a subclass sets event_type: str = "custom_type", that value is used
-        - If no explicit default is set, the class name is used
         """
-        if isinstance(data, dict):
-            # Only set event_type if:
-            # 1. It's not provided in the input data (or is empty string)
-            # 2. AND the field default is empty string (meaning auto-derivation should apply)
-            provided_event_type = data.get("event_type")
-            if not provided_event_type:
-                # Check if the field has a non-empty default (explicit type set by subclass)
-                field_info = cls.model_fields.get("event_type")
-                field_default = field_info.default if field_info else ""
-                # Set to class name if:
-                # - field default is empty (auto-derivation applies), OR
-                # - an empty string was explicitly provided (we replace it)
-                if not field_default or provided_event_type == "":
-                    data = dict(data)  # Make a copy to avoid modifying input
-                    data["event_type"] = cls.__name__
+        if isinstance(data, dict) and not data.get("event_type"):
+            data = dict(data)  # Copy to avoid mutating caller input
+            data["event_type"] = cls.event_type_name()
         return data
 
     def __str__(self) -> str:

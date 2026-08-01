@@ -137,21 +137,11 @@ class EventRegistry:
 
         Resolution order:
         1. Explicit parameter
-        2. Pydantic field default value (if it's a string)
-        3. Class name fallback
+        2. DomainEvent.event_type_name() (canonical source of truth)
         """
         if event_type is not None:
             return event_type
-
-        # Try to get from class field default
-        if hasattr(event_class, "model_fields"):
-            field_info = event_class.model_fields.get("event_type")
-            # Check if there's a default and it's a string (not PydanticUndefined)
-            if field_info and isinstance(field_info.default, str):
-                return field_info.default
-
-        # Fallback to class name
-        return event_class.__name__
+        return event_class.event_type_name()
 
     def get(self, event_type: str) -> type[DomainEvent]:
         """
