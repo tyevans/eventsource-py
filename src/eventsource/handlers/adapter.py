@@ -10,6 +10,7 @@ type checking throughout the codebase.
 """
 
 import asyncio
+import inspect
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
@@ -116,7 +117,7 @@ class HandlerAdapter:
         # If it's an object with a handle method
         if hasattr(handler, "handle"):
             handle_method = handler.handle
-            if asyncio.iscoroutinefunction(handle_method):
+            if inspect.iscoroutinefunction(handle_method):
                 # Already async - return the bound method directly
                 # Cast needed because mypy can't infer the bound method type
                 return handle_method  # type: ignore[no-any-return]
@@ -135,7 +136,7 @@ class HandlerAdapter:
 
         # It's a callable (function or lambda)
         elif callable(handler):
-            if asyncio.iscoroutinefunction(handler):
+            if inspect.iscoroutinefunction(handler):
                 # Cast needed because mypy can't narrow the callable type
                 return handler  # type: ignore[no-any-return]
             else:
