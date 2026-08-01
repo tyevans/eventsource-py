@@ -12,9 +12,15 @@ from datetime import UTC, datetime
 from typing import Any, ClassVar, Self
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from eventsource.domain.stream_id import CATEGORY_PATTERN
 
 logger = logging.getLogger(__name__)
+
+# CATEGORY_PATTERN is already a compiled regex (stream_id.py) -- reuse it
+# directly so aggregate_type validation accepts exactly what StreamId does.
+_CATEGORY_REGEX = CATEGORY_PATTERN
 
 
 class DomainEvent(BaseModel):
@@ -75,7 +81,14 @@ class DomainEvent(BaseModel):
         >>> assert event.event_type == "order_created_v2"
     """
 
-    model_config = ConfigDict(frozen=True, allow_inf_nan=False, extra="forbid")
+    # validate_default=True: subclasses commonly declare
+    # `aggregate_type: str = "Order"` as a plain class-level default rather
+    # than through `Field(...)`, and pydantic skips validating defaults
+    # unless this is set -- without it, _validate_aggregate_type would never
+    # run for the common declaration style.
+    model_config = ConfigDict(
+        frozen=True, allow_inf_nan=False, extra="forbid", validate_default=True
+    )
 
     # Class variable to suppress mismatch warning when event_type differs from class name
     suppress_event_type_warning: ClassVar[bool] = False
@@ -182,6 +195,17 @@ class DomainEvent(BaseModel):
                     cls.__name__,
                     explicit_type,
                 )
+
+    @field_validator("aggregate_type")
+    @classmethod
+    def _validate_aggregate_type(cls, v: str) -> str:
+        if not _CATEGORY_REGEX.match(v):
+            raise ValueError(
+                f"aggregate_type {v!r} is not a valid stream category "
+                f"(must match {_CATEGORY_REGEX.pattern}); it is used as "
+                f"StreamId.category on the event's stream"
+            )
+        return v
 
     @classmethod
     def event_type_name(cls) -> str:

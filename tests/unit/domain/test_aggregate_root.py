@@ -1375,6 +1375,7 @@ class TestUnregisteredEventHandling:
         """AC2: ignore mode allows unknown events without raising or logging."""
 
         class IgnoreAggregate(DeclarativeAggregate[CounterState]):
+            aggregate_type = "IgnoreAggregate"
             unregistered_event_handling = "ignore"
 
             def _get_initial_state(self) -> CounterState:
@@ -1409,6 +1410,7 @@ class TestUnregisteredEventHandling:
         """AC1: error mode raises UnhandledEventError for unhandled events."""
 
         class StrictAggregate(DeclarativeAggregate[CounterState]):
+            aggregate_type = "StrictAggregate"
             unregistered_event_handling = "error"
 
             def _get_initial_state(self) -> CounterState:
@@ -1445,6 +1447,7 @@ class TestUnregisteredEventHandling:
         """AC3: warn mode logs warning for unhandled events."""
 
         class WarnAggregate(DeclarativeAggregate[CounterState]):
+            aggregate_type = "WarnAggregate"
             unregistered_event_handling = "warn"
 
             def _get_initial_state(self) -> CounterState:
@@ -1484,6 +1487,7 @@ class TestUnregisteredEventHandling:
         """AC4: Error message lists handlers that ARE available."""
 
         class MultiHandlerAggregate(DeclarativeAggregate[CounterState]):
+            aggregate_type = "MultiHandlerAggregate"
             unregistered_event_handling = "error"
 
             def _get_initial_state(self) -> CounterState:
@@ -1527,6 +1531,7 @@ class TestUnregisteredEventHandling:
         """Error message shows 'none' when no handlers are registered."""
 
         class EmptyAggregate(DeclarativeAggregate[CounterState]):
+            aggregate_type = "EmptyAggregate"
             unregistered_event_handling = "error"
 
             def _get_initial_state(self) -> CounterState:
@@ -1570,6 +1575,7 @@ class TestUnregisteredEventHandling:
         """Events with handlers work regardless of handling mode."""
 
         class StrictAggregate(DeclarativeAggregate[CounterState]):
+            aggregate_type = "StrictAggregate"
             unregistered_event_handling = "error"
 
             def _get_initial_state(self) -> CounterState:
@@ -1679,3 +1685,28 @@ class TestUnhandledEventErrorException:
 
         assert isinstance(error, EventSourceError)
         assert isinstance(error, Exception)
+
+
+class TestAggregateTypeRequired:
+    def test_subclass_without_aggregate_type_raises_on_construction(self) -> None:
+        from eventsource.domain.exceptions import AggregateTypeNotSetError
+
+        class ForgotType(AggregateRoot[dict]):
+            def _apply(self, event: DomainEvent) -> None: ...
+
+            def _get_initial_state(self) -> dict | None:
+                return None
+
+        with pytest.raises(AggregateTypeNotSetError, match="ForgotType"):
+            ForgotType(uuid4())
+
+    def test_subclass_with_aggregate_type_constructs(self) -> None:
+        class HasType(AggregateRoot[dict]):
+            aggregate_type = "HasType"
+
+            def _apply(self, event: DomainEvent) -> None: ...
+
+            def _get_initial_state(self) -> dict | None:
+                return None
+
+        assert HasType(uuid4()).aggregate_type == "HasType"

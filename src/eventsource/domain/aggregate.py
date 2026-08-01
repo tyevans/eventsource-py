@@ -18,6 +18,7 @@ from eventsource.domain.decorators import discover_handlers
 from eventsource.domain.event import DomainEvent
 from eventsource.domain.exceptions import (
     AggregateNotCreatedError,
+    AggregateTypeNotSetError,
     EventVersionError,
     HandlerSignatureError,
     UnhandledEventError,
@@ -129,8 +130,10 @@ class AggregateRoot(Generic[TState], ABC):
             ...     schema_version = 1  # Increment when OrderState changes
     """
 
-    # Class-level aggregate type (subclasses should override)
-    aggregate_type: str = "Unknown"
+    # Aggregate type identifier -- REQUIRED. Becomes the stream category;
+    # construction raises AggregateTypeNotSetError if a concrete subclass
+    # does not set it. (Annotated ClassVar, deliberately no default.)
+    aggregate_type: ClassVar[str]
 
     # Class-level schema version for snapshot compatibility
     # Increment when TState structure changes incompatibly
@@ -148,6 +151,8 @@ class AggregateRoot(Generic[TState], ABC):
         Args:
             aggregate_id: Unique identifier for this aggregate
         """
+        if not getattr(type(self), "aggregate_type", None):
+            raise AggregateTypeNotSetError(type(self).__name__)
         self._aggregate_id = aggregate_id
         self._version = 0
         self._uncommitted_events: list[DomainEvent] = []

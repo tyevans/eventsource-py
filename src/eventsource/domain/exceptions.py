@@ -199,6 +199,25 @@ class AggregateNotCreatedError(EventSourceError):
         super().__init__(message)
 
 
+class AggregateTypeNotSetError(EventSourceError):
+    """
+    Raised when a concrete aggregate class is constructed without declaring
+    aggregate_type.
+
+    Aggregate identity is not optional: aggregate_type becomes the stream
+    category, so a missing value would silently create wrongly-typed
+    streams (the old behavior was a silent "Unknown" default).
+    """
+
+    def __init__(self, class_name: str) -> None:
+        self.class_name = class_name
+        super().__init__(
+            f"{class_name} does not declare 'aggregate_type'. Every concrete "
+            f"aggregate class must set it to its stream category, e.g. "
+            f'aggregate_type = "Order".'
+        )
+
+
 class HandlerDispatchError(EventSourceError):
     """
     Raised after a delivery attempt when one or more handlers failed.
