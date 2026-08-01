@@ -48,6 +48,11 @@ See Also:
 """
 
 from eventsource.application.migration.bulk_copier import BulkCopier
+from eventsource.application.migration.circuit_breaker import (
+    CircuitBreaker,
+    CircuitBreakerConfig,
+    CircuitState,
+)
 from eventsource.application.migration.consistency import (
     ConsistencyVerifier,
     ConsistencyViolation,
@@ -68,10 +73,7 @@ from eventsource.application.migration.error_classification import (
     RetryConfig,
 )
 from eventsource.application.migration.exceptions import (
-    CircuitBreaker,
-    CircuitBreakerConfig,
     CircuitBreakerOpenError,
-    CircuitState,
     # Core exceptions
     ConsistencyError,
     CutoverError,

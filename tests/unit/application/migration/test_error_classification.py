@@ -16,6 +16,12 @@ from uuid import uuid4
 
 import pytest
 
+from eventsource.application.migration.circuit_breaker import (
+    # Circuit breaker
+    CircuitBreaker,
+    CircuitBreakerConfig,
+    CircuitState,
+)
 from eventsource.application.migration.error_classification import (
     CONNECTIVITY_RETRY_CONFIG,
     CUTOVER_RETRY_CONFIG,
@@ -30,11 +36,7 @@ from eventsource.application.migration.error_classification import (
 )
 from eventsource.application.migration.exceptions import (
     BulkCopyError,
-    # Circuit breaker
-    CircuitBreaker,
-    CircuitBreakerConfig,
     CircuitBreakerOpenError,
-    CircuitState,
     ConsistencyError,
     CutoverError,
     CutoverLagError,

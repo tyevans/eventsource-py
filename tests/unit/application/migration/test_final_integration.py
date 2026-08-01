@@ -30,6 +30,10 @@ from uuid import UUID, uuid4
 import pytest
 
 from eventsource.adapters.memory import InMemoryEventStore
+from eventsource.application.migration.circuit_breaker import (
+    CircuitBreaker,
+    CircuitBreakerConfig,
+)
 from eventsource.application.migration.consistency import (
     ConsistencyVerifier,
     VerificationLevel,
@@ -43,8 +47,6 @@ from eventsource.application.migration.error_classification import (
 )
 from eventsource.application.migration.exceptions import (
     BulkCopyError,
-    CircuitBreaker,
-    CircuitBreakerConfig,
     CircuitBreakerOpenError,
     CutoverError,
     CutoverLagError,
