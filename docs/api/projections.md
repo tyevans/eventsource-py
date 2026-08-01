@@ -502,7 +502,7 @@ first `handle()` call.
 from eventsource.application.projections import CheckpointTrackingProjection
 from eventsource.application.projections.retry import ExponentialBackoffRetryPolicy
 from eventsource import SQLCheckpointRepository, SQLDLQRepository
-from eventsource.subscriptions.retry import RetryConfig
+from eventsource.application.subscriptions.retry import RetryConfig
 
 projection = OrderProjection(
     checkpoint_repo=SQLCheckpointRepository(pool),
@@ -513,7 +513,7 @@ projection = OrderProjection(
 ```
 
 Note that `ExponentialBackoffRetryPolicy` is configured with a `RetryConfig` from
-`eventsource.subscriptions.retry`, not with loose keyword arguments — the retry
+`eventsource.application.subscriptions.retry`, not with loose keyword arguments — the retry
 configuration type is shared with the subscription machinery.
 
 #### Interactions worth knowing

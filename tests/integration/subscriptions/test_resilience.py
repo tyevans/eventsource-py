@@ -26,20 +26,16 @@ from eventsource.adapters.memory.bus import InMemoryEventBus
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
 from eventsource.adapters.memory.dlq import InMemoryDLQRepository
 from eventsource.adapters.memory.store import InMemoryEventStore
-from eventsource.domain import StreamId
-from eventsource.events.base import DomainEvent
-from eventsource.ports.envelopes import EventEnvelope
-from eventsource.ports.positions import Position
-from eventsource.subscriptions import SubscriptionConfig, SubscriptionManager
-from eventsource.subscriptions.error_handling import (
+from eventsource.application.subscriptions import SubscriptionConfig, SubscriptionManager
+from eventsource.application.subscriptions.error_handling import (
     ErrorCategory,
     ErrorHandlingConfig,
     ErrorHandlingStrategy,
     ErrorInfo,
     SubscriptionErrorHandler,
 )
-from eventsource.subscriptions.flow_control import FlowController
-from eventsource.subscriptions.retry import (
+from eventsource.application.subscriptions.flow_control import FlowController
+from eventsource.application.subscriptions.retry import (
     CircuitBreaker,
     CircuitBreakerConfig,
     CircuitBreakerOpenError,
@@ -48,10 +44,14 @@ from eventsource.subscriptions.retry import (
     RetryError,
     retry_async,
 )
-from eventsource.subscriptions.shutdown import (
+from eventsource.application.subscriptions.shutdown import (
     ShutdownCoordinator,
     ShutdownPhase,
 )
+from eventsource.domain import StreamId
+from eventsource.events.base import DomainEvent
+from eventsource.ports.envelopes import EventEnvelope
+from eventsource.ports.positions import Position
 
 from .conftest import (
     CollectingProjection,
@@ -641,7 +641,7 @@ class TestRetryAndRecovery:
 
     async def test_exponential_backoff_delays(self):
         """Test that retry delays follow exponential backoff."""
-        from eventsource.subscriptions.retry import calculate_backoff
+        from eventsource.application.subscriptions.retry import calculate_backoff
 
         config = RetryConfig(
             initial_delay=1.0,
@@ -980,7 +980,7 @@ class TestErrorHandlingIntegration:
 
     async def test_error_classification(self):
         """Test error classification for different exception types."""
-        from eventsource.subscriptions.error_handling import (
+        from eventsource.application.subscriptions.error_handling import (
             ErrorClassifier,
         )
 

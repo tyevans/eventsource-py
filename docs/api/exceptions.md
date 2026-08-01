@@ -33,9 +33,10 @@ Six of these are re-exported from the package root (`AggregateNotCreatedError`,
 imported from `eventsource.domain.exceptions`. See
 [Import paths and public exports](#import-paths-and-public-exports).
 
-Other subsystems — multi-tenancy, snapshots, subscriptions, migration, the
-read-model layer, and the optional bus backends — define their own error types
-in their own modules. Those are catalogued under
+Other subsystems — multi-tenancy, snapshots, migration, the read-model layer,
+and the optional bus backends — define their own error types in their own
+modules. (`SubscriptionError` used to be one of these; ADR 0032 rebased it
+onto `EventSourceError` -- see below.) Those are catalogued under
 [Related exceptions outside the core hierarchy](#related-exceptions-outside-the-core-hierarchy);
 note in particular that `eventsource.ports.readmodels.exceptions` defines a
 *second*, unrelated `OptimisticLockError`.
@@ -53,14 +54,14 @@ group.
 
 **Subsystem errors** live beside the code that raises them (or, for
 `SnapshotError`, alongside the core hierarchy in `eventsource.domain.exceptions`
-despite not deriving from it) — `eventsource.subscriptions`,
-`eventsource.migration`, `eventsource.multitenancy`,
-`eventsource.ports.readmodels.exceptions`, and the optional bus backends each
-define their own families. These are *not* subclasses of `EventSourceError`;
-catching the core base class will not catch them. (`LockAcquisitionError` and
-`LockNotHeldError` moved onto `EventSourceError` under ADR 0029 -- they used
-to be a fourth bare-`Exception` family and are now part of the core
-hierarchy; see the diagram below.)
+despite not deriving from it) — `eventsource.migration`,
+`eventsource.multitenancy`, `eventsource.ports.readmodels.exceptions`, and the
+optional bus backends each define their own families. These are *not*
+subclasses of `EventSourceError`; catching the core base class will not catch
+them. (`LockAcquisitionError` and `LockNotHeldError` moved onto
+`EventSourceError` under ADR 0029, and `SubscriptionError` moved the same way
+under ADR 0032 -- all three used to be bare-`Exception` families and are now
+part of the core hierarchy; see the diagram below.)
 
 Three properties of the core hierarchy are worth knowing before you write
 handling code:
@@ -143,7 +144,15 @@ Exception
 │   ├── TenantContextNotSetError               eventsource.multitenancy.exceptions
 │   ├── TenantMismatchError                    eventsource.multitenancy.exceptions
 │   ├── LockAcquisitionError                   (ADR 0029: rebased here, was a bare Exception)
-│   └── LockNotHeldError                       (ADR 0029: rebased here, was a bare Exception)
+│   ├── LockNotHeldError                       (ADR 0029: rebased here, was a bare Exception)
+│   └── SubscriptionError                      (ADR 0032: rebased here, was a bare Exception)
+│       ├── SubscriptionConfigError
+│       ├── SubscriptionStateError
+│       ├── SubscriptionAlreadyExistsError
+│       ├── CheckpointNotFoundError
+│       ├── EventStoreConnectionError
+│       ├── EventBusConnectionError
+│       └── TransitionError
 │
 ├── SnapshotError                             eventsource.domain.exceptions
 │   │                                          (not a subclass of EventSourceError)
@@ -154,15 +163,6 @@ Exception
 ├── ReadModelError                            eventsource.ports.readmodels.exceptions
 │   ├── OptimisticLockError                    (distinct from the core one)
 │   └── ReadModelNotFoundError
-│
-├── SubscriptionError                         eventsource.subscriptions.exceptions
-│   ├── SubscriptionConfigError
-│   ├── SubscriptionStateError
-│   ├── SubscriptionAlreadyExistsError
-│   ├── CheckpointNotFoundError
-│   ├── EventStoreConnectionError
-│   ├── EventBusConnectionError
-│   └── TransitionError
 │
 ├── MigrationError                            eventsource.migration.exceptions
 │   ├── MigrationNotFoundError
@@ -181,8 +181,8 @@ Exception
 │   └── SubscriptionMigrationError             eventsource.migration.subscription_migrator
 │
 ├── (standalone, direct Exception subclasses)
-│   ├── RetryError                            eventsource.subscriptions.retry
-│   ├── CircuitBreakerOpenError               eventsource.subscriptions.retry
+│   ├── RetryError                            eventsource.application.subscriptions.retry
+│   ├── CircuitBreakerOpenError               eventsource.application.subscriptions.retry
 │   │                                          (distinct from the migration one)
 │   ├── StoreNotFoundError                    eventsource.migration.router
 │   ├── WritePausedError                      eventsource.migration.write_pause
@@ -212,7 +212,7 @@ Two names appear twice in the tree. `OptimisticLockError` is defined both in
 two are unrelated classes — catching one will not catch the other. (This
 collision predates ADR 0029 and is tracked in `BACKLOG.md`.) `CircuitBreakerOpenError`
 is likewise defined twice, in `eventsource.migration.exceptions` (a
-`MigrationError`) and in `eventsource.subscriptions.retry` (a bare `Exception`).
+`MigrationError`) and in `eventsource.application.subscriptions.retry` (a bare `Exception`).
 Import these by module rather than pulling both into one namespace.
 
 ## EventSourceError
@@ -520,12 +520,12 @@ Points worth keeping:
   Both retry identically, but the ratio is worth a metric.
 
 There is no purpose-built retry helper for command conflicts in the library. The
-generic `retry_async` in `eventsource.subscriptions.retry` will work if — and
+generic `retry_async` in `eventsource.application.subscriptions.retry` will work if — and
 only if — the closure you hand it performs the reload itself:
 
 ```python
 from eventsource import OptimisticLockError
-from eventsource.subscriptions.retry import RetryConfig, retry_async
+from eventsource.application.subscriptions.retry import RetryConfig, retry_async
 
 
 async def attempt():

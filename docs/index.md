@@ -373,7 +373,7 @@ are built on the richer stack instead of the bare interface:
   a typed `ReadModelRepository` for the model class, with in-memory, PostgreSQL,
   and SQLite backends.
 
-`SubscriptionManager` (`eventsource.subscriptions`) owns the runtime. You
+`SubscriptionManager` (`eventsource.application.subscriptions`) owns the runtime. You
 `subscribe(subscriber, config, name)` — the manager wires up historical catch-up
 from the event store *and* live delivery from the bus behind one subscription —
 then `start()`, and either `stop()` or `run_until_shutdown()`. It is an async

@@ -216,7 +216,7 @@ class OrderSummaryProjection:
 
 Those two methods are the whole contract that `SubscriptionManager` needs.
 There is no registration decorator and no base class to extend — duck typing is
-enough. (`eventsource.subscriptions` does ship a `BaseSubscriber` ABC declaring
+enough. (`eventsource.application.subscriptions` does ship a `BaseSubscriber` ABC declaring
 exactly these two abstract methods, if you prefer inheritance, but the example
 does not use it.)
 
@@ -284,7 +284,7 @@ there is no configuration step here at all. `InMemoryEventStore`,
 `InMemoryEventBus`, and `AggregateRepository` all come from the top-level
 `eventsource` package, alongside `AggregateRoot`, `DomainEvent`, and
 `register_event`. Only `SubscriptionConfig` and `SubscriptionManager` are
-imported from `eventsource.subscriptions`.
+imported from `eventsource.application.subscriptions`.
 
 Each object has a distinct job:
 
@@ -577,7 +577,7 @@ into the numbered steps you saw in the output, run under
 `asyncio.run(main())`.
 
 It is self-contained: everything it imports comes from the top-level
-`eventsource` package plus `eventsource.subscriptions`, and it is safe to copy
+`eventsource` package plus `eventsource.application.subscriptions`, and it is safe to copy
 into a scratch file and edit. Good first modifications: change
 `start_from="beginning"` to `"checkpoint"` and run twice to see the second run
 replay nothing; drop `OrderCancelled` from `subscribed_to()` and watch the

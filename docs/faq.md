@@ -23,7 +23,7 @@ A few conventions used throughout:
 
 - Everything user-facing is imported from the top-level `eventsource` package,
   so examples say `from eventsource import ...` rather than reaching into
-  submodules, except where a subpackage such as `eventsource.subscriptions` is
+  submodules, except where a subpackage such as `eventsource.application.subscriptions` is
   the documented import path.
 - "Core" means the parts that work with only `pydantic` and `sqlalchemy`
   installed. Anything requiring `asyncpg`, `aiosqlite`, `redis`, `aio-pika`,

@@ -14,9 +14,9 @@ from uuid import uuid4
 
 import pytest
 
+from eventsource.application.subscriptions import SubscriptionConfig
 from eventsource.domain import StreamId
 from eventsource.ports.positions import ExpectedVersion
-from eventsource.subscriptions import SubscriptionConfig
 
 from .conftest import (
     CollectingProjection,

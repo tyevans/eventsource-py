@@ -1,6 +1,6 @@
 # ADR-0009: Multi-Instance Subscription Coordination
 
-**Status:** Accepted
+**Status:** Accepted. Amended by [ADR 0032](0032-subscriptions-ring-migration.md).
 
 **Date:** 2026-07-27
 

@@ -1,12 +1,22 @@
 """Boundary ports (Clean Architecture output ports). Depends on domain only."""
 
-from eventsource.ports.bus import EventBus, EventHandlerFunc, EventPublisher
+from eventsource.ports.bus import (
+    EventBus,
+    EventHandlerFunc,
+    EventPublisher,
+    SubscribableEventBus,
+)
 from eventsource.ports.checkpoints import (
     CheckpointData,
     CheckpointRepository,
     LagMetrics,
     ProjectionCheckpoints,
     SubscriptionPositions,
+)
+from eventsource.ports.coordination import (
+    LeaderChangeCallback,
+    LeaderElector,
+    LeaderElectorWithLease,
 )
 from eventsource.ports.dlq import (
     DLQEntry,
@@ -55,6 +65,13 @@ from eventsource.ports.store import (
     StreamReader,
     collect,
 )
+from eventsource.ports.subscribers import (
+    BatchSubscriber,
+    Subscriber,
+    SyncSubscriber,
+    get_subscribed_event_types,
+    supports_batch_handling,
+)
 
 __all__ = [
     # Positions and versions
@@ -81,6 +98,7 @@ __all__ = [
     "SnapshotStore",
     # Bus port
     "EventPublisher",
+    "SubscribableEventBus",
     "EventBus",
     "EventHandlerFunc",
     # Outbox port
@@ -111,4 +129,14 @@ __all__ = [
     "EventSubscriber",
     "FlexibleEventSubscriber",
     "AsyncEventHandler",
+    # Subscriber protocols / utilities
+    "Subscriber",
+    "SyncSubscriber",
+    "BatchSubscriber",
+    "supports_batch_handling",
+    "get_subscribed_event_types",
+    # Leader election port
+    "LeaderElector",
+    "LeaderElectorWithLease",
+    "LeaderChangeCallback",
 ]

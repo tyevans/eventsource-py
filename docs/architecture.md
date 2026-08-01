@@ -360,7 +360,7 @@ historical). The contract is stable; the accommodations are private.
 ### Tier 2: orchestration and lifecycle
 
 Tier 2 is the machinery that keeps the loop running unattended. Almost all of it
-sits under `subscriptions/`, the largest package in the library by a wide
+sits under `application/subscriptions/`, the largest package in the library by a wide
 margin: `SubscriptionManager` as the front door, two runners
 (`CatchUpRunner` reading batches from the store, `LiveRunner` consuming the bus)
 with a `TransitionCoordinator` handing one off to the other at a watermark, plus
@@ -397,12 +397,12 @@ projection can be driven by hand with no subscription runtime at all, and a
 `FlowController` or `CircuitBreaker` is usable on its own.
 
 Being Tier 2 is about needing the world -- clocks, background tasks, OS signals,
-other processes -- not about importing a driver. `subscriptions/` names its
+other processes -- not about importing a driver. `application/subscriptions/` names its
 checkpoint and DLQ types only under `TYPE_CHECKING`, and those types are the
 pure `SubscriptionPositions` and `DLQRepository` Protocols from
 `ports/checkpoints.py` and `ports/dlq.py` -- not the SQLAlchemy-backed
 implementations, which live in `adapters/sql/` and are supplied by the caller
-at composition time. `subscriptions/` is genuinely dependency-light on its own;
+at composition time. `application/subscriptions/` is genuinely dependency-light on its own;
 it lands above Tier 1 for the reason stated at the top of this section --
 lifetime and orchestration across restarts, not driver imports. `migration/`
 is the exception that reaches for a driver directly: its own
@@ -500,7 +500,7 @@ write-path narrowness; the bus is a delivery mechanism and pays for its speed in
 guarantees. A bus subscriber learns about events that arrive *after* it
 subscribed and nothing about events that came before -- there is no
 `current_position()` equivalent, because there is no retained ordering to
-report. Everything in `subscriptions/` follows from taking that limitation
+report. Everything in `application/subscriptions/` follows from taking that limitation
 seriously rather than papering over it.
 
 Wildcard subscription (`subscribe_to_all_events`) is worth noting here because
@@ -560,7 +560,7 @@ question "what does this event do to my read model" and the question "where was
 I when the process died" have different failure modes and different owners.
 Fusing them is how projections end up with bespoke, half-correct catch-up loops.
 
-`SubscriptionManager` (`subscriptions/manager.py`) is the entry point --
+`SubscriptionManager` (`application/subscriptions/manager.py`) is the entry point --
 `subscribe`/`unsubscribe`, `start`/`stop`, `run_until_shutdown`, signal
 registration, health and error aggregation -- and it delegates almost
 everything. Registration lives in `registry.py`, start/stop in `lifecycle.py`,
@@ -605,7 +605,7 @@ single ordered stream of every event, starting from wherever it left off and
 continuing forever. What it can actually be given is a store that remembers
 everything but never speaks unless asked, and a bus that speaks constantly but
 remembers nothing. The subscription's whole job is to make those two look like
-one, and every unusual structure in `subscriptions/` is an artefact of doing
+one, and every unusual structure in `application/subscriptions/` is an artefact of doing
 that safely.
 
 ### Why the event store and the event bus cannot be read as one source
@@ -717,7 +717,7 @@ discipline that makes a crash mid-handoff recoverable.
 ## Why the lifecycle is split into three collaborators
 
 The obvious implementation of "read history, then follow the stream" is one
-object with a mode flag. `subscriptions/` instead contains `CatchUpRunner`
+object with a mode flag. `application/subscriptions/` instead contains `CatchUpRunner`
 (`runners/catchup.py`), `LiveRunner` (`runners/live.py`), and
 `TransitionCoordinator` (`transition.py`), and the split is not a matter of
 file size -- it is that the two halves of the work have incompatible control
@@ -1326,7 +1326,7 @@ line of that loop.
 long?* It is a `runtime_checkable` Protocol with three members --
 `max_retries`, `get_backoff(attempt)`, `should_retry(attempt, error)` -- and
 three implementations ship with it. `ExponentialBackoffRetryPolicy` delegates
-to `calculate_backoff` from `subscriptions/retry.py`, so projections and
+to `calculate_backoff` from `application/subscriptions/retry.py`, so projections and
 subscriptions share one backoff implementation. `NoRetryPolicy` reports
 `max_retries == 0` and returns `False` unconditionally, which collapses the
 loop to a single attempt -- the right choice in tests, where the alternative is
@@ -1641,7 +1641,7 @@ under thirty lines each and testable without any of the rest of the read side.
 
 **`ExponentialBackoffRetryPolicy`** is the default shape. It holds a
 `RetryConfig` and forwards `get_backoff` straight to `calculate_backoff` from
-`subscriptions/retry.py` — deliberately the same function the subscription
+`application/subscriptions/retry.py` — deliberately the same function the subscription
 runtime uses, so there is one backoff implementation in the codebase rather
 than two that drift. `should_retry` is `attempt < max_retries`: retry
 everything until the budget runs out. Its own constructor default is
@@ -1661,7 +1661,7 @@ subscription runner or broker that will redeliver anyway.
 wraps a base policy and a tuple of exception types, and `should_retry` returns
 `False` immediately unless `isinstance(error, retryable_exceptions)`, otherwise
 deferring to the base. Pairing it with `TRANSIENT_EXCEPTIONS` from
-`subscriptions/retry.py` (`ConnectionError`, `TimeoutError`,
+`application/subscriptions/retry.py` (`ConnectionError`, `TimeoutError`,
 `asyncio.TimeoutError`, `OSError`) expresses the distinction that actually
 matters on the read side: a dropped connection is worth waiting out, a
 `ValidationError` on the event payload will fail identically on attempt four,

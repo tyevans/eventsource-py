@@ -59,9 +59,9 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
+from eventsource.application.subscriptions.subscription import render_position
 from eventsource.migration.exceptions import MigrationError, PositionMappingError
 from eventsource.observability import Tracer, create_tracer
-from eventsource.subscriptions.subscription import render_position
 
 if TYPE_CHECKING:
     from eventsource.migration.position_mapper import PositionMapper

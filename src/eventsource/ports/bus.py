@@ -20,7 +20,7 @@ from eventsource.ports.handlers import (
     FlexibleEventSubscriber,
 )
 
-__all__ = ["EventBus", "EventHandlerFunc", "EventPublisher"]
+__all__ = ["EventBus", "EventHandlerFunc", "EventPublisher", "SubscribableEventBus"]
 
 # Type alias for simple function-based handlers
 EventHandlerFunc = Callable[[DomainEvent], Awaitable[None] | None]
@@ -52,6 +52,54 @@ class EventPublisher(Protocol):
 
         Raises:
             Exception: If publishing fails (implementation-specific)
+        """
+        ...
+
+
+class SubscribableEventBus(Protocol):
+    """
+    Protocol for the narrow slice of ``EventBus`` that live subscription
+    runners depend on: registering and removing a handler for a single
+    event type.
+
+    Use cases that only need to (un)subscribe handlers should type-hint
+    this port instead of the concrete ``EventBus`` ABC below -- every
+    ``EventBus`` implementation satisfies it structurally, with no
+    explicit subclassing required.
+
+    Example:
+        >>> def wire_runner(bus: SubscribableEventBus) -> None:
+        ...     bus.subscribe(OrderCreated, handler)
+    """
+
+    def subscribe(
+        self,
+        event_type: type[DomainEvent],
+        handler: FlexibleEventHandler | EventHandlerFunc,
+    ) -> None:
+        """
+        Subscribe a handler to a specific event type.
+
+        Args:
+            event_type: The event class to subscribe to
+            handler: Object with handle() method or callable
+        """
+        ...
+
+    def unsubscribe(
+        self,
+        event_type: type[DomainEvent],
+        handler: FlexibleEventHandler | EventHandlerFunc,
+    ) -> bool:
+        """
+        Unsubscribe a handler from a specific event type.
+
+        Args:
+            event_type: The event class to unsubscribe from
+            handler: The handler to remove
+
+        Returns:
+            True if the handler was found and removed, False otherwise
         """
         ...
 
