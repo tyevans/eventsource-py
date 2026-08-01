@@ -29,6 +29,21 @@ Exceptions merge into `domain/exceptions.py` (rebase roots onto
 needs 1-2 methods of a wider infra interface, cut a small Protocol in
 `ports/` instead of importing across rings or weakening a contract.
 
+## Sibling campaigns — coordinate before writing anything
+
+Parallel ring migrations collide at shared seams, and the collisions cost
+more than any slice. Before the plan:
+
+- `gh pr list` and inspect open ring PRs for (a) ADR numbers they claim
+  (grep `docs/adrs/` on their branches) — take max + 1; (b) shared seam
+  files they touch (`ports/bus.py`, `ports/__init__.py`,
+  `domain/exceptions.py`). If a symbol could land in two homes, agree the
+  canonical home now, not at merge time.
+- When a sibling PR merges, merge origin/main into your branch immediately —
+  drift compounds. Resolve conflicted files hunk-by-hunk; never
+  `git checkout --ours` a partially-conflicted file (it silently discards
+  main's auto-merged changes in the non-conflicted hunks).
+
 ## Workflow
 
 1. **Plan first, as an artifact.** Ring-assignment table, move list, slice
@@ -48,15 +63,22 @@ needs 1-2 methods of a wider infra interface, cut a small Protocol in
    `**BREAKING: ...**` entry naming old path → `ModuleNotFoundError` and all
    replacement paths.
 
-## Sweep scope — always all six
+## Sweep — whole repo, denylist not allowlist
 
-```
-grep -rn "eventsource\.<pkg>" src/ tests/ bench/ docs/ examples/ pyproject.toml
-```
+Run `.claude/skills/migrating-modules-to-rings/sweep.sh <pkg>` from the
+repo root. Fatal findings (nonzero exit): import-shaped references
+(`from`/`import eventsource.<pkg>`) outside by-design locations
+(CHANGELOG, ADR bodies, plan artifacts, `test_public_api.py` guard tests),
+and leftover dirs at `src/eventsource/<pkg>` or `tests/unit/<pkg>` — even
+`__pycache__`-only debris resurrects the old path.
+`tests/integration/<pkg>` stays in place by design. Bare path mentions
+(logger names, prose) print as a non-fatal triage list — read it; some
+mentions are intentional, some are stale docs.
 
-`bench/` has been missed twice and `examples/` once (CI's
-validate-examples job executes the top-level examples — a stale import
-there fails the build); docstrings and comments count. In pyproject.toml
+Directory allowlists have failed four times (`bench/` twice, `examples/`
+once — CI's validate-examples job executes top-level examples, so a stale
+import there fails the build — and `README.md` once, found only when this
+script's whole-repo grep first ran). Sweep everything. In pyproject.toml
 check three spots: import-linter contract module lists,
 `[tool.mutmut] only_mutate`, pytest test-selection args.
 
@@ -64,13 +86,21 @@ check three spots: import-linter contract module lists,
 
 - Per slice: targeted pytest + `uv run lint-imports` + ruff + mypy.
 - Orchestrator, before PR: `make check` (CI parity) + Docker integration
-  suite. Subagents never run the full suite.
+  suite + `uv run python scripts/validate_examples.py` +
+  `uv run mkdocs build --strict`. The last two are seconds-cheap and are
+  the only local checks covering examples/ and docs — `make check` runs
+  neither. Subagents never run the full suite.
+- Re-run the full gate only at stable points (slice complete, post-merge,
+  post-fix), not after every mechanical edit.
 
 ## Common mistakes
 
 | Mistake | Reality |
 |---|---|
-| Sweep only src/ and tests/ | bench/, docs/, examples/, pyproject carry paths too — and CI executes examples/ |
+| Sweep a directory allowlist | Allowlists rot (missed bench/ twice, examples/ once); sweep the whole repo via `sweep.sh` |
+| Pick "next ADR number" from local docs/adrs/ | Sibling branches claim numbers concurrently; check open PRs first |
+| First commit fails → assume error | pre-commit's ruff-format hook reformats and fails the commit; re-add and re-commit |
+| Poll `gh pr view --json mergeable` right after push | Eventually-consistent; reads UNKNOWN/stale for a minute or two |
 | `git rm`/`mv` then move on | Leftover dirs/`__pycache__` = silent namespace packages; `test -d` for the old dirs |
 | "Strict docs build will catch nav" | It won't; add new pages to mkdocs nav by hand |
 | Tree-wide `ruff format` | Collides with parallel campaigns; format only touched files. Shared files (`__init__.py`, pyproject.toml): re-read immediately before each surgical single-line edit |
