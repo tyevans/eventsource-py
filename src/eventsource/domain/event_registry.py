@@ -10,15 +10,16 @@ The registry is thread-safe and supports multiple registration patterns:
 - Multiple independent registries for testing isolation
 
 Usage:
-    # Option 1: Decorator-based registration
+    # Option 1: Decorator-based registration (event_type is auto-derived
+    # from the class name -- never declare it by hand)
     @register_event
     class OrderCreated(DomainEvent):
-        event_type: str = "OrderCreated"
         ...
 
-    # Option 2: Decorator with explicit type name
+    # Option 2: Decorator with an explicit wire name, e.g. to register a
+    # versioned event class under a stable name distinct from its class name
     @register_event(event_type="order.created")
-    class OrderCreated(DomainEvent):
+    class OrderCreatedV2(DomainEvent):
         ...
 
     # Option 3: Explicit registration
@@ -314,13 +315,13 @@ def register_event(
     Example:
         >>> @register_event
         ... class OrderCreated(DomainEvent):
-        ...     event_type: str = "OrderCreated"
         ...     aggregate_type: str = "Order"
         ...     order_id: UUID
         ...
+        >>> # Explicit wire name: registers this class under a stable name
+        >>> # distinct from the class name, e.g. for a versioned event schema
         >>> @register_event(event_type="order.shipped")
-        ... class OrderShipped(DomainEvent):
-        ...     event_type: str = "order.shipped"
+        ... class OrderShippedV2(DomainEvent):
         ...     aggregate_type: str = "Order"
     """
     target_registry = registry or default_registry

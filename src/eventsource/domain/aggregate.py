@@ -57,12 +57,19 @@ class AggregateRoot(Generic[TState], ABC):
     - `_get_initial_state()`: Return initial state for new aggregates
 
     Example:
+        >>> @register_event
+        ... class OrderCreated(DomainEvent):
+        ...     aggregate_type: str = "Order"
+        ...     customer_id: UUID
+        ...
         >>> class OrderState(BaseModel):
         ...     order_id: UUID
         ...     status: str = "pending"
         ...     items: list[OrderItem] = []
         ...
         >>> class OrderAggregate(AggregateRoot[OrderState]):
+        ...     aggregate_type = "Order"
+        ...
         ...     def _get_initial_state(self) -> OrderState:
         ...         return OrderState(order_id=self.aggregate_id)
         ...
@@ -80,14 +87,7 @@ class AggregateRoot(Generic[TState], ABC):
         ...     def create(self, customer_id: UUID) -> None:
         ...         if self.version > 0:
         ...             raise ValueError("Order already created")
-        ...         event = OrderCreated(
-        ...             aggregate_id=self.aggregate_id,
-        ...             aggregate_type="Order",
-        ...             event_type="OrderCreated",
-        ...             customer_id=customer_id,
-        ...             aggregate_version=self.version + 1,
-        ...         )
-        ...         self.apply_event(event)
+        ...         self.create_event(OrderCreated, customer_id=customer_id)
 
     Attributes:
         aggregate_id: Unique identifier for this aggregate instance
@@ -434,8 +434,9 @@ class AggregateRoot(Generic[TState], ABC):
 
         Note:
             Explicit kwargs always override auto-populated values.
-            For example, passing `aggregate_version=5` will use 5 instead
-            of the calculated next version. Precedence: explicit kwargs > command > tenant context > auto fields.
+            Overriding auto-stamped fields (e.g. `aggregate_version`) is an
+            escape hatch for tests and migrations — in normal domain code,
+            let the aggregate stamp them. Precedence: explicit kwargs > command > tenant context > auto fields.
         """
         # Start with auto-populated aggregate fields
         event_kwargs: dict[str, Any] = {
@@ -645,10 +646,13 @@ class DeclarativeAggregate(AggregateRoot[TState], ABC):
             Default is False (backward compatible).
         unregistered_event_handling: Controls behavior when an event has no
             registered handler. Options:
-            - "ignore": Silently ignore unhandled events (default, for backwards
-              compatibility and forward compatibility with new event types)
+            - "error": Raise UnhandledEventError for unhandled events (default).
+              An aggregate is the write model — a silently unapplied event means
+              command handlers reason over divergent state.
             - "warn": Log a warning for unhandled events
-            - "error": Raise UnhandledEventError for unhandled events
+            - "ignore": Silently ignore unhandled events (explicit opt-down, e.g.
+              for forward-compat replay of event types added after this
+              aggregate's handlers were written)
 
     Example with deferred state:
         >>> class ExtractionProcess(DeclarativeAggregate[ExtractionState]):
@@ -686,9 +690,10 @@ class DeclarativeAggregate(AggregateRoot[TState], ABC):
         ...                 update={"status": "shipped"}
         ...             )
 
-        >>> # For strict mode (raises error on unhandled events):
-        >>> class StrictOrderAggregate(DeclarativeAggregate[OrderState]):
-        ...     unregistered_event_handling = "error"
+        >>> # Strictness is the default; opt down explicitly for forward-compat
+        >>> # replay of event types added after these handlers were written:
+        >>> class LenientOrderAggregate(DeclarativeAggregate[OrderState]):
+        ...     unregistered_event_handling = "ignore"
         ...     # ... handlers ...
 
     Example with schema versioning:
@@ -706,8 +711,8 @@ class DeclarativeAggregate(AggregateRoot[TState], ABC):
     requires_creation_event: ClassVar[bool] = False
 
     # Class-level configuration for unregistered event handling
-    # Options: "ignore" (default), "warn", "error"
-    unregistered_event_handling: ClassVar[UnregisteredEventHandling] = "ignore"
+    # Options: "error" (default), "warn", "ignore"
+    unregistered_event_handling: ClassVar[UnregisteredEventHandling] = "error"
 
     # Per-subclass handler registry, rebuilt by __init_subclass__.
     _event_handlers: ClassVar[dict[type[DomainEvent], str]] = {}

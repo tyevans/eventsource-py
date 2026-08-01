@@ -763,9 +763,26 @@ class TestDeclarativeAggregate:
         assert aggregate.state is not None
         assert aggregate.state.value == 6
 
-    def test_unhandled_event_is_ignored(self) -> None:
-        """Events without handlers should be silently ignored."""
-        aggregate = DeclarativeCounterAggregate(uuid4())
+    def test_unhandled_event_is_ignored_with_explicit_opt_down(self) -> None:
+        """Events without handlers are silently ignored when the aggregate
+        explicitly opts down to unregistered_event_handling="ignore"."""
+
+        class OptDownCounterAggregate(DeclarativeAggregate[CounterState]):
+            aggregate_type = "Counter"
+            unregistered_event_handling = "ignore"
+
+            def _get_initial_state(self) -> CounterState:
+                return CounterState(counter_id=self.aggregate_id)
+
+            @handles(CounterIncremented)
+            def _on_counter_incremented(self, event: CounterIncremented) -> None:
+                if self._state is None:
+                    self._state = self._get_initial_state()
+                self._state = self._state.model_copy(
+                    update={"value": self._state.value + event.increment}
+                )
+
+        aggregate = OptDownCounterAggregate(uuid4())
 
         # Create an event type that has no handler registered
         class UnhandledEvent(DomainEvent):
@@ -1364,12 +1381,14 @@ class TestUnregisteredEventHandling:
     - AC2: Setting unregistered_event_handling="ignore" silently ignores events
     - AC3: Setting unregistered_event_handling="warn" logs warning
     - AC4: Error message lists available handlers
-    - AC5: Default mode is "ignore" for backwards compatibility
+    - AC5: Default mode is "error" (strict by default; ignore/warn are explicit opt-downs)
     """
 
-    def test_default_mode_is_ignore(self) -> None:
-        """AC5: Default mode should be 'ignore' for backwards compatibility."""
-        assert DeclarativeCounterAggregate.unregistered_event_handling == "ignore"
+    def test_default_mode_is_error(self) -> None:
+        """AC5: Default mode is 'error' -- an aggregate is the write model, so a
+        silently unapplied event would leave command handlers reasoning over
+        divergent state."""
+        assert DeclarativeCounterAggregate.unregistered_event_handling == "error"
 
     def test_ignore_mode_silently_accepts_unknown_events(self) -> None:
         """AC2: ignore mode allows unknown events without raising or logging."""
@@ -1602,8 +1621,9 @@ class TestUnregisteredEventHandling:
         assert aggregate.state is not None
         assert aggregate.state.value == 5
 
-    def test_backwards_compatibility_with_existing_code(self) -> None:
-        """Existing code should work without changes (ignore mode is default)."""
+    def test_unregistered_event_raises_by_default_without_opt_down(self) -> None:
+        """Aggregates that don't opt down raise on an unhandled event -- the
+        strict default catches events silently falling through to no handler."""
         # DeclarativeCounterAggregate is defined without explicit mode setting
         aggregate = DeclarativeCounterAggregate(uuid4())
 
@@ -1618,9 +1638,8 @@ class TestUnregisteredEventHandling:
             aggregate_version=1,
         )
 
-        # Should not raise - backwards compatible behavior
-        aggregate.apply_event(event)
-        assert aggregate.version == 1
+        with pytest.raises(UnhandledEventError):
+            aggregate.apply_event(event)
 
 
 class TestUnhandledEventErrorException:
@@ -1710,3 +1729,30 @@ class TestAggregateTypeRequired:
                 return None
 
         assert HasType(uuid4()).aggregate_type == "HasType"
+
+
+class TestStrictUnregisteredDefault:
+    def test_unhandled_event_raises_by_default(self) -> None:
+        from eventsource.domain.exceptions import UnhandledEventError
+
+        class Surprise(DomainEvent):
+            aggregate_type: str = "Strict"
+
+        class StrictAggregate(DeclarativeAggregate[dict]):
+            aggregate_type = "Strict"
+
+        agg = StrictAggregate(uuid4())
+        with pytest.raises(UnhandledEventError):
+            agg.apply_event(Surprise(aggregate_id=agg.aggregate_id), is_new=True)
+
+    def test_explicit_ignore_still_available(self) -> None:
+        class Surprise2(DomainEvent):
+            aggregate_type: str = "Lenient"
+
+        class LenientAggregate(DeclarativeAggregate[dict]):
+            aggregate_type = "Lenient"
+            unregistered_event_handling = "ignore"
+
+        agg = LenientAggregate(uuid4())
+        agg.apply_event(Surprise2(aggregate_id=agg.aggregate_id), is_new=True)
+        assert agg.version == 1

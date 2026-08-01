@@ -355,10 +355,12 @@ class TestDeclarativeAggregateClass:
     """Tests for DeclarativeAggregate."""
 
     def test_declarative_aggregate_with_no_handlers(self):
-        """Test declarative aggregate with no handlers ignores events."""
+        """Test declarative aggregate with no handlers ignores events when it
+        explicitly opts down to unregistered_event_handling="ignore"."""
 
         class EmptyAggregate(DeclarativeAggregate[dict]):
             aggregate_type = "EmptyAggregate"
+            unregistered_event_handling = "ignore"
 
             def _get_initial_state(self):
                 return {}
