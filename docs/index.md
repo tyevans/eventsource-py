@@ -344,25 +344,13 @@ class AccountAggregate(DeciderAggregate[AccountState, AccountCommand]):
     aggregate_type = "Account"
 
     @staticmethod
-    def initial_state(aggregate_id: UUID) -> AccountState:
-        return AccountState(account_id=aggregate_id)
-
-    @staticmethod
     def decide(command: AccountCommand, state: AccountState) -> list[DomainEvent]:
         match command, state:
             case Withdraw(amount=amt), AccountState(balance=bal) if amt > bal:
                 raise CommandRejectedError(f"insufficient balance: {bal}")
             case Withdraw(amount=amt), _:
                 return [MoneyWithdrawn(aggregate_id=state.account_id, amount=amt)]
-            # ...
-
-    @staticmethod
-    def evolve(state: AccountState, event: DomainEvent) -> AccountState:
-        match event:
-            case MoneyWithdrawn(amount=amt):
-                return state.model_copy(update={"balance": state.balance - amt})
-            case _:
-                return state
+            # ... initial_state() and evolve() elided, same shape
 ```
 
 `execute(command)` is the public entry point: it runs `decide`, stamps each returned
