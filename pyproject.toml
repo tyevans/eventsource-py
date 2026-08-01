@@ -306,6 +306,32 @@ layers = [
     "eventsource.domain",
 ]
 
+# Out-of-ring settlement (ADR 0040). observability/ is the cross-cutting
+# telemetry toolkit (OTel optional/guarded), consumed by application and
+# adapters by design — but the two innermost rings must stay free of it:
+# domain entities and port contracts carry no telemetry. testing/ is the
+# public test toolkit; it imports adapters by design and no ring may ever
+# import it back.
+[[tool.importlinter.contracts]]
+name = "Domain and ports must not import observability"
+type = "forbidden"
+source_modules = [
+    "eventsource.domain",
+    "eventsource.ports",
+]
+forbidden_modules = ["eventsource.observability"]
+
+[[tool.importlinter.contracts]]
+name = "Rings must not import the testing toolkit"
+type = "forbidden"
+source_modules = [
+    "eventsource.domain",
+    "eventsource.ports",
+    "eventsource.application",
+    "eventsource.adapters",
+]
+forbidden_modules = ["eventsource.testing"]
+
 # The projections/ Tier-0 blocker documented in docs/core-surface.md (projections/base.py
 # and the checkpoint/dlq managers pulling in sqlalchemy-backed repositories.checkpoint and
 # repositories.dlq) is resolved: projections/ and repositories/{checkpoint,dlq}.py were
