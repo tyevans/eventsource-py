@@ -105,8 +105,11 @@ mutants/
 # Claude Code session worktrees (machine-local)
 .claude/worktrees/
 
-# Agent-team memory (session logs, learnings, retros -- machine-local)
-memory/
+# Agent-team memory (session logs, learnings, retros -- machine-local).
+# Anchored to the repo root: hatchling applies .gitignore patterns when
+# selecting wheel contents, and an unanchored `memory/` silently dropped
+# src/eventsource/adapters/memory/ from the 0.8.0 wheel.
+/memory/
 
 # Doc-sync state (per-checkout, never shared)
 .claude/last-docs-run

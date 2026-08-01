@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-08-01
+
+### Fixed
+
+- **The 0.8.0 wheel published to PyPI was missing the entire `eventsource.adapters.memory` package** -- `pip install eventsource-py==0.8.0` failed on `from eventsource import InMemoryEventStore` (and every other memory-adapter name) with `ModuleNotFoundError: No module named 'eventsource.adapters.memory'`. Root cause: `.gitignore` carried an unanchored `memory/` pattern (intended for machine-local agent-team memory at the repo root), and hatchling applies `.gitignore` patterns when selecting wheel contents even for files git tracks -- so the adapter package was silently dropped from the build. The pattern is now anchored to `/memory/`. 0.8.0 is yanked on PyPI; this release is identical except for the packaging fix.
+- The release workflow now smoke-tests the built wheel (install + import `DomainEvent`, `InMemoryEventStore`, `InMemoryEventBus`) before anything is published, so an incomplete wheel fails the build instead of reaching PyPI.
+
 ## [0.8.0] - 2026-08-01
 
 ### Added
@@ -698,7 +705,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Automatic schema creation and migrations
 - GitHub Actions CI/CD pipeline
 
-[Unreleased]: https://github.com/tyevans/eventsource-py/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/tyevans/eventsource-py/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/tyevans/eventsource-py/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/tyevans/eventsource-py/compare/v0.5.0...v0.8.0
 [0.5.0]: https://github.com/tyevans/eventsource-py/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/tyevans/eventsource-py/compare/v0.3.1...v0.4.0
