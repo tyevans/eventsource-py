@@ -21,7 +21,7 @@ from pydantic import Field
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
 from eventsource.adapters.memory.dlq import InMemoryDLQRepository
 from eventsource.adapters.sql.readmodel_projection import ReadModelProjection
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.handlers import handles
 from eventsource.ports.readmodels import ReadModel
 

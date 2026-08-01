@@ -27,7 +27,7 @@ from eventsource.application.subscriptions.subscriber import (
     get_subscribed_event_types,
     supports_batch_handling,
 )
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 
 
 # Sample events for testing

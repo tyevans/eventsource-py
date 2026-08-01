@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from eventsource.adapters.serialization import EventSourceJSONEncoder
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_AGGREGATE_ID,

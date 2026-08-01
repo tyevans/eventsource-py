@@ -49,7 +49,7 @@ from eventsource.application.subscriptions.shutdown import (
     ShutdownPhase,
 )
 from eventsource.domain import StreamId
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.ports.envelopes import EventEnvelope
 from eventsource.ports.positions import Position
 

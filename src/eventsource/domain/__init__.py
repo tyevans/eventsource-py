@@ -1,22 +1,30 @@
-"""Entities ring. Pure: stdlib + pydantic only.
-
-TRANSITION: DomainEvent/EventRegistry still live in eventsource.events and
-count as this ring until sub-project 3 moves them.
-"""
+"""Entities ring. Pure: stdlib + pydantic only."""
 
 from eventsource.domain.aggregate import AggregateRoot, DeclarativeAggregate
 from eventsource.domain.command import DomainCommand
 from eventsource.domain.decider import DeciderAggregate
+from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import (
+    EventRegistry,
+    default_registry,
+    get_event_class,
+    get_event_class_or_none,
+    is_event_registered,
+    list_registered_events,
+    register_event,
+)
 from eventsource.domain.exceptions import (
     AggregateNotCreatedError,
     AggregateNotFoundError,
     CheckpointError,
     CommandRejectedError,
     DuplicateEventError,
+    DuplicateEventTypeError,
     EventBusError,
     EventNotFoundError,
     EventSourceError,
     EventStoreError,
+    EventTypeNotFoundError,
     EventVersionError,
     HandlerDispatchError,
     LockAcquisitionError,
@@ -58,12 +66,16 @@ __all__ = [
     "DeciderAggregate",
     "DeclarativeAggregate",
     "DomainCommand",
+    "DomainEvent",
     "DuplicateEventError",
+    "DuplicateEventTypeError",
     "EventBusError",
     "EventId",
     "EventNotFoundError",
+    "EventRegistry",
     "EventSourceError",
     "EventStoreError",
+    "EventTypeNotFoundError",
     "EventVersionError",
     "GlobalPosition",
     "HandlerDispatchError",
@@ -84,4 +96,10 @@ __all__ = [
     "TenantId",
     "UnhandledEventError",
     "Version",
+    "default_registry",
+    "get_event_class",
+    "get_event_class_or_none",
+    "is_event_registered",
+    "list_registered_events",
+    "register_event",
 ]

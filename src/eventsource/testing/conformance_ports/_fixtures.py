@@ -1,6 +1,6 @@
 """Shared event and stream-id factories for the port conformance suites.
 
-Kept sqlalchemy-free: only `eventsource.domain`, `eventsource.events`, and
+Kept sqlalchemy-free: only `eventsource.domain` and
 `eventsource.ports.readmodels` are imported here, so this module stays usable
 from the Tier 0 surface.
 """
@@ -8,7 +8,7 @@ from the Tier 0 surface.
 from uuid import UUID, uuid4
 
 from eventsource.domain import StreamId
-from eventsource.events import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.ports.readmodels import ReadModel
 
 

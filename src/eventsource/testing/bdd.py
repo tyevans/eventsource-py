@@ -47,8 +47,8 @@ from uuid import UUID, uuid4
 
 from eventsource.domain import StreamId
 from eventsource.domain.aggregate import AggregateRoot
+from eventsource.domain.event import DomainEvent
 from eventsource.domain.exceptions import CommandRejectedError
-from eventsource.events.base import DomainEvent
 from eventsource.ports import ExpectedVersion
 from eventsource.testing.harness import InMemoryTestHarness
 

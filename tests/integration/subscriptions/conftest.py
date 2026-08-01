@@ -17,8 +17,8 @@ from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
 from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.application.subscriptions import SubscriptionManager
 from eventsource.domain import StreamId
-from eventsource.events.base import DomainEvent
-from eventsource.events.registry import register_event
+from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import register_event
 from eventsource.ports.positions import ExpectedVersion
 
 # =============================================================================

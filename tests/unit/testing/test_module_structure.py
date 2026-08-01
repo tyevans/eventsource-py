@@ -189,7 +189,7 @@ class TestImplementationStatus:
 
     def test_event_builder_is_implemented(self) -> None:
         """Test EventBuilder is fully implemented (DX-002 complete)."""
-        from eventsource.events.base import DomainEvent
+        from eventsource.domain.event import DomainEvent
         from eventsource.testing import EventBuilder
 
         class TestEvent(DomainEvent):
@@ -239,7 +239,7 @@ class TestImplementationStatus:
         from pydantic import BaseModel
 
         from eventsource.domain.aggregate import AggregateRoot
-        from eventsource.events.base import DomainEvent
+        from eventsource.domain.event import DomainEvent
         from eventsource.testing import when_command
 
         class TestState(BaseModel):
@@ -269,7 +269,7 @@ class TestImplementationStatus:
     def test_then_event_published_is_implemented(self) -> None:
         """Test then_event_published is fully implemented (DX-004 complete)."""
 
-        from eventsource.events.base import DomainEvent
+        from eventsource.domain.event import DomainEvent
         from eventsource.testing import InMemoryTestHarness, then_event_published
 
         class TestEvent(DomainEvent):

@@ -10,7 +10,7 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.testing.assertions import EventAssertions
 
 # =============================================================================

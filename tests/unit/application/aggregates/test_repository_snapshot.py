@@ -27,8 +27,8 @@ from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.domain import StreamId
 from eventsource.domain.aggregate import AggregateRoot
+from eventsource.domain.event import DomainEvent
 from eventsource.domain.exceptions import AggregateNotFoundError
-from eventsource.events.base import DomainEvent
 from eventsource.ports import ExpectedVersion
 from eventsource.ports.snapshots import Snapshot
 

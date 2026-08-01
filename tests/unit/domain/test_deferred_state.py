@@ -18,8 +18,8 @@ import pytest
 from pydantic import BaseModel
 
 from eventsource.domain.aggregate import DeclarativeAggregate
+from eventsource.domain.event import DomainEvent
 from eventsource.domain.exceptions import AggregateNotCreatedError
-from eventsource.events.base import DomainEvent
 from eventsource.handlers import handles
 
 # =============================================================================

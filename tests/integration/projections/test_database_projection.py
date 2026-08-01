@@ -22,7 +22,7 @@ from sqlalchemy import text
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
 from eventsource.adapters.memory.dlq import InMemoryDLQRepository
 from eventsource.adapters.sql.projection import DatabaseProjection
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.handlers import handles
 
 # Import integration test fixtures

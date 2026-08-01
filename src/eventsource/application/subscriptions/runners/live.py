@@ -30,7 +30,7 @@ from eventsource.application.subscriptions.subscription import (
     SubscriptionState,
     render_position,
 )
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_BUFFER_SIZE,

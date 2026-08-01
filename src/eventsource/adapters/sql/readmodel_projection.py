@@ -11,7 +11,7 @@ import logging
 from typing import TYPE_CHECKING, Generic, TypeVar
 
 from eventsource.adapters.sql.projection import DatabaseProjection
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.observability.attributes import (
     ATTR_EVENT_TYPE,
     ATTR_HANDLER_NAME,

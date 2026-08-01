@@ -19,8 +19,8 @@ import asyncio
 import pytest
 
 from eventsource.adapters.sqlite.store import SQLiteEventStore
+from eventsource.domain.event_registry import EventRegistry
 from eventsource.domain.exceptions import DuplicateEventError
-from eventsource.events.registry import EventRegistry
 from eventsource.ports import ExpectedVersion, collect
 from eventsource.testing.conformance_ports._fixtures import (
     ConformanceEvent,

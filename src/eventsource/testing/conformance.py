@@ -31,7 +31,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 from uuid import UUID, uuid4
 
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.ports.bus import EventBus
 
 

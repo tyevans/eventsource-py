@@ -10,8 +10,8 @@ from hypothesis import strategies as st
 
 from eventsource.adapters.rabbitmq import serialization
 from eventsource.adapters.rabbitmq.config import RabbitMQEventBusConfig
-from eventsource.events.base import DomainEvent
-from eventsource.events.registry import EventRegistry
+from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import EventRegistry
 
 
 class RoundtripEvent(DomainEvent):

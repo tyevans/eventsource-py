@@ -8,7 +8,7 @@ from pydantic import Field
 
 from eventsource.adapters.memory.dlq import InMemoryDLQRepository
 from eventsource.application.projections.dlq import read_failed_events, send_to_dlq
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.observability import create_tracer
 
 

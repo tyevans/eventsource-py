@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from eventsource.adapters._sql.connection import sql_connection
 from eventsource.adapters.serialization import EventSourceJSONEncoder
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_AGGREGATE_ID,

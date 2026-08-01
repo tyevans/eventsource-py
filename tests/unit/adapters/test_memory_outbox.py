@@ -13,7 +13,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from eventsource.adapters.memory.outbox import InMemoryOutboxRepository
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.ports.outbox import OutboxEntry, OutboxRepository
 
 

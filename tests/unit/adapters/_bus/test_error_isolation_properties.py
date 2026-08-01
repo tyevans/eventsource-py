@@ -8,7 +8,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from eventsource.adapters.memory.bus import InMemoryEventBus
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 
 
 class IsolationEvent(DomainEvent):

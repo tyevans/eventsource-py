@@ -21,7 +21,7 @@ from hypothesis import strategies as st
 
 from eventsource.adapters.memory import InMemoryEventStore
 from eventsource.domain import StreamId
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.migration.bulk_copier import BulkCopier
 from eventsource.migration.consistency import ConsistencyVerifier
 from eventsource.migration.models import Migration, MigrationConfig, MigrationPhase, PositionMapping

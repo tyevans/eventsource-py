@@ -575,7 +575,7 @@ class TestDomainEventRejectsNonFiniteFloats:
     def test_domain_event_rejects_inf_at_construction(self):
         from pydantic import ValidationError
 
-        from eventsource.events.base import DomainEvent
+        from eventsource.domain.event import DomainEvent
 
         class MyEvent(DomainEvent):
             value: float
@@ -590,7 +590,7 @@ class TestDomainEventRejectsNonFiniteFloats:
     def test_domain_event_rejects_neg_inf_at_construction(self):
         from pydantic import ValidationError
 
-        from eventsource.events.base import DomainEvent
+        from eventsource.domain.event import DomainEvent
 
         class MyEvent(DomainEvent):
             value: float
@@ -605,7 +605,7 @@ class TestDomainEventRejectsNonFiniteFloats:
     def test_domain_event_rejects_nan_at_construction(self):
         from pydantic import ValidationError
 
-        from eventsource.events.base import DomainEvent
+        from eventsource.domain.event import DomainEvent
 
         class MyEvent(DomainEvent):
             value: float
@@ -618,7 +618,7 @@ class TestDomainEventRejectsNonFiniteFloats:
             )
 
     def test_domain_event_accepts_finite_floats(self):
-        from eventsource.events.base import DomainEvent
+        from eventsource.domain.event import DomainEvent
 
         class MyEvent(DomainEvent):
             value: float
@@ -631,7 +631,7 @@ class TestDomainEventRejectsNonFiniteFloats:
         # fields, not just top-level scalar fields.
         from pydantic import ValidationError
 
-        from eventsource.events.base import DomainEvent
+        from eventsource.domain.event import DomainEvent
 
         class MyEvent(DomainEvent):
             amounts: list[float]
@@ -646,7 +646,7 @@ class TestDomainEventRejectsNonFiniteFloats:
     def test_domain_event_still_frozen(self):
         # allow_inf_nan=False must not have displaced frozen=True in
         # model_config -- both are set together.
-        from eventsource.events.base import DomainEvent
+        from eventsource.domain.event import DomainEvent
 
         class MyEvent(DomainEvent):
             value: float

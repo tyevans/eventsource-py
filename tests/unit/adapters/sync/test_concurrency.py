@@ -10,8 +10,8 @@ import pytest
 from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.adapters.sync import SyncEventStoreAdapter
 from eventsource.domain import StreamId
+from eventsource.domain.event import DomainEvent
 from eventsource.domain.exceptions import OptimisticLockError
-from eventsource.events.base import DomainEvent
 from eventsource.ports import ExpectedVersion
 
 

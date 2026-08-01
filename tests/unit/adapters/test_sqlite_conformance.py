@@ -26,7 +26,7 @@ def _make_registry():
     registry. SQLite round-trips events through JSON, so it must be able
     to look the class up again on read.
     """
-    from eventsource.events.registry import EventRegistry
+    from eventsource.domain.event_registry import EventRegistry
     from eventsource.testing.conformance_ports._fixtures import ConformanceEvent
 
     registry = EventRegistry()

@@ -9,7 +9,7 @@ Tests cover:
 
 from pydantic import Field
 
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.handlers import (
     get_handled_event_type,
     handles,

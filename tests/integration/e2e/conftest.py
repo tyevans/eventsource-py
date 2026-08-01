@@ -24,7 +24,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from eventsource.adapters.postgresql import PostgreSQLEventStore
-from eventsource.events.registry import EventRegistry
+from eventsource.domain.event_registry import EventRegistry
 
 from ..conftest import TestOrderCompleted, TestOrderCreated, TestOrderItemAdded
 

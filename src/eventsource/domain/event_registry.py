@@ -40,51 +40,15 @@ import threading
 from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING, TypeVar, overload
 
+from eventsource.domain.exceptions import DuplicateEventTypeError, EventTypeNotFoundError
+
 if TYPE_CHECKING:
-    from eventsource.events.base import DomainEvent
+    from eventsource.domain.event import DomainEvent
 
 logger = logging.getLogger(__name__)
 
 # Type variable for event classes
 TEvent = TypeVar("TEvent", bound="DomainEvent")
-
-
-class EventTypeNotFoundError(KeyError):
-    """
-    Raised when an event type is not found in the registry.
-
-    Provides helpful error messages including a list of available event types.
-    """
-
-    def __init__(self, event_type: str, available_types: list[str]) -> None:
-        self.event_type = event_type
-        self.available_types = available_types
-        available = ", ".join(sorted(available_types)) if available_types else "none"
-        super().__init__(
-            f"Unknown event type: '{event_type}'. "
-            f"Available types: {available}. "
-            f"Did you forget to register this event type?"
-        )
-
-
-class DuplicateEventTypeError(ValueError):
-    """
-    Raised when attempting to register a different class with an existing event type name.
-    """
-
-    def __init__(
-        self,
-        event_type: str,
-        existing_class: type[DomainEvent],
-        new_class: type[DomainEvent],
-    ) -> None:
-        self.event_type = event_type
-        self.existing_class = existing_class
-        self.new_class = new_class
-        super().__init__(
-            f"Event type '{event_type}' is already registered to {existing_class.__name__}. "
-            f"Cannot register {new_class.__name__} with the same type name."
-        )
 
 
 class EventRegistry:

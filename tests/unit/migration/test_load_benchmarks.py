@@ -46,7 +46,7 @@ import pytest
 
 from eventsource.adapters.memory import InMemoryEventStore
 from eventsource.domain import StreamId
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.migration.bulk_copier import BulkCopier
 from eventsource.migration.dual_write import DualWriteInterceptor
 from eventsource.migration.models import (

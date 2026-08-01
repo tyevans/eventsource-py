@@ -35,9 +35,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from eventsource.adapters._sql.positions import IntPositionCodec
 from eventsource.adapters.serialization import json_dumps, json_loads
 from eventsource.domain import StreamId
+from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import EventRegistry, default_registry
 from eventsource.domain.exceptions import DuplicateEventError, OptimisticLockError
-from eventsource.events import DomainEvent
-from eventsource.events.registry import EventRegistry, default_registry
 from eventsource.migrations import get_schema
 from eventsource.ports import (
     AppendResult,

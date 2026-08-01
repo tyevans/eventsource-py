@@ -19,7 +19,7 @@ from uuid import uuid4
 import pytest
 from pydantic import Field
 
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.ports.handlers import (
     AsyncEventHandler,
     EventHandler,

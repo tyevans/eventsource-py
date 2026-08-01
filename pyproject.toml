@@ -263,8 +263,8 @@ modules = [
 name = "Tier 0 modules must not import sqlalchemy"
 type = "forbidden"
 source_modules = [
-    "eventsource.events.base",
-    "eventsource.events.registry",
+    "eventsource.domain.event",
+    "eventsource.domain.event_registry",
     "eventsource.domain.aggregate",
     "eventsource.domain.decider",
     "eventsource.domain.command",

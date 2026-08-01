@@ -36,7 +36,7 @@ from uuid import UUID
 
 if TYPE_CHECKING:
     from eventsource.application.subscriptions.config import SubscriptionConfig
-    from eventsource.events.base import DomainEvent
+    from eventsource.domain.event import DomainEvent
     from eventsource.ports.subscribers import Subscriber
 
 

@@ -24,7 +24,7 @@ from eventsource.application.subscriptions import (
     SubscriptionState,
 )
 from eventsource.domain import StreamId
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.ports.positions import ExpectedVersion
 
 # --- Sample Event Classes ---

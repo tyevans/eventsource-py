@@ -21,8 +21,8 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from eventsource.domain import StreamId
+from eventsource.domain.event import DomainEvent
 from eventsource.domain.exceptions import DuplicateEventError, OptimisticLockError
-from eventsource.events import DomainEvent
 from eventsource.ports import (
     AppendResult,
     CategoryReadOptions,

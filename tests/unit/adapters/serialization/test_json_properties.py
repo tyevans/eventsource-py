@@ -79,7 +79,7 @@ from hypothesis import strategies as st
 from pydantic import ValidationError
 
 from eventsource.adapters.serialization import json_dumps, json_loads
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 
 json_values = st.recursive(
     st.none()

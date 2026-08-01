@@ -28,7 +28,7 @@ from eventsource.application.subscriptions.subscription import render_position
 from eventsource.ports.positions import Position
 
 if TYPE_CHECKING:
-    from eventsource.events.base import DomainEvent
+    from eventsource.domain.event import DomainEvent
     from eventsource.ports.dlq import DLQRepository
     from eventsource.ports.envelopes import EventEnvelope
 

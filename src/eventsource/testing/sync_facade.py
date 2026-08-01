@@ -21,7 +21,7 @@ from collections.abc import Callable, Sequence
 from uuid import UUID
 
 from eventsource.domain import StreamId
-from eventsource.events import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.ports import (
     AppendResult,
     EventEnvelope,

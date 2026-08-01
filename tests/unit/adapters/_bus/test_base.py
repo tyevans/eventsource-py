@@ -5,8 +5,8 @@ import asyncio
 import pytest
 
 from eventsource.adapters._bus.base import BaseEventBus
-from eventsource.events.base import DomainEvent
-from eventsource.events.registry import EventRegistry, default_registry
+from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import EventRegistry, default_registry
 
 
 class BaseBusEvent(DomainEvent):

@@ -30,8 +30,8 @@ from eventsource.adapters.rabbitmq import (
     RabbitMQEventBusStats,
     RabbitMQNotAvailableError,
 )
-from eventsource.events.base import DomainEvent
-from eventsource.events.registry import EventRegistry
+from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import EventRegistry
 
 
 class TestRabbitMQEventBusConfig:

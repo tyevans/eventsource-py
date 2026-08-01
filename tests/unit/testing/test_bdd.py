@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from eventsource.domain import StreamId
 from eventsource.domain.aggregate import AggregateRoot
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.testing import InMemoryTestHarness
 from eventsource.testing.bdd import (
     given_events,

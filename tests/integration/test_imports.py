@@ -69,7 +69,7 @@ def test_all_decorator_utilities_accessible():
     assert callable(is_event_handler)
 
     # Test basic functionality
-    from eventsource.events.base import DomainEvent
+    from eventsource.domain.event import DomainEvent
 
     class TestEvent(DomainEvent):
         pass

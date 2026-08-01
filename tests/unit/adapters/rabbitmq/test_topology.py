@@ -9,7 +9,7 @@ import pytest
 
 from eventsource.adapters.rabbitmq.config import RabbitMQEventBusConfig
 from eventsource.adapters.rabbitmq.topology import RabbitMQTopology
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 
 
 class OrderCreated(DomainEvent):

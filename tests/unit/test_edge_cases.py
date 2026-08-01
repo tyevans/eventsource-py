@@ -21,7 +21,7 @@ from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
 from eventsource.adapters.memory.dlq import InMemoryDLQRepository
 from eventsource.adapters.memory.outbox import InMemoryOutboxRepository
 from eventsource.domain import StreamId
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.ports import (
     CategoryReadOptions,
     ExpectedVersion,

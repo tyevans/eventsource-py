@@ -31,8 +31,8 @@ from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from eventsource.domain.event import DomainEvent
 from eventsource.domain.exceptions import UnhandledEventError
-from eventsource.events.base import DomainEvent
 from eventsource.handlers.decorators import get_handled_event_type
 
 logger = logging.getLogger(__name__)

@@ -15,7 +15,7 @@ from pydantic import Field
 
 from eventsource.adapters.sql.readmodel_projection import ReadModelProjection
 from eventsource.application.projections import handles
-from eventsource.events import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.ports.readmodels import ReadModel
 
 # =============================================================================

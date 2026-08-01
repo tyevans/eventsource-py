@@ -21,7 +21,7 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
-    from eventsource.events.base import DomainEvent
+    from eventsource.domain.event import DomainEvent
 
 
 class DomainCommand(BaseModel):

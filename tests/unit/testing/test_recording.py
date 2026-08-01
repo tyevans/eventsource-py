@@ -3,7 +3,7 @@
 from uuid import uuid4
 
 from eventsource.adapters.memory.bus import InMemoryEventBus
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.testing.recording import RecordingEventBus
 
 

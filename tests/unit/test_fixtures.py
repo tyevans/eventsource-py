@@ -13,7 +13,7 @@ import pytest
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
 from eventsource.adapters.memory.dlq import InMemoryDLQRepository
 from eventsource.adapters.memory.store import InMemoryEventStore
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from tests.conftest import MockEventPublisher
 from tests.fixtures import (
     CounterAggregate,

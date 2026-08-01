@@ -157,6 +157,26 @@ class TestBlessedStoreSurface:
 
         assert eventsource.PostgreSQLOutboxRepository is PostgreSQLOutboxRepository
 
+    def test_top_level_domain_event_is_the_domain_entity(self) -> None:
+        from eventsource.domain.event import DomainEvent
+
+        assert eventsource.DomainEvent is DomainEvent
+
+    def test_top_level_event_registry_is_the_domain_registry(self) -> None:
+        from eventsource.domain.event_registry import EventRegistry
+
+        assert eventsource.EventRegistry is EventRegistry
+
+    def test_top_level_event_type_not_found_error_is_the_domain_exception(self) -> None:
+        from eventsource.domain.exceptions import EventTypeNotFoundError
+
+        assert eventsource.EventTypeNotFoundError is EventTypeNotFoundError
+
+    def test_top_level_duplicate_event_type_error_is_the_domain_exception(self) -> None:
+        from eventsource.domain.exceptions import DuplicateEventTypeError
+
+        assert eventsource.DuplicateEventTypeError is DuplicateEventTypeError
+
 
 class TestLegacyStoreSurfaceIsGone:
     """Spec section 4.2: the legacy names and their import path are retired."""
@@ -180,3 +200,7 @@ class TestLegacyStoreSurfaceIsGone:
     def test_legacy_subscriptions_package_is_not_importable(self) -> None:
         with pytest.raises(ModuleNotFoundError):
             import eventsource.subscriptions  # noqa: F401
+
+    def test_legacy_events_package_is_not_importable(self) -> None:
+        with pytest.raises(ModuleNotFoundError):
+            import eventsource.events  # noqa: F401

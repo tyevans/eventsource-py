@@ -40,8 +40,8 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from eventsource.adapters._bus.base import BaseEventBus
+from eventsource.domain.event import DomainEvent
 from eventsource.domain.exceptions import HandlerDispatchError
-from eventsource.events.base import DomainEvent
 from eventsource.handlers.adapter import HandlerAdapter
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
@@ -57,7 +57,7 @@ from eventsource.observability.attributes import (
 )
 
 if TYPE_CHECKING:
-    from eventsource.events.registry import EventRegistry
+    from eventsource.domain.event_registry import EventRegistry
 
 # Optional Redis import - fail gracefully if not installed
 try:
@@ -202,7 +202,7 @@ class RedisEventBus(BaseEventBus):
 
     Example:
         >>> from eventsource.adapters.redis import RedisEventBus, RedisEventBusConfig
-        >>> from eventsource.events.registry import EventRegistry
+        >>> from eventsource.domain.event_registry import EventRegistry
         >>>
         >>> config = RedisEventBusConfig(redis_url="redis://localhost:6379")
         >>> registry = EventRegistry()

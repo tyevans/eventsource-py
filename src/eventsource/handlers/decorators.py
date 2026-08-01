@@ -17,7 +17,7 @@ Example:
 from collections.abc import Callable
 from typing import Any, TypeVar
 
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 
 # Type variable for handler functions - preserves the exact type of the decorated function
 F = TypeVar("F", bound=Callable[..., Any])

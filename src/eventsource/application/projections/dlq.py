@@ -7,7 +7,7 @@ checkpoints module.
 
 import logging
 
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.observability import Tracer
 from eventsource.observability.attributes import (
     ATTR_EVENT_ID,

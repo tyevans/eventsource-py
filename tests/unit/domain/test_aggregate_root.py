@@ -23,8 +23,8 @@ from eventsource.domain.aggregate import (
     AggregateRoot,
     DeclarativeAggregate,
 )
+from eventsource.domain.event import DomainEvent
 from eventsource.domain.exceptions import EventVersionError, UnhandledEventError
-from eventsource.events.base import DomainEvent
 
 # Use canonical import for @handles (TD-006)
 from eventsource.handlers import handles

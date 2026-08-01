@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.domain.aggregate import AggregateRoot, DeclarativeAggregate
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 
 # =============================================================================
 # Test fixtures: State models and Aggregates

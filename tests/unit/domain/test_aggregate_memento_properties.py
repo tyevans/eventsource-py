@@ -13,7 +13,7 @@ from hypothesis import strategies as st
 from pydantic import BaseModel
 
 from eventsource.domain.aggregate import AggregateRoot
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 
 
 class ThingState(BaseModel):

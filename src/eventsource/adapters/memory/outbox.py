@@ -11,7 +11,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_AGGREGATE_ID,

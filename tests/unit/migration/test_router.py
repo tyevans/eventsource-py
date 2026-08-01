@@ -18,7 +18,7 @@ from uuid import uuid4
 import pytest
 
 from eventsource.domain import StreamId
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.migration.models import (
     TenantMigrationState,
     TenantRouting,

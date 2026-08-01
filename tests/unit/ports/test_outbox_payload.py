@@ -4,7 +4,7 @@ import json
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from eventsource.events import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.ports import outbox_event_data
 
 

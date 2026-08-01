@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 from eventsource.adapters.rabbitmq import serialization
 from eventsource.adapters.rabbitmq.config import RabbitMQEventBusConfig
 from eventsource.adapters.rabbitmq.models import BatchPublishError, RabbitMQEventBusStats
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.observability import OTEL_AVAILABLE, SpanKindEnum, Tracer
 from eventsource.observability.attributes import (
     ATTR_AGGREGATE_ID,

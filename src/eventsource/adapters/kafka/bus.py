@@ -109,12 +109,12 @@ from eventsource.adapters.kafka.models import (
 )
 from eventsource.adapters.kafka.publisher import KafkaPublisher
 from eventsource.adapters.kafka.serialization import EventSerializer
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.handlers.adapter import HandlerAdapter
 from eventsource.observability import OTEL_AVAILABLE, Tracer, create_tracer
 
 if TYPE_CHECKING:
-    from eventsource.events.registry import EventRegistry
+    from eventsource.domain.event_registry import EventRegistry
 
 # Optional aiokafka import - fail gracefully if not installed
 try:

@@ -17,7 +17,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.multitenancy import (
     TenantAwareRepository,
     TenantContextNotSetError,

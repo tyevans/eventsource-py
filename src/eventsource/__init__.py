@@ -102,13 +102,29 @@ from eventsource.domain import StreamId
 from eventsource.domain.aggregate import AggregateRoot, DeclarativeAggregate
 from eventsource.domain.command import DomainCommand
 from eventsource.domain.decider import DeciderAggregate
+
+# Core event primitives (Task 02)
+from eventsource.domain.event import DomainEvent
+
+# Event registry (Task 03)
+from eventsource.domain.event_registry import (
+    EventRegistry,
+    default_registry,
+    get_event_class,
+    get_event_class_or_none,
+    is_event_registered,
+    list_registered_events,
+    register_event,
+)
 from eventsource.domain.exceptions import (
     AggregateNotCreatedError,
     AggregateNotFoundError,
     CommandRejectedError,
     DuplicateEventError,
+    DuplicateEventTypeError,
     EventNotFoundError,
     EventSourceError,
+    EventTypeNotFoundError,
     EventVersionError,
     HandlerDispatchError,
     OptimisticLockError,
@@ -119,22 +135,6 @@ from eventsource.domain.exceptions import (
     SnapshotError,
     SnapshotNotFoundError,
     SnapshotSchemaVersionError,
-)
-
-# Core event primitives (Task 02)
-from eventsource.events.base import DomainEvent
-
-# Event registry (Task 03)
-from eventsource.events.registry import (
-    DuplicateEventTypeError,
-    EventRegistry,
-    EventTypeNotFoundError,
-    default_registry,
-    get_event_class,
-    get_event_class_or_none,
-    is_event_registered,
-    list_registered_events,
-    register_event,
 )
 
 # Decorators - canonical location for @handles (TD-006)

@@ -6,7 +6,7 @@ pair the adapters actually use on the wire (e.g.
 `eventsource.adapters._sql.dialect`), combined with
 `DomainEvent.to_dict()`/`from_dict()` (pydantic `model_dump(mode="json")`
 / `model_validate`) for the object<->dict boundary. Rehydration goes
-through `eventsource.events.registry.get_event_class`, keyed by the
+through `eventsource.domain.event_registry.get_event_class`, keyed by the
 event's own `event_type`, so the round trip is registry-mediated rather
 than hardcoding the class.
 """
@@ -18,8 +18,8 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from eventsource.adapters.serialization import json_dumps, json_loads
-from eventsource.events import DomainEvent
-from eventsource.events.registry import default_registry, get_event_class
+from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import default_registry, get_event_class
 
 
 class RoundTripEvent(DomainEvent):

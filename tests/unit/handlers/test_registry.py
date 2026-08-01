@@ -2,7 +2,7 @@
 
 import pytest
 
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.handlers import (
     HandlerRegistry,
     HandlerSignatureError,

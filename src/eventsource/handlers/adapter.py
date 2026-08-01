@@ -15,7 +15,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 
 # Import canonical protocol definitions
 from eventsource.ports.handlers import AsyncEventHandler, SyncEventHandler

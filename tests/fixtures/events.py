@@ -12,7 +12,7 @@ Also provides an event factory function for creating test events with sensible d
 from typing import Any
 from uuid import UUID, uuid4
 
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 
 # =============================================================================
 # Counter Events - For testing aggregates with simple state

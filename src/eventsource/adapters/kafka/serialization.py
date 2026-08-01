@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from eventsource.adapters.kafka.models import DeserializationError
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 
 
 class EventSerializer:

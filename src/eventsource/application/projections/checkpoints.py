@@ -13,7 +13,7 @@ functional gain, so the names are kept deliberately.
 import logging
 from typing import Any
 
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.observability import Tracer
 from eventsource.observability.attributes import (
     ATTR_EVENT_TYPE,

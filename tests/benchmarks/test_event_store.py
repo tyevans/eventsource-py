@@ -20,7 +20,7 @@ from uuid import uuid4
 
 from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.domain import StreamId
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.ports.positions import ExpectedVersion
 from tests.benchmarks.conftest import run_async
 from tests.fixtures import SampleEvent

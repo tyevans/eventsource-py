@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 from eventsource.adapters.rabbitmq import serialization
 from eventsource.adapters.rabbitmq.config import RabbitMQEventBusConfig
 from eventsource.adapters.rabbitmq.models import QueueInfo
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 
 if TYPE_CHECKING:
     from aio_pika.abc import AbstractExchange, AbstractQueue

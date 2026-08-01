@@ -35,7 +35,7 @@ from eventsource.application.projections.retry import (
     ExponentialBackoffRetryPolicy,
     RetryPolicy,
 )
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.handlers.registry import HandlerRegistry
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (

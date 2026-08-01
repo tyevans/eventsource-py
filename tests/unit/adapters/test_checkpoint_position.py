@@ -484,7 +484,7 @@ class TestSQLCheckpointRepositoryPosition:
         round-trip through the checkpoint table.
         """
         from eventsource.adapters.sqlite import SQLiteEventStore
-        from eventsource.events.registry import EventRegistry
+        from eventsource.domain.event_registry import EventRegistry
         from eventsource.ports import ExpectedVersion
         from eventsource.testing.conformance_ports._fixtures import (
             ConformanceEvent,
