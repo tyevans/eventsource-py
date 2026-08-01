@@ -167,6 +167,7 @@ nav:
       - "ADR-0041: Infrastructure Exceptions to Ports": adrs/0041-infrastructure-exceptions-to-ports.md
       - "ADR-0042: Domain Event and Handler Strictness": adrs/0042-domain-event-strictness.md
       - "ADR-0043: Domain Model Guards and Vocabulary": adrs/0043-domain-model-guards-and-vocabulary.md
+      - "ADR-0044: Migration Error Module Decomposition": adrs/0044-migration-error-module-decomposition.md
   - Development:
       - development/index.md
       - Contributing: development/contributing.md
