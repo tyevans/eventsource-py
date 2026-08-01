@@ -31,7 +31,7 @@ only on `pydantic` and `sqlalchemy`, and every driver — `asyncpg`, `aiosqlite`
 `redis`, `aio-pika`, `aiokafka`, OpenTelemetry — is an optional extra you opt
 into. A project that only ever uses the in-memory backends pulls in nothing else.
 
-eventsource-py targets Python 3.11 and newer, is distributed on PyPI as
+eventsource-py targets Python 3.13 and newer, is distributed on PyPI as
 [`eventsource-py`](https://pypi.org/project/eventsource-py/), ships a `py.typed`
 marker for downstream type checkers, and is MIT licensed. Source lives at
 [github.com/tyevans/eventsource-py](https://github.com/tyevans/eventsource-py).
@@ -332,14 +332,41 @@ each store its own.
 
 ### Aggregates, repositories, and optimistic locking
 
-`AggregateRoot[TState]` is the write model. It holds an id, a version, a state
-object, and a list of `uncommitted_events`; `apply_event` mutates state and
-records the event, `load_from_history` replays without recording, and
-`mark_events_as_committed` clears the buffer after a successful save.
-`DeclarativeAggregate` layers routing on top: decorate methods with
-`@handles(SomeEvent)` and the base class dispatches by event type at class
-initialization time, raising `HandlerSignatureError` immediately if a handler's
-signature is wrong rather than at the first event.
+`DeciderAggregate[TState, TCommand]` is the **recommended** write model: two pure
+static functions, `decide` and `evolve`, plus an `aggregate_type` class attribute.
+`decide(command, state)` returns the events a command produces or raises
+`CommandRejectedError`; `evolve(state, event)` folds one event into the next state.
+Nothing else about the domain touches `self`, so both functions are trivial to unit
+test without an event store in sight:
+
+```python
+class AccountAggregate(DeciderAggregate[AccountState, AccountCommand]):
+    aggregate_type = "Account"
+
+    @staticmethod
+    def decide(command: AccountCommand, state: AccountState) -> list[DomainEvent]:
+        match command, state:
+            case Withdraw(amount=amt), AccountState(balance=bal) if amt > bal:
+                raise CommandRejectedError(f"insufficient balance: {bal}")
+            case Withdraw(amount=amt), _:
+                return [MoneyWithdrawn(aggregate_id=state.account_id, amount=amt)]
+            # ... initial_state() and evolve() elided, same shape
+```
+
+`execute(command)` is the public entry point: it runs `decide`, stamps each returned
+event with `aggregate_version`, `aggregate_type`, and provenance from the command, and
+applies it — a rejection leaves the aggregate completely untouched. See
+[Getting Started](getting-started.md) for the full walkthrough.
+
+Two other aggregate styles remain fully supported for existing codebases:
+`AggregateRoot[TState]`, the base write model with `apply_event`/`_apply`/
+`_get_initial_state`, and `DeclarativeAggregate`, which layers `@handles(SomeEvent)`
+routing on top of it, dispatching by event type at class initialization time and
+raising `HandlerSignatureError` immediately if a handler's signature is wrong rather
+than at the first event. `DeciderAggregate` is itself built on `AggregateRoot`, so all
+three share `apply_event`, `load_from_history`, and `mark_events_as_committed`. See
+[Aggregate Styles](explanation/aggregate-styles.md) for a side-by-side comparison and
+guidance on which to reach for.
 
 `AggregateRepository[TAggregate]` is the load/save boundary. `load` rehydrates
 (via snapshot plus remaining events when a `SnapshotStore` is configured),

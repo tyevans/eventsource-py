@@ -107,8 +107,8 @@ one. Concretely, the series assumes you:
 - Have used pydantic, or are willing to pick it up as you go. `DomainEvent` is a pydantic
   v2 `BaseModel` with `model_config = ConfigDict(frozen=True)`, so field declaration,
   validation, and immutability all follow pydantic rules.
-- Run Python 3.11 or newer. That is the floor declared in `pyproject.toml`
-  (`requires-python = ">=3.11"`); 3.12 and 3.13 are also supported and tested.
+- Run Python 3.13 or newer. That is the floor declared in `pyproject.toml`
+  (`requires-python = ">=3.13"`).
 
 You do **not** need prior event sourcing experience. Tutorial 1 starts from the concepts
 -- events as the source of truth, aggregates as consistency boundaries, projections as
@@ -137,9 +137,8 @@ needs, it installs when it needs it.
 
 ### Python and Tooling
 
-You need **Python 3.11 or newer**. `pyproject.toml` declares
-`requires-python = ">=3.11"`, and 3.11, 3.12, and 3.13 are the versions classified as
-supported. Check what you have:
+You need **Python 3.13 or newer**. `pyproject.toml` declares
+`requires-python = ">=3.13"`. Check what you have:
 
 ```bash
 python --version

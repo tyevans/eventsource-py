@@ -28,7 +28,7 @@ recorded, drain in-flight work at shutdown, and read the bus's own statistics.
 
 ## Prerequisites
 
-- **Python 3.11 or newer.** That is the floor `eventsource` itself requires.
+- **Python 3.13 or newer.** That is the floor `eventsource` itself requires.
 - **`eventsource` installed.** From a clone, `uv sync` is enough; `uv sync --all-extras`
   also works. Nothing in this tutorial needs an extra -- `InMemoryEventBus` is built on
   `asyncio` alone, and the only dependencies in play are pydantic and sqlalchemy, which

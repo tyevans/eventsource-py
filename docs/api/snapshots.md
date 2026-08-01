@@ -178,15 +178,16 @@ The value is a plain string, not a class object, and nothing derives it from
 aggregate_type)` and copy it verbatim into the `Snapshot`. In the normal path
 that parameter originates from `AggregateRepository`, which either takes the
 `aggregate_type=` constructor argument or infers it from the aggregate class's
-`aggregate_type` class attribute. `AggregateRoot` declares that attribute with
-the default `aggregate_type = "Unknown"`, and inference explicitly rejects both
-`"Unknown"` and `""` — an aggregate class that never sets it makes
-`AggregateRepository.__init__` raise `ValueError` with instructions to declare
-the attribute or pass the argument:
+`aggregate_type` class attribute. `AggregateRoot` declares that attribute as
+`ClassVar[str]` with no default — an aggregate class that never sets it fails
+even earlier, at aggregate construction, with `AggregateTypeNotSetError`.
+Inference itself explicitly rejects `""`, so an aggregate class that manages
+to leave it empty still makes `AggregateRepository.__init__` raise
+`ValueError` with instructions to declare the attribute or pass the argument:
 
 ```python
 class OrderAggregate(DeclarativeAggregate[OrderState]):
-    aggregate_type = "Order"  # without this, AggregateRepository raises ValueError
+    aggregate_type = "Order"  # without this, construction raises AggregateTypeNotSetError
 ```
 
 Note that the guard lives in the repository, not in `Snapshot` or the stores. A

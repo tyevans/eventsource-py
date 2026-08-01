@@ -303,3 +303,52 @@ class TestAmbientTenantStamping:
         with tenant_scope_sync(tenant):
             events = agg.execute(PlainShip(order_id=agg.aggregate_id))
         assert events[0].tenant_id == tenant
+
+
+class TestTypedDecider:
+    def test_two_param_subscript_works_at_runtime(self) -> None:
+        @dataclass(frozen=True)
+        class Ping:
+            target: UUID
+
+        class PingState(BaseModel):
+            id: UUID
+
+        class PingDecider(DeciderAggregate[PingState, Ping]):
+            aggregate_type = "Ping"
+
+            @staticmethod
+            def initial_state(aggregate_id: UUID) -> PingState:
+                return PingState(id=aggregate_id)
+
+            @staticmethod
+            def decide(command: Ping, state: PingState) -> list[DomainEvent]:
+                return []
+
+            @staticmethod
+            def evolve(state: PingState, event: DomainEvent) -> PingState:
+                return state
+
+        agg = PingDecider(uuid4())
+        assert agg.execute(Ping(target=agg.aggregate_id)) == []
+
+    def test_single_param_subscript_still_works(self) -> None:
+        class LegacyState(BaseModel):
+            id: UUID
+
+        class LegacyDecider(DeciderAggregate[LegacyState]):
+            aggregate_type = "Legacy"
+
+            @staticmethod
+            def initial_state(aggregate_id: UUID) -> LegacyState:
+                return LegacyState(id=aggregate_id)
+
+            @staticmethod
+            def decide(command: object, state: LegacyState) -> list[DomainEvent]:
+                return []
+
+            @staticmethod
+            def evolve(state: LegacyState, event: DomainEvent) -> LegacyState:
+                return state
+
+        assert LegacyDecider(uuid4()).execute(object()) == []

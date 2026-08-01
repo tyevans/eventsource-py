@@ -866,3 +866,45 @@ class TestDomainEventEquality:
         # Events with metadata dict are not hashable
         with pytest.raises(TypeError):
             hash(event)
+
+
+class TestAggregateTypePattern:
+    def test_invalid_category_characters_raise(self) -> None:
+        class BadEvent(DomainEvent):
+            aggregate_type: str = "Or:der"  # ':' is the StreamId separator
+
+        with pytest.raises(ValidationError):
+            BadEvent(aggregate_id=uuid4())
+
+    def test_valid_category_passes(self) -> None:
+        class GoodEvent(DomainEvent):
+            aggregate_type: str = "Order_v2"
+
+        assert GoodEvent(aggregate_id=uuid4()).aggregate_type == "Order_v2"
+
+    def test_invalid_class_level_default_raises(self) -> None:
+        """A class-level default (not passed as a kwarg) must still be
+        validated -- this is the case validate_default=True previously
+        covered; the after-validator must cover it without that config."""
+
+        class BadDefaultEvent(DomainEvent):
+            aggregate_type: str = "Bad:Name"
+
+        with pytest.raises(ValidationError):
+            BadDefaultEvent(aggregate_id=uuid4())
+
+
+class TestTypesVocabulary:
+    def test_identity_aliases_are_plain_uuid(self) -> None:
+        from uuid import UUID
+
+        from eventsource.domain import types
+
+        assert types.TenantId is UUID
+        assert types.CausationId is UUID
+
+    def test_position_aliases_are_gone(self) -> None:
+        from eventsource.domain import types
+
+        for name in ("Version", "StreamPosition", "GlobalPosition"):
+            assert not hasattr(types, name)

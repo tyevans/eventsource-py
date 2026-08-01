@@ -454,7 +454,7 @@ class MigrationMetrics:
         self._verification_failures_count += 1
 
     @contextmanager
-    def time_phase(self, phase: str) -> Generator[_PhaseTimer, None, None]:
+    def time_phase(self, phase: str) -> Generator[_PhaseTimer]:
         """
         Context manager for timing a migration phase.
 
@@ -479,7 +479,7 @@ class MigrationMetrics:
             self.record_phase_duration(phase, timer.duration_seconds)
 
     @contextmanager
-    def time_cutover(self) -> Generator[_CutoverTimer, None, None]:
+    def time_cutover(self) -> Generator[_CutoverTimer]:
         """
         Context manager for timing a cutover operation.
 

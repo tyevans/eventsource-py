@@ -28,7 +28,7 @@ A few conventions used throughout:
 - "Core" means the parts that work with only `pydantic` and `sqlalchemy`
   installed. Anything requiring `asyncpg`, `aiosqlite`, `redis`, `aio-pika`,
   `aiokafka`, or OpenTelemetry is called out as needing an extra.
-- Answers describe eventsource-py 0.5.0 on Python 3.11+.
+- Answers describe eventsource-py 0.5.0 on Python 3.13+.
 
 ## Concepts
 

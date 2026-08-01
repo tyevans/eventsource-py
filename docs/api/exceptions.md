@@ -98,9 +98,11 @@ handling code:
   (`CheckpointError` is a marker too, but lives in `eventsource.ports.exceptions`.)
 
 Two of the errors are configuration-sensitive rather than unconditional.
-`UnhandledEventError` is raised only when a `DeclarativeAggregate` or
-`DeclarativeProjection` sets `unregistered_event_handling = "error"`; under
-`"warn"` or `"ignore"` the same situation produces no exception.
+`UnhandledEventError` is raised by default on `DeclarativeAggregate` (whose
+`unregistered_event_handling` now defaults to `"error"`), and on
+`DeclarativeProjection` only when it explicitly sets
+`unregistered_event_handling = "error"`; under `"warn"` or `"ignore"` the same
+situation produces no exception.
 `AggregateNotCreatedError` is raised only when an aggregate sets
 `requires_creation_event = True` and `.state` is read before any event has been
 applied — `state_or_none` and `is_created` are the non-raising alternatives.

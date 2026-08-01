@@ -40,7 +40,7 @@ def _make_registry() -> EventRegistry:
 
 
 @pytest.fixture(scope="session")
-async def e2e_postgres_connection_url(postgres_connection_url: str) -> AsyncGenerator[str, None]:
+async def e2e_postgres_connection_url(postgres_connection_url: str) -> AsyncGenerator[str]:
     """Connection URL for a private `e2e_ports` database.
 
     Created once per session on the shared testcontainer via a raw
@@ -69,7 +69,7 @@ async def e2e_postgres_connection_url(postgres_connection_url: str) -> AsyncGene
 @pytest.fixture
 async def postgres_event_store(
     e2e_postgres_connection_url: str,
-) -> AsyncGenerator[PostgreSQLEventStore, None]:
+) -> AsyncGenerator[PostgreSQLEventStore]:
     """Ports-adapter PostgreSQL event store, fresh `events` table per test."""
     engine: AsyncEngine = create_async_engine(e2e_postgres_connection_url)
     async with engine.begin() as conn:

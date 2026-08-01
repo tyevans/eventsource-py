@@ -72,6 +72,12 @@ carves thirteen infrastructure-meaning classes back out of
 `domain/exceptions.py` into a new `ports/exceptions.py`, narrowing what
 "settled onto `domain/`" now means for that one module.
 
+**Amended by [ADR 0043](0043-domain-model-guards-and-vocabulary.md).**
+This ADR's relocation of `types.py` onto `domain/` stands; ADR 0043
+reshapes that module's contents, deleting `Version`, `StreamPosition`,
+and `GlobalPosition` and threading the remaining identity aliases
+through real `DomainEvent`/`DomainCommand` signatures.
+
 **Amended by [ADR 0033](0033-events-handlers-internal-ring-migration.md).**
 This ADR's own relocations stand untouched. The pointer is here because this
 ADR's Context section (below) names `events/base.py` as a hard import floor

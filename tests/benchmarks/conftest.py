@@ -187,7 +187,7 @@ def benchmark_store() -> InMemoryEventStore:
 def populated_benchmark_store_100(
     benchmark_store: InMemoryEventStore,
     sample_events_100: list[DomainEvent],
-) -> Generator[InMemoryEventStore, None, None]:
+) -> Generator[InMemoryEventStore]:
     """
     Provide a InMemoryEventStore pre-populated with 100 events.
     """
@@ -209,7 +209,7 @@ def populated_benchmark_store_100(
 def populated_benchmark_store_1000(
     benchmark_store: InMemoryEventStore,
     sample_events_1000: list[DomainEvent],
-) -> Generator[InMemoryEventStore, None, None]:
+) -> Generator[InMemoryEventStore]:
     """
     Provide a InMemoryEventStore pre-populated with 1000 events.
     """
@@ -260,7 +260,7 @@ def benchmark_outbox_repo() -> InMemoryOutboxRepository:
 def populated_checkpoint_repo(
     benchmark_checkpoint_repo: InMemoryCheckpointRepository,
     sample_events_100: list[DomainEvent],
-) -> Generator[InMemoryCheckpointRepository, None, None]:
+) -> Generator[InMemoryCheckpointRepository]:
     """
     Provide a checkpoint repository with 100 checkpoints pre-recorded.
     """

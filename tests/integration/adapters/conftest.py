@@ -21,7 +21,7 @@ _PORTS_DATABASE = "ports_conformance"
 
 
 @pytest.fixture(scope="session")
-async def ports_postgres_connection_url(postgres_connection_url: str) -> AsyncGenerator[str, None]:
+async def ports_postgres_connection_url(postgres_connection_url: str) -> AsyncGenerator[str]:
     """Connection URL for a private `ports_conformance` database.
 
     Created once per session on the shared testcontainer via a raw

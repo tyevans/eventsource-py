@@ -1,7 +1,8 @@
 """Tests for store port protocols (atomic and composite) and the collect helper."""
 
+from typing import get_protocol_members
+
 import pytest
-from typing_extensions import get_protocol_members
 
 from eventsource.ports import collect
 from eventsource.ports.store import (

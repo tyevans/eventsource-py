@@ -1,26 +1,33 @@
 # 8. Testing Event-Sourced Code
 
-In this tutorial you will test an event-sourced `Order` end to end without touching a
-database: you will seed history, run a command, assert on what was published, replay the
-stored events through a projection, and finally point the library's conformance suites at
-a backend.
+In this tutorial you will test an event-sourced `Order` end to end: start with
+`DeciderScenario`, a synchronous Given-When-Then harness that tests pure `decide`/
+`evolve` functions with no infrastructure at all, then move to the async path --
+seed history, run a command, assert on what was published, replay stored events
+through a projection, and point the library's conformance suites at a backend.
 
 Event sourcing makes tests unusually pleasant, because the input and the output of a
-command are both just events. `eventsource.testing` leans into that with four pieces:
+command are both just events. `eventsource.testing` leans into that with five pieces:
+`DeciderScenario` (synchronous, infrastructure-free, for decider-style aggregates),
 `InMemoryTestHarness` (wired in-memory infrastructure), `EventBuilder` (fluent event
 construction), the Given-When-Then helpers (`given_events`, `when_command`, `then_*`),
 and `EventAssertions` for when the helpers run out of road. There are also two abstract
 conformance suites you can subclass to prove a custom `EventStore` or `EventBus` obeys
 the contract.
 
-Everything in Steps 1-6 runs in plain Python with pytest -- no Docker, no PostgreSQL.
+Everything in this tutorial runs in plain Python with pytest -- no Docker, no
+PostgreSQL.
 
 ## What you'll build
 
 A pytest module containing:
 
-- a `harness` fixture wrapping `InMemoryTestHarness`
-- a Given-When-Then test that ships a paid order and asserts `OrderShipped` was published
+- a decider test that ships a paid order and asserts `OrderShipped`, with no store or
+  bus involved
+- a `harness` fixture wrapping `InMemoryTestHarness`, for the same domain modeled as a
+  `DeclarativeAggregate`
+- a Given-When-Then test over the async helpers that ships a paid order and asserts
+  `OrderShipped` was published
 - tighter assertions for sequence, count, and no-op commands
 - a projection test that folds stored events into a read model
 - conformance test classes that run the built-in suites against a backend
@@ -31,8 +38,9 @@ Before you start:
 
 - Work through [Your First Aggregate](03-first-aggregate.md) -- you should be comfortable
   with `DeciderAggregate`, `decide()`/`evolve()`, `execute()`, and `uncommitted_events`.
-- [Building Projections](06-projections.md) helps for Step 6, but is not required.
-- Install `pytest` and `pytest-asyncio`. Nothing in Steps 1-6 needs an optional extra:
+- [Building Projections](06-projections.md) helps for the projection step, but is not
+  required.
+- Install `pytest` and `pytest-asyncio`. Nothing here needs an optional extra:
   `eventsource.testing` and the in-memory backends ride on the core dependencies
   (pydantic and sqlalchemy). No Docker, no database.
 
@@ -48,13 +56,14 @@ Before you start:
   ```
 
   With `auto`, plain `async def test_...` functions run without a decorator -- that is
-  what the examples below assume. If your project leaves the default `strict` mode, add
-  `@pytest.mark.asyncio` to every async test in this tutorial.
+  what the async examples below assume. If your project leaves the default `strict`
+  mode, add `@pytest.mark.asyncio` to every async test in this tutorial. The
+  `DeciderScenario` tests are synchronous and need no marker at all.
 
 You will write the code as a test module (for example `tests/unit/test_orders.py`) and
 run it with `uv run pytest tests/unit/test_orders.py -v`.
 
-## The sample domain (Order aggregate and its events)
+## The sample domain (Order aggregate as a decider)
 
 Put this at the top of your test module (or in a shared `conftest.py`):
 
@@ -68,24 +77,28 @@ import pytest
 from pydantic import BaseModel
 
 from eventsource import (
-    AggregateRepository,
-    DeclarativeAggregate,
+    CommandRejectedError,
+    DeciderAggregate,
+    DomainCommand,
     DomainEvent,
-    handles,
+    register_event,
 )
 
 
+@register_event
 class OrderCreated(DomainEvent):
     aggregate_type: str = "Order"
     customer_id: UUID
     total: Decimal
 
 
+@register_event
 class OrderPaid(DomainEvent):
     aggregate_type: str = "Order"
     amount: Decimal
 
 
+@register_event
 class OrderShipped(DomainEvent):
     aggregate_type: str = "Order"
     tracking_number: str
@@ -93,22 +106,176 @@ class OrderShipped(DomainEvent):
 
 
 class OrderState(BaseModel):
+    order_id: UUID
     customer_id: UUID | None = None
     total: Decimal = Decimal("0")
     status: str = "new"
     tracking_number: str | None = None
 
 
+class ShipOrder(DomainCommand):
+    tracking_number: str
+
+
+def initial_state(order_id: UUID) -> OrderState:
+    """Return the initial state for a new aggregate."""
+    return OrderState(order_id=order_id, status="new")
+
+
+def decide(command: ShipOrder, state: OrderState) -> list[DomainEvent]:
+    """Given a command and the current state, decide what events to produce."""
+    match command:
+        case ShipOrder(tracking_number=tn):
+            if state.status != "paid":
+                raise CommandRejectedError("Cannot ship unpaid order")
+            return [OrderShipped(aggregate_id=state.order_id, tracking_number=tn)]
+        case _:
+            raise CommandRejectedError(f"Unknown command: {command}")
+
+
+def evolve(state: OrderState, event: DomainEvent) -> OrderState:
+    """Given the current state and an event, return the next state."""
+    match event:
+        case OrderCreated(customer_id=cid, total=total):
+            return state.model_copy(
+                update={"customer_id": cid, "total": total, "status": "created"}
+            )
+        case OrderPaid():
+            return state.model_copy(update={"status": "paid"})
+        case OrderShipped(tracking_number=tn):
+            return state.model_copy(update={"status": "shipped", "tracking_number": tn})
+        case _:
+            return state
+
+
+class Order(DeciderAggregate[OrderState, ShipOrder]):
+    aggregate_type = "Order"
+
+    @staticmethod
+    def initial_state(aggregate_id: UUID) -> OrderState:
+        return initial_state(aggregate_id)
+
+    @staticmethod
+    def decide(command: ShipOrder, state: OrderState) -> list[DomainEvent]:
+        return decide(command, state)
+
+    @staticmethod
+    def evolve(state: OrderState, event: DomainEvent) -> OrderState:
+        return evolve(state, event)
+```
+
+`evolve` must handle every event the aggregate emits, not just the one `decide` cares
+about here -- `given()` (below) replays the whole history through it, so a missing case
+(as `OrderCreated`/`OrderPaid` would be if only `OrderShipped` were matched) silently
+leaves `state.status` at its default and the "paid" precondition can never be
+satisfied. Note also that no event above declares `event_type`: `@register_event`
+derives it from the class name automatically.
+
+## Step 1: Test the decider with DeciderScenario
+
+`DeciderScenario` is a synchronous Given-When-Then harness that tests `decide` and
+`evolve` directly, with no event store, event bus, or async machinery:
+
+```python
+from eventsource.testing import DeciderScenario
+
+
+def test_paid_order_ships():
+    order_id = uuid4()
+
+    (DeciderScenario(Order)
+     .given(
+        OrderCreated(aggregate_id=order_id, aggregate_version=1,
+                    customer_id=uuid4(), total=Decimal("99.99")),
+        OrderPaid(aggregate_id=order_id, aggregate_version=2,
+                 amount=Decimal("99.99")),
+     )
+     .when(ShipOrder(tracking_number="TRACK123"))
+     .then_events(OrderShipped))
+```
+
+The three methods chain:
+
+- **`given(*events)`**: Folds prior events into state via `evolve`, building up
+  scenario state before the command is issued.
+- **`when(command)`**: Runs `decide(command, state)`, capturing the returned
+  events or any raised exception.
+- **`then_events(*types)`** or **`then_rejected(exc_type=...)`**: Asserts the
+  outcome -- either the event types produced or the exception raised.
+
+### Asserting on rejection
+
+When `decide` raises an exception, use `then_rejected`. `decide()` above raises
+`CommandRejectedError`, which is also `then_rejected`'s default `exc_type`, so the
+type argument can be omitted:
+
+```python
+def test_unpaid_order_cannot_ship():
+    order_id = uuid4()
+
+    (DeciderScenario(Order)
+     .given(
+        OrderCreated(aggregate_id=order_id, aggregate_version=1,
+                    customer_id=uuid4(), total=Decimal("99.99")),
+     )
+     .when(ShipOrder(tracking_number="TRACK123"))
+     .then_rejected(match="Cannot ship unpaid"))
+```
+
+The `match` parameter is optional; if provided, the exception message must match
+the regex. `then_rejected` is not limited to `CommandRejectedError` -- if your
+`decide()` raises a different exception type (say, a plain `ValueError`), pass it
+explicitly and it is checked the same way:
+
+```python
+     .when(ShipOrder(tracking_number="TRACK123"))
+     .then_rejected(ValueError, match="Cannot ship unpaid"))
+```
+
+### Accessing the produced events
+
+After `when()`, the `events` property returns the list of events that `decide`
+produced:
+
+```python
+scenario = (DeciderScenario(Order)
+    .given(...)
+    .when(ShipOrder(tracking_number="TRACK123")))
+
+for event in scenario.events:
+    print(f"Produced: {event}")
+```
+
+`DeciderScenario` isolates pure domain logic: no repository, no store, no bus. When you
+need to test the aggregate's full lifecycle -- loading through `AggregateRepository`,
+saving, and what gets published on the bus -- move to the async path in the rest of
+this tutorial, which uses the same domain modeled as a `DeclarativeAggregate` (the
+style whose full lifecycle needs infrastructure to exercise).
+
+## Step 2: The async path -- InMemoryTestHarness
+
+`AggregateRoot` and `DeclarativeAggregate` aggregates don't have pure `decide`/`evolve`
+functions to call directly, so testing their full lifecycle -- load, command, save,
+publish -- means standing up in-memory infrastructure. The same `Order` domain, written
+as a `DeclarativeAggregate`, looks like this:
+
+```python
+from eventsource import AggregateRepository, DeclarativeAggregate, handles
+
+
 class OrderAggregate(DeclarativeAggregate[OrderState]):
     aggregate_type: str = "Order"
 
     def _get_initial_state(self) -> OrderState:
-        return OrderState()
+        return OrderState(order_id=self.aggregate_id)
 
     @handles(OrderCreated)
     def _on_created(self, event: OrderCreated) -> None:
         self._state = OrderState(
-            customer_id=event.customer_id, total=event.total, status="created"
+            order_id=self.aggregate_id,
+            customer_id=event.customer_id,
+            total=event.total,
+            status="created",
         )
 
     @handles(OrderPaid)
@@ -137,11 +304,6 @@ class OrderAggregate(DeclarativeAggregate[OrderState]):
         if self.state.status == "paid":
             return
 ```
-
-Note that `event_type` is not set on any of the events: `DomainEvent` derives it from the
-class name automatically.
-
-## Step 1: Spin up an InMemoryTestHarness
 
 `InMemoryTestHarness` takes no arguments and builds all four components immediately, with
 tracing disabled so tests stay fast and traces stay clean.
@@ -215,7 +377,7 @@ Two details worth knowing:
 One harness per test. The harness object is not thread-safe, though `InMemoryEventBus`
 operations are guarded by an internal `threading.RLock`.
 
-## Step 2: Build test events with EventBuilder
+## Step 3: Build test events with EventBuilder
 
 Writing `OrderCreated(aggregate_id=..., aggregate_type=..., aggregate_version=...,
 customer_id=..., total=...)` in twenty tests is how test files rot. `EventBuilder` fills
@@ -316,7 +478,7 @@ def order_created(order_id: UUID, **overrides) -> OrderCreated:
     )
 ```
 
-## Step 3: Write your first Given-When-Then test
+## Step 4: Write a Given-When-Then test with the async helpers
 
 ### Given: seeding history with given_events(harness, [...])
 
@@ -419,7 +581,7 @@ async def test_paid_order_can_be_shipped(harness):
 Run it with `uv run pytest tests/unit/test_orders.py -v`. With `asyncio_mode = "auto"`
 there is no decorator to remember.
 
-## Step 4: Assert more precisely
+## Step 5: Assert more precisely
 
 ### then_event_sequence for ordered expectations
 
@@ -470,7 +632,7 @@ If several events of the type exist and none matches, the error message prints e
 candidate with just those attributes -- so a typo'd field name shows up as
 `{'trackingnumber': None}` in the failure output.
 
-## Step 5: Drop down to EventAssertions when the BDD helpers aren't enough
+## Step 6: Drop down to EventAssertions when the BDD helpers aren't enough
 
 The `then_*` helpers only ever look at `harness.published_events`. When you want to
 assert against a different list -- uncommitted events on an aggregate, events read back
@@ -511,7 +673,7 @@ item_events = assertions.get_events_of_type(ItemAdded)
 assert [e.sku for e in item_events] == ["A", "B", "C"]
 ```
 
-## Step 6: Test a projection against the harness
+## Step 7: Test a projection against the harness
 
 A projection is just an event consumer, so testing one means feeding it events and
 looking at the read model. `DeclarativeProjection` accepts the harness repositories
@@ -576,7 +738,7 @@ Because you passed the harness repositories in, you can also assert on failure p
 event whose handler keeps raising ends up in `harness.dlq_repo` after the retries are
 exhausted.
 
-## Step 7: Verify a custom backend with the conformance suites
+## Step 8: Verify a custom backend with the conformance suites
 
 If you write your own event store adapter or `EventBus`, do not hand-write contract
 tests -- subclass the suites. The event store side is five narrow, per-port suites in
@@ -673,186 +835,18 @@ The library runs the port suites against its own `InMemoryEventStore` and
 `test_sqlite_conformance.py`, and the bus suite against `InMemoryEventBus` in
 `tests/unit/test_conformance.py` -- working references if you get stuck.
 
-## Step 8: Test a decider-style aggregate with DeciderScenario
+## Choosing where to test: decider, harness, or a real backend
 
-If your domain is built with `DeciderAggregate` and the decider pattern — pure
-`decide` and `evolve` functions — you can test it synchronously and without any
-infrastructure using `DeciderScenario`. No event store, no event bus, no async.
+**Use `DeciderScenario`** when your aggregate is a `DeciderAggregate` and you want to
+test pure domain logic with no infrastructure, synchronously. It isolates `decide` and
+`evolve` from everything else -- prefer it whenever the domain is expressed that way.
 
-### The decider pattern: pure functions
+**Use the harness and the async BDD helpers** (`given_events`, `when_command`,
+`then_*`) when your aggregate is `DeclarativeAggregate` or hand-written `_apply`, or
+when you need to test the full lifecycle -- load, save, publish -- regardless of style.
+It is fast enough to run on every save and needs no Docker.
 
-The decider pattern models the aggregate as three pure functions. This state carries its
-own `order_id` (the shared `OrderState` from earlier steps does not, since the
-`DeclarativeAggregate` example above never needed it), and the command comes from
-`eventsource.DomainCommand`, exactly as introduced in
-[Your First Aggregate](03-first-aggregate.md):
-
-```python
-from eventsource import CommandRejectedError, DomainCommand
-
-
-class ShipOrder(DomainCommand):
-    tracking_number: str
-
-
-class OrderState(BaseModel):
-    order_id: UUID
-    customer_id: UUID | None = None
-    total: Decimal = Decimal("0")
-    status: str = "new"
-    tracking_number: str | None = None
-
-
-def initial_state(order_id: UUID) -> OrderState:
-    """Return the initial state for a new aggregate."""
-    return OrderState(order_id=order_id, status="new")
-
-def decide(command: object, state: OrderState) -> list[DomainEvent]:
-    """Given a command and the current state, decide what events to produce."""
-    match command:
-        case ShipOrder(tracking_number=tn):
-            if state.status != "paid":
-                raise CommandRejectedError("Cannot ship unpaid order")
-            return [OrderShipped(aggregate_id=state.order_id, tracking_number=tn)]
-        case _:
-            raise CommandRejectedError(f"Unknown command: {command}")
-
-def evolve(state: OrderState, event: DomainEvent) -> OrderState:
-    """Given the current state and an event, return the next state."""
-    match event:
-        case OrderCreated(customer_id=cid, total=total):
-            return state.model_copy(update={"customer_id": cid, "total": total, "status": "created"})
-        case OrderPaid():
-            return state.model_copy(update={"status": "paid"})
-        case OrderShipped(tracking_number=tn):
-            return state.model_copy(update={"status": "shipped", "tracking_number": tn})
-        case _:
-            return state
-```
-
-`evolve` must handle every event the aggregate emits, not just the one `decide` cares
-about here -- `given()` replays the whole history through it, so a missing case (as
-`OrderCreated`/`OrderPaid` would be if only `OrderShipped` were matched) silently leaves
-`state.status` at its default and the "paid" precondition can never be satisfied.
-
-These functions are wrapped in a `DeciderAggregate` subclass:
-
-```python
-from eventsource import DeciderAggregate
-
-class Order(DeciderAggregate[OrderState]):
-    aggregate_type = "Order"
-
-    @staticmethod
-    def initial_state(aggregate_id: UUID) -> OrderState:
-        return initial_state(aggregate_id)
-
-    @staticmethod
-    def decide(command: object, state: OrderState) -> list[DomainEvent]:
-        return decide(command, state)
-
-    @staticmethod
-    def evolve(state: OrderState, event: DomainEvent) -> OrderState:
-        return evolve(state, event)
-```
-
-### Testing with DeciderScenario: synchronous and infrastructure-free
-
-`DeciderScenario` is a synchronous Given-When-Then harness that tests the three
-pure functions directly, with no event store, event bus, or async machinery:
-
-```python
-from eventsource.testing import DeciderScenario
-
-def test_paid_order_ships():
-    order_id = uuid4()
-
-    (DeciderScenario(Order)
-     .given(
-        OrderCreated(aggregate_id=order_id, aggregate_version=1,
-                    customer_id=uuid4(), total=Decimal("99.99")),
-        OrderPaid(aggregate_id=order_id, aggregate_version=2,
-                 amount=Decimal("99.99")),
-     )
-     .when(ShipOrder(tracking_number="TRACK123"))
-     .then_events(OrderShipped))
-```
-
-The three methods chain:
-
-- **`given(*events)`**: Folds prior events into state via `evolve`, building up
-  scenario state before the command is issued.
-- **`when(command)`**: Runs `decide(command, state)`, capturing the returned
-  events or any raised exception.
-- **`then_events(*types)`** or **`then_rejected(exc_type=...)`**: Asserts the
-  outcome — either the event types produced or the exception raised.
-
-### Asserting on rejection
-
-When `decide` raises an exception, use `then_rejected`. `decide()` above raises
-`CommandRejectedError`, which is also `then_rejected`'s default `exc_type`, so the
-type argument can be omitted:
-
-```python
-def test_unpaid_order_cannot_ship():
-    order_id = uuid4()
-
-    (DeciderScenario(Order)
-     .given(
-        OrderCreated(aggregate_id=order_id, aggregate_version=1,
-                    customer_id=uuid4(), total=Decimal("99.99")),
-     )
-     .when(ShipOrder(tracking_number="TRACK123"))
-     .then_rejected(match="Cannot ship unpaid"))
-```
-
-The `match` parameter is optional; if provided, the exception message must match
-the regex. `then_rejected` is not limited to `CommandRejectedError` -- if your
-`decide()` raises a different exception type (say, a plain `ValueError`), pass it
-explicitly and it is checked the same way:
-
-```python
-     .when(ShipOrder(tracking_number="TRACK123"))
-     .then_rejected(ValueError, match="Cannot ship unpaid"))
-```
-
-### Accessing the produced events
-
-After `when()`, the `events` property returns the list of events that `decide`
-produced:
-
-```python
-scenario = (DeciderScenario(Order)
-    .given(...)
-    .when(ShipOrder(tracking_number="TRACK123")))
-
-for event in scenario.events:
-    print(f"Produced: {event}")
-```
-
-### When to use DeciderScenario vs. the async helpers
-
-**Use `DeciderScenario`** when:
-- Your aggregate is a `DeciderAggregate`.
-- You want to test pure domain logic with no infrastructure.
-- You prefer synchronous tests.
-
-**Use the async BDD helpers** (`given_events`, `when_command`, `then_*`) when:
-- Your aggregate is `DeclarativeAggregate` or hand-written `_apply`.
-- You need to test the full aggregate lifecycle: load, save, publish.
-- You are testing behavior that involves the repository and bus.
-
-The two approaches test different layers. `DeciderScenario` isolates the domain
-(pure functions), while the async helpers validate the aggregate's contract with
-the store and bus.
-
-## Choosing between the harness and real backends
-
-Use the harness for aggregate behaviour, command validation, projection logic, and event
-flow -- anything where the database is incidental. It is fast enough to run on every
-save, and it needs no Docker.
-
-Use a real backend when the thing under test *is* the backend interaction: SQL in a
+**Use a real backend** when the thing under test *is* the backend interaction: SQL in a
 `DatabaseProjection`, PostgreSQL advisory locks, actual concurrent appends racing for the
 same version, or JSON round-tripping through a real column type. `InMemoryEventStore`
 implements the same contract (the conformance suite proves it), but it cannot tell you
@@ -888,6 +882,8 @@ between a fake and the real thing. Keep the imports inside `tests/`.
 
 You now have the whole testing toolkit:
 
+- `DeciderScenario` tests `decide`/`evolve` synchronously with no infrastructure --
+  `given(*events)`, `when(command)`, `then_events(*types)` / `then_rejected(...)`.
 - `InMemoryTestHarness` gives you `event_store`, `event_bus`, `checkpoint_repo`,
   `dlq_repo`, and `published_events`, with `reset()` and `clear_published_events()` for
   isolation. It does not build repositories -- wire `AggregateRepository` yourself with

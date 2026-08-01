@@ -318,7 +318,7 @@ def in_memory_store() -> InMemoryEventStore:
 async def populated_store(
     in_memory_store: InMemoryEventStore,
     event_stream: list[DomainEvent],
-) -> AsyncGenerator[InMemoryEventStore, None]:
+) -> AsyncGenerator[InMemoryEventStore]:
     """
     Provide a InMemoryEventStore pre-populated with sample events.
 
@@ -582,7 +582,7 @@ def reset_kafka_meter():
 
 
 @pytest_asyncio.fixture
-async def sqlite_connection() -> AsyncGenerator[Any, None]:
+async def sqlite_connection() -> AsyncGenerator[Any]:
     """
     Provide a raw aiosqlite connection to an in-memory database.
 
@@ -604,7 +604,7 @@ async def sqlite_connection() -> AsyncGenerator[Any, None]:
 
 
 @pytest_asyncio.fixture
-async def sqlite_checkpoint_repo(tmp_path: Any) -> AsyncGenerator[Any, None]:
+async def sqlite_checkpoint_repo(tmp_path: Any) -> AsyncGenerator[Any]:
     """
     Provide a SQLCheckpointRepository backed by a SQLite engine, schema initialized.
 
@@ -635,7 +635,7 @@ async def sqlite_checkpoint_repo(tmp_path: Any) -> AsyncGenerator[Any, None]:
 @pytest_asyncio.fixture
 async def sqlite_outbox_repo(
     sqlite_connection: aiosqlite.Connection,
-) -> AsyncGenerator[Any, None]:
+) -> AsyncGenerator[Any]:
     """
     Provide a SQLiteOutboxRepository with schema initialized.
 
@@ -663,7 +663,7 @@ async def sqlite_outbox_repo(
 
 
 @pytest_asyncio.fixture
-async def sqlite_dlq_repo(tmp_path: Any) -> AsyncGenerator[Any, None]:
+async def sqlite_dlq_repo(tmp_path: Any) -> AsyncGenerator[Any]:
     """
     Provide a SQLDLQRepository backed by a SQLite engine, schema initialized.
 

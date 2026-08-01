@@ -5,7 +5,7 @@ same checks CI runs, and get a pull request merged.
 
 ## Before you start
 
-You need Python 3.11 or newer (the package declares `requires-python = ">=3.11"`), [uv](https://docs.astral.sh/uv/)
+You need Python 3.13 or newer (the package declares `requires-python = ">=3.13"`), [uv](https://docs.astral.sh/uv/)
 for dependency management, and Docker if you plan to run the integration tests.
 
 ### Set up your environment
@@ -69,11 +69,11 @@ nothing for them to drift from.
 use the versions in `uv.lock` — the same ones the Makefile and CI use:
 
 - **ruff**: `ruff check --fix` followed by `ruff format`. Both read `[tool.ruff]` from
-  `pyproject.toml` — line length 100, target `py311`, rule sets `E`, `F`, `I`, `N`, `W`, `UP`,
+  `pyproject.toml` — line length 100, target `py313`, rule sets `E`, `F`, `I`, `N`, `W`, `UP`,
   `B`, `C4`, `SIM`, with `E501` ignored (the formatter owns line wrapping) and `eventsource`
   treated as first-party for import sorting.
 - **mypy** with `--config-file=pyproject.toml`, restricted to `files: ^src/`. The config sets
-  `strict = true`, `python_version = "3.11"`, `warn_return_any`, and `warn_unused_ignores`.
+  `strict = true`, `python_version = "3.13"`, `warn_return_any`, and `warn_unused_ignores`.
   Tests and examples are never type-checked by the hook.
 - **bandit** with `-c pyproject.toml`, which applies `exclude_dirs = ["tests", "examples"]`
   and `skips = ["B101"]` so plain `assert` statements are allowed. Scoped to `^src/` to match
@@ -230,9 +230,9 @@ the build.
 
 - **`lint`** — installs `.[dev]` and runs `ruff check .` plus `ruff format --check .` on the whole repo.
 - **`type-check`** — installs `.[dev,all]` and runs `mypy src/`.
-- **`test`** — a matrix over Python 3.11 and 3.12 with `.[dev,all]`, running
+- **`test`** — a matrix over Python 3.13 with `.[dev,all]`, running
   `pytest -m "not integration and not postgres and not redis and not e2e"` with XML coverage; the
-  3.11 leg uploads `coverage.xml` as an artifact (7-day retention).
+  3.13 leg uploads `coverage.xml` as an artifact (7-day retention).
 - **`integration`** — needs the other three, spins up `postgres:16` and `redis:7` service containers,
   sets `DATABASE_URL=postgresql://test:test@localhost:5432/eventsource_test` and
   `REDIS_URL=redis://localhost:6379`, and runs `pytest -m "integration or postgres or redis"`. It is

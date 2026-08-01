@@ -13,40 +13,41 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import register_event
 
 # =============================================================================
 # Counter Events - For testing aggregates with simple state
 # =============================================================================
 
 
+@register_event
 class CounterIncremented(DomainEvent):
     """Event for incrementing a counter."""
 
-    event_type: str = "CounterIncremented"
     aggregate_type: str = "Counter"
     increment: int = 1
 
 
+@register_event
 class CounterDecremented(DomainEvent):
     """Event for decrementing a counter."""
 
-    event_type: str = "CounterDecremented"
     aggregate_type: str = "Counter"
     decrement: int = 1
 
 
+@register_event
 class CounterNamed(DomainEvent):
     """Event for naming a counter."""
 
-    event_type: str = "CounterNamed"
     aggregate_type: str = "Counter"
     name: str
 
 
+@register_event
 class CounterReset(DomainEvent):
     """Event for resetting a counter to zero."""
 
-    event_type: str = "CounterReset"
     aggregate_type: str = "Counter"
 
 
@@ -55,35 +56,35 @@ class CounterReset(DomainEvent):
 # =============================================================================
 
 
+@register_event
 class OrderCreated(DomainEvent):
     """Event for order creation."""
 
-    event_type: str = "OrderCreated"
     aggregate_type: str = "Order"
     customer_id: UUID
 
 
+@register_event
 class OrderItemAdded(DomainEvent):
     """Event for adding an item to an order."""
 
-    event_type: str = "OrderItemAdded"
     aggregate_type: str = "Order"
     item_name: str
     price: float
 
 
+@register_event
 class OrderShipped(DomainEvent):
     """Event for shipping an order."""
 
-    event_type: str = "OrderShipped"
     aggregate_type: str = "Order"
     tracking_number: str
 
 
+@register_event
 class OrderCancelled(DomainEvent):
     """Event for cancelling an order."""
 
-    event_type: str = "OrderCancelled"
     aggregate_type: str = "Order"
     reason: str = ""
 
@@ -93,18 +94,18 @@ class OrderCancelled(DomainEvent):
 # =============================================================================
 
 
+@register_event
 class SampleEvent(DomainEvent):
     """Simple test event for basic scenarios."""
 
-    event_type: str = "SampleEvent"
     aggregate_type: str = "TestAggregate"
     data: str = "test"
 
 
+@register_event
 class UserRegistered(DomainEvent):
     """User registration event for multi-aggregate testing."""
 
-    event_type: str = "UserRegistered"
     aggregate_type: str = "User"
     email: str
 

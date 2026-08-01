@@ -3,7 +3,7 @@ name = "eventsource-py"
 version = "0.9.0"
 description = "Production-ready event sourcing library for Python"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 license = {text = "MIT"}
 authors = [
     {name = "Ty Evans", email = "tyevans@gmail.com"}
@@ -14,8 +14,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
@@ -129,7 +127,7 @@ source = ["src/eventsource"]
 fail_under = 87
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.13"
 strict = true
 warn_return_any = true
 warn_unused_ignores = true
@@ -164,7 +162,7 @@ ignore_missing_imports = true
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py313"
 # ruff >= 0.14 formats Python code blocks inside Markdown. The snippets in our
 # agent and docs Markdown are illustrative and deliberately abbreviated
 # (`...` bodies, partial classes); reformatting them serves no one and made
@@ -174,7 +172,15 @@ extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B", "C4", "SIM"]
-ignore = ["E501"]
+ignore = [
+    "E501",
+    # Staged py313 modernization: PEP 695 type-parameter syntax rewrites
+    # (structural, auto-variance semantics) deferred to a dedicated cleanup
+    # task — do not add new violations.
+    "UP046",  # Generic class uses `Generic` subclass instead of type parameters
+    "UP047",  # Generic function should use type parameters
+    "UP040",  # Type alias uses `TypeAlias` annotation instead of the `type` keyword
+]
 
 [tool.ruff.lint.isort]
 known-first-party = ["eventsource", "bench"]

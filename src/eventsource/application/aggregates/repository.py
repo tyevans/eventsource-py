@@ -250,7 +250,9 @@ class AggregateRepository(Generic[TAggregate]):
         Infer aggregate_type from factory's aggregate_type attribute.
 
         Attempts to read the aggregate_type class attribute from the factory.
-        Rejects "Unknown" and empty string as these indicate missing configuration.
+        Rejects an empty string, and the attribute being altogether unset now
+        raises AggregateTypeNotSetError at construction time before this
+        method ever sees the factory (aggregate_type has no default).
 
         Args:
             factory: The aggregate factory (class)

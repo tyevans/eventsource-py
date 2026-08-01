@@ -10,14 +10,16 @@ docs/explanation/decider-pattern.md.
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Any
+from typing import Any, Generic, TypeVar
 from uuid import UUID
 
 from eventsource.domain.aggregate import AggregateRoot, TState
 from eventsource.domain.event import DomainEvent
 
+TCommand = TypeVar("TCommand", default=object)
 
-class DeciderAggregate(AggregateRoot[TState]):
+
+class DeciderAggregate(AggregateRoot[TState], Generic[TState, TCommand]):
     """
     Aggregate style built from pure ``decide``/``evolve`` functions.
 
@@ -31,6 +33,13 @@ class DeciderAggregate(AggregateRoot[TState]):
     Contract note: ``DomainEvent.aggregate_id`` is a required field, so
     ``decide`` must set it. ``initial_state(aggregate_id)`` receives the id
     precisely so state carries the aggregate's identity for decide to use.
+
+    Subscript with two type parameters — ``DeciderAggregate[MyState,
+    MyCommandUnion]`` — to get mypy exhaustiveness checking on a userland
+    command union in ``decide``/``execute``. Subscripting with one parameter
+    — ``DeciderAggregate[MyState]`` — leaves ``TCommand`` defaulted to
+    ``object``, preserving the structural typing ADR-0022 established (no
+    base command class required).
     """
 
     def __init__(self, aggregate_id: UUID) -> None:
@@ -44,7 +53,7 @@ class DeciderAggregate(AggregateRoot[TState]):
 
     @staticmethod
     @abstractmethod
-    def decide(command: Any, state: TState) -> list[DomainEvent]:
+    def decide(command: TCommand, state: TState) -> list[DomainEvent]:
         """Given current state, return the events a command produces, or raise."""
 
     @staticmethod
@@ -70,7 +79,7 @@ class DeciderAggregate(AggregateRoot[TState]):
         base = self._state if self._state is not None else self.initial_state(self.aggregate_id)
         self._state = self.evolve(base, event)
 
-    def execute(self, command: object) -> list[DomainEvent]:
+    def execute(self, command: TCommand) -> list[DomainEvent]:
         """
         Run decide(), stamp each produced event, and apply it.
 

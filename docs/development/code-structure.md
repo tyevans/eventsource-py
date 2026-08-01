@@ -261,8 +261,10 @@ The constructor takes the whole dependency list, which is the point of the compo
 string, an optional `EventPublisher`, the three snapshot mode/threshold knobs plus the
 `snapshot_policy=`/`snapshot_scheduler=` escape hatches, and the two tracing arguments.
 When `aggregate_type` is omitted, `_infer_aggregate_type` reads the `aggregate_type` class
-attribute off the factory and rejects `""` and `"Unknown"` as unset — the `ValueError` it raises
-spells out both fixes rather than letting a mistyped stream name reach the store.
+attribute off the factory and rejects `""` as unset — the `ValueError` it raises
+spells out both fixes rather than letting a mistyped stream name reach the store. (A
+factory that never declares `aggregate_type` at all never gets this far: `AggregateRoot`
+requires the attribute and raises `AggregateTypeNotSetError` at construction.)
 
 `load` is where the loading *sequence* lives, and reading it top to bottom is the fastest way to
 understand the aggregate lifecycle: call `read_valid_snapshot()` for a valid snapshot; fetch events

@@ -77,7 +77,7 @@ def order_summary_factory() -> Callable[..., OrderSummary]:
 
 
 @pytest_asyncio.fixture
-async def inmemory_repo() -> AsyncGenerator[InMemoryReadModelRepository[OrderSummary], None]:
+async def inmemory_repo() -> AsyncGenerator[InMemoryReadModelRepository[OrderSummary]]:
     """In-memory repository for testing."""
     repo: InMemoryReadModelRepository[OrderSummary] = InMemoryReadModelRepository(
         OrderSummary, enable_tracing=False
@@ -94,7 +94,7 @@ async def inmemory_repo() -> AsyncGenerator[InMemoryReadModelRepository[OrderSum
 @pytest_asyncio.fixture
 async def sqlite_repo(
     tmp_path: Any,
-) -> AsyncGenerator[Any, None]:
+) -> AsyncGenerator[Any]:
     """SQLite repository for testing."""
     try:
         import aiosqlite
@@ -126,7 +126,7 @@ async def sqlite_repo(
 @pytest_asyncio.fixture
 async def postgresql_repo(
     postgres_engine: AsyncEngine,
-) -> AsyncGenerator[Any, None]:
+) -> AsyncGenerator[Any]:
     """PostgreSQL repository for testing."""
     from sqlalchemy import text
 
@@ -166,7 +166,7 @@ async def repo(
     sqlite_repo: Any,
     postgresql_repo: Any,
     request: pytest.FixtureRequest,
-) -> AsyncGenerator[Any, None]:
+) -> AsyncGenerator[Any]:
     """
     Parametrized fixture providing all repository implementations.
 

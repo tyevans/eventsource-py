@@ -29,7 +29,7 @@ command to remember; the sections below cover everything else.
 
 ## Prerequisites
 
-You need a checkout of the repository, Python 3.11 or newer, and either
+You need a checkout of the repository, Python 3.13 or newer, and either
 [uv](https://docs.astral.sh/uv/) or pip. Docker is optional — it is only required for
 `tests/integration/`.
 

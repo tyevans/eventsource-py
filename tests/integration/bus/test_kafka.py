@@ -98,7 +98,7 @@ pytestmark = [
 
 
 @pytest.fixture(scope="session")
-def kafka_container() -> Generator[Any, None, None]:
+def kafka_container() -> Generator[Any]:
     """
     Provide Kafka container for integration tests.
 
@@ -171,7 +171,7 @@ def kafka_event_bus_factory(
 @pytest_asyncio.fixture
 async def kafka_event_bus(
     kafka_event_bus_factory: Any,
-) -> AsyncGenerator[KafkaEventBus, None]:
+) -> AsyncGenerator[KafkaEventBus]:
     """
     Provide Kafka event bus for integration tests.
 
@@ -2345,7 +2345,7 @@ class TestKafkaEventBusConformance(EventBusConformanceSuite):
         self,
         kafka_bootstrap_servers: str,
         request: pytest.FixtureRequest,
-    ) -> AsyncGenerator[None, None]:
+    ) -> AsyncGenerator[None]:
         registry = EventRegistry()
         registry.register(TestItemCreated)
         unique_suffix = uuid4().hex[:8]

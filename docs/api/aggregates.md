@@ -176,9 +176,10 @@ returning `None`.
 change behaviour: `aggregate_type`, `schema_version`, `validate_versions`, and
 `_event_handlers`. They are covered in
 [Class Attributes](#class-attributes). The most consequential is
-`aggregate_type` — it defaults to the string `"Unknown"`, is stamped onto every
-event produced by `create_event()`, and causes `AggregateRepository` to raise
-`ValueError` if left at its default (see
+`aggregate_type` — it has no default and must be declared by every concrete
+subclass (construction raises `AggregateTypeNotSetError` otherwise), is
+stamped onto every event produced by `create_event()`, and causes
+`AggregateRepository` to raise `ValueError` if left empty (see
 [`aggregate_type` Inference](#aggregate_type-inference)).
 
 ### Identity semantics
@@ -201,14 +202,14 @@ top-level package. The module also defines, without exporting, the alias
 
 ### Class Attributes
 
-`AggregateRoot` declares four class-level attributes. All are plain class
-attributes (none are annotated `ClassVar`), so an instance assignment such as
-`aggregate.validate_versions = False` shadows the class value for that instance
-only.
+`AggregateRoot` declares four class-level attributes. `aggregate_type` is
+annotated `ClassVar[str]` with no default; the other three are plain class
+attributes, so an instance assignment such as `aggregate.validate_versions =
+False` shadows the class value for that instance only.
 
 | Attribute | Declared type | Default | Read by |
 | --- | --- | --- | --- |
-| `aggregate_type` | `str` | `"Unknown"` | `create_event()`, `AggregateRepository`, snapshot storage |
+| `aggregate_type` | `ClassVar[str]` | *none — required* | `create_event()`, `AggregateRepository`, snapshot storage |
 | `schema_version` | `int` | `1` | Snapshot write and load paths |
 | `validate_versions` | `bool` | `True` | `apply_event()` |
 | `_event_handlers` | `dict[type[DomainEvent], str]` | `{}` | `DeclarativeAggregate` only |
@@ -220,10 +221,11 @@ as the partition key for snapshots. `create_event()` copies it into the event's
 `aggregate_type` field, and `AggregateRepository` uses it to scope event-store
 and snapshot-store reads.
 
-The default is the literal string `"Unknown"`, and it is the one class
-attribute you must override. `AggregateRepository._infer_aggregate_type()`
+There is no default, and it is the one class attribute every concrete
+subclass must declare — `AggregateRoot.__init__` raises
+`AggregateTypeNotSetError` if it's unset. `AggregateRepository._infer_aggregate_type()`
 reads `factory.aggregate_type` and raises `ValueError` when the value is
-`"Unknown"` or empty, with a message naming both remedies — declare the class
+empty, with a message naming both remedies — declare the class
 attribute, or pass `aggregate_type=` to the repository constructor. See
 [`aggregate_type` Inference](#aggregate_type-inference).
 
