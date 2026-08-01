@@ -36,7 +36,7 @@ _test_processor = None
 
 
 @pytest.fixture(scope="session", autouse=True)
-def setup_test_tracing() -> Generator[Any, None, None]:
+def setup_test_tracing() -> Generator[Any]:
     """
     Set up a global TracerProvider for all tests at session scope.
 
@@ -67,7 +67,7 @@ def setup_test_tracing() -> Generator[Any, None, None]:
 
 
 @pytest.fixture(scope="function")
-def trace_exporter(setup_test_tracing: Any) -> Generator[Any, None, None]:
+def trace_exporter(setup_test_tracing: Any) -> Generator[Any]:
     """
     Create an in-memory span exporter for testing.
 
@@ -103,7 +103,7 @@ def trace_exporter(setup_test_tracing: Any) -> Generator[Any, None, None]:
 
 
 @pytest.fixture(scope="function")
-def trace_provider(trace_exporter: Any) -> Generator[Any, None, None]:
+def trace_provider(trace_exporter: Any) -> Generator[Any]:
     """
     Provide the TracerProvider for testing.
 

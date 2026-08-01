@@ -80,7 +80,7 @@ pytestmark = [
 
 
 @pytest.fixture(scope="session")
-def rabbitmq_container() -> Generator[Any, None, None]:
+def rabbitmq_container() -> Generator[Any]:
     """
     Provide RabbitMQ container for integration tests.
 
@@ -157,7 +157,7 @@ def rabbitmq_event_bus_factory(
 @pytest_asyncio.fixture
 async def rabbitmq_event_bus(
     rabbitmq_event_bus_factory: Any,
-) -> AsyncGenerator[RabbitMQEventBus, None]:
+) -> AsyncGenerator[RabbitMQEventBus]:
     """
     Provide RabbitMQ event bus for integration tests.
 
@@ -3024,7 +3024,7 @@ class TestRabbitMQEventBusConformance(EventBusConformanceSuite):
         self,
         rabbitmq_connection_url: str,
         request: pytest.FixtureRequest,
-    ) -> AsyncGenerator[None, None]:
+    ) -> AsyncGenerator[None]:
         registry = EventRegistry()
         registry.register(TestItemCreated)
         unique_suffix = str(uuid4())[:8]

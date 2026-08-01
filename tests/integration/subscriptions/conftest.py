@@ -191,14 +191,14 @@ class SlowProjection:
 
 
 @pytest_asyncio.fixture
-async def in_memory_event_store() -> AsyncGenerator[InMemoryEventStore, None]:
+async def in_memory_event_store() -> AsyncGenerator[InMemoryEventStore]:
     """Create an in-memory event store for testing."""
     store = InMemoryEventStore()
     yield store
 
 
 @pytest_asyncio.fixture
-async def in_memory_event_bus() -> AsyncGenerator[InMemoryEventBus, None]:
+async def in_memory_event_bus() -> AsyncGenerator[InMemoryEventBus]:
     """Create an in-memory event bus for testing."""
     bus = InMemoryEventBus(enable_tracing=False)
     yield bus
@@ -206,7 +206,7 @@ async def in_memory_event_bus() -> AsyncGenerator[InMemoryEventBus, None]:
 
 
 @pytest_asyncio.fixture
-async def in_memory_checkpoint_repo() -> AsyncGenerator[InMemoryCheckpointRepository, None]:
+async def in_memory_checkpoint_repo() -> AsyncGenerator[InMemoryCheckpointRepository]:
     """Create an in-memory checkpoint repository for testing."""
     repo = InMemoryCheckpointRepository(enable_tracing=False)
     yield repo
@@ -217,7 +217,7 @@ async def subscription_manager(
     in_memory_event_store: InMemoryEventStore,
     in_memory_event_bus: InMemoryEventBus,
     in_memory_checkpoint_repo: InMemoryCheckpointRepository,
-) -> AsyncGenerator[SubscriptionManager, None]:
+) -> AsyncGenerator[SubscriptionManager]:
     """Create a subscription manager for testing."""
     manager = SubscriptionManager(
         event_store=in_memory_event_store,

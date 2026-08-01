@@ -225,7 +225,7 @@ class NullTracer:
         self,
         name: str,
         attributes: dict[str, Any] | None = None,
-    ) -> Generator[None, None, None]:
+    ) -> Generator[None]:
         """Create a no-op span context (yields None)."""
         yield None
 
@@ -251,7 +251,7 @@ class NullTracer:
         kind: SpanKindEnum = SpanKindEnum.INTERNAL,
         attributes: dict[str, Any] | None = None,
         context: Any | None = None,
-    ) -> Generator[None, None, None]:
+    ) -> Generator[None]:
         """Create a no-op span context with kind (yields None)."""
         yield None
 
@@ -420,7 +420,7 @@ class MockTracer:
         self,
         name: str,
         attributes: dict[str, Any] | None = None,
-    ) -> Generator[None, None, None]:
+    ) -> Generator[None]:
         """Record span and yield None."""
         self.spans.append((name, attributes))
         yield None
@@ -457,7 +457,7 @@ class MockTracer:
         kind: SpanKindEnum = SpanKindEnum.INTERNAL,
         attributes: dict[str, Any] | None = None,
         context: Any | None = None,
-    ) -> Generator[None, None, None]:
+    ) -> Generator[None]:
         """Record span with kind and yield None."""
         self.spans.append((name, attributes))
         yield None

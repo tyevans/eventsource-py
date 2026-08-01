@@ -317,7 +317,7 @@ def clear_tenant_context() -> None:
 
 
 @asynccontextmanager
-async def tenant_scope(tenant_id: UUID) -> AsyncGenerator[UUID, None]:
+async def tenant_scope(tenant_id: UUID) -> AsyncGenerator[UUID]:
     """
     Async context manager for scoped tenant context.
 
@@ -374,7 +374,7 @@ async def tenant_scope(tenant_id: UUID) -> AsyncGenerator[UUID, None]:
 
 
 @contextmanager
-def tenant_scope_sync(tenant_id: UUID) -> Generator[UUID, None, None]:
+def tenant_scope_sync(tenant_id: UUID) -> Generator[UUID]:
     """
     Sync context manager for scoped tenant context.
 

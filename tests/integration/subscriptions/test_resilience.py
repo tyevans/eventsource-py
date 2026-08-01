@@ -265,7 +265,7 @@ class ChaosProjection:
 
 
 @pytest_asyncio.fixture
-async def in_memory_dlq_repo() -> AsyncGenerator[InMemoryDLQRepository, None]:
+async def in_memory_dlq_repo() -> AsyncGenerator[InMemoryDLQRepository]:
     """Create an in-memory DLQ repository for testing."""
     repo = InMemoryDLQRepository(enable_tracing=False)
     yield repo
@@ -278,7 +278,7 @@ async def subscription_manager_with_dlq(
     in_memory_event_bus: InMemoryEventBus,
     in_memory_checkpoint_repo: InMemoryCheckpointRepository,
     in_memory_dlq_repo: InMemoryDLQRepository,
-) -> AsyncGenerator[SubscriptionManager, None]:
+) -> AsyncGenerator[SubscriptionManager]:
     """Create a subscription manager with DLQ support for testing."""
     manager = SubscriptionManager(
         event_store=in_memory_event_store,

@@ -349,7 +349,7 @@ OUTBOX_SCHEMA_STATEMENTS = [
 
 
 @pytest.fixture(scope="session")
-def postgres_container() -> Generator[Any, None, None]:
+def postgres_container() -> Generator[Any]:
     """
     Provide PostgreSQL container for integration tests.
 
@@ -378,7 +378,7 @@ def postgres_connection_url(postgres_container: Any) -> str:
 @pytest.fixture(scope="session")
 async def postgres_engine(
     postgres_connection_url: str,
-) -> AsyncGenerator[AsyncEngine, None]:
+) -> AsyncGenerator[AsyncEngine]:
     """
     Provide SQLAlchemy async engine connected to PostgreSQL container.
 
@@ -422,7 +422,7 @@ async def postgres_engine(
 @pytest.fixture
 async def postgres_session_factory(
     postgres_engine: AsyncEngine,
-) -> AsyncGenerator[async_sessionmaker[AsyncSession], None]:
+) -> AsyncGenerator[async_sessionmaker[AsyncSession]]:
     """Provide SQLAlchemy async session factory."""
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -436,7 +436,7 @@ async def postgres_session_factory(
 
 
 @pytest.fixture
-async def clean_postgres_tables(postgres_engine: AsyncEngine) -> AsyncGenerator[None, None]:
+async def clean_postgres_tables(postgres_engine: AsyncEngine) -> AsyncGenerator[None]:
     """Clean all test tables before and after each test."""
     from sqlalchemy import text
 
@@ -458,7 +458,7 @@ async def clean_postgres_tables(postgres_engine: AsyncEngine) -> AsyncGenerator[
 
 
 @pytest.fixture(scope="session")
-def redis_container() -> Generator[Any, None, None]:
+def redis_container() -> Generator[Any]:
     """
     Provide Redis container for integration tests.
 
@@ -485,7 +485,7 @@ def redis_connection_url(redis_container: Any) -> str:
 
 
 @pytest_asyncio.fixture(loop_scope="session")
-async def redis_client(redis_connection_url: str) -> AsyncGenerator[Any, None]:
+async def redis_client(redis_connection_url: str) -> AsyncGenerator[Any]:
     """
     Provide async Redis client connected to container.
 
@@ -512,7 +512,7 @@ async def redis_client(redis_connection_url: str) -> AsyncGenerator[Any, None]:
 
 
 @pytest_asyncio.fixture(loop_scope="session")
-async def clean_redis(redis_connection_url: str) -> AsyncGenerator[None, None]:
+async def clean_redis(redis_connection_url: str) -> AsyncGenerator[None]:
     """Clean Redis state before and after each test."""
     try:
         import redis.asyncio as redis
@@ -549,7 +549,7 @@ async def clean_redis(redis_connection_url: str) -> AsyncGenerator[None, None]:
 async def postgres_event_store(
     postgres_engine: AsyncEngine,
     clean_postgres_tables: None,
-) -> AsyncGenerator[Any, None]:
+) -> AsyncGenerator[Any]:
     """Provide PostgreSQL event store for integration tests."""
     from eventsource.adapters.postgresql import PostgreSQLEventStore
     from eventsource.domain.event_registry import EventRegistry
@@ -579,7 +579,7 @@ async def postgres_event_store(
 async def postgres_event_store_with_outbox(
     postgres_engine: AsyncEngine,
     clean_postgres_tables: None,
-) -> AsyncGenerator[Any, None]:
+) -> AsyncGenerator[Any]:
     """Provide PostgreSQL event store with outbox enabled."""
     from eventsource.adapters.postgresql import PostgreSQLEventStore
     from eventsource.domain.event_registry import EventRegistry
@@ -658,7 +658,7 @@ def redis_event_bus_factory(
 async def redis_event_bus(
     redis_event_bus_factory: Any,
     clean_redis: None,
-) -> AsyncGenerator[Any, None]:
+) -> AsyncGenerator[Any]:
     """
     Provide Redis event bus for integration tests.
 
@@ -684,7 +684,7 @@ async def redis_event_bus(
 async def postgres_checkpoint_repo(
     postgres_engine: AsyncEngine,
     clean_postgres_tables: None,
-) -> AsyncGenerator[Any, None]:
+) -> AsyncGenerator[Any]:
     """Provide PostgreSQL checkpoint repository for integration tests."""
     from eventsource import SQLCheckpointRepository
 
@@ -696,7 +696,7 @@ async def postgres_checkpoint_repo(
 async def postgres_dlq_repo(
     postgres_engine: AsyncEngine,
     clean_postgres_tables: None,
-) -> AsyncGenerator[Any, None]:
+) -> AsyncGenerator[Any]:
     """Provide PostgreSQL DLQ repository for integration tests."""
     from eventsource import SQLDLQRepository
 
@@ -708,7 +708,7 @@ async def postgres_dlq_repo(
 async def postgres_outbox_repo(
     postgres_engine: AsyncEngine,
     clean_postgres_tables: None,
-) -> AsyncGenerator[Any, None]:
+) -> AsyncGenerator[Any]:
     """Provide PostgreSQL outbox repository for integration tests."""
     from eventsource import PostgreSQLOutboxRepository
 

@@ -617,7 +617,7 @@ class TestRedisEventBusConformance(EventBusConformanceSuite):
         redis_connection_url: str,
         clean_redis: None,
         request: pytest.FixtureRequest,
-    ) -> AsyncGenerator[None, None]:
+    ) -> AsyncGenerator[None]:
         # Deliberately does NOT use single_connection_client=True (unlike
         # redis_event_bus_factory): that mode shares one connection between
         # publish and the blocking start_consuming() XREADGROUP call, which

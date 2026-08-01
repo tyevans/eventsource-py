@@ -417,7 +417,7 @@ class SubscriptionMetrics:
         self._state_value = STATE_MAPPING.get(self._state_name, StateValue.UNKNOWN)
 
     @contextmanager
-    def time_processing(self) -> Generator[_Timer, None, None]:
+    def time_processing(self) -> Generator[_Timer]:
         """
         Context manager for timing event processing.
 

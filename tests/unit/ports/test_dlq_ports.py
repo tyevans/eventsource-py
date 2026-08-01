@@ -2,11 +2,10 @@
 
 import dataclasses
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, get_protocol_members
 from uuid import UUID, uuid4
 
 import pytest
-from typing_extensions import get_protocol_members
 
 from eventsource.ports.dlq import (
     DLQEntry,
