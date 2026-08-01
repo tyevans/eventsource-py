@@ -70,7 +70,7 @@ which caught nothing lock-related before. Both are now defined in
 `eventsource.domain.exceptions`, importable alongside every other name in this tree.
 
 `SubscriptionError` (and its eight subclasses) moved the same way under ADR
-0031, as part of the subscriptions ring migration: previously defined in
+0032, as part of the subscriptions ring migration: previously defined in
 the old `subscriptions` package's `exceptions.py`, deriving directly from `Exception`,
 it now lives in `eventsource.domain.exceptions` and derives from
 `EventSourceError`. Same widening-only shape as the lock exceptions above --

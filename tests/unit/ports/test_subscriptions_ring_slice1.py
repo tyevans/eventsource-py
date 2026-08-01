@@ -1,6 +1,6 @@
 """
 Identity and conformance tests for the subscriptions ring migration, slice 1
-(ADR 0031).
+(ADR 0032).
 
 Slice 1 extracts the pure boundary interfaces out of
 ``eventsource.application.subscriptions`` into ``eventsource.ports`` /

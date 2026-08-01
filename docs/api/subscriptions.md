@@ -47,7 +47,7 @@ from eventsource.adapters.memory.coordination import InMemoryLeaderElector
 ```
 
 `InMemoryLeaderElector` and `SharedLeaderState` are the one name-availability
-break in the ADR 0031 move: the `LeaderElector` Protocol pair lives in
+break in the ADR 0032 move: the `LeaderElector` Protocol pair lives in
 `eventsource.ports.coordination`, but their only concrete implementation is an
 adapter, and `application/` may not import `adapters/` — so it now lives in
 `eventsource.adapters.memory.coordination` (re-exported from

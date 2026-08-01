@@ -1,6 +1,6 @@
 """
 Barrel-surface parity test for ``eventsource.application.subscriptions``
-(ADR 0031 slice 2).
+(ADR 0032 slice 2).
 
 Confirms every name listed in ``__all__`` is actually importable as an
 attribute of the package -- i.e. the ``__all__`` declaration and the actual

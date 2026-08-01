@@ -35,7 +35,7 @@ imported from `eventsource.domain.exceptions`. See
 
 Other subsystems — multi-tenancy, snapshots, migration, the read-model layer,
 and the optional bus backends — define their own error types in their own
-modules. (`SubscriptionError` used to be one of these; ADR 0031 rebased it
+modules. (`SubscriptionError` used to be one of these; ADR 0032 rebased it
 onto `EventSourceError` -- see below.) Those are catalogued under
 [Related exceptions outside the core hierarchy](#related-exceptions-outside-the-core-hierarchy);
 note in particular that `eventsource.ports.readmodels.exceptions` defines a
@@ -60,7 +60,7 @@ optional bus backends each define their own families. These are *not*
 subclasses of `EventSourceError`; catching the core base class will not catch
 them. (`LockAcquisitionError` and `LockNotHeldError` moved onto
 `EventSourceError` under ADR 0029, and `SubscriptionError` moved the same way
-under ADR 0031 -- all three used to be bare-`Exception` families and are now
+under ADR 0032 -- all three used to be bare-`Exception` families and are now
 part of the core hierarchy; see the diagram below.)
 
 Three properties of the core hierarchy are worth knowing before you write
@@ -145,7 +145,7 @@ Exception
 │   ├── TenantMismatchError                    eventsource.multitenancy.exceptions
 │   ├── LockAcquisitionError                   (ADR 0029: rebased here, was a bare Exception)
 │   ├── LockNotHeldError                       (ADR 0029: rebased here, was a bare Exception)
-│   └── SubscriptionError                      (ADR 0031: rebased here, was a bare Exception)
+│   └── SubscriptionError                      (ADR 0032: rebased here, was a bare Exception)
 │       ├── SubscriptionConfigError
 │       ├── SubscriptionStateError
 │       ├── SubscriptionAlreadyExistsError

@@ -266,7 +266,7 @@ class TestModuleExports:
         """Test that __all__ contains all public symbols.
 
         LeaderElectorWithLease is not re-exported from this module (ADR
-        0031): its canonical home is eventsource.ports.coordination only.
+        0032): its canonical home is eventsource.ports.coordination only.
         InMemoryLeaderElector/SharedLeaderState's canonical home is
         eventsource.adapters.memory.coordination -- see
         test_all_exports_include_inmemory below.
@@ -690,7 +690,7 @@ class TestSharedLeaderState:
 
 
 class TestModuleExportsWithInMemory:
-    """Tests for InMemoryLeaderElector/SharedLeaderState's relocated home (ADR 0031).
+    """Tests for InMemoryLeaderElector/SharedLeaderState's relocated home (ADR 0032).
 
     They no longer live in (or re-export from) eventsource.application.subscriptions --
     their canonical home is eventsource.adapters.memory.coordination, because

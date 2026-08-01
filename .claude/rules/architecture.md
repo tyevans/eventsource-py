@@ -41,7 +41,7 @@ The rings, innermost first:
    collaborators, the catch-up and live runners, retry and circuit-breaking,
    flow control, filtering, and the coordination message types plus
    `WorkRedistributionCoordinator`) is settled, not transitional; top-level
-   `subscriptions/` no longer exists (ADR 0031). `Subscriber`/`SyncSubscriber`/
+   `subscriptions/` no longer exists (ADR 0032). `Subscriber`/`SyncSubscriber`/
    `BatchSubscriber` (in `ports/subscribers.py`) and `LeaderElector`/
    `LeaderElectorWithLease` (in `ports/coordination.py`) are Protocols, not
    part of this ring — see the ports entry below.
@@ -70,7 +70,7 @@ The rings, innermost first:
    `readmodels/` no longer exist — there is no shim at either path (ADR 0030).
    `adapters/memory/coordination.py` (`InMemoryLeaderElector`, `SharedLeaderState`)
    is settled, not transitional — the only concrete implementation of the
-   `ports/coordination.py` Protocol pair (ADR 0031).
+   `ports/coordination.py` Protocol pair (ADR 0032).
 4. **Frameworks & drivers**: sqlalchemy, asyncpg, aiosqlite, redis, aiokafka,
    aio-pika. Imported only inside the adapter that needs them, always guarded
    (see below). Driver types never appear in port signatures.
@@ -96,7 +96,7 @@ inverted at every boundary crossing (the D in SOLID).
   `EventBus` satisfies structurally — is what lets `application/subscriptions/`
   type its bus dependency without importing `adapters/`. Top-level
   `subscriptions/` is no longer a transitional location for any of these
-  (ADR 0031).
+  (ADR 0032).
 - Our store/repository/bus ports are **output ports** (gateways) in Clean
   Architecture terms: the use-case ring calls them; adapters implement them.
 - Ports are small, composed `Protocol` classes — one capability per port

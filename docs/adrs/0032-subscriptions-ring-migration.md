@@ -1,4 +1,4 @@
-# 0031. Subscriptions Ring Migration
+# 0032. Subscriptions Ring Migration
 
 The largest remaining pre-ring package -- `subscriptions/`, 20 modules and
 roughly 13.7k lines -- moves onto the `domain`/`ports`/`adapters`/`application`
@@ -38,7 +38,7 @@ moves is where the surface lives: the Protocol pair is now
 `WorkRedistributionCoordinator` are now `application/subscriptions/coordination.py`
 -- a three-way split of what ADR 0009 described as one module,
 `src/eventsource/subscriptions/coordination.py`. ADR 0009's `**Status:**` line
-carries an "Amended by ADR 0031" pointer; its body is untouched.
+carries an "Amended by ADR 0032" pointer; its body is untouched.
 
 ### ADR Impact
 
