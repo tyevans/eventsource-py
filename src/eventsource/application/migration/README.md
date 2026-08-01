@@ -1,4 +1,4 @@
-# eventsource.migration
+# eventsource.application.migration
 
 A zero-downtime live migration system for multi-tenant event stores. This module enables seamless backend migrations (e.g., shared PostgreSQL to dedicated PostgreSQL) without stopping your application.
 

@@ -28,7 +28,7 @@ The names split across three modules along ring boundaries (ADR 0029):
 | `LockNotHeldError` | Raised when releasing a lock this manager does not hold | `eventsource.domain.exceptions` |
 
 The package's primary in-tree consumer is the live migration tooling
-(`eventsource.migration`), where a lock guards cutover so that only one instance
+(`eventsource.application.migration`), where a lock guards cutover so that only one instance
 can flip a tenant's event store at a time — hence the `migration_lock_key`
 convenience helper. Nothing about the manager is migration-specific, though: any
 operation that must not run concurrently across instances can use it.
@@ -233,14 +233,14 @@ consequences for calling code:
   exactly as before; the newly-catching clause is `except EventSourceError`,
   which caught nothing lock-related prior to this change.
 
-In-tree, `eventsource.migration.cutover` follows this pattern, importing
+In-tree, `eventsource.application.migration.cutover` follows this pattern, importing
 `LockAcquisitionError` from `eventsource.domain.exceptions` and `migration_lock_key`
 from `eventsource.ports.locks`.
 
 ### Typing-only imports
 
 `PostgreSQLLockManager` is referenced under `if TYPE_CHECKING:` in
-`eventsource.migration.cutover` and `eventsource.migration.coordinator`, which
+`eventsource.application.migration.cutover` and `eventsource.application.migration.coordinator`, which
 is the right approach for annotating a `lock_manager` parameter without pulling
 `eventsource.adapters.postgresql.locks` into module import at runtime. `from
 __future__ import annotations` is already in effect in those modules, so the

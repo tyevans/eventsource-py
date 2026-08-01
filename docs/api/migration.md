@@ -1,6 +1,6 @@
 # Migration API Reference
 
-Technical reference for `eventsource.migration`, the live migration system that
+Technical reference for `eventsource.application.migration`, the live migration system that
 moves a single tenant's event data from one event store to another while the
 application keeps reading and writing.
 
@@ -9,13 +9,13 @@ drives:
 
 | Area | Module | Key names |
 | --- | --- | --- |
-| Lifecycle model | `eventsource.migration.models` | `MigrationPhase`, `TenantMigrationState`, `Migration`, `MigrationConfig`, `MigrationStatus`, `MigrationResult`, `TenantRouting`, `PositionMapping`, `SyncLag`, `CutoverResult`, `MigrationAuditEntry`, `AuditEventType` |
-| Orchestration | `eventsource.migration.coordinator` | `MigrationCoordinator` |
-| Routing | `eventsource.migration.router` | `TenantStoreRouter` |
+| Lifecycle model | `eventsource.ports.migration.models` | `MigrationPhase`, `TenantMigrationState`, `Migration`, `MigrationConfig`, `MigrationStatus`, `MigrationResult`, `TenantRouting`, `PositionMapping`, `SyncLag`, `CutoverResult`, `MigrationAuditEntry`, `AuditEventType` |
+| Orchestration | `eventsource.application.migration.coordinator` | `MigrationCoordinator` |
+| Routing | `eventsource.application.migration.router` | `TenantStoreRouter` |
 | Phase components | `bulk_copier`, `dual_write`, `cutover`, `write_pause`, `position_mapper`, `sync_lag_tracker`, `subscription_migrator` | `BulkCopier`, `DualWriteInterceptor`, `CutoverManager`, `WritePauseManager`, `PositionMapper`, `SyncLagTracker`, `SubscriptionMigrator` |
-| Verification | `eventsource.migration.consistency` | `ConsistencyVerifier`, `VerificationLevel`, `VerificationReport` |
+| Verification | `eventsource.application.migration.consistency` | `ConsistencyVerifier`, `VerificationLevel`, `VerificationReport` |
 | Observability | `status_streamer`, `metrics` | `StatusStreamer`, `StatusStreamManager`, `MigrationMetrics`, `ActiveMigrationsTracker` |
-| Errors | `eventsource.migration.exceptions` | `MigrationError` and subclasses, `classify_exception()`, `RetryConfig`, `CircuitBreaker`, `ErrorHandler` |
+| Errors | `eventsource.application.migration.exceptions` | `MigrationError` and subclasses, `classify_exception()`, `RetryConfig`, `CircuitBreaker`, `ErrorHandler` |
 
 A migration advances through the phases `PENDING → BULK_COPY → DUAL_WRITE →
 CUTOVER → COMPLETED`, with `ABORTED` and `FAILED` as terminal escapes from any
@@ -25,7 +25,7 @@ an abort at any point leaves reads and writes on the original store.
 Everything documented on this page is exported from the package root:
 
 ```python
-from eventsource.migration import (
+from eventsource.application.migration import (
     MigrationCoordinator,
     MigrationConfig,
     MigrationPhase,
@@ -33,10 +33,11 @@ from eventsource.migration import (
 )
 ```
 
-`eventsource.migration.__all__` is the authoritative export list; submodule
+`eventsource.application.migration.__all__` is the authoritative export list; submodule
 paths are given below only to show where each name is defined. Persistence
-interfaces for migration records, routing rows, position mappings, and audit
-entries live under `eventsource.migration.repositories`.
+*interfaces* (Protocols) for migration records, routing rows, position
+mappings, and audit entries live in `eventsource.ports.migration.repositories`;
+the PostgreSQL implementations live in `eventsource.adapters.sql.migration`.
 
 Every enum value, dataclass field, default, validation rule, and coordinator
 method below is described as it behaves in the current implementation.
@@ -58,7 +59,7 @@ Three objects have to be in place before anything can run:
   `TenantMigrationState`.
 - Repositories for persistence: `MigrationRepository` and
   `TenantRoutingRepository` (both `Protocol`s under
-  `eventsource.migration.repositories`), plus the position-mapping and audit-log
+  `eventsource.ports.migration.repositories`), plus the position-mapping and audit-log
   repositories used by the later phases.
 - A `MigrationCoordinator`, constructed with the source store, those
   repositories, and the router.
@@ -112,14 +113,14 @@ tenant-partitioned. A maintenance-window copy needs none of the dual-write,
 position-mapping, or lag-tracking machinery here, and this package has no mode
 for migrating all tenants as a single unit -- migrate them one at a time.
 
-### Import surface (`eventsource.migration`)
+### Import surface (`eventsource.application.migration`)
 
 Every public name is re-exported from the package root; `__all__` in
 `eventsource/migration/__init__.py` is the authoritative list. Import from the
 package, not from submodules:
 
 ```python
-from eventsource.migration import (
+from eventsource.application.migration import (
     # lifecycle model
     Migration, MigrationConfig, MigrationPhase, MigrationStatus,
     MigrationResult, MigrationAuditEntry, AuditEventType,
@@ -152,32 +153,35 @@ from eventsource.migration import (
 ```
 
 Persistence interfaces are the one part of the surface not re-exported at the
-package root. They live in the `eventsource.migration.repositories` subpackage,
-which exports each protocol, a `...Protocol` alias for it, and the PostgreSQL
-implementation:
+package root. The four Protocols live in `eventsource.ports.migration.repositories`;
+the PostgreSQL implementations live in `eventsource.adapters.sql.migration`:
 
 ```python
-from eventsource.migration.repositories import (
-    MigrationRepository, PostgreSQLMigrationRepository,
-    TenantRoutingRepository, PostgreSQLTenantRoutingRepository,
-    PositionMappingRepository, PostgreSQLPositionMappingRepository,
-    MigrationAuditLogRepository, PostgreSQLMigrationAuditLogRepository,
+from eventsource.ports.migration.repositories import (
+    MigrationRepository,
+    TenantRoutingRepository,
+    PositionMappingRepository,
+    MigrationAuditLogRepository,
+)
+from eventsource.adapters.sql.migration import (
+    PostgreSQLMigrationRepository,
+    PostgreSQLTenantRoutingRepository,
+    PostgreSQLPositionMappingRepository,
+    PostgreSQLMigrationAuditLogRepository,
     VALID_TRANSITIONS,
 )
 ```
 
 `MigrationRepository`, `TenantRoutingRepository`, `PositionMappingRepository`,
 and `MigrationAuditLogRepository` are `Protocol` classes -- implement them
-structurally to back migration state with something other than PostgreSQL. The
-`MigrationRepositoryProtocol` and `TenantRoutingRepositoryProtocol` names are
-plain aliases of the corresponding protocol classes, kept for compatibility;
-prefer the unsuffixed names. `VALID_TRANSITIONS` is the legal
-`MigrationPhase` transition map enforced by the repository layer, documented
-under [Legal transition table](#legal-transition-table).
+structurally to back migration state with something other than PostgreSQL.
+`VALID_TRANSITIONS` is the legal `MigrationPhase` transition map enforced by
+the repository layer, documented under
+[Legal transition table](#legal-transition-table).
 
 ## Migration Lifecycle
 
-Two enums, both in `eventsource.migration.models`, describe the lifecycle from
+Two enums, both in `eventsource.ports.migration.models`, describe the lifecycle from
 two angles. `MigrationPhase` is the state of the *migration record* -- what the
 coordinator is doing. `TenantMigrationState` is the state of the *tenant's
 routing row* -- what `TenantStoreRouter` does with each operation. The
@@ -236,7 +240,7 @@ Notes on the individual values:
 
 Two transition maps exist and they are not identical. `MigrationPhase.can_transition_to()`
 is the in-memory check; `VALID_TRANSITIONS` in
-`eventsource.migration.repositories.migration` is what
+`eventsource.adapters.sql.migration.migration` is what
 `MigrationRepository.update_phase()` actually enforces, raising
 `InvalidPhaseTransitionError` on a violation.
 
@@ -275,8 +279,8 @@ authoritative for anything that will be persisted, and read
 yourself and want to enforce the same rules:
 
 ```python
-from eventsource.migration.repositories import VALID_TRANSITIONS
-from eventsource.migration import MigrationPhase
+from eventsource.adapters.sql.migration import VALID_TRANSITIONS
+from eventsource.ports.migration.models import MigrationPhase
 
 assert VALID_TRANSITIONS[MigrationPhase.CUTOVER] == {
     MigrationPhase.COMPLETED,

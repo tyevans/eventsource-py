@@ -5,7 +5,7 @@ shared PostgreSQL store and onto a dedicated one -- while the application keeps
 reading and writing. The source store stays authoritative until the moment of
 cutover, so at no point is there a window where events can be lost.
 
-The work is driven by `MigrationCoordinator` from `eventsource.migration`, which
+The work is driven by `MigrationCoordinator` from `eventsource.application.migration`, which
 walks a tenant through five phases (`PENDING` -> `BULK_COPY` -> `DUAL_WRITE` ->
 `CUTOVER` -> `COMPLETED`), and by `TenantStoreRouter`, a transparent proxy you put
 in front of your event store so application code never has to know a migration is

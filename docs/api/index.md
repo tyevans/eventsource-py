@@ -80,7 +80,7 @@ The exported names fall into these groups:
 
 Several public subsystems ship in the package but are **not** re-exported at the top
 level. They are imported from their own modules: `eventsource.testing`,
-`eventsource.application.subscriptions`, `eventsource.observability`, `eventsource.migration`,
+`eventsource.application.subscriptions`, `eventsource.observability`, `eventsource.application.migration`,
 `eventsource.ports.locks` / `eventsource.adapters.postgresql.locks`,
 `eventsource.gdpr`, and the raw SQL under `eventsource.migrations`.
 (`eventsource.locks` no longer exists -- see ADR 0030; import
@@ -163,7 +163,7 @@ Two further flags live outside the barrel. `eventsource.observability` exposes
 `OTEL_AVAILABLE` for the OpenTelemetry tracing integration, and
 `eventsource.application.subscriptions` exposes `OTEL_METRICS_AVAILABLE` (re-exported from its
 shutdown module, and also available as `SHUTDOWN_OTEL_METRICS_AVAILABLE`) for the metrics
-half; `eventsource.migration.metrics` defines its own `OTEL_METRICS_AVAILABLE`. When
+half; `eventsource.application.migration.metrics` defines its own `OTEL_METRICS_AVAILABLE`. When
 OpenTelemetry is absent, tracing and metrics degrade to no-ops rather than raising.
 
 The rule to rely on: for the bus backends and the SQLite snapshot store, **check the flag
@@ -456,7 +456,7 @@ Several public subsystems are intentionally *not* re-exported. They have their o
 | `eventsource.testing` | 11 | `from eventsource.testing import EventBuilder, InMemoryTestHarness` |
 | `eventsource.application.subscriptions` | 123 | `from eventsource.application.subscriptions import SubscriptionManager, SubscriptionConfig` |
 | `eventsource.observability` | 58 | `from eventsource.observability import get_tracer, OTEL_AVAILABLE` |
-| `eventsource.migration` | 66 | `from eventsource.migration import Migration, MigrationConfig` |
+| `eventsource.application.migration` | 66 | `from eventsource.application.migration import Migration, MigrationConfig` |
 | `eventsource.ports.locks` / `eventsource.adapters.postgresql.locks` | 5 | `from eventsource.adapters.postgresql.locks import PostgreSQLLockManager` |
 
 The size difference is the reason for the split: `subscriptions` and `migration` alone
@@ -819,7 +819,7 @@ Import these from their module:
 | `eventsource.application.subscriptions` | Subscription manager, runners, retry policy, health, and flow control |
 | `eventsource.testing` | Assertions, BDD helpers, the test harness, builders, and the conformance suites |
 | `eventsource.observability` | OpenTelemetry tracing integration (`telemetry` extra) |
-| `eventsource.migration` | Live event-store migration tooling: dual-write, cutover, sync tracking |
+| `eventsource.application.migration` | Live event-store migration tooling: dual-write, cutover, sync tracking |
 | `eventsource.gdpr` | GDPR compliance utilities |
 
 Two modules are re-exported *and* importable directly, because they are canonical
