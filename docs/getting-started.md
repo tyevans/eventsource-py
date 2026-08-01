@@ -76,8 +76,8 @@ once the concepts are in place.
 
 Before you start, make sure of three things.
 
-**Python 3.11 or newer.** The package declares `requires-python = ">=3.11"`, and
-3.11, 3.12, and 3.13 are the supported versions. Check yours:
+**Python 3.13 or newer.** The package declares `requires-python = ">=3.13"`.
+Check yours:
 
 ```bash
 python --version

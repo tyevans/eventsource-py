@@ -81,8 +81,8 @@ def evolve(state: OrderState, event: OrderEvent) -> OrderState:
 
 The `case _` makes `evolve` total: an event with no branch is a no-op rather than an
 error, which is the same silent-skip behavior a hand-written `_apply` has (see
-[Aggregate Styles](aggregate-styles.md) for why `DeclarativeAggregate`'s
-`unregistered_event_handling` exists to tighten that).
+[Aggregate Styles](aggregate-styles.md) for why `DeclarativeAggregate` defaults
+its `unregistered_event_handling` to strict, and how to loosen it).
 
 ## The imperative shell: `DeciderAggregate`
 

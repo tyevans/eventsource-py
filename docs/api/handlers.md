@@ -225,10 +225,11 @@ needs its own `@handles`.
 
 Both consumers also share the same unregistered-event policy vocabulary — the
 `unregistered_event_handling` class attribute (`"ignore"` / `"warn"` /
-`"error"`), defaulting to `"ignore"` on `DeclarativeAggregate` — but the
-aggregate implements it inline in `_handle_unregistered_event()` while the
-projection delegates to its `HandlerRegistry`. Both raise `UnhandledEventError`
-under `"error"`.
+`"error"`), defaulting to `"error"` on `DeclarativeAggregate` (`"ignore"` and
+`"warn"` are explicit opt-downs) while `DeclarativeProjection`'s
+`HandlerRegistry` still defaults to `"ignore"` — the aggregate implements the
+policy inline in `_handle_unregistered_event()` while the projection delegates
+to its `HandlerRegistry`. Both raise `UnhandledEventError` under `"error"`.
 
 ### How the decorator marks a function (`_handles_event_type` attribute)
 

@@ -23,7 +23,7 @@ await manager.start()
 
 ## Before you begin
 
-You need Python 3.11 or later and three collaborators to construct a `SubscriptionManager`: an `EventStore` (historical events), an `EventBus` (live events), and a `CheckpointRepository` (position tracking). A `DLQRepository` is optional and only needed for the DLQ recipes.
+You need Python 3.13 or later and three collaborators to construct a `SubscriptionManager`: an `EventStore` (historical events), an `EventBus` (live events), and a `CheckpointRepository` (position tracking). A `DLQRepository` is optional and only needed for the DLQ recipes.
 
 Install the extras for the backends you plan to use — the core package depends only on `pydantic` and `sqlalchemy`:
 

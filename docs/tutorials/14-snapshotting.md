@@ -26,7 +26,7 @@ the only thing changing between runs is the snapshot configuration.
 
 - Tutorial 3, [Your First Aggregate](03-first-aggregate.md) -- you should be comfortable
   with `DeciderAggregate`, `decide()`/`evolve()`, and `AggregateRepository`.
-- Python 3.11 or newer.
+- Python 3.13 or newer.
 - `eventsource-py` installed. Steps 1-9 need nothing beyond the core package; Step 10
   writes snapshots to a file and needs the `sqlite` extra (`aiosqlite`):
 

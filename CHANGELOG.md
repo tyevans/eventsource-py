@@ -12,7 +12,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING: `DomainEvent.aggregate_type` is validated as a stream category** (must match `CATEGORY_PATTERN`); values that would corrupt a `StreamId` (e.g. containing `:`) now fail at event construction instead of detonating at stream-render time.
 - **BREAKING: `DeclarativeAggregate.unregistered_event_handling` now defaults to `"error"`** (was `"ignore"`). An aggregate replaying an event it has no `@handles` method for raises `UnhandledEventError` instead of silently skipping it — silent skips let command handlers reason over divergent state. Opt down explicitly with `unregistered_event_handling = "ignore"`. Projections are unaffected.
 - **BREAKING: `eventsource.domain.types` reshaped.** `Version`, `StreamPosition`, and `GlobalPosition` are deleted (global positions are opaque adapter-owned tokens — use `eventsource.ports.positions.Position`); `TenantId` and `CausationId` are now plain `UUID` aliases (optionality belongs to the referencing field, not the identity type). The identity aliases are now threaded through `DomainEvent`/`DomainCommand` annotations, so the published vocabulary matches the real signatures.
-
 - **BREAKING: Python 3.13+ is now required** (`requires-python = ">=3.13"`; was `>=3.11`). The typed decider uses native PEP 696 TypeVar defaults, and the project now targets one modern floor instead of carrying compatibility imports. CI tests 3.13.
 
 ### Added

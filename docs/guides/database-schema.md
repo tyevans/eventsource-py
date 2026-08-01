@@ -33,7 +33,7 @@ strict subset.
 
 You need:
 
-- **Python 3.11 or newer** with `eventsource-py` installed. The SQL and Alembic
+- **Python 3.13 or newer** with `eventsource-py` installed. The SQL and Alembic
   templates ship inside the `eventsource.adapters.sql.schemas` package, so the helpers
   read them out of your site-packages -- there is nothing to download or vendor.
 - **A running database you can create tables in.** PostgreSQL 12 or newer for

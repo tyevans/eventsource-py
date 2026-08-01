@@ -30,7 +30,7 @@ read [Decide which backend fits](#decide-which-backend-fits) and stop there.
 This guide assumes you already have a working `eventsource` install and some
 `DomainEvent` subclasses to store. Specifically:
 
-- **Python 3.11+** with `eventsource-py` installed. The base install pulls only
+- **Python 3.13+** with `eventsource-py` installed. The base install pulls only
   `pydantic` and `sqlalchemy`; every backend beyond `InMemoryEventStore`
   requires an optional extra (`sqlite` or `postgresql`), installed separately.
 - **An async runtime.** The store ports are async throughout (`append`,

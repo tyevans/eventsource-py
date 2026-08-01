@@ -79,7 +79,7 @@ multi-tenancy module itself, and every gap it leaves is equally visible.
 - **A rough idea of what a `ContextVar` is.** You do not need to have used
   `contextvars` directly; the point to hold onto is that the value is per-task, not
   per-process, which is exactly why the concurrency step works.
-- **Python 3.11 or newer** -- the floor declared in `pyproject.toml`.
+- **Python 3.13 or newer** -- the floor declared in `pyproject.toml`.
 
 Install the library. Multi-tenancy is part of the core package, so no extras are
 needed for this tutorial:

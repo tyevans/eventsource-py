@@ -28,9 +28,9 @@ If you want a guided first application rather than an installation reference, st
 
 ## Requirements
 
-`eventsource-py` requires **Python 3.11 or newer** (`requires-python = ">=3.11"` in `pyproject.toml`). Python 3.11, 3.12, and 3.13 are declared as supported in the package classifiers; CI runs the full test suite on 3.11 and 3.12, and the lint, type-check, docs, and release jobs run on 3.11. Both `mypy` (`python_version = "3.11"`, `strict = true`) and `ruff` (`target-version = "py311"`) are configured against the 3.11 baseline, so 3.11 is the language level the source is written and checked at.
+`eventsource-py` requires **Python 3.13 or newer** (`requires-python = ">=3.13"` in `pyproject.toml`). CI runs the full test suite on 3.13, and the lint, type-check, docs, and release jobs run on 3.13 as well. Both `mypy` (`python_version = "3.13"`, `strict = true`) and `ruff` (`target-version = "py313"`) are configured against the 3.13 baseline, so 3.13 is the language level the source is written and checked at.
 
-There is no minimum version below 3.11: the codebase uses modern typing syntax and `asyncio` behavior that earlier interpreters do not provide, and `pip` will refuse to install the distribution on Python 3.10 or older.
+There is no minimum version below 3.13: the codebase uses modern typing syntax (including PEP 696 TypeVar defaults) and `asyncio` behavior that earlier interpreters do not provide, and `pip` will refuse to install the distribution on Python 3.12 or older.
 
 ### Platform
 

@@ -83,7 +83,7 @@ else -- version tracking, replay, provenance stamping -- is inherited.
 
 Before you start you need:
 
-- **Python 3.11 or newer** -- the package declares `requires-python = ">=3.11"`.
+- **Python 3.13 or newer** -- the package declares `requires-python = ">=3.13"`.
 - **`eventsource-py` installed.** From a clone of the repository, `uv sync --all-extras`;
   otherwise `pip install eventsource-py`. Nothing in this tutorial needs an optional
   extra -- the core install (pydantic + sqlalchemy) is enough.

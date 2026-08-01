@@ -15,7 +15,7 @@ pre-commit run --all-files               # the full lint/format/type/security ga
 
 What to expect from the rest of this section:
 
-- **Prerequisites** — Python 3.11 or 3.12 (the versions CI tests), plus Docker and
+- **Prerequisites** — Python 3.13 (the version CI tests), plus Docker and
   Docker Compose if you intend to run integration tests.
 - **Set Up a Local Environment** — cloning, `uv sync --all-extras`, the optional
   dependency extras, and installing the pre-commit hooks.
@@ -43,7 +43,7 @@ as you work through the pages that follow.
 
 Before you start, make sure you have:
 
-- **Python 3.11 or 3.12** on your `PATH`.
+- **Python 3.13** on your `PATH`.
 - **[uv](https://docs.astral.sh/uv/)** — every command in this section is written as
   `uv run ...`. If you prefer plain `pip` and a virtualenv, `pip install -e ".[dev,all]"`
   installs the same set of packages (that is what CI does).
@@ -53,21 +53,14 @@ Before you start, make sure you have:
 Nothing else is required for the unit test suite: the runtime dependencies are just
 `pydantic` and `sqlalchemy`, and everything else is an optional extra.
 
-### Python version support (3.11, 3.12)
+### Python version support (3.13)
 
-`pyproject.toml` declares `requires-python = ">=3.11"`, and the CI test matrix in
-`.github/workflows/ci.yml` runs on **3.11 and 3.12**. The `lint` and `type-check` jobs
-both pin 3.11, and the coverage upload step only runs on the 3.11 matrix leg, so 3.11 is
+`pyproject.toml` declares `requires-python = ">=3.13"`, and the CI test matrix in
+`.github/workflows/ci.yml` runs on **3.13** only. The `lint` and `type-check` jobs
+also pin 3.13, and the coverage upload step runs on that same matrix leg, so 3.13 is
 the version to reach for if you want your local results to match CI exactly.
 
-The package classifiers also list 3.13. It is expected to work, but it is not in the
-matrix — if you develop on 3.13, run a 3.11 check before opening a pull request:
-
-```bash
-uv run --python 3.11 pytest tests/unit/ -q
-```
-
-Older interpreters are not supported: `requires-python` blocks installation on 3.10 and
+Older interpreters are not supported: `requires-python` blocks installation on 3.12 and
 below.
 
 ### Docker and Docker Compose (integration tests only)
@@ -171,11 +164,10 @@ uv run pytest tests/unit/ -q
 uv run mypy src/eventsource/ --config-file=pyproject.toml
 ```
 
-To work against a specific interpreter — useful when you develop on 3.13 but want to
-match CI — pass `--python`:
+To work against a specific interpreter, pass `--python`:
 
 ```bash
-uv sync --all-extras --python 3.11
+uv sync --all-extras --python 3.13
 ```
 
 ### Optional dependency extras (postgresql, sqlite, redis, rabbitmq, kafka, telemetry, all)

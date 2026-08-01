@@ -24,9 +24,9 @@ The rings, innermost first:
    it raises `AggregateTypeNotSetError` at construction — and
    `DomainEvent.aggregate_type` is validated against `CATEGORY_PATTERN` at
    construction (ADR 0043). `domain/types.py` (type aliases:
-   `AggregateId`, `EventId`, `TenantId`, `CorrelationId`, `CausationId`, `TState`
-   — all plain `UUID` aliases threaded through `DomainEvent`/`DomainCommand`
-   annotations; `Version`, `StreamPosition`, and `GlobalPosition` are deleted,
+   `AggregateId`, `EventId`, `TenantId`, `CorrelationId`, `CausationId` — plain
+   `UUID` aliases threaded through `DomainEvent`/`DomainCommand` annotations —
+   and `TState`, a `TypeVar` (not a UUID alias); `Version`, `StreamPosition`, and `GlobalPosition` are deleted,
    positions being opaque adapter-owned tokens per `ports/positions.py`, ADR
    0043), `domain/exceptions.py` (the
    domain exception hierarchy — `EventSourceError` root, aggregate/event/

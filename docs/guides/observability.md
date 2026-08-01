@@ -39,7 +39,7 @@ but you should not need to import from them directly.
 
 You need:
 
-- **Python 3.11+** and a working install of `eventsource-py`. Nothing in this
+- **Python 3.13+** and a working install of `eventsource-py`. Nothing in this
   guide requires a database or broker — the examples use `InMemoryEventBus`
   and other in-memory components so they run anywhere.
 - **The `telemetry` extra**, which pulls in `opentelemetry-api>=1.0,<2.0` and

@@ -70,7 +70,7 @@ need to re-validate them.
 
 Before you start, you need:
 
-- **Python 3.11 or newer.** The library declares `requires-python = ">=3.11"`.
+- **Python 3.13 or newer.** The library declares `requires-python = ">=3.13"`.
 - **`eventsource-py` installed**, with whatever optional extras your backend
   driver needs (`postgresql`, `sqlite`, `redis`, `rabbitmq`, `kafka`,
   `telemetry`, or `all`). `eventsource.testing.conformance_ports` is

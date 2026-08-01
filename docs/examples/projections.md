@@ -88,8 +88,8 @@ and handling failures with retries and a dead-letter queue.
 
 ## Prerequisites
 
-**Python 3.11 or newer.** The package requires `>=3.11`; both examples were run
-against 3.12 while writing this tutorial.
+**Python 3.13 or newer.** The package requires `>=3.13`; both examples were run
+against 3.13 while writing this tutorial.
 
 **A checkout of this repository.** The two examples live in the repository's
 `examples/` package, and you run them as modules from the repository root:

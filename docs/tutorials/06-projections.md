@@ -79,7 +79,7 @@ Docker available.
 
 Before you start you need:
 
-- **Python 3.11 or newer** -- the package declares `requires-python = ">=3.11"`.
+- **Python 3.13 or newer** -- the package declares `requires-python = ">=3.13"`.
 - **`eventsource-py` installed, with the SQLite extra.** From a clone of the repository,
   `uv sync --all-extras`; otherwise `pip install "eventsource-py[sqlite]"`. The
   projection classes themselves come from the core install (pydantic + sqlalchemy), but

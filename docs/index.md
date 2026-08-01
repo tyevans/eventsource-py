@@ -31,7 +31,7 @@ only on `pydantic` and `sqlalchemy`, and every driver — `asyncpg`, `aiosqlite`
 `redis`, `aio-pika`, `aiokafka`, OpenTelemetry — is an optional extra you opt
 into. A project that only ever uses the in-memory backends pulls in nothing else.
 
-eventsource-py targets Python 3.11 and newer, is distributed on PyPI as
+eventsource-py targets Python 3.13 and newer, is distributed on PyPI as
 [`eventsource-py`](https://pypi.org/project/eventsource-py/), ships a `py.typed`
 marker for downstream type checkers, and is MIT licensed. Source lives at
 [github.com/tyevans/eventsource-py](https://github.com/tyevans/eventsource-py).

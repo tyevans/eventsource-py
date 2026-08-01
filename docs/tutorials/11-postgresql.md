@@ -70,7 +70,7 @@ PostgreSQL 12 or newer image; everything else comes from the package.
 Before you start, make sure the following are in place. If you have been
 following the earlier tutorials, only the last two items are new.
 
-**Python 3.11 or newer.** The package declares `requires-python = ">=3.11"`,
+**Python 3.13 or newer.** The package declares `requires-python = ">=3.13"`,
 so anything older will not install.
 
 **Docker (with Compose).** Step 1 uses the `docker-compose.test.yml` that
