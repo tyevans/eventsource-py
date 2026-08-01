@@ -34,6 +34,10 @@ from eventsource.application.migration.error_classification import (
     # Configuration classes
     RetryConfig,
 )
+from eventsource.application.migration.error_handling import (
+    ErrorHandler,
+    classify_exception,
+)
 from eventsource.application.migration.exceptions import (
     BulkCopyError,
     CircuitBreakerOpenError,
@@ -42,8 +46,6 @@ from eventsource.application.migration.exceptions import (
     CutoverLagError,
     CutoverTimeoutError,
     DualWriteError,
-    # Error handler
-    ErrorHandler,
     InvalidPhaseTransitionError,
     MigrationAlreadyExistsError,
     # Exceptions to test
@@ -52,7 +54,6 @@ from eventsource.application.migration.exceptions import (
     MigrationStateError,
     PositionMappingError,
     RoutingError,
-    classify_exception,
 )
 from eventsource.ports.migration.models import MigrationPhase
 from eventsource.ports.positions import Position

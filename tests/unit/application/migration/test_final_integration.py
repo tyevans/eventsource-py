@@ -45,6 +45,10 @@ from eventsource.application.migration.error_classification import (
     ErrorSeverity,
     RetryConfig,
 )
+from eventsource.application.migration.error_handling import (
+    ErrorHandler,
+    classify_exception,
+)
 from eventsource.application.migration.exceptions import (
     BulkCopyError,
     CircuitBreakerOpenError,
@@ -52,11 +56,9 @@ from eventsource.application.migration.exceptions import (
     CutoverLagError,
     CutoverTimeoutError,
     DualWriteError,
-    ErrorHandler,
     MigrationAlreadyExistsError,
     MigrationError,
     MigrationNotFoundError,
-    classify_exception,
 )
 from eventsource.application.migration.metrics import (
     clear_metrics_registry,

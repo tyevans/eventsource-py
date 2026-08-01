@@ -72,20 +72,22 @@ from eventsource.application.migration.error_classification import (
     ErrorSeverity,
     RetryConfig,
 )
+from eventsource.application.migration.error_handling import (
+    ErrorHandler,
+    classify_exception,
+)
 from eventsource.application.migration.exceptions import (
     CircuitBreakerOpenError,
     # Core exceptions
     ConsistencyError,
     CutoverError,
     CutoverTimeoutError,
-    ErrorHandler,
     MigrationAlreadyExistsError,
     MigrationError,
     MigrationNotFoundError,
     MigrationStateError,
     PositionMappingError,
     RoutingError,
-    classify_exception,
 )
 from eventsource.application.migration.metrics import (
     ActiveMigrationsTracker,
