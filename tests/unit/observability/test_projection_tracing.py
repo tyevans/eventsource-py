@@ -207,7 +207,7 @@ class TestCheckpointTrackingProjectionTracing:
         from eventsource.adapters.memory.dlq import InMemoryDLQRepository
         from eventsource.application.projections.base import CheckpointTrackingProjection
         from eventsource.application.projections.retry import ExponentialBackoffRetryPolicy
-        from eventsource.subscriptions.retry import RetryConfig
+        from eventsource.application.subscriptions.retry import RetryConfig
 
         mock_tracer = Mock()
         mock_span = MagicMock()

@@ -246,7 +246,7 @@ Two accessors derive the sub-configs used internally:
 `config.py` also exports two factories for the common shapes:
 
 ```python
-from eventsource.subscriptions.config import (
+from eventsource.application.subscriptions.config import (
     create_catch_up_config,
     create_live_only_config,
 )

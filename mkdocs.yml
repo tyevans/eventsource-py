@@ -155,6 +155,7 @@ nav:
       - "ADR-0029: Locks, Read Models, and Engine Rings": adrs/0029-locks-readmodels-and-engine-rings.md
       - "ADR-0030: Top-Level Module Ring Consolidation": adrs/0030-top-level-module-ring-consolidation.md
       - "ADR-0031: Bus Ring Split": adrs/0031-bus-ring-split.md
+      - "ADR-0032: Subscriptions Ring Migration": adrs/0032-subscriptions-ring-migration.md
   - Development:
       - development/index.md
       - Contributing: development/contributing.md

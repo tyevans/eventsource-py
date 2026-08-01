@@ -211,7 +211,7 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
         >>>
         >>> # With custom retry policy
         >>> from eventsource.application.projections.retry import ExponentialBackoffRetryPolicy
-        >>> from eventsource.subscriptions.retry import RetryConfig
+        >>> from eventsource.application.subscriptions.retry import RetryConfig
         >>> policy = ExponentialBackoffRetryPolicy(RetryConfig(max_retries=5))
         >>> projection = OrderProjection(retry_policy=policy, enable_tracing=True)
     """
@@ -255,7 +255,7 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
         if retry_policy is not None:
             self._retry_policy = retry_policy
         else:
-            from eventsource.subscriptions.retry import RetryConfig
+            from eventsource.application.subscriptions.retry import RetryConfig
 
             self._retry_policy = ExponentialBackoffRetryPolicy(
                 config=RetryConfig(

@@ -32,7 +32,7 @@ from eventsource import (
     InMemoryEventStore,
     register_event,
 )
-from eventsource.subscriptions import (
+from eventsource.application.subscriptions import (
     HealthCheckConfig,
     SubscriptionConfig,
     SubscriptionManager,

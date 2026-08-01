@@ -80,7 +80,7 @@ The exported names fall into these groups:
 
 Several public subsystems ship in the package but are **not** re-exported at the top
 level. They are imported from their own modules: `eventsource.testing`,
-`eventsource.subscriptions`, `eventsource.observability`, `eventsource.migration`,
+`eventsource.application.subscriptions`, `eventsource.observability`, `eventsource.migration`,
 `eventsource.ports.locks` / `eventsource.adapters.postgresql.locks`,
 `eventsource.gdpr`, and the raw SQL under `eventsource.migrations`.
 (`eventsource.locks` no longer exists -- see ADR 0030; import
@@ -161,7 +161,7 @@ by the caller, so the `asyncpg` requirement surfaces where the engine is created
 
 Two further flags live outside the barrel. `eventsource.observability` exposes
 `OTEL_AVAILABLE` for the OpenTelemetry tracing integration, and
-`eventsource.subscriptions` exposes `OTEL_METRICS_AVAILABLE` (re-exported from its
+`eventsource.application.subscriptions` exposes `OTEL_METRICS_AVAILABLE` (re-exported from its
 shutdown module, and also available as `SHUTDOWN_OTEL_METRICS_AVAILABLE`) for the metrics
 half; `eventsource.migration.metrics` defines its own `OTEL_METRICS_AVAILABLE`. When
 OpenTelemetry is absent, tracing and metrics degrade to no-ops rather than raising.
@@ -454,7 +454,7 @@ Several public subsystems are intentionally *not* re-exported. They have their o
 | Module | Exported names | Typical import |
 | --- | --- | --- |
 | `eventsource.testing` | 11 | `from eventsource.testing import EventBuilder, InMemoryTestHarness` |
-| `eventsource.subscriptions` | 123 | `from eventsource.subscriptions import SubscriptionManager, SubscriptionConfig` |
+| `eventsource.application.subscriptions` | 123 | `from eventsource.application.subscriptions import SubscriptionManager, SubscriptionConfig` |
 | `eventsource.observability` | 58 | `from eventsource.observability import get_tracer, OTEL_AVAILABLE` |
 | `eventsource.migration` | 66 | `from eventsource.migration import Migration, MigrationConfig` |
 | `eventsource.ports.locks` / `eventsource.adapters.postgresql.locks` | 5 | `from eventsource.adapters.postgresql.locks import PostgreSQLLockManager` |
@@ -680,7 +680,7 @@ each yield an `AsyncIterator[EventEnvelope]`, shaped respectively by `StreamRead
 subclasses — `CheckpointTrackingProjection`, `DeclarativeProjection`,
 `DatabaseProjection`, `ReadModelProjection` — consume those events to build read models,
 recording progress through a `CheckpointRepository` and diverting poison events to a
-`DLQRepository`. The `eventsource.subscriptions` package drives projections
+`DLQRepository`. The `eventsource.application.subscriptions` package drives projections
 continuously, adding retry policy, health reporting, and flow control.
 
 ### Distribution
@@ -816,7 +816,7 @@ Import these from their module:
 | Module | Contents |
 | --- | --- |
 | `eventsource.ports.locks` / `eventsource.adapters.postgresql.locks` | `PostgreSQLLockManager` (adapter); `LockInfo`, `migration_lock_key` (port); `LockAcquisitionError`, `LockNotHeldError` (`eventsource.domain.exceptions`) |
-| `eventsource.subscriptions` | Subscription manager, runners, retry policy, health, and flow control |
+| `eventsource.application.subscriptions` | Subscription manager, runners, retry policy, health, and flow control |
 | `eventsource.testing` | Assertions, BDD helpers, the test harness, builders, and the conformance suites |
 | `eventsource.observability` | OpenTelemetry tracing integration (`telemetry` extra) |
 | `eventsource.migration` | Live event-store migration tooling: dual-write, cutover, sync tracking |

@@ -218,8 +218,6 @@ only_mutate = [
     "src/eventsource/ports",
     "src/eventsource/adapters",
     "src/eventsource/application",
-    # Store retirement slice (b): opaque positions in subscriptions
-    "src/eventsource/subscriptions",
     # Store retirement slice (c): resume/duplicate-skip and binary-search surfaces
     "src/eventsource/migration/bulk_copier.py",
     "src/eventsource/migration/position_mapper.py",
@@ -239,10 +237,6 @@ pytest_add_cli_args_test_selection = [
     "tests/unit/domain/",
     "tests/unit/ports/",
     "tests/unit/test_public_api.py",
-    # Store retirement slice (b): opaque positions in subscriptions
-    "tests/unit/test_catchup_runner.py",
-    "tests/unit/test_transition.py",
-    "tests/unit/subscriptions/",
     # Store retirement slice (c)
     "tests/unit/migration/test_bulk_copier.py",
     "tests/unit/migration/test_position_mapper.py",
@@ -288,6 +282,7 @@ source_modules = [
     "eventsource.adapters.memory.outbox",
     "eventsource.adapters.memory.locks",
     "eventsource.adapters.memory.readmodels",
+    "eventsource.adapters.memory.coordination",
     "eventsource.testing.builder",
     "eventsource.testing.assertions",
     "eventsource.testing.conformance",

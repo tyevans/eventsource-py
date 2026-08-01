@@ -33,7 +33,7 @@ from eventsource import (
     InMemoryEventStore,
     register_event,
 )
-from eventsource.subscriptions import SubscriptionConfig, SubscriptionManager
+from eventsource.application.subscriptions import SubscriptionConfig, SubscriptionManager
 
 # Configure logging to see subscription lifecycle messages
 logging.basicConfig(

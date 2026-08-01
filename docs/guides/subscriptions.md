@@ -8,10 +8,10 @@ These recipes assume you already have an event store, an event bus, and a checkp
 - Surviving failure: [Retry transient failures with exponential backoff](#retry-transient-failures-with-exponential-backoff), [Guard external calls with a circuit breaker](#guard-external-calls-with-a-circuit-breaker), [Route permanently failed events to the DLQ](#route-permanently-failed-events-to-the-dlq), [React to errors with callbacks](#react-to-errors-with-callbacks)
 - Operating it: [Run multiple projections from one manager](#run-multiple-projections-from-one-manager), [Monitor subscription health](#monitor-subscription-health), [Expose Kubernetes readiness and liveness probes](#expose-kubernetes-readiness-and-liveness-probes), [Shut down gracefully](#shut-down-gracefully)
 
-Import everything from `eventsource.subscriptions`:
+Import everything from `eventsource.application.subscriptions`:
 
 ```python
-from eventsource.subscriptions import (
+from eventsource.application.subscriptions import (
     SubscriptionConfig,
     SubscriptionManager,
 )
@@ -66,7 +66,7 @@ Construct the manager with the three required collaborators, register each proje
 ```python
 import asyncio
 
-from eventsource.subscriptions import SubscriptionConfig, SubscriptionManager
+from eventsource.application.subscriptions import SubscriptionConfig, SubscriptionManager
 
 
 async def main() -> None:
@@ -144,7 +144,7 @@ Beyond the three required arguments, the constructor takes:
 A production wiring usually looks like this:
 
 ```python
-from eventsource.subscriptions import (
+from eventsource.application.subscriptions import (
     ErrorHandlingConfig,
     HealthCheckConfig,
     SubscriptionManager,
@@ -185,7 +185,7 @@ Anything you pass to `subscribe()` must satisfy two members: `subscribed_to()`, 
 
 ```python
 from eventsource.events.base import DomainEvent
-from eventsource.subscriptions import Subscriber
+from eventsource.application.subscriptions import Subscriber
 
 
 class OrderProjection:
@@ -210,7 +210,7 @@ assert isinstance(OrderProjection(db), Subscriber)  # runtime-checkable
 If you prefer inheritance, `BaseSubscriber` is an ABC with the same two abstract methods plus `can_handle(event)` (defaults to `type(event) in self.subscribed_to()`) and a `__repr__` that lists the subscribed types. `FilteringSubscriber` goes further: override `should_handle(event)` for predicate filtering and implement `_process_event(event)` instead of `handle()`.
 
 ```python
-from eventsource.subscriptions import FilteringSubscriber
+from eventsource.application.subscriptions import FilteringSubscriber
 
 
 class TenantOrderProjection(FilteringSubscriber):
@@ -227,7 +227,7 @@ class TenantOrderProjection(FilteringSubscriber):
         await self._db.insert_order(event.aggregate_id, event.total)
 ```
 
-Import all of these from `eventsource.subscriptions`. The manager's own type hint is the `EventSubscriber` ABC from `eventsource.ports.handlers`, but the runners only ever call `subscribed_to()` and `handle()`, so a plain duck-typed class works.
+Import all of these from `eventsource.application.subscriptions`. The manager's own type hint is the `EventSubscriber` ABC from `eventsource.ports.handlers`, but the runners only ever call `subscribed_to()` and `handle()`, so a plain duck-typed class works.
 
 ### What `subscribed_to()` controls
 
@@ -260,14 +260,14 @@ For an ergonomic alternative to the `isinstance` ladder, `DeclarativeProjection`
 
 ### Handle events in batches with handle_batch()
 
-When a projection can write in bulk — one multi-row insert instead of N — implement `handle_batch()`. The `BatchSubscriber` protocol (`@runtime_checkable`, import from `eventsource.subscriptions`) requires exactly two members: `subscribed_to()` and `async def handle_batch(self, events: Sequence[DomainEvent]) -> None`. Note it does *not* require `handle()`.
+When a projection can write in bulk — one multi-row insert instead of N — implement `handle_batch()`. The `BatchSubscriber` protocol (`@runtime_checkable`, import from `eventsource.application.subscriptions`) requires exactly two members: `subscribed_to()` and `async def handle_batch(self, events: Sequence[DomainEvent]) -> None`. Note it does *not* require `handle()`.
 
 The easier route is `BatchAwareSubscriber`, an ABC extending `BaseSubscriber` whose default `handle_batch()` simply loops over `handle()`, so you override it only where bulk writes pay off:
 
 ```python
 from collections.abc import Sequence
 
-from eventsource.subscriptions import BatchAwareSubscriber
+from eventsource.application.subscriptions import BatchAwareSubscriber
 
 
 class AnalyticsProjection(BatchAwareSubscriber):
@@ -307,7 +307,7 @@ for event, exc in failures:
 | `Position` | That exact opaque position token | Backfills and repairs from a known point |
 
 ```python
-from eventsource.subscriptions import SubscriptionConfig
+from eventsource.application.subscriptions import SubscriptionConfig
 
 await manager.subscribe(OrderProjection(), SubscriptionConfig())                       # resume
 await manager.subscribe(RebuildProjection(), SubscriptionConfig(start_from="beginning"))
@@ -328,7 +328,7 @@ The first ever start of a subscription has no row in the checkpoint repository. 
 await manager.subscribe(OrderProjection(), name="orders-read-model")
 ```
 
-(`CheckpointNotFoundError` exists in `eventsource.subscriptions.exceptions` for code that wants to treat a missing checkpoint as fatal; the resolver itself never raises it.)
+(`CheckpointNotFoundError` exists in `eventsource.domain.exceptions` for code that wants to treat a missing checkpoint as fatal; the resolver itself never raises it.)
 
 ### What "end" actually skips
 
@@ -349,10 +349,10 @@ await checkpoint_repo.reset_checkpoint("orders-read-model")
 
 ### Prebuilt configs
 
-Two factory helpers in `eventsource.subscriptions` cover the common shapes:
+Two factory helpers in `eventsource.application.subscriptions` cover the common shapes:
 
 ```python
-from eventsource.subscriptions import create_catch_up_config, create_live_only_config
+from eventsource.application.subscriptions import create_catch_up_config, create_live_only_config
 
 create_catch_up_config(batch_size=1000)  # start_from="checkpoint", EVERY_BATCH checkpoints
 create_live_only_config()                # start_from="end", batch_size=100, EVERY_EVENT
