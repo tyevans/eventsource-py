@@ -61,7 +61,6 @@ pytestmark = pytest.mark.asyncio
 # =============================================================================
 
 
-@register_event
 async def position_after(store, n: int):
     """The token of the nth (1-based) event in the feed."""
     envelopes = [e async for e in store.read_all()]
