@@ -6,7 +6,7 @@
 # - type-check: mypy strict type checking
 # - import-linter: architecture layering contracts (pyproject.toml [tool.importlinter])
 # - audit: pip-audit dependency vulnerability scan
-# - test: pytest with coverage (matrix: Python 3.11, 3.12)
+# - test: pytest with coverage (matrix: Python 3.13)
 #
 # Every job installs with `uv sync --all-extras --locked` and runs tools via
 # `uv run`, so CI executes the exact versions pinned in uv.lock -- the same
@@ -49,7 +49,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
-          python-version: '3.11'
+          python-version: '3.13'
           enable-cache: true
 
       - name: Install dependencies
@@ -71,7 +71,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
-          python-version: '3.11'
+          python-version: '3.13'
           enable-cache: true
 
       - name: Install dependencies
@@ -90,7 +90,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
-          python-version: '3.11'
+          python-version: '3.13'
           enable-cache: true
 
       - name: Install dependencies
@@ -109,7 +109,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
-          python-version: '3.11'
+          python-version: '3.13'
           enable-cache: true
 
       - name: Install dependencies
@@ -127,7 +127,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.11', '3.12']
+        python-version: ['3.13']
 
     steps:
       - name: Checkout
@@ -149,7 +149,7 @@ jobs:
             -m "not integration and not postgres and not redis and not e2e"
 
       - name: Upload coverage report
-        if: matrix.python-version == '3.11'
+        if: matrix.python-version == '3.13'
         uses: actions/upload-artifact@v7
         with:
           name: coverage-report
@@ -180,7 +180,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
-          python-version: '3.11'
+          python-version: '3.13'
           enable-cache: true
 
       - name: Install dependencies
@@ -229,7 +229,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
-          python-version: '3.11'
+          python-version: '3.13'
           enable-cache: true
 
       - name: Install dependencies
@@ -269,7 +269,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
-          python-version: '3.11'
+          python-version: '3.13'
           enable-cache: true
 
       - name: Install dependencies
