@@ -453,14 +453,15 @@ get rehydrated into. Always write the parameter.
 
 ### `aggregate_type` is the stream's name
 
-`AggregateRoot` defines `aggregate_type: str = "Unknown"` as a class attribute, and you
-are expected to override it. It is a plain string on the class -- not a property, not
-derived from the class name -- so `OrderAggregate` becomes `"Order"` only because you
-said so. That string ends up in three places: on every event `execute()` stamps (it
-must agree with the `aggregate_type` you defaulted on each event class in Step 2), in
-the event store's stream identity (`get_events(aggregate_id, aggregate_type)`), and in
-`AggregateRepository`, which refuses to build a repository for a class that left
-`aggregate_type` at `"Unknown"`.
+`AggregateRoot` declares `aggregate_type: ClassVar[str]` with no default, and you are
+required to set it -- a subclass that doesn't raises `AggregateTypeNotSetError` at
+construction. It is a plain string on the class -- not a property, not derived from
+the class name -- so `OrderAggregate` becomes `"Order"` only because you said so. That
+string ends up in three places: on every event `execute()` stamps (it must agree with
+the `aggregate_type` you defaulted on each event class in Step 2), in the event
+store's stream identity (`get_events(aggregate_id, aggregate_type)`), and in
+`AggregateRepository`, which refuses to build a repository for a class whose
+`aggregate_type` is empty.
 
 Because it is baked into stored events, **treat `aggregate_type` as permanent**. Renaming
 the Python class from `OrderAggregate` to `PurchaseOrderAggregate` is free; changing the

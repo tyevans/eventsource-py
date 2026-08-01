@@ -395,8 +395,9 @@ Three things are already decided by those five lines.
 
 `aggregate_type = "BankAccount"` is the class attribute that must match the
 `aggregate_type` on your events and the string you pass to the repository in Step 4.
-The base class defaults it to `"Unknown"`; forgetting to override it is a quiet way to
-end up with events nobody can find.
+The base class requires it — a subclass that doesn't set it raises
+`AggregateTypeNotSetError` at construction, rather than quietly ending up with
+events nobody can find.
 
 `_get_initial_state()` is one of the two abstract methods `AggregateRoot` requires. It
 returns the empty account — nameless, zero balance, `is_open=False` — built from

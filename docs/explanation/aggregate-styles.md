@@ -143,9 +143,10 @@ a Pydantic model, because serialization and snapshot restore go through
 `model_dump`/`model_validate`. Both conventionally treat state as immutable and rebuild
 it with `model_copy(update={...})` inside handlers rather than mutating in place.
 
-**`aggregate_type`.** A class attribute defaulting to `"Unknown"` on `AggregateRoot`.
-Both styles should override it; both use it as the stream's type discriminator and as
-the value `create_event` stamps onto every event.
+**`aggregate_type`.** A required class attribute on `AggregateRoot` -- constructing a
+subclass that doesn't set it raises `AggregateTypeNotSetError`. Both styles must
+declare it; both use it as the stream's type discriminator and as the value
+`create_event` stamps onto every event.
 
 The practical consequence is that anything written against `AggregateRoot` -- the
 repository, the snapshot manager, the testing harness in `eventsource.testing` -- accepts

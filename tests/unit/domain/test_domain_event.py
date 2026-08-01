@@ -881,3 +881,14 @@ class TestAggregateTypePattern:
             aggregate_type: str = "Order_v2"
 
         assert GoodEvent(aggregate_id=uuid4()).aggregate_type == "Order_v2"
+
+    def test_invalid_class_level_default_raises(self) -> None:
+        """A class-level default (not passed as a kwarg) must still be
+        validated -- this is the case validate_default=True previously
+        covered; the after-validator must cover it without that config."""
+
+        class BadDefaultEvent(DomainEvent):
+            aggregate_type: str = "Bad:Name"
+
+        with pytest.raises(ValidationError):
+            BadDefaultEvent(aggregate_id=uuid4())

@@ -1189,7 +1189,7 @@ Two methods are abstract: `_apply(event) -> None`, which updates state for an ev
 
 | Attribute | Default | Meaning |
 | --- | --- | --- |
-| `aggregate_type` | `"Unknown"` | Type name written onto events and used by the repository. Subclasses are expected to override it |
+| `aggregate_type` | *required, no default* | Type name written onto events and used by the repository. Subclasses must declare it; construction raises `AggregateTypeNotSetError` otherwise |
 | `schema_version` | `1` | Schema version of `TState`. Increment when the model changes incompatibly; snapshots whose `schema_version` differs are discarded |
 | `validate_versions` | `True` | Whether a new event with an unexpected `aggregate_version` raises `EventVersionError` or only logs a warning |
 
@@ -1313,9 +1313,9 @@ one `UUID`), then optional `aggregate_type`, `event_publisher`, `snapshot_store`
 `snapshot_threshold`, `snapshot_mode`, `tracer`, and `enable_tracing`.
 
 `aggregate_type` is inferred from `aggregate_factory.aggregate_type` when omitted; an
-explicit argument wins. Inference deliberately rejects `""` and the base default
-`"Unknown"` and raises `ValueError` with instructions, so a subclass that forgot to set
-`aggregate_type` fails at construction rather than writing events under a useless type.
+explicit argument wins. Inference deliberately rejects `""` and raises `ValueError`
+with instructions; a subclass that never declares `aggregate_type` at all fails even
+earlier, at aggregate construction, with `AggregateTypeNotSetError`.
 
 **Methods.**
 

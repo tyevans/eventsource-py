@@ -47,12 +47,12 @@ from eventsource import (
 ```
 
 One caveat worth knowing before you start editing classes: `AggregateRoot`
-defines `aggregate_type: str = "Unknown"` as its default. Inheriting that default
-does **not** satisfy inference — the repository treats `"Unknown"` (and the empty
-string) as "not configured" and raises. That behavior is the subject of
-[Rejected values](#rejected-values-unknown-the-aggregateroot-default-and) below,
-and it is the most common reason a repository that looks correctly wired fails at
-construction time.
+declares `aggregate_type: ClassVar[str]` with **no default**. A subclass that
+never assigns it fails at aggregate construction with `AggregateTypeNotSetError`,
+before a repository ever enters the picture; a subclass that assigns an empty
+string gets past that check but the repository still treats it as "not
+configured" and raises. Either way, this is the most common reason a repository
+that looks correctly wired fails at construction time.
 
 ## Step 1: Declare `aggregate_type` on your aggregate class
 
@@ -75,10 +75,10 @@ class OrderAggregate(DeclarativeAggregate[OrderState]):
         )
 ```
 
-That is the whole step. `aggregate_type` is a plain class attribute declared on
-`AggregateRoot` as `aggregate_type: str = "Unknown"`, so you are overriding a
-default rather than introducing a new field — no decorator, no registration call,
-no metaclass hook is involved.
+That is the whole step. `aggregate_type` is declared on `AggregateRoot` as
+`aggregate_type: ClassVar[str]` with no default, so you are satisfying a
+required attribute rather than overriding one — no decorator, no registration
+call, no metaclass hook is involved.
 
 Pick the value deliberately. It is not a display name: the aggregate stamps it
 onto every event it creates (`AggregateRoot.create_event` passes
@@ -91,14 +91,12 @@ name.
 
 Two things to check while you are in the class:
 
-- **Do not leave the default.** A class that never assigns `aggregate_type`
-  inherits `"Unknown"`, which inference rejects. The failure surfaces later, at
-  repository construction, not here.
-- **Do not annotate it as `ClassVar`.** The surrounding attributes in
-  `DeclarativeAggregate` (`requires_creation_event`, `unregistered_event_handling`)
-  are `ClassVar`, but `aggregate_type` is declared as a normal `str` attribute on
-  `AggregateRoot`; a bare assignment matches the base declaration and keeps mypy
-  quiet.
+- **Do not skip assigning it.** A class that never assigns `aggregate_type`
+  raises `AggregateTypeNotSetError` the moment you construct it — well before
+  a repository enters the picture.
+- **A bare assignment is enough.** `aggregate_type = "Order"` on the subclass
+  satisfies the `ClassVar[str]` declaration on `AggregateRoot`; you don't need
+  to repeat the `ClassVar` annotation yourself.
 
 You can confirm the attribute is visible to the inference rule without
 constructing anything:
