@@ -16,13 +16,13 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.domain import StreamId
-from eventsource.ports.positions import ExpectedVersion, Position
-from eventsource.subscriptions import (
+from eventsource.application.subscriptions import (
     SubscriptionConfig,
     SubscriptionManager,
     SubscriptionState,
 )
+from eventsource.domain import StreamId
+from eventsource.ports.positions import ExpectedVersion, Position
 
 from .conftest import (
     CollectingProjection,

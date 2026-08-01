@@ -3,7 +3,7 @@ Identity and conformance tests for the subscriptions ring migration, slice 1
 (ADR 0031).
 
 Slice 1 extracts the pure boundary interfaces out of
-``eventsource.subscriptions`` into ``eventsource.ports`` /
+``eventsource.application.subscriptions`` into ``eventsource.ports`` /
 ``eventsource.adapters.memory`` while the ``subscriptions`` package itself
 stays in place (moved to ``eventsource.application.subscriptions`` in slice
 2). These tests pin down that the extracted names are genuinely the same
@@ -34,32 +34,32 @@ from eventsource.ports.subscribers import (
 
 
 class TestSubscriberProtocolIdentity:
-    """eventsource.subscriptions.subscriber re-exports the ports Protocols verbatim."""
+    """eventsource.application.subscriptions.subscriber re-exports the ports Protocols verbatim."""
 
     def test_subscriber_is_the_same_object(self) -> None:
-        from eventsource.subscriptions.subscriber import Subscriber as ReExported
+        from eventsource.application.subscriptions.subscriber import Subscriber as ReExported
 
         assert ReExported is Subscriber
 
     def test_sync_subscriber_is_the_same_object(self) -> None:
-        from eventsource.subscriptions.subscriber import SyncSubscriber as ReExported
+        from eventsource.application.subscriptions.subscriber import SyncSubscriber as ReExported
 
         assert ReExported is SyncSubscriber
 
     def test_batch_subscriber_is_the_same_object(self) -> None:
-        from eventsource.subscriptions.subscriber import BatchSubscriber as ReExported
+        from eventsource.application.subscriptions.subscriber import BatchSubscriber as ReExported
 
         assert ReExported is BatchSubscriber
 
     def test_supports_batch_handling_is_the_same_function(self) -> None:
-        from eventsource.subscriptions.subscriber import (
+        from eventsource.application.subscriptions.subscriber import (
             supports_batch_handling as reexported,
         )
 
         assert reexported is supports_batch_handling
 
     def test_get_subscribed_event_types_is_the_same_function(self) -> None:
-        from eventsource.subscriptions.subscriber import (
+        from eventsource.application.subscriptions.subscriber import (
             get_subscribed_event_types as reexported,
         )
 
@@ -79,12 +79,12 @@ class TestLeaderElectorIdentity:
     """LeaderElector / LeaderElectorWithLease / LeaderChangeCallback are a single object each."""
 
     def test_leader_elector_is_the_same_object(self) -> None:
-        from eventsource.subscriptions.coordination import LeaderElector as ReExported
+        from eventsource.application.subscriptions.coordination import LeaderElector as ReExported
 
         assert ReExported is LeaderElector
 
     def test_leader_change_callback_is_the_same_object(self) -> None:
-        from eventsource.subscriptions.coordination import (
+        from eventsource.application.subscriptions.coordination import (
             LeaderChangeCallback as ReExported,
         )
 
@@ -94,7 +94,7 @@ class TestLeaderElectorIdentity:
         self,
     ) -> None:
         """LeaderElectorWithLease's canonical home is ports.coordination only."""
-        import eventsource.subscriptions.coordination as coordination_module
+        import eventsource.application.subscriptions.coordination as coordination_module
 
         assert not hasattr(coordination_module, "LeaderElectorWithLease")
 
@@ -106,7 +106,7 @@ class TestLeaderElectorIdentity:
         assert ports.LeaderChangeCallback is LeaderChangeCallback
 
     def test_leader_elector_with_lease_reexported_from_subscriptions_package(self) -> None:
-        from eventsource.subscriptions import LeaderElectorWithLease as ReExported
+        from eventsource.application.subscriptions import LeaderElectorWithLease as ReExported
 
         assert ReExported is LeaderElectorWithLease
 
@@ -121,7 +121,7 @@ class TestInMemoryLeaderElectorRelocated:
         assert memory.SharedLeaderState is SharedLeaderState
 
     def test_not_reexported_from_subscriptions_package(self) -> None:
-        import eventsource.subscriptions as subscriptions_module
+        import eventsource.application.subscriptions as subscriptions_module
 
         assert not hasattr(subscriptions_module, "InMemoryLeaderElector")
         assert not hasattr(subscriptions_module, "SharedLeaderState")

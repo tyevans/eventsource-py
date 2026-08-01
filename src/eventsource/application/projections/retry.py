@@ -18,7 +18,7 @@ Example:
     >>> policy = ExponentialBackoffRetryPolicy()
     >>>
     >>> # Or customize
-    >>> from eventsource.subscriptions.retry import RetryConfig
+    >>> from eventsource.application.subscriptions.retry import RetryConfig
     >>> policy = ExponentialBackoffRetryPolicy(
     ...     config=RetryConfig(max_retries=5, initial_delay=1.0)
     ... )
@@ -27,7 +27,7 @@ Example:
 import logging
 from typing import Protocol, runtime_checkable
 
-from eventsource.subscriptions.retry import RetryConfig, calculate_backoff
+from eventsource.application.subscriptions.retry import RetryConfig, calculate_backoff
 
 logger = logging.getLogger(__name__)
 
@@ -218,7 +218,7 @@ class FilteredRetryPolicy:
     allowed exception types.
 
     Example:
-        >>> from eventsource.subscriptions.retry import TRANSIENT_EXCEPTIONS
+        >>> from eventsource.application.subscriptions.retry import TRANSIENT_EXCEPTIONS
         >>>
         >>> # Only retry transient failures
         >>> policy = FilteredRetryPolicy(

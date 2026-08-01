@@ -21,25 +21,25 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.domain import StreamId
-from eventsource.events.base import DomainEvent
-from eventsource.events.registry import register_event
-from eventsource.ports.positions import ExpectedVersion
-from eventsource.subscriptions import (
+from eventsource.application.subscriptions import (
     PauseReason,
     SubscriptionConfig,
     SubscriptionManager,
     SubscriptionState,
 )
-from eventsource.subscriptions.filtering import EventFilter
-from eventsource.subscriptions.health import (
+from eventsource.application.subscriptions.filtering import EventFilter
+from eventsource.application.subscriptions.health import (
     ManagerHealth,
 )
-from eventsource.subscriptions.metrics import (
+from eventsource.application.subscriptions.metrics import (
     OTEL_METRICS_AVAILABLE,
     SubscriptionMetrics,
     clear_metrics_registry,
 )
+from eventsource.domain import StreamId
+from eventsource.events.base import DomainEvent
+from eventsource.events.registry import register_event
+from eventsource.ports.positions import ExpectedVersion
 
 from .conftest import (
     CollectingProjection,

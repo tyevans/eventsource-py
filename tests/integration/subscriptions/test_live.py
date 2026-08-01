@@ -13,9 +13,9 @@ from uuid import uuid4
 
 import pytest
 
+from eventsource.application.subscriptions import SubscriptionConfig
 from eventsource.domain import StreamId
 from eventsource.ports.positions import ExpectedVersion
-from eventsource.subscriptions import SubscriptionConfig
 
 from .conftest import (
     CollectingProjection,
@@ -326,7 +326,7 @@ class TestLiveSubscriptionRecovery:
         in_memory_checkpoint_repo,
     ):
         """Test live subscription resumes correctly after manager restart."""
-        from eventsource.subscriptions import SubscriptionManager
+        from eventsource.application.subscriptions import SubscriptionManager
 
         # First: Populate store with initial events (not live)
         for i in range(20):

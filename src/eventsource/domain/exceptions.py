@@ -460,7 +460,7 @@ class LockNotHeldError(EventSourceError):
 # Subscription exceptions
 # =============================================================================
 #
-# Merged from the former eventsource.subscriptions.exceptions module (ADR
+# Merged from the former eventsource.application.subscriptions.exceptions module (ADR
 # 0031). SubscriptionError is rebased onto EventSourceError -- a widening
 # change: the sole `except SubscriptionError` call site in the repo still
 # catches it, and no ErrorClassifier keys on EventSourceError.
