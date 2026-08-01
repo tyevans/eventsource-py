@@ -26,8 +26,8 @@ import threading
 from typing import TYPE_CHECKING
 
 from eventsource.adapters.memory import InMemoryCheckpointRepository, InMemoryDLQRepository
+from eventsource.adapters.memory.bus import InMemoryEventBus
 from eventsource.adapters.memory.store import InMemoryEventStore
-from eventsource.bus.memory import InMemoryEventBus
 from eventsource.events.base import DomainEvent
 
 if TYPE_CHECKING:

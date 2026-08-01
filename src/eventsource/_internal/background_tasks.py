@@ -8,7 +8,7 @@ fire-and-forget ``asyncio.Task`` objects:
 - ``eventsource.application.aggregates.snapshotting.BackgroundScheduler`` uses
   it to track in-flight background snapshot creation and to support
   ``await_pending()`` in tests.
-- ``eventsource.bus.base.BaseEventBus`` uses it to track in-flight publish
+- ``eventsource.adapters._bus.base.BaseEventBus`` uses it to track in-flight publish
   work and to support draining on shutdown.
 
 Both call sites previously hand-rolled nearly identical task tracking; this

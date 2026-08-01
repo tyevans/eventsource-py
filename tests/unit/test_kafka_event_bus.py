@@ -16,7 +16,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from eventsource.bus.kafka import (
+from eventsource.adapters.kafka import (
     KAFKA_AVAILABLE,
     KafkaEventBus,
     KafkaEventBusConfig,
@@ -155,7 +155,7 @@ def test_handlers_resolve_when_event_type_field_differs_from_class_name() -> Non
 
 
 def test_retry_delay_comes_from_the_shared_policy() -> None:
-    from eventsource.bus.retry import RetryPolicy
+    from eventsource.adapters._bus.retry import RetryPolicy
 
     config = KafkaEventBusConfig(
         bootstrap_servers="localhost:9092",
@@ -849,8 +849,8 @@ class TestKafkaEventBus:
         bus = KafkaEventBus(event_registry=event_registry)
 
         with (
-            patch("eventsource.bus.kafka.connection.AIOKafkaProducer") as mock_producer_class,
-            patch("eventsource.bus.kafka.connection.AIOKafkaConsumer") as mock_consumer_class,
+            patch("eventsource.adapters.kafka.connection.AIOKafkaProducer") as mock_producer_class,
+            patch("eventsource.adapters.kafka.connection.AIOKafkaConsumer") as mock_consumer_class,
         ):
             mock_producer = AsyncMock()
             mock_consumer = AsyncMock()
@@ -872,8 +872,8 @@ class TestKafkaEventBus:
     async def test_context_manager(self, event_registry: EventRegistry) -> None:
         """Test async context manager usage."""
         with (
-            patch("eventsource.bus.kafka.connection.AIOKafkaProducer") as mock_producer_class,
-            patch("eventsource.bus.kafka.connection.AIOKafkaConsumer") as mock_consumer_class,
+            patch("eventsource.adapters.kafka.connection.AIOKafkaProducer") as mock_producer_class,
+            patch("eventsource.adapters.kafka.connection.AIOKafkaConsumer") as mock_consumer_class,
         ):
             mock_producer = AsyncMock()
             mock_consumer = AsyncMock()
@@ -1065,7 +1065,7 @@ class TestKafkaEventBusMetricsInfrastructure:
     @pytest.fixture(autouse=True)
     def reset_meter(self) -> None:
         """Reset cached meter before each test."""
-        import eventsource.bus.kafka.bus as kafka_module
+        import eventsource.adapters.kafka.bus as kafka_module
 
         kafka_module._meter = None
         yield
@@ -1074,7 +1074,7 @@ class TestKafkaEventBusMetricsInfrastructure:
     @skip_if_no_otel_metrics
     def test_get_meter_returns_meter(self) -> None:
         """Test _get_meter returns a meter instance."""
-        from eventsource.bus.kafka.bus import _get_meter
+        from eventsource.adapters.kafka.bus import _get_meter
 
         meter = _get_meter()
         assert meter is not None
@@ -1082,7 +1082,7 @@ class TestKafkaEventBusMetricsInfrastructure:
     @skip_if_no_otel_metrics
     def test_get_meter_cached(self) -> None:
         """Test _get_meter returns cached meter on subsequent calls."""
-        from eventsource.bus.kafka.bus import _get_meter
+        from eventsource.adapters.kafka.bus import _get_meter
 
         meter1 = _get_meter()
         meter2 = _get_meter()
@@ -1090,12 +1090,12 @@ class TestKafkaEventBusMetricsInfrastructure:
 
     def test_get_meter_none_when_otel_unavailable(self) -> None:
         """Test _get_meter returns None when OpenTelemetry not installed."""
-        import eventsource.bus.kafka.bus as kafka_module
+        import eventsource.adapters.kafka.bus as kafka_module
 
         kafka_module._meter = None
 
         with patch.object(kafka_module, "OTEL_AVAILABLE", False):
-            from eventsource.bus.kafka.bus import _get_meter
+            from eventsource.adapters.kafka.bus import _get_meter
 
             meter = _get_meter()
             assert meter is None
@@ -1103,7 +1103,7 @@ class TestKafkaEventBusMetricsInfrastructure:
     @skip_if_no_otel_metrics
     def test_metrics_class_creates_all_counters(self) -> None:
         """Test KafkaEventBusMetrics creates all counter instruments."""
-        from eventsource.bus.kafka.bus import KafkaEventBusMetrics, _get_meter
+        from eventsource.adapters.kafka.bus import KafkaEventBusMetrics, _get_meter
 
         meter = _get_meter()
         metrics = KafkaEventBusMetrics(meter)
@@ -1122,7 +1122,7 @@ class TestKafkaEventBusMetricsInfrastructure:
     @skip_if_no_otel_metrics
     def test_metrics_class_creates_all_histograms(self) -> None:
         """Test KafkaEventBusMetrics creates all histogram instruments."""
-        from eventsource.bus.kafka.bus import KafkaEventBusMetrics, _get_meter
+        from eventsource.adapters.kafka.bus import KafkaEventBusMetrics, _get_meter
 
         meter = _get_meter()
         metrics = KafkaEventBusMetrics(meter)
@@ -1141,7 +1141,7 @@ class TestKafkaEventBusMetricsConfig:
     @pytest.fixture(autouse=True)
     def reset_meter(self) -> None:
         """Reset cached meter before each test."""
-        import eventsource.bus.kafka.bus as kafka_module
+        import eventsource.adapters.kafka.bus as kafka_module
 
         kafka_module._meter = None
         yield
@@ -1167,7 +1167,7 @@ class TestKafkaEventBusMetricsConfig:
 
     def test_metrics_none_when_otel_unavailable(self) -> None:
         """Test metrics is None when OpenTelemetry not installed."""
-        import eventsource.bus.kafka.bus as kafka_module
+        import eventsource.adapters.kafka.bus as kafka_module
 
         with (
             patch.object(kafka_module, "OTEL_AVAILABLE", False),
@@ -1193,7 +1193,7 @@ class TestKafkaEventBusCounterMetrics:
     @pytest.fixture(autouse=True)
     def setup_metrics(self) -> Any:
         """Set up metrics for each test."""
-        import eventsource.bus.kafka.bus as kafka_module
+        import eventsource.adapters.kafka.bus as kafka_module
 
         kafka_module._meter = None
 
@@ -1214,7 +1214,7 @@ class TestKafkaEventBusCounterMetrics:
 
     def _create_bus_with_test_metrics(self) -> "KafkaEventBus":
         """Create a bus and set up metrics with our test provider."""
-        from eventsource.bus.kafka import KafkaEventBusMetrics
+        from eventsource.adapters.kafka import KafkaEventBusMetrics
 
         with patch.object(KafkaEventBusConfig, "_validate_security_config"):
             bus = KafkaEventBus()
@@ -1325,8 +1325,12 @@ class TestKafkaEventBusCounterMetrics:
         bus = self._create_bus_with_test_metrics()
 
         with (
-            patch("eventsource.bus.kafka.connection.AIOKafkaProducer", return_value=mock_producer),
-            patch("eventsource.bus.kafka.connection.AIOKafkaConsumer", return_value=AsyncMock()),
+            patch(
+                "eventsource.adapters.kafka.connection.AIOKafkaProducer", return_value=mock_producer
+            ),
+            patch(
+                "eventsource.adapters.kafka.connection.AIOKafkaConsumer", return_value=AsyncMock()
+            ),
         ):
             with pytest.raises(Exception, match="Connection failed"):
                 await bus.connect()
@@ -1349,7 +1353,7 @@ class TestKafkaEventBusHistogramMetrics:
     @pytest.fixture(autouse=True)
     def setup_metrics(self) -> Any:
         """Set up metrics for each test."""
-        import eventsource.bus.kafka.bus as kafka_module
+        import eventsource.adapters.kafka.bus as kafka_module
 
         kafka_module._meter = None
 
@@ -1370,7 +1374,7 @@ class TestKafkaEventBusHistogramMetrics:
 
     def _create_bus_with_test_metrics(self) -> "KafkaEventBus":
         """Create a bus and set up metrics with our test provider."""
-        from eventsource.bus.kafka import KafkaEventBusMetrics
+        from eventsource.adapters.kafka import KafkaEventBusMetrics
 
         with patch.object(KafkaEventBusConfig, "_validate_security_config"):
             bus = KafkaEventBus()
@@ -1425,7 +1429,7 @@ class TestKafkaEventBusGaugeMetrics:
     @pytest.fixture(autouse=True)
     def setup_metrics(self) -> Any:
         """Set up metrics for each test."""
-        import eventsource.bus.kafka.bus as kafka_module
+        import eventsource.adapters.kafka.bus as kafka_module
 
         kafka_module._meter = None
 
@@ -1446,7 +1450,7 @@ class TestKafkaEventBusGaugeMetrics:
 
     def _create_bus_with_test_metrics(self) -> "KafkaEventBus":
         """Create a bus and set up metrics with our test provider."""
-        from eventsource.bus.kafka import KafkaEventBusMetrics
+        from eventsource.adapters.kafka import KafkaEventBusMetrics
 
         with patch.object(KafkaEventBusConfig, "_validate_security_config"):
             bus = KafkaEventBus()
@@ -1466,8 +1470,12 @@ class TestKafkaEventBusGaugeMetrics:
         bus = self._create_bus_with_test_metrics()
 
         with (
-            patch("eventsource.bus.kafka.connection.AIOKafkaProducer", return_value=mock_producer),
-            patch("eventsource.bus.kafka.connection.AIOKafkaConsumer", return_value=mock_consumer),
+            patch(
+                "eventsource.adapters.kafka.connection.AIOKafkaProducer", return_value=mock_producer
+            ),
+            patch(
+                "eventsource.adapters.kafka.connection.AIOKafkaConsumer", return_value=mock_consumer
+            ),
         ):
             await bus.connect()
 
@@ -1485,8 +1493,12 @@ class TestKafkaEventBusGaugeMetrics:
         bus = self._create_bus_with_test_metrics()
 
         with (
-            patch("eventsource.bus.kafka.connection.AIOKafkaProducer", return_value=mock_producer),
-            patch("eventsource.bus.kafka.connection.AIOKafkaConsumer", return_value=mock_consumer),
+            patch(
+                "eventsource.adapters.kafka.connection.AIOKafkaProducer", return_value=mock_producer
+            ),
+            patch(
+                "eventsource.adapters.kafka.connection.AIOKafkaConsumer", return_value=mock_consumer
+            ),
         ):
             await bus.connect()
 
@@ -1507,8 +1519,12 @@ class TestKafkaEventBusGaugeMetrics:
         bus = self._create_bus_with_test_metrics()
 
         with (
-            patch("eventsource.bus.kafka.connection.AIOKafkaProducer", return_value=mock_producer),
-            patch("eventsource.bus.kafka.connection.AIOKafkaConsumer", return_value=mock_consumer),
+            patch(
+                "eventsource.adapters.kafka.connection.AIOKafkaProducer", return_value=mock_producer
+            ),
+            patch(
+                "eventsource.adapters.kafka.connection.AIOKafkaConsumer", return_value=mock_consumer
+            ),
         ):
             await bus.connect()
             await bus.disconnect()
@@ -1529,8 +1545,12 @@ class TestKafkaEventBusGaugeMetrics:
         bus = self._create_bus_with_test_metrics()
 
         with (
-            patch("eventsource.bus.kafka.connection.AIOKafkaProducer", return_value=mock_producer),
-            patch("eventsource.bus.kafka.connection.AIOKafkaConsumer", return_value=mock_consumer),
+            patch(
+                "eventsource.adapters.kafka.connection.AIOKafkaProducer", return_value=mock_producer
+            ),
+            patch(
+                "eventsource.adapters.kafka.connection.AIOKafkaConsumer", return_value=mock_consumer
+            ),
         ):
             await bus.connect()
 
@@ -1552,8 +1572,12 @@ class TestKafkaEventBusGaugeMetrics:
         bus = self._create_bus_with_test_metrics()
 
         with (
-            patch("eventsource.bus.kafka.connection.AIOKafkaProducer", return_value=mock_producer),
-            patch("eventsource.bus.kafka.connection.AIOKafkaConsumer", return_value=mock_consumer),
+            patch(
+                "eventsource.adapters.kafka.connection.AIOKafkaProducer", return_value=mock_producer
+            ),
+            patch(
+                "eventsource.adapters.kafka.connection.AIOKafkaConsumer", return_value=mock_consumer
+            ),
         ):
             await bus.connect()
 
@@ -1579,7 +1603,7 @@ class TestKafkaEventBusMetricsEdgeCases:
     @pytest.fixture(autouse=True)
     def reset_meter(self) -> None:
         """Reset cached meter before each test."""
-        import eventsource.bus.kafka.bus as kafka_module
+        import eventsource.adapters.kafka.bus as kafka_module
 
         kafka_module._meter = None
         yield
@@ -1616,7 +1640,7 @@ class TestKafkaEventBusMetricsEdgeCases:
     @pytest.mark.asyncio
     async def test_no_error_when_otel_unavailable(self) -> None:
         """Test no errors occur when OpenTelemetry not installed."""
-        import eventsource.bus.kafka.bus as kafka_module
+        import eventsource.adapters.kafka.bus as kafka_module
 
         with (
             patch.object(kafka_module, "OTEL_AVAILABLE", False),
@@ -1637,8 +1661,8 @@ class TestKafkaEventBusMetricsEdgeCases:
     @pytest.mark.asyncio
     async def test_handler_metrics_on_error_still_records_duration(self) -> None:
         """Test handler duration is recorded even when handler raises."""
-        import eventsource.bus.kafka.bus as kafka_module
-        from eventsource.bus.kafka import KafkaEventBusMetrics
+        import eventsource.adapters.kafka.bus as kafka_module
+        from eventsource.adapters.kafka import KafkaEventBusMetrics
 
         kafka_module._meter = None
 
@@ -1687,8 +1711,8 @@ class TestKafkaEventBusMetricsEdgeCases:
     @pytest.mark.asyncio
     async def test_multiple_handlers_increment_counter_correctly(self) -> None:
         """Test that multiple handlers each increment the counter."""
-        import eventsource.bus.kafka.bus as kafka_module
-        from eventsource.bus.kafka import KafkaEventBusMetrics
+        import eventsource.adapters.kafka.bus as kafka_module
+        from eventsource.adapters.kafka import KafkaEventBusMetrics
 
         kafka_module._meter = None
 
@@ -1735,8 +1759,8 @@ class TestKafkaEventBusMetricsEdgeCases:
     @pytest.mark.asyncio
     async def test_publish_error_counter(self) -> None:
         """Test publish error increments publish_errors counter."""
-        import eventsource.bus.kafka.bus as kafka_module
-        from eventsource.bus.kafka import KafkaEventBusMetrics
+        import eventsource.adapters.kafka.bus as kafka_module
+        from eventsource.adapters.kafka import KafkaEventBusMetrics
 
         kafka_module._meter = None
 
@@ -1759,10 +1783,12 @@ class TestKafkaEventBusMetricsEdgeCases:
 
             with (
                 patch(
-                    "eventsource.bus.kafka.connection.AIOKafkaProducer", return_value=mock_producer
+                    "eventsource.adapters.kafka.connection.AIOKafkaProducer",
+                    return_value=mock_producer,
                 ),
                 patch(
-                    "eventsource.bus.kafka.connection.AIOKafkaConsumer", return_value=AsyncMock()
+                    "eventsource.adapters.kafka.connection.AIOKafkaConsumer",
+                    return_value=AsyncMock(),
                 ),
             ):
                 await bus.connect()

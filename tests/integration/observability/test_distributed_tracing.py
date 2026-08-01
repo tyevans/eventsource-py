@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 
 # Check for Kafka availability
 try:
-    from eventsource.bus.kafka import KAFKA_AVAILABLE
+    from eventsource.adapters.kafka import KAFKA_AVAILABLE
 except ImportError:
     KAFKA_AVAILABLE = False
 
@@ -124,7 +124,7 @@ class TestRabbitMQDistributedTracing:
         4. All spans share the same trace ID
         """
         from eventsource import EventRegistry
-        from eventsource.bus.rabbitmq import RabbitMQEventBus, RabbitMQEventBusConfig
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus, RabbitMQEventBusConfig
 
         registry = EventRegistry()
         registry.register(TracingTestEvent)
@@ -216,7 +216,7 @@ class TestRabbitMQDistributedTracing:
     ):
         """RabbitMQ bus works correctly when tracing is disabled."""
         from eventsource import EventRegistry
-        from eventsource.bus.rabbitmq import RabbitMQEventBus, RabbitMQEventBusConfig
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus, RabbitMQEventBusConfig
 
         registry = EventRegistry()
         registry.register(TracingTestEvent)
@@ -332,7 +332,7 @@ class TestKafkaDistributedTracing:
         4. All spans share the same trace ID
         """
         from eventsource import EventRegistry
-        from eventsource.bus.kafka import KafkaEventBus, KafkaEventBusConfig
+        from eventsource.adapters.kafka import KafkaEventBus, KafkaEventBusConfig
 
         registry = EventRegistry()
         registry.register(TracingTestEvent)
@@ -417,7 +417,7 @@ class TestKafkaDistributedTracing:
     ):
         """Kafka bus works correctly when tracing is disabled."""
         from eventsource import EventRegistry
-        from eventsource.bus.kafka import KafkaEventBus, KafkaEventBusConfig
+        from eventsource.adapters.kafka import KafkaEventBus, KafkaEventBusConfig
 
         registry = EventRegistry()
         registry.register(TracingTestEvent)
@@ -596,7 +596,7 @@ class TestRedisDistributedTracing:
         if not REDIS_AVAILABLE:
             pytest.skip("Redis not available")
 
-        from eventsource.bus.redis import RedisEventBus, RedisEventBusConfig
+        from eventsource.adapters.redis.bus import RedisEventBus, RedisEventBusConfig
 
         registry = EventRegistry()
         registry.register(TracingTestEvent)

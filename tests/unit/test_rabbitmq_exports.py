@@ -2,8 +2,10 @@
 
 Tests that RabbitMQ event bus classes are properly exported from:
 - eventsource (main package)
-- eventsource.bus (bus subpackage)
-- eventsource.bus.rabbitmq (direct module)
+- eventsource.adapters.rabbitmq (direct module)
+
+``eventsource.bus`` no longer re-exports RabbitMQ symbols -- the backend
+lives under ``eventsource.adapters.rabbitmq`` (ADR-0031).
 
 These tests verify that imports work correctly regardless of whether
 aio-pika is installed or not.
@@ -73,104 +75,56 @@ class TestRabbitMQExportsFromEventsource:
         assert "RABBITMQ_AVAILABLE" in eventsource.__all__
 
 
-class TestRabbitMQExportsFromBus:
-    """Tests for RabbitMQ exports from eventsource.bus subpackage."""
+class TestRabbitMQNotExportedFromBusFacade:
+    """The eventsource.bus package is deleted outright (ADR-0031)."""
 
-    def test_rabbitmq_event_bus_exported(self) -> None:
-        """Test RabbitMQEventBus is exported from eventsource.bus."""
-        from eventsource.bus import RabbitMQEventBus
+    def test_bus_package_removed(self) -> None:
+        """Test the eventsource.bus package no longer exists at all."""
+        import importlib
 
-        assert RabbitMQEventBus is not None
+        import pytest
 
-    def test_rabbitmq_event_bus_config_exported(self) -> None:
-        """Test RabbitMQEventBusConfig is exported from eventsource.bus."""
-        from eventsource.bus import RabbitMQEventBusConfig
-
-        assert RabbitMQEventBusConfig is not None
-
-    def test_rabbitmq_event_bus_stats_exported(self) -> None:
-        """Test RabbitMQEventBusStats is exported from eventsource.bus."""
-        from eventsource.bus import RabbitMQEventBusStats
-
-        assert RabbitMQEventBusStats is not None
-
-    def test_rabbitmq_not_available_error_exported(self) -> None:
-        """Test RabbitMQNotAvailableError is exported from eventsource.bus."""
-        from eventsource.bus import RabbitMQNotAvailableError
-
-        assert RabbitMQNotAvailableError is not None
-        assert issubclass(RabbitMQNotAvailableError, ImportError)
-
-    def test_rabbitmq_available_constant_exported(self) -> None:
-        """Test RABBITMQ_AVAILABLE constant is exported from eventsource.bus."""
-        from eventsource.bus import RABBITMQ_AVAILABLE
-
-        assert isinstance(RABBITMQ_AVAILABLE, bool)
-
-    def test_all_rabbitmq_exports_from_bus(self) -> None:
-        """Test all RabbitMQ classes can be imported from bus."""
-        from eventsource.bus import (
-            RABBITMQ_AVAILABLE,
-            RabbitMQEventBus,
-            RabbitMQEventBusConfig,
-            RabbitMQEventBusStats,
-            RabbitMQNotAvailableError,
-        )
-
-        assert RabbitMQEventBus is not None
-        assert RabbitMQEventBusConfig is not None
-        assert RabbitMQEventBusStats is not None
-        assert RabbitMQNotAvailableError is not None
-        assert isinstance(RABBITMQ_AVAILABLE, bool)
-
-    def test_rabbitmq_exports_in_bus_all(self) -> None:
-        """Test RabbitMQ exports are in eventsource.bus.__all__."""
-        from eventsource import bus
-
-        assert "RabbitMQEventBus" in bus.__all__
-        assert "RabbitMQEventBusConfig" in bus.__all__
-        assert "RabbitMQEventBusStats" in bus.__all__
-        assert "RabbitMQNotAvailableError" in bus.__all__
-        assert "RABBITMQ_AVAILABLE" in bus.__all__
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module("eventsource.bus")
 
 
 class TestRabbitMQExportsFromDirectModule:
-    """Tests for RabbitMQ exports from eventsource.bus.rabbitmq directly."""
+    """Tests for RabbitMQ exports from eventsource.adapters.rabbitmq directly."""
 
     def test_rabbitmq_event_bus_exported(self) -> None:
-        """Test RabbitMQEventBus is exported from eventsource.bus.rabbitmq."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        """Test RabbitMQEventBus is exported from eventsource.adapters.rabbitmq."""
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         assert RabbitMQEventBus is not None
 
     def test_rabbitmq_event_bus_config_exported(self) -> None:
-        """Test RabbitMQEventBusConfig is exported from eventsource.bus.rabbitmq."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBusConfig
+        """Test RabbitMQEventBusConfig is exported from eventsource.adapters.rabbitmq."""
+        from eventsource.adapters.rabbitmq import RabbitMQEventBusConfig
 
         assert RabbitMQEventBusConfig is not None
 
     def test_rabbitmq_event_bus_stats_exported(self) -> None:
-        """Test RabbitMQEventBusStats is exported from eventsource.bus.rabbitmq."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBusStats
+        """Test RabbitMQEventBusStats is exported from eventsource.adapters.rabbitmq."""
+        from eventsource.adapters.rabbitmq import RabbitMQEventBusStats
 
         assert RabbitMQEventBusStats is not None
 
     def test_rabbitmq_not_available_error_exported(self) -> None:
-        """Test RabbitMQNotAvailableError is exported from eventsource.bus.rabbitmq."""
-        from eventsource.bus.rabbitmq import RabbitMQNotAvailableError
+        """Test RabbitMQNotAvailableError is exported from eventsource.adapters.rabbitmq."""
+        from eventsource.adapters.rabbitmq import RabbitMQNotAvailableError
 
         assert RabbitMQNotAvailableError is not None
         assert issubclass(RabbitMQNotAvailableError, ImportError)
 
     def test_rabbitmq_available_constant_exported(self) -> None:
-        """Test RABBITMQ_AVAILABLE constant is exported from eventsource.bus.rabbitmq."""
-        from eventsource.bus.rabbitmq import RABBITMQ_AVAILABLE
+        """Test RABBITMQ_AVAILABLE constant is exported from eventsource.adapters.rabbitmq."""
+        from eventsource.adapters.rabbitmq import RABBITMQ_AVAILABLE
 
         assert isinstance(RABBITMQ_AVAILABLE, bool)
 
     def test_all_rabbitmq_exports_from_direct_module(self) -> None:
         """Test all RabbitMQ classes can be imported from rabbitmq module."""
-        from eventsource.bus.rabbitmq import (
+        from eventsource.adapters.rabbitmq import (
             RABBITMQ_AVAILABLE,
             RabbitMQEventBus,
             RabbitMQEventBusConfig,
@@ -185,8 +139,8 @@ class TestRabbitMQExportsFromDirectModule:
         assert isinstance(RABBITMQ_AVAILABLE, bool)
 
     def test_rabbitmq_exports_in_module_all(self) -> None:
-        """Test RabbitMQ exports are in eventsource.bus.rabbitmq.__all__."""
-        from eventsource.bus import rabbitmq
+        """Test RabbitMQ exports are in eventsource.adapters.rabbitmq.__all__."""
+        from eventsource.adapters import rabbitmq
 
         assert "RabbitMQEventBus" in rabbitmq.__all__
         assert "RabbitMQEventBusConfig" in rabbitmq.__all__
@@ -215,10 +169,9 @@ class TestRabbitMQAvailabilityConstant:
     def test_rabbitmq_available_consistent_across_imports(self) -> None:
         """Test RABBITMQ_AVAILABLE is consistent across different import paths."""
         from eventsource import RABBITMQ_AVAILABLE as AVAILABLE_FROM_MAIN
-        from eventsource.bus import RABBITMQ_AVAILABLE as AVAILABLE_FROM_BUS
-        from eventsource.bus.rabbitmq import RABBITMQ_AVAILABLE as AVAILABLE_FROM_MODULE
+        from eventsource.adapters.rabbitmq import RABBITMQ_AVAILABLE as AVAILABLE_FROM_MODULE
 
-        assert AVAILABLE_FROM_MAIN == AVAILABLE_FROM_BUS == AVAILABLE_FROM_MODULE
+        assert AVAILABLE_FROM_MAIN == AVAILABLE_FROM_MODULE
 
 
 class TestRabbitMQExportConsistencyWithRedis:

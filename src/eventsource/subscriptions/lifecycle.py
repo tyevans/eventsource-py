@@ -36,7 +36,7 @@ from eventsource.subscriptions.subscription import (
 from eventsource.subscriptions.transition import StartFromResolver, TransitionCoordinator
 
 if TYPE_CHECKING:
-    from eventsource.bus.interface import EventBus
+    from eventsource.ports.bus import EventBus
     from eventsource.ports.checkpoints import SubscriptionPositions
     from eventsource.ports.store import GlobalEventFeed
 

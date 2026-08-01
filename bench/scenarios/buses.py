@@ -13,8 +13,8 @@ from uuid import uuid4
 from bench.adapters.base import BenchAdapter, BusAdapter
 from bench.core.domain import BenchEvent, make_events
 from bench.core.runner import Measurement, Scenario
-from eventsource.bus.interface import EventBus
 from eventsource.events.base import DomainEvent
+from eventsource.ports.bus import EventBus
 
 
 @dataclass

@@ -7,6 +7,11 @@ and its use on the consume paths of `src/eventsource/bus/redis.py`,
 `rabbitmq.py`, and `kafka.py`. `src/eventsource/bus/memory.py` is unaffected:
 `InMemoryEventBus.publish()` continues to swallow-and-log per 0007 D3.
 
+**Amended by [ADR 0031](0031-bus-ring-split.md)** -- for module locations
+only: the four backends live under `eventsource.adapters.{memory,redis,
+rabbitmq,kafka}` now, not `eventsource.bus`. This ADR's error-isolation
+Decision is unchanged.
+
 This ADR **amends** [0007 - Event Bus Delivery Semantics and Tracing
 Contract](0007-event-bus-delivery-semantics.md), specifically D3 ("Handler
 errors are caught, logged, and swallowed") and the "For users writing

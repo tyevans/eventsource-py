@@ -7,6 +7,11 @@ Accepted (2026-07-29). Implemented by `src/eventsource/bus/base.py`
 and the four backends -- `memory.py`, `redis.py`, `rabbitmq.py`, `kafka.py` --
 which now all subclass `BaseEventBus` instead of `EventBus` directly.
 
+**Amended by [ADR 0031](0031-bus-ring-split.md)** -- for module locations
+only: `BaseEventBus` and `SubscriptionRegistry` live under
+`eventsource.adapters._bus` now, not `eventsource.bus`. This ADR's
+`background` semantics and contract Decision is unchanged.
+
 This ADR amends [0007 - Event Bus Delivery Semantics and Tracing
 Contract](0007-event-bus-delivery-semantics.md): D4 (thread-safety) is now
 enforced by shared machinery rather than per-adapter locks, and the

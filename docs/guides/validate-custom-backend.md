@@ -28,7 +28,7 @@ its own `InMemoryEventStore` adapter
 Use this guide when you have written -- or are about to write -- your own
 event store adapter (structurally conforming to one or more of the protocols
 in `eventsource.ports.store`) or your own `EventBus` (from
-`eventsource.bus.interface`) and you want confidence that it behaves the way
+`eventsource.ports.bus`) and you want confidence that it behaves the way
 aggregates, repositories, projections, and subscriptions already assume.
 Typical cases:
 
@@ -86,7 +86,7 @@ Before you start, you need:
 - **A backend implementation to test**: a class that structurally implements
   one or more of the protocols in `eventsource.ports.store`
   (`EventAppender`, `StreamReader`, `EventLookup`, `GlobalEventFeed`,
-  `CategoryQuery`), or an `EventBus` subclass from `eventsource.bus.interface`.
+  `CategoryQuery`), or an `EventBus` subclass from `eventsource.ports.bus`.
   It does not have to be finished -- running the suite against a partial
   implementation is a reasonable way to drive the work -- but it must be
   importable and constructible from your test module.

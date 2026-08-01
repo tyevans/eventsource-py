@@ -362,7 +362,8 @@ domain if you would rather learn it than apply it.
 
 The event store records what happened; the bus is what gets that record to
 projections, read models, integrations, and audit logs. All four
-implementations in `eventsource.bus` satisfy the same `EventBus` ABC -- the six
+implementations across `eventsource.adapters.{memory,redis,rabbitmq,kafka}`
+satisfy the same `eventsource.ports.bus.EventBus` ABC -- the six
 methods `publish()`, `subscribe()`, `unsubscribe()`, `subscribe_all()`,
 `subscribe_to_all_events()`, and `unsubscribe_from_all_events()` -- so your
 publishing and subscribing code is backend-independent. What changes when you

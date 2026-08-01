@@ -23,7 +23,7 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.bus.rabbitmq import (
+from eventsource.adapters.rabbitmq import (
     RABBITMQ_AVAILABLE,
     RabbitMQEventBus,
     RabbitMQEventBusConfig,
@@ -638,7 +638,7 @@ class TestRabbitMQEventBusInit:
 
     def test_init_with_default_config(self) -> None:
         """Test initialization with default configuration."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus()
 
@@ -650,7 +650,7 @@ class TestRabbitMQEventBusInit:
 
     def test_init_with_custom_config(self) -> None:
         """Test initialization with custom configuration."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         config = RabbitMQEventBusConfig(
             rabbitmq_url="amqp://test:test@localhost/",
@@ -665,7 +665,7 @@ class TestRabbitMQEventBusInit:
 
     def test_init_with_event_registry(self) -> None:
         """Test initialization with custom event registry."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         # Mock registry
         mock_registry = MagicMock()
@@ -676,8 +676,8 @@ class TestRabbitMQEventBusInit:
     def test_init_raises_error_when_aio_pika_not_available(self) -> None:
         """Test that initialization raises error when aio-pika not available."""
         # We need to patch at the module level before the class checks
-        import eventsource.bus.rabbitmq.bus as rabbitmq_module
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        import eventsource.adapters.rabbitmq.bus as rabbitmq_module
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         original_available = rabbitmq_module.RABBITMQ_AVAILABLE
 
@@ -693,7 +693,7 @@ class TestRabbitMQEventBusInit:
 
     def test_init_initializes_stats(self) -> None:
         """Test that initialization creates empty stats."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus()
 
@@ -704,7 +704,7 @@ class TestRabbitMQEventBusInit:
 
     def test_init_initializes_connection_state(self) -> None:
         """Test that initialization sets connection state to disconnected."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus()
 
@@ -726,13 +726,13 @@ class TestRabbitMQEventBusConnection:
             consumer_group="test-group",
         )
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_connect_creates_connection(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that connect creates a robust connection."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -751,13 +751,13 @@ class TestRabbitMQEventBusConnection:
         )
         assert bus.is_connected is True
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_connect_creates_channel(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that connect creates a channel."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -772,13 +772,13 @@ class TestRabbitMQEventBusConnection:
         mock_connection.channel.assert_called_once()
         assert bus._channel is mock_channel
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_connect_sets_prefetch(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that connect sets prefetch count on channel."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -792,13 +792,13 @@ class TestRabbitMQEventBusConnection:
 
         mock_channel.set_qos.assert_called_once_with(prefetch_count=config.prefetch_count)
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_connect_when_already_connected_logs_warning(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that calling connect when already connected logs warning."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -819,13 +819,13 @@ class TestRabbitMQEventBusConnection:
         # Should not call connect_robust again
         mock_aio_pika.connect_robust.assert_not_called()
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_connect_handles_connection_error(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that connect handles connection errors properly."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_aio_pika.connect_robust = AsyncMock(side_effect=Exception("Connection refused"))
 
@@ -836,13 +836,13 @@ class TestRabbitMQEventBusConnection:
 
         assert bus.is_connected is False
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_disconnect_closes_connection(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that disconnect closes the connection."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -859,13 +859,13 @@ class TestRabbitMQEventBusConnection:
         mock_connection.close.assert_called_once()
         assert bus.is_connected is False
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_disconnect_clears_references(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that disconnect clears all references."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -885,13 +885,13 @@ class TestRabbitMQEventBusConnection:
         assert bus._consumer_queue is None
         assert bus._dlq_queue is None
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_disconnect_when_not_connected(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that disconnect works when not connected."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus(config=config)
 
@@ -900,7 +900,7 @@ class TestRabbitMQEventBusConnection:
 
         assert bus.is_connected is False
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_disconnect_cancels_consumer_task(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
@@ -908,7 +908,7 @@ class TestRabbitMQEventBusConnection:
         """Test that disconnect cancels consumer task if running."""
         import asyncio
 
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -943,13 +943,13 @@ class TestRabbitMQEventBusContextManager:
             consumer_group="test-group",
         )
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_context_manager_connects_on_enter(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that async context manager connects on entry."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -964,13 +964,13 @@ class TestRabbitMQEventBusContextManager:
             assert entered_bus is bus
             assert bus.is_connected is True
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_context_manager_disconnects_on_exit(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that async context manager disconnects on exit."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -988,13 +988,13 @@ class TestRabbitMQEventBusContextManager:
         mock_connection.close.assert_called_once()
         assert bus.is_connected is False
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_context_manager_disconnects_on_exception(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that async context manager disconnects even when exception occurs."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -1028,7 +1028,7 @@ class TestRabbitMQEventBusProperties:
 
     def test_config_property(self, config: RabbitMQEventBusConfig) -> None:
         """Test config property returns configuration."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus(config=config)
 
@@ -1036,19 +1036,19 @@ class TestRabbitMQEventBusProperties:
 
     def test_is_connected_property_when_disconnected(self, config: RabbitMQEventBusConfig) -> None:
         """Test is_connected returns False when disconnected."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus(config=config)
 
         assert bus.is_connected is False
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_is_connected_property_when_connected(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test is_connected returns True when connected."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -1062,13 +1062,13 @@ class TestRabbitMQEventBusProperties:
 
         assert bus.is_connected is True
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_is_connected_returns_false_when_connection_closed(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test is_connected returns False when connection is closed."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -1087,7 +1087,7 @@ class TestRabbitMQEventBusProperties:
 
     def test_is_consuming_property_when_not_consuming(self, config: RabbitMQEventBusConfig) -> None:
         """Test is_consuming returns False when not consuming."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus(config=config)
 
@@ -1095,7 +1095,7 @@ class TestRabbitMQEventBusProperties:
 
     def test_stats_property(self, config: RabbitMQEventBusConfig) -> None:
         """Test stats property returns statistics."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus(config=config)
 
@@ -1109,7 +1109,7 @@ class TestRabbitMQEventBusUrlSanitization:
 
     def test_sanitize_url_removes_password(self) -> None:
         """Test that _sanitize_url removes password from URL."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus()
         sanitized = bus._sanitize_url("amqp://user:password@host:5672/")
@@ -1120,7 +1120,7 @@ class TestRabbitMQEventBusUrlSanitization:
 
     def test_sanitize_url_removes_complex_password(self) -> None:
         """Test sanitization with complex password containing special chars."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus()
         sanitized = bus._sanitize_url("amqp://admin:p@ssw0rd!#$@host:5672/")
@@ -1130,7 +1130,7 @@ class TestRabbitMQEventBusUrlSanitization:
 
     def test_sanitize_url_handles_no_credentials(self) -> None:
         """Test sanitization when no credentials in URL."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus()
         url = "amqp://host:5672/"
@@ -1141,7 +1141,7 @@ class TestRabbitMQEventBusUrlSanitization:
 
     def test_sanitize_url_handles_amqps(self) -> None:
         """Test sanitization works with amqps:// URLs."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus()
         sanitized = bus._sanitize_url("amqps://user:secret@host:5671/")
@@ -1160,7 +1160,7 @@ class TestRabbitMQStructuredLogging:
 
     def test_sanitize_url_in_connect_log(self) -> None:
         """Test that connect logs use sanitized URL."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus, RabbitMQEventBusConfig
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus, RabbitMQEventBusConfig
 
         config = RabbitMQEventBusConfig(rabbitmq_url="amqp://user:secret123@localhost:5672/")
         bus = RabbitMQEventBus(config=config)
@@ -1174,7 +1174,7 @@ class TestRabbitMQStructuredLogging:
 
     def test_sanitize_url_with_at_in_password(self) -> None:
         """Test sanitization handles @ symbol in password."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus()
         # Password with @ symbol
@@ -1187,7 +1187,7 @@ class TestRabbitMQStructuredLogging:
 
     def test_sanitize_url_with_special_chars(self) -> None:
         """Test sanitization handles special characters."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus()
         url = "amqp://admin:P@ssw0rd!#$%^&*()@rabbitmq.example.com:5672/"
@@ -1200,7 +1200,7 @@ class TestRabbitMQStructuredLogging:
 
     def test_sanitize_url_preserves_vhost(self) -> None:
         """Test sanitization preserves virtual host."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus()
         url = "amqp://user:password@localhost:5672/myvhost"
@@ -1212,7 +1212,7 @@ class TestRabbitMQStructuredLogging:
 
     def test_sanitize_url_with_no_path(self) -> None:
         """Test sanitization handles URL with no path."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus()
         url = "amqp://user:password@localhost:5672"
@@ -1741,13 +1741,13 @@ class TestRabbitMQExchangeDeclaration:
             enable_dlq=False,  # Disable DLQ for basic exchange tests
         )
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_declare_exchange_topic(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that connect declares a topic exchange."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -1769,11 +1769,11 @@ class TestRabbitMQExchangeDeclaration:
         assert call_kwargs["durable"] == config.durable
         assert call_kwargs["auto_delete"] == config.auto_delete
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_declare_exchange_direct(self, mock_aio_pika: MagicMock) -> None:
         """Test that connect declares a direct exchange when configured."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         config = RabbitMQEventBusConfig(
             exchange_name="direct-events",
@@ -1801,11 +1801,11 @@ class TestRabbitMQExchangeDeclaration:
         call_kwargs = mock_channel.declare_exchange.call_args.kwargs
         assert call_kwargs["type"] == ExchangeType.DIRECT
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_declare_exchange_fanout(self, mock_aio_pika: MagicMock) -> None:
         """Test that connect declares a fanout exchange when configured."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         config = RabbitMQEventBusConfig(
             exchange_name="fanout-events",
@@ -1832,11 +1832,11 @@ class TestRabbitMQExchangeDeclaration:
         call_kwargs = mock_channel.declare_exchange.call_args.kwargs
         assert call_kwargs["type"] == ExchangeType.FANOUT
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_declare_exchange_headers(self, mock_aio_pika: MagicMock) -> None:
         """Test that connect declares a headers exchange when configured."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         config = RabbitMQEventBusConfig(
             exchange_name="headers-events",
@@ -1863,13 +1863,13 @@ class TestRabbitMQExchangeDeclaration:
         call_kwargs = mock_channel.declare_exchange.call_args.kwargs
         assert call_kwargs["type"] == ExchangeType.HEADERS
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_declare_exchange_unknown_type_defaults_to_topic(
         self, mock_aio_pika: MagicMock
     ) -> None:
         """Test that unknown exchange type defaults to topic."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         config = RabbitMQEventBusConfig(
             exchange_name="events",
@@ -1896,11 +1896,11 @@ class TestRabbitMQExchangeDeclaration:
         call_kwargs = mock_channel.declare_exchange.call_args.kwargs
         assert call_kwargs["type"] == ExchangeType.TOPIC
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_declare_exchange_case_insensitive(self, mock_aio_pika: MagicMock) -> None:
         """Test that exchange type is case-insensitive."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         config = RabbitMQEventBusConfig(
             exchange_name="events",
@@ -1927,11 +1927,11 @@ class TestRabbitMQExchangeDeclaration:
         call_kwargs = mock_channel.declare_exchange.call_args.kwargs
         assert call_kwargs["type"] == ExchangeType.TOPIC
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_declare_exchange_durable_setting(self, mock_aio_pika: MagicMock) -> None:
         """Test that exchange respects durable setting."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         config = RabbitMQEventBusConfig(
             exchange_name="events",
@@ -1956,11 +1956,11 @@ class TestRabbitMQExchangeDeclaration:
         call_kwargs = mock_channel.declare_exchange.call_args.kwargs
         assert call_kwargs["durable"] is False
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_declare_exchange_auto_delete_setting(self, mock_aio_pika: MagicMock) -> None:
         """Test that exchange respects auto_delete setting."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         config = RabbitMQEventBusConfig(
             exchange_name="events",
@@ -1985,13 +1985,13 @@ class TestRabbitMQExchangeDeclaration:
         call_kwargs = mock_channel.declare_exchange.call_args.kwargs
         assert call_kwargs["auto_delete"] is True
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_exchange_reference_stored(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that exchange reference is stored after declaration."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -2023,13 +2023,13 @@ class TestRabbitMQQueueDeclaration:
             enable_dlq=False,
         )
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_declare_queue_basic(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that connect declares a queue."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -2051,11 +2051,11 @@ class TestRabbitMQQueueDeclaration:
         assert call_kwargs["durable"] == config.durable
         assert call_kwargs["auto_delete"] == config.auto_delete
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_declare_queue_with_dlq_arguments(self, mock_aio_pika: MagicMock) -> None:
         """Test that queue includes DLQ arguments when enabled."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         config = RabbitMQEventBusConfig(
             exchange_name="test-events",
@@ -2090,13 +2090,13 @@ class TestRabbitMQQueueDeclaration:
         assert call_kwargs["arguments"]["x-dead-letter-exchange"] == config.dlq_exchange_name
         assert call_kwargs["arguments"]["x-dead-letter-routing-key"] == config.queue_name
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_declare_queue_without_dlq_arguments(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that queue has no DLQ arguments when DLQ disabled."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -2115,13 +2115,13 @@ class TestRabbitMQQueueDeclaration:
         call_kwargs = mock_channel.declare_queue.call_args.kwargs
         assert call_kwargs["arguments"] is None
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_queue_reference_stored(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that queue reference is stored after declaration."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -2153,13 +2153,13 @@ class TestRabbitMQQueueBinding:
             enable_dlq=False,
         )
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_bind_queue_to_exchange(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that queue is bound to exchange."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -2177,13 +2177,13 @@ class TestRabbitMQQueueBinding:
 
         mock_queue.bind.assert_called_once()
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_bind_queue_with_wildcard_routing_key(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that queue is bound with '#' routing key."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -2202,13 +2202,13 @@ class TestRabbitMQQueueBinding:
         call_kwargs = mock_queue.bind.call_args.kwargs
         assert call_kwargs["routing_key"] == "#"
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_bind_queue_to_correct_exchange(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that queue is bound to the correct exchange."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -2241,13 +2241,13 @@ class TestRabbitMQDLQDeclaration:
             enable_dlq=True,
         )
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_dlq_exchange_declared_when_enabled(
         self, mock_aio_pika: MagicMock, config_with_dlq: RabbitMQEventBusConfig
     ) -> None:
         """Test that DLQ exchange is declared when DLQ is enabled."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -2275,7 +2275,7 @@ class TestRabbitMQDLQDeclaration:
         first_call_kwargs = mock_channel.declare_exchange.call_args_list[0].kwargs
         assert first_call_kwargs["name"] == config_with_dlq.dlq_exchange_name
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_dlq_exchange_is_direct_type(
         self, mock_aio_pika: MagicMock, config_with_dlq: RabbitMQEventBusConfig
@@ -2283,7 +2283,7 @@ class TestRabbitMQDLQDeclaration:
         """Test that DLQ exchange is of direct type."""
         from aio_pika import ExchangeType
 
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -2304,13 +2304,13 @@ class TestRabbitMQDLQDeclaration:
         first_call_kwargs = mock_channel.declare_exchange.call_args_list[0].kwargs
         assert first_call_kwargs["type"] == ExchangeType.DIRECT
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_dlq_queue_declared_when_enabled(
         self, mock_aio_pika: MagicMock, config_with_dlq: RabbitMQEventBusConfig
     ) -> None:
         """Test that DLQ queue is declared when DLQ is enabled."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -2334,13 +2334,13 @@ class TestRabbitMQDLQDeclaration:
         first_call_kwargs = mock_channel.declare_queue.call_args_list[0].kwargs
         assert first_call_kwargs["name"] == config_with_dlq.dlq_queue_name
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_dlq_queue_bound_to_dlq_exchange(
         self, mock_aio_pika: MagicMock, config_with_dlq: RabbitMQEventBusConfig
     ) -> None:
         """Test that DLQ queue is bound to DLQ exchange."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -2365,13 +2365,13 @@ class TestRabbitMQDLQDeclaration:
         assert dlq_bind_kwargs["exchange"] is mock_dlq_exchange
         assert dlq_bind_kwargs["routing_key"] == config_with_dlq.queue_name
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_dlq_references_stored(
         self, mock_aio_pika: MagicMock, config_with_dlq: RabbitMQEventBusConfig
     ) -> None:
         """Test that DLQ references are stored after declaration."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -2393,11 +2393,11 @@ class TestRabbitMQDLQDeclaration:
         assert bus._dlq_exchange is mock_dlq_exchange
         assert bus._dlq_queue is mock_dlq_queue
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_no_dlq_when_disabled(self, mock_aio_pika: MagicMock) -> None:
         """Test that no DLQ is declared when DLQ is disabled."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         config = RabbitMQEventBusConfig(
             exchange_name="test-events",
@@ -2444,13 +2444,13 @@ class TestRabbitMQConnectionWithTopology:
             enable_dlq=True,
         )
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_connect_sets_up_complete_topology(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that connect sets up complete topology."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -2476,13 +2476,13 @@ class TestRabbitMQConnectionWithTopology:
         assert bus._dlq_queue is not None
         assert bus.is_connected is True
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_connect_cleanup_on_failure(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that connect cleans up on failure."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -2506,13 +2506,13 @@ class TestRabbitMQConnectionWithTopology:
         assert bus._exchange is None
         assert bus._consumer_queue is None
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_connect_order_dlq_before_main(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that DLQ is declared before main queue."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         call_order: list[str] = []
 
@@ -2569,7 +2569,7 @@ class TestRabbitMQDeclarationErrors:
         self, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that _declare_exchange raises if not connected."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus(config=config)
 
@@ -2581,7 +2581,7 @@ class TestRabbitMQDeclarationErrors:
         self, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that _declare_queue raises if not connected."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus(config=config)
 
@@ -2591,7 +2591,7 @@ class TestRabbitMQDeclarationErrors:
     @pytest.mark.asyncio
     async def test_bind_queue_without_queue_raises(self, config: RabbitMQEventBusConfig) -> None:
         """Test that _bind_queue raises if queue not initialized."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus(config=config)
 
@@ -2601,7 +2601,7 @@ class TestRabbitMQDeclarationErrors:
     @pytest.mark.asyncio
     async def test_declare_dlq_without_channel_raises(self, config: RabbitMQEventBusConfig) -> None:
         """Test that _declare_dlq raises if not connected."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus(config=config)
 
@@ -2642,7 +2642,7 @@ class TestRabbitMQRoutingKey:
     @pytest.fixture
     def bus(self, config: RabbitMQEventBusConfig) -> RabbitMQEventBus:
         """Create bus instance for testing."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         return RabbitMQEventBus(config=config)
 
@@ -2691,7 +2691,7 @@ class TestRabbitMQEventSerialization:
     @pytest.fixture
     def bus(self, config: RabbitMQEventBusConfig) -> RabbitMQEventBus:
         """Create bus instance for testing."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         return RabbitMQEventBus(config=config)
 
@@ -2835,7 +2835,7 @@ class TestRabbitMQCreateMessage:
     @pytest.fixture
     def bus(self, config: RabbitMQEventBusConfig) -> RabbitMQEventBus:
         """Create bus instance for testing."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         return RabbitMQEventBus(config=config)
 
@@ -2939,7 +2939,7 @@ class TestRabbitMQEventDeserialization:
     @pytest.fixture
     def bus(self, config: RabbitMQEventBusConfig, registry: EventRegistry) -> RabbitMQEventBus:
         """Create bus instance with event registry."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         return RabbitMQEventBus(config=config, event_registry=registry)
 
@@ -3077,7 +3077,7 @@ class TestRabbitMQSerializationRoundTrip:
     @pytest.fixture
     def bus(self, config: RabbitMQEventBusConfig, registry: EventRegistry) -> RabbitMQEventBus:
         """Create bus instance with event registry."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         return RabbitMQEventBus(config=config, event_registry=registry)
 
@@ -3173,13 +3173,13 @@ class TestRabbitMQPublish:
             PublishTestEvent(aggregate_id=uuid4(), data="event-2"),
         ]
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_publish_empty_list_returns_immediately(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that publishing empty list does nothing and doesn't raise."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus(config=config)
 
@@ -3190,13 +3190,13 @@ class TestRabbitMQPublish:
         mock_aio_pika.connect_robust.assert_not_called()
         assert bus.is_connected is False
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_publish_auto_connects_if_not_connected(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that publish auto-connects if not already connected."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -3219,7 +3219,7 @@ class TestRabbitMQPublish:
         assert bus.is_connected is True
         mock_aio_pika.connect_robust.assert_called_once()
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_publish_calls_exchange_publish(
         self,
@@ -3228,7 +3228,7 @@ class TestRabbitMQPublish:
         sample_events: list[PublishTestEvent],
     ) -> None:
         """Test that publish calls exchange.publish for each event."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -3248,7 +3248,7 @@ class TestRabbitMQPublish:
         # Should have called publish for each event
         assert mock_exchange.publish.call_count == len(sample_events)
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_publish_increments_events_published_stat(
         self,
@@ -3257,7 +3257,7 @@ class TestRabbitMQPublish:
         sample_events: list[PublishTestEvent],
     ) -> None:
         """Test that events_published stat is incremented for each event."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -3279,7 +3279,7 @@ class TestRabbitMQPublish:
 
         assert bus.stats.events_published == len(sample_events)
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_publish_increments_publish_confirms_stat(
         self,
@@ -3288,7 +3288,7 @@ class TestRabbitMQPublish:
         sample_events: list[PublishTestEvent],
     ) -> None:
         """Test that publish_confirms stat is incremented when background=False."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -3310,7 +3310,7 @@ class TestRabbitMQPublish:
 
         assert bus.stats.publish_confirms == len(sample_events)
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_publish_background_does_not_increment_confirms(
         self,
@@ -3319,7 +3319,7 @@ class TestRabbitMQPublish:
         sample_events: list[PublishTestEvent],
     ) -> None:
         """Test that publish_confirms stat is NOT incremented when background=True."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -3342,13 +3342,13 @@ class TestRabbitMQPublish:
         # But publish_confirms should NOT be incremented
         assert bus.stats.publish_confirms == 0
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_publish_uses_correct_routing_key(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that publish uses the correct routing key for each event."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -3370,7 +3370,7 @@ class TestRabbitMQPublish:
         call_kwargs = mock_exchange.publish.call_args.kwargs
         assert call_kwargs["routing_key"] == "TestAggregate.PublishTestEvent"
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_publish_creates_message_using_create_message(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
@@ -3378,7 +3378,7 @@ class TestRabbitMQPublish:
         """Test that publish creates AMQP message using _create_message."""
         from aio_pika import Message
 
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -3401,13 +3401,13 @@ class TestRabbitMQPublish:
         published_message = call_args.args[0] if call_args.args else call_args.kwargs.get("message")
         assert isinstance(published_message, Message)
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_publish_single_event(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test publishing a single event."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -3428,13 +3428,13 @@ class TestRabbitMQPublish:
         assert mock_exchange.publish.call_count == 1
         assert bus.stats.events_published == 1
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_publish_raises_runtime_error_when_exchange_none(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that publish raises RuntimeError if exchange is None after connect."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         event = PublishTestEvent(aggregate_id=uuid4())
         bus = RabbitMQEventBus(config=config)
@@ -3446,13 +3446,13 @@ class TestRabbitMQPublish:
         with pytest.raises(RuntimeError, match="Exchange not initialized"):
             await bus.publish([event])
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_publish_reraises_exception_on_failure(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that publish re-raises exceptions from exchange.publish."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -3473,13 +3473,13 @@ class TestRabbitMQPublish:
         with pytest.raises(Exception, match="Connection lost"):
             await bus.publish([event])
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_publish_does_not_increment_stats_on_failure(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that stats are not incremented when publish fails."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -3520,13 +3520,13 @@ class TestRabbitMQPublishSingle:
             consumer_group="test-group",
         )
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_publish_single_raises_when_exchange_none(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that _publish_single raises RuntimeError if exchange is None."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         event = PublishTestEvent(aggregate_id=uuid4())
         bus = RabbitMQEventBus(config=config)
@@ -3535,13 +3535,13 @@ class TestRabbitMQPublishSingle:
         with pytest.raises(RuntimeError, match="Exchange not initialized"):
             await bus._publish_single(event)
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_publish_single_wait_for_confirm_true(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test _publish_single with wait_for_confirm=True increments confirms."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -3563,13 +3563,13 @@ class TestRabbitMQPublishSingle:
         assert bus.stats.events_published == 1
         assert bus.stats.publish_confirms == 1
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_publish_single_wait_for_confirm_false(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test _publish_single with wait_for_confirm=False does not increment confirms."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -3604,13 +3604,13 @@ class TestRabbitMQPublishMultipleEvents:
             consumer_group="test-group",
         )
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_publish_multiple_events_sequential(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that multiple events are published sequentially."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -3632,7 +3632,7 @@ class TestRabbitMQPublishMultipleEvents:
         assert bus.stats.events_published == 5
         assert bus.stats.publish_confirms == 5
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_publish_handles_partial_failure_in_batch(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
@@ -3643,7 +3643,7 @@ class TestRabbitMQPublishMultipleEvents:
         some fail. The first error encountered is re-raised after all events
         are processed.
         """
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -3685,13 +3685,13 @@ class TestRabbitMQPublishWithDifferentEventTypes:
             consumer_group="test-group",
         )
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_publish_mixed_event_types(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test publishing events of different types uses correct routing keys."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -3749,13 +3749,13 @@ class TestRabbitMQStartConsuming:
             consumer_name="test-consumer",
         )
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_start_consuming_auto_connects(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that start_consuming auto-connects if not connected."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -3792,13 +3792,13 @@ class TestRabbitMQStartConsuming:
 
         mock_aio_pika.connect_robust.assert_called_once()
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_start_consuming_raises_if_queue_not_initialized(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that start_consuming raises RuntimeError if queue not initialized."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus(config=config)
         bus._connected = True  # Pretend connected but no queue
@@ -3806,13 +3806,13 @@ class TestRabbitMQStartConsuming:
         with pytest.raises(RuntimeError, match="Consumer queue not initialized"):
             await bus.start_consuming()
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_start_consuming_sets_consuming_flag(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that start_consuming sets is_consuming to True."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -3850,13 +3850,13 @@ class TestRabbitMQStartConsuming:
         if consuming_flag_during_loop:
             assert consuming_flag_during_loop[0] is True
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_start_consuming_handles_cancellation(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that start_consuming handles CancelledError gracefully."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -3901,7 +3901,7 @@ class TestRabbitMQStopConsuming:
     @pytest.mark.asyncio
     async def test_stop_consuming_sets_flag(self) -> None:
         """Test that stop_consuming sets consuming flag to False."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus()
         bus._consuming = True
@@ -3913,7 +3913,7 @@ class TestRabbitMQStopConsuming:
     @pytest.mark.asyncio
     async def test_stop_consuming_when_already_stopped(self) -> None:
         """Test that stop_consuming works even when not consuming."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus()
         assert bus._consuming is False
@@ -3934,13 +3934,13 @@ class TestRabbitMQStartConsumingInBackground:
             consumer_name="bg-consumer",
         )
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_start_consuming_in_background_returns_task(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that start_consuming_in_background returns an asyncio Task."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -3974,13 +3974,13 @@ class TestRabbitMQStartConsumingInBackground:
         with contextlib.suppress(asyncio.CancelledError):
             await task
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_start_consuming_in_background_raises_if_already_running(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that start_consuming_in_background raises if already running."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -4621,13 +4621,13 @@ class TestRabbitMQConsumerLoopErrorHandling:
             consumer_name="error-test-consumer",
         )
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_consumer_loop_handles_general_exception(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that consumer loop handles and re-raises general exceptions."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -4657,13 +4657,13 @@ class TestRabbitMQConsumerLoopErrorHandling:
         # Consuming flag should be reset after exception
         assert bus.is_consuming is False
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_consumer_stops_when_consuming_flag_cleared(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that consumer loop stops when is_consuming is set to False."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -4712,7 +4712,7 @@ class TestRabbitMQModuleAllExports:
 
     def test_module_all_contains_expected_exports(self) -> None:
         """Test that __all__ contains all expected exports."""
-        from eventsource.bus import rabbitmq
+        from eventsource.adapters import rabbitmq
 
         expected_exports = {
             "BatchPublishError",
@@ -4733,7 +4733,7 @@ class TestRabbitMQModuleAllExports:
 
     def test_all_exports_are_importable(self) -> None:
         """Test that all items in __all__ can be imported."""
-        from eventsource.bus import rabbitmq
+        from eventsource.adapters import rabbitmq
 
         for name in rabbitmq.__all__:
             obj = getattr(rabbitmq, name)
@@ -4745,7 +4745,7 @@ class TestRabbitMQEventBusInterfaceCompliance:
 
     def test_implements_event_bus_interface(self) -> None:
         """Test that RabbitMQEventBus implements EventBus protocol."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus()
 
@@ -4767,7 +4767,7 @@ class TestRabbitMQEventBusInterfaceCompliance:
 
     def test_has_async_context_manager_methods(self) -> None:
         """Test that RabbitMQEventBus has async context manager methods."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus()
 
@@ -4782,7 +4782,7 @@ class TestRabbitMQStatsResetBehavior:
 
     def test_stats_are_not_shared_between_instances(self) -> None:
         """Test that each bus instance has its own stats object."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         bus1 = RabbitMQEventBus()
         bus2 = RabbitMQEventBus()
@@ -4798,7 +4798,7 @@ class TestRabbitMQConfigImmutabilityAfterInit:
 
     def test_config_cannot_be_changed_after_init(self) -> None:
         """Test that config property returns the original config."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         original_config = RabbitMQEventBusConfig(
             exchange_name="original",
@@ -4816,7 +4816,7 @@ class TestRabbitMQConnectionStateTransitions:
 
     def test_initial_state_is_disconnected(self) -> None:
         """Test that a new bus starts in disconnected state."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus()
 
@@ -4827,13 +4827,13 @@ class TestRabbitMQConnectionStateTransitions:
         assert bus._exchange is None
         assert bus._consumer_queue is None
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_connection_state_after_connect_then_disconnect(
         self, mock_aio_pika: MagicMock
     ) -> None:
         """Test state transitions through connect/disconnect cycle."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -4870,12 +4870,12 @@ class TestRabbitMQLoggingIntegration:
 
     def test_logger_is_configured(self) -> None:
         """Test that the bus has a logger configured."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus()
 
         assert bus._logger is not None
-        assert bus._logger.name == "eventsource.bus.rabbitmq"
+        assert bus._logger.name == "eventsource.adapters.rabbitmq"
 
 
 class TestRabbitMQConfigValidation:
@@ -4974,13 +4974,13 @@ class TestRabbitMQDLQQueueDeclarationWithOptions:
             enable_dlq=True,
         )
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_dlq_queue_declared_with_ttl(
         self, mock_aio_pika: MagicMock, config_with_dlq_options: RabbitMQEventBusConfig
     ) -> None:
         """Test that DLQ queue is declared with x-message-ttl when configured."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -5003,13 +5003,13 @@ class TestRabbitMQDLQQueueDeclarationWithOptions:
         assert "arguments" in dlq_queue_call.kwargs
         assert dlq_queue_call.kwargs["arguments"]["x-message-ttl"] == 3600000
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_dlq_queue_declared_with_max_length(
         self, mock_aio_pika: MagicMock, config_with_dlq_options: RabbitMQEventBusConfig
     ) -> None:
         """Test that DLQ queue is declared with x-max-length when configured."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -5030,13 +5030,13 @@ class TestRabbitMQDLQQueueDeclarationWithOptions:
         dlq_queue_call = mock_channel.declare_queue.call_args_list[0]
         assert dlq_queue_call.kwargs["arguments"]["x-max-length"] == 1000
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_dlq_queue_declared_without_arguments_when_options_not_set(
         self, mock_aio_pika: MagicMock, config_without_dlq_options: RabbitMQEventBusConfig
     ) -> None:
         """Test that DLQ queue has no arguments when options are not set."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -5145,126 +5145,126 @@ class TestRabbitMQDLQHelperMethods:
 
     def test_get_death_count_no_death(self, mock_message_no_death: MagicMock) -> None:
         """Test get_death_count returns 0 when no x-death header."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         count = RabbitMQEventBus.get_death_count(mock_message_no_death)
         assert count == 0
 
     def test_get_death_count_single_death(self, mock_message_with_death: MagicMock) -> None:
         """Test get_death_count returns correct count for single death."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         count = RabbitMQEventBus.get_death_count(mock_message_with_death)
         assert count == 1
 
     def test_get_death_count_multiple_deaths(self, mock_message_multiple_deaths: MagicMock) -> None:
         """Test get_death_count sums counts from multiple death records."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         count = RabbitMQEventBus.get_death_count(mock_message_multiple_deaths)
         assert count == 5  # 3 + 2
 
     def test_get_death_count_empty_headers(self, mock_message_empty_headers: MagicMock) -> None:
         """Test get_death_count returns 0 for empty headers."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         count = RabbitMQEventBus.get_death_count(mock_message_empty_headers)
         assert count == 0
 
     def test_get_death_count_none_headers(self, mock_message_none_headers: MagicMock) -> None:
         """Test get_death_count returns 0 for None headers."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         count = RabbitMQEventBus.get_death_count(mock_message_none_headers)
         assert count == 0
 
     def test_get_first_death_queue_no_death(self, mock_message_no_death: MagicMock) -> None:
         """Test get_first_death_queue returns None when not dead-lettered."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         queue = RabbitMQEventBus.get_first_death_queue(mock_message_no_death)
         assert queue is None
 
     def test_get_first_death_queue_with_death(self, mock_message_with_death: MagicMock) -> None:
         """Test get_first_death_queue returns correct queue name."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         queue = RabbitMQEventBus.get_first_death_queue(mock_message_with_death)
         assert queue == "events.default"
 
     def test_get_first_death_reason_no_death(self, mock_message_no_death: MagicMock) -> None:
         """Test get_first_death_reason returns None when not dead-lettered."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         reason = RabbitMQEventBus.get_first_death_reason(mock_message_no_death)
         assert reason is None
 
     def test_get_first_death_reason_with_death(self, mock_message_with_death: MagicMock) -> None:
         """Test get_first_death_reason returns correct reason."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         reason = RabbitMQEventBus.get_first_death_reason(mock_message_with_death)
         assert reason == "rejected"
 
     def test_get_first_death_exchange_no_death(self, mock_message_no_death: MagicMock) -> None:
         """Test get_first_death_exchange returns None when not dead-lettered."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         exchange = RabbitMQEventBus.get_first_death_exchange(mock_message_no_death)
         assert exchange is None
 
     def test_get_first_death_exchange_with_death(self, mock_message_with_death: MagicMock) -> None:
         """Test get_first_death_exchange returns correct exchange name."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         exchange = RabbitMQEventBus.get_first_death_exchange(mock_message_with_death)
         assert exchange == "events"
 
     def test_get_original_routing_key_no_death(self, mock_message_no_death: MagicMock) -> None:
         """Test get_original_routing_key returns None when not dead-lettered."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         routing_key = RabbitMQEventBus.get_original_routing_key(mock_message_no_death)
         assert routing_key is None
 
     def test_get_original_routing_key_with_death(self, mock_message_with_death: MagicMock) -> None:
         """Test get_original_routing_key returns correct routing key."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         routing_key = RabbitMQEventBus.get_original_routing_key(mock_message_with_death)
         assert routing_key == "TestAggregate.TestEvent"
 
     def test_is_from_dlq_no_death(self, mock_message_no_death: MagicMock) -> None:
         """Test is_from_dlq returns False when not dead-lettered."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         result = RabbitMQEventBus.is_from_dlq(mock_message_no_death)
         assert result is False
 
     def test_is_from_dlq_with_death(self, mock_message_with_death: MagicMock) -> None:
         """Test is_from_dlq returns True when dead-lettered."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         result = RabbitMQEventBus.is_from_dlq(mock_message_with_death)
         assert result is True
 
     def test_is_from_dlq_empty_headers(self, mock_message_empty_headers: MagicMock) -> None:
         """Test is_from_dlq returns False for empty headers."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         result = RabbitMQEventBus.is_from_dlq(mock_message_empty_headers)
         assert result is False
 
     def test_is_from_dlq_none_headers(self, mock_message_none_headers: MagicMock) -> None:
         """Test is_from_dlq returns False for None headers."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         result = RabbitMQEventBus.is_from_dlq(mock_message_none_headers)
         assert result is False
 
     def test_is_from_dlq_empty_x_death_list(self) -> None:
         """Test is_from_dlq returns False for empty x-death list."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         message = MagicMock()
         message.headers = {"x-death": []}
@@ -5273,7 +5273,7 @@ class TestRabbitMQDLQHelperMethods:
 
     def test_get_death_info_no_death(self, mock_message_no_death: MagicMock) -> None:
         """Test get_death_info returns complete dict for non-dead-lettered message."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         info = RabbitMQEventBus.get_death_info(mock_message_no_death)
 
@@ -5287,7 +5287,7 @@ class TestRabbitMQDLQHelperMethods:
 
     def test_get_death_info_with_death(self, mock_message_with_death: MagicMock) -> None:
         """Test get_death_info returns complete dict for dead-lettered message."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         info = RabbitMQEventBus.get_death_info(mock_message_with_death)
 
@@ -5306,7 +5306,7 @@ class TestRabbitMQDLQHelperEdgeCases:
 
     def test_get_death_count_invalid_count_type(self) -> None:
         """Test get_death_count handles non-integer count values."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         message = MagicMock()
         message.headers = {
@@ -5322,7 +5322,7 @@ class TestRabbitMQDLQHelperEdgeCases:
 
     def test_get_death_count_missing_count_field(self) -> None:
         """Test get_death_count handles death records without count field."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         message = MagicMock()
         message.headers = {
@@ -5337,7 +5337,7 @@ class TestRabbitMQDLQHelperEdgeCases:
 
     def test_get_original_routing_key_empty_routing_keys(self) -> None:
         """Test get_original_routing_key handles empty routing-keys list."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         message = MagicMock()
         message.headers = {
@@ -5351,7 +5351,7 @@ class TestRabbitMQDLQHelperEdgeCases:
 
     def test_get_original_routing_key_no_routing_keys(self) -> None:
         """Test get_original_routing_key handles missing routing-keys field."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         message = MagicMock()
         message.headers = {
@@ -5365,7 +5365,7 @@ class TestRabbitMQDLQHelperEdgeCases:
 
     def test_x_death_non_list_type(self) -> None:
         """Test helper methods handle non-list x-death header."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         message = MagicMock()
         message.headers = {"x-death": "not-a-list"}
@@ -5376,7 +5376,7 @@ class TestRabbitMQDLQHelperEdgeCases:
 
     def test_x_death_non_dict_entries(self) -> None:
         """Test get_death_count handles non-dict entries in x-death list."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         message = MagicMock()
         message.headers = {
@@ -6107,7 +6107,7 @@ class TestDLQMessageDataclass:
 
     def test_dlq_message_with_all_fields(self) -> None:
         """Test DLQMessage with all fields populated."""
-        from eventsource.bus.rabbitmq import DLQMessage
+        from eventsource.adapters.rabbitmq import DLQMessage
 
         msg = DLQMessage(
             message_id="test-id-123",
@@ -6135,7 +6135,7 @@ class TestDLQMessageDataclass:
 
     def test_dlq_message_with_minimal_fields(self) -> None:
         """Test DLQMessage with only required fields."""
-        from eventsource.bus.rabbitmq import DLQMessage
+        from eventsource.adapters.rabbitmq import DLQMessage
 
         msg = DLQMessage(
             message_id=None,
@@ -6157,7 +6157,7 @@ class TestDLQMessageDataclass:
 
     def test_dlq_message_default_values(self) -> None:
         """Test DLQMessage default values for optional fields."""
-        from eventsource.bus.rabbitmq import DLQMessage
+        from eventsource.adapters.rabbitmq import DLQMessage
 
         msg = DLQMessage(
             message_id="id",
@@ -6238,7 +6238,7 @@ class TestGetDLQMessages:
     @pytest.mark.asyncio
     async def test_returns_dlq_messages(self, config_with_dlq: RabbitMQEventBusConfig) -> None:
         """Test get_dlq_messages returns list of DLQMessage objects."""
-        from eventsource.bus.rabbitmq import DLQMessage
+        from eventsource.adapters.rabbitmq import DLQMessage
 
         bus = RabbitMQEventBus(config=config_with_dlq)
         bus._connected = True
@@ -6904,13 +6904,13 @@ class TestDLQMessageExport:
 
     def test_dlq_message_exported(self) -> None:
         """Test that DLQMessage is exported from rabbitmq module."""
-        from eventsource.bus.rabbitmq import DLQMessage
+        from eventsource.adapters.rabbitmq import DLQMessage
 
         assert DLQMessage is not None
 
     def test_dlq_message_in_all(self) -> None:
         """Test that DLQMessage is in __all__."""
-        from eventsource.bus import rabbitmq
+        from eventsource.adapters import rabbitmq
 
         assert "DLQMessage" in rabbitmq.__all__
 
@@ -7270,7 +7270,7 @@ class TestRabbitMQConnectWithReconnectionCallbacks:
             reconnect_delay=2.0,
         )
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_connect_uses_reconnect_interval(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
@@ -7295,7 +7295,7 @@ class TestRabbitMQConnectWithReconnectionCallbacks:
             reconnect_interval=config.reconnect_delay,
         )
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_connect_registers_reconnect_callback(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
@@ -7318,7 +7318,7 @@ class TestRabbitMQConnectWithReconnectionCallbacks:
             bus._connection_manager._on_reconnect
         )
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_connect_registers_close_callback(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
@@ -7341,7 +7341,7 @@ class TestRabbitMQConnectWithReconnectionCallbacks:
             bus._connection_manager._on_connection_close
         )
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_connect_registers_channel_close_callback(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
@@ -7463,7 +7463,7 @@ class TestGracefulShutdown:
         """Test that _shutdown_initiated is False initially."""
         assert bus._shutdown_initiated is False
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_shutdown_sets_shutdown_flag(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
@@ -7484,7 +7484,7 @@ class TestGracefulShutdown:
         assert bus.is_shutdown is True
         assert bus._shutdown_initiated is True
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_shutdown_stops_consuming(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
@@ -7505,7 +7505,7 @@ class TestGracefulShutdown:
 
         assert bus._consuming is False
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_shutdown_disconnects(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
@@ -7527,7 +7527,7 @@ class TestGracefulShutdown:
         mock_channel.close.assert_called_once()
         mock_connection.close.assert_called_once()
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_shutdown_is_idempotent(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
@@ -7554,7 +7554,7 @@ class TestGracefulShutdown:
         # Channel close should only be called once (during first shutdown)
         mock_channel.close.assert_called_once()
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_shutdown_cancels_consumer_task(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
@@ -7581,7 +7581,7 @@ class TestGracefulShutdown:
 
         assert bus._consumer_task is None
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_shutdown_when_not_connected(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
@@ -7594,7 +7594,7 @@ class TestGracefulShutdown:
 
         assert bus.is_shutdown is True
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_shutdown_when_not_consuming(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
@@ -7630,7 +7630,7 @@ class TestGracefulShutdownContextManager:
             shutdown_timeout=5.0,
         )
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_context_manager_uses_shutdown(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
@@ -7649,7 +7649,7 @@ class TestGracefulShutdownContextManager:
         assert bus.is_shutdown is True
         assert bus.is_connected is False
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_context_manager_uses_config_timeout(self, mock_aio_pika: MagicMock) -> None:
         """Test that context manager uses shutdown_timeout from config."""
@@ -7667,7 +7667,7 @@ class TestGracefulShutdownContextManager:
 
         assert bus.is_shutdown is True
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_context_manager_shutdown_on_exception(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
@@ -7802,7 +7802,7 @@ class TestForceDisconnect:
             rabbitmq_url="amqp://test:test@localhost/",
         )
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_force_disconnect_clears_all_state(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
@@ -7830,7 +7830,7 @@ class TestForceDisconnect:
         assert bus._consuming is False
         assert bus._shutdown_initiated is True
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_force_disconnect_cancels_consumer_task(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
@@ -7855,7 +7855,7 @@ class TestForceDisconnect:
 
         assert bus._consumer_task is None
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_force_disconnect_handles_close_errors(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
@@ -7898,28 +7898,28 @@ class TestShutdownError:
 
     def test_shutdown_error_default_message(self) -> None:
         """Test that ShutdownError has a default message."""
-        from eventsource.bus.rabbitmq import ShutdownError
+        from eventsource.adapters.rabbitmq import ShutdownError
 
         error = ShutdownError()
         assert str(error) == "Event bus has been shut down"
 
     def test_shutdown_error_custom_message(self) -> None:
         """Test that ShutdownError accepts custom message."""
-        from eventsource.bus.rabbitmq import ShutdownError
+        from eventsource.adapters.rabbitmq import ShutdownError
 
         error = ShutdownError("Custom shutdown message")
         assert str(error) == "Custom shutdown message"
 
     def test_shutdown_error_is_exception(self) -> None:
         """Test that ShutdownError is an Exception subclass."""
-        from eventsource.bus.rabbitmq import ShutdownError
+        from eventsource.adapters.rabbitmq import ShutdownError
 
         error = ShutdownError()
         assert isinstance(error, Exception)
 
     def test_shutdown_error_can_be_raised_and_caught(self) -> None:
         """Test that ShutdownError can be raised and caught."""
-        from eventsource.bus.rabbitmq import ShutdownError
+        from eventsource.adapters.rabbitmq import ShutdownError
 
         with pytest.raises(ShutdownError) as exc_info:
             raise ShutdownError("Test shutdown")
@@ -7937,7 +7937,7 @@ class TestShutdownLogging:
             rabbitmq_url="amqp://test:test@localhost/",
         )
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_shutdown_logs_initiation(
         self,
@@ -7961,7 +7961,7 @@ class TestShutdownLogging:
 
         assert "Initiating graceful shutdown" in caplog.text
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_shutdown_logs_completion(
         self,
@@ -8300,7 +8300,7 @@ class TestResetStatsMethod:
 class TestStatisticsIntegration:
     """Integration tests for statistics tracking."""
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_connect_sets_connected_at(self, mock_aio_pika: MagicMock) -> None:
         """Test that connect() sets connected_at timestamp."""
@@ -8321,7 +8321,7 @@ class TestStatisticsIntegration:
         assert bus.stats.connected_at is not None
         assert isinstance(bus.stats.connected_at, datetime)
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_disconnect_clears_connected_at(self, mock_aio_pika: MagicMock) -> None:
         """Test that disconnect() clears connected_at timestamp."""
@@ -8416,7 +8416,7 @@ class TestQueueInfo:
 
     def test_default_values(self) -> None:
         """Test that QueueInfo has correct default values."""
-        from eventsource.bus.rabbitmq import QueueInfo
+        from eventsource.adapters.rabbitmq import QueueInfo
 
         info = QueueInfo(
             name="test-queue",
@@ -8432,7 +8432,7 @@ class TestQueueInfo:
 
     def test_with_error_state(self) -> None:
         """Test QueueInfo with error state."""
-        from eventsource.bus.rabbitmq import QueueInfo
+        from eventsource.adapters.rabbitmq import QueueInfo
 
         info = QueueInfo(
             name="test-queue",
@@ -8447,7 +8447,7 @@ class TestQueueInfo:
 
     def test_idle_state(self) -> None:
         """Test QueueInfo with idle state."""
-        from eventsource.bus.rabbitmq import QueueInfo
+        from eventsource.adapters.rabbitmq import QueueInfo
 
         info = QueueInfo(
             name="test-queue",
@@ -8463,13 +8463,13 @@ class TestQueueInfo:
         """Test that QueueInfo is a proper dataclass."""
         from dataclasses import is_dataclass
 
-        from eventsource.bus.rabbitmq import QueueInfo
+        from eventsource.adapters.rabbitmq import QueueInfo
 
         assert is_dataclass(QueueInfo)
 
     def test_equality(self) -> None:
         """Test QueueInfo equality comparison."""
-        from eventsource.bus.rabbitmq import QueueInfo
+        from eventsource.adapters.rabbitmq import QueueInfo
 
         info1 = QueueInfo(name="q1", message_count=10, consumer_count=2)
         info2 = QueueInfo(name="q1", message_count=10, consumer_count=2)
@@ -8484,7 +8484,7 @@ class TestHealthCheckResult:
 
     def test_healthy_result(self) -> None:
         """Test HealthCheckResult for healthy state."""
-        from eventsource.bus.rabbitmq import HealthCheckResult
+        from eventsource.adapters.rabbitmq import HealthCheckResult
 
         result = HealthCheckResult(
             healthy=True,
@@ -8501,7 +8501,7 @@ class TestHealthCheckResult:
 
     def test_unhealthy_result(self) -> None:
         """Test HealthCheckResult for unhealthy state."""
-        from eventsource.bus.rabbitmq import HealthCheckResult
+        from eventsource.adapters.rabbitmq import HealthCheckResult
 
         result = HealthCheckResult(
             healthy=False,
@@ -8516,7 +8516,7 @@ class TestHealthCheckResult:
 
     def test_with_dlq_status(self) -> None:
         """Test HealthCheckResult with DLQ status."""
-        from eventsource.bus.rabbitmq import HealthCheckResult
+        from eventsource.adapters.rabbitmq import HealthCheckResult
 
         result = HealthCheckResult(
             healthy=True,
@@ -8530,7 +8530,7 @@ class TestHealthCheckResult:
 
     def test_with_dlq_disabled(self) -> None:
         """Test HealthCheckResult with DLQ disabled."""
-        from eventsource.bus.rabbitmq import HealthCheckResult
+        from eventsource.adapters.rabbitmq import HealthCheckResult
 
         result = HealthCheckResult(
             healthy=True,
@@ -8544,7 +8544,7 @@ class TestHealthCheckResult:
 
     def test_with_details(self) -> None:
         """Test HealthCheckResult with details dictionary."""
-        from eventsource.bus.rabbitmq import HealthCheckResult
+        from eventsource.adapters.rabbitmq import HealthCheckResult
 
         details = {
             "exchange": "test-exchange",
@@ -8568,7 +8568,7 @@ class TestHealthCheckResult:
         """Test that HealthCheckResult is a proper dataclass."""
         from dataclasses import is_dataclass
 
-        from eventsource.bus.rabbitmq import HealthCheckResult
+        from eventsource.adapters.rabbitmq import HealthCheckResult
 
         assert is_dataclass(HealthCheckResult)
 
@@ -8593,7 +8593,7 @@ class TestGetQueueInfo:
     @pytest.mark.asyncio
     async def test_queue_info_when_not_connected(self, config: RabbitMQEventBusConfig) -> None:
         """Test get_queue_info returns error state when not connected."""
-        from eventsource.bus.rabbitmq import QueueInfo, RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import QueueInfo, RabbitMQEventBus
 
         bus = RabbitMQEventBus(config=config)
 
@@ -8606,13 +8606,13 @@ class TestGetQueueInfo:
         assert info.state == "error"
         assert info.error == "Not connected to RabbitMQ"
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_queue_info_when_connected(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test get_queue_info returns queue statistics when connected."""
-        from eventsource.bus.rabbitmq import QueueInfo, RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import QueueInfo, RabbitMQEventBus
 
         # Setup mock connection and channel
         mock_connection = AsyncMock()
@@ -8645,13 +8645,13 @@ class TestGetQueueInfo:
         assert info.state == "running"
         assert info.error is None
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_queue_info_idle_state_when_no_consumers(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test get_queue_info returns idle state when no consumers."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         # Setup mock connection and channel
         mock_connection = AsyncMock()
@@ -8681,13 +8681,13 @@ class TestGetQueueInfo:
         assert info.consumer_count == 0
         assert info.message_count == 10
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_queue_info_handles_exception(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test get_queue_info handles exceptions gracefully."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         # Setup mock connection and channel
         mock_connection = AsyncMock()
@@ -8729,13 +8729,13 @@ class TestGetQueueInfo:
         assert info.message_count == 0
         assert info.consumer_count == 0
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_queue_info_uses_passive_declaration(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test get_queue_info uses passive queue declaration."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         # Setup mock connection and channel
         mock_connection = AsyncMock()
@@ -8798,7 +8798,7 @@ class TestHealthCheck:
     @pytest.mark.asyncio
     async def test_health_check_when_not_connected(self, config: RabbitMQEventBusConfig) -> None:
         """Test health_check returns unhealthy when not connected."""
-        from eventsource.bus.rabbitmq import HealthCheckResult, RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import HealthCheckResult, RabbitMQEventBus
 
         bus = RabbitMQEventBus(config=config)
 
@@ -8810,13 +8810,13 @@ class TestHealthCheck:
         assert result.channel_status == "not_initialized"
         assert "Not connected to RabbitMQ" in (result.error or "")
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_health_check_healthy_state(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test health_check returns healthy when all checks pass."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         # Setup mock connection and channel
         mock_connection = AsyncMock()
@@ -8849,13 +8849,13 @@ class TestHealthCheck:
         assert result.dlq_status == "accessible"
         assert result.error is None
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_health_check_includes_details(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test health_check includes configuration details."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         # Setup mock connection and channel
         mock_connection = AsyncMock()
@@ -8889,13 +8889,13 @@ class TestHealthCheck:
         assert result.details["dlq_enabled"] is True
         assert result.details["dlq_queue"] == config.dlq_queue_name
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_health_check_includes_stats(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test health_check includes stats in details."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         # Setup mock connection and channel
         mock_connection = AsyncMock()
@@ -8930,13 +8930,13 @@ class TestHealthCheck:
         assert result.details["stats"]["events_published"] == 100
         assert result.details["stats"]["events_consumed"] == 95
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_health_check_connection_closed(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test health_check when connection is closed."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         # Setup mock connection and channel
         mock_connection = AsyncMock()
@@ -8958,13 +8958,13 @@ class TestHealthCheck:
         assert result.connection_status == "closed"
         assert "RabbitMQ connection is closed" in (result.error or "")
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_health_check_channel_closed(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test health_check when channel is closed."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         # Setup mock connection and channel
         mock_connection = AsyncMock()
@@ -8986,13 +8986,13 @@ class TestHealthCheck:
         assert result.channel_status == "closed"
         assert "AMQP channel is closed" in (result.error or "")
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_health_check_queue_error(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test health_check when queue check fails."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         # Setup mock connection and channel
         mock_connection = AsyncMock()
@@ -9037,7 +9037,7 @@ class TestHealthCheck:
     @pytest.mark.asyncio
     async def test_health_check_dlq_disabled(self, config_no_dlq: RabbitMQEventBusConfig) -> None:
         """Test health_check when DLQ is disabled."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus(config=config_no_dlq)
 
@@ -9045,13 +9045,13 @@ class TestHealthCheck:
 
         assert result.dlq_status == "disabled"
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_health_check_dlq_error_doesnt_fail_overall(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that DLQ check failure doesn't make overall health fail."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         # Setup mock connection and channel
         mock_connection = AsyncMock()
@@ -9091,13 +9091,13 @@ class TestHealthCheck:
         assert result.queue_status == "accessible"
         assert "error:" in (result.dlq_status or "")
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_health_check_multiple_errors(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test health_check with multiple errors combines them."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus(config=config)
         # Not connected, so multiple errors expected
@@ -9141,7 +9141,7 @@ class TestOpenTelemetryTracing:
 
     def test_otel_available_exported(self) -> None:
         """Test that OTEL_AVAILABLE is properly exported."""
-        from eventsource.bus.rabbitmq import OTEL_AVAILABLE
+        from eventsource.adapters.rabbitmq import OTEL_AVAILABLE
 
         # OTEL_AVAILABLE should be a boolean
         assert isinstance(OTEL_AVAILABLE, bool)
@@ -9159,7 +9159,7 @@ class TestOpenTelemetryTracing:
 
     def test_tracer_set_when_enabled_and_available(self, config: RabbitMQEventBusConfig) -> None:
         """Test that _tracer is set when enabled and available."""
-        from eventsource.bus.rabbitmq import OTEL_AVAILABLE
+        from eventsource.adapters.rabbitmq import OTEL_AVAILABLE
 
         bus = RabbitMQEventBus(config=config)
 
@@ -9171,13 +9171,13 @@ class TestOpenTelemetryTracing:
         else:
             assert bus._tracer.enabled is False
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_publish_creates_span_when_tracing_enabled(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that publish creates a span when tracing is enabled."""
-        from eventsource.bus.rabbitmq import OTEL_AVAILABLE, RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import OTEL_AVAILABLE, RabbitMQEventBus
 
         if not OTEL_AVAILABLE:
             pytest.skip("OpenTelemetry not installed")
@@ -9220,13 +9220,13 @@ class TestOpenTelemetryTracing:
         mock_tracer.start_span.assert_called()
         mock_span.end.assert_called()
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_publish_span_has_correct_attributes(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that publish span includes correct attributes."""
-        from eventsource.bus.rabbitmq import OTEL_AVAILABLE, RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import OTEL_AVAILABLE, RabbitMQEventBus
         from eventsource.observability.attributes import (
             ATTR_EVENT_TYPE,
             ATTR_MESSAGING_DESTINATION,
@@ -9282,13 +9282,13 @@ class TestOpenTelemetryTracing:
         assert attributes[ATTR_EVENT_TYPE] == "TestEvent"
         assert attributes["aggregate.type"] == "TestAggregate"
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_publish_no_span_when_tracing_disabled(
         self, mock_aio_pika: MagicMock, config_no_tracing: RabbitMQEventBusConfig
     ) -> None:
         """Test that publish does not create span when tracing is disabled."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         # Set up mocks
         mock_connection = AsyncMock()
@@ -9325,13 +9325,13 @@ class TestOpenTelemetryTracing:
         await bus.publish([event])
         mock_exchange.publish.assert_called_once()
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_publish_span_records_exception_on_error(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that publish span records exception when publish fails."""
-        from eventsource.bus.rabbitmq import OTEL_AVAILABLE, RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import OTEL_AVAILABLE, RabbitMQEventBus
 
         if not OTEL_AVAILABLE:
             pytest.skip("OpenTelemetry not installed")
@@ -9382,7 +9382,7 @@ class TestOpenTelemetryTracing:
         self, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that _create_message_with_tracing injects trace context."""
-        from eventsource.bus.rabbitmq import OTEL_AVAILABLE, RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import OTEL_AVAILABLE, RabbitMQEventBus
 
         if not OTEL_AVAILABLE:
             pytest.skip("OpenTelemetry not installed")
@@ -9397,7 +9397,7 @@ class TestOpenTelemetryTracing:
         bus = RabbitMQEventBus(config=config)
 
         # Mock inject to verify it gets called
-        with patch("eventsource.bus.rabbitmq.serialization.inject") as mock_inject:
+        with patch("eventsource.adapters.rabbitmq.serialization.inject") as mock_inject:
             mock_span = MagicMock()
             message = bus._create_message_with_tracing(event, mock_span)
 
@@ -9419,7 +9419,7 @@ class TestOpenTelemetryTracing:
         bus = RabbitMQEventBus(config=config)
 
         # Without span, inject should not be called
-        with patch("eventsource.bus.rabbitmq.serialization.inject") as mock_inject:
+        with patch("eventsource.adapters.rabbitmq.serialization.inject") as mock_inject:
             message = bus._create_message_with_tracing(event, None)
 
             # Verify inject was not called
@@ -9453,7 +9453,7 @@ class TestOpenTelemetryConsumerTracing:
         registry.register(TestEvent)
         return registry
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_process_message_creates_consumer_span(
         self,
@@ -9462,7 +9462,7 @@ class TestOpenTelemetryConsumerTracing:
         registry: EventRegistry,
     ) -> None:
         """Test that _process_message creates a consumer span."""
-        from eventsource.bus.rabbitmq import OTEL_AVAILABLE, RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import OTEL_AVAILABLE, RabbitMQEventBus
 
         if not OTEL_AVAILABLE:
             pytest.skip("OpenTelemetry not installed")
@@ -9496,7 +9496,7 @@ class TestOpenTelemetryConsumerTracing:
         bus._tracer = mock_tracer
 
         # Also mock extract for context propagation
-        with patch("eventsource.bus.rabbitmq.consumer.extract") as mock_extract:
+        with patch("eventsource.adapters.rabbitmq.consumer.extract") as mock_extract:
             mock_extract.return_value = None
 
             await bus._process_message(mock_message)
@@ -9508,7 +9508,7 @@ class TestOpenTelemetryConsumerTracing:
             # Verify span was ended
             mock_span.end.assert_called()
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_dispatch_event_creates_handler_spans(
         self,
@@ -9517,7 +9517,7 @@ class TestOpenTelemetryConsumerTracing:
         registry: EventRegistry,
     ) -> None:
         """Test that _dispatch_event creates handler spans."""
-        from eventsource.bus.rabbitmq import OTEL_AVAILABLE, RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import OTEL_AVAILABLE, RabbitMQEventBus
 
         if not OTEL_AVAILABLE:
             pytest.skip("OpenTelemetry not installed")
@@ -9560,7 +9560,7 @@ class TestOpenTelemetryConsumerTracing:
         # Verify handler span was ended
         mock_handler_span.end.assert_called()
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_dispatch_event_no_handler_spans_without_parent(
         self,
@@ -9569,7 +9569,7 @@ class TestOpenTelemetryConsumerTracing:
         registry: EventRegistry,
     ) -> None:
         """Test that _dispatch_event does not create handler spans without parent span."""
-        from eventsource.bus.rabbitmq import OTEL_AVAILABLE, RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import OTEL_AVAILABLE, RabbitMQEventBus
 
         if not OTEL_AVAILABLE:
             pytest.skip("OpenTelemetry not installed")
@@ -9607,7 +9607,7 @@ class TestOpenTelemetryConsumerTracing:
         # But no spans should be created (because parent_span is None)
         mock_tracer.start_span.assert_not_called()
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_handler_span_records_exception_on_error(
         self,
@@ -9616,7 +9616,7 @@ class TestOpenTelemetryConsumerTracing:
         registry: EventRegistry,
     ) -> None:
         """Test that handler span records exception when handler fails."""
-        from eventsource.bus.rabbitmq import OTEL_AVAILABLE, RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import OTEL_AVAILABLE, RabbitMQEventBus
 
         if not OTEL_AVAILABLE:
             pytest.skip("OpenTelemetry not installed")
@@ -9678,7 +9678,7 @@ class TestOpenTelemetryGracefulDegradation:
         # _tracer is always set with composition-based tracing
         assert bus._tracer is not None
 
-        from eventsource.bus.rabbitmq import OTEL_AVAILABLE
+        from eventsource.adapters.rabbitmq import OTEL_AVAILABLE
 
         if not OTEL_AVAILABLE:
             # When OTEL is not available, _tracer should be a NullTracer (disabled)
@@ -9687,7 +9687,7 @@ class TestOpenTelemetryGracefulDegradation:
             # When OTEL is available, tracer should be enabled
             assert bus._tracer.enabled is True
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_publish_works_without_otel(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
@@ -9720,7 +9720,7 @@ class TestOpenTelemetryGracefulDegradation:
         await bus.connect()
 
         # Make OTEL unavailable
-        with patch("eventsource.bus.rabbitmq.bus.OTEL_AVAILABLE", False):
+        with patch("eventsource.adapters.rabbitmq.bus.OTEL_AVAILABLE", False):
             # Should not raise any exceptions
             await bus.publish([event])
 
@@ -9742,7 +9742,7 @@ class TestOpenTelemetryGracefulDegradation:
         bus = RabbitMQEventBus(config=config)
 
         # Make OTEL unavailable
-        with patch("eventsource.bus.rabbitmq.bus.OTEL_AVAILABLE", False):
+        with patch("eventsource.adapters.rabbitmq.bus.OTEL_AVAILABLE", False):
             mock_span = MagicMock()
             # Should not raise, even with a span provided
             message = bus._create_message_with_tracing(event, mock_span)
@@ -9841,7 +9841,7 @@ class TestDirectExchangeBinding:
             enable_dlq=False,
         )
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_direct_exchange_uses_queue_name_as_routing_key(
         self, mock_aio_pika: MagicMock, direct_exchange_config: RabbitMQEventBusConfig
@@ -9867,7 +9867,7 @@ class TestDirectExchangeBinding:
         call_kwargs = mock_queue.bind.call_args.kwargs
         assert call_kwargs["routing_key"] == direct_exchange_config.queue_name
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_topic_exchange_uses_wildcard_routing_key(self, mock_aio_pika: MagicMock) -> None:
         """Test that topic exchange binds with '#' wildcard routing key."""
@@ -9896,7 +9896,7 @@ class TestDirectExchangeBinding:
         call_kwargs = mock_queue.bind.call_args.kwargs
         assert call_kwargs["routing_key"] == "#"
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_fanout_exchange_uses_empty_routing_key(self, mock_aio_pika: MagicMock) -> None:
         """Test that fanout exchange binds with empty routing key."""
@@ -9925,7 +9925,7 @@ class TestDirectExchangeBinding:
         call_kwargs = mock_queue.bind.call_args.kwargs
         assert call_kwargs["routing_key"] == ""
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_custom_routing_key_pattern_overrides_default(
         self, mock_aio_pika: MagicMock
@@ -9972,7 +9972,7 @@ class TestBindEventType:
             enable_dlq=False,
         )
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_bind_event_type_creates_binding(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
@@ -10037,7 +10037,7 @@ class TestBindRoutingKey:
             enable_dlq=False,
         )
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_bind_routing_key_creates_binding(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
@@ -10069,7 +10069,7 @@ class TestBindRoutingKey:
         call_kwargs = mock_queue.bind.call_args.kwargs
         assert call_kwargs["routing_key"] == "Order.OrderCreated"
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_bind_routing_key_supports_wildcards_for_topic(
         self, mock_aio_pika: MagicMock
@@ -10165,7 +10165,7 @@ class TestDirectExchangeWorkQueuePattern:
         routing_key = work_queue_config.get_effective_routing_key()
         assert routing_key == work_queue_config.queue_name
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_work_queue_multiple_consumers_same_binding(
         self, mock_aio_pika: MagicMock, work_queue_config: RabbitMQEventBusConfig
@@ -10218,7 +10218,7 @@ class TestDirectExchangeWorkQueuePattern:
 class TestDirectExchangeRoutingKeyGeneration:
     """Tests for routing key generation in publish for direct exchange."""
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_publish_uses_aggregate_event_routing_key(self, mock_aio_pika: MagicMock) -> None:
         """Test that publish uses {aggregate_type}.{event_type} as routing key."""
@@ -10314,7 +10314,7 @@ class TestFanoutExchangeBroadcastBehavior:
         assert config_mixed.get_effective_routing_key() == ""
         assert config_lower.get_effective_routing_key() == ""
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_fanout_exchange_declared_with_correct_type(
         self, mock_aio_pika: MagicMock, fanout_config: RabbitMQEventBusConfig
@@ -10344,7 +10344,7 @@ class TestFanoutExchangeBroadcastBehavior:
         assert call_kwargs["name"] == "broadcast-events"
         assert call_kwargs["durable"] is True
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_fanout_queue_bound_with_empty_routing_key(
         self, mock_aio_pika: MagicMock, fanout_config: RabbitMQEventBusConfig
@@ -10371,7 +10371,7 @@ class TestFanoutExchangeBroadcastBehavior:
         assert call_kwargs["routing_key"] == ""
         assert call_kwargs["exchange"] == mock_exchange
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_fanout_publish_includes_routing_key_for_logging(
         self, mock_aio_pika: MagicMock, fanout_config: RabbitMQEventBusConfig
@@ -10445,7 +10445,7 @@ class TestFanoutExchangeMultipleConsumerGroups:
         assert config2.queue_name == "broadcast.audit-log"
         assert config3.queue_name == "broadcast.cache-invalidation"
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_multiple_buses_same_fanout_exchange(self, mock_aio_pika: MagicMock) -> None:
         """Test that multiple buses can connect to the same fanout exchange.
@@ -10586,7 +10586,7 @@ class TestFanoutExchangeUseCases:
 class TestFanoutExchangeWithDLQ:
     """Tests for fanout exchange with dead letter queue."""
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_fanout_with_dlq_enabled(self, mock_aio_pika: MagicMock) -> None:
         """Test that fanout exchange works correctly with DLQ enabled."""
@@ -10643,7 +10643,7 @@ class TestFanoutExchangeWithDLQ:
 class TestFanoutExchangeLogging:
     """Tests for fanout exchange logging behavior."""
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_fanout_binding_logged_correctly(
         self, mock_aio_pika: MagicMock, caplog: pytest.LogCaptureFixture
@@ -10687,7 +10687,7 @@ class TestFanoutExchangeLogging:
         assert hasattr(binding_log, "routing_key_ignored")
         assert binding_log.routing_key_ignored is True
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_fanout_publish_logged_with_routing_key(
         self, mock_aio_pika: MagicMock, caplog: pytest.LogCaptureFixture
@@ -10926,7 +10926,7 @@ class TestTLSSupport:
         assert ctx is not None
         assert "Both cert_file and key_file must be provided" in caplog.text
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_connect_with_amqps_url(self, mock_aio_pika: MagicMock) -> None:
         """Test connection with amqps:// URL passes ssl_context to connect_robust."""
@@ -10957,7 +10957,7 @@ class TestTLSSupport:
         assert "ssl_context" in call_kwargs
         assert isinstance(call_kwargs["ssl_context"], ssl.SSLContext)
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_connect_with_custom_ssl_context(self, mock_aio_pika: MagicMock) -> None:
         """Test connection with custom SSL context."""
@@ -10991,7 +10991,7 @@ class TestTLSSupport:
         call_kwargs = mock_aio_pika.connect_robust.call_args.kwargs
         assert call_kwargs["ssl_context"] is custom_ctx
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_connect_with_ssl_options(self, mock_aio_pika: MagicMock) -> None:
         """Test connection with additional ssl_options."""
@@ -11023,7 +11023,7 @@ class TestTLSSupport:
         assert "ssl_context" in call_kwargs
         assert call_kwargs.get("server_hostname") == "custom.hostname.com"
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_connect_without_tls(self, mock_aio_pika: MagicMock) -> None:
         """Test connection without TLS does not pass ssl_context."""
@@ -11053,7 +11053,7 @@ class TestTLSSupport:
         call_kwargs = mock_aio_pika.connect_robust.call_args.kwargs
         assert "ssl_context" not in call_kwargs
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_connect_logs_tls_status(
         self, mock_aio_pika: MagicMock, caplog: pytest.LogCaptureFixture
@@ -11091,7 +11091,7 @@ class TestTLSSupport:
         assert hasattr(connect_logs[0], "tls_enabled")
         assert connect_logs[0].tls_enabled is True
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_connect_logs_plaintext_status(
         self, mock_aio_pika: MagicMock, caplog: pytest.LogCaptureFixture
@@ -11129,7 +11129,7 @@ class TestTLSSupport:
         assert hasattr(connect_logs[0], "tls_enabled")
         assert connect_logs[0].tls_enabled is False
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_ssl_error_handling(
         self, mock_aio_pika: MagicMock, caplog: pytest.LogCaptureFixture
@@ -11242,14 +11242,14 @@ class TestBatchPublishError:
 
     def test_batch_publish_error_can_be_raised(self) -> None:
         """Test that BatchPublishError can be raised and caught."""
-        from eventsource.bus.rabbitmq import BatchPublishError
+        from eventsource.adapters.rabbitmq import BatchPublishError
 
         with pytest.raises(BatchPublishError):
             raise BatchPublishError("Test error")
 
     def test_batch_publish_error_has_results(self) -> None:
         """Test that BatchPublishError contains results dict."""
-        from eventsource.bus.rabbitmq import BatchPublishError
+        from eventsource.adapters.rabbitmq import BatchPublishError
 
         results = {"total": 10, "published": 8, "failed": 2, "chunks": 1}
         error = BatchPublishError("Partial failure", results=results)
@@ -11261,7 +11261,7 @@ class TestBatchPublishError:
 
     def test_batch_publish_error_has_errors_list(self) -> None:
         """Test that BatchPublishError contains list of errors."""
-        from eventsource.bus.rabbitmq import BatchPublishError
+        from eventsource.adapters.rabbitmq import BatchPublishError
 
         errors = [Exception("Error 1"), Exception("Error 2")]
         error = BatchPublishError("Multiple failures", errors=errors)
@@ -11272,7 +11272,7 @@ class TestBatchPublishError:
 
     def test_batch_publish_error_defaults(self) -> None:
         """Test that BatchPublishError has sensible defaults."""
-        from eventsource.bus.rabbitmq import BatchPublishError
+        from eventsource.adapters.rabbitmq import BatchPublishError
 
         error = BatchPublishError("Test")
 
@@ -11294,26 +11294,26 @@ class TestPublishBatchMethod:
             max_concurrent_publishes=5,
         )
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_publish_batch_empty_list(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test publish_batch with empty list returns zero stats."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus(config=config)
         result = await bus.publish_batch([])
 
         assert result == {"total": 0, "published": 0, "failed": 0, "chunks": 0}
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_publish_batch_success(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test publish_batch successfully publishes all events."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -11339,11 +11339,11 @@ class TestPublishBatchMethod:
         assert bus.stats.batch_publishes == 1
         assert bus.stats.batch_events_published == 5
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_publish_batch_with_chunking(self, mock_aio_pika: MagicMock) -> None:
         """Test publish_batch splits large batches into chunks."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         config = RabbitMQEventBusConfig(
             rabbitmq_url="amqp://test:test@localhost/",
@@ -11372,13 +11372,13 @@ class TestPublishBatchMethod:
         assert result["published"] == 12
         assert result["chunks"] == 3  # 12 events / 5 batch_size = 3 chunks
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_publish_batch_preserve_order(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test publish_batch with preserve_order=True publishes sequentially."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -11402,13 +11402,13 @@ class TestPublishBatchMethod:
         assert result["chunks"] == 1  # Sequential is always 1 chunk
         assert mock_exchange.publish.call_count == 5
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_publish_batch_partial_failure_raises_error(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test publish_batch raises BatchPublishError on partial failure."""
-        from eventsource.bus.rabbitmq import BatchPublishError, RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import BatchPublishError, RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -11438,13 +11438,13 @@ class TestPublishBatchMethod:
         assert len(exc_info.value.errors) == 1
         assert bus.stats.batch_partial_failures == 1
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_publish_batch_auto_connects(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test publish_batch auto-connects if not connected."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -11484,13 +11484,13 @@ class TestPublishMethodBatchOptimization:
             max_concurrent_publishes=5,
         )
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_publish_single_event_no_batch(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that publishing a single event does not use batch optimization."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -11513,13 +11513,13 @@ class TestPublishMethodBatchOptimization:
         assert bus.stats.events_published == 1
         assert bus.stats.batch_publishes == 0
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_publish_multiple_events_uses_batch(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that publishing multiple events uses batch optimization."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -11547,11 +11547,11 @@ class TestPublishMethodBatchOptimization:
 class TestBatchPublishingStatsDict:
     """Tests for batch stats in get_stats_dict()."""
 
-    @patch("eventsource.bus.rabbitmq.connection.aio_pika")
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_stats_dict_includes_batch_fields(self, mock_aio_pika: MagicMock) -> None:
         """Test that get_stats_dict includes batch publishing fields."""
-        from eventsource.bus.rabbitmq import RabbitMQEventBus
+        from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         mock_connection = AsyncMock()
         mock_connection.is_closed = False
@@ -11583,7 +11583,7 @@ class TestBatchPublishingStatsDict:
 
 def test_retry_delay_comes_from_the_shared_policy() -> None:
     """The bus must delegate backoff to RetryPolicy, not compute it inline."""
-    from eventsource.bus.retry import RetryPolicy
+    from eventsource.adapters._bus.retry import RetryPolicy
 
     config = RabbitMQEventBusConfig(
         rabbitmq_url="amqp://guest:guest@localhost/",

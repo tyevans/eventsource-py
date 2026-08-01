@@ -181,7 +181,7 @@ Everything a caller can do to a store either appends or reads, and that is a
 property of the interface rather than a convention implementations are trusted
 to follow.
 
-`EventBus` (`eventsource.bus.interface`) is the live-delivery half, and it is
+`EventBus` (`eventsource.ports.bus`) is the live-delivery half, and it is
 where async-first meets a practical concession. `publish(events,
 background=False)` is a coroutine; subscription management is not — `subscribe`
 and `unsubscribe` bind a handler to one event type, `subscribe_all`,

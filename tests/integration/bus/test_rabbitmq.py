@@ -34,7 +34,7 @@ from eventsource import (
     DomainEvent,
     EventRegistry,
 )
-from eventsource.bus.interface import EventBus
+from eventsource.ports.bus import EventBus
 from eventsource.testing.conformance import EventBusConformanceSuite
 
 from ..conftest import (

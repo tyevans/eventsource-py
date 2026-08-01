@@ -10,6 +10,12 @@ by all four adapters shipped in `src/eventsource/bus/` -- `memory.py`,
 `src/eventsource/observability/tracer.py` and the attribute constants in
 `src/eventsource/observability/attributes.py`.
 
+**Amended by [ADR 0031](0031-bus-ring-split.md)** -- for module locations
+only: `EventBus` and the four backends live under `eventsource.ports.bus`
+and `eventsource.adapters.{memory,redis,rabbitmq,kafka}` now, not
+`eventsource.bus`. This ADR's delivery-semantics and tracing-contract
+Decision is unchanged.
+
 Compliance is pinned by `tests/unit/bus/test_eventbus_tracing_patterns.py`,
 which inspects every adapter's source and signature, with
 `tests/unit/bus/test_memory.py` and `tests/unit/bus/test_rabbitmq_tracing.py`
