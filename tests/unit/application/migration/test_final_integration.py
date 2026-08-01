@@ -36,6 +36,11 @@ from eventsource.application.migration.consistency import (
 )
 from eventsource.application.migration.coordinator import MigrationCoordinator
 from eventsource.application.migration.cutover import CutoverManager
+from eventsource.application.migration.error_classification import (
+    ErrorRecoverability,
+    ErrorSeverity,
+    RetryConfig,
+)
 from eventsource.application.migration.exceptions import (
     BulkCopyError,
     CircuitBreaker,
@@ -46,12 +51,9 @@ from eventsource.application.migration.exceptions import (
     CutoverTimeoutError,
     DualWriteError,
     ErrorHandler,
-    ErrorRecoverability,
-    ErrorSeverity,
     MigrationAlreadyExistsError,
     MigrationError,
     MigrationNotFoundError,
-    RetryConfig,
     classify_exception,
 )
 from eventsource.application.migration.metrics import (

@@ -16,11 +16,19 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.application.migration.exceptions import (
+from eventsource.application.migration.error_classification import (
     CONNECTIVITY_RETRY_CONFIG,
     CUTOVER_RETRY_CONFIG,
     # Default configs
     TRANSIENT_RETRY_CONFIG,
+    ErrorClassification,
+    ErrorRecoverability,
+    # Enums
+    ErrorSeverity,
+    # Configuration classes
+    RetryConfig,
+)
+from eventsource.application.migration.exceptions import (
     BulkCopyError,
     # Circuit breaker
     CircuitBreaker,
@@ -32,12 +40,8 @@ from eventsource.application.migration.exceptions import (
     CutoverLagError,
     CutoverTimeoutError,
     DualWriteError,
-    ErrorClassification,
     # Error handler
     ErrorHandler,
-    ErrorRecoverability,
-    # Enums
-    ErrorSeverity,
     InvalidPhaseTransitionError,
     MigrationAlreadyExistsError,
     # Exceptions to test
@@ -45,8 +49,6 @@ from eventsource.application.migration.exceptions import (
     MigrationNotFoundError,
     MigrationStateError,
     PositionMappingError,
-    # Configuration classes
-    RetryConfig,
     RoutingError,
     classify_exception,
 )
