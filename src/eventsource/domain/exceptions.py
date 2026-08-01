@@ -229,6 +229,32 @@ class HandlerDispatchError(EventSourceError):
         super().__init__(f"{len(failures)} handler(s) failed during dispatch: {handler_names}")
 
 
+class DuplicateHandlerError(EventSourceError):
+    """
+    Raised when two @handles methods in one class claim the same event type.
+
+    Without this check, discovery order (alphabetical via dir()) silently
+    picks one handler and drops the other's state mutation.
+    """
+
+    def __init__(
+        self,
+        owner_name: str,
+        event_type: type,
+        first_handler: str,
+        second_handler: str,
+    ) -> None:
+        self.owner_name = owner_name
+        self.event_type = event_type
+        self.first_handler = first_handler
+        self.second_handler = second_handler
+        super().__init__(
+            f"{owner_name} declares multiple handlers for "
+            f"{event_type.__name__}: '{first_handler}' and '{second_handler}'. "
+            f"Each event type may have exactly one @handles method per class."
+        )
+
+
 class DuplicateEventError(EventSourceError):
     """An event with this event_id already exists in the store."""
 
@@ -542,6 +568,7 @@ class HandlerSignatureError(EventSourceError, ValueError):
         event_type: type,
         param_count: int,
         is_async_required: bool = True,
+        reason: str | None = None,
     ) -> None:
         self.handler_name = handler_name
         self.owner_name = owner_name
@@ -552,15 +579,21 @@ class HandlerSignatureError(EventSourceError, ValueError):
         event_name = event_type.__name__
         async_prefix = "async " if is_async_required else ""
 
-        message = (
-            f"Handler '{handler_name}' in {owner_name} has invalid signature "
-            f"for @handles({event_name}).\n\n"
-            f"Expected one of:\n"
-            f"  {async_prefix}def {handler_name}(self, event: {event_name}) -> None\n"
-            f"  {async_prefix}def {handler_name}(self, context, event: {event_name}) -> None\n\n"
-            f"Got: {param_count} parameter(s) (excluding self)\n\n"
-            f"Hint: Ensure your handler has exactly 1 or 2 parameters after 'self'."
-        )
+        if reason is not None:
+            message = (
+                f"Handler '{handler_name}' in {owner_name} is invalid for "
+                f"@handles({event_name}): {reason}"
+            )
+        else:
+            message = (
+                f"Handler '{handler_name}' in {owner_name} has invalid signature "
+                f"for @handles({event_name}).\n\n"
+                f"Expected one of:\n"
+                f"  {async_prefix}def {handler_name}(self, event: {event_name}) -> None\n"
+                f"  {async_prefix}def {handler_name}(self, context, event: {event_name}) -> None\n\n"
+                f"Got: {param_count} parameter(s) (excluding self)\n\n"
+                f"Hint: Ensure your handler has exactly 1 or 2 parameters after 'self'."
+            )
 
         super().__init__(message)
 
