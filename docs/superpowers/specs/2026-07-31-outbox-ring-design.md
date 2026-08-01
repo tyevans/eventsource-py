@@ -49,7 +49,7 @@ Three consequences follow from leaving it:
 
 | New module | Contents | Purity |
 |---|---|---|
-| `src/eventsource/ports/outbox.py` | `OutboxEntry`, `OutboxStats`, `OutboxRepository` Protocol, `outbox_event_data()` | stdlib + `eventsource.events.base` only — Tier 0 |
+| `src/eventsource/ports/outbox.py` | `OutboxEntry`, `OutboxStats`, `OutboxRepository` Protocol, `outbox_event_data()` | stdlib + `eventsource.domain.event` only — Tier 0 |
 | `src/eventsource/adapters/memory/outbox.py` | `InMemoryOutboxRepository` (+ `clear()`) | stdlib only — Tier 0 |
 | `src/eventsource/adapters/postgresql/outbox.py` | `PostgreSQLOutboxRepository` | sqlalchemy |
 | `src/eventsource/adapters/sqlite/outbox.py` | `SQLiteOutboxRepository` | aiosqlite (guarded) |
@@ -244,7 +244,7 @@ cleanup).
 
 New `src/eventsource/testing/conformance_ports/outbox.py` exporting
 `OutboxRepositoryConformance`, matching the established shape: an ABC with an abstract
-`store` pytest fixture, importing only from `eventsource.ports`, `eventsource.events`, and
+`store` pytest fixture, importing only from `eventsource.ports`, `eventsource.domain.event_registry`, and
 pytest/stdlib. Wired to all three backends:
 
 | Backend | Runner |

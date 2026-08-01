@@ -53,7 +53,7 @@ SQLite extra is absent and 133 when it is present (`SQLITE_AVAILABLE`, `SQLiteEv
 and `SQLiteOutboxRepository` are the only names conditionally appended). The barrel is
 deliberately flat —
 `from eventsource import DomainEvent, AggregateRoot, InMemoryEventStore` is the idiomatic
-import style, and the module paths underneath (`eventsource.events.base`,
+import style, and the module paths underneath (`eventsource.domain.event`,
 `eventsource.domain.aggregate`, `eventsource.adapters.memory`) are where those names are
 defined rather than where callers are expected to reach.
 
@@ -100,8 +100,8 @@ SQLite event store. Persistent snapshot stores are therefore imported path-only,
 re-exported: the barrel carries the commonly used names from each, while the modules
 themselves remain the canonical definition sites and contain additional members.
 
-`eventsource._internal` is private. Names under it are not part of the public API and
-may change in any release without notice.
+`eventsource._internal` no longer exists as a package; its one module,
+`BackgroundTaskManager`, moved to `eventsource.application.background_tasks`.
 
 ### Optional Backends and `*_AVAILABLE` Flags
 
@@ -252,9 +252,9 @@ short-circuited by a snapshot, consumed by a projection, and distributed over a 
 
 | Page | Package(s) documented | Top-level exports covered |
 | --- | --- | --- |
-| [Events](events.md) | `eventsource.events` | 10 |
+| [Events](events.md) | `eventsource.domain.event`, `eventsource.domain.event_registry` | 10 |
 | Event Stores | `eventsource.ports`, `eventsource.adapters.{memory,postgresql,sqlite}` | 15 (16 with the SQLite extra) |
-| [Aggregates](aggregates.md) | `eventsource.domain.aggregate`, `eventsource.application.aggregates`, `eventsource.handlers` | 4 |
+| [Aggregates](aggregates.md) | `eventsource.domain.aggregate`, `eventsource.application.aggregates`, `eventsource.domain.decorators` | 4 |
 | [Snapshots](snapshots.md) | `eventsource.ports.snapshots`, `eventsource.application.aggregates.snapshotting`, `eventsource.adapters.{memory,postgresql,sqlite}` | 7 of 11 |
 | [Projections](projections.md) | `eventsource.application.projections`, `eventsource.ports.readmodels` | 5 of 21 |
 | [Event Bus](bus.md) | `eventsource.ports.bus`, `eventsource.adapters.{memory,redis,rabbitmq,kafka}` | 20 |
@@ -262,11 +262,11 @@ short-circuited by a snapshot, consumed by a projection, and distributed over a 
 Where a page documents more names than the barrel exports — snapshots, projections and
 read models — the extra names are imported from their own module. Each page states which.
 
-### Events — `api/events.md` (`eventsource.events.base`, `eventsource.events.registry`)
+### Events — `api/events.md` (`eventsource.domain.event`, `eventsource.domain.event_registry`)
 
 Covers `DomainEvent`, the frozen Pydantic base class every domain event derives from, and
 the `EventRegistry` that maps `event_type` strings back to classes during
-deserialization. `eventsource.events.__all__` and the corresponding slice of the barrel
+deserialization. The corresponding slice of the barrel
 agree exactly: `DomainEvent`, `EventRegistry`, `default_registry`, `register_event`, the
 four convenience functions that operate on `default_registry` (`get_event_class`,
 `get_event_class_or_none`, `is_event_registered`, `list_registered_events`), and the two
@@ -337,7 +337,7 @@ is one ring out, at `eventsource.application.aggregates.repository`.
 `eventsource.application.aggregates.__all__` adds the type variable `TAggregate`
 alongside `AggregateRepository`; `TState` is declared in `eventsource.domain.types` and
 re-exported from the top-level barrel. The `handles` decorator itself is defined in
-`eventsource.handlers` and re-exported from the barrel; the same decorator is used by
+`eventsource.domain.decorators` and re-exported from the barrel; the same decorator is used by
 `DeclarativeProjection`.
 
 The page also covers the repository's snapshot policy surface — `snapshot_mode`,
@@ -419,15 +419,15 @@ modules and re-binds them at package level. Two import styles therefore reach th
 objects, and they are the same object — the barrel rebinds, it does not wrap or copy.
 
 ```python
-from eventsource import DomainEvent            # barrel
-from eventsource.events.base import DomainEvent  # submodule (identical object)
+from eventsource import DomainEvent               # barrel
+from eventsource.domain.event import DomainEvent  # submodule (identical object)
 ```
 
 ### Prefer the barrel for the public surface
 
 For any name listed in `eventsource.__all__`, import from `eventsource` directly. The
 barrel is the supported contract; the module paths beneath it
-(`eventsource.events.base`, `eventsource.application.aggregates.repository`,
+(`eventsource.domain.event`, `eventsource.application.aggregates.repository`,
 `eventsource.adapters.memory`) are implementation detail and may be reorganized without
 being treated as a breaking change, provided the barrel name keeps working.
 
@@ -442,7 +442,7 @@ from eventsource import (
 )
 ```
 
-Note that the barrel is flat, not namespaced: there are no `eventsource.events.X`-style
+Note that the barrel is flat, not namespaced: there are no `eventsource.domain.X`-style
 attribute chains to walk from the package object. Everything public sits one level down
 from `eventsource`.
 
@@ -490,8 +490,8 @@ mix of relative and `sys.path`-relative imports) is not.
 
 ### What not to import
 
-`eventsource._internal` is private. Its contents are helpers for the packages above it
-and may be renamed, moved, or removed in any release. Likewise, treat the raw SQL under
+`eventsource._internal` no longer exists as a package; its one module,
+`BackgroundTaskManager`, moved to `eventsource.application.background_tasks`. Likewise, treat the raw SQL under
 `eventsource.migrations` as data applied by tooling rather than an importable API.
 
 ## Version metadata (`__version__`, `importlib.metadata`, and the `0.0.0.dev0` source fallback)
@@ -613,7 +613,7 @@ test harness.
 
 ### Why the surface is flat
 
-Every name below is re-exported at package level. There is no `eventsource.events.X`
+Every name below is re-exported at package level. There is no barrel submodule
 attribute chain to walk from the package object: `from eventsource import DomainEvent,
 AggregateRoot, InMemoryEventStore` is the whole import model. The subsections that
 follow group the names thematically for reading, not by module path — the grouping is
@@ -823,11 +823,11 @@ Import these from their module:
 | `eventsource.gdpr` | GDPR compliance utilities |
 
 Two modules are re-exported *and* importable directly, because they are canonical
-homes rather than optional add-ons: `eventsource.handlers` (`handles`) and
+homes rather than optional add-ons: `eventsource.domain.decorators` (`handles`) and
 `eventsource.ports.handlers` (the handler and subscriber protocols). Prefer the barrel.
 
-`eventsource._internal` is private. Nothing under it is part of the public API, and its
-contents may change in any release.
+`eventsource._internal` no longer exists as a package; its one module,
+`BackgroundTaskManager`, moved to `eventsource.application.background_tasks`.
 
 ### Type checking
 
@@ -836,7 +836,7 @@ annotations directly — no stub package is required or published.
 
 ### Events
 
-`eventsource.events` defines the event vocabulary: `DomainEvent`, the base class every
+`eventsource.domain.event` and `eventsource.domain.event_registry` define the event vocabulary: `DomainEvent`, the base class every
 event subclasses, and `EventRegistry`, the name-to-class mapping used to rehydrate
 persisted events. Both are re-exported from the barrel.
 
@@ -1172,7 +1172,7 @@ class that turns commands into events and events into state, and `DeclarativeAgg
 which routes events to `@handles`-decorated methods. `AggregateRepository`, which loads
 and saves aggregates through an `EventStore`, lives one ring out at
 `eventsource.application.aggregates.repository`. All three are re-exported from the
-barrel, as is `handles` (whose canonical home is `eventsource.handlers`). The type
+barrel, as is `handles` (whose canonical home is `eventsource.domain.decorators`). The type
 variable `TAggregate` is exported from `eventsource.application.aggregates` but not from
 the barrel.
 
@@ -1291,7 +1291,7 @@ else:
 function unchanged, so a decorated method is still an ordinary method. Discovery happens
 in the base class's `__init_subclass__`. The companion helpers
 `get_handled_event_type(func)` (returns the type or `None`) and `is_event_handler(func)`
-are importable from `eventsource.handlers`.
+are importable from `eventsource.domain.decorators`.
 
 #### `AggregateRepository`
 
@@ -1508,8 +1508,8 @@ Import them from `eventsource.domain.types` directly; see the
 ### Events and event registry (`DomainEvent`, `EventRegistry`, `default_registry`, registry helpers, `EventTypeNotFoundError`, `DuplicateEventTypeError`)
 
 Ten names in this group are re-exported at the top level. They come from two modules:
-`DomainEvent` from `eventsource.events.base`, and everything else from
-`eventsource.events.registry`.
+`DomainEvent` from `eventsource.domain.event`, and everything else from
+`eventsource.domain.event_registry`.
 
 | Name | Kind | Purpose |
 | --- | --- | --- |
@@ -1707,7 +1707,7 @@ event = event_class.from_dict(payload)
 
 #### `EventTypeNotFoundError` and `DuplicateEventTypeError`
 
-Both are defined in `eventsource.events.registry` and — unlike most exceptions in this
+Both are defined in `eventsource.domain.exceptions` and — unlike most exceptions in this
 library — do **not** inherit from `EventSourceError`. They extend builtins instead, so
 `except KeyError` and `except ValueError` catch them:
 

@@ -1,11 +1,12 @@
 # Handlers
 
-Reference documentation for the handler infrastructure exported from
-`eventsource.handlers`: the `@handles` decorator that marks event handler
-methods, the inspection helpers that read its marker, the `HandlerRegistry` that
-discovers and routes decorated methods on an owner object, and the
-`HandlerAdapter` that normalizes arbitrary sync/async handlers to a single
-awaitable interface.
+Reference documentation for the handler infrastructure, split across three
+homes: `eventsource.domain.decorators` (the `@handles` decorator that marks
+event handler methods, and the inspection helpers that read its marker),
+`eventsource.application.projections.handlers` (the `HandlerRegistry` that
+discovers and routes decorated methods on an owner object), and
+`eventsource.adapters._bus.handler_adapter` (the `HandlerAdapter` that
+normalizes arbitrary sync/async handlers to a single awaitable interface).
 
 Public names covered here:
 
@@ -22,39 +23,35 @@ Public names covered here:
 | `UnregisteredEventHandling` | type alias | `Literal["ignore", "warn", "error"]` policy value |
 
 ```python
-from eventsource.handlers import (
-    handles,
-    get_handled_event_type,
-    is_event_handler,
-    HandlerRegistry,
-    HandlerInfo,
-    HandlerSignatureError,
-    HandlerAdapter,
-    get_handler_name,
-)
+from eventsource.domain.decorators import handles, get_handled_event_type, is_event_handler
+from eventsource.domain.exceptions import HandlerSignatureError
+from eventsource.application.projections.handlers import HandlerRegistry, HandlerInfo
+from eventsource.adapters._bus.handler_adapter import HandlerAdapter, get_handler_name
 ```
 
 Only `handles` is re-exported from the top-level `eventsource` package
-(`from eventsource import handles`); the remaining names are imported from
-`eventsource.handlers`. `UnregisteredEventHandling` is not in the package's
-`__all__` — import it from `eventsource.handlers.registry` if you need to
-annotate the policy argument.
+(`from eventsource import handles`); the remaining names must be imported from
+their defining submodule above. `UnregisteredEventHandling` is not re-exported
+anywhere — import it from `eventsource.application.projections.handlers` if you
+need to annotate the policy argument.
 
 `HandlerRegistry.dispatch()` and `HandlerAdapter.handle()` are `async`;
-everything else on this page is synchronous. The module depends only on
-`eventsource.events`, `eventsource.domain.exceptions`, and `eventsource.ports.handlers`, so
-it imports with the core dependencies alone.
+everything else on this page is synchronous. The modules depend only on
+`eventsource.domain.event`, `eventsource.domain.exceptions`, and
+`eventsource.ports.handlers`, so they import with the core dependencies alone.
 
 The two consumers of this machinery are `DeclarativeAggregate` (sync handlers
 applied to aggregate state) and `DeclarativeProjection` (async handlers that
 write read models); both discover handlers through the same `@handles` marker.
 
 Behavior described below is that of the current source in
-`src/eventsource/handlers/decorators.py`, `registry.py`, and `adapter.py`.
+`src/eventsource/domain/decorators.py`,
+`src/eventsource/application/projections/handlers.py`, and
+`src/eventsource/adapters/_bus/handler_adapter.py`.
 
 ## Overview
 
-The package has three layers that build on one another.
+These modules have three layers that build on one another.
 
 1. **Marking.** `@handles(EventType)` sets a single attribute,
    `_handles_event_type`, on the decorated function and returns the function
@@ -86,35 +83,31 @@ behalf).
 
 ### Import surface
 
-Every public name is available from `eventsource.handlers`, which re-exports it
-from the defining submodule:
+There is no single barrel package for this machinery anymore; each name lives
+in one of three homes, and only `handles` is re-exported from the top-level
+`eventsource` package:
 
 | Name | Defining module | Also exported from |
 | --- | --- | --- |
-| `handles` | `eventsource.handlers.decorators` | `eventsource.handlers`, `eventsource` |
-| `get_handled_event_type` | `eventsource.handlers.decorators` | `eventsource.handlers` |
-| `is_event_handler` | `eventsource.handlers.decorators` | `eventsource.handlers` |
-| `HandlerRegistry` | `eventsource.handlers.registry` | `eventsource.handlers` |
-| `HandlerInfo` | `eventsource.handlers.registry` | `eventsource.handlers` |
-| `HandlerSignatureError` | `eventsource.handlers.registry` | `eventsource.handlers` |
-| `HandlerAdapter` | `eventsource.handlers.adapter` | `eventsource.handlers` |
-| `get_handler_name` | `eventsource.handlers.adapter` | `eventsource.handlers` |
-| `UnregisteredEventHandling` | `eventsource.handlers.registry` | — |
+| `handles` | `eventsource.domain.decorators` | `eventsource` |
+| `get_handled_event_type` | `eventsource.domain.decorators` | — |
+| `is_event_handler` | `eventsource.domain.decorators` | — |
+| `HandlerRegistry` | `eventsource.application.projections.handlers` | `eventsource.application.projections` |
+| `HandlerInfo` | `eventsource.application.projections.handlers` | `eventsource.application.projections` |
+| `HandlerSignatureError` | `eventsource.domain.exceptions` | — |
+| `HandlerAdapter` | `eventsource.adapters._bus.handler_adapter` | — |
+| `get_handler_name` | `eventsource.adapters._bus.handler_adapter` | — |
+| `UnregisteredEventHandling` | `eventsource.application.projections.handlers` | — |
 
-`UnregisteredEventHandling` is the one exception: it is listed in
-`eventsource.handlers.registry.__all__` but is not re-exported by the
-`eventsource.handlers` package, so annotate the policy argument with an explicit
-submodule import:
+`UnregisteredEventHandling` is not re-exported from
+`eventsource.application.projections`, so annotate the policy argument with an
+explicit submodule import:
 
 ```python
-from eventsource.handlers.registry import UnregisteredEventHandling
+from eventsource.application.projections.handlers import UnregisteredEventHandling
 
 policy: UnregisteredEventHandling = "warn"
 ```
-
-`eventsource.handlers.adapter` also re-exports the `AsyncEventHandler` and
-`SyncEventHandler` protocols for backward compatibility; their canonical home is
-`eventsource.ports.handlers`.
 
 ## `handles(event_type)`
 
@@ -123,7 +116,7 @@ decorator in the library for event routing and is shared by
 `DeclarativeAggregate` and `DeclarativeProjection`.
 
 ```python
-from eventsource import handles          # or: from eventsource.handlers import handles
+from eventsource import handles          # or: from eventsource.domain.decorators import handles
 ```
 
 ### Signature and return value

@@ -35,6 +35,16 @@ The decision is partial by design: `AggregateRoot` in
 split, and the `require_async` parameter that makes migration possible, are the
 main things this record has to justify.
 
+**Amended by [ADR 0033](0033-events-handlers-internal-ring-migration.md).**
+This ADR's Decision stands untouched: `HandlerRegistry` and `HandlerAdapter`
+are still collaborators, not base classes, and `require_async` is still a
+constructor parameter. What changes is purely where the three classes this
+ADR describes live -- `HandlerRegistry`/`HandlerInfo` move from
+`eventsource.handlers.registry` to `eventsource.application.projections.handlers`,
+`HandlerAdapter`/`get_handler_name` move from `eventsource.handlers.adapter` to
+`eventsource.adapters._bus.handler_adapter`, and the `@handles` decorator moves
+from `eventsource.handlers.decorators` to `eventsource.domain.decorators`.
+
 ## Context
 
 ### Handler discovery, validation, and routing were embedded in DeclarativeProjection

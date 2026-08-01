@@ -83,7 +83,7 @@ move events around and fold them into state. So events are the first thing to ge
 
 ## The DomainEvent Base Class
 
-All events subclass `DomainEvent`, which lives in `eventsource.events.base` and is
+All events subclass `DomainEvent`, which lives in `eventsource.domain.event` and is
 re-exported from the package root:
 
 ```python

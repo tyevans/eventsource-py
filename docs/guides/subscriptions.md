@@ -184,7 +184,7 @@ To remove a subscription at runtime, `await manager.unsubscribe(name)` — it st
 Anything you pass to `subscribe()` must satisfy two members: `subscribed_to()`, returning the event classes you want, and `handle()`, processing one event. That is the whole contract — no base class required:
 
 ```python
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.application.subscriptions import Subscriber
 
 

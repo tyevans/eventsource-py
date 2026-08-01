@@ -145,14 +145,17 @@ Exception
 │   ├── TenantMismatchError                    eventsource.multitenancy.exceptions
 │   ├── LockAcquisitionError                   (ADR 0029: rebased here, was a bare Exception)
 │   ├── LockNotHeldError                       (ADR 0029: rebased here, was a bare Exception)
-│   └── SubscriptionError                      (ADR 0032: rebased here, was a bare Exception)
-│       ├── SubscriptionConfigError
-│       ├── SubscriptionStateError
-│       ├── SubscriptionAlreadyExistsError
-│       ├── CheckpointNotFoundError
-│       ├── EventStoreConnectionError
-│       ├── EventBusConnectionError
-│       └── TransitionError
+│   ├── SubscriptionError                      (ADR 0032: rebased here, was a bare Exception)
+│   │   ├── SubscriptionConfigError
+│   │   ├── SubscriptionStateError
+│   │   ├── SubscriptionAlreadyExistsError
+│   │   ├── CheckpointNotFoundError
+│   │   ├── EventStoreConnectionError
+│   │   ├── EventBusConnectionError
+│   │   └── TransitionError
+│   ├── EventTypeNotFoundError                 (ADR 0033: rebased here, still also a KeyError)
+│   ├── DuplicateEventTypeError                (ADR 0033: rebased here, still also a ValueError)
+│   └── HandlerSignatureError                  (ADR 0033: rebased here, still also a ValueError)
 │
 ├── SnapshotError                             eventsource.domain.exceptions
 │   │                                          (not a subclass of EventSourceError)
@@ -189,11 +192,7 @@ Exception
 │   ├── ShutdownError                         eventsource.adapters.rabbitmq
 │   └── BatchPublishError                     eventsource.adapters.rabbitmq
 │
-├── KeyError
-│   └── EventTypeNotFoundError                eventsource.events.registry
 ├── ValueError
-│   ├── DuplicateEventTypeError               eventsource.events.registry
-│   ├── HandlerSignatureError                 eventsource.handlers.registry
 │   └── DeserializationError                  eventsource.adapters.kafka
 └── ImportError
     ├── RedisNotAvailableError                eventsource.adapters.redis

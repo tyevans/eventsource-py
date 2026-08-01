@@ -634,7 +634,7 @@ The bus suite keeps its original factory-method shape:
 ```python
 from uuid import UUID
 
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.testing.conformance import EventBusConformanceSuite
 
 

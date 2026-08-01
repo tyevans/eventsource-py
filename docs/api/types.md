@@ -45,7 +45,7 @@ Together they answer two questions:
 | Kind | Type aliases and one `TypeVar` | Four `Protocol`s (all `@runtime_checkable`) and two ABCs |
 | Runtime effect | None — the aliases *are* `UUID`, `UUID \| None`, and `int` | Protocols support `isinstance()`; ABCs enforce abstract methods at instantiation |
 | `__all__` | Not defined | Defined — this module is the canonical import location for the contracts |
-| Library imports | `pydantic.BaseModel` only (for the `TState` bound) | `eventsource.events.base.DomainEvent` only |
+| Library imports | `pydantic.BaseModel` only (for the `TState` bound) | `eventsource.domain.event.DomainEvent` only |
 
 Most names in both modules are re-exported from the package root, so
 `from eventsource import EventHandler, AggregateId, TState` works. The three

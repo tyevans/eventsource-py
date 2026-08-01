@@ -139,7 +139,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from eventsource.events import DomainEvent
+from eventsource.domain.event import DomainEvent
 
 
 class LineItem(BaseModel):
