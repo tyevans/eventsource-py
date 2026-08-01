@@ -573,9 +573,10 @@ class TestDeclarativeProjection:
         self,
         checkpoint_repo: InMemoryCheckpointRepository,
     ) -> None:
-        """Handler with wrong parameter count raises ValueError."""
+        """Handler with wrong parameter count raises HandlerSignatureError."""
+        from eventsource.domain.exceptions import HandlerSignatureError
 
-        with pytest.raises(ValueError, match="1 or 2 parameters"):
+        with pytest.raises(HandlerSignatureError, match="1 or 2 parameters"):
 
             class BadProjection(DeclarativeProjection):
                 @handles(OrderCreated)

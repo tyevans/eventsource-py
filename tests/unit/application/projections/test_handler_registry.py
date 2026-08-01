@@ -75,15 +75,17 @@ class TestHandlerSignatureError:
         assert "async def" not in message
         assert "Got: 0 parameter(s)" in message
 
-    def test_exception_is_value_error(self):
-        """HandlerSignatureError should be a subclass of ValueError."""
+    def test_exception_is_event_source_error(self):
+        """HandlerSignatureError should be a subclass of EventSourceError."""
+        from eventsource.domain.exceptions import EventSourceError
+
         error = HandlerSignatureError(
             handler_name="_handle",
             owner_name="Test",
             event_type=TestEvent,
             param_count=5,
         )
-        assert isinstance(error, ValueError)
+        assert isinstance(error, EventSourceError)
 
 
 class TestHandlerSignatureValidation:

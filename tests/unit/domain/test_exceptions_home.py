@@ -117,3 +117,22 @@ def test_top_level_package_re_exports_without_going_through_a_shim() -> None:
         assert getattr(eventsource, name) is getattr(domain_exceptions, name)
     for name in TOP_LEVEL_TYPE_NAMES:
         assert getattr(eventsource, name) is getattr(domain_types, name)
+
+
+class TestNoBuiltinBases:
+    def test_registry_errors_are_not_builtin_lookup_errors(self) -> None:
+        from eventsource.domain.exceptions import (
+            DuplicateEventTypeError,
+            EventTypeNotFoundError,
+            HandlerSignatureError,
+        )
+
+        assert not issubclass(EventTypeNotFoundError, KeyError)
+        assert not issubclass(DuplicateEventTypeError, ValueError)
+        assert not issubclass(HandlerSignatureError, ValueError)
+
+    def test_not_found_message_is_not_requoted(self) -> None:
+        from eventsource.domain.exceptions import EventTypeNotFoundError
+
+        err = EventTypeNotFoundError("OrderCreated", ["A", "B"])
+        assert not str(err).startswith("'")  # KeyError.__str__ used to re-quote

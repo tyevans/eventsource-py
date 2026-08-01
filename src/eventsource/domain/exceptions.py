@@ -338,9 +338,6 @@ class SnapshotDeserializationError(SnapshotError):
 
         super().__init__(self.message)
 
-    def __str__(self) -> str:
-        return self.message
-
     def __repr__(self) -> str:
         return (
             f"SnapshotDeserializationError("
@@ -399,9 +396,6 @@ class SnapshotSchemaVersionError(SnapshotError):
 
         super().__init__(self.message)
 
-    def __str__(self) -> str:
-        return self.message
-
     def __repr__(self) -> str:
         return (
             f"SnapshotSchemaVersionError("
@@ -441,9 +435,6 @@ class SnapshotNotFoundError(SnapshotError):
         self.message = f"No snapshot found for {aggregate_type}/{aggregate_id}"
 
         super().__init__(self.message)
-
-    def __str__(self) -> str:
-        return self.message
 
     def __repr__(self) -> str:
         return (
@@ -496,7 +487,7 @@ class LockNotHeldError(EventSourceError):
 # events/ -> domain/).
 
 
-class EventTypeNotFoundError(EventSourceError, KeyError):
+class EventTypeNotFoundError(EventSourceError):
     """
     Raised when an event type is not found in the registry.
 
@@ -514,7 +505,7 @@ class EventTypeNotFoundError(EventSourceError, KeyError):
         )
 
 
-class DuplicateEventTypeError(EventSourceError, ValueError):
+class DuplicateEventTypeError(EventSourceError):
     """
     Raised when attempting to register a different class with an existing event type name.
     """
@@ -534,7 +525,7 @@ class DuplicateEventTypeError(EventSourceError, ValueError):
         )
 
 
-class HandlerSignatureError(EventSourceError, ValueError):
+class HandlerSignatureError(EventSourceError):
     """
     Raised when an event handler has an invalid signature.
 
