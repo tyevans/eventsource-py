@@ -1398,7 +1398,7 @@ from eventsource import InMemoryCheckpointRepository
 from eventsource.adapters.memory import InMemoryEventStore
 from eventsource.domain import StreamId
 from eventsource.ports import ExpectedVersion
-from eventsource.subscriptions import SubscriptionConfig, SubscriptionManager
+from eventsource.application.subscriptions import SubscriptionConfig, SubscriptionManager
 
 
 async def main() -> None:

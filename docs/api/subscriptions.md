@@ -1,23 +1,23 @@
 # Subscriptions API Reference
 
 Technical reference for the subscription configuration and multi-instance
-coordination surface of the `eventsource.subscriptions` package.
+coordination surface of the `eventsource.application.subscriptions` package.
 
-`eventsource.subscriptions` is the largest package in the library: it covers the
+`eventsource.application.subscriptions` is the largest package in the library: it covers the
 subscription state machine (`Subscription`, `SubscriptionState`), the manager and
 its collaborators (`SubscriptionManager`, `SubscriptionRegistry`,
 `SubscriptionLifecycleManager`, `PauseResumeController`, `HealthCheckProvider`),
 catch-up/live transition (`TransitionCoordinator`), flow control, filtering,
 retry and circuit breaking, error handling, health checks, metrics, graceful
 shutdown, and coordination across instances. Everything listed in
-`eventsource.subscriptions.__all__` is public.
+`eventsource.application.subscriptions.__all__` is public.
 
 This page documents two of those areas in full detail:
 
 | Area | Module | Covered here |
 | --- | --- | --- |
-| Configuration | `eventsource.subscriptions.config` | `StartPosition`, `CheckpointStrategy`, `SubscriptionConfig`, `create_catch_up_config()`, `create_live_only_config()` |
-| Coordination | `eventsource.subscriptions.coordination` | Topic constants, coordination messages, leader election, peer tracking and redistribution, callback type aliases |
+| Configuration | `eventsource.application.subscriptions.config` | `StartPosition`, `CheckpointStrategy`, `SubscriptionConfig`, `create_catch_up_config()`, `create_live_only_config()` |
+| Coordination | `eventsource.application.subscriptions.coordination` | Topic constants, coordination messages, leader election, peer tracking and redistribution, callback type aliases |
 
 Configuration is the entry point for almost every subscription: a
 `SubscriptionConfig` is a frozen dataclass that decides where a subscription
@@ -39,11 +39,20 @@ Both areas are re-exported from the package root, so the documented names are
 importable either from the package or from their defining module:
 
 ```python
-from eventsource.subscriptions import SubscriptionConfig, InMemoryLeaderElector
+from eventsource.application.subscriptions import SubscriptionConfig
+from eventsource.adapters.memory import InMemoryLeaderElector
 # equivalent to
-from eventsource.subscriptions.config import SubscriptionConfig
-from eventsource.subscriptions.coordination import InMemoryLeaderElector
+from eventsource.application.subscriptions.config import SubscriptionConfig
+from eventsource.adapters.memory.coordination import InMemoryLeaderElector
 ```
+
+`InMemoryLeaderElector` and `SharedLeaderState` are the one name-availability
+break in the ADR 0031 move: the `LeaderElector` Protocol pair lives in
+`eventsource.ports.coordination`, but their only concrete implementation is an
+adapter, and `application/` may not import `adapters/` — so it now lives in
+`eventsource.adapters.memory.coordination` (re-exported from
+`eventsource.adapters.memory`) rather than in `eventsource.application.subscriptions`
+alongside the rest of the coordination surface.
 
 ### Configuration at a glance
 
@@ -71,7 +80,7 @@ a constructed instance is always valid: invalid combinations raise `ValueError`
 at construction time rather than failing mid-stream. The retry and circuit
 breaker fields are stored flat on the config and converted on demand by
 `get_retry_config()` and `get_circuit_breaker_config()`, which build the
-`RetryConfig` and `CircuitBreakerConfig` objects that `eventsource.subscriptions.retry`
+`RetryConfig` and `CircuitBreakerConfig` objects that `eventsource.application.subscriptions.retry`
 consumes.
 
 `create_catch_up_config()` and `create_live_only_config()` are thin factories
@@ -93,13 +102,14 @@ Coordination splits into four layers:
   for shutdown, heartbeat, and work-assignment traffic.
 - **Messages** — `ShutdownIntent`, `ShutdownNotification`, `HeartbeatMessage`,
   and `WorkAssignment`: the payloads instances exchange.
-- **Leader election** — `LeaderElector` and `LeaderElectorWithLease` are
-  Protocols describing what a leader-election backend must provide.
-  `InMemoryLeaderElector`, backed by `SharedLeaderState`, is the only concrete
-  implementation shipped; it coordinates within a single process and is intended
-  for tests and single-instance deployments. Kubernetes, Redis, and Consul
-  backends are named in the module docstring as future work, not as available
-  classes.
+- **Leader election** — `LeaderElector` and `LeaderElectorWithLease`
+  (`eventsource.ports.coordination`) are Protocols describing what a
+  leader-election backend must provide. `InMemoryLeaderElector`, backed by
+  `SharedLeaderState` (`eventsource.adapters.memory.coordination`), is the
+  only concrete implementation shipped; it coordinates within a single
+  process and is intended for tests and single-instance deployments.
+  Kubernetes, Redis, and Consul backends are named in the module docstring as
+  future work, not as available classes.
 - **Peer tracking and redistribution** — `PeerInfo` records what is known about
   a peer, and `WorkRedistributionCoordinator` ties the pieces together:
   broadcasting shutdown intent, tracking heartbeats, detecting peer timeouts,
@@ -111,16 +121,16 @@ The five callback type aliases (`LeaderChangeCallback`, `PeerShutdownCallback`,
 returns nothing. They are aliases, not classes; any coroutine function with the
 right parameter type satisfies them.
 
-## Import surface (`eventsource.subscriptions`)
+## Import surface (`eventsource.application.subscriptions`)
 
-All names on this page are exported from `eventsource.subscriptions.__all__`
+All names on this page are exported from `eventsource.application.subscriptions.__all__`
 (123 entries in total for the package). They are **not** re-exported from the
 top-level `eventsource` package — unlike most of the library, subscription
 names must be imported from the subpackage:
 
 ```python
 # Correct
-from eventsource.subscriptions import SubscriptionConfig, CheckpointStrategy
+from eventsource.application.subscriptions import SubscriptionConfig, CheckpointStrategy
 
 # Wrong — AttributeError / ImportError
 from eventsource import SubscriptionConfig
@@ -136,24 +146,29 @@ of its own; the package `__all__` is the contract.
 
 | Name | Kind | Import |
 | --- | --- | --- |
-| `StartPosition` | Type alias — `Literal["beginning", "end", "checkpoint"] \| int` | `from eventsource.subscriptions import StartPosition` |
-| `CheckpointStrategy` | `Enum` (`EVERY_EVENT`, `EVERY_BATCH`, `PERIODIC`) | `from eventsource.subscriptions import CheckpointStrategy` |
-| `SubscriptionConfig` | `@dataclass(frozen=True)` | `from eventsource.subscriptions import SubscriptionConfig` |
-| `create_catch_up_config` | Function returning `SubscriptionConfig` | `from eventsource.subscriptions import create_catch_up_config` |
-| `create_live_only_config` | Function returning `SubscriptionConfig` | `from eventsource.subscriptions import create_live_only_config` |
+| `StartPosition` | Type alias — `Literal["beginning", "end", "checkpoint"] \| int` | `from eventsource.application.subscriptions import StartPosition` |
+| `CheckpointStrategy` | `Enum` (`EVERY_EVENT`, `EVERY_BATCH`, `PERIODIC`) | `from eventsource.application.subscriptions import CheckpointStrategy` |
+| `SubscriptionConfig` | `@dataclass(frozen=True)` | `from eventsource.application.subscriptions import SubscriptionConfig` |
+| `create_catch_up_config` | Function returning `SubscriptionConfig` | `from eventsource.application.subscriptions import create_catch_up_config` |
+| `create_live_only_config` | Function returning `SubscriptionConfig` | `from eventsource.application.subscriptions import create_live_only_config` |
 
 `config.py` uses `from __future__ import annotations` and imports `DomainEvent`,
 `RetryConfig`, and `CircuitBreakerConfig` only under `TYPE_CHECKING`. Those
 types therefore appear in annotations without being imported at runtime — the
 runtime import of `RetryConfig`/`CircuitBreakerConfig` happens inside
 `get_retry_config()` and `get_circuit_breaker_config()` when you call them.
-Importing `eventsource.subscriptions.config` directly pulls in only
+Importing `eventsource.application.subscriptions.config` directly pulls in only
 `dataclasses`, `enum`, `typing`, and `uuid`.
 
 ### Coordination names
 
-Defined in `eventsource/subscriptions/coordination.py`, which does declare its
-own `__all__` — the 18 names below, all re-exported unchanged by the package.
+Defined in `src/eventsource/application/subscriptions/coordination.py`, which
+does declare its own `__all__` — the message types, callback aliases, and
+work-redistribution names below are re-exported unchanged by the package.
+`LeaderElector`/`LeaderElectorWithLease` and `InMemoryLeaderElector`/
+`SharedLeaderState` are re-exported from `eventsource.ports.coordination` and
+`eventsource.adapters.memory.coordination` respectively (see the previous
+section) and are **not** re-exported by `application.subscriptions`.
 
 | Group | Names |
 | --- | --- |
@@ -161,7 +176,8 @@ own `__all__` — the 18 names below, all re-exported unchanged by the package.
 | Enum | `ShutdownIntent` |
 | Message types | `ShutdownNotification`, `HeartbeatMessage`, `WorkAssignment` |
 | Callback aliases | `LeaderChangeCallback`, `PeerShutdownCallback`, `HeartbeatCallback`, `WorkAssignmentCallback`, `PeerTimeoutCallback` |
-| Leader election | `LeaderElector`, `LeaderElectorWithLease`, `InMemoryLeaderElector`, `SharedLeaderState` |
+| Leader election (`eventsource.ports.coordination`) | `LeaderElector`, `LeaderElectorWithLease` |
+| Leader election, in-memory (`eventsource.adapters.memory`) | `InMemoryLeaderElector`, `SharedLeaderState` |
 | Work redistribution | `PeerInfo`, `WorkRedistributionCoordinator` |
 
 `LeaderElector` and `LeaderElectorWithLease` are `Protocol` classes: import them
@@ -171,17 +187,17 @@ concrete elector shipped is `InMemoryLeaderElector`.
 ### A representative import
 
 ```python
-from eventsource.subscriptions import (
+from eventsource.adapters.memory import InMemoryLeaderElector
+from eventsource.application.subscriptions import (
     CheckpointStrategy,
     HEARTBEAT_TOPIC,
-    InMemoryLeaderElector,
-    LeaderElector,
     PeerInfo,
     ShutdownIntent,
     SubscriptionConfig,
     WorkRedistributionCoordinator,
     create_catch_up_config,
 )
+from eventsource.ports.coordination import LeaderElector
 ```
 
 Nothing in either module requires an optional dependency: both are importable
@@ -192,13 +208,13 @@ guards.
 
 ## Configuration
 
-`eventsource.subscriptions.config` defines five public names. Together they
+`eventsource.application.subscriptions.config` defines five public names. Together they
 answer, for a single subscription: where to start, how much to read at a time,
 when to persist a checkpoint, which events to keep, and what to do when a
 handler fails.
 
 ```python
-from eventsource.subscriptions import (
+from eventsource.application.subscriptions import (
     CheckpointStrategy,
     StartPosition,
     SubscriptionConfig,
@@ -215,7 +231,7 @@ StartPosition = Literal["beginning", "end", "checkpoint"] | Position
 
 A type alias, not a class — there is nothing to instantiate beyond a `Position`
 itself. It is the annotation of `SubscriptionConfig.start_from` and the set of
-values `StartFromResolver.resolve()` (in `eventsource.subscriptions.transition`)
+values `StartFromResolver.resolve()` (in `eventsource.application.subscriptions.transition`)
 understands:
 
 | Value | Resolved starting position |
@@ -265,7 +281,7 @@ default is `CheckpointStrategy.EVERY_BATCH`.
 
 #### How each runner interprets it
 
-The two runners in `eventsource.subscriptions.runners` read the same field but
+The two runners in `eventsource.application.subscriptions.runners` read the same field but
 do not behave identically, and the difference is the main thing to know here.
 
 **Catch-up runner** (`runners/catchup.py`) honors all three literally, per batch:
@@ -375,10 +391,10 @@ The 20 fields fall into six groups, documented in the subsections that follow:
 The retry and circuit breaker groups are stored flat on the dataclass and are
 not consumed in that form: `get_retry_config()` and
 `get_circuit_breaker_config()` assemble them into the `RetryConfig` and
-`CircuitBreakerConfig` objects that `eventsource.subscriptions.retry` defines.
+`CircuitBreakerConfig` objects that `eventsource.application.subscriptions.retry` defines.
 Those two methods are the only behavior on the class beyond validation —
 `SubscriptionConfig` is data, and the runners in
-`eventsource.subscriptions.runners` are what interpret it.
+`eventsource.application.subscriptions.runners` are what interpret it.
 
 Defaults, in full, describe a subscription that resumes from its last
 checkpoint, reads 100 events per batch, allows 1000 in flight, signals
@@ -411,7 +427,7 @@ reading from the start of the feed with an info-level log from
 history, say so explicitly with `"end"` or a `Position`.
 
 The field is consumed only by `StartFromResolver.resolve()` in
-`eventsource.subscriptions.transition`, which is called once when the
+`eventsource.application.subscriptions.transition`, which is called once when the
 subscription starts. Changing `start_from` on a running subscription is not
 possible (the config is frozen) and would have no effect mid-run anyway.
 
@@ -524,7 +540,7 @@ strategies the field is inert (but still validated).
 
 Both are validated as positive, and both are currently declarative rather than
 enforced by the subscription runners. `processing_timeout` is not read anywhere
-in `eventsource.subscriptions` outside `config.py`. `shutdown_timeout` on the
+in `eventsource.application.subscriptions` outside `config.py`. `shutdown_timeout` on the
 config is likewise not read by the runners: `SubscriptionManager` takes its own
 `shutdown_timeout` constructor argument (also defaulting to `30.0`) and passes
 that to its shutdown coordinator, and `stop_all()` accepts a per-call override.
@@ -542,7 +558,7 @@ config fields as intent you may read back from the config object.
 `None` on any field means "no restriction on this dimension". These three are
 consumed by `EventFilter.from_config()` and
 `EventFilter.from_config_and_subscriber()` in
-`eventsource.subscriptions.filtering`, which copy them straight across. All
+`eventsource.application.subscriptions.filtering`, which copy them straight across. All
 configured dimensions must match for an event to pass — the filter ANDs them.
 
 Matching semantics, as implemented by `EventFilter`:
@@ -632,7 +648,7 @@ member is gone — an unrecognized string value is only caught later by
 
 #### `get_retry_config() -> RetryConfig`
 
-Builds a `RetryConfig` (from `eventsource.subscriptions.retry`) from the flat
+Builds a `RetryConfig` (from `eventsource.application.subscriptions.retry`) from the flat
 retry fields. The import happens inside the method, so `config.py` stays free of
 a runtime dependency on `retry.py`.
 

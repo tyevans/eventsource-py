@@ -28,7 +28,7 @@ it is named, because a structural argument that nothing enforces is just a prefe
 
 The running example throughout is the `aggregates` package, because it is where these principles
 were applied most recently and most visibly. The same pattern — a coordinator, named
-collaborators, an injected tracer — repeats in `application/projections/`, `subscriptions/`,
+collaborators, an injected tracer — repeats in `application/projections/`, `application/subscriptions/`,
 `bus/`, and `migration/`, and the closing sections come back to that.
 
 ## How the package is organized
@@ -48,7 +48,7 @@ thing, you can find its directory.
 | `handlers/` | The `@handles` decorator, its registry, and the sync/async handler adapter |
 | `bus/` | `EventBus` interface plus in-memory, Redis, RabbitMQ, and Kafka backends |
 | `readmodels/` | Read-model projections, query surface, schema, and per-backend repositories |
-| `subscriptions/` | Subscription lifecycle: manager, `runners/`, retry, health, flow control, pause/resume, shutdown |
+| `application/subscriptions/` | Subscription lifecycle: manager, `runners/`, retry, health, flow control, pause/resume, shutdown |
 | `migration/` | Live event-store migration: dual write, routing, cutover, consistency, position mapping |
 | `migrations/` | SQL schema files (`schemas/`, `updates/`, `templates/`) — append-only |
 | `observability/` | `Tracer` protocol, tracer implementations, standard span attribute constants |
@@ -489,7 +489,7 @@ through cooperative `super()` calls, and a test could not hand a component a dif
 without subclassing or monkeypatching. Composition inverts all three — tracing is a constructor
 argument, any object satisfying the `Tracer` protocol is acceptable, and disabling tracing is
 just a different object. The comment `# Composition-based tracing (replaces TracingMixin)`
-marks the same migration across `application/projections/`, `subscriptions/`, `bus/`, and `migration/`.
+marks the same migration across `application/projections/`, `application/subscriptions/`, `bus/`, and `migration/`.
 
 ### What the tests pin down
 
@@ -525,7 +525,7 @@ A workable order:
 
 The pattern — a coordinator plus named collaborators plus an injected tracer — repeats across the
 codebase. `application/projections/` separates the coordinator (`coordinator.py`) from the
-checkpoint and DLQ functions (`checkpoints.py`, `dlq.py`); `subscriptions/`
+checkpoint and DLQ functions (`checkpoints.py`, `dlq.py`); `application/subscriptions/`
 splits lifecycle, pause/resume, retry, health, and flow control into distinct modules;
 `migration/` separates the router, the consistency checker, and the status streamer. All of them
 carry the same composition-based tracing initialization. When adding to any of these packages,

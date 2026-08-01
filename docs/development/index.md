@@ -223,8 +223,8 @@ distribution is published as `eventsource-py`, so the literal command in those m
 is `pip install "eventsource-py[redis]"`.)
 
 The `telemetry` extra is the exception: OpenTelemetry is *optional at runtime by design*.
-When it is absent, the metrics helpers in `subscriptions/metrics.py`,
-`subscriptions/shutdown.py`, and `migration/metrics.py` degrade to no-ops rather than
+When it is absent, the metrics helpers in `application/subscriptions/metrics.py`,
+`application/subscriptions/shutdown.py`, and `migration/metrics.py` degrade to no-ops rather than
 raising, so tracing silently does nothing instead of breaking your process.
 
 If a test skips with a message about an unavailable backend, an extra is missing from

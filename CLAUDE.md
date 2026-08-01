@@ -67,15 +67,19 @@ src/eventsource/
                     #   aliases: AggregateId, EventId, TenantId, etc.), command.py (DomainCommand)
   application/      # Use-case ring: AggregateRepository, snapshot policy/scheduler collaborators;
                     #   application/projections/: Projection, DeclarativeProjection, coordinator,
-                    #   checkpoint/DLQ functions, retry policies (DatabaseProjection is an adapter, not here)
+                    #   checkpoint/DLQ functions, retry policies (DatabaseProjection is an adapter, not here);
+                    #   application/subscriptions/: subscription lifecycle -- manager, runners, retry,
+                    #   health, flow control, coordination messages/WorkRedistributionCoordinator
   ports/            # Boundary interfaces: Snapshot/SnapshotStore, ProjectionCheckpoints/SubscriptionPositions/
                     #   CheckpointRepository, DLQRepository, OutboxRepository/outbox_event_data,
-                    #   store/bus/envelope/position ports, handlers.py (canonical handler/subscriber
-                    #   Protocols + ABCs, see note below)
+                    #   store/bus/envelope/position ports (incl. SubscribableEventBus), handlers.py (canonical
+                    #   handler/subscriber Protocols + ABCs, see note below), subscribers.py (Subscriber/
+                    #   SyncSubscriber/BatchSubscriber Protocols), coordination.py (LeaderElector Protocols)
   adapters/         # Interface adapters: memory/postgresql/sqlite snapshot + event store implementations;
                     #   adapters/sql/: dialect-parameterized checkpoint, DLQ, and DatabaseProjection (both
-                    #   PostgreSQL and SQLite); adapters/memory/: in-memory checkpoint, DLQ, and outbox
-                    #   repositories; adapters/postgresql/ and adapters/sqlite/: per-technology outbox
+                    #   PostgreSQL and SQLite); adapters/memory/: in-memory checkpoint, DLQ, outbox, and
+                    #   coordination (InMemoryLeaderElector, SharedLeaderState) repositories;
+                    #   adapters/postgresql/ and adapters/sqlite/: per-technology outbox
                     #   repositories (not dialect-parameterized -- SQLite takes a raw aiosqlite.Connection);
                     #   adapters/sync/ (SyncEventStoreAdapter, wraps a FullEventStore for sync callers);
                     #   adapters/serialization/ (JSON encoding, EventSourceJSONEncoder)
@@ -86,7 +90,6 @@ src/eventsource/
   migrations/       # SQL schema files (append-only)
   multitenancy/     # Tenant context (contextvars), scopes, TenantDomainEvent
   observability/    # OpenTelemetry tracing integration (optional dep)
-  subscriptions/    # Subscription lifecycle: manager, runners, retry, health, flow control
   testing/          # Test helpers: assertions, BDD, builder, harness;
                     #   testing/conformance_ports/: backend conformance suites for the store/snapshot/
                     #   checkpoint/DLQ ports (EventStoreConformanceSuite's replacement)

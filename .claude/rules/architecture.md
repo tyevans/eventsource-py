@@ -26,8 +26,8 @@ The rings, innermost first:
    exceptions), and `domain/command.py` (`DomainCommand`) are settled, not
    transitional; `types.py`, `exceptions.py`, and `commands/` at the top level are
    no longer transitional locations for any of it (ADR 0030).
-2. **Use cases** (`application/` — during transition `subscriptions/`,
-   `migration/`, `handlers/`): Application business rules —
+2. **Use cases** (`application/` — during transition `migration/`,
+   `handlers/`): Application business rules —
    aggregate repositories, projection engines, subscription lifecycle, migration
    orchestration. Depends on entities and on the boundary ports it owns. Never on a
    concrete adapter, driver, or framework. `application/aggregates/`
@@ -36,7 +36,15 @@ The rings, innermost first:
    (`Projection`/`CheckpointTrackingProjection`/`DeclarativeProjection`, the
    `ProjectionCoordinator`/`ProjectionRegistry`/`SubscriberRegistry` collaborators,
    the checkpoint and DLQ functions, and the retry policies) — `projections/` is no
-   longer a transitional location for any of it.
+   longer a transitional location for any of it. `application/subscriptions/`
+   (`SubscriptionManager` and its lifecycle/registry/pause-resume/health
+   collaborators, the catch-up and live runners, retry and circuit-breaking,
+   flow control, filtering, and the coordination message types plus
+   `WorkRedistributionCoordinator`) is settled, not transitional; top-level
+   `subscriptions/` no longer exists (ADR 0031). `Subscriber`/`SyncSubscriber`/
+   `BatchSubscriber` (in `ports/subscribers.py`) and `LeaderElector`/
+   `LeaderElectorWithLease` (in `ports/coordination.py`) are Protocols, not
+   part of this ring — see the ports entry below.
 3. **Interface adapters** (`adapters/` — during transition `stores/`,
    `bus/` backend modules): Gateways that
    implement the ports for a specific technology, converting between the use-case
@@ -60,6 +68,9 @@ The rings, innermost first:
    `adapters/postgresql/` and `adapters/memory/`; read-model adapters live
    under `adapters/{memory,postgresql,sqlite}/`; top-level `locks/` and
    `readmodels/` no longer exist — there is no shim at either path (ADR 0030).
+   `adapters/memory/coordination.py` (`InMemoryLeaderElector`, `SharedLeaderState`)
+   is settled, not transitional — the only concrete implementation of the
+   `ports/coordination.py` Protocol pair (ADR 0031).
 4. **Frameworks & drivers**: sqlalchemy, asyncpg, aiosqlite, redis, aiokafka,
    aio-pika. Imported only inside the adapter that needs them, always guarded
    (see below). Driver types never appear in port signatures.
@@ -75,8 +86,17 @@ inverted at every boundary crossing (the D in SOLID).
 - Ports live in `ports/` (during transition also `*/interface.py`), depend only on
   entities, and contain no implementation code, ever. `ports/handlers.py`
   (`EventHandler`, `SyncEventHandler`, `FlexibleEventHandler`, `EventSubscriber`,
-  `AsyncEventHandler`, `FlexibleEventSubscriber`) is settled, not transitional;
-  top-level `protocols.py` is no longer a transitional location for it (ADR 0030).
+  `AsyncEventHandler`, `FlexibleEventSubscriber`, `EventHandlerFunc`) is settled,
+  not transitional; top-level `protocols.py` is no longer a transitional location
+  for it (ADR 0030). `ports/subscribers.py` (`Subscriber`, `SyncSubscriber`,
+  `BatchSubscriber`, `supports_batch_handling()`, `get_subscribed_event_types()`)
+  and `ports/coordination.py` (`LeaderElector`, `LeaderElectorWithLease`,
+  `LeaderChangeCallback`) are settled, not transitional; `ports/bus.py`'s
+  `SubscribableEventBus` — a two-method Protocol (`subscribe`/`unsubscribe`)
+  `EventBus` satisfies structurally — is what lets `application/subscriptions/`
+  type its bus dependency without importing `adapters/`. Top-level
+  `subscriptions/` is no longer a transitional location for any of these
+  (ADR 0031).
 - Our store/repository/bus ports are **output ports** (gateways) in Clean
   Architecture terms: the use-case ring calls them; adapters implement them.
 - Ports are small, composed `Protocol` classes — one capability per port

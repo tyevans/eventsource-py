@@ -403,9 +403,9 @@ whose source lives in a package you would otherwise have to pick a subdirectory 
 The package subdirectories mirror source packages one-for-one: `aggregates/`, `bus/`,
 `handlers/`, `migration/`, `migrations/`, `multitenancy/`, `observability/`,
 `projections/`, `readmodels/`, `repositories/`, `serialization/`,
-`adapters/`, `ports/`, `subscriptions/`, `sync/`, and `testing/`. These hold the deeper,
+`adapters/`, `ports/`, `application/subscriptions/`, `sync/`, and `testing/`. These hold the deeper,
 feature-specific coverage — `migration/` alone has 25 modules covering dual-write,
-cutover, position mapping, and chaos scenarios, and `subscriptions/` has 15 covering
+cutover, position mapping, and chaos scenarios, and `application/subscriptions/` has 15 covering
 backpressure, drain, retry, health, and pause/resume.
 
 The rule of thumb when adding a module: if it exercises one source package in depth, put
@@ -552,11 +552,11 @@ lifecycle, schema creation, cleanup, and the skip logic:
 | `migrations/` | `test_migration_schema_postgresql.py` | PostgreSQL |
 | `projections/` | `test_database_projection.py` | PostgreSQL |
 | `readmodels/` | `test_repositories.py`, `test_projection.py`, `test_enhanced_features.py` | parametrized: in-memory, SQLite, PostgreSQL |
-| `subscriptions/` | `test_catchup.py`, `test_live.py`, `test_transition.py`, `test_full_flow.py`, `test_resilience.py`, `test_advanced_features.py` | none — in-memory |
+| `application/subscriptions/` | `test_catchup.py`, `test_live.py`, `test_transition.py`, `test_full_flow.py`, `test_resilience.py`, `test_advanced_features.py` | none — in-memory |
 | `observability/` | `test_tracing_integration.py`, `test_distributed_tracing.py` | none / externally provided brokers |
 | _(root)_ | `test_imports.py` | none |
 
-`observability/`, `subscriptions/`, and `readmodels/` layer their own `conftest.py` on top
+`observability/`, `application/subscriptions/`, and `readmodels/` layer their own `conftest.py` on top
 of the shared one.
 
 #### How containers are provisioned
@@ -628,7 +628,7 @@ The broker suites add the client library to the condition —
 `RabbitMQEventBus`, so collection succeeds even with the driver absent.
 
 The net effect: on a machine with no Docker, `pytest tests/integration` is all skips and
-no errors. Three groups still run there — `subscriptions/` (in-memory store and bus
+no errors. Three groups still run there — `application/subscriptions/` (in-memory store and bus
 throughout), `observability/test_tracing_integration.py` (in-memory store and bus with an
 OpenTelemetry span exporter), and `test_imports.py` (a circular-import guard that just
 imports the public surface). `readmodels/` parametrizes its `repo` fixture over
@@ -637,8 +637,8 @@ imports the public surface). `readmodels/` parametrizes its `repo` fixture over
 #### Markers on this tier
 
 Every module here carries `pytest.mark.integration`, plus the backend marker it needs, and
-`e2e/test_full_flow.py` adds `pytest.mark.e2e`. `subscriptions/test_resilience.py` is also
-`pytest.mark.slow`. The `subscriptions/` and `readmodels/` modules carry no backend marker
+`e2e/test_full_flow.py` adds `pytest.mark.e2e`. `application/subscriptions/test_resilience.py` is also
+`pytest.mark.slow`. The `application/subscriptions/` and `readmodels/` modules carry no backend marker
 because they do not require one.
 
 Note that `tests/integration/conftest.py` re-registers `integration`, `postgres`, `redis`,

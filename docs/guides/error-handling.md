@@ -36,7 +36,7 @@ If you only want the mapping, jump to the [quick reference table](#quick-referen
 
 ## The exception hierarchy at a glance
 
-There is no single root exception in this library. There are four independent trees, and knowing which one an exception belongs to tells you what your `except` clauses have to look like.
+There is no single root exception in this library. There are three independent trees, and knowing which one an exception belongs to tells you what your `except` clauses have to look like.
 
 ```
 Exception
@@ -55,8 +55,8 @@ Exception
 │   ├── TenantContextNotSetError        (eventsource.multitenancy.exceptions)
 │   ├── TenantMismatchError             (eventsource.multitenancy.exceptions)
 │   ├── LockAcquisitionError            key, reason, timeout
-│   └── LockNotHeldError                key
-├── SubscriptionError                   (eventsource.subscriptions.exceptions)
+│   ├── LockNotHeldError                key
+│   └── SubscriptionError               (eventsource.domain.exceptions)
 ├── SnapshotError                       (eventsource.domain.exceptions -- not actually a subclass of EventSourceError)
 └── ReadModelError                      (eventsource.ports.readmodels.exceptions)
 ```
@@ -68,6 +68,14 @@ existing `except LockAcquisitionError` still catches, and so does
 `except Exception`; the newly-catching clause is `except EventSourceError`,
 which caught nothing lock-related before. Both are now defined in
 `eventsource.domain.exceptions`, importable alongside every other name in this tree.
+
+`SubscriptionError` (and its eight subclasses) moved the same way under ADR
+0031, as part of the subscriptions ring migration: previously defined in
+the old `subscriptions` package's `exceptions.py`, deriving directly from `Exception`,
+it now lives in `eventsource.domain.exceptions` and derives from
+`EventSourceError`. Same widening-only shape as the lock exceptions above --
+every existing `except SubscriptionError` still catches, and `except
+EventSourceError` newly catches subscription failures too.
 
 Write your handlers against this shape: catch the specific type when you can act on it, fall back to the subsystem root, and only then to `EventSourceError`.
 
@@ -128,11 +136,11 @@ class InsufficientFundsError(EventSourceError):
     """Raised by the Account aggregate when a debit would overdraw."""
 ```
 
-### Per-subsystem hierarchies that do NOT inherit from it (`SubscriptionError`, `SnapshotError`, `ReadModelError`, `readmodels.OptimisticLockError`)
+### Per-subsystem hierarchies that do NOT inherit from it (`SnapshotError`, `ReadModelError`, `readmodels.OptimisticLockError`)
 
-Three subsystems define their own root, each deriving straight from `Exception`. If your boundary handler only catches `EventSourceError`, these will fly past it and hit whatever generic 500 handler sits above you.
+Two subsystems define their own root, each deriving straight from `Exception`. If your boundary handler only catches `EventSourceError`, these will fly past it and hit whatever generic 500 handler sits above you. (`SubscriptionError` used to be a third -- see the widening note above; it is caught by `EventSourceError` now.)
 
-**`SubscriptionError`** — `eventsource.subscriptions.exceptions`. Raised by the subscription manager and runners: `SubscriptionConfigError`, `SubscriptionStateError`, `SubscriptionAlreadyExistsError`, `CheckpointNotFoundError` (has `.projection_name`), `EventStoreConnectionError`, `EventBusConnectionError`, `TransitionError`. Note that `CheckpointNotFoundError` here is unrelated to `eventsource.domain.exceptions.CheckpointError`, which *is* an `EventSourceError`.
+`SubscriptionError`'s subclasses -- `SubscriptionConfigError`, `SubscriptionStateError`, `SubscriptionAlreadyExistsError`, `CheckpointNotFoundError` (has `.projection_name`), `EventStoreConnectionError`, `EventBusConnectionError`, `TransitionError` -- are raised by the subscription manager and runners, and live in `eventsource.domain.exceptions` alongside it. Note that `CheckpointNotFoundError` here is unrelated to `eventsource.domain.exceptions.CheckpointError`, which is a distinct `EventSourceError` subclass with a different meaning.
 
 **`SnapshotError`** — `eventsource.domain.exceptions` (moved here from its own `snapshots` module in the ring migration; still not part of the `EventSourceError` tree), with `SnapshotDeserializationError` (`aggregate_id`, `aggregate_type`, `original_error`), `SnapshotSchemaVersionError` (adds `snapshot_schema_version` and `expected_schema_version`), and `SnapshotNotFoundError`. These are largely internal: the snapshot path is designed so that a failed load degrades to a full event replay rather than surfacing to you — a *missing* snapshot is not an error at all, `get_snapshot()` simply returns `None`. Catch `SnapshotError` if you want to log the degradation; do not treat it as a request failure.
 
@@ -257,10 +265,10 @@ Two ways to avoid the conflict rather than absorb it:
 - **Serialize the writers.** `PostgreSQLLockManager` (`eventsource.adapters.postgresql.locks`) gives you advisory locks keyed by aggregate id, so a second writer waits instead of racing. Worth it when conflicts are frequent and the command is expensive to replay; see [Distributed locks](distributed-locks.md).
 - **Opt out of the check.** `ExpectedVersion.ANY` (`-1`) tells `append()` to skip the version check entirely. That disables optimistic locking for that append, so reserve it for genuinely order-independent streams — it does not make concurrent writes safe, it makes them silent.
 
-Transient infrastructure failures are the second retryable class, and they are *not* `EventSourceError` subclasses — they arrive as `ConnectionError`, `TimeoutError`, `asyncio.TimeoutError`, or `OSError` from the driver, sometimes wrapped in `EventStoreError` or `EventBusError`. The library ships a helper for exactly this shape, `retry_async()` from `eventsource.subscriptions`:
+Transient infrastructure failures are the second retryable class, and they are *not* `EventSourceError` subclasses — they arrive as `ConnectionError`, `TimeoutError`, `asyncio.TimeoutError`, or `OSError` from the driver, sometimes wrapped in `EventStoreError` or `EventBusError`. The library ships a helper for exactly this shape, `retry_async()` from `eventsource.application.subscriptions`:
 
 ```python
-from eventsource.subscriptions import RetryConfig, RetryError, retry_async
+from eventsource.application.subscriptions import RetryConfig, RetryError, retry_async
 
 try:
     events = await retry_async(
@@ -277,7 +285,7 @@ except RetryError as exc:
 
 By default `retry_async` retries only `TRANSIENT_EXCEPTIONS` (`ConnectionError`, `TimeoutError`, `asyncio.TimeoutError`, `OSError`) and re-raises anything else immediately. Do **not** widen `retryable_exceptions` to include `OptimisticLockError`: the helper re-invokes the same callable, and a conflict needs a reload between attempts, which only your loop can do.
 
-For a backend that is down rather than flaky, wrap the retry in `CircuitBreaker` (also in `eventsource.subscriptions`, configured via `CircuitBreakerConfig`: `failure_threshold=5`, `recovery_timeout=30.0`, `half_open_max_calls=1`). Retrying into a dead dependency just multiplies the load on it; the breaker opens after the threshold and fails fast until the recovery window elapses.
+For a backend that is down rather than flaky, wrap the retry in `CircuitBreaker` (also in `eventsource.application.subscriptions`, configured via `CircuitBreakerConfig`: `failure_threshold=5`, `recovery_timeout=30.0`, `half_open_max_calls=1`). Retrying into a dead dependency just multiplies the load on it; the breaker opens after the threshold and fails fast until the recovery window elapses.
 
 ### Handle `OptimisticLockError` by reloading the aggregate and replaying the command
 

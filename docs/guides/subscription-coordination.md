@@ -6,17 +6,21 @@ during a rolling restart. It covers electing a leader, exchanging heartbeats,
 detecting failed peers, assigning and reclaiming work, and coordinating
 shutdown.
 
-Everything here lives in `eventsource.subscriptions.coordination` and is
-re-exported from `eventsource.subscriptions`:
+Most of this lives in `eventsource.application.subscriptions.coordination` and
+is re-exported from `eventsource.application.subscriptions`. The `LeaderElector`
+Protocol pair lives in `eventsource.ports.coordination` (also re-exported from
+`application.subscriptions`), and the in-memory implementation,
+`InMemoryLeaderElector` / `SharedLeaderState`, lives in
+`eventsource.adapters.memory` — it is an adapter, not part of the
+`application.subscriptions` re-export surface:
 
 ```python
-from eventsource.subscriptions import (
+from eventsource.adapters.memory import InMemoryLeaderElector, SharedLeaderState
+from eventsource.application.subscriptions import (
     HeartbeatMessage,
-    InMemoryLeaderElector,
     LeaderElector,
     LeaderElectorWithLease,
     PeerInfo,
-    SharedLeaderState,
     ShutdownIntent,
     ShutdownNotification,
     WorkAssignment,
@@ -153,13 +157,13 @@ carrying the three topics. Everything below assumes you have both.
 ## The coordination topics
 
 All coordination traffic flows over three topic names exported from
-`eventsource.subscriptions`. They are plain strings — the library never
+`eventsource.application.subscriptions`. They are plain strings — the library never
 subscribes to them for you — and all three share the
 `COORDINATION_TOPIC_PREFIX` (`"__eventsource_coordination"`) so they are easy to
 filter, ACL, or route onto a dedicated exchange:
 
 ```python
-from eventsource.subscriptions import (
+from eventsource.application.subscriptions import (
     COORDINATION_TOPIC_PREFIX,        # "__eventsource_coordination"
     HEARTBEAT_TOPIC,                  # "__eventsource_coordination.heartbeat"
     SHUTDOWN_NOTIFICATIONS_TOPIC,     # "__eventsource_coordination.shutdown"
@@ -243,7 +247,7 @@ and five methods:
 A minimal implementation backed by a Postgres advisory lock looks like this:
 
 ```python
-from eventsource.subscriptions import LeaderChangeCallback, LeaderElector
+from eventsource.application.subscriptions import LeaderChangeCallback, LeaderElector
 
 
 class AdvisoryLockElector:
@@ -522,7 +526,7 @@ against `LeaderElectorWithLease` and pick a different test double.
 `_identity`, so construct it positionally or with that keyword:
 
 ```python
-from eventsource.subscriptions import InMemoryLeaderElector, SharedLeaderState
+from eventsource.adapters.memory import InMemoryLeaderElector, SharedLeaderState
 
 elector = InMemoryLeaderElector("worker-1")
 assert await elector.try_acquire() is True   # always True, no contention
