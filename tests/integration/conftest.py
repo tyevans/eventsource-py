@@ -387,7 +387,7 @@ async def postgres_engine(
     from sqlalchemy import text
     from sqlalchemy.ext.asyncio import create_async_engine
 
-    from eventsource.migrations import get_schema
+    from eventsource.adapters.sql.schemas import get_schema
 
     engine = create_async_engine(
         postgres_connection_url,

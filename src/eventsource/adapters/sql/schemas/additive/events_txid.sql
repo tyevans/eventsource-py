@@ -1,6 +1,6 @@
 -- Additive fragment: wraparound-safe transaction id for the global feed
 -- horizon. Appended to the events schema at composition time
--- (eventsource.migrations.get_schema). Idempotent on PostgreSQL.
+-- (eventsource.adapters.sql.schemas.get_schema). Idempotent on PostgreSQL.
 --
 -- The feed's no-skip guard defers rows whose inserting transaction is not
 -- yet definitely-committed. It used to read the `xmin` system column, a

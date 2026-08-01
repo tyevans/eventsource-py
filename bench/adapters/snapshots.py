@@ -76,8 +76,8 @@ class SQLiteSnapshotAdapter(BenchAdapter[SnapshotStore]):
     async def create(self) -> SnapshotStore:
         import aiosqlite
 
+        from eventsource.adapters.sql.schemas import get_schema
         from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
-        from eventsource.migrations import get_schema
 
         assert self._tmpdir is not None
         database = str(Path(self._tmpdir.name) / f"{uuid4().hex}.db")

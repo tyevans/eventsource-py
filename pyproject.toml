@@ -291,8 +291,8 @@ forbidden_modules = ["sqlalchemy"]
 # targeted forbidden contracts that previously guarded application->adapters
 # and ports->{adapters,application}, and adds the domain ring (domain may not
 # name ports, application, or adapters). Packages outside the four rings
-# (observability, testing, migrations, serialization) are deliberately
-# unconstrained here. Note this catches by-name dependencies the
+# (observability, testing) are deliberately unconstrained here. Note this
+# catches by-name dependencies the
 # Tier 0 sqlalchemy contract cannot: e.g. ports/readmodels importing
 # eventsource.adapters.sql.readmodel_schema would break layering even though
 # readmodel_schema itself imports no sqlalchemy (ADR 0029 gap, closed here).

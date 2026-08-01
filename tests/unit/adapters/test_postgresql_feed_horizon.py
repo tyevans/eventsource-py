@@ -16,7 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from eventsource.adapters.postgresql import store as pg_store
-from eventsource.migrations import get_all_schemas, get_schema
+from eventsource.adapters.sql.schemas import get_all_schemas, get_schema
 
 
 class TestHorizonPredicateShape:

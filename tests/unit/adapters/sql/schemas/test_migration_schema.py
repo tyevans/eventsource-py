@@ -1,6 +1,6 @@
 """Unit tests for migration schema template."""
 
-from eventsource.migrations import (
+from eventsource.adapters.sql.schemas import (
     MIGRATION_SCHEMA,
     get_schema,
     get_template_path,

@@ -10,7 +10,7 @@ if AIOSQLITE_AVAILABLE:
 
     import aiosqlite
 
-    from eventsource.migrations import get_schema, list_schemas
+    from eventsource.adapters.sql.schemas import get_schema, list_schemas
 
 
 class TestSQLiteSnapshotSchema:
