@@ -30,7 +30,7 @@ import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
-from eventsource.multitenancy import (
+from eventsource import (
     TenantContextNotSetError,
     TenantContextResetError,
     clear_tenant_context,
@@ -38,10 +38,10 @@ from eventsource.multitenancy import (
     get_required_tenant,
     reset_tenant_context,
     set_current_tenant,
+    tenant_context,
     tenant_scope,
     tenant_scope_sync,
 )
-from eventsource.multitenancy.context import tenant_context
 
 pytestmark = pytest.mark.timeout(60)
 

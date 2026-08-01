@@ -302,29 +302,19 @@ class TestCreateEventTenantContext:
     def order(self) -> OrderAggregate:
         return OrderAggregate(uuid4())
 
-    def test_no_tenant_when_module_not_available(self, order: OrderAggregate) -> None:
-        """tenant_id is None when multitenancy module is not available."""
+    def test_no_tenant_when_context_not_set(self, order: OrderAggregate) -> None:
+        """tenant_id is None when no tenant context is set."""
         event = order.create(customer_id=uuid4())
         assert event.tenant_id is None
 
     def test_tenant_from_context_when_available(self, order: OrderAggregate) -> None:
-        """tenant_id is populated from context when multitenancy is available."""
+        """tenant_id is populated from the current tenant context."""
         tenant_id = uuid4()
 
-        # Mock the multitenancy module import and get_current_tenant function
-        with (
-            patch.dict(
-                "sys.modules",
-                {
-                    "eventsource.multitenancy": type(
-                        "MockModule", (), {"get_current_tenant": staticmethod(lambda: tenant_id)}
-                    )()
-                },
-            ),
-            patch(
-                "eventsource.domain.aggregate.AggregateRoot._get_tenant_from_context",
-                return_value=tenant_id,
-            ),
+        with patch.object(
+            OrderAggregate,
+            "_get_tenant_from_context",
+            return_value=tenant_id,
         ):
             event = order.create(customer_id=uuid4())
             assert event.tenant_id == tenant_id
@@ -347,11 +337,9 @@ class TestCreateEventTenantContext:
             # Explicit value should win
             assert event.tenant_id == explicit_tenant
 
-    def test_handles_import_error_gracefully(self, order: OrderAggregate) -> None:
-        """_get_tenant_from_context handles ImportError gracefully."""
-        # This should not raise - returns None when import fails
-        tenant = order._get_tenant_from_context()
-        assert tenant is None
+    def test_get_tenant_from_context_reads_current_tenant(self, order: OrderAggregate) -> None:
+        """_get_tenant_from_context delegates to get_current_tenant()."""
+        assert order._get_tenant_from_context() is None
 
 
 # =============================================================================

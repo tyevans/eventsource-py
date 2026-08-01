@@ -537,7 +537,7 @@ class DeclarativeProjection(CheckpointTrackingProjection):
         >>> projection = OrderProjection(tenant_filter=tenant_uuid)
 
     Example with dynamic filter (context-based):
-        >>> from eventsource.multitenancy import get_current_tenant
+        >>> from eventsource import get_current_tenant
         >>> # Process events for current request's tenant
         >>> projection = OrderProjection(tenant_filter=get_current_tenant)
 

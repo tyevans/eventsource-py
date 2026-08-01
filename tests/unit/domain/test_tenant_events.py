@@ -17,7 +17,7 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import ValidationError
 
-from eventsource.multitenancy import (
+from eventsource import (
     TenantContextNotSetError,
     TenantDomainEvent,
     clear_tenant_context,
@@ -314,7 +314,7 @@ class TestTenantMismatchError:
 
     def test_error_attributes(self) -> None:
         """TenantMismatchError has expected attributes."""
-        from eventsource.multitenancy import TenantMismatchError
+        from eventsource import TenantMismatchError
 
         expected = uuid4()
         actual = uuid4()
@@ -332,7 +332,7 @@ class TestTenantMismatchError:
 
     def test_error_message_format(self) -> None:
         """TenantMismatchError message is formatted correctly."""
-        from eventsource.multitenancy import TenantMismatchError
+        from eventsource import TenantMismatchError
 
         expected = uuid4()
         actual = uuid4()
@@ -352,7 +352,7 @@ class TestTenantMismatchError:
 
     def test_error_message_truncates_many_events(self) -> None:
         """TenantMismatchError truncates list when more than 5 events."""
-        from eventsource.multitenancy import TenantMismatchError
+        from eventsource import TenantMismatchError
 
         expected = uuid4()
         actual = uuid4()
@@ -369,8 +369,8 @@ class TestTenantMismatchError:
 
     def test_error_is_eventsource_error(self) -> None:
         """TenantMismatchError inherits from EventSourceError."""
+        from eventsource import TenantMismatchError
         from eventsource.domain.exceptions import EventSourceError
-        from eventsource.multitenancy import TenantMismatchError
 
         error = TenantMismatchError(
             expected=uuid4(),

@@ -13,8 +13,8 @@ from uuid import UUID
 
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.domain.aggregate import AggregateRoot
-from eventsource.multitenancy.context import get_required_tenant
-from eventsource.multitenancy.exceptions import TenantMismatchError
+from eventsource.domain.exceptions import TenantMismatchError
+from eventsource.domain.tenant_context import get_required_tenant
 
 if TYPE_CHECKING:
     from typing import Any
@@ -42,7 +42,10 @@ class TenantAwareRepository(Generic[TAggregate]):
         Tenant context is managed per-async-task via ContextVar.
 
     Example:
-        >>> from eventsource.multitenancy import TenantAwareRepository, tenant_scope
+        >>> from eventsource import tenant_scope
+        >>> from eventsource.application.aggregates.tenant_repository import (
+        ...     TenantAwareRepository,
+        ... )
         >>> from eventsource.application.aggregates import AggregateRepository
         >>>
         >>> # Create tenant-aware wrapper

@@ -7,7 +7,7 @@ tenant_id is optional, TenantDomainEvent makes it required.
 
 Example:
     >>> from uuid import uuid4
-    >>> from eventsource.multitenancy import TenantDomainEvent, tenant_scope
+    >>> from eventsource import TenantDomainEvent, tenant_scope
     >>>
     >>> class OrderCreated(TenantDomainEvent):
     ...     aggregate_type: str = "Order"
@@ -33,7 +33,7 @@ from uuid import UUID
 from pydantic import Field
 
 from eventsource.domain.event import DomainEvent
-from eventsource.multitenancy.context import get_required_tenant
+from eventsource.domain.tenant_context import get_required_tenant
 
 
 class TenantDomainEvent(DomainEvent):
@@ -69,7 +69,7 @@ class TenantDomainEvent(DomainEvent):
 
     Example with context (preferred in request handlers):
         >>> import asyncio
-        >>> from eventsource.multitenancy import tenant_scope
+        >>> from eventsource import tenant_scope
         >>>
         >>> async def process_request():
         ...     tenant_id = uuid4()
@@ -121,7 +121,7 @@ class TenantDomainEvent(DomainEvent):
         Example with tenant_scope:
             >>> import asyncio
             >>> from uuid import uuid4, UUID
-            >>> from eventsource.multitenancy import tenant_scope
+            >>> from eventsource import tenant_scope
             >>>
             >>> class InvoiceCreated(TenantDomainEvent):
             ...     aggregate_type: str = "Invoice"
