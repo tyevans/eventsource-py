@@ -282,11 +282,16 @@ def reset_tenant_context(token: TenantContextToken) -> None:
 
 def clear_tenant_context() -> None:
     """
-    Clear the tenant context.
+    Unconditionally clear the tenant context for the current execution
+    context, invalidating ALL outstanding TenantContextTokens.
 
-    This should be called after request processing to prevent tenant leakage
-    between requests. In most cases, prefer using tenant_scope() which
-    handles cleanup automatically.
+    This is the hard-reset escape hatch for request/task boundaries
+    ("no tenant may survive past this point"). After calling it,
+    get_current_tenant() returns None and any reset_tenant_context()
+    call with a previously issued token raises TenantContextResetError
+    — including the implicit reset performed when an enclosing
+    tenant_scope()/tenant_scope_sync() exits. Never call this inside a
+    tenant scope unless you want that scope's exit to fail loudly.
 
     Example:
         >>> from uuid import uuid4
@@ -296,7 +301,8 @@ def clear_tenant_context() -> None:
         ...     get_current_tenant,
         ... )
         >>> tenant_id = uuid4()
-        >>> set_current_tenant(tenant_id)
+        >>> set_current_tenant(tenant_id)  # doctest: +ELLIPSIS
+        <...TenantContextToken...>
         >>> clear_tenant_context()
         >>> assert get_current_tenant() is None
 
@@ -307,6 +313,7 @@ def clear_tenant_context() -> None:
     """
     logger.debug("Tenant context cleared")
     tenant_context.set(None)
+    _token_stack.set(())
 
 
 @asynccontextmanager

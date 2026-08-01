@@ -19,6 +19,7 @@ import pytest
 
 from eventsource import (
     TenantContextNotSetError,
+    TenantContextResetError,
     clear_tenant_context,
     get_current_tenant,
     get_required_tenant,
@@ -354,3 +355,32 @@ class TestTenantContextNotSetError:
 
         error = TenantContextNotSetError()
         assert isinstance(error, EventSourceError)
+
+
+class TestClearIsFinal:
+    """Tests for clear_tenant_context hard-reset behavior."""
+
+    def setup_method(self) -> None:
+        """Clear context before each test."""
+        clear_tenant_context()
+
+    def teardown_method(self) -> None:
+        """Clear context after each test."""
+        clear_tenant_context()
+
+    def test_clear_invalidates_outstanding_tokens(self) -> None:
+        """Clearing invalidates outstanding tokens."""
+        token = set_current_tenant(uuid4())
+        clear_tenant_context()
+        assert get_current_tenant() is None
+        with pytest.raises(TenantContextResetError):
+            reset_tenant_context(token)
+        assert get_current_tenant() is None
+
+    def test_clear_inside_scope_raises_on_scope_exit(self) -> None:
+        """Clearing inside a scope raises on scope exit (discipline violation)."""
+        # Clearing inside a scope is a discipline violation; the scope's
+        # exit must fail loudly rather than silently resurrect the tenant.
+        with pytest.raises(TenantContextResetError), tenant_scope_sync(uuid4()):
+            clear_tenant_context()
+        assert get_current_tenant() is None
