@@ -21,8 +21,8 @@ from eventsource.domain.exceptions import (
     SerializationError,
     EventStoreError,
     EventBusError,
-    CheckpointError,
 )
+from eventsource.ports.exceptions import CheckpointError
 ```
 
 Four things are worth knowing before you write your first handler:
@@ -51,13 +51,14 @@ Exception
 │   ├── SerializationError              event_type
 │   ├── EventStoreError
 │   ├── EventBusError
-│   ├── CheckpointError
 │   ├── TenantContextNotSetError        (eventsource.domain.exceptions -- merged under ADR 0038)
 │   ├── TenantContextResetError         (eventsource.domain.exceptions -- merged under ADR 0038)
-│   ├── TenantMismatchError             (eventsource.domain.exceptions -- merged under ADR 0038)
+│   └── TenantMismatchError             (eventsource.domain.exceptions -- merged under ADR 0038)
+├── EventSourceError                    eventsource.ports.exceptions (ADR 0041)
+│   ├── CheckpointError
 │   ├── LockAcquisitionError            key, reason, timeout
 │   ├── LockNotHeldError                key
-│   └── SubscriptionError               (eventsource.domain.exceptions)
+│   └── SubscriptionError
 ├── SnapshotError                       (eventsource.domain.exceptions -- not actually a subclass of EventSourceError)
 └── ReadModelError                      (eventsource.ports.readmodels.exceptions)
 ```
@@ -67,16 +68,19 @@ under ADR 0029 (previously they derived directly from `Exception`, defined
 in `eventsource.locks.postgresql`). This is a widening change only: every
 existing `except LockAcquisitionError` still catches, and so does
 `except Exception`; the newly-catching clause is `except EventSourceError`,
-which caught nothing lock-related before. Both are now defined in
-`eventsource.domain.exceptions`, importable alongside every other name in this tree.
+which caught nothing lock-related before. Both now live in
+`eventsource.ports.exceptions` (ADR 0041 relocated them there, along with
+`CheckpointError` and `SubscriptionError` below, from `eventsource.domain.exceptions`
+-- they describe port-contract failures, not domain concepts).
 
-`SubscriptionError` (and its eight subclasses) moved the same way under ADR
-0032, as part of the subscriptions ring migration: previously defined in
-the old `subscriptions` package's `exceptions.py`, deriving directly from `Exception`,
-it now lives in `eventsource.domain.exceptions` and derives from
-`EventSourceError`. Same widening-only shape as the lock exceptions above --
-every existing `except SubscriptionError` still catches, and `except
-EventSourceError` newly catches subscription failures too.
+`SubscriptionError` (and its seven subclasses) moved onto `EventSourceError`
+under ADR 0032, as part of the subscriptions ring migration: previously
+defined in the old `subscriptions` package's `exceptions.py`, deriving
+directly from `Exception`. Same widening-only shape as the lock exceptions
+above -- every existing `except SubscriptionError` still catches, and
+`except EventSourceError` newly catches subscription failures too. It now
+lives in `eventsource.ports.exceptions` alongside the lock exceptions (ADR
+0041); import it from there, not from `eventsource.domain.exceptions`.
 
 Write your handlers against this shape: catch the specific type when you can act on it, fall back to the subsystem root, and only then to `EventSourceError`.
 
@@ -124,10 +128,10 @@ from eventsource import (
 from eventsource.domain.exceptions import (
     EventStoreError,
     EventBusError,
-    CheckpointError,
     SerializationError,
     UnhandledEventError,
 )
+from eventsource.ports.exceptions import CheckpointError
 ```
 
 `EventSourceError` is never raised on its own — it is always one of the concrete subclasses above. Because it adds nothing, you can also subclass it for your own domain errors when you want them swept up by the same boundary handler:
@@ -141,7 +145,7 @@ class InsufficientFundsError(EventSourceError):
 
 Two subsystems define their own root, each deriving straight from `Exception`. If your boundary handler only catches `EventSourceError`, these will fly past it and hit whatever generic 500 handler sits above you. (`SubscriptionError` used to be a third -- see the widening note above; it is caught by `EventSourceError` now.)
 
-`SubscriptionError`'s subclasses -- `SubscriptionConfigError`, `SubscriptionStateError`, `SubscriptionAlreadyExistsError`, `CheckpointNotFoundError` (has `.projection_name`), `EventStoreConnectionError`, `EventBusConnectionError`, `TransitionError` -- are raised by the subscription manager and runners, and live in `eventsource.domain.exceptions` alongside it. Note that `CheckpointNotFoundError` here is unrelated to `eventsource.domain.exceptions.CheckpointError`, which is a distinct `EventSourceError` subclass with a different meaning.
+`SubscriptionError`'s subclasses -- `SubscriptionConfigError`, `SubscriptionStateError`, `SubscriptionAlreadyExistsError`, `CheckpointNotFoundError` (has `.projection_name`), `EventStoreConnectionError`, `EventBusConnectionError`, `TransitionError` -- are raised by the subscription manager and runners, and live in `eventsource.ports.exceptions` alongside it (ADR 0041). Note that `CheckpointNotFoundError` here is unrelated to `eventsource.ports.exceptions.CheckpointError`, which is a distinct `EventSourceError` subclass with a different meaning.
 
 **`SnapshotError`** — `eventsource.domain.exceptions` (moved here from its own `snapshots` module in the ring migration; still not part of the `EventSourceError` tree), with `SnapshotDeserializationError` (`aggregate_id`, `aggregate_type`, `original_error`), `SnapshotSchemaVersionError` (adds `snapshot_schema_version` and `expected_schema_version`), and `SnapshotNotFoundError`. These are largely internal: the snapshot path is designed so that a failed load degrades to a full event replay rather than surfacing to you — a *missing* snapshot is not an error at all, `get_snapshot()` simply returns `None`. Catch `SnapshotError` if you want to log the degradation; do not treat it as a request failure.
 

@@ -32,6 +32,21 @@ from eventsource.ports.envelopes import (
     ReadDirection,
     StreamReadOptions,
 )
+from eventsource.ports.exceptions import (
+    CheckpointError,
+    CheckpointNotFoundError,
+    EventBusConnectionError,
+    EventStoreConnectionError,
+    LockAcquisitionError,
+    LockNotHeldError,
+    PositionDecodeError,
+    PositionForeignError,
+    SubscriptionAlreadyExistsError,
+    SubscriptionConfigError,
+    SubscriptionError,
+    SubscriptionStateError,
+    TransitionError,
+)
 from eventsource.ports.handlers import (
     AsyncEventHandler,
     EventHandler,
@@ -143,4 +158,18 @@ __all__ = [
     "LeaderElector",
     "LeaderElectorWithLease",
     "LeaderChangeCallback",
+    # Infrastructure exception taxonomy (ADR 0041)
+    "CheckpointError",
+    "CheckpointNotFoundError",
+    "EventBusConnectionError",
+    "EventStoreConnectionError",
+    "LockAcquisitionError",
+    "LockNotHeldError",
+    "PositionDecodeError",
+    "PositionForeignError",
+    "SubscriptionAlreadyExistsError",
+    "SubscriptionConfigError",
+    "SubscriptionError",
+    "SubscriptionStateError",
+    "TransitionError",
 ]

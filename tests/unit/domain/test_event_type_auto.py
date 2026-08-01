@@ -386,14 +386,14 @@ class TestEdgeCases:
         assert event.event_type == "VeryLongEventClassNameForTestingPurposesOnly"
 
     def test_class_model_fields_updated(self) -> None:
-        """model_fields default is updated correctly."""
+        """event_type_name() derives the correct type from class name."""
 
         class OrderCreated(DomainEvent):
             aggregate_type: str = "Order"
 
-        field_info = OrderCreated.model_fields.get("event_type")
-        assert field_info is not None
-        assert field_info.default == "OrderCreated"
+        # Use event_type_name() — the canonical source of truth,
+        # not the mutated model_fields
+        assert OrderCreated.event_type_name() == "OrderCreated"
 
     def test_dict_construction_with_empty_string_value(self) -> None:
         """Dict with empty string event_type uses class name."""
@@ -605,3 +605,54 @@ class TestModelValidatorBehavior:
             }
         )
         assert event.event_type == "provided_value"
+
+
+class TestSubclassingDoesNotCorruptParent:
+    def test_parent_field_default_survives_subclassing(self) -> None:
+        class ParentEvent(DomainEvent):
+            aggregate_type: str = "P"
+
+        class ChildEvent(ParentEvent):
+            pass
+
+        assert ParentEvent.event_type_name() == "ParentEvent"
+        assert ChildEvent.event_type_name() == "ChildEvent"
+        event = ParentEvent(aggregate_id=uuid4())
+        assert event.event_type == "ParentEvent"
+
+    def test_domainevent_base_default_untouched(self) -> None:
+        class AnythingEvent(DomainEvent):
+            aggregate_type: str = "A"
+
+        assert DomainEvent.model_fields["event_type"].default == ""
+
+    def test_registry_key_matches_wire_value_after_subclassing(self) -> None:
+        from eventsource.domain.event_registry import EventRegistry
+
+        registry = EventRegistry()
+
+        class OrderPlaced(DomainEvent):
+            aggregate_type: str = "Order"
+
+        class OrderPlacedSpecial(OrderPlaced):
+            pass
+
+        # Register parent AFTER child exists — the corruption trigger.
+        registry.register(OrderPlaced)
+        registry.register(OrderPlacedSpecial)
+        assert registry.get("OrderPlaced") is OrderPlaced
+        assert registry.get("OrderPlacedSpecial") is OrderPlacedSpecial
+
+    def test_explicit_wire_name_inherited_by_subclass(self) -> None:
+        class LegacyEvent(DomainEvent):
+            event_type: str = "legacy.v1"
+            suppress_event_type_warning = True
+            aggregate_type: str = "L"
+
+        class LegacyChildEvent(LegacyEvent):
+            pass
+
+        # Inherited explicit default is what instances serialize, so the
+        # registry must agree (registering both then raises Duplicate).
+        assert LegacyEvent.event_type_name() == "legacy.v1"
+        assert LegacyChildEvent.event_type_name() == "legacy.v1"

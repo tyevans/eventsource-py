@@ -13,7 +13,7 @@ from uuid import uuid4
 import pytest
 
 from eventsource.adapters.postgresql.locks import PostgreSQLLockManager
-from eventsource.domain.exceptions import LockAcquisitionError, LockNotHeldError
+from eventsource.ports.exceptions import LockAcquisitionError, LockNotHeldError
 from eventsource.ports.locks import LockInfo, migration_lock_key
 
 # =============================================================================

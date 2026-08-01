@@ -20,21 +20,16 @@ EXCEPTION_NAMES = [
     "CommandRejectedError",
     "EventStoreError",
     "EventBusError",
-    "CheckpointError",
     "SerializationError",
     "EventVersionError",
     "UnhandledEventError",
     "AggregateNotCreatedError",
     "HandlerDispatchError",
     "DuplicateEventError",
-    "PositionDecodeError",
-    "PositionForeignError",
     "SnapshotError",
     "SnapshotDeserializationError",
     "SnapshotSchemaVersionError",
     "SnapshotNotFoundError",
-    "LockAcquisitionError",
-    "LockNotHeldError",
 ]
 
 TYPE_NAMES = [
@@ -59,8 +54,6 @@ TOP_LEVEL_EXCEPTION_NAMES = [
     "EventVersionError",
     "HandlerDispatchError",
     "OptimisticLockError",
-    "PositionDecodeError",
-    "PositionForeignError",
     "ProjectionError",
     "SnapshotDeserializationError",
     "SnapshotError",
@@ -100,11 +93,6 @@ def test_snapshot_error_hierarchy() -> None:
     assert not issubclass(domain_exceptions.SnapshotError, domain_exceptions.EventSourceError)
 
 
-def test_lock_exceptions_are_event_source_errors() -> None:
-    assert issubclass(domain_exceptions.LockAcquisitionError, domain_exceptions.EventSourceError)
-    assert issubclass(domain_exceptions.LockNotHeldError, domain_exceptions.EventSourceError)
-
-
 def test_domain_package_re_exports_exceptions_and_types() -> None:
     for name in EXCEPTION_NAMES:
         assert getattr(eventsource.domain, name) is getattr(domain_exceptions, name)
@@ -117,3 +105,40 @@ def test_top_level_package_re_exports_without_going_through_a_shim() -> None:
         assert getattr(eventsource, name) is getattr(domain_exceptions, name)
     for name in TOP_LEVEL_TYPE_NAMES:
         assert getattr(eventsource, name) is getattr(domain_types, name)
+
+
+class TestNoBuiltinBases:
+    def test_registry_errors_are_not_builtin_lookup_errors(self) -> None:
+        from eventsource.domain.exceptions import (
+            DuplicateEventTypeError,
+            EventTypeNotFoundError,
+            HandlerSignatureError,
+        )
+
+        assert not issubclass(EventTypeNotFoundError, KeyError)
+        assert not issubclass(DuplicateEventTypeError, ValueError)
+        assert not issubclass(HandlerSignatureError, ValueError)
+
+    def test_not_found_message_is_not_requoted(self) -> None:
+        from eventsource.domain.exceptions import EventTypeNotFoundError
+
+        err = EventTypeNotFoundError("OrderCreated", ["A", "B"])
+        assert not str(err).startswith("'")  # KeyError.__str__ used to re-quote
+
+
+class TestDomainFacadeComplete:
+    def test_every_public_domain_exception_is_exported(self) -> None:
+        import eventsource.domain as domain
+        from eventsource.domain import exceptions as ex
+
+        public = {
+            name
+            for name in dir(ex)
+            if isinstance(getattr(ex, name), type)
+            and issubclass(getattr(ex, name), Exception)
+            and not name.startswith("_")
+            and getattr(ex, name).__module__ == "eventsource.domain.exceptions"
+        }
+        exported = set(domain.__all__)
+        missing = public - exported
+        assert not missing, f"domain/__init__ is missing: {sorted(missing)}"

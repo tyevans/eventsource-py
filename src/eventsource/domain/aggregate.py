@@ -6,17 +6,20 @@ They maintain their state by applying events and emit new events
 when commands are executed.
 """
 
+import inspect
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from typing import Any, ClassVar, Generic, TypeVar, cast, get_args, get_origin
 from uuid import UUID
 
 from eventsource.domain.command import DomainCommand
+from eventsource.domain.decorators import discover_handlers
 from eventsource.domain.event import DomainEvent
 from eventsource.domain.exceptions import (
     AggregateNotCreatedError,
     EventVersionError,
+    HandlerSignatureError,
     UnhandledEventError,
 )
 from eventsource.domain.tenant_context import get_current_tenant
@@ -137,9 +140,6 @@ class AggregateRoot(Generic[TState], ABC):
     # When True, events with incorrect versions will raise EventVersionError
     # When False, version mismatches are logged as warnings but allowed
     validate_versions: bool = True
-
-    # Class-level registry of event handlers (populated by decorator)
-    _event_handlers: dict[type[DomainEvent], str] = {}
 
     def __init__(self, aggregate_id: UUID) -> None:
         """
@@ -438,22 +438,7 @@ class AggregateRoot(Generic[TState], ABC):
             "aggregate_type": self.aggregate_type,
             "aggregate_version": self.get_next_version(),
         }
-
-        # Optionally auto-populate tenant_id from context
-        if "tenant_id" not in kwargs:
-            tenant_id = self._get_tenant_from_context()
-            if tenant_id is not None:
-                event_kwargs["tenant_id"] = tenant_id
-
-        # Optionally auto-populate provenance from a command object
-        if isinstance(command, DomainCommand):
-            event_kwargs["causation_id"] = command.command_id
-            event_kwargs["correlation_id"] = command.correlation_id
-            if command.actor_id is not None:
-                event_kwargs["actor_id"] = command.actor_id
-            if command.tenant_id is not None:
-                event_kwargs["tenant_id"] = command.tenant_id
-
+        event_kwargs.update(self._provenance_updates(command, kwargs.keys()))
         # User kwargs override auto-populated values
         event_kwargs.update(kwargs)
 
@@ -462,6 +447,37 @@ class AggregateRoot(Generic[TState], ABC):
         self.apply_event(event, is_new=True)
 
         return event
+
+    def _provenance_updates(
+        self,
+        command: object,
+        explicitly_set: Collection[str],
+    ) -> dict[str, Any]:
+        """
+        Shared stamping semantics for create_event() and DeciderAggregate._stamp().
+
+        Fields listed in explicitly_set are never overwritten. Tenant
+        precedence: explicit > DomainCommand.tenant_id > ambient tenant
+        context (unconditional fallback regardless of command type).
+        Causation/correlation/actor come only from a DomainCommand.
+        """
+        updates: dict[str, Any] = {}
+        if isinstance(command, DomainCommand):
+            if "causation_id" not in explicitly_set:
+                updates["causation_id"] = command.command_id
+            if "correlation_id" not in explicitly_set:
+                updates["correlation_id"] = command.correlation_id
+            if "actor_id" not in explicitly_set and command.actor_id is not None:
+                updates["actor_id"] = command.actor_id
+        if "tenant_id" not in explicitly_set:
+            tenant: UUID | None = None
+            if isinstance(command, DomainCommand) and command.tenant_id is not None:
+                tenant = command.tenant_id
+            if tenant is None:
+                tenant = self._get_tenant_from_context()
+            if tenant is not None:
+                updates["tenant_id"] = tenant
+        return updates
 
     def _get_tenant_from_context(self) -> UUID | None:
         """
@@ -688,21 +704,44 @@ class DeclarativeAggregate(AggregateRoot[TState], ABC):
     # Options: "ignore" (default), "warn", "error"
     unregistered_event_handling: ClassVar[UnregisteredEventHandling] = "ignore"
 
+    # Per-subclass handler registry, rebuilt by __init_subclass__.
+    _event_handlers: ClassVar[dict[type[DomainEvent], str]] = {}
+
     def __init_subclass__(cls, **kwargs: object) -> None:
-        """Initialize handler registry for each subclass."""
+        """Discover and validate @handles methods for each subclass."""
         super().__init_subclass__(**kwargs)
-        # Each subclass gets its own handler registry
-        cls._event_handlers = {}
-        # Collect handlers from methods with _handles_event_type attribute
-        for name in dir(cls):
+        cls._event_handlers = discover_handlers(cls)
+        for event_type, name in cls._event_handlers.items():
+            method = getattr(cls, name)
+            if inspect.iscoroutinefunction(method):
+                try:
+                    async_params = list(inspect.signature(method).parameters.values())
+                    async_param_count = len(async_params) - 1  # exclude self (unbound function)
+                except (ValueError, TypeError):
+                    async_param_count = 1
+                raise HandlerSignatureError(
+                    handler_name=name,
+                    owner_name=cls.__name__,
+                    event_type=event_type,
+                    param_count=async_param_count,
+                    is_async_required=False,
+                    reason=(
+                        "aggregate event handlers run synchronously during replay; remove 'async'"
+                    ),
+                )
             try:
-                method = getattr(cls, name)
-                if hasattr(method, "_handles_event_type"):
-                    event_type = method._handles_event_type
-                    cls._event_handlers[event_type] = name
-            except AttributeError:
-                # Some attributes might raise, skip them
+                params = list(inspect.signature(method).parameters.values())
+            except (ValueError, TypeError):
                 continue
+            param_count = len(params) - 1  # exclude self (unbound function)
+            if param_count != 1:
+                raise HandlerSignatureError(
+                    handler_name=name,
+                    owner_name=cls.__name__,
+                    event_type=event_type,
+                    param_count=param_count,
+                    is_async_required=False,
+                )
 
     @property
     def state(self) -> TState:

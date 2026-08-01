@@ -1,11 +1,16 @@
 """Unit tests for event handler decorators."""
 
+import pytest
+
+from eventsource.domain.aggregate import DeclarativeAggregate
 from eventsource.domain.decorators import (
+    discover_handlers,
     get_handled_event_type,
     handles,
     is_event_handler,
 )
 from eventsource.domain.event import DomainEvent
+from eventsource.domain.exceptions import DuplicateHandlerError, HandlerSignatureError
 
 
 class TestEvent(DomainEvent):
@@ -189,3 +194,66 @@ class TestDecoratorIntegration:
         assert is_event_handler(regular_func) is False
         assert get_handled_event_type(regular_func) is None
         assert not hasattr(regular_func, "_handles_event_type")
+
+
+class ThingHappened(DomainEvent):
+    aggregate_type: str = "Thing"
+
+
+class TestDiscoverHandlers:
+    def test_discovers_decorated_methods(self) -> None:
+        class Owner:
+            @handles(ThingHappened)
+            def _on_thing(self, event: ThingHappened) -> None: ...
+
+        assert discover_handlers(Owner) == {ThingHappened: "_on_thing"}
+
+    def test_duplicate_handlers_for_same_event_raise(self) -> None:
+        with pytest.raises(DuplicateHandlerError) as exc_info:
+
+            class BadOwner:
+                @handles(ThingHappened)
+                def _a_handler(self, event: ThingHappened) -> None: ...
+
+                @handles(ThingHappened)
+                def _b_handler(self, event: ThingHappened) -> None: ...
+
+            discover_handlers(BadOwner)
+        assert "ThingHappened" in str(exc_info.value)
+
+
+class TestDeclarativeAggregateValidation:
+    def test_duplicate_handles_raises_at_class_definition(self) -> None:
+        with pytest.raises(DuplicateHandlerError):
+
+            class DupAggregate(DeclarativeAggregate[dict]):
+                aggregate_type = "Dup"
+
+                @handles(ThingHappened)
+                def _one(self, event: ThingHappened) -> None: ...
+
+                @handles(ThingHappened)
+                def _two(self, event: ThingHappened) -> None: ...
+
+    def test_async_handler_raises_handler_signature_error(self) -> None:
+        with pytest.raises(HandlerSignatureError):
+
+            class AsyncAggregate(DeclarativeAggregate[dict]):
+                aggregate_type = "Async"
+
+                @handles(ThingHappened)
+                async def _on_thing(self, event: ThingHappened) -> None: ...
+
+    def test_wrong_param_count_raises_handler_signature_error(self) -> None:
+        with pytest.raises(HandlerSignatureError):
+
+            class FatAggregate(DeclarativeAggregate[dict]):
+                aggregate_type = "Fat"
+
+                @handles(ThingHappened)
+                def _on_thing(self, context: object, event: ThingHappened) -> None: ...
+
+    def test_base_aggregate_root_has_no_shared_mutable_registry(self) -> None:
+        from eventsource.domain.aggregate import AggregateRoot
+
+        assert "_event_handlers" not in AggregateRoot.__dict__

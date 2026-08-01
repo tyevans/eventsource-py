@@ -14,7 +14,6 @@ from typing import Any
 from uuid import UUID
 
 from eventsource.domain.aggregate import AggregateRoot, TState
-from eventsource.domain.command import DomainCommand
 from eventsource.domain.event import DomainEvent
 
 
@@ -56,7 +55,12 @@ class DeciderAggregate(AggregateRoot[TState]):
     @property
     def state(self) -> TState:
         """Current state. Never None: eagerly initialized from initial_state()."""
-        assert self._state is not None  # established in __init__, maintained by _apply
+        if self._state is None:
+            raise RuntimeError(
+                f"{type(self).__name__} has no state: initial_state() must "
+                f"return a non-None state (established in __init__, "
+                f"maintained by _apply)."
+            )
         return self._state
 
     def _get_initial_state(self) -> TState:
@@ -77,8 +81,9 @@ class DeciderAggregate(AggregateRoot[TState]):
         are never overwritten — detected via model_fields_set):
         - always: aggregate_version, aggregate_type
         - when command is a DomainCommand: causation_id (command_id),
-          correlation_id, actor_id, tenant_id (command value, else tenant
-          context, else untouched)
+          correlation_id, actor_id
+        - tenant_id: command value if DomainCommand, else ambient tenant
+          context, else untouched — for every command type
         """
         events = self.decide(command, self.state)
         applied: list[DomainEvent] = []
@@ -95,21 +100,7 @@ class DeciderAggregate(AggregateRoot[TState]):
             updates["aggregate_version"] = self.get_next_version()
         if "aggregate_type" not in fields_set:
             updates["aggregate_type"] = self.aggregate_type
-        if isinstance(command, DomainCommand):
-            if "causation_id" not in fields_set:
-                updates["causation_id"] = command.command_id
-            if "correlation_id" not in fields_set:
-                updates["correlation_id"] = command.correlation_id
-            if "actor_id" not in fields_set and command.actor_id is not None:
-                updates["actor_id"] = command.actor_id
-            if "tenant_id" not in fields_set:
-                tenant = (
-                    command.tenant_id
-                    if command.tenant_id is not None
-                    else self._get_tenant_from_context()
-                )
-                if tenant is not None:
-                    updates["tenant_id"] = tenant
+        updates.update(self._provenance_updates(command, fields_set))
         if not updates:
             return event
         return event.model_copy(update=updates)

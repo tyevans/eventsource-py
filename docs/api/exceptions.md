@@ -3,7 +3,8 @@
 Reference for the error types raised by `eventsource`.
 
 The core hierarchy lives in `eventsource.domain.exceptions` and is rooted at a single
-base class, `EventSourceError`. It contains thirteen types:
+base class, `EventSourceError`. The domain module holds the errors that carry
+domain meaning:
 
 | Exception | Structured attributes |
 | --- | --- |
@@ -14,33 +15,45 @@ base class, `EventSourceError`. It contains thirteen types:
 | `AggregateNotFoundError` | `aggregate_id`, `aggregate_type` |
 | `EventStoreError` | — |
 | `EventBusError` | — |
-| `CheckpointError` | — |
 | `SerializationError` | `event_type` |
 | `EventVersionError` | `expected_version`, `actual_version`, `event_id`, `aggregate_id` |
 | `UnhandledEventError` | `event_type`, `event_id`, `handler_class`, `available_handlers` |
 | `AggregateNotCreatedError` | `aggregate_class`, `suggestion` |
-| `LockAcquisitionError` | `key`, `reason`, `timeout` (ADR 0029: rebased onto `EventSourceError`) |
-| `LockNotHeldError` | `key` (ADR 0029: rebased onto `EventSourceError`) |
 
 Every one of these accepts its attributes as constructor arguments and builds a
 human-readable message from them, so the attributes are always populated when
 the library raises the error — you can branch on them rather than parsing
 `str(exc)`.
 
-Six of these are re-exported from the package root (`AggregateNotCreatedError`,
-`AggregateNotFoundError`, `EventNotFoundError`, `EventSourceError`,
-`EventVersionError`, `OptimisticLockError`, `ProjectionError`); the rest must be
-imported from `eventsource.domain.exceptions`. See
+**Infrastructure exceptions live in `eventsource.ports.exceptions`, not
+`eventsource.domain.exceptions` (ADR 0041).** `CheckpointError`,
+`LockAcquisitionError`, `LockNotHeldError`, `PositionDecodeError`,
+`PositionForeignError`, and `SubscriptionError` with its seven subclasses
+(`SubscriptionConfigError`, `SubscriptionStateError`,
+`SubscriptionAlreadyExistsError`, `CheckpointNotFoundError`,
+`EventStoreConnectionError`, `EventBusConnectionError`, `TransitionError`)
+describe port-contract failures (stores, buses, locks, positions,
+checkpoints, subscriptions), not domain concepts, and were moved out of
+`domain/exceptions.py` for that reason. They are still rooted in
+`EventSourceError`, so `except EventSourceError` still catches them.
+`from eventsource.domain.exceptions import LockAcquisitionError` (or any of
+the other twelve) now raises `ImportError` — there is no shim; import from
+`eventsource.ports.exceptions` instead.
+
+Six of the domain errors are re-exported from the package root
+(`AggregateNotCreatedError`, `AggregateNotFoundError`, `EventNotFoundError`,
+`EventSourceError`, `EventVersionError`, `OptimisticLockError`,
+`ProjectionError`); the rest must be imported from
+`eventsource.domain.exceptions` or `eventsource.ports.exceptions` as
+applicable. See
 [Import paths and public exports](#import-paths-and-public-exports).
 
-Other subsystems — snapshots, migration, the read-model layer, and the
-optional bus backends — define their own error types in their own modules.
-(`SubscriptionError` used to be one of these; ADR 0032 rebased it onto
-`EventSourceError` -- see below. The three tenant exceptions used to be one
-of these too, defined in `eventsource.multitenancy.exceptions`; ADR 0038
-merged them into the core hierarchy alongside this relocation, though they
-were already `EventSourceError`-rooted before the merge, so no rebase was
-needed.) Those are catalogued under
+Other subsystems — snapshots, migration, and the optional bus backends —
+define their own error types in their own modules. The three tenant
+exceptions used to be defined in `eventsource.multitenancy.exceptions`; ADR
+0038 merged them into the core hierarchy, though they were already
+`EventSourceError`-rooted before the merge, so no rebase was needed. Those
+are catalogued under
 [Related exceptions outside the core hierarchy](#related-exceptions-outside-the-core-hierarchy);
 note in particular that `eventsource.ports.readmodels.exceptions` defines a
 *second*, unrelated `OptimisticLockError`.
@@ -62,10 +75,10 @@ despite not deriving from it) — `eventsource.application.migration`,
 `eventsource.ports.readmodels.exceptions`, and the optional bus backends each
 define their own families. These are *not*
 subclasses of `EventSourceError`; catching the core base class will not catch
-them. (`LockAcquisitionError` and `LockNotHeldError` moved onto
-`EventSourceError` under ADR 0029, and `SubscriptionError` moved the same way
-under ADR 0032 -- all three used to be bare-`Exception` families and are now
-part of the core hierarchy; see the diagram below.)
+them. (`LockAcquisitionError`, `LockNotHeldError`, and `SubscriptionError`
+are `EventSourceError` subclasses too, but live in `eventsource.ports.exceptions`
+rather than `eventsource.domain.exceptions` as of ADR 0041 — see the diagram
+below.)
 
 Three properties of the core hierarchy are worth knowing before you write
 handling code:
@@ -79,10 +92,10 @@ handling code:
   `EventSourceError`; there are no intermediate base classes. So you can catch
   everything, or catch one specific type, but there is no middle tier such as
   "all storage errors".
-- **Four types are markers with no attributes.** `EventStoreError`,
-  `EventBusError`, `CheckpointError`, and `EventSourceError` itself are plain
-  `pass` subclasses; they carry only whatever message the raiser passes to
-  `Exception.__init__`.
+- **Some types are markers with no attributes.** `EventStoreError`,
+  `EventBusError`, and `EventSourceError` itself are plain `pass` subclasses;
+  they carry only whatever message the raiser passes to `Exception.__init__`.
+  (`CheckpointError` is a marker too, but lives in `eventsource.ports.exceptions`.)
 
 Two of the errors are configuration-sensitive rather than unconditional.
 `UnhandledEventError` is raised only when a `DeclarativeAggregate` or
@@ -97,12 +110,19 @@ raise it, then catalogue the subsystem families and their import paths.
 
 ## Exception hierarchy
 
-`eventsource.domain.exceptions` defines the whole `EventSourceError` tree in
-one module, including the three tenant exceptions merged in under ADR 0038
-(`TenantContextNotSetError`, `TenantContextResetError`,
-`TenantMismatchError` — already `EventSourceError`-rooted before the merge,
-so no rebase was needed) and `LockAcquisitionError`/`LockNotHeldError`
-(moved here from a standalone `Exception` base under ADR 0029). There are no
+`eventsource.domain.exceptions` and `eventsource.ports.exceptions` together
+define the whole `EventSourceError` tree, split by ADR 0041 along domain
+meaning versus infrastructure meaning. `domain/exceptions.py` holds the three
+tenant exceptions merged in under ADR 0038 (`TenantContextNotSetError`,
+`TenantContextResetError`, `TenantMismatchError` — already
+`EventSourceError`-rooted before the merge, so no rebase was needed) plus
+everything the domain ring itself raises. `ports/exceptions.py` holds the
+thirteen infrastructure types — `LockAcquisitionError`, `LockNotHeldError`,
+`CheckpointError`, `PositionDecodeError`, `PositionForeignError`, and
+`SubscriptionError` with its seven subclasses — moved there by ADR 0041 because
+they describe port-contract failures (stores, buses, locks, positions,
+checkpoints, subscriptions), not domain concepts; roughly a third of the old
+`domain/exceptions.py` had no domain meaning before this split. There are no
 intermediate base classes beyond `SubscriptionError` — every other error is
 exactly one level below the root.
 
@@ -135,29 +155,20 @@ Exception
 │   ├── AggregateNotFoundError
 │   ├── EventStoreError
 │   ├── EventBusError
-│   ├── CheckpointError
 │   ├── SerializationError
 │   ├── EventVersionError
 │   ├── UnhandledEventError
 │   ├── AggregateNotCreatedError
+│   ├── DuplicateHandlerError
+│   ├── DuplicateEventError
 │   ├── TenantContextNotSetError                (ADR 0038: merged here; formerly in eventsource.multitenancy)
 │   ├── TenantContextResetError                 (ADR 0038: merged here; formerly in eventsource.multitenancy)
 │   ├── TenantMismatchError                     (ADR 0038: merged here; formerly in eventsource.multitenancy)
-│   ├── LockAcquisitionError                   (ADR 0029: rebased here, was a bare Exception)
-│   ├── LockNotHeldError                       (ADR 0029: rebased here, was a bare Exception)
-│   ├── SubscriptionError                      (ADR 0032: rebased here, was a bare Exception)
-│   │   ├── SubscriptionConfigError
-│   │   ├── SubscriptionStateError
-│   │   ├── SubscriptionAlreadyExistsError
-│   │   ├── CheckpointNotFoundError
-│   │   ├── EventStoreConnectionError
-│   │   ├── EventBusConnectionError
-│   │   └── TransitionError
-│   ├── EventTypeNotFoundError                 (ADR 0033: rebased here, still also a KeyError)
-│   ├── DuplicateEventTypeError                (ADR 0033: rebased here, still also a ValueError)
-│   ├── HandlerSignatureError                  (ADR 0033: rebased here, still also a ValueError)
+│   ├── EventTypeNotFoundError                 (ADR 0033: rebased here, no longer also a KeyError as of ADR 0042)
+│   ├── DuplicateEventTypeError                (ADR 0033: rebased here, no longer also a ValueError as of ADR 0042)
+│   ├── HandlerSignatureError                  (ADR 0033: rebased here, no longer also a ValueError as of ADR 0042)
 │   └── MigrationError                         (ADR 0034: rebased here, was a bare Exception)
-│       eventsource.application.migration.exceptions
+│       │                                      eventsource.application.migration.exceptions
 │       ├── MigrationNotFoundError
 │       ├── MigrationAlreadyExistsError
 │       ├── MigrationStateError
@@ -172,6 +183,21 @@ Exception
 │       ├── RoutingError
 │       ├── CircuitBreakerOpenError
 │       └── SubscriptionMigrationError          eventsource.application.migration.subscription_migrator
+│
+├── EventSourceError                          eventsource.ports.exceptions (ADR 0041)
+│   ├── CheckpointError
+│   ├── PositionDecodeError
+│   ├── PositionForeignError
+│   ├── LockAcquisitionError                   (ADR 0029: rebased onto EventSourceError; ADR 0041: relocated here from domain.exceptions)
+│   ├── LockNotHeldError                       (ADR 0029: rebased onto EventSourceError; ADR 0041: relocated here from domain.exceptions)
+│   └── SubscriptionError                      (ADR 0032: rebased onto EventSourceError; ADR 0041: relocated here from domain.exceptions)
+│       ├── SubscriptionConfigError
+│       ├── SubscriptionStateError
+│       ├── SubscriptionAlreadyExistsError
+│       ├── CheckpointNotFoundError
+│       ├── EventStoreConnectionError
+│       ├── EventBusConnectionError
+│       └── TransitionError
 │
 ├── SnapshotError                             eventsource.domain.exceptions
 │   │                                          (not a subclass of EventSourceError)

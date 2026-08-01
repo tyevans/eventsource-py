@@ -41,6 +41,19 @@ class TestHandlerSignatureError:
         assert error.param_count == 3
         assert error.is_async_required is True
 
+    def test_exception_stores_reason(self):
+        """Exception should store the reason argument as an attribute."""
+        error = HandlerSignatureError(
+            handler_name="_handle_order",
+            owner_name="OrderProjection",
+            event_type=TestEvent,
+            param_count=3,
+            is_async_required=True,
+            reason="too many parameters",
+        )
+
+        assert error.reason == "too many parameters"
+
     def test_exception_message_format_async(self):
         """Error message should include expected signatures for async handlers."""
         error = HandlerSignatureError(
@@ -75,15 +88,17 @@ class TestHandlerSignatureError:
         assert "async def" not in message
         assert "Got: 0 parameter(s)" in message
 
-    def test_exception_is_value_error(self):
-        """HandlerSignatureError should be a subclass of ValueError."""
+    def test_exception_is_event_source_error(self):
+        """HandlerSignatureError should be a subclass of EventSourceError."""
+        from eventsource.domain.exceptions import EventSourceError
+
         error = HandlerSignatureError(
             handler_name="_handle",
             owner_name="Test",
             event_type=TestEvent,
             param_count=5,
         )
-        assert isinstance(error, ValueError)
+        assert isinstance(error, EventSourceError)
 
 
 class TestHandlerSignatureValidation:

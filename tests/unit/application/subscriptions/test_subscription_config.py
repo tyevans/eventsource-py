@@ -509,7 +509,7 @@ class TestModuleImports:
 
     def test_import_from_exceptions_submodule(self):
         """Test direct import from the exceptions' canonical home (ADR 0032)."""
-        from eventsource.domain.exceptions import (
+        from eventsource.ports.exceptions import (
             CheckpointNotFoundError,
             EventBusConnectionError,
             EventStoreConnectionError,

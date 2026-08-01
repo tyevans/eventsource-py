@@ -45,13 +45,13 @@ the known limitation under `TenantAwareRepository`.
 | `get_current_tenant` | `() -> UUID \| None` | Read the tenant, or `None`; never raises |
 | `get_required_tenant` | `() -> UUID` | Read the tenant, or raise `TenantContextNotSetError` |
 | `set_current_tenant` | `(tenant_id: UUID) -> Token[UUID \| None]` | Set the tenant, returning a reset `Token` |
-| `clear_tenant_context` | `() -> None` | Set the tenant back to `None` |
+| `clear_tenant_context` | `() -> None` | Hard reset: set the tenant to `None` and invalidate every outstanding token in this context |
 | `tenant_scope` | async context manager, yields `UUID` | Scoped set + token-based restore |
 | `tenant_scope_sync` | sync context manager, yields `UUID` | Same, for synchronous code |
 | `TenantDomainEvent` | class, subclass of `DomainEvent` | Event base with required `tenant_id` |
 | `TenantAwareRepository` | `Generic[TAggregate]` class | Validating wrapper over `AggregateRepository` |
 | `TenantContextNotSetError` | exception, subclass of `EventSourceError` | No tenant in context where one was required |
-| `TenantContextResetError` | exception, subclass of `EventSourceError` | A context token was reset out of LIFO order, or reset twice |
+| `TenantContextResetError` | exception, subclass of `EventSourceError` | A context token was reset out of LIFO order, reset twice, or invalidated by an intervening `clear_tenant_context()` |
 | `TenantMismatchError` | exception, subclass of `EventSourceError` | Events carry a tenant other than the active one |
 
 Each source module declares its own `__all__` containing exactly the names
@@ -152,7 +152,7 @@ writes:
 | Read, tenant required | `tenant_context.get()` + `None` check | `get_required_tenant()` |
 | Set | `tenant_context.set(tenant_id)` | `set_current_tenant()` (adds a debug log) or `tenant_scope()` |
 | Restore prior value | `tenant_context.reset(token)` | `tenant_scope()` / `tenant_scope_sync()` |
-| Force empty | `tenant_context.set(None)` | `clear_tenant_context()` |
+| Hard reset (force empty + invalidate all tokens) | `tenant_context.set(None)` (does not invalidate tokens) | `clear_tenant_context()` |
 
 The variable is not type-narrowed for you: `tenant_context.get()` is typed
 `UUID | None`, so reading it directly forces a `None` check at every call site.
@@ -327,22 +327,29 @@ exactly this.
 
 ### `clear_tenant_context() -> None`
 
-Calls `tenant_context.set(None)` and logs a debug line. Note the implementation
-detail with visible consequences: this **sets the variable to `None`**, it does
-not reset a token. A previously outer tenant is therefore *not* restored -- the
-context becomes empty for the remainder of the current context, and any token
-taken earlier still resets to the value that preceded that earlier set.
+Sets the variable to `None` **and invalidates every outstanding token** in the
+current execution context, then logs a debug line. This is a hard reset, not a
+token-free version of restore: a previously outer tenant is *not* restored --
+the context becomes empty -- and any token taken earlier, including one held
+by an enclosing `tenant_scope()`/`tenant_scope_sync()`, now raises
+`TenantContextResetError` if it is ever reset, instead of silently restoring a
+stale value.
 
 ```python
 set_current_tenant(tenant_a)
-set_current_tenant(tenant_b)
+token = set_current_tenant(tenant_b)
 clear_tenant_context()
 assert get_current_tenant() is None  # tenant_a is not restored
+reset_tenant_context(token)          # raises TenantContextResetError
 ```
 
 Use it to guarantee a clean slate at the end of a unit of work when no scope
 manager owns the lifetime -- for instance in test teardown or in a worker loop
-that reuses a thread across jobs.
+that reuses a thread across jobs. **Never call it inside an active
+`tenant_scope()`/`tenant_scope_sync()` block** unless you want that scope's
+exit to raise `TenantContextResetError` -- the raise is deliberate: it turns
+the tenant-context leakage that a silent restore would otherwise cause into a
+loud failure at the scope boundary.
 
 #### Caveat: Concurrent Tasks and Context Isolation
 
@@ -406,8 +413,9 @@ async with tenant_scope(tenant_a):
 
 An exception raised inside the inner scope restores `tenant_a` on the way out
 before propagating, so an outer `except` block still observes the correct
-tenant. Note the contrast with `clear_tenant_context()`, which would leave
-`None` at that point.
+tenant. Note the contrast with `clear_tenant_context()`, which -- called
+inside either scope -- would make that scope's exit raise
+`TenantContextResetError` instead of restoring `tenant_a`.
 
 ### `tenant_scope_sync(tenant_id: UUID)` (sync context manager)
 

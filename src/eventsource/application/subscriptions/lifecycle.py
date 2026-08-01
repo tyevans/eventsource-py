@@ -30,13 +30,13 @@ from eventsource.application.subscriptions.transition import (
     StartFromResolver,
     TransitionCoordinator,
 )
-from eventsource.domain.exceptions import SubscriptionError
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_EVENTS_PROCESSED,
     ATTR_POSITION,
     ATTR_SUBSCRIPTION_NAME,
 )
+from eventsource.ports.exceptions import SubscriptionError
 
 if TYPE_CHECKING:
     from eventsource.ports.bus import SubscribableEventBus

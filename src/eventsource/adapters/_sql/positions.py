@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from eventsource.domain.exceptions import PositionDecodeError, PositionForeignError
+from eventsource.ports.exceptions import PositionDecodeError, PositionForeignError
 from eventsource.ports.positions import Position
 
 

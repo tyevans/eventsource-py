@@ -141,8 +141,6 @@ if TYPE_CHECKING:
         EventVersionError,
         HandlerDispatchError,
         OptimisticLockError,
-        PositionDecodeError,
-        PositionForeignError,
         ProjectionError,
         SnapshotDeserializationError,
         SnapshotError,
@@ -206,6 +204,7 @@ if TYPE_CHECKING:
         DLQStats,
         ProjectionFailureCount,
     )
+    from eventsource.ports.exceptions import PositionDecodeError, PositionForeignError
 
     # Protocols - canonical location (TD-007)
     from eventsource.ports.handlers import (
@@ -527,8 +526,8 @@ _LAZY: dict[str, str] = {
     "collect": "eventsource.ports",
     "IntPositionCodec": "eventsource.adapters._sql.positions",
     "DuplicateEventError": "eventsource.domain.exceptions",
-    "PositionDecodeError": "eventsource.domain.exceptions",
-    "PositionForeignError": "eventsource.domain.exceptions",
+    "PositionDecodeError": "eventsource.ports.exceptions",
+    "PositionForeignError": "eventsource.ports.exceptions",
     "AIOSQLITE_AVAILABLE": "eventsource.adapters.sqlite",
     "SQLITE_AVAILABLE": "eventsource.adapters.sqlite",
     "SQLiteEventStore": "eventsource.adapters.sqlite",

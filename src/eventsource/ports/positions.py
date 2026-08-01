@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from eventsource.domain.exceptions import PositionDecodeError, PositionForeignError
+from eventsource.ports.exceptions import PositionDecodeError, PositionForeignError
 
 
 @dataclass(frozen=True, slots=True)

@@ -66,6 +66,12 @@ Sibling of [ADR 0025](0025-legacy-store-retirement.md) and
 [ADR 0029](0029-locks-readmodels-and-engine-rings.md) in *shape* (relocating
 the last pre-ring modules onto the ring map).
 
+**Amended by [ADR 0041](0041-infrastructure-exceptions-to-ports.md).**
+This ADR's relocation of `exceptions.py` onto `domain/` stands; ADR 0041
+carves thirteen infrastructure-meaning classes back out of
+`domain/exceptions.py` into a new `ports/exceptions.py`, narrowing what
+"settled onto `domain/`" now means for that one module.
+
 **Amended by [ADR 0033](0033-events-handlers-internal-ring-migration.md).**
 This ADR's own relocations stand untouched. The pointer is here because this
 ADR's Context section (below) names `events/base.py` as a hard import floor

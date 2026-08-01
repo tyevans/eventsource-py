@@ -17,6 +17,7 @@ from collections.abc import Callable
 from typing import Any, TypeVar
 
 from eventsource.domain.event import DomainEvent
+from eventsource.domain.exceptions import DuplicateHandlerError
 
 # Type variable for handler functions - preserves the exact type of the decorated function
 F = TypeVar("F", bound=Callable[..., Any])
@@ -139,8 +140,41 @@ def is_event_handler(func: Callable[..., Any]) -> bool:
     return hasattr(func, "_handles_event_type")
 
 
+def discover_handlers(owner: type) -> dict[type[DomainEvent], str]:
+    """
+    Scan a class for @handles-decorated methods.
+
+    The shared discovery core used by DeclarativeAggregate (domain ring)
+    and HandlerRegistry (application ring). Returns a mapping of event
+    type to method name.
+
+    Raises:
+        DuplicateHandlerError: If two methods claim the same event type.
+    """
+    handlers: dict[type[DomainEvent], str] = {}
+    for name in dir(owner):
+        try:
+            attr = getattr(owner, name)
+        except AttributeError:
+            continue
+        event_type = get_handled_event_type(attr)
+        if event_type is None or not isinstance(event_type, type):
+            continue
+        existing = handlers.get(event_type)
+        if existing is not None and existing != name:
+            raise DuplicateHandlerError(
+                owner_name=owner.__name__,
+                event_type=event_type,
+                first_handler=existing,
+                second_handler=name,
+            )
+        handlers[event_type] = name
+    return handlers
+
+
 __all__ = [
     "handles",
     "get_handled_event_type",
     "is_event_handler",
+    "discover_handlers",
 ]

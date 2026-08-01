@@ -10,7 +10,6 @@ import pytest
 
 from eventsource.domain.exceptions import (
     AggregateNotFoundError,
-    CheckpointError,
     EventBusError,
     EventNotFoundError,
     EventSourceError,
@@ -19,6 +18,7 @@ from eventsource.domain.exceptions import (
     ProjectionError,
     SerializationError,
 )
+from eventsource.ports.exceptions import CheckpointError
 
 
 class TestEventSourceError:

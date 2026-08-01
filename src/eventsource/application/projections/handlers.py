@@ -31,7 +31,7 @@ from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from eventsource.domain.decorators import get_handled_event_type
+from eventsource.domain.decorators import discover_handlers
 from eventsource.domain.event import DomainEvent
 from eventsource.domain.exceptions import HandlerSignatureError, UnhandledEventError
 
@@ -141,23 +141,8 @@ class HandlerRegistry:
 
         Discovers both private methods (starting with _) and public methods.
         """
-        for attr_name in dir(self._owner):
-            # Skip dunder methods
-            if attr_name.startswith("__"):
-                continue
-
-            attr = getattr(self._owner, attr_name, None)
-            if attr is None:
-                continue
-
-            # Check if decorated with @handles
-            event_type = get_handled_event_type(attr)
-            if event_type is None:
-                continue
-
-            # Skip if event_type is not a proper type (e.g., mock object)
-            if not isinstance(event_type, type):
-                continue
+        for event_type, attr_name in discover_handlers(type(self._owner)).items():
+            attr = getattr(self._owner, attr_name)
 
             # Get handler info
             is_async = inspect.iscoroutinefunction(attr)

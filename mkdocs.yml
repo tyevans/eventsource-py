@@ -164,6 +164,8 @@ nav:
       - "ADR-0038: Multi-Tenancy Ring Dissolution": adrs/0038-multitenancy-dissolution.md
       - "ADR-0039: Schema DDL Package Relocated to Adapters": adrs/0039-schema-ddl-to-adapters.md
       - "ADR-0040: Out-of-Ring Settlement": adrs/0040-out-of-ring-settlement.md
+      - "ADR-0041: Infrastructure Exceptions to Ports": adrs/0041-infrastructure-exceptions-to-ports.md
+      - "ADR-0042: Domain Event and Handler Strictness": adrs/0042-domain-event-strictness.md
   - Development:
       - development/index.md
       - Contributing: development/contributing.md

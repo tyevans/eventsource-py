@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING
 from eventsource.application.subscriptions.runners.catchup import CatchUpRunner
 from eventsource.application.subscriptions.runners.live import LiveRunner
 from eventsource.application.subscriptions.subscription import Subscription, render_position
-from eventsource.domain.exceptions import TransitionError
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_BUFFER_SIZE,
@@ -30,6 +29,7 @@ from eventsource.observability.attributes import (
     ATTR_SUBSCRIPTION_PHASE,
     ATTR_WATERMARK,
 )
+from eventsource.ports.exceptions import TransitionError
 from eventsource.ports.positions import Position
 
 if TYPE_CHECKING:

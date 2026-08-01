@@ -63,9 +63,9 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from eventsource.adapters._sql.connection import sql_connection
-from eventsource.domain.exceptions import PositionDecodeError
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import ATTR_DB_SYSTEM
+from eventsource.ports.exceptions import PositionDecodeError
 from eventsource.ports.migration.models import PositionMapping
 from eventsource.ports.positions import Position
 

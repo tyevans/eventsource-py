@@ -281,9 +281,10 @@ class TestHandlerValidation:
             )
 
     def test_zero_param_handler_raises_value_error(self, mock_session_factory) -> None:
-        """Test that handlers with no parameters raise ValueError."""
+        """Test that handlers with no parameters raise HandlerSignatureError."""
+        from eventsource.domain.exceptions import HandlerSignatureError
 
-        with pytest.raises(ValueError, match="invalid signature"):
+        with pytest.raises(HandlerSignatureError, match="invalid signature"):
 
             class BadProjection(ReadModelProjection[TestModel]):
                 @handles(TestEvent)
@@ -296,11 +297,12 @@ class TestHandlerValidation:
             )
 
     def test_three_param_handler_raises_value_error(self, mock_session_factory) -> None:
-        """Test that handlers with 3+ parameters raise ValueError.
+        """Test that handlers with 3+ parameters raise HandlerSignatureError.
 
         Note: The error message uses 'invalid signature' rather than 'must accept'."""
+        from eventsource.domain.exceptions import HandlerSignatureError
 
-        with pytest.raises(ValueError, match="invalid signature"):
+        with pytest.raises(HandlerSignatureError, match="invalid signature"):
 
             class BadProjection(ReadModelProjection[TestModel]):
                 @handles(TestEvent)

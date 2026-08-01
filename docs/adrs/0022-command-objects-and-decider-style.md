@@ -9,6 +9,13 @@ Accepted (2026-07-30)
 `eventsource.domain.command`; the decider pattern and command-object design
 below are unchanged).
 
+**Amended by [ADR 0042](0042-domain-event-strictness.md).** The decider
+pattern and command-object design below are unchanged. ADR 0042 unifies
+`DeciderAggregate`'s provenance stamping with `create_event()`'s via a
+shared `_provenance_updates()` helper, so the ambient tenant-context
+fallback now applies to every command type the decider handles, not only
+`DomainCommand` subclasses.
+
 ## Context
 
 The library shipped two aggregate styles (hand-written `_apply` on

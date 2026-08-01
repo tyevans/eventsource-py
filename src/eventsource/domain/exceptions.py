@@ -85,12 +85,6 @@ class EventBusError(EventSourceError):
     pass
 
 
-class CheckpointError(EventSourceError):
-    """Raised when there's an error with checkpoint operations."""
-
-    pass
-
-
 class SerializationError(EventSourceError):
     """Raised when event serialization or deserialization fails."""
 
@@ -229,16 +223,34 @@ class HandlerDispatchError(EventSourceError):
         super().__init__(f"{len(failures)} handler(s) failed during dispatch: {handler_names}")
 
 
+class DuplicateHandlerError(EventSourceError):
+    """
+    Raised when two @handles methods in one class claim the same event type.
+
+    Without this check, discovery order (alphabetical via dir()) silently
+    picks one handler and drops the other's state mutation.
+    """
+
+    def __init__(
+        self,
+        owner_name: str,
+        event_type: type,
+        first_handler: str,
+        second_handler: str,
+    ) -> None:
+        self.owner_name = owner_name
+        self.event_type = event_type
+        self.first_handler = first_handler
+        self.second_handler = second_handler
+        super().__init__(
+            f"{owner_name} declares multiple handlers for "
+            f"{event_type.__name__}: '{first_handler}' and '{second_handler}'. "
+            f"Each event type may have exactly one @handles method per class."
+        )
+
+
 class DuplicateEventError(EventSourceError):
     """An event with this event_id already exists in the store."""
-
-
-class PositionDecodeError(EventSourceError):
-    """A persisted position string could not be decoded."""
-
-
-class PositionForeignError(EventSourceError):
-    """Positions from different stores were compared for order."""
 
 
 # NOTE: intentionally `Exception`, not `EventSourceError` -- this is the
@@ -312,9 +324,6 @@ class SnapshotDeserializationError(SnapshotError):
 
         super().__init__(self.message)
 
-    def __str__(self) -> str:
-        return self.message
-
     def __repr__(self) -> str:
         return (
             f"SnapshotDeserializationError("
@@ -373,9 +382,6 @@ class SnapshotSchemaVersionError(SnapshotError):
 
         super().__init__(self.message)
 
-    def __str__(self) -> str:
-        return self.message
-
     def __repr__(self) -> str:
         return (
             f"SnapshotSchemaVersionError("
@@ -416,50 +422,12 @@ class SnapshotNotFoundError(SnapshotError):
 
         super().__init__(self.message)
 
-    def __str__(self) -> str:
-        return self.message
-
     def __repr__(self) -> str:
         return (
             f"SnapshotNotFoundError("
             f"aggregate_id={self.aggregate_id!r}, "
             f"aggregate_type={self.aggregate_type!r})"
         )
-
-
-class LockAcquisitionError(EventSourceError):
-    """
-    Raised when a lock cannot be acquired.
-
-    Attributes:
-        key: The lock key that could not be acquired
-        reason: Description of why acquisition failed
-        timeout: The timeout value if timeout was the cause
-    """
-
-    def __init__(
-        self,
-        key: str,
-        reason: str,
-        timeout: float | None = None,
-    ):
-        self.key = key
-        self.reason = reason
-        self.timeout = timeout
-        super().__init__(f"Failed to acquire lock '{key}': {reason}")
-
-
-class LockNotHeldError(EventSourceError):
-    """
-    Raised when attempting to release a lock not held.
-
-    Attributes:
-        key: The lock key that was not held
-    """
-
-    def __init__(self, key: str):
-        self.key = key
-        super().__init__(f"Lock '{key}' is not held by this session")
 
 
 # =============================================================================
@@ -470,7 +438,7 @@ class LockNotHeldError(EventSourceError):
 # events/ -> domain/).
 
 
-class EventTypeNotFoundError(EventSourceError, KeyError):
+class EventTypeNotFoundError(EventSourceError):
     """
     Raised when an event type is not found in the registry.
 
@@ -488,7 +456,7 @@ class EventTypeNotFoundError(EventSourceError, KeyError):
         )
 
 
-class DuplicateEventTypeError(EventSourceError, ValueError):
+class DuplicateEventTypeError(EventSourceError):
     """
     Raised when attempting to register a different class with an existing event type name.
     """
@@ -508,7 +476,7 @@ class DuplicateEventTypeError(EventSourceError, ValueError):
         )
 
 
-class HandlerSignatureError(EventSourceError, ValueError):
+class HandlerSignatureError(EventSourceError):
     """
     Raised when an event handler has an invalid signature.
 
@@ -542,93 +510,35 @@ class HandlerSignatureError(EventSourceError, ValueError):
         event_type: type,
         param_count: int,
         is_async_required: bool = True,
+        reason: str | None = None,
     ) -> None:
         self.handler_name = handler_name
         self.owner_name = owner_name
         self.event_type = event_type
         self.param_count = param_count
         self.is_async_required = is_async_required
+        self.reason = reason
 
         event_name = event_type.__name__
         async_prefix = "async " if is_async_required else ""
 
-        message = (
-            f"Handler '{handler_name}' in {owner_name} has invalid signature "
-            f"for @handles({event_name}).\n\n"
-            f"Expected one of:\n"
-            f"  {async_prefix}def {handler_name}(self, event: {event_name}) -> None\n"
-            f"  {async_prefix}def {handler_name}(self, context, event: {event_name}) -> None\n\n"
-            f"Got: {param_count} parameter(s) (excluding self)\n\n"
-            f"Hint: Ensure your handler has exactly 1 or 2 parameters after 'self'."
-        )
+        if reason is not None:
+            message = (
+                f"Handler '{handler_name}' in {owner_name} is invalid for "
+                f"@handles({event_name}): {reason}"
+            )
+        else:
+            message = (
+                f"Handler '{handler_name}' in {owner_name} has invalid signature "
+                f"for @handles({event_name}).\n\n"
+                f"Expected one of:\n"
+                f"  {async_prefix}def {handler_name}(self, event: {event_name}) -> None\n"
+                f"  {async_prefix}def {handler_name}(self, context, event: {event_name}) -> None\n\n"
+                f"Got: {param_count} parameter(s) (excluding self)\n\n"
+                f"Hint: Ensure your handler has exactly 1 or 2 parameters after 'self'."
+            )
 
         super().__init__(message)
-
-
-# =============================================================================
-# Subscription exceptions
-# =============================================================================
-#
-# Merged from the former eventsource.application.subscriptions.exceptions module (ADR
-# 0032). SubscriptionError is rebased onto EventSourceError -- a widening
-# change: the sole `except SubscriptionError` call site in the repo still
-# catches it, and no ErrorClassifier keys on EventSourceError.
-
-
-class SubscriptionError(EventSourceError):
-    """Base exception for subscription-related errors."""
-
-    pass
-
-
-class SubscriptionConfigError(SubscriptionError):
-    """Raised when subscription configuration is invalid."""
-
-    pass
-
-
-class SubscriptionStateError(SubscriptionError):
-    """Raised when an operation is invalid for the current state."""
-
-    pass
-
-
-class SubscriptionAlreadyExistsError(SubscriptionError):
-    """Raised when trying to register a duplicate subscription."""
-
-    def __init__(self, name: str) -> None:
-        self.name = name
-        super().__init__(f"Subscription '{name}' already exists")
-
-
-class CheckpointNotFoundError(SubscriptionError):
-    """Raised when checkpoint is required but not found."""
-
-    def __init__(self, projection_name: str) -> None:
-        self.projection_name = projection_name
-        super().__init__(
-            f"No checkpoint found for '{projection_name}'. "
-            "Use start_from='beginning' to start from the beginning, "
-            "or ensure the projection name is correct."
-        )
-
-
-class EventStoreConnectionError(SubscriptionError):
-    """Raised when unable to connect to the event store."""
-
-    pass
-
-
-class EventBusConnectionError(SubscriptionError):
-    """Raised when unable to connect to the event bus."""
-
-    pass
-
-
-class TransitionError(SubscriptionError):
-    """Raised when catch-up to live transition fails."""
-
-    pass
 
 
 # Merged from the former eventsource.multitenancy.exceptions module (ADR 0038).

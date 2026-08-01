@@ -1,5 +1,6 @@
 """Tests for DeciderAggregate."""
 
+from dataclasses import dataclass
 from uuid import UUID, uuid4
 
 import pytest
@@ -196,6 +197,30 @@ class TestSnapshotRoundTrip:
         assert restored.version == 1
 
 
+class TestStateInvariant:
+    def test_none_state_raises_even_without_assertions(self) -> None:
+        """Accessing state when initial_state returns None raises RuntimeError."""
+
+        class BrokenDecider(DeciderAggregate[dict]):
+            aggregate_type = "Broken"
+
+            @staticmethod
+            def initial_state(aggregate_id: UUID) -> dict:
+                return None  # type: ignore[return-value]  # deliberate contract violation
+
+            @staticmethod
+            def decide(command: object, state: dict) -> list[DomainEvent]:
+                return []
+
+            @staticmethod
+            def evolve(state: dict, event: DomainEvent) -> dict:
+                return state
+
+        agg = BrokenDecider(uuid4())
+        with pytest.raises(RuntimeError, match="initial_state"):
+            _ = agg.state
+
+
 class TestCreateEventCommandProvenance:
     def test_create_event_stamps_provenance_from_command(self) -> None:
         from eventsource.domain.aggregate import AggregateRoot
@@ -244,3 +269,37 @@ class TestCreateEventCommandProvenance:
         )
         assert event.correlation_id == explicit
         assert event.causation_id == cmd.command_id
+
+
+class TestAmbientTenantStamping:
+    def test_plain_command_gets_ambient_tenant(self) -> None:
+        from eventsource.domain.tenant_context import tenant_scope_sync
+
+        tenant = uuid4()
+
+        @dataclass
+        class PlainShip:  # deliberately NOT a DomainCommand
+            order_id: UUID
+
+        class ShipDecider(DeciderAggregate[dict]):
+            aggregate_type = "Order"
+
+            @staticmethod
+            def initial_state(aggregate_id: UUID) -> dict:
+                return {"id": aggregate_id}
+
+            @staticmethod
+            def decide(command: object, state: dict) -> list[DomainEvent]:
+                return [Shipped(aggregate_id=state["id"])]
+
+            @staticmethod
+            def evolve(state: dict, event: DomainEvent) -> dict:
+                return state
+
+        class Shipped(DomainEvent):
+            aggregate_type: str = "Order"
+
+        agg = ShipDecider(uuid4())
+        with tenant_scope_sync(tenant):
+            events = agg.execute(PlainShip(order_id=agg.aggregate_id))
+        assert events[0].tenant_id == tenant
