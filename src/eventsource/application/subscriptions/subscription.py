@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from eventsource.application.subscriptions.config import SubscriptionConfig
-from eventsource.domain.exceptions import SubscriptionStateError
+from eventsource.ports.exceptions import SubscriptionStateError
 from eventsource.ports.positions import Position
 
 if TYPE_CHECKING:

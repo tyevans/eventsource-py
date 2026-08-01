@@ -26,7 +26,7 @@ The five names split across three modules by ring (ADR 0029):
 
 ```python
 from eventsource.ports.locks import LockInfo, migration_lock_key
-from eventsource.domain.exceptions import LockAcquisitionError, LockNotHeldError
+from eventsource.ports.exceptions import LockAcquisitionError, LockNotHeldError
 from eventsource.adapters.postgresql.locks import PostgreSQLLockManager
 ```
 

@@ -21,8 +21,8 @@ from eventsource.domain.exceptions import (
     SerializationError,
     EventStoreError,
     EventBusError,
-    CheckpointError,
 )
+from eventsource.ports.exceptions import CheckpointError
 ```
 
 Four things are worth knowing before you write your first handler:
@@ -124,10 +124,10 @@ from eventsource import (
 from eventsource.domain.exceptions import (
     EventStoreError,
     EventBusError,
-    CheckpointError,
     SerializationError,
     UnhandledEventError,
 )
+from eventsource.ports.exceptions import CheckpointError
 ```
 
 `EventSourceError` is never raised on its own — it is always one of the concrete subclasses above. Because it adds nothing, you can also subclass it for your own domain errors when you want them swept up by the same boundary handler:

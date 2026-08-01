@@ -16,13 +16,14 @@ from eventsource.adapters.memory.coordination import (
     InMemoryLeaderElector,
     SharedLeaderState,
 )
-from eventsource.domain.exceptions import EventSourceError, SubscriptionError
+from eventsource.domain.exceptions import EventSourceError
 from eventsource.ports.bus import EventHandlerFunc, SubscribableEventBus
 from eventsource.ports.coordination import (
     LeaderChangeCallback,
     LeaderElector,
     LeaderElectorWithLease,
 )
+from eventsource.ports.exceptions import SubscriptionError
 from eventsource.ports.subscribers import (
     BatchSubscriber,
     Subscriber,

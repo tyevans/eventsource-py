@@ -11,8 +11,8 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.domain.exceptions import PositionForeignError
 from eventsource.ports.checkpoints import ProjectionCheckpoints, SubscriptionPositions
+from eventsource.ports.exceptions import PositionForeignError
 from eventsource.ports.positions import Position
 
 

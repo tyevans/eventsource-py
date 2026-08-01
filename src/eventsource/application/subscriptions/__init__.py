@@ -183,7 +183,12 @@ from eventsource.application.subscriptions.transition import (
     TransitionPhase,
     TransitionResult,
 )
-from eventsource.domain.exceptions import (
+from eventsource.ports.coordination import (
+    LeaderChangeCallback,
+    LeaderElector,
+    LeaderElectorWithLease,
+)
+from eventsource.ports.exceptions import (
     CheckpointNotFoundError,
     EventBusConnectionError,
     EventStoreConnectionError,
@@ -192,11 +197,6 @@ from eventsource.domain.exceptions import (
     SubscriptionError,
     SubscriptionStateError,
     TransitionError,
-)
-from eventsource.ports.coordination import (
-    LeaderChangeCallback,
-    LeaderElector,
-    LeaderElectorWithLease,
 )
 
 __all__ = [

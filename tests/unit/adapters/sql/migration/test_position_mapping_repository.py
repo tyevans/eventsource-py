@@ -21,7 +21,7 @@ import pytest
 from eventsource.adapters.sql.migration.position_mapping import (
     PostgreSQLPositionMappingRepository,
 )
-from eventsource.domain.exceptions import PositionDecodeError
+from eventsource.ports.exceptions import PositionDecodeError
 from eventsource.ports.migration.models import PositionMapping
 from eventsource.ports.migration.repositories import PositionMappingRepository
 from eventsource.ports.positions import Position

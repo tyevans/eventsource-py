@@ -20,21 +20,16 @@ EXCEPTION_NAMES = [
     "CommandRejectedError",
     "EventStoreError",
     "EventBusError",
-    "CheckpointError",
     "SerializationError",
     "EventVersionError",
     "UnhandledEventError",
     "AggregateNotCreatedError",
     "HandlerDispatchError",
     "DuplicateEventError",
-    "PositionDecodeError",
-    "PositionForeignError",
     "SnapshotError",
     "SnapshotDeserializationError",
     "SnapshotSchemaVersionError",
     "SnapshotNotFoundError",
-    "LockAcquisitionError",
-    "LockNotHeldError",
 ]
 
 TYPE_NAMES = [
@@ -59,8 +54,6 @@ TOP_LEVEL_EXCEPTION_NAMES = [
     "EventVersionError",
     "HandlerDispatchError",
     "OptimisticLockError",
-    "PositionDecodeError",
-    "PositionForeignError",
     "ProjectionError",
     "SnapshotDeserializationError",
     "SnapshotError",
@@ -98,11 +91,6 @@ def test_snapshot_error_hierarchy() -> None:
     # Deliberately not an EventSourceError -- preserved verbatim from the
     # pre-move contract.
     assert not issubclass(domain_exceptions.SnapshotError, domain_exceptions.EventSourceError)
-
-
-def test_lock_exceptions_are_event_source_errors() -> None:
-    assert issubclass(domain_exceptions.LockAcquisitionError, domain_exceptions.EventSourceError)
-    assert issubclass(domain_exceptions.LockNotHeldError, domain_exceptions.EventSourceError)
 
 
 def test_domain_package_re_exports_exceptions_and_types() -> None:

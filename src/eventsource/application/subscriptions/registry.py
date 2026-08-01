@@ -26,7 +26,7 @@ from eventsource.application.subscriptions.subscription import (
     SubscriptionState,
     SubscriptionStatus,
 )
-from eventsource.domain.exceptions import SubscriptionAlreadyExistsError
+from eventsource.ports.exceptions import SubscriptionAlreadyExistsError
 
 if TYPE_CHECKING:
     from eventsource.ports.handlers import EventSubscriber

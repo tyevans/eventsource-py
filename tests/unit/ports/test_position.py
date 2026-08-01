@@ -2,8 +2,8 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from eventsource.domain.exceptions import PositionDecodeError, PositionForeignError
 from eventsource.ports import Position
+from eventsource.ports.exceptions import PositionDecodeError, PositionForeignError
 
 keys = st.lists(
     st.one_of(st.integers(min_value=0, max_value=2**62), st.text(max_size=32)),

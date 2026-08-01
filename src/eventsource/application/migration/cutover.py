@@ -65,9 +65,9 @@ from eventsource.application.migration.exceptions import (
     CutoverLagError,
     CutoverTimeoutError,
 )
-from eventsource.domain.exceptions import LockAcquisitionError
 from eventsource.observability import ATTR_TENANT_ID, Tracer, create_tracer
 from eventsource.ports import Position
+from eventsource.ports.exceptions import LockAcquisitionError
 from eventsource.ports.locks import migration_lock_key
 from eventsource.ports.migration.models import (
     CutoverResult,

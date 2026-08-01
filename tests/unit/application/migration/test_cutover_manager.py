@@ -21,8 +21,8 @@ from uuid import uuid4
 import pytest
 
 from eventsource.application.migration.cutover import CutoverManager
-from eventsource.domain.exceptions import LockAcquisitionError
 from eventsource.ports import Position
+from eventsource.ports.exceptions import LockAcquisitionError
 from eventsource.ports.locks import LockInfo
 from eventsource.ports.migration.models import (
     CutoverResult,

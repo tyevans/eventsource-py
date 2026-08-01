@@ -204,7 +204,7 @@ The five public names split across three modules by ring (ADR 0029):
 
 ```python
 from eventsource.ports.locks import LockInfo, migration_lock_key
-from eventsource.domain.exceptions import LockAcquisitionError, LockNotHeldError
+from eventsource.ports.exceptions import LockAcquisitionError, LockNotHeldError
 from eventsource.adapters.postgresql.locks import PostgreSQLLockManager
 ```
 
@@ -307,7 +307,7 @@ Bounded — polls `pg_try_advisory_lock` every `retry_interval` seconds until th
 deadline, then raises:
 
 ```python
-from eventsource.domain.exceptions import LockAcquisitionError
+from eventsource.ports.exceptions import LockAcquisitionError
 
 try:
     async with lock_manager.acquire("cutover:tenant-123", timeout=5.0):
