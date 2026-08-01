@@ -29,7 +29,7 @@ out into `ports/`. ADR 0030's Status section carries an "Amended by ADR
 Decision §5 merged the subscription exception family into
 `domain/exceptions.py` and rebased `SubscriptionError` onto
 `EventSourceError`; neither of those choices is reversed here. What moves
-is only the module: `SubscriptionError` and its six subclasses relocate
+is only the module: `SubscriptionError` and its seven subclasses relocate
 from `domain/exceptions.py` to `ports/exceptions.py`, the same file the
 lock and checkpoint exceptions land in by this same ADR. ADR 0032's Status
 section carries an "Amended by ADR 0041" pointer.
@@ -73,7 +73,7 @@ The thirteen classes named above move to a new module,
 `ports/exceptions.py`, importing only `EventSourceError` from
 `domain/exceptions.py`. Every class keeps its exact name, constructor
 signature, attributes, and message format — this is a relocation, not a
-redesign. `SubscriptionError`'s six subclasses move as a unit, preserving
+redesign. `SubscriptionError`'s seven subclasses move as a unit, preserving
 the existing single-level inheritance under `SubscriptionError` itself.
 
 No shim. `import eventsource.domain.exceptions` still succeeds (the

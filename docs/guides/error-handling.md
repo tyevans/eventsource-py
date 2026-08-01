@@ -73,7 +73,7 @@ which caught nothing lock-related before. Both now live in
 `CheckpointError` and `SubscriptionError` below, from `eventsource.domain.exceptions`
 -- they describe port-contract failures, not domain concepts).
 
-`SubscriptionError` (and its six subclasses) moved onto `EventSourceError`
+`SubscriptionError` (and its seven subclasses) moved onto `EventSourceError`
 under ADR 0032, as part of the subscriptions ring migration: previously
 defined in the old `subscriptions` package's `exceptions.py`, deriving
 directly from `Exception`. Same widening-only shape as the lock exceptions

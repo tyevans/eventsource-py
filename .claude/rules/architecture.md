@@ -165,7 +165,7 @@ inverted at every boundary crossing (the D in SOLID).
   `CheckpointNotFoundError`, `EventBusConnectionError`,
   `EventStoreConnectionError`, `LockAcquisitionError`, `LockNotHeldError`,
   `PositionDecodeError`, `PositionForeignError`, `SubscriptionError` and its
-  six subclasses — rooted in `EventSourceError`) is settled, not transitional;
+  seven subclasses — rooted in `EventSourceError`) is settled, not transitional;
   `domain/exceptions.py` is no longer their location (ADR 0041).
 - Our store/repository/bus ports are **output ports** (gateways) in Clean
   Architecture terms: the use-case ring calls them; adapters implement them.

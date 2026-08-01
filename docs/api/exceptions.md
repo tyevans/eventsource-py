@@ -27,13 +27,15 @@ the library raises the error — you can branch on them rather than parsing
 
 **Infrastructure exceptions live in `eventsource.ports.exceptions`, not
 `eventsource.domain.exceptions` (ADR 0041).** `CheckpointError`,
-`CheckpointNotFoundError`, `EventBusConnectionError`,
-`EventStoreConnectionError`, `LockAcquisitionError`, `LockNotHeldError`,
-`PositionDecodeError`, `PositionForeignError`, `SubscriptionError` and its six
-subclasses, and `TransitionError` describe port-contract failures (stores,
-buses, locks, positions, checkpoints, subscriptions), not domain concepts, and
-were moved out of `domain/exceptions.py` for that reason. They are still
-rooted in `EventSourceError`, so `except EventSourceError` still catches them.
+`LockAcquisitionError`, `LockNotHeldError`, `PositionDecodeError`,
+`PositionForeignError`, and `SubscriptionError` with its seven subclasses
+(`SubscriptionConfigError`, `SubscriptionStateError`,
+`SubscriptionAlreadyExistsError`, `CheckpointNotFoundError`,
+`EventStoreConnectionError`, `EventBusConnectionError`, `TransitionError`)
+describe port-contract failures (stores, buses, locks, positions,
+checkpoints, subscriptions), not domain concepts, and were moved out of
+`domain/exceptions.py` for that reason. They are still rooted in
+`EventSourceError`, so `except EventSourceError` still catches them.
 `from eventsource.domain.exceptions import LockAcquisitionError` (or any of
 the other twelve) now raises `ImportError` — there is no shim; import from
 `eventsource.ports.exceptions` instead.
@@ -117,7 +119,7 @@ tenant exceptions merged in under ADR 0038 (`TenantContextNotSetError`,
 everything the domain ring itself raises. `ports/exceptions.py` holds the
 thirteen infrastructure types — `LockAcquisitionError`, `LockNotHeldError`,
 `CheckpointError`, `PositionDecodeError`, `PositionForeignError`, and
-`SubscriptionError` with its six subclasses — moved there by ADR 0041 because
+`SubscriptionError` with its seven subclasses — moved there by ADR 0041 because
 they describe port-contract failures (stores, buses, locks, positions,
 checkpoints, subscriptions), not domain concepts; roughly a third of the old
 `domain/exceptions.py` had no domain meaning before this split. There are no
