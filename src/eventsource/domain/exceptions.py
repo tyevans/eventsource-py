@@ -517,6 +517,7 @@ class HandlerSignatureError(EventSourceError):
         self.event_type = event_type
         self.param_count = param_count
         self.is_async_required = is_async_required
+        self.reason = reason
 
         event_name = event_type.__name__
         async_prefix = "async " if is_async_required else ""

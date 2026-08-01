@@ -404,14 +404,7 @@ class EventFilter:
         if self._event_type_set is None:
             return None
 
-        names = []
-        for event_type in self._event_type_set:
-            # Get event_type from class attribute
-            if hasattr(event_type, "model_fields"):
-                # Pydantic model
-                event_type_field = event_type.model_fields.get("event_type")
-                if event_type_field and event_type_field.default:
-                    names.append(event_type_field.default)
+        names = [event_type.event_type_name() for event_type in self._event_type_set]
 
         return names if names else None
 

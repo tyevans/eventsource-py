@@ -714,11 +714,16 @@ class DeclarativeAggregate(AggregateRoot[TState], ABC):
         for event_type, name in cls._event_handlers.items():
             method = getattr(cls, name)
             if inspect.iscoroutinefunction(method):
+                try:
+                    async_params = list(inspect.signature(method).parameters.values())
+                    async_param_count = len(async_params) - 1  # exclude self (unbound function)
+                except (ValueError, TypeError):
+                    async_param_count = 1
                 raise HandlerSignatureError(
                     handler_name=name,
                     owner_name=cls.__name__,
                     event_type=event_type,
-                    param_count=1,
+                    param_count=async_param_count,
                     is_async_required=False,
                     reason=(
                         "aggregate event handlers run synchronously during replay; remove 'async'"

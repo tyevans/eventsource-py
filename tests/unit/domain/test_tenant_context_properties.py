@@ -241,12 +241,12 @@ async def test_async_exception_at_any_depth_restores_context(depth: int, fail_at
 # ---------------------------------------------------------------------------
 
 
-def test_clear_inside_scope_is_overridden_by_scope_exit() -> None:
+def test_clear_inside_scope_makes_scope_exit_raise() -> None:
     """clear_tenant_context() inside an active scope invalidates the scope's
     restore token. On exit, tenant_scope_sync will raise TenantContextResetError
     because the token it tries to reset was invalidated by clear_tenant_context().
-    Task 2: Calling clear inside an active scope is a discipline violation;
-    the scope must fail loudly to detect the violation."""
+    Calling clear inside an active scope is a discipline violation; the scope
+    must fail loudly to detect the violation."""
     outer = uuid4()
     with pytest.raises(TenantContextResetError), tenant_scope_sync(outer):
         assert get_current_tenant() == outer
@@ -255,11 +255,11 @@ def test_clear_inside_scope_is_overridden_by_scope_exit() -> None:
     assert get_current_tenant() is None
 
 
-def test_clear_inside_nested_scope_does_not_leak_to_outer_restore() -> None:
+def test_clear_inside_nested_scope_makes_inner_scope_exit_raise() -> None:
     """clear_tenant_context() inside an inner nested scope invalidates that
     scope's token. When the inner scope exits, it will raise TenantContextResetError
-    because its token was invalidated. Task 2: Calling clear inside an active
-    scope is a discipline violation."""
+    because its token was invalidated. Calling clear inside an active scope is
+    a discipline violation."""
     outer = uuid4()
     inner = uuid4()
     with pytest.raises(TenantContextResetError), tenant_scope_sync(outer), tenant_scope_sync(inner):
@@ -269,10 +269,10 @@ def test_clear_inside_nested_scope_does_not_leak_to_outer_restore() -> None:
     assert get_current_tenant() is None
 
 
-async def test_clear_inside_async_scope_is_overridden_by_scope_exit() -> None:
+async def test_clear_inside_async_scope_makes_scope_exit_raise() -> None:
     """clear_tenant_context() inside an active async scope invalidates the
     scope's restore token. On exit, tenant_scope will raise TenantContextResetError.
-    Task 2: Calling clear inside an active scope is a discipline violation."""
+    Calling clear inside an active scope is a discipline violation."""
     outer = uuid4()
     with pytest.raises(TenantContextResetError):
         async with tenant_scope(outer):

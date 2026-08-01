@@ -332,9 +332,7 @@ class RabbitMQTopology:
         aggregate_type = serialization.get_event_field_default(
             event_type, "aggregate_type", "Unknown"
         )
-        event_type_name = serialization.get_event_field_default(
-            event_type, "event_type", event_type.__name__
-        )
+        event_type_name = event_type.event_type_name()
         routing_key = f"{aggregate_type}.{event_type_name}"
 
         await self._consumer_queue.bind(

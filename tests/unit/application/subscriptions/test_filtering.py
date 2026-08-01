@@ -534,6 +534,20 @@ class TestEventFilterEventTypeNames:
 
         assert filter.event_type_names is None
 
+    def test_event_type_names_includes_auto_named_classes(self):
+        """Regression test: classes without an explicit event_type field must
+        still contribute their auto-derived name (event_type_name())."""
+
+        class AutoNamedOrderCancelled(DomainEvent):
+            aggregate_type: str = "Order"
+
+        filter = EventFilter(event_types=(OrderCreated, AutoNamedOrderCancelled))
+
+        names = filter.event_type_names
+        assert names is not None
+        assert "OrderCreated" in names
+        assert "AutoNamedOrderCancelled" in names
+
 
 # --- Repr Tests ---
 

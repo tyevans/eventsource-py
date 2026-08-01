@@ -20,6 +20,13 @@ class OrderCreated(DomainEvent):
     aggregate_id: UUID = uuid4()
 
 
+class AutoNamedOrderShipped(DomainEvent):
+    """Sample event with no explicit event_type, exercising the auto-name fallback."""
+
+    aggregate_type: str = "Order"
+    aggregate_id: UUID = uuid4()
+
+
 def _fake_channel() -> mock.AsyncMock:
     channel = mock.AsyncMock()
     channel.declare_exchange = mock.AsyncMock(return_value=mock.AsyncMock())
@@ -116,6 +123,24 @@ async def test_bind_event_type_binds_derived_routing_key(config: RabbitMQEventBu
     topology.consumer_queue.bind.assert_awaited_with(  # type: ignore[union-attr]
         exchange=topology.exchange,
         routing_key="Order.OrderCreated",
+    )
+
+
+@pytest.mark.asyncio
+async def test_bind_event_type_auto_named_event_uses_class_name(
+    config: RabbitMQEventBusConfig,
+) -> None:
+    """Regression test: auto-named events (no explicit event_type field) must not
+    produce a binding key with an empty event-type segment (e.g. "Order.")."""
+    channel = _fake_channel()
+    topology = RabbitMQTopology(config=config, connection=_fake_connection(channel))
+    await topology.declare_all()
+
+    await topology.bind_event_type(AutoNamedOrderShipped)
+
+    topology.consumer_queue.bind.assert_awaited_with(  # type: ignore[union-attr]
+        exchange=topology.exchange,
+        routing_key="Order.AutoNamedOrderShipped",
     )
 
 
