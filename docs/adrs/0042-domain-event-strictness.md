@@ -132,8 +132,10 @@ an explicit error instead of silent data corruption.
 implementation of `@handles` discovery shared by both
 `DeclarativeAggregate` and `DeclarativeProjection` (previously each
 implemented its own walk). It raises the new `DuplicateHandlerError` if
-two methods on the same class both claim the same event type, at class
-*definition* time — before any instance is ever constructed.
+two methods on the same class both claim the same event type — at class
+*definition* time for `DeclarativeAggregate`, and at instance
+*construction* time for `DeclarativeProjection` (which discovers handlers
+in `__init__`, not `__init_subclass__`).
 `HandlerSignatureError` gains an optional `reason` keyword so both
 call sites can describe what shape check failed (wrong parameter count,
 handler declared `async` where sync is required, etc.). `
@@ -186,8 +188,9 @@ caller happened to use.
   `DomainEvent`; `EventTypeNotFoundError`/`DuplicateEventTypeError`/
   `HandlerSignatureError` no longer multiple-inherit from builtins; and
   any code that relied on "last `@handles` wins" for a duplicate handler
-  now gets `DuplicateHandlerError` at import/class-definition time
-  instead of quietly picking one. All three require an explicit migration
+  now gets `DuplicateHandlerError` at class-definition time for aggregates,
+  or at instance construction time for projections, instead of quietly
+  picking one. All three require an explicit migration
   step for anyone who was depending on the old, looser behavior — no
   transition window, per the project's pre-1.0 standing rule.
 - `DeclarativeAggregate` subclasses with previously-unnoticed handler
@@ -197,6 +200,16 @@ caller happened to use.
   failure earlier and with a clear message — but it means a subclass that
   imported cleanly before this change may now raise `HandlerSignatureError`
   at import time.
+- `extra="forbid"` applies to `from_dict()` deserialization as well as
+  fresh construction, since `from_dict()` is `model_validate()`. A stored
+  event carrying a field no longer declared on its event class — one
+  written by an older version of the class, or corrupted in storage — now
+  fails replay with `ValidationError` instead of silently dropping the
+  extra field. This is accepted deliberately: the project's schema policy
+  is additive-only via new event types (never widen or narrow an existing
+  one), so under that policy an unknown field on a stored event can only
+  indicate a bug or out-of-band tampering, not a legitimate schema
+  evolution that replay should tolerate.
 
 ## Alternatives Considered
 
@@ -243,7 +256,7 @@ convenience nobody is using.
 - `CHANGELOG.md` — `[Unreleased]` entries for all six changes
 - `docs/guides/error-handling.md`, `docs/api/exceptions.md` — updated for
   the single-inheritance exception change
-- `docs/api/multitenancy.md`, `docs/guides/multi-tenant.md`,
-  `docs/tutorials/16-multi-tenancy.md` — already documented the hard-clear
-  semantics from the implementation task; this ADR is the durable record
-  of the decision
+- `docs/api/multitenancy.md`, `docs/guides/multi-tenant.md` — updated in
+  the final-review fix wave to describe the hard-clear semantics (they
+  previously still documented the pre-fix restore-on-clear behavior);
+  this ADR is the durable record of the decision

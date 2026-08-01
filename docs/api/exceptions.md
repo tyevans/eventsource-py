@@ -168,7 +168,21 @@ Exception
 │   ├── DuplicateEventTypeError                (ADR 0033: rebased here, no longer also a ValueError as of ADR 0042)
 │   ├── HandlerSignatureError                  (ADR 0033: rebased here, no longer also a ValueError as of ADR 0042)
 │   └── MigrationError                         (ADR 0034: rebased here, was a bare Exception)
-│       eventsource.application.migration.exceptions
+│       │                                      eventsource.application.migration.exceptions
+│       ├── MigrationNotFoundError
+│       ├── MigrationAlreadyExistsError
+│       ├── MigrationStateError
+│       │   └── InvalidPhaseTransitionError
+│       ├── CutoverError
+│       │   ├── CutoverTimeoutError
+│       │   └── CutoverLagError
+│       ├── ConsistencyError
+│       ├── BulkCopyError
+│       ├── DualWriteError
+│       ├── PositionMappingError
+│       ├── RoutingError
+│       ├── CircuitBreakerOpenError
+│       └── SubscriptionMigrationError          eventsource.application.migration.subscription_migrator
 │
 ├── EventSourceError                          eventsource.ports.exceptions (ADR 0041)
 │   ├── CheckpointError
@@ -184,20 +198,6 @@ Exception
 │       ├── EventStoreConnectionError
 │       ├── EventBusConnectionError
 │       └── TransitionError
-│       ├── MigrationNotFoundError
-│       ├── MigrationAlreadyExistsError
-│       ├── MigrationStateError
-│       │   └── InvalidPhaseTransitionError
-│       ├── CutoverError
-│       │   ├── CutoverTimeoutError
-│       │   └── CutoverLagError
-│       ├── ConsistencyError
-│       ├── BulkCopyError
-│       ├── DualWriteError
-│       ├── PositionMappingError
-│       ├── RoutingError
-│       ├── CircuitBreakerOpenError
-│       └── SubscriptionMigrationError          eventsource.application.migration.subscription_migrator
 │
 ├── SnapshotError                             eventsource.domain.exceptions
 │   │                                          (not a subclass of EventSourceError)

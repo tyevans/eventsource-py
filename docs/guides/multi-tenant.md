@@ -255,21 +255,25 @@ doing this by hand:
   one context, wrap the unit of work in `tenant_scope` instead.
 
 `clear_tenant_context()` is a different operation, not a token-free reset. It
-sets the variable to `None`:
+sets the variable to `None` **and invalidates every outstanding token** in the
+current execution context:
 
 ```python
 set_current_tenant(tenant_a)
 token = set_current_tenant(tenant_b)
 clear_tenant_context()
 assert get_current_tenant() is None   # tenant_a is gone, not restored
-tenant_context.reset(token)           # back to tenant_a
+reset_tenant_context(token)           # raises TenantContextResetError: token is invalidated
 ```
 
-So calling it inside a nested scope wipes the outer tenant rather than returning
-to it, and a subsequent `tenant_scope` exit (or `reset`) will still restore the
-value that scope captured. Reach for it as a hard reset at the outermost
-boundary — the end of a request in a pooled worker, or between tests — and use
-the token everywhere else.
+So calling it inside a nested scope wipes the outer tenant, and a later
+`reset_tenant_context()` call — including the implicit one an enclosing
+`tenant_scope()`/`tenant_scope_sync()` performs on exit — raises
+`TenantContextResetError` instead of restoring anything, because the token it
+holds no longer matches the current state. **Never call `clear_tenant_context()`
+inside an active scope** unless you want that scope's exit to fail loudly; it
+is a hard reset for the outermost boundary — the end of a request in a pooled
+worker, or between tests — not a tool to use mid-scope.
 
 Its docstring carries one more caveat worth repeating: clearing affects only the
 current execution context. Concurrent tasks each hold their own copy, so
