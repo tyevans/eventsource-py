@@ -9,6 +9,9 @@ MIGRATION_DIR = (
     Path(__file__).resolve().parents[4] / "src" / "eventsource" / "application" / "migration"
 )
 
+# Deliberate closed-world contract: the DAG is a fixed four-layer design
+# (ADR 0044). A new module in this family must be added here consciously,
+# not picked up implicitly.
 # module -> the migration-package modules it is allowed to import from
 ALLOWED: dict[str, set[str]] = {
     "error_classification": set(),
@@ -23,13 +26,17 @@ def _migration_imports(module_name: str) -> set[str]:
     source = (MIGRATION_DIR / f"{module_name}.py").read_text()
     tree = ast.parse(source)
     found: set[str] = set()
+    prefix = "eventsource.application.migration."
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module:
-            prefix = "eventsource.application.migration."
             if node.module.startswith(prefix):
                 found.add(node.module[len(prefix) :].split(".")[0])
             elif node.level and node.module in ALLOWED:
                 found.add(node.module)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.startswith(prefix):
+                    found.add(alias.name[len(prefix) :].split(".")[0])
     return found
 
 
