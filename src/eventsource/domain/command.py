@@ -16,9 +16,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Self
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from eventsource.domain.types import CausationId, CorrelationId, TenantId
 
 if TYPE_CHECKING:
     from eventsource.domain.event import DomainEvent
@@ -42,11 +44,11 @@ class DomainCommand(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    command_id: UUID = Field(default_factory=uuid4)
+    command_id: CausationId = Field(default_factory=uuid4)
     issued_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    correlation_id: UUID = Field(default_factory=uuid4)
+    correlation_id: CorrelationId = Field(default_factory=uuid4)
     actor_id: str | None = Field(default=None)
-    tenant_id: UUID | None = Field(default=None)
+    tenant_id: TenantId | None = Field(default=None)
 
     def caused_by(self, event: DomainEvent) -> Self:
         """

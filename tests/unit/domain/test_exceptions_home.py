@@ -39,9 +39,6 @@ TYPE_NAMES = [
     "TenantId",
     "CorrelationId",
     "CausationId",
-    "Version",
-    "StreamPosition",
-    "GlobalPosition",
 ]
 
 TOP_LEVEL_EXCEPTION_NAMES = [

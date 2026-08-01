@@ -892,3 +892,19 @@ class TestAggregateTypePattern:
 
         with pytest.raises(ValidationError):
             BadDefaultEvent(aggregate_id=uuid4())
+
+
+class TestTypesVocabulary:
+    def test_identity_aliases_are_plain_uuid(self) -> None:
+        from uuid import UUID
+
+        from eventsource.domain import types
+
+        assert types.TenantId is UUID
+        assert types.CausationId is UUID
+
+    def test_position_aliases_are_gone(self) -> None:
+        from eventsource.domain import types
+
+        for name in ("Version", "StreamPosition", "GlobalPosition"):
+            assert not hasattr(types, name)

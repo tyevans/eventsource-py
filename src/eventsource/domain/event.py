@@ -10,11 +10,18 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from typing import Any, ClassVar, Self
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from eventsource.domain.stream_id import CATEGORY_PATTERN
+from eventsource.domain.types import (
+    AggregateId,
+    CausationId,
+    CorrelationId,
+    EventId,
+    TenantId,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +94,7 @@ class DomainEvent(BaseModel):
     suppress_event_type_warning: ClassVar[bool] = False
 
     # Event metadata
-    event_id: UUID = Field(
+    event_id: EventId = Field(
         default_factory=uuid4,
         description="Unique event identifier",
     )
@@ -106,7 +113,7 @@ class DomainEvent(BaseModel):
     )
 
     # Aggregate information
-    aggregate_id: UUID = Field(
+    aggregate_id: AggregateId = Field(
         ...,
         description="ID of the aggregate this event belongs to",
     )
@@ -121,7 +128,7 @@ class DomainEvent(BaseModel):
     )
 
     # Multi-tenancy (optional for library)
-    tenant_id: UUID | None = Field(
+    tenant_id: TenantId | None = Field(
         default=None,
         description="Tenant this event belongs to (optional)",
     )
@@ -133,11 +140,11 @@ class DomainEvent(BaseModel):
     )
 
     # Correlation and causation for event chains
-    correlation_id: UUID = Field(
+    correlation_id: CorrelationId = Field(
         default_factory=uuid4,
         description="ID linking related events across aggregates",
     )
-    causation_id: UUID | None = Field(
+    causation_id: CausationId | None = Field(
         default=None,
         description="ID of the event that caused this event",
     )
