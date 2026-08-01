@@ -89,6 +89,14 @@ jobs:
       - name: Build distributions
         run: python -m build
 
+      # Guard against incomplete wheels reaching PyPI: the 0.8.0 wheel
+      # silently shipped without eventsource.adapters.memory because
+      # hatchling excludes .gitignore-matched paths from file selection.
+      - name: Smoke-test the built wheel
+        run: |
+          pip install dist/*.whl
+          python -c "from eventsource import DomainEvent, InMemoryEventStore, InMemoryEventBus; print('Wheel smoke test passed')"
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
