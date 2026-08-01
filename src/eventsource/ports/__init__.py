@@ -54,7 +54,7 @@ from eventsource.ports.outbox import (
     outbox_event_data,
 )
 from eventsource.ports.positions import ExpectedVersion, Position
-from eventsource.ports.snapshots import Snapshot, SnapshotStore
+from eventsource.ports.snapshots import Snapshot, SnapshotStore, SnapshotTypeInvalidation
 from eventsource.ports.store import (
     AggregateStore,
     CategoryQuery,
@@ -96,6 +96,7 @@ __all__ = [
     # Snapshot port (TRANSITION re-home)
     "Snapshot",
     "SnapshotStore",
+    "SnapshotTypeInvalidation",
     # Bus port
     "EventPublisher",
     "SubscribableEventBus",

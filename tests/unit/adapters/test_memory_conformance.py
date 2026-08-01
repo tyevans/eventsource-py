@@ -10,7 +10,7 @@ from eventsource.testing.conformance_ports import (
     CategoryQueryConformance,
     EventLookupConformance,
     GlobalFeedConformance,
-    SnapshotConformance,
+    SnapshotStoreConformance,
     StreamReaderConformance,
 )
 
@@ -45,7 +45,7 @@ class TestMemoryCategoryQuery(CategoryQueryConformance):
         yield InMemoryEventStore()
 
 
-class TestMemorySnapshotStore(SnapshotConformance):
+class TestMemorySnapshotStore(SnapshotStoreConformance):
     @pytest.fixture
     async def store(self) -> AsyncIterator[InMemorySnapshotStore]:
         yield InMemorySnapshotStore()

@@ -56,7 +56,7 @@ from eventsource.testing.conformance_ports import (  # noqa: E402
     DLQRepositoryConformance,
     EventLookupConformance,
     GlobalFeedConformance,
-    SnapshotConformance,
+    SnapshotStoreConformance,
     StreamReaderConformance,
 )
 from eventsource.testing.conformance_ports._fixtures import make_event, make_stream  # noqa: E402
@@ -147,7 +147,7 @@ class TestPostgreSQLCategoryQuery(CategoryQueryConformance):
         await store.close()
 
 
-class TestPostgreSQLSnapshotStore(SnapshotConformance):
+class TestPostgreSQLSnapshotStore(SnapshotStoreConformance):
     @pytest.fixture
     async def store(
         self, ports_postgres_connection_url: str

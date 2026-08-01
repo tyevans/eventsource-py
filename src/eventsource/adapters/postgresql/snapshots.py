@@ -21,12 +21,12 @@ from eventsource.observability.attributes import (
     ATTR_AGGREGATE_TYPE,
     ATTR_VERSION,
 )
-from eventsource.ports.snapshots import Snapshot, SnapshotStore
+from eventsource.ports.snapshots import Snapshot
 
 logger = logging.getLogger(__name__)
 
 
-class PostgreSQLSnapshotStore(SnapshotStore):
+class PostgreSQLSnapshotStore:
     """
     PostgreSQL implementation of SnapshotStore.
 

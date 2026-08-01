@@ -7,13 +7,16 @@ restored from a snapshot and only replay events since the snapshot.
 
 This module provides:
 - Snapshot: Immutable data structure representing captured aggregate state
-- SnapshotStore: Abstract base class for snapshot storage implementations
+- SnapshotStore: Protocol for the core save/get/delete/exists capabilities
+- SnapshotTypeInvalidation: Protocol for the optional bulk-invalidation
+  capability (bulk delete by aggregate type). A store that does not support
+  bulk invalidation simply does not implement this Protocol -- there is no
+  default body and no NotImplementedError.
 """
 
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 from uuid import UUID
 
 
@@ -83,9 +86,10 @@ class Snapshot:
         )
 
 
-class SnapshotStore(ABC):
+@runtime_checkable
+class SnapshotStore(Protocol):
     """
-    Abstract base class for snapshot storage.
+    Protocol for snapshot storage.
 
     Snapshot stores provide persistence for aggregate state snapshots,
     enabling fast aggregate loading by skipping event replay for events
@@ -95,6 +99,7 @@ class SnapshotStore(ABC):
     - save_snapshot: Save or update a snapshot (upsert semantics)
     - get_snapshot: Retrieve the latest snapshot for an aggregate
     - delete_snapshot: Remove a snapshot for an aggregate
+    - snapshot_exists: Check whether a snapshot exists for an aggregate
 
     Design principles:
     - One snapshot per aggregate (keyed by aggregate_id + aggregate_type)
@@ -102,31 +107,13 @@ class SnapshotStore(ABC):
     - Snapshots are optional - missing snapshots trigger full event replay
     - Thread-safe for concurrent access
 
-    Example:
-        >>> class MySnapshotStore(SnapshotStore):
-        ...     async def save_snapshot(self, snapshot: Snapshot) -> None:
-        ...         # Persist snapshot to storage
-        ...         ...
-        ...
-        ...     async def get_snapshot(
-        ...         self, aggregate_id: UUID, aggregate_type: str
-        ...     ) -> Snapshot | None:
-        ...         # Retrieve snapshot from storage
-        ...         ...
-        ...
-        ...     async def delete_snapshot(
-        ...         self, aggregate_id: UUID, aggregate_type: str
-        ...     ) -> bool:
-        ...         # Delete snapshot from storage
-        ...         ...
-
     See Also:
+        - SnapshotTypeInvalidation: optional bulk-invalidation capability
         - InMemorySnapshotStore: Testing/development implementation
         - PostgreSQLSnapshotStore: Production PostgreSQL implementation
         - SQLiteSnapshotStore: Embedded SQLite implementation
     """
 
-    @abstractmethod
     async def save_snapshot(self, snapshot: Snapshot) -> None:
         """
         Save or update a snapshot for an aggregate.
@@ -152,9 +139,8 @@ class SnapshotStore(ABC):
             ... )
             >>> await snapshot_store.save_snapshot(snapshot)
         """
-        pass
+        ...
 
-    @abstractmethod
     async def get_snapshot(
         self,
         aggregate_id: UUID,
@@ -181,9 +167,8 @@ class SnapshotStore(ABC):
             ... else:
             ...     print("No snapshot, will replay all events")
         """
-        pass
+        ...
 
-    @abstractmethod
     async def delete_snapshot(
         self,
         aggregate_id: UUID,
@@ -217,7 +202,7 @@ class SnapshotStore(ABC):
             >>> if deleted:
             ...     print("Snapshot deleted, next load will replay all events")
         """
-        pass
+        ...
 
     async def snapshot_exists(
         self,
@@ -226,9 +211,6 @@ class SnapshotStore(ABC):
     ) -> bool:
         """
         Check if a snapshot exists for an aggregate.
-
-        Default implementation uses get_snapshot. Implementations may
-        override for efficiency (e.g., using SQL EXISTS query).
 
         Args:
             aggregate_id: Unique identifier of the aggregate
@@ -241,8 +223,20 @@ class SnapshotStore(ABC):
             >>> if await snapshot_store.snapshot_exists(order_id, "Order"):
             ...     print("Snapshot available")
         """
-        snapshot = await self.get_snapshot(aggregate_id, aggregate_type)
-        return snapshot is not None
+        ...
+
+
+@runtime_checkable
+class SnapshotTypeInvalidation(Protocol):
+    """
+    Optional capability: bulk snapshot invalidation by aggregate type.
+
+    A snapshot store that supports bulk invalidation implements this
+    Protocol in addition to `SnapshotStore`; one that doesn't simply omits
+    `delete_snapshots_by_type` -- there is no default body and no
+    `NotImplementedError` fallback. Callers that need this capability check
+    `isinstance(store, SnapshotTypeInvalidation)` before calling it.
+    """
 
     async def delete_snapshots_by_type(
         self,
@@ -264,10 +258,6 @@ class SnapshotStore(ABC):
         Returns:
             Number of snapshots deleted.
 
-        Note:
-            Default implementation raises NotImplementedError.
-            Concrete implementations should override for production use.
-
         Example:
             >>> # Delete all Order snapshots with schema version < 2
             >>> count = await snapshot_store.delete_snapshots_by_type(
@@ -276,10 +266,7 @@ class SnapshotStore(ABC):
             ... )
             >>> print(f"Invalidated {count} old snapshots")
         """
-        raise NotImplementedError(
-            "delete_snapshots_by_type is not implemented by default. "
-            "Concrete implementations may provide this functionality."
-        )
+        ...
 
 
-__all__ = ["Snapshot", "SnapshotStore"]
+__all__ = ["Snapshot", "SnapshotStore", "SnapshotTypeInvalidation"]
