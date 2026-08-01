@@ -1493,17 +1493,11 @@ type is a static error rather than a runtime one — but snapshot round-tripping
 
 #### Aliases not re-exported at the top level
 
-`eventsource.domain.types` defines three further aliases that are **not** in the package-level
-`__all__`:
-
-```python
-from eventsource.domain.types import GlobalPosition, StreamPosition, Version
-```
-
-All three are `int`: `Version` for optimistic-locking versions, `StreamPosition` for a
-position within one stream, and `GlobalPosition` for a position in the global ordering.
-Import them from `eventsource.domain.types` directly; see the
-[types and protocols reference](types.md) for the whole module.
+For positions in the global feed, use the opaque `Position` value object from `eventsource.ports.positions`;
+it is adapter-defined and immutable. Aggregate versions are plain `int` values in `DomainEvent.aggregate_version`;
+stream positions are exposed as `EventEnvelope.stream_version`. See the
+[types and protocols reference](types.md) for the complete module, including the identity aliases
+(`AggregateId`, `EventId`, `TenantId`, `CorrelationId`, `CausationId`) and `TState`.
 
 ### Events and event registry (`DomainEvent`, `EventRegistry`, `default_registry`, registry helpers, `EventTypeNotFoundError`, `DuplicateEventTypeError`)
 

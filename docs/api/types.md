@@ -6,9 +6,9 @@ Reference for the type vocabulary of `eventsource`: the semantic aliases in
 
 Two modules cover two different concerns:
 
-- **`eventsource.domain.types`** — plain aliases (`AggregateId`, `EventId`,
-  `Version`, ...) and the `TState` type variable. These name intent in
-  signatures; they add no runtime behavior.
+- **`eventsource.domain.types`** — plain aliases for domain identities (`AggregateId`,
+  `EventId`, `TenantId`, `CorrelationId`, `CausationId`) and the `TState` type
+  variable. These name intent in signatures; they add no runtime behavior.
 - **`eventsource.ports.handlers`** — the canonical definitions of every handler and
   subscriber contract in the library: three `runtime_checkable` Protocols
   (`EventHandler`, `SyncEventHandler`, `FlexibleEventHandler`), one Protocol
@@ -17,9 +17,7 @@ Two modules cover two different concerns:
 
 Both modules are re-exported from the package root, so
 `from eventsource import EventHandler, AggregateId` works. `eventsource.ports.handlers`
-is the canonical import location for the protocol names; the aliases `Version`,
-`StreamPosition`, and `GlobalPosition` are *not* re-exported at the root and
-must be imported from `eventsource.domain.types`.
+is the canonical import location for the protocol names.
 
 The sections below list each name, its definition, and its required members.
 
@@ -41,35 +39,29 @@ Together they answer two questions:
 
 | | `eventsource.domain.types` | `eventsource.ports.handlers` |
 | --- | --- | --- |
-| Contents | `TState` plus the aliases `AggregateId`, `EventId`, `TenantId`, `CorrelationId`, `CausationId`, `Version`, `StreamPosition`, `GlobalPosition` | `EventHandler`, `SyncEventHandler`, `FlexibleEventHandler`, `FlexibleEventSubscriber`, `EventSubscriber`, `AsyncEventHandler` |
+| Contents | `TState` plus the identity aliases `AggregateId`, `EventId`, `TenantId`, `CorrelationId`, `CausationId` | `EventHandler`, `SyncEventHandler`, `FlexibleEventHandler`, `FlexibleEventSubscriber`, `EventSubscriber`, `AsyncEventHandler` |
 | Kind | Type aliases and one `TypeVar` | Four `Protocol`s (all `@runtime_checkable`) and two ABCs |
 | Runtime effect | None — the aliases *are* `UUID`, `UUID \| None`, and `int` | Protocols support `isinstance()`; ABCs enforce abstract methods at instantiation |
 | `__all__` | Not defined | Defined — this module is the canonical import location for the contracts |
 | Library imports | `pydantic.BaseModel` only (for the `TState` bound) | `eventsource.domain.event.DomainEvent` only |
 
-Most names in both modules are re-exported from the package root, so
-`from eventsource import EventHandler, AggregateId, TState` works. The three
-ordering aliases — `Version`, `StreamPosition`, and `GlobalPosition` — are the
-exception: they are not in the root `__all__` and must be imported from
-`eventsource.domain.types` directly.
+All names in both modules are re-exported from the package root, so
+`from eventsource import EventHandler, AggregateId, TState` works.
 
 ## Type Aliases (`eventsource.domain.types`)
 
-`eventsource.domain.types` contains nine names: eight plain assignments and one
-`TypeVar`. Every alias resolves to a stdlib type (`UUID`, `UUID | None`, or
-`int`); the module's only third-party import is `pydantic.BaseModel`, used as
+`eventsource.domain.types` contains six names: five identity aliases and one
+`TypeVar`. Every alias resolves to a stdlib type (`UUID` or `UUID | None`);
+the module's only third-party import is `pydantic.BaseModel`, used as
 the bound for `TState`.
 
 | Name | Definition | Used for |
 | --- | --- | --- |
 | `AggregateId` | `UUID` | The identity of an aggregate / event stream |
 | `EventId` | `UUID` | The identity of a single event instance |
-| `TenantId` | `UUID \| None` | Multi-tenancy scope; `None` means "no tenant" |
+| `TenantId` | `UUID` | Multi-tenancy scope (optionality on the referencing field, not the type) |
 | `CorrelationId` | `UUID` | Groups events belonging to one logical flow |
-| `CausationId` | `UUID \| None` | The `event_id` of the event that caused this one |
-| `Version` | `int` | Aggregate version, used for optimistic locking |
-| `StreamPosition` | `int` | Position within one aggregate's stream |
-| `GlobalPosition` | `int` | Position across all events in the store |
+| `CausationId` | `UUID` | The `event_id` of the event that caused this one (optionality on the referencing field) |
 | `TState` | `TypeVar("TState", bound=BaseModel)` | Aggregate state model parameter |
 
 ### Identity aliases
@@ -97,11 +89,12 @@ On the store side, an `EventEnvelope`'s identity is accessed via
 `envelope.event.event_id`, and `EventLookup.event_exists(event_id: UUID) ->
 bool` looks an event up by this identity — the basis for idempotent appends.
 
-#### `TenantId` — `UUID | None`
+#### `TenantId` — `UUID`
 
 The tenant an event belongs to. `DomainEvent.tenant_id` is declared
-`UUID | None` with `default=None`, so a plain `DomainEvent` subclass is
-untenanted unless you pass a tenant explicitly — hence the optional alias.
+`TenantId | None` (the identity is plain `UUID`; optionality belongs to the
+referencing field, not the type). A plain `DomainEvent` subclass is
+untenanted unless you pass a tenant explicitly.
 
 Two ways to make the tenant non-optional in practice:
 
@@ -145,48 +138,35 @@ layer's `DEFAULT_UUID_FIELDS`, so it round-trips as a `UUID` rather than a
 string, and the Kafka and RabbitMQ buses emit it as a message header
 (`str(event.correlation_id)`) for cross-service tracing.
 
-#### `CausationId` — `UUID | None`
+#### `CausationId` — `UUID`
 
-Points at the `event_id` of the event that directly caused this one, and
-defaults to `None` for an event with no in-system cause.
+Points at the `event_id` of the event that directly caused this one. The identity
+is a plain `UUID`; optionality belongs to the referencing field (`DomainEvent.causation_id`
+is `CausationId | None`), so an event can have no in-system cause.
 `with_causation(causing_event)` sets it to `causing_event.event_id`;
 `is_caused_by(other)` checks `self.causation_id == other.event_id`.
 
 Correlation and causation differ in shape for that reason: a correlation always
-exists (hence `UUID`), a cause may not (hence `UUID | None`).
+exists in a field (hence `UUID`), a cause may not (hence `UUID | None`).
 
-### Ordering and concurrency aliases
+### Version and Position Information
 
-All three are `int`. They are distinguished only by what the number counts.
+**Aggregate versioning** — `DomainEvent` carries the post-event value as `aggregate_version`
+(an `int`), and `StreamReader.get_stream_version()` reports the current version of a stream
+(`0` for an empty one). `EventAppender.append()` takes an `expected: ExpectedVersion` argument
+(built via `ExpectedVersion.any_()`, `.no_stream()`, `.stream_exists()`, or `.exact(version)`)
+and raises `OptimisticLockError` when the actual version does not match.
 
-#### `Version` — `int` (optimistic locking)
+**Global and stream positions** — Global positions (the ordered position across all events in
+the store) are opaque, adapter-defined tokens represented by the `Position` value object
+(see `eventsource.ports.positions`). Consumers may compare and persist a `Position` but must
+not do arithmetic on it. This is what projections and subscriptions checkpoint against.
+Stream positions (the position within one aggregate's stream) are exposed as `EventEnvelope.stream_version`.
 
-The aggregate's version: the number of events applied to it. `DomainEvent`
-carries the post-event value as `aggregate_version`, and
-`StreamReader.get_stream_version()` reports the current version of a stream
-(`0` for an empty one).
-
-`EventAppender.append()` takes an `expected: ExpectedVersion` argument (built
-via `ExpectedVersion.any_()`, `.no_stream()`, `.stream_exists()`, or
-`.exact(version)`) and raises `OptimisticLockError` when the actual version
-does not match. On the store's `AppendResult`, `new_version` is the stream
-version after a successful append.
-
-#### `StreamPosition` — `int`
-
-The 1-based position of an event within its own aggregate's stream, exposed as
-`EventEnvelope.stream_version`.
-
-#### `GlobalPosition` — `int`
-
-The ordered position of an event across all events in the store. Unlike the
-integer `StreamPosition`, the global feed position is the opaque,
-adapter-defined `Position` value object (see `eventsource.ports.positions`),
-exposed as `EventEnvelope.position` and as `AppendResult.position` (the
-position of the append). Consumers may compare and persist a `Position` but
-must not do arithmetic on it. This is what projections and subscriptions
-checkpoint against, since it is total across streams while `StreamPosition`
-is only meaningful within one aggregate.
+Note: `Version`, `StreamPosition`, and `GlobalPosition` type aliases have been removed from
+`eventsource.domain.types` to emphasize that positions are opaque adapter-owned tokens, not
+plain integers — use the `Position` type from `eventsource.ports.positions` when working
+with global feed positions.
 
 ### Type variables
 
@@ -206,19 +186,16 @@ and imported by `eventsource.domain.aggregate` (`AggregateRoot`); the
 ### Note: aliases are transparent, not distinct types (no runtime enforcement)
 
 These are assignments, not `NewType` declarations and not subclasses. At
-runtime `AggregateId is UUID` and `Version is int` — nothing distinguishes an
-`AggregateId` from an `EventId`, or a `StreamPosition` from a `GlobalPosition`.
-Consequences:
+runtime `AggregateId is UUID`, `TenantId is UUID`, etc. — nothing distinguishes
+an `AggregateId` from an `EventId`. Consequences:
 
 - A type checker will not flag passing an `EventId` where an `AggregateId` is
   expected. The aliases document intent; they do not police it.
 - `isinstance(x, AggregateId)` is just `isinstance(x, UUID)`, and
   `isinstance(x, TenantId)` fails the way `isinstance(x, UUID | None)` does —
   do not use the aliases for runtime validation logic.
-- Because they are transparent, you can pass plain `UUID` and `int` values
-  everywhere the aliases appear; adopting them is a documentation choice.
+- Because they are transparent, you can pass plain `UUID` values everywhere
+  the aliases appear; adopting them is a documentation choice.
 
-Import the identity aliases and `TState` from the package root
-(`from eventsource import AggregateId, EventId, TenantId, CorrelationId,
-CausationId, TState`). Import `Version`, `StreamPosition`, and
-`GlobalPosition` from `eventsource.domain.types` — they are not in the root `__all__`.
+Import the identity aliases and `TState` from the package root:
+`from eventsource import AggregateId, EventId, TenantId, CorrelationId, CausationId, TState`.
