@@ -66,10 +66,7 @@ For Kafka-based distributed event bus:
     >>> await bus.publish([MyEvent(...)])
 """
 
-from eventsource.bus.interface import (
-    EventBus,
-    EventHandlerFunc,
-)
+from eventsource.bus.interface import EventBus
 
 # Kafka event bus - conditionally imported based on aiokafka availability
 from eventsource.bus.kafka import (
@@ -103,6 +100,7 @@ from eventsource.bus.redis import (
 from eventsource.ports.handlers import (
     AsyncEventHandler,
     EventHandler,
+    EventHandlerFunc,
     EventSubscriber,
     FlexibleEventHandler,
     FlexibleEventSubscriber,

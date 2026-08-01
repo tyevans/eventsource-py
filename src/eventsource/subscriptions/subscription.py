@@ -26,9 +26,9 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
+from eventsource.domain.exceptions import SubscriptionStateError
 from eventsource.ports.positions import Position
 from eventsource.subscriptions.config import SubscriptionConfig
-from eventsource.subscriptions.exceptions import SubscriptionStateError
 
 if TYPE_CHECKING:
     from eventsource.events.base import DomainEvent

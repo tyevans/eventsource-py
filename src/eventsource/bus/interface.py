@@ -11,16 +11,13 @@ Use `from eventsource.ports.handlers import EventHandler` instead.
 """
 
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable
 
 from eventsource.events.base import DomainEvent
 from eventsource.ports.handlers import (
+    EventHandlerFunc,
     FlexibleEventHandler,
     FlexibleEventSubscriber,
 )
-
-# Type alias for simple function-based handlers
-EventHandlerFunc = Callable[[DomainEvent], Awaitable[None] | None]
 
 
 class EventBus(ABC):

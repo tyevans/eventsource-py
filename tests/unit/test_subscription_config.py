@@ -508,8 +508,8 @@ class TestModuleImports:
         assert create_live_only_config is not None
 
     def test_import_from_exceptions_submodule(self):
-        """Test direct import from exceptions submodule."""
-        from eventsource.subscriptions.exceptions import (
+        """Test direct import from the exceptions' canonical home (ADR 0031)."""
+        from eventsource.domain.exceptions import (
             CheckpointNotFoundError,
             EventBusConnectionError,
             EventStoreConnectionError,

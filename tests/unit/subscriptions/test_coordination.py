@@ -11,18 +11,22 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from eventsource.adapters.memory.coordination import (
+    InMemoryLeaderElector,
+    SharedLeaderState,
+)
+from eventsource.ports.coordination import (
+    LeaderChangeCallback,
+    LeaderElector,
+    LeaderElectorWithLease,
+)
 from eventsource.subscriptions.coordination import (
     COORDINATION_TOPIC_PREFIX,
     HEARTBEAT_TOPIC,
     SHUTDOWN_NOTIFICATIONS_TOPIC,
     WORK_ASSIGNMENT_TOPIC,
     HeartbeatMessage,
-    InMemoryLeaderElector,
-    LeaderChangeCallback,
-    LeaderElector,
-    LeaderElectorWithLease,
     PeerInfo,
-    SharedLeaderState,
     ShutdownIntent,
     ShutdownNotification,
     WorkAssignment,
@@ -259,16 +263,20 @@ class TestModuleExports:
     """Tests for module exports."""
 
     def test_all_exports_are_defined(self) -> None:
-        """Test that __all__ contains all public symbols."""
+        """Test that __all__ contains all public symbols.
+
+        LeaderElectorWithLease is not re-exported from this module (ADR
+        0031): its canonical home is eventsource.ports.coordination only.
+        InMemoryLeaderElector/SharedLeaderState's canonical home is
+        eventsource.adapters.memory.coordination -- see
+        test_all_exports_include_inmemory below.
+        """
         from eventsource.subscriptions import coordination
 
         # Core leader election exports must be present
         core_expected = {
             "LeaderElector",
-            "LeaderElectorWithLease",
             "LeaderChangeCallback",
-            "InMemoryLeaderElector",
-            "SharedLeaderState",
         }
         for symbol in core_expected:
             assert symbol in coordination.__all__, f"Missing core export: {symbol}"
@@ -682,26 +690,35 @@ class TestSharedLeaderState:
 
 
 class TestModuleExportsWithInMemory:
-    """Tests for updated module exports including InMemoryLeaderElector."""
+    """Tests for InMemoryLeaderElector/SharedLeaderState's relocated home (ADR 0031).
+
+    They no longer live in (or re-export from) eventsource.subscriptions --
+    their canonical home is eventsource.adapters.memory.coordination, because
+    eventsource.subscriptions (soon eventsource.application.subscriptions)
+    may not import adapters.memory.
+    """
 
     def test_all_exports_include_inmemory(self) -> None:
-        """Test that __all__ contains InMemoryLeaderElector and SharedLeaderState."""
-        from eventsource.subscriptions import coordination
+        """Test that adapters.memory.coordination.__all__ contains both names."""
+        from eventsource.adapters.memory import coordination
 
-        # Core leader election exports should be present
         core_expected = {
-            "LeaderElector",
-            "LeaderElectorWithLease",
-            "LeaderChangeCallback",
             "InMemoryLeaderElector",
             "SharedLeaderState",
         }
         for symbol in core_expected:
             assert symbol in coordination.__all__, f"Missing core export: {symbol}"
 
-    def test_exports_from_subscriptions_package_include_inmemory(self) -> None:
-        """Test that InMemoryLeaderElector is exported from subscriptions package."""
-        from eventsource.subscriptions import (
+    def test_not_exported_from_subscriptions_package(self) -> None:
+        """InMemoryLeaderElector/SharedLeaderState are not re-exported here."""
+        import eventsource.subscriptions as subscriptions_module
+
+        assert not hasattr(subscriptions_module, "InMemoryLeaderElector")
+        assert not hasattr(subscriptions_module, "SharedLeaderState")
+
+    def test_exports_from_adapters_memory_package(self) -> None:
+        """Test that InMemoryLeaderElector is exported from adapters.memory package."""
+        from eventsource.adapters.memory import (
             InMemoryLeaderElector,
             SharedLeaderState,
         )

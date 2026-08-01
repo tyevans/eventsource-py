@@ -46,6 +46,21 @@ Exceptions:
     CheckpointNotFoundError: Missing checkpoint
 """
 
+from eventsource.domain.exceptions import (
+    CheckpointNotFoundError,
+    EventBusConnectionError,
+    EventStoreConnectionError,
+    SubscriptionAlreadyExistsError,
+    SubscriptionConfigError,
+    SubscriptionError,
+    SubscriptionStateError,
+    TransitionError,
+)
+from eventsource.ports.coordination import (
+    LeaderChangeCallback,
+    LeaderElector,
+    LeaderElectorWithLease,
+)
 from eventsource.subscriptions.config import (
     CheckpointStrategy,
     StartPosition,
@@ -60,14 +75,9 @@ from eventsource.subscriptions.coordination import (
     WORK_ASSIGNMENT_TOPIC,
     HeartbeatCallback,
     HeartbeatMessage,
-    InMemoryLeaderElector,
-    LeaderChangeCallback,
-    LeaderElector,
-    LeaderElectorWithLease,
     PeerInfo,
     PeerShutdownCallback,
     PeerTimeoutCallback,
-    SharedLeaderState,
     ShutdownIntent,
     ShutdownNotification,
     WorkAssignment,
@@ -88,16 +98,6 @@ from eventsource.subscriptions.error_handling import (
     SubscriptionErrorHandler,
     SyncErrorCallback,
     get_default_classifier,
-)
-from eventsource.subscriptions.exceptions import (
-    CheckpointNotFoundError,
-    EventBusConnectionError,
-    EventStoreConnectionError,
-    SubscriptionAlreadyExistsError,
-    SubscriptionConfigError,
-    SubscriptionError,
-    SubscriptionStateError,
-    TransitionError,
 )
 from eventsource.subscriptions.filtering import (
     EventFilter,
@@ -321,12 +321,13 @@ __all__ = [
     "get_metrics",
     "clear_metrics_registry",
     "reset_meter",
-    # Coordination (P3)
+    # Coordination (P3) -- LeaderElector/LeaderElectorWithLease/LeaderChangeCallback
+    # are the eventsource.ports.coordination port; InMemoryLeaderElector and
+    # SharedLeaderState now live in eventsource.adapters.memory (not re-exported
+    # here -- application may not import adapters.memory).
     "LeaderElector",
     "LeaderElectorWithLease",
     "LeaderChangeCallback",
-    "InMemoryLeaderElector",
-    "SharedLeaderState",
     # Work Redistribution Signals (P3-003)
     "COORDINATION_TOPIC_PREFIX",
     "SHUTDOWN_NOTIFICATIONS_TOPIC",

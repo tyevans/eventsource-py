@@ -10,9 +10,13 @@ from __future__ import annotations
 import threading
 from collections import deque
 
-from eventsource.bus.interface import EventBus, EventHandlerFunc
+from eventsource.bus.interface import EventBus
 from eventsource.events.base import DomainEvent
-from eventsource.ports.handlers import FlexibleEventHandler, FlexibleEventSubscriber
+from eventsource.ports.handlers import (
+    EventHandlerFunc,
+    FlexibleEventHandler,
+    FlexibleEventSubscriber,
+)
 
 
 class RecordingEventBus(EventBus):

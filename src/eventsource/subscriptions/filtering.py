@@ -36,8 +36,8 @@ from uuid import UUID
 
 if TYPE_CHECKING:
     from eventsource.events.base import DomainEvent
+    from eventsource.ports.subscribers import Subscriber
     from eventsource.subscriptions.config import SubscriptionConfig
-    from eventsource.subscriptions.subscriber import Subscriber
 
 
 logger = logging.getLogger(__name__)

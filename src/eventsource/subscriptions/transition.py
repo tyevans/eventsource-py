@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
+from eventsource.domain.exceptions import TransitionError
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_BUFFER_SIZE,
@@ -27,13 +28,12 @@ from eventsource.observability.attributes import (
     ATTR_WATERMARK,
 )
 from eventsource.ports.positions import Position
-from eventsource.subscriptions.exceptions import TransitionError
 from eventsource.subscriptions.runners.catchup import CatchUpRunner
 from eventsource.subscriptions.runners.live import LiveRunner
 from eventsource.subscriptions.subscription import Subscription, render_position
 
 if TYPE_CHECKING:
-    from eventsource.bus.interface import EventBus
+    from eventsource.ports.bus import SubscribableEventBus
     from eventsource.ports.checkpoints import SubscriptionPositions
     from eventsource.ports.store import GlobalEventFeed
     from eventsource.subscriptions.flow_control import FlowController
@@ -136,7 +136,7 @@ class TransitionCoordinator:
     def __init__(
         self,
         event_store: "GlobalEventFeed",
-        event_bus: "EventBus",
+        event_bus: "SubscribableEventBus",
         checkpoint_repo: "SubscriptionPositions",
         subscription: Subscription,
         tracer: Tracer | None = None,

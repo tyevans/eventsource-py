@@ -20,8 +20,8 @@ import logging
 from collections.abc import ItemsView, Iterator
 from typing import TYPE_CHECKING
 
+from eventsource.domain.exceptions import SubscriptionAlreadyExistsError
 from eventsource.subscriptions.config import SubscriptionConfig
-from eventsource.subscriptions.exceptions import SubscriptionAlreadyExistsError
 from eventsource.subscriptions.subscription import (
     Subscription,
     SubscriptionState,

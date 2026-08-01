@@ -290,6 +290,7 @@ source_modules = [
     "eventsource.adapters.memory.outbox",
     "eventsource.adapters.memory.locks",
     "eventsource.adapters.memory.readmodels",
+    "eventsource.adapters.memory.coordination",
     "eventsource.testing.builder",
     "eventsource.testing.assertions",
     "eventsource.testing.conformance",

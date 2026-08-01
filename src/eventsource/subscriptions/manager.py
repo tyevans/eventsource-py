@@ -72,7 +72,7 @@ from eventsource.subscriptions.subscription import (
 )
 
 if TYPE_CHECKING:
-    from eventsource.bus.interface import EventBus
+    from eventsource.ports.bus import SubscribableEventBus
     from eventsource.ports.checkpoints import SubscriptionPositions
     from eventsource.ports.dlq import DLQRepository
     from eventsource.ports.handlers import EventSubscriber
@@ -114,7 +114,7 @@ class SubscriptionManager:
     def __init__(
         self,
         event_store: "GlobalEventFeed",
-        event_bus: "EventBus",
+        event_bus: "SubscribableEventBus",
         checkpoint_repo: "SubscriptionPositions",
         shutdown_timeout: float = 30.0,
         drain_timeout: float = 10.0,

@@ -14,12 +14,16 @@ from collections.abc import Coroutine
 from typing import Any
 
 from eventsource._internal.background_tasks import BackgroundTaskManager
-from eventsource.bus.interface import EventBus, EventHandlerFunc
+from eventsource.bus.interface import EventBus
 from eventsource.bus.registry import SubscriptionRegistry
 from eventsource.events.base import DomainEvent
 from eventsource.events.registry import EventRegistry
 from eventsource.handlers.adapter import HandlerAdapter
-from eventsource.ports.handlers import FlexibleEventHandler, FlexibleEventSubscriber
+from eventsource.ports.handlers import (
+    EventHandlerFunc,
+    FlexibleEventHandler,
+    FlexibleEventSubscriber,
+)
 
 logger = logging.getLogger(__name__)
 

@@ -69,10 +69,7 @@ from eventsource.application.projections.base import (
 
 # Event bus (Task 10)
 from eventsource.bus.base import BaseEventBus
-from eventsource.bus.interface import (
-    EventBus,
-    EventHandlerFunc,
-)
+from eventsource.bus.interface import EventBus
 
 # Kafka Event bus
 from eventsource.bus.kafka import (
@@ -194,6 +191,7 @@ from eventsource.ports.dlq import (
 from eventsource.ports.handlers import (
     AsyncEventHandler,
     EventHandler,
+    EventHandlerFunc,
     EventSubscriber,
     FlexibleEventHandler,
     FlexibleEventSubscriber,

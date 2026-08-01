@@ -21,13 +21,13 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
+from eventsource.domain.exceptions import SubscriptionError
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_EVENTS_PROCESSED,
     ATTR_POSITION,
     ATTR_SUBSCRIPTION_NAME,
 )
-from eventsource.subscriptions.exceptions import SubscriptionError
 from eventsource.subscriptions.subscription import (
     Subscription,
     SubscriptionState,
@@ -36,7 +36,7 @@ from eventsource.subscriptions.subscription import (
 from eventsource.subscriptions.transition import StartFromResolver, TransitionCoordinator
 
 if TYPE_CHECKING:
-    from eventsource.bus.interface import EventBus
+    from eventsource.ports.bus import SubscribableEventBus
     from eventsource.ports.checkpoints import SubscriptionPositions
     from eventsource.ports.store import GlobalEventFeed
 
@@ -64,7 +64,7 @@ class SubscriptionLifecycleManager:
     def __init__(
         self,
         event_store: "GlobalEventFeed",
-        event_bus: "EventBus",
+        event_bus: "SubscribableEventBus",
         checkpoint_repo: "SubscriptionPositions",
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
