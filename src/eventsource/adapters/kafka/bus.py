@@ -89,6 +89,7 @@ from types import TracebackType
 from typing import TYPE_CHECKING, Any
 
 from eventsource.adapters._bus.base import BaseEventBus
+from eventsource.adapters._bus.handler_adapter import HandlerAdapter
 from eventsource.adapters._bus.retry import RetryPolicy
 from eventsource.adapters.kafka.config import KafkaEventBusConfig
 from eventsource.adapters.kafka.connection import (
@@ -110,7 +111,6 @@ from eventsource.adapters.kafka.models import (
 from eventsource.adapters.kafka.publisher import KafkaPublisher
 from eventsource.adapters.kafka.serialization import EventSerializer
 from eventsource.domain.event import DomainEvent
-from eventsource.handlers.adapter import HandlerAdapter
 from eventsource.observability import OTEL_AVAILABLE, Tracer, create_tracer
 
 if TYPE_CHECKING:

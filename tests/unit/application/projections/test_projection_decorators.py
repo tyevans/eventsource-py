@@ -9,12 +9,12 @@ Tests cover:
 
 from pydantic import Field
 
-from eventsource.domain.event import DomainEvent
-from eventsource.handlers import (
+from eventsource.domain.decorators import (
     get_handled_event_type,
     handles,
     is_event_handler,
 )
+from eventsource.domain.event import DomainEvent
 
 
 # Sample events for testing
@@ -242,9 +242,9 @@ class TestHandlesDecoratorConsolidation:
     - AC2: IDE autocomplete suggests canonical import (verified via __all__)
     """
 
-    def test_canonical_import_from_handlers(self) -> None:
-        """@handles from handlers is the canonical import."""
-        from eventsource.handlers import handles as canonical_handles
+    def test_canonical_import_from_domain(self) -> None:
+        """@handles from domain.decorators is the canonical import."""
+        from eventsource.domain.decorators import handles as canonical_handles
 
         @canonical_handles(OrderCreated)
         def handler(self, event: OrderCreated) -> None:
@@ -270,8 +270,8 @@ class TestHandlesDecoratorConsolidation:
 
         assert "handles" in eventsource.__all__
 
-    def test_handles_in_handlers_all(self) -> None:
-        """'handles' is in eventsource.handlers.__all__ for IDE autocomplete."""
-        from eventsource import handlers
+    def test_handles_in_domain_decorators_all(self) -> None:
+        """'handles' is in eventsource.domain.decorators.__all__ for IDE autocomplete."""
+        from eventsource.domain import decorators
 
-        assert "handles" in handlers.__all__
+        assert "handles" in decorators.__all__

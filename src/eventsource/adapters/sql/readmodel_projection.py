@@ -76,7 +76,7 @@ class ReadModelProjection(DatabaseProjection, Generic[TModel]):
     Example:
         >>> from eventsource import ReadModelProjection
         >>> from eventsource.ports.readmodels import ReadModel
-        >>> from eventsource.handlers import handles
+        >>> from eventsource.domain.decorators import handles
         >>>
         >>> class OrderSummary(ReadModel):
         ...     order_number: str

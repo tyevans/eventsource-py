@@ -10,8 +10,7 @@ handlers, and works with both:
 - DeclarativeProjection: For async handlers that build read models
 
 Example:
-    >>> from eventsource.handlers import handles
-    >>> # or: from eventsource import handles
+    >>> from eventsource import handles
 """
 
 from collections.abc import Callable
@@ -61,7 +60,7 @@ def handles(event_type: type[DomainEvent]) -> Callable[[F], F]:
             The error message includes expected signature patterns and hints.
 
     Example (Aggregate):
-        >>> from eventsource.handlers import handles
+        >>> from eventsource import handles
         >>> from eventsource.domain.aggregate import DeclarativeAggregate
         >>>
         >>> class OrderAggregate(DeclarativeAggregate[OrderState]):
@@ -73,7 +72,7 @@ def handles(event_type: type[DomainEvent]) -> Callable[[F], F]:
         ...         )
 
     Example (Projection):
-        >>> from eventsource.handlers import handles
+        >>> from eventsource import handles
         >>> from eventsource.application.projections import DeclarativeProjection
         >>>
         >>> class OrderProjection(DeclarativeProjection):

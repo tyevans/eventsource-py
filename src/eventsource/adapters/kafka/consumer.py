@@ -47,12 +47,12 @@ from eventsource.observability.attributes import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from eventsource.adapters._bus.handler_adapter import HandlerAdapter
     from eventsource.adapters._bus.retry import RetryPolicy
     from eventsource.adapters.kafka.config import KafkaEventBusConfig
     from eventsource.adapters.kafka.connection import KafkaConnectionManager
     from eventsource.adapters.kafka.metrics import KafkaEventBusMetrics
     from eventsource.adapters.kafka.models import KafkaEventBusStats
-    from eventsource.handlers.adapter import HandlerAdapter
 
 # OpenTelemetry propagation imports -- kept optional, matching bus.py.
 try:

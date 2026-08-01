@@ -20,6 +20,7 @@ import pytest
 
 pytest.importorskip("aiokafka", reason="aiokafka not installed")
 
+from eventsource.adapters._bus.handler_adapter import HandlerAdapter  # noqa: E402
 from eventsource.adapters._bus.retry import RetryPolicy  # noqa: E402
 from eventsource.adapters.kafka.config import KafkaEventBusConfig  # noqa: E402
 from eventsource.adapters.kafka.connection import KafkaConnectionManager  # noqa: E402
@@ -28,7 +29,6 @@ from eventsource.adapters.kafka.models import KafkaEventBusStats  # noqa: E402
 from eventsource.adapters.kafka.serialization import EventSerializer  # noqa: E402
 from eventsource.domain.event import DomainEvent  # noqa: E402
 from eventsource.domain.exceptions import HandlerDispatchError  # noqa: E402
-from eventsource.handlers.adapter import HandlerAdapter  # noqa: E402
 from eventsource.observability import create_tracer  # noqa: E402
 
 

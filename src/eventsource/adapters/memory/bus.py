@@ -11,9 +11,9 @@ import asyncio
 import logging
 
 from eventsource.adapters._bus.base import BaseEventBus
+from eventsource.adapters._bus.handler_adapter import HandlerAdapter
 from eventsource.domain.event import DomainEvent
 from eventsource.domain.event_registry import EventRegistry
-from eventsource.handlers.adapter import HandlerAdapter
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_AGGREGATE_ID,

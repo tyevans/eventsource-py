@@ -23,8 +23,8 @@ from eventsource.application.projections.base import (
     SyncProjection,
 )
 from eventsource.domain.aggregate import AggregateRoot, DeclarativeAggregate
+from eventsource.domain.decorators import handles
 from eventsource.domain.event import DomainEvent
-from eventsource.handlers import handles
 from eventsource.ports.handlers import (
     AsyncEventHandler,
     FlexibleEventSubscriber,

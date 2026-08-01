@@ -23,11 +23,11 @@ from eventsource.domain.aggregate import (
     AggregateRoot,
     DeclarativeAggregate,
 )
-from eventsource.domain.event import DomainEvent
-from eventsource.domain.exceptions import EventVersionError, UnhandledEventError
 
 # Use canonical import for @handles (TD-006)
-from eventsource.handlers import handles
+from eventsource.domain.decorators import handles
+from eventsource.domain.event import DomainEvent
+from eventsource.domain.exceptions import EventVersionError, UnhandledEventError
 
 # =============================================================================
 # Test fixtures: State models and Events

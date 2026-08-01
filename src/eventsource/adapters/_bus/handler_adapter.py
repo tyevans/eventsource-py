@@ -17,9 +17,6 @@ from typing import Any, TypeVar
 
 from eventsource.domain.event import DomainEvent
 
-# Import canonical protocol definitions
-from eventsource.ports.handlers import AsyncEventHandler, SyncEventHandler
-
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
@@ -27,11 +24,6 @@ T = TypeVar("T")
 
 # Type for async handler function
 AsyncHandlerFunc = Callable[[DomainEvent], Awaitable[None]]
-
-
-# Note: AsyncEventHandler and SyncEventHandler are now imported from
-# eventsource.ports.handlers. The imports above re-export them for backward
-# compatibility with code that imports from this module.
 
 
 def get_handler_name(handler: Any) -> str:
@@ -190,7 +182,5 @@ class HandlerAdapter:
 __all__ = [
     "HandlerAdapter",
     "AsyncHandlerFunc",
-    "AsyncEventHandler",
-    "SyncEventHandler",
     "get_handler_name",
 ]

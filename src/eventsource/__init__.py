@@ -103,6 +103,9 @@ from eventsource.domain.aggregate import AggregateRoot, DeclarativeAggregate
 from eventsource.domain.command import DomainCommand
 from eventsource.domain.decider import DeciderAggregate
 
+# Decorators - canonical location for @handles (TD-006)
+from eventsource.domain.decorators import handles
+
 # Core event primitives (Task 02)
 from eventsource.domain.event import DomainEvent
 
@@ -136,9 +139,6 @@ from eventsource.domain.exceptions import (
     SnapshotNotFoundError,
     SnapshotSchemaVersionError,
 )
-
-# Decorators - canonical location for @handles (TD-006)
-from eventsource.handlers import handles
 from eventsource.multitenancy import (
     TenantContextNotSetError,
     TenantContextResetError,

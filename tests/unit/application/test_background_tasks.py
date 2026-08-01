@@ -3,7 +3,7 @@
 import asyncio
 import contextlib
 
-from eventsource._internal.background_tasks import BackgroundTaskManager
+from eventsource.application.background_tasks import BackgroundTaskManager
 
 
 async def test_submit_runs_the_coroutine_and_tracks_the_task() -> None:
@@ -110,11 +110,13 @@ async def test_failed_task_is_logged_under_this_modules_logger(
     async def boom() -> None:
         raise ValueError("distinctive background task manager failure")
 
-    with caplog.at_level("ERROR", logger="eventsource._internal.background_tasks"):
+    with caplog.at_level("ERROR", logger="eventsource.application.background_tasks"):
         manager.submit(boom())
         await manager.await_all()
 
-    own_records = [r for r in caplog.records if r.name == "eventsource._internal.background_tasks"]
+    own_records = [
+        r for r in caplog.records if r.name == "eventsource.application.background_tasks"
+    ]
     # Logged both by the task's done-callback and by await_all's own
     # exception collection -- this mirrors the pre-refactor behaviour of
     # the original standalone BackgroundTaskManager.

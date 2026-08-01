@@ -506,6 +506,63 @@ class DuplicateEventTypeError(EventSourceError, ValueError):
         )
 
 
+class HandlerSignatureError(EventSourceError, ValueError):
+    """
+    Raised when an event handler has an invalid signature.
+
+    This exception provides detailed guidance on how to fix invalid handler
+    signatures, including expected signature patterns and hints for common
+    mistakes.
+
+    Attributes:
+        handler_name: Name of the handler method
+        owner_name: Name of the class containing the handler
+        event_type: The event type from @handles decorator
+        param_count: Actual number of parameters (excluding self)
+        is_async_required: Whether async is required for this handler
+
+    Example:
+        >>> from eventsource import handles
+        >>> from eventsource.application.projections.handlers import HandlerRegistry
+        >>>
+        >>> class BadProjection:
+        ...     @handles(OrderCreated)
+        ...     async def _handle(self, a, b, c, event):  # Too many params
+        ...         pass
+        ...
+        >>> # Raises HandlerSignatureError with helpful message
+    """
+
+    def __init__(
+        self,
+        handler_name: str,
+        owner_name: str,
+        event_type: type,
+        param_count: int,
+        is_async_required: bool = True,
+    ) -> None:
+        self.handler_name = handler_name
+        self.owner_name = owner_name
+        self.event_type = event_type
+        self.param_count = param_count
+        self.is_async_required = is_async_required
+
+        event_name = event_type.__name__
+        async_prefix = "async " if is_async_required else ""
+
+        message = (
+            f"Handler '{handler_name}' in {owner_name} has invalid signature "
+            f"for @handles({event_name}).\n\n"
+            f"Expected one of:\n"
+            f"  {async_prefix}def {handler_name}(self, event: {event_name}) -> None\n"
+            f"  {async_prefix}def {handler_name}(self, context, event: {event_name}) -> None\n\n"
+            f"Got: {param_count} parameter(s) (excluding self)\n\n"
+            f"Hint: Ensure your handler has exactly 1 or 2 parameters after 'self'."
+        )
+
+        super().__init__(message)
+
+
 # =============================================================================
 # Subscription exceptions
 # =============================================================================

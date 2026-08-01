@@ -11,8 +11,8 @@ from __future__ import annotations
 import threading
 from typing import Any
 
+from eventsource.adapters._bus.handler_adapter import HandlerAdapter
 from eventsource.domain.event import DomainEvent
-from eventsource.handlers.adapter import HandlerAdapter
 from eventsource.ports.handlers import FlexibleEventSubscriber
 
 

@@ -19,8 +19,8 @@ import pytest
 from pydantic import BaseModel, Field, ValidationError
 
 from eventsource.domain.aggregate import AggregateRoot, DeclarativeAggregate
+from eventsource.domain.decorators import handles
 from eventsource.domain.event import DomainEvent
-from eventsource.handlers import handles
 
 # =============================================================================
 # Test State Models

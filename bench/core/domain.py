@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from eventsource import CommandRejectedError, DomainCommand, DomainEvent, EventRegistry
 from eventsource.domain.aggregate import DeclarativeAggregate
 from eventsource.domain.decider import DeciderAggregate
-from eventsource.handlers import handles
+from eventsource.domain.decorators import handles
 
 PAYLOAD_SIZES: dict[str, int] = {"small": 200, "large": 5_000}
 SNAPSHOT_SIZES: dict[str, int] = {"small": 1_000, "medium": 50_000, "large": 500_000}

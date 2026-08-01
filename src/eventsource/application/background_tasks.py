@@ -15,7 +15,7 @@ Both call sites previously hand-rolled nearly identical task tracking; this
 module is the shared implementation they now delegate to.
 
 Example:
-    >>> from eventsource._internal.background_tasks import BackgroundTaskManager
+    >>> from eventsource.application.background_tasks import BackgroundTaskManager
     >>>
     >>> manager = BackgroundTaskManager()
     >>> manager.submit(create_snapshot_coro())

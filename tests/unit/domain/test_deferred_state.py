@@ -18,9 +18,9 @@ import pytest
 from pydantic import BaseModel
 
 from eventsource.domain.aggregate import DeclarativeAggregate
+from eventsource.domain.decorators import handles
 from eventsource.domain.event import DomainEvent
 from eventsource.domain.exceptions import AggregateNotCreatedError
-from eventsource.handlers import handles
 
 # =============================================================================
 # Test fixtures: State models and Events for deferred state aggregate

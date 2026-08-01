@@ -1,11 +1,11 @@
 """Unit tests for event handler decorators."""
 
-from eventsource.domain.event import DomainEvent
-from eventsource.handlers.decorators import (
+from eventsource.domain.decorators import (
     get_handled_event_type,
     handles,
     is_event_handler,
 )
+from eventsource.domain.event import DomainEvent
 
 
 class TestEvent(DomainEvent):

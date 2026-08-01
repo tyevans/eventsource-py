@@ -10,10 +10,10 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from eventsource.adapters._bus.handler_adapter import HandlerAdapter
 from eventsource.adapters._bus.retry import RetryPolicy
 from eventsource.domain.event import DomainEvent
 from eventsource.domain.exceptions import HandlerDispatchError
-from eventsource.handlers.adapter import HandlerAdapter
 
 from eventsource.adapters.rabbitmq.config import RabbitMQEventBusConfig  # isort: skip
 from eventsource.adapters.rabbitmq.consumer import RabbitMQConsumer  # isort: skip
