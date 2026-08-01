@@ -105,6 +105,9 @@ mutants/
 # Claude Code session worktrees (machine-local)
 .claude/worktrees/
 
+# Agent-team memory (session logs, learnings, retros -- machine-local)
+memory/
+
 # Doc-sync state (per-checkout, never shared)
 .claude/last-docs-run
 
