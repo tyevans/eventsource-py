@@ -48,14 +48,16 @@ needs 1-2 methods of a wider infra interface, cut a small Protocol in
    `**BREAKING: ...**` entry naming old path → `ModuleNotFoundError` and all
    replacement paths.
 
-## Sweep scope — always all five
+## Sweep scope — always all six
 
 ```
-grep -rn "eventsource\.<pkg>" src/ tests/ bench/ docs/ pyproject.toml
+grep -rn "eventsource\.<pkg>" src/ tests/ bench/ docs/ examples/ pyproject.toml
 ```
 
-`bench/` has been missed twice; docstrings and comments count. In
-pyproject.toml check three spots: import-linter contract module lists,
+`bench/` has been missed twice and `examples/` once (CI's
+validate-examples job executes the top-level examples — a stale import
+there fails the build); docstrings and comments count. In pyproject.toml
+check three spots: import-linter contract module lists,
 `[tool.mutmut] only_mutate`, pytest test-selection args.
 
 ## Gates
@@ -68,7 +70,7 @@ pyproject.toml check three spots: import-linter contract module lists,
 
 | Mistake | Reality |
 |---|---|
-| Sweep only src/ and tests/ | bench/, docs/, pyproject carry paths too |
+| Sweep only src/ and tests/ | bench/, docs/, examples/, pyproject carry paths too — and CI executes examples/ |
 | `git rm`/`mv` then move on | Leftover dirs/`__pycache__` = silent namespace packages; `test -d` for the old dirs |
 | "Strict docs build will catch nav" | It won't; add new pages to mkdocs nav by hand |
 | Tree-wide `ruff format` | Collides with parallel campaigns; format only touched files. Shared files (`__init__.py`, pyproject.toml): re-read immediately before each surgical single-line edit |
