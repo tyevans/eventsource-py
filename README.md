@@ -30,7 +30,7 @@ from eventsource import (
     DomainEvent, register_event, AggregateRoot, AggregateRepository,
     InMemoryEventStore, InMemoryEventBus, InMemoryCheckpointRepository,
 )
-from eventsource.subscriptions import SubscriptionManager, SubscriptionConfig
+from eventsource.application.subscriptions import SubscriptionManager, SubscriptionConfig
 
 # 1. Define events - immutable facts that capture what happened
 @register_event
