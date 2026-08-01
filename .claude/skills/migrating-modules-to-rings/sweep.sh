@@ -29,6 +29,15 @@ fi
 pkg="$1"
 fail=0
 
+# Drop grep hits (file:line:text) whose file is git-ignored: ignored files
+# (.superpowers/ session artifacts, local scratch) never ship, so a stale
+# reference there is noise, not a finding.
+drop_ignored() {
+    while IFS= read -r line; do
+        git check-ignore -q "${line%%:*}" || printf '%s\n' "$line"
+    done
+}
+
 GREP_EXCLUDES=(
     --exclude-dir=.git --exclude-dir=.venv --exclude-dir=__pycache__
     --exclude-dir=.claude --exclude-dir=node_modules --exclude-dir=.mypy_cache
@@ -38,7 +47,9 @@ GREP_EXCLUDES=(
 )
 
 echo "== FATAL: import-shaped references to eventsource.${pkg} =="
-if grep -rnE "(from|import)[[:space:]]+eventsource\.${pkg}\b" . "${GREP_EXCLUDES[@]}"; then
+imports=$(grep -rnE "(from|import)[[:space:]]+eventsource\.${pkg}\b" . "${GREP_EXCLUDES[@]}" | drop_ignored)
+if [ -n "$imports" ]; then
+    printf '%s\n' "$imports"
     fail=1
 else
     echo "(none)"
@@ -60,9 +71,9 @@ else
 fi
 
 echo "== triage (non-fatal): other mentions of eventsource.${pkg} =="
-grep -rn "eventsource\.${pkg}\b" . "${GREP_EXCLUDES[@]}" \
-    | grep -vE "(from|import)[[:space:]]+eventsource\.${pkg}\b" \
-    || echo "(none)"
+triage=$(grep -rn "eventsource\.${pkg}\b" . "${GREP_EXCLUDES[@]}" \
+    | grep -vE "(from|import)[[:space:]]+eventsource\.${pkg}\b" | drop_ignored)
+if [ -n "$triage" ]; then printf '%s\n' "$triage"; else echo "(none)"; fi
 
 if [ "$fail" -ne 0 ]; then
     echo "SWEEP FAILED: fatal findings above" >&2

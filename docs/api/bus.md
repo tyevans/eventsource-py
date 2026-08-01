@@ -224,7 +224,7 @@ call and not its peers.
 
 ```python
 from eventsource.ports.bus import EventBus, EventHandlerFunc
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.ports.handlers import FlexibleEventHandler, FlexibleEventSubscriber
 
 

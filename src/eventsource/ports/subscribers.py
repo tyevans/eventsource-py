@@ -35,7 +35,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from eventsource.events.base import DomainEvent
+    from eventsource.domain.event import DomainEvent
 
 
 @runtime_checkable

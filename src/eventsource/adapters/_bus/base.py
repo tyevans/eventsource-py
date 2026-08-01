@@ -13,11 +13,11 @@ import logging
 from collections.abc import Coroutine
 from typing import Any
 
-from eventsource._internal.background_tasks import BackgroundTaskManager
+from eventsource.adapters._bus.handler_adapter import HandlerAdapter
 from eventsource.adapters._bus.registry import SubscriptionRegistry
-from eventsource.events.base import DomainEvent
-from eventsource.events.registry import EventRegistry
-from eventsource.handlers.adapter import HandlerAdapter
+from eventsource.application.background_tasks import BackgroundTaskManager
+from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import EventRegistry
 from eventsource.ports.bus import EventBus, EventHandlerFunc
 from eventsource.ports.handlers import FlexibleEventHandler, FlexibleEventSubscriber
 
@@ -131,7 +131,7 @@ class BaseEventBus(EventBus):
         if self._event_registry is not None:
             return self._event_registry.get_or_none(event_type_name)
 
-        from eventsource.events.registry import default_registry
+        from eventsource.domain.event_registry import default_registry
 
         return default_registry.get_or_none(event_type_name)
 

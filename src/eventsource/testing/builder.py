@@ -20,7 +20,7 @@ from datetime import datetime
 from typing import Any, Generic, TypeVar
 from uuid import UUID, uuid4
 
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 
 # Type variable bound to DomainEvent for type-safe builder
 TEvent = TypeVar("TEvent", bound=DomainEvent)

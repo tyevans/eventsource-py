@@ -31,7 +31,7 @@ from eventsource.domain.exceptions import SubscriptionStateError
 from eventsource.ports.positions import Position
 
 if TYPE_CHECKING:
-    from eventsource.events.base import DomainEvent
+    from eventsource.domain.event import DomainEvent
     from eventsource.ports.handlers import EventSubscriber
 
 

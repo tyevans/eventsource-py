@@ -15,7 +15,7 @@ from uuid import UUID
 
 from eventsource.domain.aggregate import AggregateRoot, TState
 from eventsource.domain.command import DomainCommand
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 
 
 class DeciderAggregate(AggregateRoot[TState]):

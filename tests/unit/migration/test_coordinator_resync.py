@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from eventsource.domain import StreamId
-from eventsource.events import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.migration.coordinator import MigrationCoordinator
 from eventsource.migration.dual_write import DualWriteInterceptor
 from eventsource.migration.exceptions import (

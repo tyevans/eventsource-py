@@ -6,7 +6,7 @@ from enum import Enum
 from uuid import UUID
 
 from eventsource.domain import StreamId
-from eventsource.events import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.ports.positions import Position
 
 

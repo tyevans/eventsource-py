@@ -2,12 +2,10 @@
 
 import pytest
 
-from eventsource.events.base import DomainEvent
-from eventsource.handlers import (
-    HandlerRegistry,
-    HandlerSignatureError,
-    handles,
-)
+from eventsource.application.projections.handlers import HandlerRegistry
+from eventsource.domain.decorators import handles
+from eventsource.domain.event import DomainEvent
+from eventsource.domain.exceptions import HandlerSignatureError
 
 
 class TestEvent(DomainEvent):
@@ -229,11 +227,11 @@ class TestHandlerSignatureValidation:
 
 
 class TestHandlerSignatureErrorImport:
-    """Tests for HandlerSignatureError import from handlers module."""
+    """Tests for HandlerSignatureError import from its domain home."""
 
-    def test_exception_exported_from_handlers_module(self):
-        """HandlerSignatureError should be importable from eventsource.handlers."""
-        from eventsource.handlers import HandlerSignatureError as ImportedError
+    def test_exception_exported_from_domain_exceptions_module(self):
+        """HandlerSignatureError should be importable from eventsource.domain.exceptions."""
+        from eventsource.domain.exceptions import HandlerSignatureError as ImportedError
 
         assert ImportedError is HandlerSignatureError
 

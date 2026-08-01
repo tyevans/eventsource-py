@@ -15,7 +15,7 @@ from eventsource.application.subscriptions import (
     FlowControlStats,
     SubscriptionConfig,
 )
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.ports.handlers import EventSubscriber
 
 # Test fixtures

@@ -19,7 +19,7 @@ import pytest
 
 from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.domain import StreamId
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.migration.models import MigrationConfig, SyncLag
 from eventsource.migration.sync_lag_tracker import (
     LagSample,

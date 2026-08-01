@@ -22,7 +22,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable
 from uuid import UUID
 
-from eventsource._internal.background_tasks import BackgroundTaskManager
+from eventsource.application.background_tasks import BackgroundTaskManager
 from eventsource.domain.aggregate import AggregateRoot
 from eventsource.ports.snapshots import Snapshot, SnapshotStore
 

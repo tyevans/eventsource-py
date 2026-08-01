@@ -12,8 +12,8 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from eventsource import KAFKA_AVAILABLE, RABBITMQ_AVAILABLE, REDIS_AVAILABLE
-from eventsource.events.base import DomainEvent
-from eventsource.events.registry import EventRegistry
+from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import EventRegistry
 
 
 class RoundtripEvent(DomainEvent):

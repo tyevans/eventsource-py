@@ -16,7 +16,7 @@ from uuid import uuid4
 import pytest
 from pydantic import Field
 
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.observability.attributes import (
     ATTR_EVENT_ID,
     ATTR_EVENT_TYPE,
@@ -258,7 +258,7 @@ class TestDeclarativeProjectionTracing:
     def test_enable_tracing_passed_through(self):
         """enable_tracing is passed to parent class."""
         from eventsource.application.projections.base import DeclarativeProjection
-        from eventsource.handlers import handles
+        from eventsource.domain.decorators import handles
 
         class TestProjection(DeclarativeProjection):
             @handles(OrderCreated)
@@ -274,7 +274,7 @@ class TestDeclarativeProjectionTracing:
     async def test_handler_dispatch_creates_span(self):
         """Handler dispatch creates span when tracing enabled."""
         from eventsource.application.projections.base import DeclarativeProjection
-        from eventsource.handlers import handles
+        from eventsource.domain.decorators import handles
 
         mock_tracer = Mock()
         mock_span_handle = MagicMock()
@@ -342,7 +342,7 @@ class TestDatabaseProjectionTracing:
     def test_enable_tracing_passed_through(self, mock_session_factory):
         """enable_tracing is passed to parent class."""
         from eventsource.adapters.sql.projection import DatabaseProjection
-        from eventsource.handlers import handles
+        from eventsource.domain.decorators import handles
 
         factory, _, _ = mock_session_factory
 
@@ -534,7 +534,7 @@ class TestBackwardCompatibility:
     async def test_declarative_projection_without_tracing_arg_works(self):
         """DeclarativeProjection works without enable_tracing arg."""
         from eventsource.application.projections.base import DeclarativeProjection
-        from eventsource.handlers import handles
+        from eventsource.domain.decorators import handles
 
         handled_events = []
 

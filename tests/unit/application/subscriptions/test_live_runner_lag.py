@@ -20,7 +20,7 @@ from eventsource.application.subscriptions import (
     SubscriptionConfig,
 )
 from eventsource.application.subscriptions.runners import LiveRunner
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 
 pytestmark = pytest.mark.asyncio
 

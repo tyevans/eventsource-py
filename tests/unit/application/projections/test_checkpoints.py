@@ -12,7 +12,7 @@ from eventsource.application.projections.checkpoints import (
     record_checkpoint,
     reset_checkpoint,
 )
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.observability import create_tracer
 
 

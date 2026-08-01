@@ -44,7 +44,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from eventsource.domain import StreamId
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.migration.models import TenantMigrationState
 from eventsource.migration.write_pause import (
     PauseMetrics,

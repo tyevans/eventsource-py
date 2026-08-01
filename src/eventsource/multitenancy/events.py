@@ -32,7 +32,7 @@ from uuid import UUID
 
 from pydantic import Field
 
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.multitenancy.context import get_required_tenant
 
 

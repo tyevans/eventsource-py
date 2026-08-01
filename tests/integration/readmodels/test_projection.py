@@ -33,7 +33,7 @@ from eventsource.adapters.memory.dlq import InMemoryDLQRepository
 from eventsource.adapters.sql.readmodel_projection import ReadModelProjection
 from eventsource.adapters.sql.readmodel_schema import generate_schema
 from eventsource.application.projections import handles
-from eventsource.events import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.ports.readmodels import ReadModel
 
 from ..conftest import skip_if_no_postgres_infra

@@ -54,7 +54,7 @@ from typing import Any
 from uuid import UUID
 
 from eventsource.domain import StreamId
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.observability import (
     ATTR_AGGREGATE_ID,
     ATTR_AGGREGATE_TYPE,

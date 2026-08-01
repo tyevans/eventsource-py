@@ -23,8 +23,8 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from eventsource.adapters.rabbitmq import death_headers, serialization
+from eventsource.domain.event import DomainEvent
 from eventsource.domain.exceptions import HandlerDispatchError
-from eventsource.events.base import DomainEvent
 from eventsource.observability import OTEL_AVAILABLE, SpanKindEnum, Tracer
 from eventsource.observability.attributes import (
     ATTR_EVENT_ID,
@@ -37,12 +37,12 @@ from eventsource.observability.attributes import (
 )
 
 if TYPE_CHECKING:
+    from eventsource.adapters._bus.handler_adapter import HandlerAdapter
     from eventsource.adapters._bus.retry import RetryPolicy
     from eventsource.adapters.rabbitmq.config import RabbitMQEventBusConfig
     from eventsource.adapters.rabbitmq.connection import RabbitMQConnectionManager
     from eventsource.adapters.rabbitmq.models import RabbitMQEventBusStats
     from eventsource.adapters.rabbitmq.topology import RabbitMQTopology
-    from eventsource.handlers.adapter import HandlerAdapter
 
 # Optional aio-pika import - fail gracefully if not installed.
 try:

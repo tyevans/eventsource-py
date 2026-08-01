@@ -15,7 +15,7 @@ from pydantic import Field
 
 from eventsource.adapters.sql.readmodel_projection import ReadModelProjection
 from eventsource.application.projections import handles
-from eventsource.events import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.ports.readmodels import ReadModel
 
 # =============================================================================
@@ -435,7 +435,7 @@ class TestNoCircularImports:
     def test_import_handles_from_projections(self) -> None:
         """Test importing handles from projections module."""
         from eventsource.application.projections import handles
-        from eventsource.handlers import (
+        from eventsource.domain.decorators import (
             get_handled_event_type,
             is_event_handler,
         )

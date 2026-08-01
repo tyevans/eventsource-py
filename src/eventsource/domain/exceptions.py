@@ -1,6 +1,10 @@
 """Library exceptions for the eventsource package."""
 
+from typing import TYPE_CHECKING
 from uuid import UUID
+
+if TYPE_CHECKING:
+    from eventsource.domain.event import DomainEvent
 
 
 class EventSourceError(Exception):
@@ -454,6 +458,109 @@ class LockNotHeldError(EventSourceError):
     def __init__(self, key: str):
         self.key = key
         super().__init__(f"Lock '{key}' is not held by this session")
+
+
+# =============================================================================
+# Event registry exceptions
+# =============================================================================
+#
+# Merged from the former eventsource.events.registry module (ring migration,
+# events/ -> domain/).
+
+
+class EventTypeNotFoundError(EventSourceError, KeyError):
+    """
+    Raised when an event type is not found in the registry.
+
+    Provides helpful error messages including a list of available event types.
+    """
+
+    def __init__(self, event_type: str, available_types: list[str]) -> None:
+        self.event_type = event_type
+        self.available_types = available_types
+        available = ", ".join(sorted(available_types)) if available_types else "none"
+        super().__init__(
+            f"Unknown event type: '{event_type}'. "
+            f"Available types: {available}. "
+            f"Did you forget to register this event type?"
+        )
+
+
+class DuplicateEventTypeError(EventSourceError, ValueError):
+    """
+    Raised when attempting to register a different class with an existing event type name.
+    """
+
+    def __init__(
+        self,
+        event_type: str,
+        existing_class: "type[DomainEvent]",
+        new_class: "type[DomainEvent]",
+    ) -> None:
+        self.event_type = event_type
+        self.existing_class = existing_class
+        self.new_class = new_class
+        super().__init__(
+            f"Event type '{event_type}' is already registered to {existing_class.__name__}. "
+            f"Cannot register {new_class.__name__} with the same type name."
+        )
+
+
+class HandlerSignatureError(EventSourceError, ValueError):
+    """
+    Raised when an event handler has an invalid signature.
+
+    This exception provides detailed guidance on how to fix invalid handler
+    signatures, including expected signature patterns and hints for common
+    mistakes.
+
+    Attributes:
+        handler_name: Name of the handler method
+        owner_name: Name of the class containing the handler
+        event_type: The event type from @handles decorator
+        param_count: Actual number of parameters (excluding self)
+        is_async_required: Whether async is required for this handler
+
+    Example:
+        >>> from eventsource import handles
+        >>> from eventsource.application.projections.handlers import HandlerRegistry
+        >>>
+        >>> class BadProjection:
+        ...     @handles(OrderCreated)
+        ...     async def _handle(self, a, b, c, event):  # Too many params
+        ...         pass
+        ...
+        >>> # Raises HandlerSignatureError with helpful message
+    """
+
+    def __init__(
+        self,
+        handler_name: str,
+        owner_name: str,
+        event_type: type,
+        param_count: int,
+        is_async_required: bool = True,
+    ) -> None:
+        self.handler_name = handler_name
+        self.owner_name = owner_name
+        self.event_type = event_type
+        self.param_count = param_count
+        self.is_async_required = is_async_required
+
+        event_name = event_type.__name__
+        async_prefix = "async " if is_async_required else ""
+
+        message = (
+            f"Handler '{handler_name}' in {owner_name} has invalid signature "
+            f"for @handles({event_name}).\n\n"
+            f"Expected one of:\n"
+            f"  {async_prefix}def {handler_name}(self, event: {event_name}) -> None\n"
+            f"  {async_prefix}def {handler_name}(self, context, event: {event_name}) -> None\n\n"
+            f"Got: {param_count} parameter(s) (excluding self)\n\n"
+            f"Hint: Ensure your handler has exactly 1 or 2 parameters after 'self'."
+        )
+
+        super().__init__(message)
 
 
 # =============================================================================

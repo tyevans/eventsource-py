@@ -19,8 +19,8 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import Field
 
-from eventsource.events.base import DomainEvent
-from eventsource.events.registry import (
+from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import (
     DuplicateEventTypeError,
     EventRegistry,
     EventTypeNotFoundError,

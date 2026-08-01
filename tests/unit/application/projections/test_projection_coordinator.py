@@ -21,7 +21,7 @@ from eventsource.application.projections.coordinator import (
     ProjectionRegistry,
     SubscriberRegistry,
 )
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.ports.handlers import EventSubscriber
 
 

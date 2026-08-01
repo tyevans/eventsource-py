@@ -1050,7 +1050,7 @@ class OrderSummaryProjection(DatabaseProjection):
 
 Four things are worth pausing on.
 
-**`handles` comes from `eventsource.handlers`** (re-exported from the top-level
+**`handles` comes from `eventsource.domain.decorators`** (re-exported from the top-level
 `eventsource` package, and also from `eventsource.application.projections`). It
 is the same decorator `DeclarativeAggregate` uses.
 

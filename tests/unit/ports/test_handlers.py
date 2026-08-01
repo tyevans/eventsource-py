@@ -19,7 +19,7 @@ from uuid import uuid4
 import pytest
 from pydantic import Field
 
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.ports.handlers import (
     AsyncEventHandler,
     EventHandler,
@@ -474,8 +474,8 @@ class TestAsyncEventHandlerImports:
         assert AsyncEventHandler is Canonical
 
     def test_handlers_adapter_import_works(self) -> None:
-        """Import from handlers.adapter works."""
-        from eventsource.handlers.adapter import AsyncEventHandler
+        """Import from ports.handlers works."""
+        from eventsource.ports.handlers import AsyncEventHandler
         from eventsource.ports.handlers import AsyncEventHandler as Canonical
 
         assert AsyncEventHandler is Canonical

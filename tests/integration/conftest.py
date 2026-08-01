@@ -552,7 +552,7 @@ async def postgres_event_store(
 ) -> AsyncGenerator[Any, None]:
     """Provide PostgreSQL event store for integration tests."""
     from eventsource.adapters.postgresql import PostgreSQLEventStore
-    from eventsource.events.registry import EventRegistry
+    from eventsource.domain.event_registry import EventRegistry
 
     # Create fresh registry for tests
     registry = EventRegistry()
@@ -582,7 +582,7 @@ async def postgres_event_store_with_outbox(
 ) -> AsyncGenerator[Any, None]:
     """Provide PostgreSQL event store with outbox enabled."""
     from eventsource.adapters.postgresql import PostgreSQLEventStore
-    from eventsource.events.registry import EventRegistry
+    from eventsource.domain.event_registry import EventRegistry
 
     registry = EventRegistry()
     registry.register(TestItemCreated)

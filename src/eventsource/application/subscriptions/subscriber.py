@@ -37,7 +37,7 @@ from eventsource.ports.subscribers import (
 )
 
 if TYPE_CHECKING:
-    from eventsource.events.base import DomainEvent
+    from eventsource.domain.event import DomainEvent
 
 logger = logging.getLogger(__name__)
 

@@ -7,8 +7,8 @@ from pydantic import BaseModel
 
 from eventsource.domain.command import DomainCommand
 from eventsource.domain.decider import DeciderAggregate
+from eventsource.domain.event import DomainEvent
 from eventsource.domain.exceptions import CommandRejectedError
-from eventsource.events.base import DomainEvent
 
 
 class AccountOpened(DomainEvent):

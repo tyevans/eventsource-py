@@ -20,7 +20,7 @@ The package exposes three public classes and two type variables:
 holds the aggregate's state, and subclasses must implement the abstract methods
 `_apply()` and `_get_initial_state()`. `DeclarativeAggregate` replaces the
 hand-written `_apply()` dispatch with handlers registered via the `@handles`
-decorator from `eventsource.handlers`. `AggregateRepository` is not generic over
+decorator from `eventsource.domain.decorators`. `AggregateRepository` is not generic over
 state — it is parameterized by the aggregate class itself and mediates between
 an aggregate and an `AggregateStore` (the `EventAppender` + `StreamReader`
 ports), an optional `EventPublisher`, and an optional `SnapshotStore`.
@@ -35,8 +35,8 @@ Two further modules back the repository's snapshot behaviour:
 `eventsource.application.aggregates.snapshotting` (`SnapshotPolicy`,
 `SnapshotScheduler`, and the `take_snapshot()` / `read_valid_snapshot()`
 functions — see [ADR 0021](../adrs/0021-snapshot-policy-scheduler-composition.md))
-and, for background scheduling, the internal
-`eventsource._internal.background_tasks` module. Neither is re-exported from
+and, for background scheduling, the
+`eventsource.application.background_tasks` module. Neither is re-exported from
 `eventsource.application.aggregates` except where noted, and both are
 documented here only through the repository methods and properties that
 expose their effects; the [Snapshots reference](snapshots.md) covers
@@ -111,7 +111,7 @@ snapshot properties and methods, documented under
 [Snapshots reference](snapshots.md) for the collaborators themselves.
 
 Symbols that support these classes but live elsewhere — the `@handles`
-decorator (`eventsource.handlers`), `DomainEvent` (`eventsource.events`), the
+decorator (`eventsource.domain.decorators`), `DomainEvent` (`eventsource.domain.event`), the
 `AggregateStore` / `EventPublisher` / `SnapshotStore` contracts
 (`eventsource.ports.store`, `eventsource.ports.bus`, `eventsource.ports.snapshots`),
 and the exceptions raised by this package (`eventsource.domain.exceptions`) — are all

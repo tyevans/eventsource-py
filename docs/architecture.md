@@ -244,7 +244,7 @@ The second is that **Tier 0 is not the same as standalone**. A module can be
 perfectly Tier 0 and still be impossible to ship alone, because it imports other
 `eventsource` modules at import time. `protocols.py` advertises itself as the
 canonical contract module, but line 35 is a module-level
-`from eventsource.events.base import DomainEvent` -- not under `TYPE_CHECKING`,
+`from eventsource.domain.event import DomainEvent` -- not under `TYPE_CHECKING`,
 not deferred -- so importing it executes `events/base.py`, which imports
 pydantic. `events/base.py` is an *extraction floor*: nothing above it moves
 without it, and the same shape repeats for `bus/interface.py` and

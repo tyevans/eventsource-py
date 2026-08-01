@@ -19,7 +19,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import text
 
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from tests.conftest import AIOSQLITE_AVAILABLE, skip_if_no_aiosqlite
 
 if AIOSQLITE_AVAILABLE:

@@ -23,7 +23,7 @@ from eventsource.application.subscriptions import (
 )
 from eventsource.application.subscriptions.runners import CatchUpRunner
 from eventsource.domain import StreamId
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.ports.positions import ExpectedVersion
 
 pytestmark = pytest.mark.asyncio

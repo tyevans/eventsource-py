@@ -15,12 +15,13 @@ exactly what production runs.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 
 import pytest
 
 from eventsource.adapters.sqlite.store import SQLiteEventStore
+from eventsource.domain.event_registry import EventRegistry
 from eventsource.domain.exceptions import DuplicateEventError
-from eventsource.events.registry import EventRegistry
 from eventsource.ports import ExpectedVersion, collect
 from eventsource.testing.conformance_ports._fixtures import (
     ConformanceEvent,
@@ -74,17 +75,25 @@ class _PausingConnection:
         return cursor
 
 
-async def _paused_store() -> tuple[SQLiteEventStore, _PausingConnection]:
+@pytest.fixture
+async def paused_store() -> AsyncIterator[tuple[SQLiteEventStore, _PausingConnection]]:
     store = SQLiteEventStore(":memory:", event_registry=_make_registry())
     conn = await store._conn()
     pausing = _PausingConnection(conn)
     store._connection = pausing  # type: ignore[assignment]
-    return store, pausing
+    yield store, pausing
+    # Unblock any append still paused by a failed test, then close --
+    # an unclosed aiosqlite connection leaves its non-daemon thread
+    # alive and hangs interpreter shutdown.
+    pausing.release.set()
+    await store.close()
 
 
 class TestReadsDoNotObserveAnOpenAppend:
-    async def test_read_all_sees_zero_or_two_events_never_one(self) -> None:
-        store, pausing = await _paused_store()
+    async def test_read_all_sees_zero_or_two_events_never_one(
+        self, paused_store: tuple[SQLiteEventStore, _PausingConnection]
+    ) -> None:
+        store, pausing = paused_store
         stream = make_stream()
         events = [make_event(stream.aggregate_id), make_event(stream.aggregate_id)]
 
@@ -108,8 +117,10 @@ class TestReadsDoNotObserveAnOpenAppend:
         if envelopes:
             assert position is not None
 
-    async def test_a_rolled_back_append_is_never_observed(self) -> None:
-        store, pausing = await _paused_store()
+    async def test_a_rolled_back_append_is_never_observed(
+        self, paused_store: tuple[SQLiteEventStore, _PausingConnection]
+    ) -> None:
+        store, pausing = paused_store
         stream = make_stream()
         duplicate = make_event(stream.aggregate_id)
 

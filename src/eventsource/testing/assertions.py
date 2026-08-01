@@ -24,7 +24,7 @@ from collections.abc import Sequence
 from typing import Any, TypeVar
 from uuid import UUID
 
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 
 # Type variable for generic event assertions
 TEvent = TypeVar("TEvent", bound=DomainEvent)

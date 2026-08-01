@@ -14,32 +14,20 @@ def test_no_circular_imports():
     # All imports succeeded = no circular dependencies
 
 
-def test_handlers_registry_imports_from_handlers():
-    """Verify registry uses the new decorator location."""
+def test_handler_registry_imports_from_domain_decorators():
+    """Verify HandlerRegistry uses the domain decorator location."""
     import inspect
 
-    from eventsource.handlers import registry
-
-    source = inspect.getsource(registry)
-    assert "from eventsource.handlers.decorators import" in source
-
-
-def test_handlers_init_no_lazy_import():
-    """Verify handlers/__init__.py has no lazy import workaround."""
-    import inspect
-
-    from eventsource import handlers
+    from eventsource.application.projections import handlers
 
     source = inspect.getsource(handlers)
-    # Should not have __getattr__ for lazy imports anymore
-    assert "__getattr__" not in source, (
-        "handlers/__init__.py should not have __getattr__ lazy import workaround"
-    )
+    assert "from eventsource.domain.decorators import" in source
 
 
 def test_direct_imports_work():
-    """Verify direct imports from handlers work without circular import."""
-    from eventsource.handlers import HandlerInfo, HandlerRegistry, handles
+    """Verify direct imports resolve without circular import."""
+    from eventsource.application.projections.handlers import HandlerInfo, HandlerRegistry
+    from eventsource.domain.decorators import handles
 
     # Verify they are the actual classes/functions
     assert callable(handles)
@@ -47,17 +35,17 @@ def test_direct_imports_work():
     assert hasattr(HandlerInfo, "__init__")
 
 
-def test_top_level_import_matches_handlers_import():
-    """Verify top-level and handlers imports resolve to same objects."""
+def test_top_level_import_matches_domain_decorators_import():
+    """Verify top-level and domain.decorators imports resolve to same objects."""
     from eventsource import handles
-    from eventsource.handlers import handles as h2
+    from eventsource.domain.decorators import handles as h2
 
     assert handles is h2
 
 
 def test_all_decorator_utilities_accessible():
-    """Verify all decorator utilities are accessible from handlers."""
-    from eventsource.handlers import (
+    """Verify all decorator utilities are accessible from domain.decorators."""
+    from eventsource.domain.decorators import (
         get_handled_event_type,
         handles,
         is_event_handler,
@@ -69,7 +57,7 @@ def test_all_decorator_utilities_accessible():
     assert callable(is_event_handler)
 
     # Test basic functionality
-    from eventsource.events.base import DomainEvent
+    from eventsource.domain.event import DomainEvent
 
     class TestEvent(DomainEvent):
         pass

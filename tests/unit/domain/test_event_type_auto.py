@@ -21,7 +21,7 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import Field, ValidationError
 
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 
 
 class TestEventTypeAutoDerivation:
@@ -220,7 +220,7 @@ class TestEventTypeMismatchWarning:
 
     def test_warning_logged_on_mismatch(self, caplog: pytest.LogCaptureFixture) -> None:
         """Warning logged when event_type differs from class name."""
-        with caplog.at_level(logging.WARNING, logger="eventsource.events.base"):
+        with caplog.at_level(logging.WARNING, logger="eventsource.domain.event"):
 
             class OrderCreated(DomainEvent):
                 aggregate_type: str = "Order"
@@ -232,7 +232,7 @@ class TestEventTypeMismatchWarning:
 
     def test_warning_suppressed(self, caplog: pytest.LogCaptureFixture) -> None:
         """Warning suppressed with suppress_event_type_warning=True."""
-        with caplog.at_level(logging.WARNING, logger="eventsource.events.base"):
+        with caplog.at_level(logging.WARNING, logger="eventsource.domain.event"):
 
             class OrderCreated(DomainEvent):
                 aggregate_type: str = "Order"
@@ -243,7 +243,7 @@ class TestEventTypeMismatchWarning:
 
     def test_no_warning_when_matching(self, caplog: pytest.LogCaptureFixture) -> None:
         """No warning when event_type matches class name."""
-        with caplog.at_level(logging.WARNING, logger="eventsource.events.base"):
+        with caplog.at_level(logging.WARNING, logger="eventsource.domain.event"):
 
             class OrderCreated(DomainEvent):
                 aggregate_type: str = "Order"
@@ -253,7 +253,7 @@ class TestEventTypeMismatchWarning:
 
     def test_no_warning_for_auto_derived(self, caplog: pytest.LogCaptureFixture) -> None:
         """No warning when event_type is auto-derived."""
-        with caplog.at_level(logging.WARNING, logger="eventsource.events.base"):
+        with caplog.at_level(logging.WARNING, logger="eventsource.domain.event"):
 
             class AutoDerivedEvent(DomainEvent):
                 aggregate_type: str = "Test"
@@ -500,7 +500,7 @@ class TestSuppressEventTypeWarningAttribute:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Subclasses inherit suppress_event_type_warning but can override."""
-        with caplog.at_level(logging.WARNING, logger="eventsource.events.base"):
+        with caplog.at_level(logging.WARNING, logger="eventsource.domain.event"):
 
             class ParentEvent(DomainEvent):
                 aggregate_type: str = "Test"
@@ -519,7 +519,7 @@ class TestIntegrationWithEventRegistry:
 
     def test_auto_derived_type_works_with_registry(self) -> None:
         """Auto-derived event_type works correctly with EventRegistry."""
-        from eventsource.events.registry import EventRegistry
+        from eventsource.domain.event_registry import EventRegistry
 
         registry = EventRegistry()
 
@@ -534,7 +534,7 @@ class TestIntegrationWithEventRegistry:
 
     def test_explicit_type_works_with_registry(self) -> None:
         """Explicit event_type works correctly with EventRegistry."""
-        from eventsource.events.registry import EventRegistry
+        from eventsource.domain.event_registry import EventRegistry
 
         registry = EventRegistry()
 

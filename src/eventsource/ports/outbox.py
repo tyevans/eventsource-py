@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 from uuid import UUID
 
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 
 
 @dataclass

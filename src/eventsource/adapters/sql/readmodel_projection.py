@@ -11,7 +11,7 @@ import logging
 from typing import TYPE_CHECKING, Generic, TypeVar
 
 from eventsource.adapters.sql.projection import DatabaseProjection
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.observability.attributes import (
     ATTR_EVENT_TYPE,
     ATTR_HANDLER_NAME,
@@ -76,7 +76,7 @@ class ReadModelProjection(DatabaseProjection, Generic[TModel]):
     Example:
         >>> from eventsource import ReadModelProjection
         >>> from eventsource.ports.readmodels import ReadModel
-        >>> from eventsource.handlers import handles
+        >>> from eventsource.domain.decorators import handles
         >>>
         >>> class OrderSummary(ReadModel):
         ...     order_number: str

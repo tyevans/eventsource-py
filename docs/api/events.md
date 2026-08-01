@@ -1,10 +1,11 @@
 # Events API Reference
 
-Reference documentation for the event primitives exported from `eventsource.events`
-(and re-exported from the top-level `eventsource` package): the `DomainEvent` base
-class, the `EventRegistry` type-name-to-class map, the `register_event` decorator,
-the module-level convenience functions that operate on the shared `default_registry`,
-and the two registry exceptions.
+Reference documentation for the event primitives defined in `eventsource.domain.event`
+and `eventsource.domain.event_registry` (and re-exported from the top-level
+`eventsource` package): the `DomainEvent` base class, the `EventRegistry`
+type-name-to-class map, the `register_event` decorator, the module-level convenience
+functions that operate on the shared `default_registry`, and the two registry
+exceptions.
 
 Public names covered here:
 
@@ -22,7 +23,7 @@ Public names covered here:
 | `DuplicateEventTypeError` | exception | Raised on a conflicting registration |
 
 ```python
-from eventsource.events import (
+from eventsource import (
     DomainEvent,
     EventRegistry,
     default_registry,
@@ -36,16 +37,32 @@ from eventsource.events import (
 )
 ```
 
+Or, for the submodule-style import:
+
+```python
+from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import (
+    EventRegistry,
+    default_registry,
+    register_event,
+    get_event_class,
+    get_event_class_or_none,
+    is_event_registered,
+    list_registered_events,
+)
+from eventsource.domain.exceptions import EventTypeNotFoundError, DuplicateEventTypeError
+```
+
 Behavior described below is that of the current source in
-`src/eventsource/events/base.py` and `src/eventsource/events/registry.py`.
+`src/eventsource/domain/event.py` and `src/eventsource/domain/event_registry.py`.
 Events are immutable: `DomainEvent` sets `model_config = ConfigDict(frozen=True)`,
 so every mutation-shaped method returns a new instance rather than modifying in place.
 
 ## Overview
 
-The module has two separable responsibilities.
+These two modules have two separable responsibilities.
 
-**`DomainEvent` (`events/base.py`) defines the event record.** It is a Pydantic v2
+**`DomainEvent` (`domain/event.py`) defines the event record.** It is a Pydantic v2
 `BaseModel` with `model_config = ConfigDict(frozen=True)` that carries the envelope
 fields every event in the system shares — identity (`event_id`, `event_type`,
 `event_version`, `occurred_at`), aggregate placement (`aggregate_id`,
@@ -62,7 +79,7 @@ comparisons over `causation_id` / `correlation_id`. `to_dict()` is
 `model_dump(mode="json")` and `from_dict()` is `model_validate()`, so the pair
 round-trips through JSON-safe primitives.
 
-**`EventRegistry` (`events/registry.py`) maps type names back to classes.** Storage
+**`EventRegistry` (`domain/event_registry.py`) maps type names back to classes.** Storage
 and message-bus payloads carry `event_type` as a string; deserialization needs the
 class that string names. The registry is a thread-safe `dict[str, type[DomainEvent]]`
 guarded by an `RLock`. A module-level `default_registry` instance backs the
@@ -100,7 +117,8 @@ of that type name can succeed, otherwise `get_event_class` raises
 ```python
 from uuid import uuid4
 
-from eventsource.events import DomainEvent, get_event_class, register_event
+from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import get_event_class, register_event
 
 
 @register_event
@@ -121,11 +139,11 @@ assert restored == event
 ## `DomainEvent`
 
 ```python
-from eventsource.events import DomainEvent
+from eventsource.domain.event import DomainEvent
 ```
 
 Frozen Pydantic v2 base class for all domain events. Defined in
-`src/eventsource/events/base.py`.
+`src/eventsource/domain/event.py`.
 
 ### Class definition signature
 
@@ -246,7 +264,7 @@ Its only effect is on the class-definition-time mismatch warning. When a subclas
 declares its own string `event_type` that differs from the class name,
 `__init_subclass__` reads the flag with
 `getattr(cls, "suppress_event_type_warning", False)` and skips the
-`logger.warning(...)` call on the `eventsource.events.base` logger when it is truthy.
+`logger.warning(...)` call on the `eventsource.domain.event` logger when it is truthy.
 Setting the flag has no effect on any other behavior — the `event_type` value itself,
 validation, and registration are all unchanged.
 
@@ -442,7 +460,7 @@ class OrderCreated(DomainEvent):
 ```
 
 Because `"order_created_v2" != "OrderCreated"`, `__init_subclass__` logs a warning
-on the `eventsource.events.base` logger at class-definition time (import time, once
+on the `eventsource.domain.event` logger at class-definition time (import time, once
 per class — not once per instance):
 
 ```
@@ -588,7 +606,7 @@ is a substitute for `to_dict()` when you need the full record.
 ```python
 from uuid import UUID, uuid4
 
-from eventsource.events import DomainEvent
+from eventsource.domain.event import DomainEvent
 
 
 class OrderCreated(DomainEvent):

@@ -22,7 +22,7 @@ from eventsource.application.subscriptions.filtering import (
     matches_event_type,
     matches_pattern,
 )
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 
 # --- Sample Event Classes ---
 

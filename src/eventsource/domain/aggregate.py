@@ -13,13 +13,13 @@ from typing import Any, ClassVar, Generic, TypeVar, cast, get_args, get_origin
 from uuid import UUID
 
 from eventsource.domain.command import DomainCommand
+from eventsource.domain.event import DomainEvent
 from eventsource.domain.exceptions import (
     AggregateNotCreatedError,
     EventVersionError,
     UnhandledEventError,
 )
 from eventsource.domain.types import TState
-from eventsource.events.base import DomainEvent
 
 # Type alias for unregistered event handling mode
 UnregisteredEventHandling = str  # "ignore" | "warn" | "error"

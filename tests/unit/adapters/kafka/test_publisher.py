@@ -22,7 +22,7 @@ from eventsource.adapters.kafka.metrics import KafkaEventBusMetrics  # noqa: E40
 from eventsource.adapters.kafka.models import KafkaEventBusStats  # noqa: E402
 from eventsource.adapters.kafka.publisher import KafkaPublisher  # noqa: E402
 from eventsource.adapters.kafka.serialization import EventSerializer  # noqa: E402
-from eventsource.events.base import DomainEvent  # noqa: E402
+from eventsource.domain.event import DomainEvent  # noqa: E402
 from eventsource.observability import create_tracer  # noqa: E402
 
 

@@ -12,7 +12,7 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 
 if TYPE_CHECKING:
     from aio_pika.abc import AbstractIncomingMessage

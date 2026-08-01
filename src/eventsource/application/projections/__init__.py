@@ -24,7 +24,7 @@ from eventsource.application.projections.coordinator import (
     SubscriberRegistry,
 )
 from eventsource.application.projections.dlq import read_failed_events, send_to_dlq
-from eventsource.handlers import (
+from eventsource.domain.decorators import (
     get_handled_event_type,
     handles,
     is_event_handler,

@@ -17,9 +17,9 @@ from uuid import uuid4
 
 import pytest
 
+from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import EventRegistry
 from eventsource.domain.exceptions import HandlerDispatchError
-from eventsource.events.base import DomainEvent
-from eventsource.events.registry import EventRegistry
 from eventsource.observability import (
     ATTR_AGGREGATE_ID,
     ATTR_EVENT_COUNT,

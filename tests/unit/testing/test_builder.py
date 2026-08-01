@@ -10,7 +10,7 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import ValidationError
 
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.testing import EventBuilder
 
 

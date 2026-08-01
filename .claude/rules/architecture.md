@@ -15,7 +15,7 @@ Source-code dependencies point only inward, toward higher-level policy. Nothing 
 inner ring may know anything about an outer ring — no names, no types, no imports.
 The rings, innermost first:
 
-1. **Entities** (`domain/` — during transition also `events/`): Enterprise business
+1. **Entities** (`domain/`): Enterprise business
    rules — domain events, the event registry, domain value objects, domain
    exceptions. Pure: stdlib + pydantic only. No I/O. `domain/aggregate.py`
    (`AggregateRoot`, `DeclarativeAggregate`) lives here now; `aggregates/` is no
@@ -25,9 +25,15 @@ The rings, innermost first:
    exception hierarchy, including the `SnapshotError` family and the lock
    exceptions), and `domain/command.py` (`DomainCommand`) are settled, not
    transitional; `types.py`, `exceptions.py`, and `commands/` at the top level are
-   no longer transitional locations for any of it (ADR 0030).
-2. **Use cases** (`application/` — during transition `migration/`,
-   `handlers/`): Application business rules —
+   no longer transitional locations for any of it (ADR 0030). `domain/event.py`
+   (`DomainEvent`), `domain/event_registry.py` (`EventRegistry`, `register_event`,
+   `default_registry`, and the lookup functions), and `domain/decorators.py`
+   (`@handles`, `get_handled_event_type`, `is_event_handler` — domain-ring because
+   `DeclarativeAggregate` is their only consumer) are settled, not transitional;
+   top-level `events/` and `handlers/` are no longer transitional locations for
+   any of it (ADR 0033).
+2. **Use cases** (`application/` — during transition `migration/`):
+   Application business rules —
    aggregate repositories, projection engines, subscription lifecycle, migration
    orchestration. Depends on entities and on the boundary ports it owns. Never on a
    concrete adapter, driver, or framework. `application/aggregates/`
@@ -44,7 +50,15 @@ The rings, innermost first:
    `subscriptions/` no longer exists (ADR 0032). `Subscriber`/`SyncSubscriber`/
    `BatchSubscriber` (in `ports/subscribers.py`) and `LeaderElector`/
    `LeaderElectorWithLease` (in `ports/coordination.py`) are Protocols, not
-   part of this ring — see the ports entry below.
+   part of this ring — see the ports entry below. `application/projections/handlers.py`
+   (`HandlerRegistry`, `HandlerInfo` — the ADR-0013 collaborator extracted out of
+   `DeclarativeProjection`) and `application/background_tasks.py`
+   (`BackgroundTaskManager`, shared by `application/aggregates/`'s background
+   snapshot scheduling and `adapters/_bus/`'s shutdown drain — owned here because
+   the Dependency Rule lets an outer ring depend inward but never the reverse, so
+   a utility used by both application and adapters is owned by the innermost of
+   the two) are settled, not transitional; top-level `handlers/` and `_internal/`
+   are gone (ADR 0033).
 3. **Interface adapters** (`adapters/` — during transition `stores/`):
    Gateways that
    implement the ports for a specific technology, converting between the use-case
@@ -75,7 +89,11 @@ The rings, innermost first:
    `readmodels/` no longer exist — there is no shim at either path (ADR 0030).
    `adapters/memory/coordination.py` (`InMemoryLeaderElector`, `SharedLeaderState`)
    is settled, not transitional — the only concrete implementation of the
-   `ports/coordination.py` Protocol pair (ADR 0032).
+   `ports/coordination.py` Protocol pair (ADR 0032). `adapters/_bus/handler_adapter.py`
+   (`HandlerAdapter`, `get_handler_name`) is settled, not transitional — every
+   importer is a bus adapter, so it joins `adapters/_bus/base.py` and
+   `adapters/_bus/registry.py` as adapters-internal shared code; top-level
+   `handlers/` is no longer a transitional location for it (ADR 0033).
 4. **Frameworks & drivers**: sqlalchemy, asyncpg, aiosqlite, redis, aiokafka,
    aio-pika. Imported only inside the adapter that needs them, always guarded
    (see below). Driver types never appear in port signatures.

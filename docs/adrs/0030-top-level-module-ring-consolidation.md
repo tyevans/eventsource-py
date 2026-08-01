@@ -66,6 +66,14 @@ Sibling of [ADR 0025](0025-legacy-store-retirement.md) and
 [ADR 0029](0029-locks-readmodels-and-engine-rings.md) in *shape* (relocating
 the last pre-ring modules onto the ring map).
 
+**Amended by [ADR 0033](0033-events-handlers-internal-ring-migration.md).**
+This ADR's own relocations stand untouched. The pointer is here because this
+ADR's Context section (below) names `events/base.py` as a hard import floor
+beneath `ports/handlers.py` and `handlers/decorators.py` -- both `events/`
+and `handlers/` are relocated by ADR 0033, to `domain/event.py` and
+`domain/decorators.py` respectively; the floor relationship itself is
+unchanged, only the file paths that describe it.
+
 ## Context
 
 `docs/core-surface.md` and `.claude/rules/architecture.md`'s ring map both

@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 from eventsource.application.projections.base import DeclarativeProjection, TenantFilter
 from eventsource.application.projections.checkpoints import record_checkpoint
 from eventsource.application.projections.dlq import send_to_dlq
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.observability.attributes import (
     ATTR_EVENT_TYPE,
     ATTR_HANDLER_NAME,

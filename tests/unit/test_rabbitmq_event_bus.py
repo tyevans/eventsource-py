@@ -30,8 +30,8 @@ from eventsource.adapters.rabbitmq import (
     RabbitMQEventBusStats,
     RabbitMQNotAvailableError,
 )
-from eventsource.events.base import DomainEvent
-from eventsource.events.registry import EventRegistry
+from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import EventRegistry
 
 
 class TestRabbitMQEventBusConfig:
@@ -1476,7 +1476,7 @@ class TestRabbitMQHandlerNormalization:
         """Test normalizing an async function handler via HandlerAdapter."""
         import asyncio
 
-        from eventsource.handlers.adapter import HandlerAdapter
+        from eventsource.adapters._bus.handler_adapter import HandlerAdapter
 
         async def async_handler(event: DomainEvent) -> None:
             pass
@@ -1489,7 +1489,7 @@ class TestRabbitMQHandlerNormalization:
         """Test normalizing a sync function handler via HandlerAdapter."""
         import asyncio
 
-        from eventsource.handlers.adapter import HandlerAdapter
+        from eventsource.adapters._bus.handler_adapter import HandlerAdapter
 
         def sync_handler(event: DomainEvent) -> None:
             pass
@@ -1502,7 +1502,7 @@ class TestRabbitMQHandlerNormalization:
         """Test normalizing a handler class with async handle method."""
         import asyncio
 
-        from eventsource.handlers.adapter import HandlerAdapter
+        from eventsource.adapters._bus.handler_adapter import HandlerAdapter
 
         class AsyncHandler:
             async def handle(self, event: DomainEvent) -> None:
@@ -1517,7 +1517,7 @@ class TestRabbitMQHandlerNormalization:
         """Test normalizing a handler class with sync handle method."""
         import asyncio
 
-        from eventsource.handlers.adapter import HandlerAdapter
+        from eventsource.adapters._bus.handler_adapter import HandlerAdapter
 
         class SyncHandler:
             def handle(self, event: DomainEvent) -> None:
@@ -1530,14 +1530,14 @@ class TestRabbitMQHandlerNormalization:
 
     def test_normalize_invalid_handler_raises_type_error(self) -> None:
         """Test that normalizing an invalid handler raises TypeError."""
-        from eventsource.handlers.adapter import HandlerAdapter
+        from eventsource.adapters._bus.handler_adapter import HandlerAdapter
 
         with pytest.raises(TypeError, match="Handler must have a handle\\(\\) method"):
             HandlerAdapter("not a handler")  # type: ignore[arg-type]
 
     def test_normalize_invalid_handler_with_number(self) -> None:
         """Test that normalizing a number raises TypeError."""
-        from eventsource.handlers.adapter import HandlerAdapter
+        from eventsource.adapters._bus.handler_adapter import HandlerAdapter
 
         with pytest.raises(TypeError, match="Handler must have a handle\\(\\) method"):
             HandlerAdapter(42)  # type: ignore[arg-type]
@@ -1546,7 +1546,7 @@ class TestRabbitMQHandlerNormalization:
         """Test normalizing a lambda handler."""
         import asyncio
 
-        from eventsource.handlers.adapter import HandlerAdapter
+        from eventsource.adapters._bus.handler_adapter import HandlerAdapter
 
         handler = lambda event: None  # noqa: E731
         adapter = HandlerAdapter(handler)
@@ -1556,7 +1556,7 @@ class TestRabbitMQHandlerNormalization:
     @pytest.mark.asyncio
     async def test_normalized_sync_handler_invocation(self) -> None:
         """Test that normalized sync handler can be invoked."""
-        from eventsource.handlers.adapter import HandlerAdapter
+        from eventsource.adapters._bus.handler_adapter import HandlerAdapter
 
         results: list[DomainEvent] = []
 
@@ -1581,7 +1581,7 @@ class TestRabbitMQHandlerNormalization:
     @pytest.mark.asyncio
     async def test_normalized_async_handler_invocation(self) -> None:
         """Test that normalized async handler can be invoked."""
-        from eventsource.handlers.adapter import HandlerAdapter
+        from eventsource.adapters._bus.handler_adapter import HandlerAdapter
 
         results: list[DomainEvent] = []
 
@@ -1606,7 +1606,7 @@ class TestRabbitMQHandlerNormalization:
     @pytest.mark.asyncio
     async def test_normalized_handler_class_invocation(self) -> None:
         """Test that normalized handler class can be invoked."""
-        from eventsource.handlers.adapter import HandlerAdapter
+        from eventsource.adapters._bus.handler_adapter import HandlerAdapter
 
         results: list[DomainEvent] = []
 
@@ -1640,7 +1640,7 @@ class TestRabbitMQGetHandlerName:
 
     def test_get_handler_name_from_class(self) -> None:
         """Test getting name from a class instance."""
-        from eventsource.handlers.adapter import HandlerAdapter
+        from eventsource.adapters._bus.handler_adapter import HandlerAdapter
 
         class MyHandler:
             async def handle(self, event: DomainEvent) -> None:
@@ -1652,7 +1652,7 @@ class TestRabbitMQGetHandlerName:
 
     def test_get_handler_name_from_function(self) -> None:
         """Test getting name from a function."""
-        from eventsource.handlers.adapter import HandlerAdapter
+        from eventsource.adapters._bus.handler_adapter import HandlerAdapter
 
         def my_handler_func(event: DomainEvent) -> None:
             pass
@@ -1662,7 +1662,7 @@ class TestRabbitMQGetHandlerName:
 
     def test_get_handler_name_from_lambda(self) -> None:
         """Test getting name from a lambda."""
-        from eventsource.handlers.adapter import HandlerAdapter
+        from eventsource.adapters._bus.handler_adapter import HandlerAdapter
 
         handler = lambda event: None  # noqa: E731
         adapter = HandlerAdapter(handler)
@@ -1670,7 +1670,7 @@ class TestRabbitMQGetHandlerName:
 
     def test_get_handler_name_from_mock(self) -> None:
         """Test getting name from a MagicMock."""
-        from eventsource.handlers.adapter import HandlerAdapter
+        from eventsource.adapters._bus.handler_adapter import HandlerAdapter
 
         handler = MagicMock()
         adapter = HandlerAdapter(handler)
@@ -4501,7 +4501,7 @@ class TestRabbitMQHandlerNormalizationEdgeCases:
 
         This tests the `if asyncio.iscoroutine(result)` branch in the sync wrapper.
         """
-        from eventsource.handlers.adapter import HandlerAdapter
+        from eventsource.adapters._bus.handler_adapter import HandlerAdapter
 
         results: list[DomainEvent] = []
 
@@ -4532,7 +4532,7 @@ class TestRabbitMQHandlerNormalizationEdgeCases:
 
         This tests the `if asyncio.iscoroutine(result)` branch in the callable wrapper.
         """
-        from eventsource.handlers.adapter import HandlerAdapter
+        from eventsource.adapters._bus.handler_adapter import HandlerAdapter
 
         results: list[DomainEvent] = []
 
@@ -4568,7 +4568,7 @@ class TestRabbitMQGetHandlerNameEdgeCases:
         Note: In practice, everything in Python has __class__, but we test
         the fallback path by using an object that has __name__ instead.
         """
-        from eventsource.handlers.adapter import HandlerAdapter
+        from eventsource.adapters._bus.handler_adapter import HandlerAdapter
 
         # Create an object that pretends to not have __class__ by overriding
         # hasattr check - this is tricky since everything has __class__
@@ -4590,7 +4590,7 @@ class TestRabbitMQGetHandlerNameEdgeCases:
         Note: This is hard to test since almost everything has __class__,
         but we can verify the behavior with mocks.
         """
-        from eventsource.handlers.adapter import HandlerAdapter
+        from eventsource.adapters._bus.handler_adapter import HandlerAdapter
 
         # Test with a MagicMock to verify it handles objects properly
         # Use a dedicated MagicMock subclass rather than mutating MagicMock

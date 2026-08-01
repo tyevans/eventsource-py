@@ -35,7 +35,7 @@ pytest.importorskip("aiokafka", reason="aiokafka not installed")
 
 from eventsource.adapters.kafka.bus import KafkaEventBus  # noqa: E402
 from eventsource.adapters.kafka.config import KafkaEventBusConfig  # noqa: E402
-from eventsource.events.base import DomainEvent  # noqa: E402
+from eventsource.domain.event import DomainEvent  # noqa: E402
 
 
 class SampleEvent(DomainEvent):

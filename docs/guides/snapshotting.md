@@ -752,7 +752,7 @@ into `None`. `save()` still succeeds. See
 ### `"background"` -- hand the snapshot to a fire-and-forget task
 
 `BackgroundScheduler.schedule()` submits the write to a
-`BackgroundTaskManager` (`eventsource._internal.background_tasks`), which
+`BackgroundTaskManager` (`eventsource.application.background_tasks`), which
 tracks it in a pending set, attaches a done-callback that discards it and
 logs any exception, and returns `None` immediately. `save()` does not wait.
 

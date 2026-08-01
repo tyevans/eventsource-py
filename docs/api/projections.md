@@ -26,8 +26,9 @@ The barrel `eventsource.application.projections` re-exports `base`, `coordinator
 `eventsource.adapters.sql.projection`, not this package) and the retry policies, which
 must still be imported from `eventsource.application.projections.retry`. The `handles`,
 `get_handled_event_type`, and `is_event_handler` names re-exported here are aliases for
-the canonical definitions in `eventsource.handlers`, kept for backward compatibility —
-new code should import them from `eventsource.handlers`. The `EventHandler`,
+the canonical definitions in `eventsource.domain.decorators`, kept for backward
+compatibility — new code should import them from `eventsource.domain.decorators`. The
+`EventHandler`,
 `SyncEventHandler`, and `EventSubscriber` names are likewise re-exports from
 `eventsource.ports.handlers`.
 
@@ -115,7 +116,7 @@ This is the complete `__all__`, grouped as the source groups it:
 | --- | --- | --- |
 | Base classes | `Projection`, `SyncProjection`, `EventHandlerBase`, `CheckpointTrackingProjection`, `DeclarativeProjection` | `eventsource.application.projections.base` |
 | Type aliases | `TenantFilter` | `eventsource.application.projections.base` |
-| Decorators | `handles`, `get_handled_event_type`, `is_event_handler` | `eventsource.handlers` (re-export) |
+| Decorators | `handles`, `get_handled_event_type`, `is_event_handler` | `eventsource.domain.decorators` (re-export) |
 | Coordinators and registries | `ProjectionRegistry`, `ProjectionCoordinator`, `SubscriberRegistry` | `eventsource.application.projections.coordinator` |
 | Checkpoint functions | `record_checkpoint`, `read_checkpoint`, `lag_metrics_dict`, `reset_checkpoint` | `eventsource.application.projections.checkpoints` |
 | DLQ functions | `send_to_dlq`, `read_failed_events` | `eventsource.application.projections.dlq` |
@@ -170,11 +171,11 @@ because all three paths resolve to the same objects.
 ### Aliases, not duplicates
 
 `handles`, `get_handled_event_type`, and `is_event_handler` are bound directly from
-`eventsource.handlers`; `EventHandler`, `SyncEventHandler`, and `EventSubscriber` from
+`eventsource.domain.decorators`; `EventHandler`, `SyncEventHandler`, and `EventSubscriber` from
 `eventsource.ports.handlers`. Identity comparisons and `isinstance`/`issubclass` checks
 behave identically whichever path you import through. The
 `application.projections`-package copies exist for backward compatibility. New code
-should prefer the canonical modules: `eventsource.handlers` for the decorator helpers and
+should prefer the canonical modules: `eventsource.domain.decorators` for the decorator helpers and
 `eventsource.ports.handlers` for the protocols.
 
 ## Abstract Base Classes

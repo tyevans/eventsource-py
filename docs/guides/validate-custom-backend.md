@@ -75,7 +75,7 @@ Before you start, you need:
   driver needs (`postgresql`, `sqlite`, `redis`, `rabbitmq`, `kafka`,
   `telemetry`, or `all`). `eventsource.testing.conformance_ports` is
   sqlalchemy-free -- it only imports from `eventsource.ports`,
-  `eventsource.domain`, `eventsource.events`, `eventsource.domain.exceptions`, and
+  `eventsource.domain`, `eventsource.domain.event_registry`, `eventsource.domain.exceptions`, and
   pytest/stdlib -- so it pulls in nothing beyond the core dependencies.
 - **pytest and pytest-asyncio.** The suites are plain classes of `async def`
   test methods; they do not bundle a runner or an event loop. Both ship in the

@@ -18,7 +18,7 @@ from eventsource.ports.positions import Position
 
 if TYPE_CHECKING:
     from eventsource.application.subscriptions.retry import CircuitBreakerConfig, RetryConfig
-    from eventsource.events.base import DomainEvent
+    from eventsource.domain.event import DomainEvent
 
 
 # Type alias for start position

@@ -27,7 +27,7 @@ from eventsource.application.subscriptions import (
     SubscriptionState,
 )
 from eventsource.application.subscriptions.runners import LiveRunner, LiveRunnerStats
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.ports.positions import Position
 
 # --- Sample Event Classes ---

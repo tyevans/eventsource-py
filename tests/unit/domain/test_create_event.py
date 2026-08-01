@@ -19,8 +19,8 @@ import pytest
 from pydantic import BaseModel
 
 from eventsource.domain.aggregate import AggregateRoot, DeclarativeAggregate
-from eventsource.events.base import DomainEvent
-from eventsource.handlers import handles
+from eventsource.domain.decorators import handles
+from eventsource.domain.event import DomainEvent
 
 # =============================================================================
 # Test fixtures: State models and Events

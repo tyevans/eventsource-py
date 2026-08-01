@@ -6,7 +6,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from eventsource.adapters._bus.registry import SubscriptionRegistry
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 
 
 class RegistryEventA(DomainEvent):

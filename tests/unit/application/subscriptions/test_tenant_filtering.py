@@ -15,7 +15,7 @@ import pytest
 
 from eventsource.application.subscriptions.config import SubscriptionConfig
 from eventsource.application.subscriptions.filtering import EventFilter
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 
 # --- Sample Event Classes ---
 

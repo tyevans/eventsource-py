@@ -18,7 +18,7 @@ import json
 from typing import Any
 from uuid import uuid4
 
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from tests.fixtures import (
     CounterIncremented,
     OrderCreated,

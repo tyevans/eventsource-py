@@ -54,11 +54,11 @@ from eventsource.adapters.rabbitmq.models import (
 )
 from eventsource.adapters.rabbitmq.publisher import RabbitMQPublisher
 from eventsource.adapters.rabbitmq.topology import RabbitMQTopology
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.observability import OTEL_AVAILABLE, Tracer, create_tracer
 
 if TYPE_CHECKING:
-    from eventsource.events.registry import EventRegistry
+    from eventsource.domain.event_registry import EventRegistry
 
 # Optional aio-pika import - fail gracefully if not installed
 try:
@@ -111,7 +111,7 @@ class RabbitMQEventBus(BaseEventBus):
 
     Example:
         >>> from eventsource.adapters.rabbitmq import RabbitMQEventBus, RabbitMQEventBusConfig
-        >>> from eventsource.events.registry import EventRegistry
+        >>> from eventsource.domain.event_registry import EventRegistry
         >>>
         >>> config = RabbitMQEventBusConfig(rabbitmq_url="amqp://localhost:5672")
         >>> registry = EventRegistry()

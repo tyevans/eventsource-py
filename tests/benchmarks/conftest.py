@@ -17,7 +17,7 @@ from eventsource.adapters.memory.dlq import InMemoryDLQRepository
 from eventsource.adapters.memory.outbox import InMemoryOutboxRepository
 from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.domain import StreamId
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.ports.positions import ExpectedVersion
 from tests.fixtures import (
     CounterIncremented,

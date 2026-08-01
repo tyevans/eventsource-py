@@ -32,7 +32,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Awaitable
 from typing import Protocol, runtime_checkable
 
-from eventsource.events import DomainEvent
+from eventsource.domain.event import DomainEvent
 
 
 @runtime_checkable

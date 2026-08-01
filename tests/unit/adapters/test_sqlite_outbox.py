@@ -15,7 +15,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from eventsource.adapters.sqlite.outbox import SQLiteOutboxRepository
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.ports.outbox import OutboxRepository
 from tests.conftest import AIOSQLITE_AVAILABLE, skip_if_no_aiosqlite
 

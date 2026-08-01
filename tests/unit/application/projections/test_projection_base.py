@@ -24,9 +24,9 @@ from eventsource.application.projections.base import (
     Projection,
     SyncProjection,
 )
+from eventsource.domain.decorators import handles
+from eventsource.domain.event import DomainEvent
 from eventsource.domain.exceptions import UnhandledEventError
-from eventsource.events.base import DomainEvent
-from eventsource.handlers import handles
 
 
 # Sample events for testing

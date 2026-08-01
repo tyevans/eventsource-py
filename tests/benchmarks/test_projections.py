@@ -18,8 +18,8 @@ from uuid import uuid4
 
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
 from eventsource.application.projections.base import DeclarativeProjection
-from eventsource.events.base import DomainEvent
-from eventsource.handlers import handles
+from eventsource.domain.decorators import handles
+from eventsource.domain.event import DomainEvent
 from tests.benchmarks.conftest import run_async
 from tests.fixtures import (
     CounterDecremented,

@@ -26,7 +26,7 @@ from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.domain import StreamId
 from eventsource.domain.aggregate import AggregateRoot
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.observability import (
     ATTR_AGGREGATE_ID,
     ATTR_AGGREGATE_TYPE,

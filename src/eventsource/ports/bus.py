@@ -14,7 +14,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from typing import Protocol
 
-from eventsource.events.base import DomainEvent
+from eventsource.domain.event import DomainEvent
 from eventsource.ports.handlers import (
     FlexibleEventHandler,
     FlexibleEventSubscriber,
