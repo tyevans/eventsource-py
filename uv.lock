@@ -639,7 +639,7 @@ requires-dist = [
     { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.5" },
     { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.5" },
     { name = "mkdocstrings", extras = ["python"], marker = "extra == 'docs'", specifier = ">=0.24" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.8" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.19.0" },
     { name = "opentelemetry-api", marker = "extra == 'telemetry'", specifier = ">=1.0,<2.0" },
     { name = "opentelemetry-sdk", marker = "extra == 'telemetry'", specifier = ">=1.0,<2.0" },
     { name = "orjson", specifier = ">=3.9" },

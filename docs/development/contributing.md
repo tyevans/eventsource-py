@@ -226,18 +226,24 @@ the build.
 
 ## Understand what CI will run on your PR
 
-`.github/workflows/ci.yml` defines four jobs:
+Every job in `.github/workflows/ci.yml` installs with `uv sync --all-extras --locked` and runs its
+tools through `uv run`, so CI executes exactly the versions pinned in `uv.lock` — the same ones
+`make check` uses locally. The jobs:
 
-- **`lint`** — installs `.[dev]` and runs `ruff check .` plus `ruff format --check .` on the whole repo.
-- **`type-check`** — installs `.[dev,all]` and runs `mypy src/`.
-- **`test`** — a matrix over Python 3.13 with `.[dev,all]`, running
+- **`lint`** — `ruff check .` plus `ruff format --check .` on the whole repo.
+- **`type-check`** — `mypy src/`.
+- **`import-linter`** — the ring-architecture contracts.
+- **`audit`** — `bandit` and `pip-audit`.
+- **`test`** — a matrix over Python 3.13 running
   `pytest -m "not integration and not postgres and not redis and not e2e"` with XML coverage; the
   3.13 leg uploads `coverage.xml` as an artifact (7-day retention).
-- **`integration`** — needs the other three, spins up `postgres:16` and `redis:7` service containers,
+- **`redis`** — the Redis-backed suite against a service container.
+- **`integration`** — spins up `postgres:16` and `redis:7` service containers,
   sets `DATABASE_URL=postgresql://test:test@localhost:5432/eventsource_test` and
   `REDIS_URL=redis://localhost:6379`, and runs `pytest -m "integration or postgres or redis"`. It is
   gated on `github.event_name == 'push' && github.ref == 'refs/heads/main'`, so **it never runs on
   your PR** — run the integration suite locally before you ask for a merge.
+- **`broker-tests`** — the Kafka and RabbitMQ suites; runs on PRs and on pushes to `main`.
 
 `.github/workflows/docs.yml` runs three jobs in parallel — `build` (`mkdocs build --strict`, plus a
 `docs-preview` artifact on PRs), `link-check` (lychee over `docs/**/*.md` and `README.md`, with

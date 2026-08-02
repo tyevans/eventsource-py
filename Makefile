@@ -3,13 +3,23 @@
 # `make check` runs every gate CI has a job for. Anything slower or needing
 # external services is a separate opt-in target -- see `make help`.
 #
-# Every recipe goes through `uv run`, so gates execute against the locked
-# environment in uv.lock. Run `make install` once first.
+# Every recipe goes through $(UV_RUN), which carries the same
+# `--all-extras --locked` that .github/workflows/ci.yml syncs with, so gates
+# execute against the versions pinned in uv.lock and a green `make check`
+# and a green CI mean the same thing. If you add a gate here, add the
+# matching job there.
 #
-# .github/workflows/ci.yml installs the same way (`uv sync --all-extras
-# --locked`) and runs the same commands via `uv run`, so a green
-# `make check` and a green CI mean the same thing. If you add a gate here,
-# add the matching job there.
+# Do not drop `--all-extras` back to a bare `uv run`. The contributor
+# toolchain (ruff, pytest, mypy, hypothesis, testcontainers, pre-commit)
+# lives in the `dev` *extra*, and extras are opt-in: without the flag, an
+# unsynced checkout has no ruff in .venv, `uv run` silently falls through to
+# whatever `ruff` is on PATH, and the gate runs an unrelated version. That
+# happened -- a pyenv-global ruff 0.7.2 reported seven errors that 0.14.8
+# does not, and the same fallthrough can pass code CI rejects.
+#
+# `--locked` makes a stale uv.lock a loud failure here as well as in CI.
+# If it trips, run `uv lock` and commit the result.
+UV_RUN := uv run --all-extras --locked
 
 # Marker expression for the unit suite -- kept byte-identical to the `test`
 # job in .github/workflows/ci.yml. If you change it here, change it there.
@@ -38,41 +48,41 @@ help:  ## Show this help
 	@echo "  check = CI parity. Green here means green in CI."
 
 install:  ## Sync the dev environment (all extras)
-	uv sync --all-extras
+	uv sync --all-extras --locked
 
 check: lint types arch sec test  ## Everything CI runs on a PR
 	@echo
 	@echo "All checks passed."
 
 fix:  ## Auto-fix what can be auto-fixed (ruff --fix + format)
-	uv run ruff check src/ tests/ --fix
-	uv run ruff format src/ tests/
+	$(UV_RUN) ruff check src/ tests/ --fix
+	$(UV_RUN) ruff format src/ tests/
 
 ## ---------------------------------------------------------------------------
 ## Individual gates (each mirrors one CI job)
 ## ---------------------------------------------------------------------------
 
 lint:  ## ruff check + format verification
-	uv run ruff check .
-	uv run ruff format --check .
+	$(UV_RUN) ruff check .
+	$(UV_RUN) ruff format --check .
 
 format: ## Alias for `fix`
 	@$(MAKE) fix
 
 types:  ## mypy strict
-	uv run mypy src/ bench/ --config-file=pyproject.toml
+	$(UV_RUN) mypy src/ bench/ --config-file=pyproject.toml
 
 arch:  ## import-linter architecture contracts
-	uv run lint-imports
+	$(UV_RUN) lint-imports
 
 sec: audit  ## bandit + pip-audit
-	uv run bandit -c pyproject.toml -r src/
+	$(UV_RUN) bandit -c pyproject.toml -r src/
 
 audit:  ## pip-audit dependency vulnerability scan
-	uv run pip-audit
+	$(UV_RUN) pip-audit
 
 test:  ## Unit suite with coverage (enforces the fail_under ratchet)
-	uv run pytest -m "$(UNIT_MARKERS)" \
+	$(UV_RUN) pytest -m "$(UNIT_MARKERS)" \
 		-n auto --dist worksteal \
 		--cov=src/eventsource --cov-report=term-missing
 
@@ -89,11 +99,11 @@ $(TEST_STAMP): $(SRC_FILES)
 	@touch $@
 
 cov: test  ## Unit suite with coverage + an HTML report in htmlcov/
-	uv run coverage html
+	$(UV_RUN) coverage html
 	@echo "Report: htmlcov/index.html"
 
 precommit:  ## Run the pre-commit hooks over all files
-	uv run pre-commit run --all-files
+	$(UV_RUN) pre-commit run --all-files
 
 ## ---------------------------------------------------------------------------
 ## Opt-in: slower, or needs external services
@@ -106,7 +116,7 @@ integration-down:  ## Stop and remove the test containers
 	$(COMPOSE) down -v
 
 integration: integration-up  ## Integration suite against real Postgres/Redis
-	uv run pytest -m "integration or postgres or redis" \
+	$(UV_RUN) pytest -m "integration or postgres or redis" \
 		--cov=src/eventsource --cov-report=term-missing
 
 mutation:  ## mutmut against the curated set (slow -- see docs/development/mutation-testing.md)
@@ -123,13 +133,13 @@ bench-down:  ## Stop and remove the benchmark services
 	$(BENCH_COMPOSE) down -v
 
 bench:  ## Run the full benchmark matrix (services optional; unavailable backends skip)
-	uv run python -m bench run
+	$(UV_RUN) python -m bench run
 
 bench-quick:  ## Fast sanity pass over the matrix
-	uv run python -m bench run --quick
+	$(UV_RUN) python -m bench run --quick
 
 bench-report:  ## Render a results file: make bench-report RESULTS=bench/results/bench-<ts>.json
-	uv run python -m bench report $(RESULTS)
+	$(UV_RUN) python -m bench report $(RESULTS)
 
 mutation-cosmic:  ## cosmic-ray for one module: make mutation-cosmic MODULE=engine
 	@test -n "$(MODULE)" || { \
@@ -139,11 +149,11 @@ mutation-cosmic:  ## cosmic-ray for one module: make mutation-cosmic MODULE=engi
 	scripts/mutation-cosmic-ray.sh $(MODULE)
 
 docs: docs-examples  ## Strict docs build + runnable-example validation
-	uv run mkdocs build --strict
+	$(UV_RUN) mkdocs build --strict
 
 docs-examples:  ## Syntax-check and execute everything in examples/
-	uv run python scripts/validate_examples.py --syntax
-	uv run python scripts/validate_examples.py
+	$(UV_RUN) python scripts/validate_examples.py --syntax
+	$(UV_RUN) python scripts/validate_examples.py
 
 ## ---------------------------------------------------------------------------
 

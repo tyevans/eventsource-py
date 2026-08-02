@@ -64,7 +64,10 @@ dev = [
     "pytest-cov>=4.0",
     "pytest-benchmark>=4.0.0",
     "hypothesis>=6.100",
-    "mypy>=1.8",
+    # Keep in step with the `mypy` pin in [dependency-groups] dev below --
+    # they resolve together, and a lower floor here silently hands
+    # `pip install -e ".[dev]"` users a mypy that fails the strict config.
+    "mypy>=1.19.0",
     "ruff>=0.14.8,<0.15",
     "testcontainers>=4.0",
     "pre-commit>=4.0",
