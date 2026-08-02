@@ -11,6 +11,7 @@ cross-dispatch).
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -340,3 +341,123 @@ class TestLifecycle:
             task.cancel()
             with pytest.raises((asyncio.CancelledError, RuntimeError)):
                 await task
+
+
+class TestRetryBackoffIsHonored:
+    """`retry_after` was written and never read (ADR 0048).
+
+    The Kafka consumer computed a delay from the shared `RetryPolicy`, put it
+    in a header, and then processed republished messages immediately -- so the
+    same config that made the RabbitMQ consumer back off made this one
+    hot-loop.
+    """
+
+    @pytest.mark.asyncio
+    async def test_republished_message_waits_out_its_scheduled_time(self) -> None:
+        loop, _producer, _consumer = _make_loop()
+        event = _make_event()
+        message = _make_message(event, retry_count=1)
+        due_in = 12.5
+        message.headers.append(
+            ("retry_after", str(datetime.now(UTC).timestamp() + due_in).encode("utf-8"))
+        )
+
+        slept: list[float] = []
+
+        async def fake_sleep(seconds: float) -> None:
+            slept.append(seconds)
+
+        with patch.object(asyncio, "sleep", fake_sleep):
+            await loop._process_message(message)
+
+        assert slept, "the scheduled backoff was ignored"
+        assert 0 < slept[0] <= due_in
+
+    @pytest.mark.asyncio
+    async def test_first_delivery_does_not_wait(self) -> None:
+        loop, _producer, _consumer = _make_loop()
+        message = _make_message(_make_event())
+
+        slept: list[float] = []
+
+        async def fake_sleep(seconds: float) -> None:
+            slept.append(seconds)
+
+        with patch.object(asyncio, "sleep", fake_sleep):
+            await loop._process_message(message)
+
+        assert slept == []
+
+    @pytest.mark.asyncio
+    async def test_an_elapsed_retry_after_does_not_wait(self) -> None:
+        loop, _producer, _consumer = _make_loop()
+        message = _make_message(_make_event(), retry_count=1)
+        message.headers.append(
+            ("retry_after", str(datetime.now(UTC).timestamp() - 60).encode("utf-8"))
+        )
+
+        slept: list[float] = []
+
+        async def fake_sleep(seconds: float) -> None:
+            slept.append(seconds)
+
+        with patch.object(asyncio, "sleep", fake_sleep):
+            await loop._process_message(message)
+
+        assert slept == []
+
+
+class TestOffsetsAreNotCommittedForUnretainedEvents:
+    """Committing an offset claims the event is handled (ADR 0048)."""
+
+    @pytest.mark.asyncio
+    async def test_no_commit_when_the_producer_cannot_republish_or_dlq(self) -> None:
+        async def boom(event: DomainEvent) -> None:
+            raise ValueError("handler exploded")
+
+        loop, _producer, consumer = _make_loop(handlers=(HandlerAdapter(boom),), max_retries=3)
+        # No producer: neither the retry topic nor the DLQ can accept it.
+        loop._connection._producer = None
+
+        await loop._process_message(_make_message(_make_event(), retry_count=1))
+
+        consumer.commit.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_no_commit_at_max_retries_when_the_dlq_send_cannot_happen(self) -> None:
+        async def boom(event: DomainEvent) -> None:
+            raise ValueError("handler exploded")
+
+        loop, _producer, consumer = _make_loop(handlers=(HandlerAdapter(boom),), max_retries=1)
+        loop._connection._producer = None
+
+        await loop._process_message(_make_message(_make_event(), retry_count=5))
+
+        consumer.commit.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_commits_when_the_republish_succeeds(self) -> None:
+        async def boom(event: DomainEvent) -> None:
+            raise ValueError("handler exploded")
+
+        loop, producer, consumer = _make_loop(handlers=(HandlerAdapter(boom),), max_retries=3)
+
+        await loop._process_message(_make_message(_make_event(), retry_count=1))
+
+        producer.send.assert_awaited()
+        consumer.commit.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_commits_when_the_dlq_is_deliberately_disabled(self) -> None:
+        """Turning the DLQ off is an explicit choice to drop poison messages."""
+
+        async def boom(event: DomainEvent) -> None:
+            raise ValueError("handler exploded")
+
+        loop, _producer, consumer = _make_loop(
+            handlers=(HandlerAdapter(boom),), max_retries=1, enable_dlq=False
+        )
+
+        await loop._process_message(_make_message(_make_event(), retry_count=5))
+
+        consumer.commit.assert_awaited()

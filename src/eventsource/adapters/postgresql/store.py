@@ -29,7 +29,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from eventsource.adapters._sql.positions import IntPositionCodec
@@ -43,6 +43,7 @@ from eventsource.ports import (
     AppendResult,
     CategoryReadOptions,
     EventEnvelope,
+    EventStoreConnectionError,
     ExpectedVersion,
     FeedReadOptions,
     Position,
@@ -211,12 +212,21 @@ class PostgreSQLEventStore:
         async with self._schema_lock:
             if self._schema_ready:
                 return
-            async with self._engine.connect() as conn:
-                raw = await conn.get_raw_connection()
-                driver_connection = raw.driver_connection
-                assert driver_connection is not None
-                await driver_connection.execute(get_schema("events"))
-                await conn.commit()
+            try:
+                async with self._engine.connect() as conn:
+                    raw = await conn.get_raw_connection()
+                    driver_connection = raw.driver_connection
+                    assert driver_connection is not None
+                    await driver_connection.execute(get_schema("events"))
+                    await conn.commit()
+            except OperationalError as e:
+                # First contact with the database. A bad DSN, an unreachable
+                # host, or refused credentials surface here as a SQLAlchemy
+                # driver error naming neither the library nor this store.
+                raise EventStoreConnectionError(
+                    f"could not connect to PostgreSQL to create the schema: {e}",
+                    store=type(self).__name__,
+                ) from e
             self._schema_ready = True
 
     async def close(self) -> None:

@@ -217,6 +217,43 @@ class AggregateNotCreatedError(EventSourceError):
         super().__init__(message)
 
 
+class AggregateTypeMismatchError(EventSourceError):
+    """An event class declares a different aggregate_type than its aggregate.
+
+    Emitting `OrderShipped(aggregate_type="Shipment")` from an aggregate
+    whose `aggregate_type` is `"Order"` used to be silently restamped to
+    `"Order"` -- the declared value was accepted at import, then discarded
+    at emit time with no signal. Since `aggregate_type` becomes the stream
+    category, the disagreement is invisible in a save/load round-trip and
+    only shows up as events missing from a category read.
+
+    Attributes:
+        event_class: Name of the event class with the divergent declaration
+        event_aggregate_type: What the event class declares
+        aggregate_class: Name of the aggregate emitting it
+        aggregate_type: What the aggregate declares
+    """
+
+    def __init__(
+        self,
+        event_class: str,
+        event_aggregate_type: str,
+        aggregate_class: str,
+        aggregate_type: str,
+    ) -> None:
+        self.event_class = event_class
+        self.event_aggregate_type = event_aggregate_type
+        self.aggregate_class = aggregate_class
+        self.aggregate_type = aggregate_type
+        super().__init__(
+            f"{event_class} declares aggregate_type={event_aggregate_type!r} but is "
+            f"emitted from {aggregate_class}, which declares {aggregate_type!r}. "
+            f"An event's aggregate_type is its stream category, so the two must "
+            f"agree. Drop the declaration from {event_class} (the aggregate stamps "
+            f"it) or emit the event from the matching aggregate."
+        )
+
+
 class AggregateTypeNotSetError(EventSourceError):
     """
     Raised when a concrete aggregate class is constructed without declaring

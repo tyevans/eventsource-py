@@ -582,8 +582,45 @@ class RedisEventBus(BaseEventBus):
         self._consuming = False
         logger.info("Consumer loop stopped")
 
+    def start_consuming_in_background(
+        self,
+        consumer_name: str | None = None,
+    ) -> asyncio.Task[None]:
+        """Start consuming in a background task.
+
+        `start_consuming()` blocks for the lifetime of the consumer, so it
+        cannot be called from a coroutine that also needs to do anything else.
+        This schedules it as a task instead, matching the Kafka and RabbitMQ
+        buses. The task is retained on the bus, so `disconnect()` cancels it.
+
+        Args:
+            consumer_name: Optional override for consumer name from config
+
+        Returns:
+            The background task running the consumer.
+
+        Raises:
+            RuntimeError: If a background consumer is already running.
+
+        Usage:
+            task = bus.start_consuming_in_background()
+            # ... do other work ...
+            await bus.stop_consuming()
+            await task
+        """
+        if self._consumer_task is not None and not self._consumer_task.done():
+            raise RuntimeError("Consumer is already running in the background")
+
+        self._consumer_task = asyncio.create_task(self.start_consuming(consumer_name))
+        return self._consumer_task
+
     async def stop_consuming(self) -> None:
-        """Stop the consumer loop gracefully."""
+        """Stop the consumer loop gracefully.
+
+        Sets the loop's stop flag. A loop started with
+        `start_consuming_in_background()` finishes its current `xreadgroup`
+        block first, so await the returned task to know it has stopped.
+        """
         self._consuming = False
         logger.info("Stop consuming requested")
 
@@ -884,9 +921,16 @@ class RedisEventBus(BaseEventBus):
             raise RuntimeError("Redis client not initialized")
 
         # Use config defaults if not specified
-        min_idle_time_ms = min_idle_time_ms or self._config.pending_idle_ms
-        max_retries = max_retries or self._config.max_retries
-        batch_size = batch_size or self._config.batch_size
+        # `is None`, not a falsy check: an explicit 0 is a meaningful
+        # argument (claim every pending message regardless of idle time, or
+        # send to the DLQ without retrying) and must not be replaced by the
+        # config default.
+        if min_idle_time_ms is None:
+            min_idle_time_ms = self._config.pending_idle_ms
+        if max_retries is None:
+            max_retries = self._config.max_retries
+        if batch_size is None:
+            batch_size = self._config.batch_size
 
         stats = {
             "checked": 0,

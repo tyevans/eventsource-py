@@ -35,6 +35,7 @@ from eventsource.ports import (
     AppendResult,
     CategoryReadOptions,
     EventEnvelope,
+    EventStoreConnectionError,
     ExpectedVersion,
     FeedReadOptions,
     Position,
@@ -136,7 +137,17 @@ class SQLiteEventStore:
             if self._connection is not None:
                 return self._connection
 
-            conn = await aiosqlite.connect(self._database)
+            try:
+                conn = await aiosqlite.connect(self._database)
+            except (aiosqlite.Error, OSError) as e:
+                # Without this the user sees a bare
+                # `sqlite3.OperationalError: unable to open database file`
+                # with nothing naming the library, the adapter, or the path.
+                raise EventStoreConnectionError(
+                    f"could not open the SQLite database at {self._database!r}: {e}",
+                    store=type(self).__name__,
+                ) from e
+
             await conn.execute("PRAGMA foreign_keys = ON")
             await conn.execute(f"PRAGMA busy_timeout = {self._busy_timeout}")
             if self._wal_mode:

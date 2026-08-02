@@ -108,6 +108,10 @@ class DeciderAggregate[TState: BaseModel, TCommand = object](AggregateRoot[TStat
         if "aggregate_version" not in fields_set:
             updates["aggregate_version"] = self.get_next_version()
         if "aggregate_type" not in fields_set:
+            # Not explicitly passed, so the value came from the event class's
+            # own declaration and is about to be replaced. Diverging there is
+            # a bug, not a preference -- see `_reject_divergent_aggregate_type`.
+            self._reject_divergent_aggregate_type(type(event))
             updates["aggregate_type"] = self.aggregate_type
         updates.update(self._provenance_updates(command, fields_set))
         if not updates:

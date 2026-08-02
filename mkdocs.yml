@@ -172,6 +172,7 @@ nav:
       - "ADR-0045: PEP 695 Type-Parameter Syntax": adrs/0045-pep695-type-parameter-syntax.md
       - "ADR-0046: aggregate_type Has One Source: the Aggregate Class": adrs/0046-aggregate-type-single-source.md
       - "ADR-0047: Live Runner Feed-Driven Checkpointing": adrs/0047-live-runner-feed-driven-checkpointing.md
+      - "ADR-0048: Failure Paths Report and Retain": adrs/0048-failure-paths-report-and-retain.md
   - Development:
       - development/index.md
       - Contributing: development/contributing.md

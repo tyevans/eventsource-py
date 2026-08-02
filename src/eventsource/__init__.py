@@ -132,6 +132,8 @@ if TYPE_CHECKING:
     from eventsource.domain.exceptions import (
         AggregateNotCreatedError,
         AggregateNotFoundError,
+        AggregateTypeMismatchError,
+        AggregateTypeNotSetError,
         CommandRejectedError,
         DuplicateEventError,
         DuplicateEventTypeError,
@@ -214,6 +216,7 @@ if TYPE_CHECKING:
         FlexibleEventSubscriber,
         SyncEventHandler,
     )
+    from eventsource.ports.readmodels import ReadModel
     from eventsource.ports.snapshots import Snapshot, SnapshotStore
     from eventsource.testing.recording import RecordingEventBus
 
@@ -321,6 +324,9 @@ __all__ = [
     "DatabaseProjection",
     # ReadModel Projections (Phase 3)
     "ReadModelProjection",
+    "ReadModel",
+    "AggregateTypeNotSetError",
+    "AggregateTypeMismatchError",
     # Snapshots
     "Snapshot",
     "SnapshotStore",
@@ -378,17 +384,25 @@ __all__ = [
     "SQLiteEventStore",
 ]
 
+
 # The SQLite outbox repository needs aiosqlite at import time; the store
 # adapter does not (its constructor raises with an install hint instead).
-# Probe aiosqlite directly here (not through eventsource.adapters.sqlite)
-# so computing __all__ does not itself defeat the lazy front door by
-# registering eventsource.adapters in sys.modules.
-try:
-    import aiosqlite as _aiosqlite  # noqa: F401
+#
+# Ask the import system whether aiosqlite is installed rather than importing
+# it. `import aiosqlite` here *executed* the driver on every `import
+# eventsource` -- exactly the eager optional-driver import ADR 0035 exists to
+# prevent, and the reason the front door pulled in 177 modules. `find_spec`
+# answers the same question without running any of it.
+def _module_installed(name: str) -> bool:
+    from importlib.util import find_spec
 
-    _AIOSQLITE_AVAILABLE_FOR_ALL = True
-except ImportError:  # pragma: no cover - exercised only without the optional dep
-    _AIOSQLITE_AVAILABLE_FOR_ALL = False
+    try:
+        return find_spec(name) is not None
+    except (ImportError, ValueError):  # pragma: no cover - malformed install
+        return False
+
+
+_AIOSQLITE_AVAILABLE_FOR_ALL = _module_installed("aiosqlite")
 
 if _AIOSQLITE_AVAILABLE_FOR_ALL:
     __all__.append("SQLiteOutboxRepository")
@@ -482,6 +496,9 @@ _LAZY: dict[str, str] = {
     "DeclarativeProjection": "eventsource.application.projections.base",
     "DatabaseProjection": "eventsource.adapters.sql.projection",
     "ReadModelProjection": "eventsource.adapters.sql.readmodel_projection",
+    "ReadModel": "eventsource.ports.readmodels",
+    "AggregateTypeNotSetError": "eventsource.domain.exceptions",
+    "AggregateTypeMismatchError": "eventsource.domain.exceptions",
     "Snapshot": "eventsource.ports.snapshots",
     "SnapshotStore": "eventsource.ports.snapshots",
     "InMemorySnapshotStore": "eventsource.adapters.memory.snapshots",

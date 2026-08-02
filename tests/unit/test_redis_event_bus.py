@@ -4,6 +4,8 @@ These tests use mocks to test the RedisEventBus without requiring
 a real Redis server.
 """
 
+import asyncio
+import contextlib
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -995,6 +997,50 @@ class TestRedisEventBusPendingRecovery:
         stats = await bus.recover_pending_messages(min_idle_time_ms=60000, max_retries=3)
 
         assert stats["dlq"] == 1
+
+    async def test_recover_pending_messages_honors_an_explicit_zero(
+        self, bus: RedisEventBus, mock_redis: AsyncMock
+    ):
+        """`0` is a meaningful argument, not "unset".
+
+        The defaults were applied with `or`, so `min_idle_time_ms=0` (claim
+        every pending message however recently delivered) was silently
+        replaced by the configured `pending_idle_ms`, and a message idle for
+        less than that was skipped.
+        """
+        mock_redis.xpending.return_value = {"pending": 1}
+        mock_redis.xpending_range.return_value = [
+            {
+                "message_id": "msg-123",
+                "consumer": "old-consumer",
+                # Freshly delivered: below any non-zero idle threshold.
+                "time_since_delivered": 0,
+                "times_delivered": 1,
+            }
+        ]
+        mock_redis.xclaim.return_value = []
+
+        stats = await bus.recover_pending_messages(min_idle_time_ms=0)
+
+        assert stats["claimed"] == 0  # xclaim returned nothing...
+        mock_redis.xclaim.assert_awaited()  # ...but the message was not skipped
+
+    async def test_start_consuming_in_background_populates_the_consumer_task(
+        self, bus: RedisEventBus, mock_redis: AsyncMock
+    ):
+        """`_consumer_task` was declared, cancelled in `disconnect()`, and set by nothing."""
+        bus._connected = True
+        task = bus.start_consuming_in_background()
+
+        assert bus._consumer_task is task
+
+        with pytest.raises(RuntimeError, match="already running"):
+            bus.start_consuming_in_background()
+
+        await bus.stop_consuming()
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
 
 
 # --- Stream Info Tests ---

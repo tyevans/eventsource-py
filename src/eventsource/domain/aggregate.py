@@ -20,6 +20,7 @@ from eventsource.domain.decorators import discover_handlers
 from eventsource.domain.event import DomainEvent
 from eventsource.domain.exceptions import (
     AggregateNotCreatedError,
+    AggregateTypeMismatchError,
     AggregateTypeNotSetError,
     EventVersionError,
     HandlerSignatureError,
@@ -439,6 +440,8 @@ class AggregateRoot[TState: BaseModel](ABC):
             escape hatch for tests and migrations — in normal domain code,
             let the aggregate stamp them. Precedence: explicit kwargs > command > tenant context > auto fields.
         """
+        self._reject_divergent_aggregate_type(event_class)
+
         # Start with auto-populated aggregate fields
         event_kwargs: dict[str, Any] = {
             "aggregate_id": self.aggregate_id,
@@ -454,6 +457,25 @@ class AggregateRoot[TState: BaseModel](ABC):
         self.apply_event(event, is_new=True)
 
         return event
+
+    def _reject_divergent_aggregate_type(self, event_class: type[DomainEvent]) -> None:
+        """Raise if the event class declares a different aggregate_type.
+
+        The aggregate is the single source for `aggregate_type` (ADR 0046),
+        so this value is about to be overwritten. Overwriting it silently
+        turns a wrong declaration into a wrong stream category that no
+        round-trip test can see; the declaration is either redundant or a
+        bug, and both deserve to be said out loud.
+        """
+        field = event_class.model_fields.get("aggregate_type")
+        declared = getattr(field, "default", None) if field is not None else None
+        if isinstance(declared, str) and declared and declared != self.aggregate_type:
+            raise AggregateTypeMismatchError(
+                event_class.__name__,
+                declared,
+                type(self).__name__,
+                self.aggregate_type,
+            )
 
     def _provenance_updates(
         self,
