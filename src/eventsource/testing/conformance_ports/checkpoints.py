@@ -204,3 +204,14 @@ class CheckpointRepositoryConformance(
         await store.save_position("P", position, event_id, "Created")  # type: ignore[attr-defined]
         assert await store.get_checkpoint("P") == event_id  # type: ignore[attr-defined]
         assert await store.get_position("P") == position  # type: ignore[attr-defined]
+
+    async def test_update_checkpoint_preserves_a_previously_saved_position(
+        self, store: object
+    ) -> None:
+        # save_position and update_checkpoint share a row. A later
+        # checkpoint-only write (e.g. a projection catching up without
+        # touching the global feed) must not wipe the position column.
+        position = self.make_position(42)
+        await store.save_position("P", position, uuid4(), "Created")  # type: ignore[attr-defined]
+        await store.update_checkpoint("P", uuid4(), "Updated")  # type: ignore[attr-defined]
+        assert await store.get_position("P") == position  # type: ignore[attr-defined]
