@@ -6,14 +6,13 @@ them (use-case ring, `eventsource.application.aggregates.repository`).
 
 ## Overview
 
-The package exposes three public classes and one type variable:
+The package exposes three public classes:
 
 | Name | Kind | Defined in |
 | --- | --- | --- |
 | `AggregateRoot[TState: BaseModel]` | Abstract base class with an inline PEP 695 type parameter | `eventsource.domain.aggregate` |
 | `DeclarativeAggregate[TState: BaseModel]` | Abstract base class (subclass of `AggregateRoot`), same inline parameter | `eventsource.domain.aggregate` |
-| `AggregateRepository[TAggregate]` | Concrete generic class | `eventsource.application.aggregates.repository` |
-| `TAggregate` | `TypeVar` bound to `AggregateRoot[Any]` | `eventsource.application.aggregates.repository` |
+| `AggregateRepository[TAggregate: AggregateRoot[Any]]` | Concrete class with an inline PEP 695 type parameter | `eventsource.application.aggregates.repository` |
 
 `AggregateRoot` is declared `class AggregateRoot[TState: BaseModel](ABC)`:
 `TState` is the Pydantic model that holds the aggregate's state, scoped to the
@@ -61,12 +60,12 @@ from eventsource.domain.aggregate import AggregateRoot, DeclarativeAggregate
 `eventsource.domain.__init__.py` re-exports both, plus `StreamId` and
 `CATEGORY_PATTERN` (unrelated to aggregates). `AggregateRepository` and the
 snapshotting collaborators live one ring out, in `eventsource.application.aggregates`,
-whose `__all__` lists exactly `AggregateRepository`, `TAggregate`,
+whose `__all__` lists exactly `AggregateRepository`,
 `BackgroundScheduler`, `EveryNEvents`, `ImmediateScheduler`, `Never`,
 `SnapshotPolicy`, `SnapshotScheduler`, `read_valid_snapshot`, `take_snapshot`:
 
 ```python
-from eventsource.application.aggregates import AggregateRepository, TAggregate
+from eventsource.application.aggregates import AggregateRepository
 ```
 
 Their defining modules are:
@@ -76,7 +75,6 @@ Their defining modules are:
 | `AggregateRoot` | `eventsource.domain.aggregate` |
 | `DeclarativeAggregate` | `eventsource.domain.aggregate` |
 | `AggregateRepository` | `eventsource.application.aggregates.repository` |
-| `TAggregate` | `eventsource.application.aggregates.repository` |
 
 `TState` is not an importable name anywhere in the library. It is declared
 inline, once per class, as a PEP 695 type parameter:
@@ -84,8 +82,10 @@ inline, once per class, as a PEP 695 type parameter:
 DeclarativeAggregate[TState: BaseModel](AggregateRoot[TState], ABC)`. Code
 that needs its own generic helper over aggregate state declares its own
 parameter, e.g. `def f[T: BaseModel](a: AggregateRoot[T]) -> None: ...`.
-`TAggregate` is declared in `eventsource.application.aggregates.repository`
-as `TypeVar("TAggregate", bound="AggregateRoot[Any]")`.
+
+The same is true of `TAggregate`: the repository is declared
+`class AggregateRepository[TAggregate: AggregateRoot[Any]]`, so the parameter
+is scoped to that class and is not importable either.
 
 ### Preferred import path
 
@@ -96,11 +96,14 @@ the intended import path for application code:
 from eventsource import AggregateRoot, AggregateRepository, DeclarativeAggregate
 ```
 
-`TState` is not part of the public surface — there is nothing to import for it.
-`TAggregate`
-is **not** in the top-level `__all__` — to annotate against it, import it from
-`eventsource.application.aggregates` (or from
-`eventsource.application.aggregates.repository`).
+Neither `TState` nor `TAggregate` is part of the public surface — both are
+class-scoped PEP 695 type parameters, so there is nothing to import for
+either. A helper that needs to be generic over a repository's aggregate type
+declares its own parameter:
+
+```python
+def f[A: AggregateRoot[Any]](repo: AggregateRepository[A]) -> None: ...
+```
 
 ### Names not exported at the top level
 

@@ -244,8 +244,9 @@ Three properties govern all of the below:
 EventBuilder(event_class: type[TEvent]) -> EventBuilder[TEvent]
 ```
 
-`TEvent` is a `TypeVar` bound to `DomainEvent`, so the builder is generic in the
-event type and `build()` returns that exact type rather than `DomainEvent`.
+The builder is declared `class EventBuilder[TEvent: DomainEvent]`, so it is
+generic in the event type and `build()` returns that exact type rather than
+`DomainEvent`.
 
 The constructor validates its argument eagerly: if `event_class` is not a class
 or is not a `DomainEvent` subclass, it raises
@@ -282,10 +283,14 @@ above.)
 currently-set field names — useful when a `build()` failure leaves you unsure
 what the builder was holding.
 
-`eventsource.testing.builder.__all__` is `["EventBuilder", "TEvent"]`, so the
-type variable is importable from the submodule if you need to annotate helpers
-that pass builders around; only `EventBuilder` is re-exported from
-`eventsource.testing`.
+`eventsource.testing.builder.__all__` is `["EventBuilder"]`, and `EventBuilder`
+is the only name re-exported from `eventsource.testing`. `TEvent` is a
+class-scoped PEP 695 type parameter, not an importable symbol — a helper that
+passes builders around declares its own:
+
+```python
+def f[E: DomainEvent](b: EventBuilder[E]) -> None: ...
+```
 
 ### Field methods: `with_aggregate_id`, `with_event_id`, `with_tenant_id`, `with_version`, `with_occurred_at`
 

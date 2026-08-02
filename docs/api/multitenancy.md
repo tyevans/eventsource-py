@@ -49,7 +49,7 @@ the known limitation under `TenantAwareRepository`.
 | `tenant_scope` | async context manager, yields `UUID` | Scoped set + token-based restore |
 | `tenant_scope_sync` | sync context manager, yields `UUID` | Same, for synchronous code |
 | `TenantDomainEvent` | class, subclass of `DomainEvent` | Event base with required `tenant_id` |
-| `TenantAwareRepository` | `Generic[TAggregate]` class | Validating wrapper over `AggregateRepository` |
+| `TenantAwareRepository` | `class TenantAwareRepository[TAggregate: AggregateRoot[Any]]` | Validating wrapper over `AggregateRepository` |
 | `TenantContextNotSetError` | exception, subclass of `EventSourceError` | No tenant in context where one was required |
 | `TenantContextResetError` | exception, subclass of `EventSourceError` | A context token was reset out of LIFO order, reset twice, or invalidated by an intervening `clear_tenant_context()` |
 | `TenantMismatchError` | exception, subclass of `EventSourceError` | Events carry a tenant other than the active one |

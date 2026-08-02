@@ -118,9 +118,9 @@ __all__ = [
 | `Query`, `Filter` | `eventsource.ports.readmodels.query` | query specification classes |
 | `ReadModelError`, `OptimisticLockError`, `ReadModelNotFoundError` | `eventsource.ports.readmodels.exceptions` | exceptions |
 | `ReadModelProjection` | `eventsource.adapters.sql.readmodel_projection` | class (extends `DatabaseProjection`) |
-| `InMemoryReadModelRepository` | `eventsource.adapters.memory.readmodels` | `Generic[TModel]` class |
-| `PostgreSQLReadModelRepository` | `eventsource.adapters.postgresql.readmodels` | `Generic[TModel]` class |
-| `SQLiteReadModelRepository` | `eventsource.adapters.sqlite.readmodels` | `Generic[TModel]` class |
+| `InMemoryReadModelRepository` | `eventsource.adapters.memory.readmodels` | `class InMemoryReadModelRepository[TModel: ReadModel]` |
+| `PostgreSQLReadModelRepository` | `eventsource.adapters.postgresql.readmodels` | `class PostgreSQLReadModelRepository[TModel: ReadModel]` |
+| `SQLiteReadModelRepository` | `eventsource.adapters.sqlite.readmodels` | `class SQLiteReadModelRepository[TModel: _BaseReadModel]` |
 | `generate_schema`, `generate_indexes`, `generate_full_schema` | `eventsource.adapters.sql.readmodel_schema` | functions |
 | `POSTGRESQL_TYPE_MAP`, `SQLITE_TYPE_MAP` | `eventsource.adapters.sql.readmodel_schema` | `dict` constants |
 

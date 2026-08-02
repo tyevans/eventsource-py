@@ -336,8 +336,8 @@ an aggregate by replaying its stream, saves uncommitted events with an
 `expected_version`, and optionally consults a snapshot store to skip part of the replay,
 is one ring out, at `eventsource.application.aggregates.repository`.
 
-`eventsource.application.aggregates.__all__` adds the type variable `TAggregate`
-alongside `AggregateRepository`. The `handles` decorator itself is defined in
+`AggregateRepository`'s `TAggregate` is a class-scoped PEP 695 type parameter, not
+an exported name. The `handles` decorator itself is defined in
 `eventsource.domain.decorators` and re-exported from the barrel; the same decorator is used by
 `DeclarativeProjection`.
 
@@ -1172,9 +1172,9 @@ class that turns commands into events and events into state, and `DeclarativeAgg
 which routes events to `@handles`-decorated methods. `AggregateRepository`, which loads
 and saves aggregates through an `EventStore`, lives one ring out at
 `eventsource.application.aggregates.repository`. All three are re-exported from the
-barrel, as is `handles` (whose canonical home is `eventsource.domain.decorators`). The type
-variable `TAggregate` is exported from `eventsource.application.aggregates` but not from
-the barrel.
+barrel, as is `handles` (whose canonical home is `eventsource.domain.decorators`).
+`TAggregate` is not exported anywhere — it is a class-scoped PEP 695 type parameter
+on `AggregateRepository`, so there is no module-level object to import.
 
 #### `AggregateRoot`
 
@@ -1295,8 +1295,8 @@ are importable from `eventsource.domain.decorators`.
 
 #### `AggregateRepository`
 
-`AggregateRepository(Generic[TAggregate])` mediates between aggregates and the store.
-`TAggregate` is bound to `AggregateRoot[Any]`.
+`class AggregateRepository[TAggregate: AggregateRoot[Any]]` mediates between
+aggregates and the store.
 
 ```python
 from eventsource import AggregateRepository, InMemoryEventStore

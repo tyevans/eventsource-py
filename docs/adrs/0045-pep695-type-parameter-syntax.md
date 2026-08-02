@@ -1,9 +1,11 @@
 # 0045. PEP 695 Type-Parameter Syntax
 
-Every generic declaration in the library — classes, functions, and the one
-type alias — moves from the pre-PEP-695 form (a module-level
-`TypeVar` plus a `Generic[...]` base, or a `TypeAlias` annotation) to native
-Python 3.13 type-parameter syntax. The rewrite is mechanical everywhere
+Every generic declaration ruff flags under `UP046`/`UP047`/`UP040` — classes,
+functions, and the one type alias — moves from the pre-PEP-695 form (a
+module-level `TypeVar` plus a `Generic[...]` base, or a `TypeAlias`
+annotation) to native Python 3.13 type-parameter syntax, together with the
+unflagged declarations that would otherwise be left sharing a module-level
+`TypeVar` with a converted one. The rewrite is mechanical everywhere
 except in one respect: a PEP 695 type parameter is scoped to the declaration
 that introduces it, so the module-level `TypeVar` objects that used to back
 these declarations cease to exist. Three of them were exported. Their
@@ -59,10 +61,12 @@ type parameters are scoped, and exported `TypeVar`s are not.
 
 ## Decision
 
-**Convert every generic declaration in `src/`, `tests/`, and `bench/` to
-native type-parameter syntax, and delete the three staged ignores.** The
+**Convert every declaration in `src/`, `tests/`, and `bench/` that ruff flags
+under `UP046`, `UP047`, or `UP040` to native type-parameter syntax — plus the
+unflagged declarations that conversion would otherwise leave shadowing a
+module-level `TypeVar` — and delete the three staged ignores.** The
 `[tool.ruff.lint] ignore` list now contains `E501` alone; a new pre-PEP-695
-generic is a lint error, not a style preference.
+generic that ruff flags is a lint error, not a style preference.
 
 ### The scoping consequence, and three public-surface reductions
 
@@ -109,7 +113,7 @@ the parameter's name is now the caller's choice.
 
 ### Conversions beyond the planned inventory
 
-The plan enumerated fifteen sites that ruff flagged. Five more were
+The plan enumerated fifteen sites that ruff flagged. Six more were
 converted because leaving them would have produced a module where a
 function-scoped parameter shadows a same-named module-level `TypeVar` — a
 shape that reads as a bug even when it is semantically identical:
@@ -125,8 +129,31 @@ shape that reads as a bug even when it is semantically identical:
 
 The governing principle: **never ship a module where a function-scoped type
 parameter shadows a same-named module-level `TypeVar`.** Convert the
-remaining users so the module-level name can die. All five are pure syntax;
+remaining users so the module-level name can die. All six are pure syntax;
 none changed a signature.
+
+### What was not converted
+
+Eight module-level `TypeVar`s survive in `src/eventsource/`, deliberately.
+Ruff does not flag them, and converting them would be a change in kind rather
+than in syntax. A reader who greps for `TypeVar` will find these, and they are
+not evidence that this ADR is stale:
+
+| Site | Why it stays |
+| --- | --- |
+| `ports/readmodels/repository.py:20` — `TModel` | Parameterizes a `Protocol`. Deliberately out of scope for this wave; the four *adapter* classes bound to it were converted. |
+| `observability/tracing.py:88` — `R` | Paired with `P = ParamSpec("P")` on a decorator. A `ParamSpec` has no PEP 695 spelling that ruff will rewrite to, so the pair stays together in the old form. |
+| `domain/decorators.py:23` — `F` | Bound to `Callable[..., Any]` and shared across the decorator's declarations. |
+| `domain/aggregate.py:39` — `TEvent` | Used by `create_event()`; the plan explicitly told Task 1 to leave it. |
+| `testing/assertions.py:30` — `TEvent` | Shared across declarations in the module; unflagged. |
+| `application/migration/error_handling.py:34` — `T` | Shared across declarations; unflagged. |
+| `adapters/_bus/handler_adapter.py:22` — `T` | Shared across declarations; unflagged. |
+| `adapters/sync/adapter.py:34` — `T` | Shared across declarations; unflagged. |
+
+The common thread for the last five: a `TypeVar` used by more than one
+declaration in a module is not a shadowing hazard — nothing converted sits
+beside it under the same name — so the rule this ADR states does not reach
+them. They are eligible for a later pass, not a defect in this one.
 
 ### Bounds are evaluated eagerly and are not deferred annotations
 
