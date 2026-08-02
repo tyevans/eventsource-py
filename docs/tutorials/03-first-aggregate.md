@@ -8,7 +8,7 @@ storing the current row of an order in a table, you store the sequence of things
 happened to it -- `OrderCreated`, `OrderShipped` -- and rebuild the current state by
 folding those events together. In `eventsource`, the recommended way to write that is
 the **decider style**: the domain is two pure functions, `decide` and `evolve`, and a
-thin subclass of `DeciderAggregate[TState]` adapts them to the library's replay,
+thin subclass of `DeciderAggregate[TState, TCommand]` adapts them to the library's replay,
 snapshot, and repository machinery.
 
 You will write the state model, the events, and the commands that request them; write
@@ -38,7 +38,7 @@ A single Python file containing an `OrderAggregate` and the pieces it needs:
   a `DomainEvent` subclass carrying only the fields that event needs.
 - **Three commands** -- `CreateOrder`, `ShipOrder`, and `CancelOrder`, each a
   `DomainCommand` subclass carrying the intent's payload.
-- **`OrderAggregate(DeciderAggregate[OrderState])`** -- with `aggregate_type = "Order"`,
+- **`OrderAggregate(DeciderAggregate[OrderState, OrderCommand])`** -- with `aggregate_type = "Order"`,
   a static `initial_state()` that seeds a fresh order, a static `decide()` that turns a
   command plus the current state into the events it produces (or raises
   `CommandRejectedError`), and a static `evolve()` that folds each event type into a new
@@ -63,14 +63,14 @@ run into an existing codebase that uses them.
 Here is the shape you are heading toward:
 
 ```python
-class OrderAggregate(DeciderAggregate[OrderState]):
+class OrderAggregate(DeciderAggregate[OrderState, OrderCommand]):
     aggregate_type = "Order"
 
     @staticmethod
     def initial_state(aggregate_id: UUID) -> OrderState: ...
 
     @staticmethod
-    def decide(command: object, state: OrderState) -> list[DomainEvent]: ...
+    def decide(command: OrderCommand, state: OrderState) -> list[DomainEvent]: ...
 
     @staticmethod
     def evolve(state: OrderState, event: DomainEvent) -> OrderState: ...
@@ -381,11 +381,19 @@ class ShipOrder(DomainCommand):
 
 class CancelOrder(DomainCommand):
     reason: str
+
+
+OrderCommand = CreateOrder | ShipOrder | CancelOrder
 ```
 
 Three classes, four payload lines -- one less than the events, because commands carry no
 `aggregate_type`. A command does not belong to a stream the way an event does; it is
 handed to an aggregate instance that already knows its own identity.
+
+`OrderCommand`, the union of all three, is the vocabulary of everything this order can
+be asked to do. Step 4 hands it to `DeciderAggregate` as a second type parameter, which
+is what lets your type checker reject a command this aggregate was never meant to
+receive -- see [Why the second type parameter](#why-the-second-type-parameter).
 
 ### What you get for free
 
@@ -426,7 +434,7 @@ Step 9, where `execute()` copies `command_id` onto each event's `causation_id`.
 With state, events, and commands all defined, you have every ingredient the domain
 needs. Next you connect them with an aggregate class.
 
-## Step 4: Subclass `DeciderAggregate[OrderState]` and set `aggregate_type`
+## Step 4: Subclass `DeciderAggregate[OrderState, OrderCommand]` and set `aggregate_type`
 
 Now the class itself. Add this to `first_aggregate.py`:
 
@@ -434,7 +442,7 @@ Now the class itself. Add this to `first_aggregate.py`:
 from eventsource import DeciderAggregate
 
 
-class OrderAggregate(DeciderAggregate[OrderState]):
+class OrderAggregate(DeciderAggregate[OrderState, OrderCommand]):
     aggregate_type = "Order"
 
     @staticmethod
@@ -447,10 +455,43 @@ Three lines of substance, and each one carries weight.
 ### The `[OrderState]` parameter is not decoration
 
 `DeciderAggregate` subclasses `AggregateRoot`, declared `[TState: BaseModel](ABC)`. Writing
-`DeciderAggregate[OrderState]` tells the type checker that `self.state` is an
+`DeciderAggregate[OrderState, OrderCommand]` tells the type checker that `self.state` is an
 `OrderState`, so `state.status` in Step 6 is checked rather than guessed at. It also
 does real work at runtime: it is how `_get_state_type()` resolves the class snapshots
 get rehydrated into. Always write the parameter.
+
+### Why the second type parameter
+
+`TCommand` is what makes `execute()` and `decide()` speak your domain's vocabulary
+rather than accepting anything at all. It defaults to `object`, so
+`DeciderAggregate[OrderState]` on its own is valid and still type checks -- but the
+default is the permissive one:
+
+```python
+class Unrelated(DomainCommand):
+    note: str
+
+
+order.execute(Unrelated(note="nope"))
+```
+
+With `DeciderAggregate[OrderState]`, that line passes a type check. Nothing in the
+signature says an order only accepts order commands, so the mistake survives until
+runtime, where it falls through `decide()`'s final `case _` and raises
+`CommandRejectedError("unknown command: ...")`.
+
+With `DeciderAggregate[OrderState, OrderCommand]`, your type checker rejects it before
+you run anything:
+
+```
+error: Argument 1 to "execute" of "DeciderAggregate" has incompatible type
+"Unrelated"; expected "CreateOrder | ShipOrder | CancelOrder"  [arg-type]
+```
+
+That is the whole benefit, and it costs one union declaration. Write the second
+parameter whenever your commands form a closed set -- which is nearly always. The
+one-parameter form stays available for the case where an aggregate genuinely accepts
+commands it cannot enumerate ahead of time.
 
 ### `aggregate_type` is the stream's name
 
@@ -522,7 +563,7 @@ With a starting state defined, the aggregate needs a way to fold events into it.
 the class:
 
 ```python
-class OrderAggregate(DeciderAggregate[OrderState]):
+class OrderAggregate(DeciderAggregate[OrderState, OrderCommand]):
     aggregate_type = "Order"
 
     @staticmethod
@@ -625,11 +666,11 @@ it to the class, alongside `evolve()`:
 from eventsource import CommandRejectedError
 
 
-class OrderAggregate(DeciderAggregate[OrderState]):
+class OrderAggregate(DeciderAggregate[OrderState, OrderCommand]):
     # ... aggregate_type, initial_state, evolve as above
 
     @staticmethod
-    def decide(command: object, state: OrderState) -> list[DomainEvent]:
+    def decide(command: OrderCommand, state: OrderState) -> list[DomainEvent]:
         match command, state:
             case CreateOrder(customer_id=customer_id, total=total), OrderState(status="pending"):
                 return [
@@ -773,7 +814,7 @@ inherited from `DeciderAggregate`, and it is worth reading once so "run `decide(
 the events, fold them in" stops being a black box:
 
 ```python
-def execute(self, command: object) -> list[DomainEvent]:
+def execute(self, command: TCommand) -> list[DomainEvent]:
     events = self.decide(command, self.state)
     applied: list[DomainEvent] = []
     for event in events:
@@ -790,6 +831,11 @@ method every aggregate style shares -- sets `self._version` to the stamped
 `aggregate_version`, calls `evolve()` to fold the event in, and appends it to
 `uncommitted_events`; and the stamped events are returned, in case a caller wants them
 (a test asserting on exactly what was produced, say).
+
+`TCommand` in that signature is the second type parameter you supplied in Step 4, so on
+`OrderAggregate` it reads `execute(self, command: OrderCommand)` -- that substitution is
+what produces the type error shown in
+[Why the second type parameter](#why-the-second-type-parameter).
 
 You never call `evolve()` or touch `self._version` yourself. `execute()` is the one
 front door, and it is the only method on `DeciderAggregate` that is not a `@staticmethod`
@@ -892,7 +938,7 @@ including how to move an aggregate from one style to another, read
 
 ## Key Takeaways
 
-- `DeciderAggregate[TState]` needs three static methods: `initial_state(aggregate_id)`,
+- `DeciderAggregate[TState, TCommand]` needs three static methods: `initial_state(aggregate_id)`,
   `decide(command, state)`, and `evolve(state, event)`. None of them touch `self`.
 - `state` is never `None` on a `DeciderAggregate` -- `initial_state()` runs eagerly in
   `__init__`, so `decide()` and `evolve()` never need a null check.
