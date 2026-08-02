@@ -311,3 +311,175 @@ subscription is directionally truthful — but re-calling manager.start() on the
 same registry objects inherits permanently inflated lag from the re-read. Fix:
 unsee `qsize()` on buffer drop, or reset both counters at transition start.
 Found by the correctness-fixes slice final review (2026-07-31).
+
+---
+
+# Audit findings, 2026-08-02
+
+Surfaced by three parallel read-only audits (`adapters/`, `application/`, public
+API + DX). 28 findings total; the three Criticals fixed on the day are omitted
+here (PRs #112, #113, #114). Everything below is still open. Each was marked
+CONFIRMED (the reviewer executed something demonstrating it) or PLAUSIBLE
+(reasoned from code, not executed) — that distinction is preserved. Docker was
+unavailable, so no integration tests ran.
+
+## SyncEventStoreAdapter always deadlocks on the running-loop path (P1)
+
+`adapters/sync/adapter.py:173-181`. `_run_sync` detects the caller's loop with
+`asyncio.get_running_loop()`, submits the coroutine back onto *that same loop*
+via `run_coroutine_threadsafe`, then blocks on `future.result(timeout=...)`. The
+blocking wait occupies the loop's own thread, so the loop can never run the
+coroutine it was just handed — a guaranteed self-deadlock until the timeout
+expires. CONFIRMED. Note this is the path taken when a caller uses the sync
+facade from inside async code, which is precisely the mistake the facade exists
+to catch; it should raise a clear error instead.
+
+## SQLite read_category(from_timestamp=) drops all rows for a non-UTC datetime (P2)
+
+`adapters/sqlite/store.py:457-458`. `created_at` is stored as
+`datetime.now(UTC).isoformat()` (`:216`) and the predicate is a **lexical TEXT
+comparison** against `options.from_timestamp.isoformat()`. A `+05:00` timestamp
+renders as `2026-08-01T17:00:00+05:00`, which sorts after every `...+00:00` row
+regardless of the instant it denotes, so the query silently returns nothing.
+CONFIRMED. Normalize to UTC before comparing.
+
+## Kafka discards its retry backoff; RabbitMQ blocks the consumer on it (P2)
+
+`adapters/kafka/consumer.py:824,876`, `adapters/rabbitmq/consumer.py:666`. Both
+compute a delay from the same shared `RetryPolicy` (`adapters/_bus/retry.py`)
+and then do opposite things with it: Kafka logs it and writes a `retry_after`
+header nothing reads, so the backoff never happens; RabbitMQ sleeps inline,
+blocking the consumer for every retrying message. Same config, two different
+behaviors — the cross-backend divergence this library most needs to avoid.
+CONFIRMED.
+
+## Kafka commits the offset after a retry republish it never performed (P2)
+
+`adapters/kafka/consumer.py:862-865, 841-844`. `_republish_for_retry` returns
+silently when the producer is absent (logging an error), and the caller commits
+the offset regardless — so the event is neither retried nor retained. PLAUSIBLE;
+needs a test double to force the producer-absent path.
+
+## Redis bus cannot consume in the background; `_consumer_task` is dead (P2)
+
+`adapters/redis/bus.py:253, 325-329, 517`. CONFIRMED.
+
+## Redis `recover_pending_messages` silently ignores explicit zero arguments (P2)
+
+`adapters/redis/bus.py:887-889`. Falsy-check rather than `is None`, so an
+explicit `0` is replaced by the default. CONFIRMED.
+
+## SQLite has no transactional outbox; PostgreSQL does (P2)
+
+`adapters/sqlite/store.py` has no `outbox_enabled`; `adapters/postgresql/store.py:170,309`
+does. A user developing on SQLite and deploying on PostgreSQL gets different
+delivery guarantees with no signal. CONFIRMED. Either implement it or document
+the gap in the backend-choice guide.
+
+## `resume()` may deliver newer live events before older pause-buffered ones (P2)
+
+`subscriptions/pause_resume.py:170-177`. `resume()` clears the paused flag
+*before* draining the pause buffer, so events arriving in that window are
+delivered ahead of older buffered ones, violating the no-reordering obligation
+`docs/architecture.md:674-682` calls absolute. CONFIRMED **against pre-#114
+code** — PR #114 reworked the pause buffer to hold wake-up sentinels rather than
+events, and delivery order now comes from the feed drain, so this may be fixed
+by construction. **Re-verify before scheduling.**
+
+Adjacent, same module: `_pause_buffer` is an unbounded `asyncio.Queue`. A
+subscription paused by an operator during an incident accumulates without cap or
+shed policy, and `max_in_flight` does not apply because buffering happens before
+the flow-control slot is acquired. Worth a bound with an explicit overflow
+policy.
+
+## Checkpoint failure re-runs the projection handler and DLQs a successful event (P2)
+
+`application/projections/base.py:304-320`. `record_checkpoint()` is called
+*inside* the `try` the retry loop wraps around `_process_event()`, so a
+checkpoint-store failure is indistinguishable from a handler failure: the loop
+retries, re-running `_process_event()` (applying the read-model mutation N
+times), and on exhaustion writes a successfully-projected event to the DLQ where
+an operator will replay it again. CONFIRMED — reproduced with a checkpoint repo
+raising `ConnectionError`: handler applied 3x, 1 DLQ entry.
+
+`docs/architecture.md:952-954` already describes the intended behavior
+("`record_checkpoint()` runs after `_process_event` returns cleanly"); the code
+has it in the wrong block. Fix: move it out of the retry `try`, onto the success
+path, and give checkpoint failure its own counter — it is a liveness problem,
+not a poison-event problem.
+
+## Cutover's routing switch is not atomic and rollback does not revert it (P2)
+
+`set_routing()` and `set_migration_state(MIGRATED)` are two writes with no
+compensation; a failure between them leaves traffic pointed at the target while
+`_rollback()` declares the tenant `DUAL_WRITE` and never reverts the route.
+PLAUSIBLE — needs a repo double to force the interleaving.
+
+## The lazy front door eagerly imports `aiosqlite` (P2)
+
+`import eventsource` pulls in `aiosqlite` (177 modules total), contradicting
+ADR 0035 and the docstring three lines above the code that does it, and making
+`eventsource.__all__` differ by environment. CONFIRMED.
+
+## Documented names are not exported; the export set is asymmetric (P2)
+
+`AggregateTypeNotSetError` is named in getting-started prose but is not
+importable from `eventsource`. `ReadModelProjection` is exported while
+`ReadModel` is not. CONFIRMED.
+
+## Driver exceptions leak raw; the exception types built to wrap them are dead (P2)
+
+A misconfigured SQLite store surfaces `sqlite3.OperationalError: unable to open
+database file` with no library context. `EventStoreConnectionError` exists for
+exactly this and is **never raised anywhere in `src/`** (it is exported from
+`eventsource.ports` and `eventsource.application.subscriptions`, though not
+top-level, and it subclasses `SubscriptionError` — itself questionable for an
+error named after the event store). CONFIRMED.
+
+## A live subscription that stops receiving events reads perfectly healthy (P3)
+
+PLAUSIBLE. Overlaps with the existing *Live-phase lag has no signal* item above;
+resolve them together.
+
+## `OptimisticLockError` renders `no_stream`/`stream_exists` as a version number (P3)
+
+`adapters/memory/store.py:31,77,81`. The sentinel `_NO_STREAM_SENTINEL = 0`
+reaches the user as `expected_version=0`, which they never wrote. CONFIRMED.
+
+## `execute()` silently overwrites an event's declared `aggregate_type` (P3)
+
+The third declaration site left out of scope by ADR 0046. An event class
+declaring `aggregate_type = "WrongType"`, emitted from an aggregate declaring
+`"RightType"`, is silently restamped. CONFIRMED. Either reject the mismatch or
+stop teaching the field default on event classes.
+
+## `StreamId` argument-order mistake produces a raw `re` TypeError (P3)
+
+`domain/stream_id.py:25`. The signature is `StreamId(aggregate_id, category)`
+but the rendered wire format is `"{aggregate_id}:{category}"` and most other
+APIs in the library lead with the category, so transposing is easy and the
+resulting error names neither argument. CONFIRMED.
+
+## `docs/getting-started.md:124` understates the dependency set (P3)
+
+Claims the core package depends only on pydantic and sqlalchemy; `pyproject.toml:22-26`
+lists more. CONFIRMED.
+
+## `application/` and `adapters/` are the only subpackages with no `__all__` (P3)
+
+Both `__init__.py` files are a single docstring line. Every other subpackage
+declares one and all resolve cleanly. CONFIRMED.
+
+## SubscriptionManager, shutdown.py, and migration/coordinator.py have outgrown their modules (P3)
+
+CONFIRMED by line count. Structural, not a defect.
+
+## `docs/guides/subscriptions.md:335` states something the code cannot do (P3)
+
+CONFIRMED.
+
+## Dead code in adapters (P3)
+
+`adapters/sync/adapter.py:88-141` — unused `ThreadPoolExecutor` machinery.
+`adapters/memory/store.py:30` — `_ANY_SENTINEL` is dead. `SyncEventStoreAdapter`
+also has no `close()`, so SQLite callers hang at exit. All CONFIRMED.
