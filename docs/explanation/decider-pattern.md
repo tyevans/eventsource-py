@@ -94,7 +94,7 @@ three static methods above, and set `aggregate_type`:
 ```python
 from eventsource import DeciderAggregate
 
-class Order(DeciderAggregate[OrderState]):
+class Order(DeciderAggregate[OrderState, OrderCommand]):
     aggregate_type = "Order"
 
     @staticmethod
