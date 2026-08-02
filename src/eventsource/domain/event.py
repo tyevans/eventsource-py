@@ -38,8 +38,15 @@ class DomainEvent(BaseModel):
     All fields except event-specific payload are included in this base class.
 
     The event_type field is automatically set to the class name if not
-    explicitly provided. This reduces boilerplate while maintaining
-    compatibility with existing code.
+    explicitly provided. Rely on that: do not declare event_type by hand.
+    A declaration whose value equals the class name is pure noise, and one
+    that differs silently decouples the wire name from the class name.
+
+    Declare it explicitly in exactly one situation -- the wire name must
+    differ from the class name, because it is fixed by an existing stored
+    event or an external contract you do not control. Renaming a published
+    event type is a breaking change; the explicit field is how you keep the
+    old name while the class moves on.
 
     Auto-derivation behavior:
         - If event_type is not defined or is empty, uses class name
@@ -76,7 +83,8 @@ class DomainEvent(BaseModel):
         ... )
         >>> assert event.event_type == "OrderCreated"
 
-    Example with explicit event_type (backward compatible):
+    Example with explicit event_type (only when the wire name is pinned by
+    already-stored events or an external contract):
         >>> class OrderCreated(DomainEvent):
         ...     event_type: str = "order_created_v2"
         ...     aggregate_type: str = "Order"

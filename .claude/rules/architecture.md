@@ -227,9 +227,12 @@ Export an `*_AVAILABLE` flag so users can check at runtime.
 ## Event Model Rules
 
 - All events subclass `DomainEvent` (pydantic BaseModel), frozen.
-- `__init_subclass__` auto-derives `event_type` from the class name — never declare it by
-  hand. Registry membership is explicit: decorate with `@register_event` (deserialization
-  needs it); there is no auto-registration.
+- `__init_subclass__` auto-derives `event_type` from the class name — do not declare it by
+  hand. The one exception is a wire name pinned by already-stored events or an external
+  contract, where it must differ from the class name; set
+  `suppress_event_type_warning = True` there to silence the mismatch check. A declaration
+  whose value *equals* the class name is always noise. Registry membership is explicit:
+  decorate with `@register_event` (deserialization needs it); there is no auto-registration.
 - Event types are immutable after creation — never modify event schema, add new event
   types instead.
 
