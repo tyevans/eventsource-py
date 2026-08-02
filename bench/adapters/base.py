@@ -6,14 +6,11 @@ backend they run on.
 """
 
 from abc import ABC, abstractmethod
-from typing import Generic, TypeVar
 
 from eventsource.ports.bus import EventBus
 
-T = TypeVar("T")
 
-
-class BenchAdapter(ABC, Generic[T]):
+class BenchAdapter[T](ABC):
     """Lifecycle: available? -> setup -> (create -> destroy)* -> teardown.
 
     create() is called once per matrix cell and must return an isolated,
@@ -26,17 +23,17 @@ class BenchAdapter(ABC, Generic[T]):
         """Return None if this backend can run, else a skip reason."""
         return None
 
-    async def setup(self) -> None:
+    async def setup(self) -> None:  # noqa: B027 - intentionally optional, not abstract
         """One-time session setup (schema creation, temp dirs)."""
 
-    async def teardown(self) -> None:
+    async def teardown(self) -> None:  # noqa: B027 - intentionally optional, not abstract
         """One-time session cleanup."""
 
     @abstractmethod
     async def create(self) -> T:
         """Create a fresh resource for one cell."""
 
-    async def destroy(self, resource: T) -> None:
+    async def destroy(self, resource: T) -> None:  # noqa: B027 - intentionally optional, not abstract
         """Release a resource created by create()."""
 
 

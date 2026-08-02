@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Sequence
-from typing import Any, TypeVar
+from typing import Any
 from uuid import UUID, uuid4
 
 from eventsource.domain import StreamId
@@ -51,10 +51,6 @@ from eventsource.domain.event import DomainEvent
 from eventsource.domain.exceptions import CommandRejectedError
 from eventsource.ports import ExpectedVersion
 from eventsource.testing.harness import InMemoryTestHarness
-
-# Type variables for generic command/event handling
-TAggregate = TypeVar("TAggregate", bound=AggregateRoot[Any])
-TEvent = TypeVar("TEvent", bound=DomainEvent)
 
 
 class _Missing:
@@ -119,7 +115,7 @@ async def given_events(
         )
 
 
-def when_command(
+def when_command[TAggregate: AggregateRoot[Any]](
     aggregate: TAggregate,
     command: Callable[[TAggregate], None],
 ) -> list[DomainEvent]:
@@ -155,7 +151,7 @@ def when_command(
     return list(aggregate.uncommitted_events[before_count:])
 
 
-def then_event_published(
+def then_event_published[TEvent: DomainEvent](
     harness: InMemoryTestHarness,
     event_type: type[TEvent],
     **expected_fields: Any,

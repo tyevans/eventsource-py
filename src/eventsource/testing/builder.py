@@ -17,16 +17,13 @@ Example:
 """
 
 from datetime import datetime
-from typing import Any, Generic, TypeVar
+from typing import Any
 from uuid import UUID, uuid4
 
 from eventsource.domain.event import DomainEvent
 
-# Type variable bound to DomainEvent for type-safe builder
-TEvent = TypeVar("TEvent", bound=DomainEvent)
 
-
-class EventBuilder(Generic[TEvent]):
+class EventBuilder[TEvent: DomainEvent]:
     """
     Fluent builder for creating test events with minimal boilerplate.
 
@@ -262,4 +259,4 @@ class EventBuilder(Generic[TEvent]):
         return f"EventBuilder({self._event_class.__name__}, fields={list(self._fields.keys())})"
 
 
-__all__ = ["EventBuilder", "TEvent"]
+__all__ = ["EventBuilder"]
