@@ -266,8 +266,10 @@ old rows deserialize under a name the class itself no longer matches.
 
 **`aggregate_type`.** Which kind of thing this event happened to. All three events use
 `"BankAccount"`, which is what groups them into one stream. The decider you write in
-Step 3 declares the same string, and so does the repository you build in Step 4 —
-they have to match.
+Step 3 declares the same string as a class attribute — that's the single source of
+truth. The `AggregateRepository` you build in Step 4 infers its own notion of the
+type from that attribute; there is no separate place to declare or override it, so
+the two can never drift apart.
 
 **`@register_event`.** Adds the class to the library's event registry, keyed by
 `event_type`. When the store loads a stream it finds rows containing a type name and a
@@ -537,7 +539,6 @@ async def main() -> None:
     repo: AggregateRepository[BankAccountAggregate] = AggregateRepository(
         event_store=store,
         aggregate_factory=BankAccountAggregate,
-        aggregate_type="BankAccount",
     )
 
     account_id = uuid4()

@@ -194,7 +194,6 @@ async def main():
     repo = AggregateRepository(
         event_store=event_store,
         aggregate_factory=BankAccountAggregate,
-        aggregate_type="BankAccount",
     )
 
     # Create a new account

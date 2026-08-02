@@ -170,6 +170,7 @@ nav:
       - "ADR-0043: Domain Model Guards and Vocabulary": adrs/0043-domain-model-guards-and-vocabulary.md
       - "ADR-0044: Migration Error Module Decomposition": adrs/0044-migration-error-module-decomposition.md
       - "ADR-0045: PEP 695 Type-Parameter Syntax": adrs/0045-pep695-type-parameter-syntax.md
+      - "ADR-0046: aggregate_type Has One Source: the Aggregate Class": adrs/0046-aggregate-type-single-source.md
   - Development:
       - development/index.md
       - Contributing: development/contributing.md

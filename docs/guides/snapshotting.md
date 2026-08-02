@@ -586,7 +586,6 @@ from eventsource.adapters.postgresql import PostgreSQLSnapshotStore
 repo = AggregateRepository(
     event_store=event_store,
     aggregate_factory=OrderAggregate,
-    aggregate_type="Order",          # optional; inferred from the class attribute
     snapshot_store=PostgreSQLSnapshotStore(session_factory),
     snapshot_threshold=100,
     snapshot_mode="sync",
@@ -979,7 +978,6 @@ reaches the milestone, in a repository configured with `snapshot_mode="manual"`:
 repo = AggregateRepository(
     event_store=event_store,
     aggregate_factory=OrderAggregate,
-    aggregate_type="Order",
     snapshot_store=snapshot_store,
     snapshot_mode="manual",
 )

@@ -135,7 +135,6 @@ class TestCommandToProjectionFlow:
         repo = AggregateRepository(
             event_store=postgres_event_store,
             aggregate_factory=TestOrderAggregate,
-            aggregate_type="TestOrder",
             event_publisher=event_bus,
         )
 
@@ -167,7 +166,6 @@ class TestCommandToProjectionFlow:
         repo = AggregateRepository(
             event_store=postgres_event_store,
             aggregate_factory=TestOrderAggregate,
-            aggregate_type="TestOrder",
             event_publisher=event_bus,
         )
 
@@ -214,7 +212,6 @@ class TestCommandToProjectionFlow:
         repo = AggregateRepository(
             event_store=postgres_event_store,
             aggregate_factory=TestOrderAggregate,
-            aggregate_type="TestOrder",
             event_publisher=event_bus,
         )
 
@@ -256,7 +253,6 @@ class TestAggregateRehydration:
         repo = AggregateRepository(
             event_store=postgres_event_store,
             aggregate_factory=TestOrderAggregate,
-            aggregate_type="TestOrder",
         )
 
         # Create order with items
@@ -299,7 +295,6 @@ class TestAggregateRehydration:
         repo = AggregateRepository(
             event_store=postgres_event_store,
             aggregate_factory=TestOrderAggregate,
-            aggregate_type="TestOrder",
         )
 
         with pytest.raises(AggregateNotFoundError):
@@ -313,7 +308,6 @@ class TestAggregateRehydration:
         repo = AggregateRepository(
             event_store=postgres_event_store,
             aggregate_factory=TestOrderAggregate,
-            aggregate_type="TestOrder",
         )
 
         order_id = uuid4()
@@ -337,7 +331,6 @@ class TestOptimisticLocking:
         repo = AggregateRepository(
             event_store=postgres_event_store,
             aggregate_factory=TestOrderAggregate,
-            aggregate_type="TestOrder",
         )
 
         # Create order
@@ -378,7 +371,6 @@ class TestMultiAggregateScenarios:
         repo = AggregateRepository(
             event_store=postgres_event_store,
             aggregate_factory=TestOrderAggregate,
-            aggregate_type="TestOrder",
             event_publisher=event_bus,
         )
 
@@ -418,7 +410,6 @@ class TestEventStreamOperations:
         repo = AggregateRepository(
             event_store=postgres_event_store,
             aggregate_factory=TestOrderAggregate,
-            aggregate_type="TestOrder",
         )
 
         # Create order with multiple events
@@ -491,7 +482,6 @@ class TestProjectionRebuilding:
         repo = AggregateRepository(
             event_store=postgres_event_store,
             aggregate_factory=TestOrderAggregate,
-            aggregate_type="TestOrder",
         )
 
         # Create some orders without projection

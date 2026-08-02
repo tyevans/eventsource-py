@@ -117,7 +117,6 @@ async def main() -> None:
     plain_repo = AggregateRepository(
         event_store=event_store,
         aggregate_factory=Counter,
-        aggregate_type="Counter",
     )
 
     counter_id = uuid4()
@@ -205,7 +204,6 @@ store, so the same 500 events are still there:
     repo = AggregateRepository(
         event_store=event_store,
         aggregate_factory=Counter,
-        aggregate_type="Counter",
         snapshot_store=snapshot_store,
         snapshot_threshold=100,
         snapshot_mode="sync",
@@ -419,7 +417,6 @@ Sometimes the interesting moment is a business milestone, not an arithmetic boun
     manual_repo = AggregateRepository(
         event_store=event_store,
         aggregate_factory=Counter,
-        aggregate_type="Counter",
         snapshot_store=snapshot_store,
         snapshot_mode="manual",
     )
@@ -450,7 +447,6 @@ It does need a store, though:
     no_store = AggregateRepository(
         event_store=event_store,
         aggregate_factory=Counter,
-        aggregate_type="Counter",
     )
     try:
         await no_store.create_snapshot(m)
@@ -478,7 +474,6 @@ class CounterV2(Counter):
     v2_repo = AggregateRepository(
         event_store=event_store,
         aggregate_factory=CounterV2,
-        aggregate_type="Counter",
         snapshot_store=snapshot_store,
         snapshot_threshold=100,
         snapshot_mode="sync",
@@ -549,7 +544,6 @@ library:
     sqlite_repo = AggregateRepository(
         event_store=event_store,
         aggregate_factory=Counter,
-        aggregate_type="Counter",
         snapshot_store=sqlite_store,
         snapshot_threshold=100,
         snapshot_mode="sync",

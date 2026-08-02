@@ -373,7 +373,6 @@ async def main():
     repo = AggregateRepository(
         event_store=event_store,
         aggregate_factory=ShoppingCartAggregate,
-        aggregate_type="ShoppingCart",
     )
 
     # Create cart

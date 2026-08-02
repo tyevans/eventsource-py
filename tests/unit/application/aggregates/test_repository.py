@@ -230,7 +230,6 @@ def counter_repository(event_store: InMemoryEventStore) -> AggregateRepository[C
     return AggregateRepository(
         event_store=event_store,
         aggregate_factory=CounterAggregate,
-        aggregate_type="Counter",
     )
 
 
@@ -240,7 +239,6 @@ def order_repository(event_store: InMemoryEventStore) -> AggregateRepository[Ord
     return AggregateRepository(
         event_store=event_store,
         aggregate_factory=OrderAggregate,
-        aggregate_type="Order",
     )
 
 
@@ -258,7 +256,6 @@ def counter_repository_with_publisher(
     return AggregateRepository(
         event_store=event_store,
         aggregate_factory=CounterAggregate,
-        aggregate_type="Counter",
         event_publisher=mock_publisher,
     )
 
@@ -276,7 +273,6 @@ class TestRepositoryInitialization:
         repo: AggregateRepository[CounterAggregate] = AggregateRepository(
             event_store=event_store,
             aggregate_factory=CounterAggregate,
-            aggregate_type="Counter",
         )
         assert repo.event_store is event_store
 
@@ -285,7 +281,6 @@ class TestRepositoryInitialization:
         repo: AggregateRepository[CounterAggregate] = AggregateRepository(
             event_store=event_store,
             aggregate_factory=CounterAggregate,
-            aggregate_type="Counter",
         )
         assert repo.aggregate_type == "Counter"
 
@@ -296,7 +291,6 @@ class TestRepositoryInitialization:
         repo: AggregateRepository[CounterAggregate] = AggregateRepository(
             event_store=event_store,
             aggregate_factory=CounterAggregate,
-            aggregate_type="Counter",
             event_publisher=mock_publisher,
         )
         assert repo.event_publisher is mock_publisher
@@ -306,7 +300,6 @@ class TestRepositoryInitialization:
         repo: AggregateRepository[CounterAggregate] = AggregateRepository(
             event_store=event_store,
             aggregate_factory=CounterAggregate,
-            aggregate_type="Counter",
         )
         assert repo.event_publisher is None
 
@@ -895,13 +888,11 @@ class TestGenericTyping:
         counter_repo: AggregateRepository[CounterAggregate] = AggregateRepository(
             event_store=event_store,
             aggregate_factory=CounterAggregate,
-            aggregate_type="Counter",
         )
 
         order_repo: AggregateRepository[OrderAggregate] = AggregateRepository(
             event_store=event_store,
             aggregate_factory=OrderAggregate,
-            aggregate_type="Order",
         )
 
         # Create and save counter

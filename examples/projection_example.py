@@ -405,7 +405,6 @@ async def main():
     repo = AggregateRepository(
         event_store=event_store,
         aggregate_factory=OrderAggregate,
-        aggregate_type="Order",
         event_publisher=event_bus,
     )
 

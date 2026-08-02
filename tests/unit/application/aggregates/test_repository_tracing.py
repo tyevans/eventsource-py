@@ -114,7 +114,6 @@ class TestAggregateRepositoryTracingComposition:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TracingTestAggregate,
-            aggregate_type="TracingTest",
         )
 
         # Check that tracing was initialized
@@ -128,7 +127,6 @@ class TestAggregateRepositoryTracingComposition:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TracingTestAggregate,
-            aggregate_type="TracingTest",
             enable_tracing=False,
         )
 
@@ -142,7 +140,6 @@ class TestAggregateRepositoryTracingComposition:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TracingTestAggregate,
-            aggregate_type="TracingTest",
             tracer=custom_tracer,
         )
 
@@ -153,7 +150,6 @@ class TestAggregateRepositoryTracingComposition:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TracingTestAggregate,
-            aggregate_type="TracingTest",
         )
         # Should not raise, tracing defaults to enabled
         assert hasattr(repo, "_enable_tracing")
@@ -187,7 +183,6 @@ class TestAggregateRepositorySpanCreation:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TracingTestAggregate,
-            aggregate_type="TracingTest",
             tracer=mock_tracer,
         )
         return repo
@@ -198,7 +193,6 @@ class TestAggregateRepositorySpanCreation:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TracingTestAggregate,
-            aggregate_type="TracingTest",
             snapshot_store=snapshot_store,
             tracer=mock_tracer,
         )
@@ -388,7 +382,6 @@ class TestAggregateRepositoryTracingDisabled:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TracingTestAggregate,
-            aggregate_type="TracingTest",
             enable_tracing=False,
         )
 
@@ -406,7 +399,6 @@ class TestAggregateRepositoryTracingDisabled:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TracingTestAggregate,
-            aggregate_type="TracingTest",
             enable_tracing=False,
         )
 
@@ -426,7 +418,6 @@ class TestAggregateRepositoryTracingDisabled:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TracingTestAggregate,
-            aggregate_type="TracingTest",
             enable_tracing=False,
         )
 
@@ -449,7 +440,6 @@ class TestAggregateRepositoryTracingDisabled:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TracingTestAggregate,
-            aggregate_type="TracingTest",
             snapshot_store=snapshot_store,
             enable_tracing=False,
         )
@@ -496,7 +486,6 @@ class TestAggregateRepositorySpanDynamicAttributes:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TracingTestAggregate,
-            aggregate_type="TracingTest",
             tracer=mock_tracer,
         )
 
@@ -528,7 +517,6 @@ class TestAggregateRepositorySpanDynamicAttributes:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TracingTestAggregate,
-            aggregate_type="TracingTest",
             tracer=mock_tracer,
         )
 
@@ -546,7 +534,6 @@ class TestAggregateRepositorySpanDynamicAttributes:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TracingTestAggregate,
-            aggregate_type="TracingTest",
             tracer=mock_tracer,
         )
 
@@ -562,7 +549,6 @@ class TestAggregateRepositorySpanDynamicAttributes:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TracingTestAggregate,
-            aggregate_type="TracingTest",
             snapshot_store=snapshot_store,
             tracer=mock_tracer,
         )
@@ -651,7 +637,6 @@ class TestAggregateRepositoryTracingMultipleEvents:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TracingTestAggregate,
-            aggregate_type="TracingTest",
             tracer=mock_tracer,
         )
 
@@ -678,7 +663,6 @@ class TestAggregateRepositoryTracingMultipleEvents:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TracingTestAggregate,
-            aggregate_type="TracingTest",
             tracer=mock_tracer,
         )
 

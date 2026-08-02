@@ -144,7 +144,6 @@ class TestRepositoryConstructor:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,
-            aggregate_type="Test",
         )
 
         assert repo.snapshot_store is None
@@ -159,7 +158,6 @@ class TestRepositoryConstructor:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,
-            aggregate_type="Test",
             snapshot_store=snapshot_store,
         )
 
@@ -173,7 +171,6 @@ class TestRepositoryConstructor:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,
-            aggregate_type="Test",
             snapshot_store=snapshot_store,
             snapshot_threshold=100,
             snapshot_mode="background",
@@ -189,7 +186,6 @@ class TestRepositoryConstructor:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,
-            aggregate_type="Test",
             snapshot_store=snapshot_store,
             snapshot_threshold=10,
             snapshot_mode="manual",
@@ -220,7 +216,6 @@ class TestRepositorySnapshotLoad:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,
-            aggregate_type="Test",
         )
 
         # Create and save aggregate
@@ -284,7 +279,6 @@ class TestRepositorySnapshotLoad:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,
-            aggregate_type="Test",
             snapshot_store=snapshot_store,
         )
 
@@ -332,7 +326,6 @@ class TestRepositorySnapshotLoad:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,
-            aggregate_type="Test",
             snapshot_store=snapshot_store,
         )
 
@@ -367,7 +360,6 @@ class TestRepositorySnapshotLoad:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,
-            aggregate_type="Test",
             snapshot_store=mock_snapshot_store,
         )
 
@@ -412,7 +404,6 @@ class TestRepositorySnapshotLoad:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,
-            aggregate_type="Test",
             snapshot_store=snapshot_store,
         )
 
@@ -428,7 +419,6 @@ class TestRepositorySnapshotLoad:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,
-            aggregate_type="Test",
             snapshot_store=snapshot_store,
         )
 
@@ -456,7 +446,6 @@ class TestRepositorySnapshotLoad:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,
-            aggregate_type="Test",
             snapshot_store=snapshot_store,
         )
 
@@ -490,7 +479,6 @@ class TestRepositoryAutoSnapshot:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,
-            aggregate_type="Test",
             snapshot_store=snapshot_store,
             snapshot_threshold=3,
             snapshot_mode="sync",
@@ -522,7 +510,6 @@ class TestRepositoryAutoSnapshot:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,
-            aggregate_type="Test",
             snapshot_store=snapshot_store,
             snapshot_threshold=10,
         )
@@ -541,7 +528,6 @@ class TestRepositoryAutoSnapshot:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,
-            aggregate_type="Test",
             snapshot_store=snapshot_store,
             snapshot_threshold=1,  # Would trigger immediately
             snapshot_mode="manual",
@@ -561,7 +547,6 @@ class TestRepositoryAutoSnapshot:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,
-            aggregate_type="Test",
             snapshot_store=snapshot_store,
             snapshot_threshold=5,
             snapshot_mode="sync",
@@ -591,7 +576,6 @@ class TestRepositoryAutoSnapshot:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,
-            aggregate_type="Test",
             snapshot_store=mock_snapshot_store,
             snapshot_threshold=1,
             snapshot_mode="sync",
@@ -631,7 +615,6 @@ class TestRepositoryManualSnapshot:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,
-            aggregate_type="Test",
             snapshot_store=snapshot_store,
         )
 
@@ -656,7 +639,6 @@ class TestRepositoryManualSnapshot:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,
-            aggregate_type="Test",
         )
 
         aggregate = TestAggregate(uuid4())
@@ -672,7 +654,6 @@ class TestRepositoryManualSnapshot:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,
-            aggregate_type="Test",
             snapshot_store=snapshot_store,
             snapshot_mode="manual",
         )
@@ -693,7 +674,6 @@ class TestRepositoryManualSnapshot:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,
-            aggregate_type="Test",
             snapshot_store=snapshot_store,
         )
 
@@ -742,7 +722,6 @@ class TestRepositoryBackgroundSnapshot:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,
-            aggregate_type="Test",
             snapshot_store=snapshot_store,
             snapshot_threshold=1,
             snapshot_mode="background",
@@ -773,7 +752,6 @@ class TestRepositoryBackgroundSnapshot:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,
-            aggregate_type="Test",
             snapshot_store=mock_snapshot_store,
             snapshot_threshold=1,
             snapshot_mode="background",
@@ -800,7 +778,6 @@ class TestRepositoryBackgroundSnapshot:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,
-            aggregate_type="Test",
             snapshot_store=snapshot_store,
             snapshot_threshold=1,
             snapshot_mode="background",
@@ -831,7 +808,6 @@ class TestRepositoryBackgroundSnapshot:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,
-            aggregate_type="Test",
             snapshot_store=mock_snapshot_store,
             snapshot_threshold=1,
             snapshot_mode="background",
@@ -875,7 +851,6 @@ class TestSnapshotPolicyLogic:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,
-            aggregate_type="Test",
             snapshot_threshold=100,
         )
 
@@ -891,7 +866,6 @@ class TestSnapshotPolicyLogic:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,
-            aggregate_type="Test",
             snapshot_store=snapshot_store,
         )
         aggregate = TestAggregate(uuid4())
@@ -988,7 +962,6 @@ class TestFullCycleIntegration:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,
-            aggregate_type="Test",
             snapshot_store=snapshot_store,
             snapshot_threshold=5,
             snapshot_mode="sync",
@@ -1031,7 +1004,6 @@ class TestFullCycleIntegration:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,
-            aggregate_type="Test",
             snapshot_store=snapshot_store,
             snapshot_mode="manual",
         )
@@ -1067,7 +1039,6 @@ class TestFullCycleIntegration:
         repo_v1 = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,  # schema_version=1
-            aggregate_type="Test",
             snapshot_store=snapshot_store,
             snapshot_threshold=5,
             snapshot_mode="sync",
@@ -1087,7 +1058,6 @@ class TestFullCycleIntegration:
         repo_v2 = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregateV2,  # schema_version=2
-            aggregate_type="Test",
             snapshot_store=snapshot_store,
         )
 
@@ -1133,7 +1103,6 @@ class TestEdgeCases:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,
-            aggregate_type="Test",
             snapshot_store=snapshot_store,
         )
 
@@ -1156,7 +1125,6 @@ class TestEdgeCases:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,
-            aggregate_type="Test",
             snapshot_store=snapshot_store,
             snapshot_threshold=1,
         )
@@ -1176,7 +1144,6 @@ class TestEdgeCases:
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,
-            aggregate_type="Test",
             snapshot_store=snapshot_store,
             snapshot_threshold=2,
             snapshot_mode="sync",
