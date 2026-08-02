@@ -121,10 +121,13 @@ source = ["src/eventsource"]
 source = ["src/eventsource"]
 
 [tool.coverage.report]
-# Unit-suite coverage measured at 88% (2026-07-29, tests/unit/ only,
-# excluding integration/postgres/redis-marked tests). Set slightly below that
-# as a regression ratchet, not a stretch target.
-fail_under = 87
+# Unit-suite coverage measured at 92% (2026-08-01, tests/unit/ only,
+# excluding integration/postgres/redis-marked tests). A regression ratchet,
+# not a stretch target: raise it when measured coverage rises, never to force
+# new tests. Note the margin here is thin -- measured was 92.01% -- so a
+# change that leaves a few lines uncovered will fail the gate rather than
+# merely warn.
+fail_under = 92
 
 [tool.mypy]
 python_version = "3.13"
