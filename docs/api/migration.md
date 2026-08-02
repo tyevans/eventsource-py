@@ -15,7 +15,10 @@ drives:
 | Phase components | `bulk_copier`, `dual_write`, `cutover`, `write_pause`, `position_mapper`, `sync_lag_tracker`, `subscription_migrator` | `BulkCopier`, `DualWriteInterceptor`, `CutoverManager`, `WritePauseManager`, `PositionMapper`, `SyncLagTracker`, `SubscriptionMigrator` |
 | Verification | `eventsource.application.migration.consistency` | `ConsistencyVerifier`, `VerificationLevel`, `VerificationReport` |
 | Observability | `status_streamer`, `metrics` | `StatusStreamer`, `StatusStreamManager`, `MigrationMetrics`, `ActiveMigrationsTracker` |
-| Errors | `eventsource.application.migration.exceptions` | `MigrationError` and subclasses, `classify_exception()`, `RetryConfig`, `CircuitBreaker`, `ErrorHandler` |
+| Error classification | `eventsource.application.migration.error_classification` | `ErrorSeverity`, `ErrorRecoverability`, `ErrorClassification`, `RetryConfig`, `TRANSIENT_RETRY_CONFIG`, `CONNECTIVITY_RETRY_CONFIG`, `CUTOVER_RETRY_CONFIG` |
+| Errors | `eventsource.application.migration.exceptions` | `MigrationError` and subclasses, including `CircuitBreakerOpenError` |
+| Circuit breaker | `eventsource.application.migration.circuit_breaker` | `CircuitState`, `CircuitBreakerConfig`, `CircuitBreaker`, `CircuitBreakerContext` |
+| Error handling | `eventsource.application.migration.error_handling` | `ErrorHandler`, `classify_exception()` |
 
 A migration advances through the phases `PENDING → BULK_COPY → DUAL_WRITE →
 CUTOVER → COMPLETED`, with `ABORTED` and `FAILED` as terminal escapes from any

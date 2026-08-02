@@ -24,6 +24,10 @@ shim, no transition window — the same standing rule ADR 0025, ADR 0026,
 ADR 0030, ADR 0031, ADR 0032, and ADR 0033 already applied to every other
 pre-ring package.
 
+Amended by ADR 0044 (`application/migration/exceptions.py` decomposes into
+four modules; the ring placement and layers contract decided here are
+unaffected).
+
 ## Decision Table
 
 | Old module | New home | Ring | Rationale |

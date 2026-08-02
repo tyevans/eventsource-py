@@ -67,13 +67,19 @@ The rings, innermost first:
    the Dependency Rule lets an outer ring depend inward but never the reverse, so
    a utility used by both application and adapters is owned by the innermost of
    the two) are settled, not transitional; top-level `handlers/` and `_internal/`
-   are gone (ADR 0033). `application/migration/` (fourteen orchestration modules
-   — `bulk_copier.py`, `consistency.py`, `coordinator.py`, `cutover.py`,
-   `dual_write.py`, `exceptions.py`, `metrics.py`, `position_mapper.py`,
-   `router.py`, `status_streamer.py`, `subscription_migrator.py`,
-   `sync_lag_tracker.py`, `write_pause.py`, plus `__init__.py`) is settled, not
-   transitional; top-level `migration/` no longer exists (ADR 0034) — it was the
-   last top-level package outside the ring map. `domain/tenant_context.py`
+   are gone (ADR 0033). `application/migration/` (seventeen orchestration modules
+   — `bulk_copier.py`, `circuit_breaker.py`, `consistency.py`, `coordinator.py`,
+   `cutover.py`, `dual_write.py`, `error_classification.py`, `error_handling.py`,
+   `exceptions.py`, `metrics.py`, `position_mapper.py`, `router.py`,
+   `status_streamer.py`, `subscription_migrator.py`, `sync_lag_tracker.py`,
+   `write_pause.py`, plus `__init__.py`) is settled, not transitional; top-level
+   `migration/` no longer exists (ADR 0034) — it was the last top-level package
+   outside the ring map. The four error-handling modules
+   (`error_classification.py`, `exceptions.py`, `circuit_breaker.py`,
+   `error_handling.py`) form a one-way DAG — vocabulary → taxonomy → circuit
+   breaker → handling — enforced by
+   `tests/unit/application/migration/test_module_layering.py`, per ADR 0044.
+   `domain/tenant_context.py`
    (`tenant_context`, `TenantContextToken`, `get_current_tenant`,
    `get_required_tenant`, `set_current_tenant`, `reset_tenant_context`,
    `clear_tenant_context`, `tenant_scope`, `tenant_scope_sync`) and

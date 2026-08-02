@@ -30,29 +30,35 @@ from uuid import UUID, uuid4
 import pytest
 
 from eventsource.adapters.memory import InMemoryEventStore
+from eventsource.application.migration.circuit_breaker import (
+    CircuitBreaker,
+    CircuitBreakerConfig,
+)
 from eventsource.application.migration.consistency import (
     ConsistencyVerifier,
     VerificationLevel,
 )
 from eventsource.application.migration.coordinator import MigrationCoordinator
 from eventsource.application.migration.cutover import CutoverManager
+from eventsource.application.migration.error_classification import (
+    ErrorRecoverability,
+    ErrorSeverity,
+    RetryConfig,
+)
+from eventsource.application.migration.error_handling import (
+    ErrorHandler,
+    classify_exception,
+)
 from eventsource.application.migration.exceptions import (
     BulkCopyError,
-    CircuitBreaker,
-    CircuitBreakerConfig,
     CircuitBreakerOpenError,
     CutoverError,
     CutoverLagError,
     CutoverTimeoutError,
     DualWriteError,
-    ErrorHandler,
-    ErrorRecoverability,
-    ErrorSeverity,
     MigrationAlreadyExistsError,
     MigrationError,
     MigrationNotFoundError,
-    RetryConfig,
-    classify_exception,
 )
 from eventsource.application.migration.metrics import (
     clear_metrics_registry,

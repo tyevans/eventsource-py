@@ -48,6 +48,11 @@ See Also:
 """
 
 from eventsource.application.migration.bulk_copier import BulkCopier
+from eventsource.application.migration.circuit_breaker import (
+    CircuitBreaker,
+    CircuitBreakerConfig,
+    CircuitState,
+)
 from eventsource.application.migration.consistency import (
     ConsistencyVerifier,
     ConsistencyViolation,
@@ -58,31 +63,31 @@ from eventsource.application.migration.consistency import (
 from eventsource.application.migration.coordinator import MigrationCoordinator
 from eventsource.application.migration.cutover import CutoverManager
 from eventsource.application.migration.dual_write import DualWriteInterceptor
-from eventsource.application.migration.exceptions import (
+from eventsource.application.migration.error_classification import (
     CONNECTIVITY_RETRY_CONFIG,
     CUTOVER_RETRY_CONFIG,
     TRANSIENT_RETRY_CONFIG,
-    CircuitBreaker,
-    CircuitBreakerConfig,
+    ErrorClassification,
+    ErrorRecoverability,
+    ErrorSeverity,
+    RetryConfig,
+)
+from eventsource.application.migration.error_handling import (
+    ErrorHandler,
+    classify_exception,
+)
+from eventsource.application.migration.exceptions import (
     CircuitBreakerOpenError,
-    CircuitState,
     # Core exceptions
     ConsistencyError,
     CutoverError,
     CutoverTimeoutError,
-    ErrorClassification,
-    ErrorHandler,
-    ErrorRecoverability,
-    # Error classification (P4-004)
-    ErrorSeverity,
     MigrationAlreadyExistsError,
     MigrationError,
     MigrationNotFoundError,
     MigrationStateError,
     PositionMappingError,
-    RetryConfig,
     RoutingError,
-    classify_exception,
 )
 from eventsource.application.migration.metrics import (
     ActiveMigrationsTracker,
