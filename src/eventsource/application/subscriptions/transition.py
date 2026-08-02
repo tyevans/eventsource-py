@@ -23,7 +23,6 @@ from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_BUFFER_SIZE,
     ATTR_EVENTS_PROCESSED,
-    ATTR_EVENTS_SKIPPED,
     ATTR_POSITION,
     ATTR_SUBSCRIPTION_NAME,
     ATTR_SUBSCRIPTION_PHASE,
@@ -75,8 +74,8 @@ class TransitionResult:
     Attributes:
         success: True if transition completed successfully
         catchup_events_processed: Number of events processed during catch-up
-        buffer_events_processed: Number of events processed from buffer
-        buffer_events_skipped: Number of duplicate events skipped from buffer
+        buffer_events_processed: Number of events processed from the global
+            feed once buffering ends (everything past the catch-up watermark)
         final_position: Last processed global-feed position, None if nothing
             has been processed
         phase_reached: The phase reached when transition ended
@@ -86,7 +85,6 @@ class TransitionResult:
     success: bool
     catchup_events_processed: int
     buffer_events_processed: int
-    buffer_events_skipped: int
     final_position: Position | None
     phase_reached: TransitionPhase
     error: Exception | None = None
@@ -196,7 +194,6 @@ class TransitionCoordinator:
         ) as span:
             catchup_processed = 0
             buffer_processed = 0
-            buffer_skipped = 0
 
             try:
                 # Phase 1: Initial setup and watermark
@@ -240,7 +237,6 @@ class TransitionCoordinator:
                         success=True,
                         catchup_events_processed=0,
                         buffer_events_processed=0,
-                        buffer_events_skipped=0,
                         final_position=self.subscription.last_processed_position,
                         phase_reached=TransitionPhase.LIVE,
                     )
@@ -253,6 +249,7 @@ class TransitionCoordinator:
                 self._live_runner = LiveRunner(
                     event_bus=self.event_bus,
                     checkpoint_repo=self.checkpoint_repo,
+                    event_feed=self.event_store,
                     subscription=self.subscription,
                 )
                 await self._live_runner.start(buffer_events=True)
@@ -303,17 +300,15 @@ class TransitionCoordinator:
                     span.set_attribute(ATTR_SUBSCRIPTION_PHASE, self._phase.value)
 
                 buffer_processed = await self._live_runner.process_buffer()
-                buffer_skipped = self._live_runner.stats.events_skipped_duplicate
 
                 if span:
-                    span.set_attribute(ATTR_EVENTS_SKIPPED, buffer_skipped)
+                    span.set_attribute(ATTR_EVENTS_PROCESSED, buffer_processed)
 
                 logger.info(
                     "Buffer processed",
                     extra={
                         "subscription": self.subscription.name,
                         "processed": buffer_processed,
-                        "skipped": buffer_skipped,
                     },
                 )
 
@@ -340,7 +335,6 @@ class TransitionCoordinator:
                     success=True,
                     catchup_events_processed=catchup_processed,
                     buffer_events_processed=buffer_processed,
-                    buffer_events_skipped=buffer_skipped,
                     final_position=self.subscription.last_processed_position,
                     phase_reached=TransitionPhase.LIVE,
                 )
@@ -368,7 +362,6 @@ class TransitionCoordinator:
                     success=False,
                     catchup_events_processed=catchup_processed,
                     buffer_events_processed=buffer_processed,
-                    buffer_events_skipped=buffer_skipped,
                     final_position=self.subscription.last_processed_position,
                     phase_reached=self._phase,
                     error=e,
@@ -384,6 +377,7 @@ class TransitionCoordinator:
         self._live_runner = LiveRunner(
             event_bus=self.event_bus,
             checkpoint_repo=self.checkpoint_repo,
+            event_feed=self.event_store,
             subscription=self.subscription,
         )
         await self._live_runner.start(buffer_events=False)

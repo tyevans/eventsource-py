@@ -37,15 +37,16 @@ from eventsource.observability.attributes import (
     ATTR_EVENT_ID,
     ATTR_EVENT_TYPE,
     ATTR_EVENTS_PROCESSED,
-    ATTR_EVENTS_SKIPPED,
     ATTR_POSITION,
     ATTR_SUBSCRIPTION_NAME,
 )
+from eventsource.ports.envelopes import EventEnvelope
 from eventsource.ports.positions import Position
 
 if TYPE_CHECKING:
     from eventsource.ports.bus import SubscribableEventBus
     from eventsource.ports.checkpoints import SubscriptionPositions
+    from eventsource.ports.store import GlobalEventFeed
 
 logger = logging.getLogger(__name__)
 
@@ -56,16 +57,14 @@ class LiveRunnerStats:
     Statistics for live event processing.
 
     Attributes:
-        events_received: Total events received from the event bus
+        events_received: Total envelopes read from the global feed while draining
         events_processed: Events successfully processed by subscriber
-        events_skipped_duplicate: Events skipped due to duplicate detection
         events_skipped_filtered: Events skipped due to event type filtering
         events_failed: Events that failed during processing
     """
 
     events_received: int = 0
     events_processed: int = 0
-    events_skipped_duplicate: int = 0
     events_skipped_filtered: int = 0
     events_failed: int = 0
 
@@ -73,24 +72,36 @@ class LiveRunnerStats:
 @dataclass
 class LiveRunner:
     """
-    Receives real-time events from the event bus and delivers to subscriber.
+    Wakes on bus notifications and delivers events read from the global feed.
+
+    The store owns ordering; the bus is a wake-up signal only. A `DomainEvent`
+    arriving from the bus carries no position and is never delivered directly
+    -- it only tells the runner that new work may exist. On each wake, the
+    runner reads `event_feed.read_all(from_position=...)` forward from the
+    subscription's last checkpoint and processes every envelope it gets back,
+    which is where the position for checkpointing actually comes from
+    (ADR 0047). Because the global feed is the single ordered source, no
+    duplicate suppression is needed between catch-up and live -- a position
+    read once is never read again.
 
     The LiveRunner handles:
-    - Subscribing to the event bus
-    - Delivering events to the subscriber
-    - Tracking position and filtering duplicates
+    - Subscribing to the event bus as a wake-up signal
+    - Draining the global feed forward from the last checkpoint
+    - Delivering feed envelopes to the subscriber
     - Checkpointing according to configuration
 
-    During the catch-up to live transition, the LiveRunner may buffer
-    events and filter duplicates based on position.
+    During the catch-up to live transition, the LiveRunner buffers wake
+    signals (not events) so nothing is drained until catch-up has caught the
+    subscription's checkpoint up to the watermark.
 
     Attributes:
-        event_bus: Event bus to subscribe to
+        event_bus: Event bus to subscribe to for wake-up notifications
         checkpoint_repo: Checkpoint repository for persistence
+        event_feed: Global event feed to drain on each wake-up
         subscription: The subscription being processed
 
     Example:
-        >>> runner = LiveRunner(event_bus, checkpoint_repo, subscription)
+        >>> runner = LiveRunner(event_bus, checkpoint_repo, event_feed, subscription)
         >>> await runner.start()
         >>> # Events now being delivered to subscriber
         >>> await runner.stop()
@@ -98,6 +109,7 @@ class LiveRunner:
 
     event_bus: "SubscribableEventBus"
     checkpoint_repo: "SubscriptionPositions"
+    event_feed: "GlobalEventFeed"
     subscription: Subscription
     tracer: Tracer | None = None
     enable_metrics: bool = True
@@ -106,11 +118,12 @@ class LiveRunner:
     # Internal state - not part of init
     _running: bool = field(default=False, init=False, repr=False)
     _subscribed: bool = field(default=False, init=False, repr=False)
-    _buffer: asyncio.Queue[DomainEvent] = field(
-        default_factory=asyncio.Queue, init=False, repr=False
-    )
+    # Wake signals, not events -- the feed is the source of truth for what
+    # to process, so buffering during transition only needs to remember
+    # "a wake happened", counted for `buffer_size`/lag observability.
+    _buffer: asyncio.Queue[None] = field(default_factory=asyncio.Queue, init=False, repr=False)
     _buffer_enabled: bool = field(default=False, init=False, repr=False)
-    _pause_buffer: asyncio.Queue[DomainEvent] = field(
+    _pause_buffer: asyncio.Queue[None] = field(
         default_factory=asyncio.Queue, init=False, repr=False
     )
     _events_buffered_during_pause: int = field(default=0, init=False, repr=False)
@@ -219,62 +232,80 @@ class LiveRunner:
 
     async def _handle_live_event(self, event: DomainEvent) -> None:
         """
-        Handle a live event from the event bus.
+        Handle a wake-up notification from the event bus.
 
-        The bus delivery receipt is the live phase's seen-point: every
-        received event is counted here, before branching, so live lag
-        equals queue depth plus in-flight count. Every terminal path in
-        `_process_live_event` that does not deliver compensates with
-        `record_events_unseen(1)` -- see `Subscription.lag`'s invariant.
+        `event` is never delivered directly -- it carries no position and
+        the bus is not the ordered source of truth. It only signals that new
+        work may exist. When not buffering or paused, this drains the global
+        feed forward from the subscription's last checkpoint via
+        `_drain_feed()`, which is where events actually get delivered,
+        checkpointed, and counted (`Subscription.lag`'s seen/delivered
+        counters are recorded per envelope pulled from the feed, not per
+        wake-up).
 
         Args:
-            event: The event received from the bus
+            event: The (unused) event payload that triggered this wake-up
         """
-        self._stats.events_received += 1
-        await self.subscription.record_events_seen(1)
+        del event  # notification only -- see docstring
 
         if self._buffer_enabled:
-            # During transition, buffer events for later processing
-            await self._buffer.put(event)
+            # During transition, remember that a wake happened; the buffer
+            # is drained (from the feed, not from stored events) once
+            # catch-up completes and disables buffering.
+            await self._buffer.put(None)
             logger.debug(
-                "Event buffered",
+                "Wake-up buffered",
                 extra={
                     "subscription": self.subscription.name,
-                    "event_id": str(event.event_id),
                     "buffer_size": self._buffer.qsize(),
                 },
             )
         elif self.subscription.is_paused:
-            # During pause, buffer events for processing on resume
-            await self._pause_buffer.put(event)
+            # During pause, remember the wake for processing on resume.
+            await self._pause_buffer.put(None)
             self._events_buffered_during_pause += 1
             logger.debug(
-                "Event buffered during pause",
+                "Wake-up buffered during pause",
                 extra={
                     "subscription": self.subscription.name,
-                    "event_id": str(event.event_id),
                     "pause_buffer_size": self._pause_buffer.qsize(),
                 },
             )
         else:
-            # Normal live processing
-            await self._process_live_event(event)
+            # Normal live processing: drain whatever is new on the feed.
+            await self._drain_feed()
 
-    async def _process_live_event(
-        self,
-        event: DomainEvent,
-        position: Position | None = None,
-    ) -> None:
+    async def _drain_feed(self) -> int:
         """
-        Process a live event, checking for duplicates and applying filters.
+        Read and process every envelope on the global feed past our checkpoint.
+
+        This is the single ordered source of live events: the subscription's
+        `last_processed_position` is re-read before each envelope is
+        requested from `event_feed`, so a drain always starts exactly where
+        the last one (or catch-up) left off. No duplicate suppression is
+        needed -- a position is read from the feed at most once.
+
+        Returns:
+            Number of envelopes processed (including filtered ones)
+        """
+        processed = 0
+        from_position = self.subscription.last_processed_position
+        async for envelope in self.event_feed.read_all(from_position=from_position):
+            self._stats.events_received += 1
+            await self.subscription.record_events_seen(1)
+            await self._process_live_event(envelope)
+            processed += 1
+        return processed
+
+    async def _process_live_event(self, envelope: EventEnvelope) -> None:
+        """
+        Process one envelope read from the global feed, applying filters.
 
         Args:
-            event: The event to process
-            position: Optional known position (from buffer processing)
+            envelope: The feed envelope to process
         """
-        # Try to get position for this event if not provided
-        if position is None:
-            position = self._get_event_position(event)
+        event = envelope.event
+        position = envelope.position
 
         with self._tracer.span(
             "eventsource.live_runner.process_event",
@@ -285,24 +316,6 @@ class LiveRunner:
                 ATTR_POSITION: render_position(position),
             },
         ):
-            # Check for duplicate (already processed during catch-up).
-            # A subscription with no processed position has nothing to
-            # dedup against, so the guard needs both sides present.
-            last_processed = self.subscription.last_processed_position
-            if position is not None and last_processed is not None and position <= last_processed:
-                self._stats.events_skipped_duplicate += 1
-                logger.debug(
-                    "Skipping duplicate event",
-                    extra={
-                        "subscription": self.subscription.name,
-                        "event_id": str(event.event_id),
-                        "position": render_position(position),
-                        "last_processed": render_position(last_processed),
-                    },
-                )
-                await self.subscription.record_events_unseen(1)
-                return
-
             # Apply event type filtering
             if self._filter and not self._filter.matches(event):
                 self._stats.events_skipped_filtered += 1
@@ -395,28 +408,6 @@ class LiveRunner:
                             "error": str(e),
                         },
                     )
-
-    def _get_event_position(self, event: DomainEvent) -> Position | None:
-        """
-        Get the global-feed position for a live event.
-
-        Live events from the bus may carry a position token. If not, we
-        cannot track position for this event -- in every in-tree
-        configuration today no bus attaches one, so this returns None and
-        callers handle that.
-
-        Args:
-            event: The event to look up
-
-        Returns:
-            Position, or None if not available
-        """
-        # Check if a position is attached to the event (some buses may include one)
-        position = getattr(event, "_position", None)
-        if isinstance(position, Position):
-            return position
-
-        return None
 
     async def _maybe_checkpoint(self, position: Position, event: DomainEvent) -> None:
         """
@@ -521,13 +512,16 @@ class LiveRunner:
 
     async def process_buffer(self) -> int:
         """
-        Process all buffered events.
+        Drain the global feed to deliver whatever arrived during buffering.
 
         Called after catch-up completes to process events that arrived
-        during the transition.
+        during the transition. Buffered wake-up signals are discarded --
+        the feed, not the queue, is the source of truth for what to
+        process -- and a single drain picks up everything past the
+        checkpoint regardless of how many wake-ups accumulated.
 
         Returns:
-            Number of events processed from buffer
+            Number of envelopes processed from the feed
         """
         with self._tracer.span(
             "eventsource.live_runner.process_buffer",
@@ -536,26 +530,22 @@ class LiveRunner:
                 ATTR_BUFFER_SIZE: self._buffer.qsize(),
             },
         ) as span:
-            processed = 0
-
             while not self._buffer.empty():
                 try:
-                    event = self._buffer.get_nowait()
-                    await self._process_live_event(event)
-                    processed += 1
+                    self._buffer.get_nowait()
                 except asyncio.QueueEmpty:
                     break
 
+            processed = await self._drain_feed()
+
             if span:
                 span.set_attribute(ATTR_EVENTS_PROCESSED, processed)
-                span.set_attribute(ATTR_EVENTS_SKIPPED, self._stats.events_skipped_duplicate)
 
             logger.info(
                 "Buffer processed",
                 extra={
                     "subscription": self.subscription.name,
                     "events_processed": processed,
-                    "events_skipped": self._stats.events_skipped_duplicate,
                 },
             )
 
@@ -579,13 +569,15 @@ class LiveRunner:
 
     async def process_pause_buffer(self) -> int:
         """
-        Process all events buffered during pause.
+        Drain the global feed to deliver whatever arrived during pause.
 
         Called after subscription resumes to process events that arrived
-        while the subscription was paused.
+        while the subscription was paused. As with `process_buffer`, the
+        queued wake-up signals are discarded in favor of a single feed
+        drain from the checkpoint.
 
         Returns:
-            Number of events processed from pause buffer
+            Number of envelopes processed from the feed
         """
         with self._tracer.span(
             "eventsource.live_runner.process_pause_buffer",
@@ -594,8 +586,6 @@ class LiveRunner:
                 ATTR_BUFFER_SIZE: self._pause_buffer.qsize(),
             },
         ) as span:
-            processed = 0
-
             logger.info(
                 "Processing pause buffer",
                 extra={
@@ -606,11 +596,11 @@ class LiveRunner:
 
             while not self._pause_buffer.empty():
                 try:
-                    event = self._pause_buffer.get_nowait()
-                    await self._process_live_event(event)
-                    processed += 1
+                    self._pause_buffer.get_nowait()
                 except asyncio.QueueEmpty:
                     break
+
+            processed = await self._drain_feed()
 
             if span:
                 span.set_attribute(ATTR_EVENTS_PROCESSED, processed)
@@ -620,7 +610,6 @@ class LiveRunner:
                 extra={
                     "subscription": self.subscription.name,
                     "events_processed": processed,
-                    "events_skipped": self._stats.events_skipped_duplicate,
                 },
             )
 
@@ -658,7 +647,6 @@ class LiveRunner:
                     "stats": {
                         "received": self._stats.events_received,
                         "processed": self._stats.events_processed,
-                        "skipped_duplicate": self._stats.events_skipped_duplicate,
                         "skipped_filtered": self._stats.events_skipped_filtered,
                         "failed": self._stats.events_failed,
                     },

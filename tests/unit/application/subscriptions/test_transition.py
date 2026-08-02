@@ -174,14 +174,12 @@ class TestTransitionResult:
             success=True,
             catchup_events_processed=100,
             buffer_events_processed=10,
-            buffer_events_skipped=5,
             final_position=Position(store_id="test", key=(110,)),
             phase_reached=TransitionPhase.LIVE,
         )
         assert result.success is True
         assert result.catchup_events_processed == 100
         assert result.buffer_events_processed == 10
-        assert result.buffer_events_skipped == 5
         assert result.final_position == Position(store_id="test", key=(110,))
         assert result.phase_reached == TransitionPhase.LIVE
         assert result.error is None
@@ -193,7 +191,6 @@ class TestTransitionResult:
             success=False,
             catchup_events_processed=50,
             buffer_events_processed=0,
-            buffer_events_skipped=0,
             final_position=Position(store_id="test", key=(50,)),
             phase_reached=TransitionPhase.FAILED,
             error=error,
@@ -257,7 +254,6 @@ class TestTransitionCoordinatorBasic:
         assert result.success is True
         assert result.catchup_events_processed == 0
         assert result.buffer_events_processed == 0
-        assert result.buffer_events_skipped == 0
         assert result.final_position is None
         assert result.phase_reached == TransitionPhase.LIVE
         assert coordinator.phase == TransitionPhase.LIVE
@@ -387,8 +383,6 @@ class TestTransitionBufferMode:
             TransitionPhase.FINAL_CATCHUP,
         ):
             live_event = TransitionTestEvent(aggregate_id=uuid4(), data="live_during_catchup")
-            # Attach position metadata
-            live_event._global_position = 100  # Position after watermark
             await event_bus.publish([live_event])
 
         # Wait for transition to complete
@@ -762,11 +756,24 @@ class TestTransitionLiveRunnerAccess:
         checkpoint_repo: InMemoryCheckpointRepository,
         subscriber: MockTransitionSubscriber,
     ):
-        """Test live runner processes events after transition completes."""
+        """Test live runner processes events after transition completes.
+
+        Regression test for the live-checkpoint bug: the live runner used to
+        read a `_position` attribute that nothing ever set, so it always
+        delivered live events with `position=None` and never checkpointed
+        past the catch-up watermark -- a live subscription would replay its
+        entire live period from the watermark on every restart. Now the
+        runner drains `GlobalEventFeed.read_all(from_position=...)` on each
+        bus wake-up, so a live event's real feed position is always known
+        and checkpointed.
+        """
         # Add initial events
         await add_events_to_store(event_store, 5)
 
-        config = SubscriptionConfig(batch_size=100)
+        config = SubscriptionConfig(
+            batch_size=100,
+            checkpoint_strategy=CheckpointStrategy.EVERY_EVENT,
+        )
         subscription = Subscription(
             name="LiveAfterTransition",
             config=config,
@@ -778,8 +785,19 @@ class TestTransitionLiveRunnerAccess:
         assert result.success is True
         assert len(subscriber.handled_events) == 5
 
-        # Now publish a live event
+        watermark = result.final_position
+        assert watermark is not None
+
+        # A real write: append to the store (the source of truth), then
+        # publish to the bus purely as a wake-up notification -- the bus
+        # payload itself is never delivered, per the store-owns-ordering
+        # design (ADR 0047).
         live_event = TransitionTestEvent(aggregate_id=uuid4(), data="after_transition")
+        append_result = await event_store.append(
+            StreamId(aggregate_id=live_event.aggregate_id, category="TransitionAggregate"),
+            [live_event],
+            ExpectedVersion.no_stream(),
+        )
         await event_bus.publish([live_event])
 
         # Wait for event processing
@@ -788,6 +806,14 @@ class TestTransitionLiveRunnerAccess:
         # Should have received the live event
         assert len(subscriber.handled_events) == 6
         assert subscriber.handled_events[-1].data == "after_transition"
+
+        # The checkpoint must have advanced past the catch-up watermark to
+        # the live event's real position -- not stayed pinned at the
+        # watermark the way the unfixed `_get_event_position` bug left it.
+        checkpoint_position = await checkpoint_repo.get_position("LiveAfterTransition")
+        assert checkpoint_position == append_result.position
+        assert checkpoint_position is not None
+        assert checkpoint_position > watermark
 
 
 # --- Module Imports Tests ---
