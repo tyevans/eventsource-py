@@ -7,8 +7,12 @@ Reference for the type vocabulary of `eventsource`: the semantic aliases in
 Two modules cover two different concerns:
 
 - **`eventsource.domain.types`** — plain aliases for domain identities (`AggregateId`,
-  `EventId`, `TenantId`, `CorrelationId`, `CausationId`) and the `TState` type
-  variable. These name intent in signatures; they add no runtime behavior.
+  `EventId`, `TenantId`, `CorrelationId`, `CausationId`). These name intent in
+  signatures; they add no runtime behavior. The aggregate state parameter
+  (formerly a module-level `TState` `TypeVar`) is now declared inline on
+  `AggregateRoot[TState: BaseModel]` and `DeciderAggregate[TState: BaseModel,
+  TCommand = object]` using native PEP 695 type-parameter syntax — it is no
+  longer an importable name.
 - **`eventsource.ports.handlers`** — the canonical definitions of every handler and
   subscriber contract in the library: three `runtime_checkable` Protocols
   (`EventHandler`, `SyncEventHandler`, `FlexibleEventHandler`), one Protocol
@@ -30,8 +34,8 @@ ABCs whose sole import from the library is `DomainEvent`.
 
 Together they answer two questions:
 
-- **What does this `UUID`/`int` mean?** — answered by the aliases and the
-  `TState` type variable in `eventsource.domain.types`.
+- **What does this `UUID`/`int` mean?** — answered by the aliases in
+  `eventsource.domain.types`.
 - **What must my class provide to be used as a handler or subscriber?** —
   answered by the six contracts in `eventsource.ports.handlers`.
 
@@ -39,21 +43,19 @@ Together they answer two questions:
 
 | | `eventsource.domain.types` | `eventsource.ports.handlers` |
 | --- | --- | --- |
-| Contents | `TState` plus the identity aliases `AggregateId`, `EventId`, `TenantId`, `CorrelationId`, `CausationId` | `EventHandler`, `SyncEventHandler`, `FlexibleEventHandler`, `FlexibleEventSubscriber`, `EventSubscriber`, `AsyncEventHandler` |
-| Kind | Type aliases and one `TypeVar` | Four `Protocol`s (all `@runtime_checkable`) and two ABCs |
-| Runtime effect | None — the aliases *are* `UUID`, `UUID \| None`, and `int` | Protocols support `isinstance()`; ABCs enforce abstract methods at instantiation |
+| Contents | The identity aliases `AggregateId`, `EventId`, `TenantId`, `CorrelationId`, `CausationId` | `EventHandler`, `SyncEventHandler`, `FlexibleEventHandler`, `FlexibleEventSubscriber`, `EventSubscriber`, `AsyncEventHandler` |
+| Kind | Type aliases | Four `Protocol`s (all `@runtime_checkable`) and two ABCs |
+| Runtime effect | None — the aliases *are* `UUID` | Protocols support `isinstance()`; ABCs enforce abstract methods at instantiation |
 | `__all__` | Not defined | Defined — this module is the canonical import location for the contracts |
-| Library imports | `pydantic.BaseModel` only (for the `TState` bound) | `eventsource.domain.event.DomainEvent` only |
+| Library imports | None | `eventsource.domain.event.DomainEvent` only |
 
 All names in both modules are re-exported from the package root, so
-`from eventsource import EventHandler, AggregateId, TState` works.
+`from eventsource import EventHandler, AggregateId` works.
 
 ## Type Aliases (`eventsource.domain.types`)
 
-`eventsource.domain.types` contains six names: five identity aliases and one
-`TypeVar`. Every alias resolves to a stdlib type (`UUID` or `UUID | None`);
-the module's only third-party import is `pydantic.BaseModel`, used as
-the bound for `TState`.
+`eventsource.domain.types` contains five identity aliases. Every alias
+resolves to a stdlib type (`UUID`); the module has no third-party imports.
 
 | Name | Definition | Used for |
 | --- | --- | --- |
@@ -62,7 +64,6 @@ the bound for `TState`.
 | `TenantId` | `UUID` | Multi-tenancy scope (optionality on the referencing field, not the type) |
 | `CorrelationId` | `UUID` | Groups events belonging to one logical flow |
 | `CausationId` | `UUID` | The `event_id` of the event that caused this one (optionality on the referencing field) |
-| `TState` | `TypeVar("TState", bound=BaseModel)` | Aggregate state model parameter |
 
 ### Identity aliases
 
@@ -168,20 +169,21 @@ Note: `Version`, `StreamPosition`, and `GlobalPosition` type aliases have been r
 plain integers — use the `Position` type from `eventsource.ports.positions` when working
 with global feed positions.
 
-### Type variables
+### The aggregate state type parameter
 
-#### `TState` — `TypeVar` bound to `pydantic.BaseModel`
+`eventsource.domain.types` no longer declares a module-level `TState`
+`TypeVar`. `AggregateRoot` and `DeclarativeAggregate` each declare their own
+inline PEP 695 type parameter — `class AggregateRoot[TState: BaseModel](ABC)`
+— and `DeciderAggregate` adds a second, defaulted one — `class
+DeciderAggregate[TState: BaseModel, TCommand = object](AggregateRoot[TState])`.
+The `BaseModel` bound is what lets the framework validate, copy, and snapshot
+state generically; `TCommand`'s `object` default (PEP 696) means
+`DeciderAggregate[OrderState]` still works without naming a command type.
 
-The single type variable in the module, declared as
-`TypeVar("TState", bound=BaseModel)`. It parameterizes aggregate state:
-`AggregateRoot` is declared `class AggregateRoot(Generic[TState], ABC)`, its
-`state` property is typed `TState | None`, and subclasses bind it to their own
-pydantic model. The `BaseModel` bound is what lets the framework validate,
-copy, and snapshot state generically.
-
-`TState` is re-exported from `eventsource`. It is declared in `eventsource.domain.types`
-and imported by `eventsource.domain.aggregate` (`AggregateRoot`); the
-`aggregates` package it used to also be re-exported from no longer exists.
+`TState` is not an importable name — it is not re-exported from
+`eventsource`, `eventsource.domain`, or anywhere else. Code that needs to
+write a helper generic over aggregate state declares its own parameter, e.g.
+`def f[T: BaseModel](a: AggregateRoot[T]) -> None: ...`.
 
 ### Note: aliases are transparent, not distinct types (no runtime enforcement)
 
@@ -197,5 +199,5 @@ an `AggregateId` from an `EventId`. Consequences:
 - Because they are transparent, you can pass plain `UUID` values everywhere
   the aliases appear; adopting them is a documentation choice.
 
-Import the identity aliases and `TState` from the package root:
-`from eventsource import AggregateId, EventId, TenantId, CorrelationId, CausationId, TState`.
+Import the identity aliases from the package root:
+`from eventsource import AggregateId, EventId, TenantId, CorrelationId, CausationId`.

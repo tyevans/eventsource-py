@@ -10,8 +10,10 @@ import inspect
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Collection
-from typing import Any, ClassVar, Generic, TypeVar, cast, get_args, get_origin
+from typing import Any, ClassVar, TypeVar, cast, get_args, get_origin
 from uuid import UUID
+
+from pydantic import BaseModel
 
 from eventsource.domain.command import DomainCommand
 from eventsource.domain.decorators import discover_handlers
@@ -24,7 +26,6 @@ from eventsource.domain.exceptions import (
     UnhandledEventError,
 )
 from eventsource.domain.tenant_context import get_current_tenant
-from eventsource.domain.types import TState
 
 # Type alias for unregistered event handling mode
 UnregisteredEventHandling = str  # "ignore" | "warn" | "error"
@@ -38,7 +39,7 @@ EventHandler = Callable[[DomainEvent], None]
 TEvent = TypeVar("TEvent", bound=DomainEvent)
 
 
-class AggregateRoot(Generic[TState], ABC):
+class AggregateRoot[TState: BaseModel](ABC):
     """
     Base class for event-sourced aggregate roots.
 
@@ -626,7 +627,7 @@ class AggregateRoot(Generic[TState], ABC):
         return hash(self._aggregate_id)
 
 
-class DeclarativeAggregate(AggregateRoot[TState], ABC):
+class DeclarativeAggregate[TState: BaseModel](AggregateRoot[TState], ABC):
     """
     Aggregate that uses decorators to register event handlers.
 
@@ -894,6 +895,5 @@ class DeclarativeAggregate(AggregateRoot[TState], ABC):
 __all__ = [
     "AggregateRoot",
     "DeclarativeAggregate",
-    "TState",
     "UnregisteredEventHandling",
 ]

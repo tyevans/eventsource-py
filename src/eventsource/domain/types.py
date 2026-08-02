@@ -12,13 +12,7 @@ Positions are deliberately absent: global feed positions are opaque
 ordered tokens owned by the adapter -- see eventsource.ports.positions.
 """
 
-from typing import TypeVar
 from uuid import UUID
-
-from pydantic import BaseModel
-
-# Type variable for aggregate state
-TState = TypeVar("TState", bound=BaseModel)
 
 # Identity vocabulary
 AggregateId = UUID

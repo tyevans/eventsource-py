@@ -6,19 +6,20 @@ them (use-case ring, `eventsource.application.aggregates.repository`).
 
 ## Overview
 
-The package exposes three public classes and two type variables:
+The package exposes three public classes and one type variable:
 
 | Name | Kind | Defined in |
 | --- | --- | --- |
-| `AggregateRoot[TState]` | Abstract base class | `eventsource.domain.aggregate` |
-| `DeclarativeAggregate[TState]` | Abstract base class (subclass of `AggregateRoot`) | `eventsource.domain.aggregate` |
+| `AggregateRoot[TState: BaseModel]` | Abstract base class with an inline PEP 695 type parameter | `eventsource.domain.aggregate` |
+| `DeclarativeAggregate[TState: BaseModel]` | Abstract base class (subclass of `AggregateRoot`), same inline parameter | `eventsource.domain.aggregate` |
 | `AggregateRepository[TAggregate]` | Concrete generic class | `eventsource.application.aggregates.repository` |
 | `TAggregate` | `TypeVar` bound to `AggregateRoot[Any]` | `eventsource.application.aggregates.repository` |
-| `TState` | `TypeVar` for the aggregate state model | `eventsource.domain.types` |
 
-`AggregateRoot` is `Generic[TState], ABC`: `TState` is the Pydantic model that
-holds the aggregate's state, and subclasses must implement the abstract methods
-`_apply()` and `_get_initial_state()`. `DeclarativeAggregate` replaces the
+`AggregateRoot` is declared `class AggregateRoot[TState: BaseModel](ABC)`:
+`TState` is the Pydantic model that holds the aggregate's state, scoped to the
+class itself rather than a module-level `TypeVar`, and subclasses must
+implement the abstract methods `_apply()` and `_get_initial_state()`.
+`DeclarativeAggregate` replaces the
 hand-written `_apply()` dispatch with handlers registered via the `@handles`
 decorator from `eventsource.domain.decorators`. `AggregateRepository` is not generic over
 state — it is parameterized by the aggregate class itself and mediates between
@@ -76,13 +77,15 @@ Their defining modules are:
 | `DeclarativeAggregate` | `eventsource.domain.aggregate` |
 | `AggregateRepository` | `eventsource.application.aggregates.repository` |
 | `TAggregate` | `eventsource.application.aggregates.repository` |
-| `TState` | `eventsource.domain.types` |
 
-`TState` is not defined in either ring package; both re-export it (indirectly,
-via `AggregateRoot`'s own import) from `eventsource.domain.types`, where it is
-declared as `TypeVar("TState", bound=BaseModel)`. `TAggregate` is declared in
-`eventsource.application.aggregates.repository` as
-`TypeVar("TAggregate", bound="AggregateRoot[Any]")`.
+`TState` is not an importable name anywhere in the library. It is declared
+inline, once per class, as a PEP 695 type parameter:
+`class AggregateRoot[TState: BaseModel](ABC)` and `class
+DeclarativeAggregate[TState: BaseModel](AggregateRoot[TState], ABC)`. Code
+that needs its own generic helper over aggregate state declares its own
+parameter, e.g. `def f[T: BaseModel](a: AggregateRoot[T]) -> None: ...`.
+`TAggregate` is declared in `eventsource.application.aggregates.repository`
+as `TypeVar("TAggregate", bound="AggregateRoot[Any]")`.
 
 ### Preferred import path
 
@@ -93,7 +96,8 @@ the intended import path for application code:
 from eventsource import AggregateRoot, AggregateRepository, DeclarativeAggregate
 ```
 
-`TState` is likewise available as `from eventsource import TState`. `TAggregate`
+`TState` is not part of the public surface — there is nothing to import for it.
+`TAggregate`
 is **not** in the top-level `__all__` — to annotate against it, import it from
 `eventsource.application.aggregates` (or from
 `eventsource.application.aggregates.repository`).
@@ -121,7 +125,7 @@ throughout this page.
 ## `AggregateRoot[TState]`
 
 ```python
-class AggregateRoot(Generic[TState], ABC):
+class AggregateRoot[TState: BaseModel](ABC):
     def __init__(self, aggregate_id: UUID) -> None: ...
 ```
 
@@ -131,8 +135,9 @@ current version, the current `TState` model (or `None`), and a list of
 uncommitted `DomainEvent`s — and mutates all three through a single entry
 point, `apply_event()`.
 
-`TState` is `TypeVar("TState", bound=BaseModel)`, so the state model must be a
-Pydantic model. That bound is what makes `_serialize_state()` and
+`TState` is scoped to the class via the inline `[TState: BaseModel]` type
+parameter, so the state model must be a Pydantic model. That bound is what
+makes `_serialize_state()` and
 `_restore_from_snapshot()` work: they call `model_dump(mode="json")` and
 `model_validate()` on the concrete type recovered by `_get_state_type()`.
 

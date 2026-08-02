@@ -67,7 +67,7 @@ Any module that passes that test -- imports cleanly with nothing but the standar
 | `handlers/adapter.py` | (none beyond protocols, events) | Sync/async handler adapter |
 | `exceptions.py` | (none) | All exception types |
 | `config.py` | (none -- empty placeholder module, defines zero configuration classes) | Nothing yet; see "Empty and placeholder modules" below |
-| `types.py` | pydantic | `AggregateId`, `TState`, `Version`, etc. |
+| `types.py` | (none) | `AggregateId`, `EventId`, `TenantId`, `CorrelationId`, `CausationId` (the aggregate state parameter is now an inline PEP 695 type parameter on `AggregateRoot`, not a module-level type) |
 | `observability/` | (none -- opentelemetry is optional, guarded) | `Tracer`, attribute constants |
 | `bus/memory.py` | (none beyond bus/interface, bus/base, events, handlers/adapter, observability) | `InMemoryEventBus` |
 | `adapters/memory/store.py` | (none beyond domain, events, exceptions, ports) | `InMemoryEventStore` (ring in-memory store) |

@@ -170,7 +170,6 @@ if TYPE_CHECKING:
         CorrelationId,
         EventId,
         TenantId,
-        TState,
     )
     from eventsource.ports import (
         AggregateStore,
@@ -222,7 +221,6 @@ __all__ = [
     # Version
     "__version__",
     # Types
-    "TState",
     "AggregateId",
     "EventId",
     "TenantId",
@@ -399,7 +397,6 @@ if _AIOSQLITE_AVAILABLE_FOR_ALL:
 # TYPE_CHECKING import block above; every name in __all__ (other than
 # __version__, computed eagerly) must appear here exactly once.
 _LAZY: dict[str, str] = {
-    "TState": "eventsource.domain.types",
     "AggregateId": "eventsource.domain.types",
     "EventId": "eventsource.domain.types",
     "TenantId": "eventsource.domain.types",

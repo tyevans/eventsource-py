@@ -10,7 +10,14 @@
 # core dependency -- so mypy failed here while passing in CI and locally.
 #
 # Non-Python hygiene hooks below keep using pre-commit's own environments;
-# they have no project dependencies to drift from.
+# they have no project dependencies to drift from. `debug-statements` still
+# parses Python source, though, so it needs an interpreter that understands
+# this project's floor -- Python 3.13, required since ADR 0043 for native
+# PEP 695/696 syntax (e.g. `class Foo[T: Bound = default]`). Without this
+# pin, pre-commit provisions whatever `python3` resolves to on PATH, which
+# can be older and fails to parse that syntax with a SyntaxError.
+default_language_version:
+  python: python3.13
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0

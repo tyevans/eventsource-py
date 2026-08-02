@@ -33,7 +33,6 @@ EXCEPTION_NAMES = [
 ]
 
 TYPE_NAMES = [
-    "TState",
     "AggregateId",
     "EventId",
     "TenantId",
@@ -59,7 +58,6 @@ TOP_LEVEL_EXCEPTION_NAMES = [
 ]
 
 TOP_LEVEL_TYPE_NAMES = [
-    "TState",
     "AggregateId",
     "EventId",
     "TenantId",
