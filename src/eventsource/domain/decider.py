@@ -10,16 +10,16 @@ docs/explanation/decider-pattern.md.
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Any, Generic, TypeVar
+from typing import Any
 from uuid import UUID
 
-from eventsource.domain.aggregate import AggregateRoot, TState
+from pydantic import BaseModel
+
+from eventsource.domain.aggregate import AggregateRoot
 from eventsource.domain.event import DomainEvent
 
-TCommand = TypeVar("TCommand", default=object)
 
-
-class DeciderAggregate(AggregateRoot[TState], Generic[TState, TCommand]):
+class DeciderAggregate[TState: BaseModel, TCommand = object](AggregateRoot[TState]):
     """
     Aggregate style built from pure ``decide``/``evolve`` functions.
 

@@ -138,8 +138,9 @@ class OrderState(BaseModel):
 That is the whole state model. A few things about it are deliberate.
 
 **It is a Pydantic `BaseModel`, and that is a hard requirement.** `AggregateRoot` (which
-`DeciderAggregate` extends) is declared as `AggregateRoot(Generic[TState], ABC)` where
-`TState = TypeVar("TState", bound=BaseModel)`. Anything you plug in as `TState` must be a
+`DeciderAggregate` extends) is declared as `class AggregateRoot[TState: BaseModel](ABC)`,
+an inline PEP 695 type parameter rather than a module-level `TypeVar`. Anything you plug
+in as `TState` must be a
 `BaseModel` subclass. A dataclass or a plain dict will not type check, and the snapshot
 machinery would break on it: `_serialize_state()` calls `self._state.model_dump(mode="json")`,
 and `_restore_from_snapshot()` calls `state_type.model_validate(state_dict)`. Those two
@@ -445,7 +446,7 @@ Three lines of substance, and each one carries weight.
 
 ### The `[OrderState]` parameter is not decoration
 
-`DeciderAggregate` subclasses `AggregateRoot`, declared `Generic[TState], ABC`. Writing
+`DeciderAggregate` subclasses `AggregateRoot`, declared `[TState: BaseModel](ABC)`. Writing
 `DeciderAggregate[OrderState]` tells the type checker that `self.state` is an
 `OrderState`, so `state.status` in Step 6 is checked rather than guessed at. It also
 does real work at runtime: it is how `_get_state_type()` resolves the class snapshots

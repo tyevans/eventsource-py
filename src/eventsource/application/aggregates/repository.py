@@ -6,7 +6,7 @@ abstracting away the details of event store operations.
 """
 
 import logging
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
 from eventsource.application.aggregates.snapshotting import (
@@ -39,12 +39,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Type variable for aggregate root
-# Using Any as the bound parameter to satisfy mypy while allowing any state type
-TAggregate = TypeVar("TAggregate", bound="AggregateRoot[Any]")
 
-
-class AggregateRepository(Generic[TAggregate]):
+class AggregateRepository[TAggregate: AggregateRoot[Any]]:
     """
     Repository for event-sourced aggregates.
 
@@ -730,5 +726,4 @@ class AggregateRepository(Generic[TAggregate]):
 
 __all__ = [
     "AggregateRepository",
-    "TAggregate",
 ]

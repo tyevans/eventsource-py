@@ -39,7 +39,7 @@ from __future__ import annotations
 import logging
 import threading
 from collections.abc import Callable, Iterator
-from typing import TYPE_CHECKING, TypeVar, overload
+from typing import TYPE_CHECKING, overload
 
 from eventsource.domain.exceptions import DuplicateEventTypeError, EventTypeNotFoundError
 
@@ -47,9 +47,6 @@ if TYPE_CHECKING:
     from eventsource.domain.event import DomainEvent
 
 logger = logging.getLogger(__name__)
-
-# Type variable for event classes
-TEvent = TypeVar("TEvent", bound="DomainEvent")
 
 
 class EventRegistry:
@@ -81,7 +78,7 @@ class EventRegistry:
         self._registry: dict[str, type[DomainEvent]] = {}
         self._lock = threading.RLock()
 
-    def register(
+    def register[TEvent: "DomainEvent"](
         self,
         event_class: type[TEvent],
         event_type: str | None = None,
@@ -128,7 +125,7 @@ class EventRegistry:
             )
             return event_class
 
-    def _resolve_event_type(
+    def _resolve_event_type[TEvent: "DomainEvent"](
         self,
         event_class: type[TEvent],
         event_type: str | None,
@@ -269,11 +266,11 @@ default_registry = EventRegistry()
 
 # Overloads for type checking - decorator with and without parentheses
 @overload
-def register_event(event_class: type[TEvent]) -> type[TEvent]: ...
+def register_event[TEvent: "DomainEvent"](event_class: type[TEvent]) -> type[TEvent]: ...
 
 
 @overload
-def register_event(
+def register_event[TEvent: "DomainEvent"](
     event_class: None = None,
     *,
     event_type: str | None = None,
@@ -281,7 +278,7 @@ def register_event(
 ) -> Callable[[type[TEvent]], type[TEvent]]: ...
 
 
-def register_event(
+def register_event[TEvent: "DomainEvent"](
     event_class: type[TEvent] | None = None,
     *,
     event_type: str | None = None,

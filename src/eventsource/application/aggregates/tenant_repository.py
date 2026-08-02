@@ -8,7 +8,7 @@ tenant isolation by validating tenant consistency on save operations.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Generic, TypeVar
+from typing import Any
 from uuid import UUID
 
 from eventsource.application.aggregates.repository import AggregateRepository
@@ -16,16 +16,10 @@ from eventsource.domain.aggregate import AggregateRoot
 from eventsource.domain.exceptions import TenantMismatchError
 from eventsource.domain.tenant_context import get_required_tenant
 
-if TYPE_CHECKING:
-    from typing import Any
-
 logger = logging.getLogger(__name__)
 
-# Type variable for aggregate root (consistent with aggregates/repository.py)
-TAggregate = TypeVar("TAggregate", bound="AggregateRoot[Any]")
 
-
-class TenantAwareRepository(Generic[TAggregate]):
+class TenantAwareRepository[TAggregate: AggregateRoot[Any]]:
     """
     Repository wrapper that enforces tenant isolation.
 

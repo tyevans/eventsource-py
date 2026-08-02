@@ -15,7 +15,9 @@ accepts, or how it is taught.
 ## Status
 
 **Accepted.** Implemented across tasks 1–7 of the DDD teaching-layer
-wave.
+wave. **Amended by [ADR 0045](0045-pep695-type-parameter-syntax.md)** — the
+three ruff `UP04x` ignores this ADR staged are removed, and `TState` is
+deleted from `domain/types.py` along with its exports.
 
 **ADR Impact**
 

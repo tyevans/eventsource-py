@@ -62,7 +62,7 @@ The exported names fall into these groups:
 | Group | Representative names |
 | --- | --- |
 | Version metadata | `__version__` |
-| Type aliases | `TState`, `AggregateId`, `EventId`, `TenantId`, `CorrelationId`, `CausationId` |
+| Type aliases | `AggregateId`, `EventId`, `TenantId`, `CorrelationId`, `CausationId` |
 | Events and registry | `DomainEvent`, `EventRegistry`, `default_registry`, `register_event`, `get_event_class`, `get_event_class_or_none`, `is_event_registered`, `list_registered_events`, `EventTypeNotFoundError`, `DuplicateEventTypeError` |
 | Event store ports | `EventAppender`, `StreamReader`, `EventLookup`, `GlobalEventFeed`, `CategoryQuery`, `AggregateStore`, `FullEventStore`, `EventEnvelope`, `AppendResult`, `StreamReadOptions`, `FeedReadOptions`, `CategoryReadOptions`, `ReadDirection`, `Position`, `ExpectedVersion` |
 | Event store implementations | `InMemoryEventStore`, `PostgreSQLEventStore`, plus `SQLiteEventStore` when available |
@@ -326,17 +326,18 @@ third-party store implementation is expected to pass.
 
 ### Aggregates — `api/aggregates.md` (`eventsource.domain.aggregate`, `eventsource.application.aggregates.repository`)
 
-Covers `AggregateRoot[TState]`, the abstract generic base holding state plus uncommitted
-events, and `DeclarativeAggregate[TState]`, which routes events to methods marked with
-`@handles` instead of requiring a hand-written `apply` dispatch — both in the entities
-ring, at `eventsource.domain.aggregate`. `AggregateRepository[TAggregate]`, which loads
+Covers `AggregateRoot[TState: BaseModel]`, the abstract base holding state plus
+uncommitted events, and `DeclarativeAggregate[TState: BaseModel]`, which routes events
+to methods marked with `@handles` instead of requiring a hand-written `apply` dispatch
+— both in the entities ring, at `eventsource.domain.aggregate`. Each class declares its
+own inline PEP 695 `TState` type parameter; it is not a shared module-level `TypeVar`.
+`AggregateRepository[TAggregate]`, which loads
 an aggregate by replaying its stream, saves uncommitted events with an
 `expected_version`, and optionally consults a snapshot store to skip part of the replay,
 is one ring out, at `eventsource.application.aggregates.repository`.
 
-`eventsource.application.aggregates.__all__` adds the type variable `TAggregate`
-alongside `AggregateRepository`; `TState` is declared in `eventsource.domain.types` and
-re-exported from the top-level barrel. The `handles` decorator itself is defined in
+`AggregateRepository`'s `TAggregate` is a class-scoped PEP 695 type parameter, not
+an exported name. The `handles` decorator itself is defined in
 `eventsource.domain.decorators` and re-exported from the barrel; the same decorator is used by
 `DeclarativeProjection`.
 
@@ -626,8 +627,7 @@ implementation detail for anything listed in `__all__`.
 The groups run roughly in dependency order — types, then events, then the store
 interface, then the components built on top of it:
 
-1. **Types** — the aliases and the `TState` type variable every other signature is
-   written in terms of.
+1. **Types** — the identity aliases every other signature is written in terms of.
 2. **Events and event registry** — `DomainEvent` and the global registry it
    self-registers into.
 3. **Event store interface and data structures** — the `EventStore` contract plus the
@@ -741,7 +741,7 @@ carry compatibility guarantees.
 | Group | Names |
 | --- | --- |
 | Version | `__version__` |
-| Type aliases | `TState`, `AggregateId`, `EventId`, `TenantId`, `CorrelationId`, `CausationId` |
+| Type aliases | `AggregateId`, `EventId`, `TenantId`, `CorrelationId`, `CausationId` |
 | Events | `DomainEvent` |
 | Event registry | `EventRegistry`, `default_registry`, `register_event`, `get_event_class`, `get_event_class_or_none`, `is_event_registered`, `list_registered_events`, `EventTypeNotFoundError`, `DuplicateEventTypeError` |
 | Store ports | `EventAppender`, `StreamReader`, `EventLookup`, `GlobalEventFeed`, `CategoryQuery`, `AggregateStore`, `FullEventStore`, `EventEnvelope`, `AppendResult`, `StreamReadOptions`, `FeedReadOptions`, `CategoryReadOptions`, `ReadDirection`, `Position`, `ExpectedVersion` |
@@ -1172,14 +1172,14 @@ class that turns commands into events and events into state, and `DeclarativeAgg
 which routes events to `@handles`-decorated methods. `AggregateRepository`, which loads
 and saves aggregates through an `EventStore`, lives one ring out at
 `eventsource.application.aggregates.repository`. All three are re-exported from the
-barrel, as is `handles` (whose canonical home is `eventsource.domain.decorators`). The type
-variable `TAggregate` is exported from `eventsource.application.aggregates` but not from
-the barrel.
+barrel, as is `handles` (whose canonical home is `eventsource.domain.decorators`).
+`TAggregate` is not exported anywhere — it is a class-scoped PEP 695 type parameter
+on `AggregateRepository`, so there is no module-level object to import.
 
 #### `AggregateRoot`
 
-`AggregateRoot(Generic[TState], ABC)` — the parameter `TState` is bound to
-`pydantic.BaseModel`, so an aggregate's state is a Pydantic model. The constructor takes
+`class AggregateRoot[TState: BaseModel](ABC)` — the inline type parameter `TState` is
+bound to `pydantic.BaseModel`, so an aggregate's state is a Pydantic model. The constructor takes
 one argument, `aggregate_id: UUID`; version starts at `0` and state at `None`.
 
 Two methods are abstract: `_apply(event) -> None`, which updates state for an event, and
@@ -1250,7 +1250,7 @@ name, id, version, and uncommitted count.
 
 #### `DeclarativeAggregate`
 
-`DeclarativeAggregate(AggregateRoot[TState], ABC)` implements `_apply` for you by
+`class DeclarativeAggregate[TState: BaseModel](AggregateRoot[TState], ABC)` implements `_apply` for you by
 dispatching on `type(event)` through a per-subclass handler registry.
 `__init_subclass__` scans the class for methods carrying the `_handles_event_type`
 attribute set by `@handles` and records them in a fresh `_event_handlers` dict — fresh
@@ -1295,8 +1295,8 @@ are importable from `eventsource.domain.decorators`.
 
 #### `AggregateRepository`
 
-`AggregateRepository(Generic[TAggregate])` mediates between aggregates and the store.
-`TAggregate` is bound to `AggregateRoot[Any]`.
+`class AggregateRepository[TAggregate: AggregateRoot[Any]]` mediates between
+aggregates and the store.
 
 ```python
 from eventsource import AggregateRepository, InMemoryEventStore
@@ -1376,15 +1376,15 @@ is a no-op.
 All five subclass `EventSourceError` and are re-exported from the barrel except
 `UnhandledEventError`, which is imported from `eventsource.domain.exceptions`.
 
-### Types (`TState`, `AggregateId`, `EventId`, `TenantId`, `CorrelationId`, `CausationId`)
+### Types (`AggregateId`, `EventId`, `TenantId`, `CorrelationId`, `CausationId`)
 
-Six names from `eventsource.domain.types` are re-exported at the top level. Five are plain
-type aliases; `TState` is a `TypeVar`. The full module definition is three lines of
-imports and eight assignments:
+Five names from `eventsource.domain.types` are re-exported at the top level, all plain
+type aliases. The module no longer declares a `TState` `TypeVar` — the aggregate state
+parameter is now an inline PEP 695 type parameter on `AggregateRoot` and
+`DeclarativeAggregate` (see below) and is not an importable name. The full module
+definition is one import and five assignments:
 
 ```python
-TState = TypeVar("TState", bound=BaseModel)
-
 AggregateId = UUID
 EventId = UUID
 TenantId = UUID | None
@@ -1394,7 +1394,6 @@ CausationId = UUID | None
 
 | Name | Definition | Kind |
 | --- | --- | --- |
-| `TState` | `TypeVar("TState", bound=pydantic.BaseModel)` | Type variable |
 | `AggregateId` | `UUID` | Alias |
 | `EventId` | `UUID` | Alias |
 | `TenantId` | `UUID \| None` | Alias |
@@ -1450,9 +1449,11 @@ step back. See the events reference for the full field semantics.
 
 #### `TState` and generic aggregates
 
-`TState` is the type variable that parameterizes the aggregate hierarchy. Its bound is
-`pydantic.BaseModel`, so aggregate state must be a Pydantic model — this is what lets
-`AggregateRoot` serialize state into snapshots and validate it back out.
+`TState` is the inline type parameter that parameterizes the aggregate hierarchy —
+declared on the class itself (`class AggregateRoot[TState: BaseModel](ABC)`), not as a
+shared module-level `TypeVar`. Its bound is `pydantic.BaseModel`, so aggregate state
+must be a Pydantic model — this is what lets `AggregateRoot` serialize state into
+snapshots and validate it back out.
 
 ```python
 from pydantic import BaseModel
@@ -1469,8 +1470,8 @@ class Order(AggregateRoot[OrderState]):
     ...
 ```
 
-`AggregateRoot` is declared as `Generic[TState]` and `DeclarativeAggregate` as
-`AggregateRoot[TState]`, so the parameter flows through both. It also shapes the state
+`AggregateRoot` is declared `[TState: BaseModel]` and `DeclarativeAggregate` redeclares
+the same inline parameter over `AggregateRoot[TState]`, so it flows through both. It also shapes the state
 accessors, and the two base classes differ here:
 
 - `AggregateRoot.state` returns `TState | None` — state is `None` before the creating
@@ -1497,7 +1498,7 @@ For positions in the global feed, use the opaque `Position` value object from `e
 it is adapter-defined and immutable. Aggregate versions are plain `int` values in `DomainEvent.aggregate_version`;
 stream positions are exposed as `EventEnvelope.stream_version`. See the
 [types and protocols reference](types.md) for the complete module, including the identity aliases
-(`AggregateId`, `EventId`, `TenantId`, `CorrelationId`, `CausationId`) and `TState`.
+(`AggregateId`, `EventId`, `TenantId`, `CorrelationId`, `CausationId`).
 
 ### Events and event registry (`DomainEvent`, `EventRegistry`, `default_registry`, registry helpers, `EventTypeNotFoundError`, `DuplicateEventTypeError`)
 

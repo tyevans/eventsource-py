@@ -8,7 +8,6 @@ live one ring in, at `eventsource.domain.aggregate`.
 ## Key Interfaces
 
 - `AggregateRepository[TAggregate]` -- Repository for loading and saving aggregates
-- `TAggregate` -- Type variable bound to `AggregateRoot`
 - `SnapshotPolicy` (`EveryNEvents`, `Never`) -- decides *when* a snapshot is taken
 - `SnapshotScheduler` (`ImmediateScheduler`, `BackgroundScheduler`) -- decides *how* the snapshot write executes
 - `take_snapshot()`, `read_valid_snapshot()` -- the single spellings of snapshot construction and load-path validation

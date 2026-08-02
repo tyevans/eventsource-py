@@ -174,12 +174,6 @@ extend-exclude = ["*.md"]
 select = ["E", "F", "I", "N", "W", "UP", "B", "C4", "SIM"]
 ignore = [
     "E501",
-    # Staged py313 modernization: PEP 695 type-parameter syntax rewrites
-    # (structural, auto-variance semantics) deferred to a dedicated cleanup
-    # task — do not add new violations.
-    "UP046",  # Generic class uses `Generic` subclass instead of type parameters
-    "UP047",  # Generic function should use type parameters
-    "UP040",  # Type alias uses `TypeAlias` annotation instead of the `type` keyword
 ]
 
 [tool.ruff.lint.isort]

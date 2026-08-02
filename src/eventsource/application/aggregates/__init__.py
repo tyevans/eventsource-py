@@ -1,6 +1,6 @@
 """Aggregate use cases: repository and snapshotting collaborators."""
 
-from eventsource.application.aggregates.repository import AggregateRepository, TAggregate
+from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.application.aggregates.snapshotting import (
     BackgroundScheduler,
     EveryNEvents,
@@ -20,7 +20,6 @@ __all__ = [
     "Never",
     "SnapshotPolicy",
     "SnapshotScheduler",
-    "TAggregate",
     "read_valid_snapshot",
     "take_snapshot",
 ]

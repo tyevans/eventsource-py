@@ -22,11 +22,9 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, TypeVar
+from typing import Any
 
 logger = logging.getLogger(__name__)
-
-T = TypeVar("T")
 
 
 # Common transient exceptions that should be retried
@@ -253,7 +251,7 @@ def is_retryable_exception(
     return isinstance(exception, retryable_exceptions)
 
 
-async def retry_async(
+async def retry_async[T](
     operation: Callable[[], Awaitable[T]],
     config: RetryConfig | None = None,
     retryable_exceptions: tuple[type[Exception], ...] = TRANSIENT_EXCEPTIONS,
@@ -489,7 +487,7 @@ class CircuitBreaker:
                         },
                     )
 
-    async def execute(
+    async def execute[T](
         self,
         operation: Callable[[], Awaitable[T]],
         operation_name: str = "operation",
@@ -573,7 +571,7 @@ class RetryableOperation:
     circuit_breaker: CircuitBreaker | None = None
     _stats: RetryStats = field(default_factory=RetryStats, init=False, repr=False)
 
-    async def execute(
+    async def execute[T](
         self,
         operation: Callable[[], Awaitable[T]],
         name: str = "operation",

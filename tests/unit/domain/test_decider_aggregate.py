@@ -352,3 +352,8 @@ class TestTypedDecider:
                 return state
 
         assert LegacyDecider(uuid4()).execute(object()) == []
+
+    def test_decider_aggregate_accepts_one_and_two_parameter_subscripts(self) -> None:
+        """The PEP 696 default on TCommand keeps the single-parameter form valid."""
+        assert DeciderAggregate[AccountState] is not None
+        assert DeciderAggregate[AccountState, OpenAccount] is not None

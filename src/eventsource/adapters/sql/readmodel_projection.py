@@ -8,7 +8,7 @@ creation and routing to handler methods, simplifying common projection patterns.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Generic, TypeVar
+from typing import TYPE_CHECKING
 
 from eventsource.adapters.sql.projection import DatabaseProjection
 from eventsource.domain.event import DomainEvent
@@ -29,11 +29,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Type variable for read model types
-TModel = TypeVar("TModel", bound=ReadModel)
 
-
-class ReadModelProjection(DatabaseProjection, Generic[TModel]):
+class ReadModelProjection[TModel: ReadModel](DatabaseProjection):
     """
     Projection base class with automatic read model repository support.
 

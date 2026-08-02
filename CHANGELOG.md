@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+- **`TState` is no longer importable.** `from eventsource import TState` (and `from eventsource.domain.types import TState`) now raises `ImportError`. The library's generics moved to native PEP 695 type-parameter syntax (`class AggregateRoot[TState: BaseModel](ABC)`), and a PEP 695 type parameter is scoped to its declaration — there is no module-level `TypeVar` object left to export. **Fix:** declare your own inline parameter — `def f[T: BaseModel](a: AggregateRoot[T]) -> None:` instead of importing `TState`. `AggregateRoot`, `DeclarativeAggregate`, and `DeciderAggregate` are otherwise unchanged, including both `DeciderAggregate[State]` and `DeciderAggregate[State, Command]` subscript forms.
+- **`TAggregate` is no longer exported** from `eventsource.application.aggregates` or `eventsource.application.aggregates.repository`, for the same reason. **Fix:** `def f[A: AggregateRoot[Any]](repo: AggregateRepository[A]) -> None:`.
+- **`TEvent` is no longer exported** from `eventsource.testing.builder`'s `__all__`. It was never re-exported at the `eventsource.testing` package level, so `from eventsource.testing import ...` is unaffected. **Fix:** `def f[E: DomainEvent](b: EventBuilder[E]) -> None:`.
+
 ### Changed
 - **BREAKING: aggregates must declare `aggregate_type`.** The silent `"Unknown"` default on `AggregateRoot` is removed; constructing a concrete aggregate class that does not set the attribute raises the new `AggregateTypeNotSetError`. Aggregate identity is not optional — the old default silently created `"Unknown"`-typed streams.
 - **BREAKING: `DomainEvent.aggregate_type` is validated as a stream category** (must match `CATEGORY_PATTERN`); values that would corrupt a `StreamId` (e.g. containing `:`) now fail at event construction instead of detonating at stream-render time.

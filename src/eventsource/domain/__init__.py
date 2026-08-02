@@ -48,7 +48,6 @@ from eventsource.domain.types import (
     CorrelationId,
     EventId,
     TenantId,
-    TState,
 )
 
 __all__ = [
@@ -86,7 +85,6 @@ __all__ = [
     "SnapshotNotFoundError",
     "SnapshotSchemaVersionError",
     "StreamId",
-    "TState",
     "TenantContextNotSetError",
     "TenantContextResetError",
     "TenantId",
