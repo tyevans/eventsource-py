@@ -22,14 +22,9 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, TypeVar
+from typing import Any
 
 logger = logging.getLogger(__name__)
-
-# Used by CircuitBreaker.execute and RetryableOperation.execute, which are
-# out of scope for this conversion; retry_async declares its own scoped
-# type parameter below and shadows this name within its signature.
-T = TypeVar("T")
 
 
 # Common transient exceptions that should be retried
@@ -492,7 +487,7 @@ class CircuitBreaker:
                         },
                     )
 
-    async def execute(
+    async def execute[T](
         self,
         operation: Callable[[], Awaitable[T]],
         operation_name: str = "operation",
@@ -576,7 +571,7 @@ class RetryableOperation:
     circuit_breaker: CircuitBreaker | None = None
     _stats: RetryStats = field(default_factory=RetryStats, init=False, repr=False)
 
-    async def execute(
+    async def execute[T](
         self,
         operation: Callable[[], Awaitable[T]],
         name: str = "operation",
