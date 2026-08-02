@@ -18,13 +18,31 @@ class EventSourceError(Exception):
 class OptimisticLockError(EventSourceError):
     """Raised when there's a version conflict during event append."""
 
-    def __init__(self, aggregate_id: UUID, expected_version: int, actual_version: int) -> None:
+    def __init__(
+        self, aggregate_id: UUID, expected_version: int | str, actual_version: int
+    ) -> None:
+        """
+        Args:
+            aggregate_id: The aggregate whose append was rejected
+            expected_version: The version the caller required, or the name of
+                the non-numeric `ExpectedVersion` kind they used
+                (`"no_stream"`, `"stream_exists"`, `"any"`). Rendering the
+                kind by name matters: a store that reported `no_stream` as
+                the integer `0` told the user it expected a version they
+                never wrote.
+            actual_version: The stream's current version
+        """
         self.aggregate_id = aggregate_id
         self.expected_version = expected_version
         self.actual_version = actual_version
+        expectation = (
+            f"version {expected_version}"
+            if isinstance(expected_version, int)
+            else str(expected_version)
+        )
         super().__init__(
             f"Optimistic lock error for aggregate {aggregate_id}: "
-            f"expected version {expected_version}, but current version is {actual_version}"
+            f"expected {expectation}, but current version is {actual_version}"
         )
 
 

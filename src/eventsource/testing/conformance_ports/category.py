@@ -7,7 +7,7 @@ only way to get events into the store to read back).
 
 import asyncio
 from abc import ABC, abstractmethod
-from datetime import timedelta
+from datetime import timedelta, timezone
 from typing import Protocol
 from uuid import uuid4
 
@@ -91,6 +91,39 @@ class CategoryQueryConformance(ABC):
 
         envelopes = await collect(
             store.read_category("Timestamped", CategoryReadOptions(from_timestamp=cutoff))
+        )
+
+        assert [e.event.payload for e in envelopes] == ["late"]  # type: ignore[attr-defined]
+
+    async def test_from_timestamp_compares_instants_not_offsets(
+        self, store: _AppenderCategory
+    ) -> None:
+        """The same instant expressed in another timezone must filter the same.
+
+        A backend comparing rendered timestamps lexically (SQLite stores
+        `created_at` as TEXT) silently returns nothing here: `+05:00` sorts
+        after every `+00:00` row no matter which instant it denotes.
+        """
+        stream = make_stream(category="Offsets")
+        await store.append(
+            stream,
+            [ConformanceEvent(aggregate_id=stream.aggregate_id, payload="early")],
+            ExpectedVersion.any_(),
+        )
+        early_envelopes = await collect(store.read_category("Offsets"))
+        cutoff = early_envelopes[0].stored_at + timedelta(milliseconds=1)
+
+        await asyncio.sleep(0.01)
+
+        await store.append(
+            stream,
+            [ConformanceEvent(aggregate_id=stream.aggregate_id, payload="late")],
+            ExpectedVersion.any_(),
+        )
+
+        shifted = cutoff.astimezone(timezone(timedelta(hours=5)))
+        envelopes = await collect(
+            store.read_category("Offsets", CategoryReadOptions(from_timestamp=shifted))
         )
 
         assert [e.event.payload for e in envelopes] == ["late"]  # type: ignore[attr-defined]

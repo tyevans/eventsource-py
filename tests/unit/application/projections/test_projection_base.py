@@ -10,7 +10,7 @@ Tests cover:
 - Handler discovery and validation
 """
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from pydantic import Field
@@ -278,6 +278,48 @@ class TestCheckpointTrackingProjection:
         assert len(failed_events) == 1
         assert failed_events[0].event_id == event.event_id
         assert failed_events[0].projection_name == "FailingProjection"
+
+    @pytest.mark.asyncio
+    async def test_checkpoint_failure_does_not_rerun_the_handler_or_dlq_the_event(
+        self,
+        dlq_repo: InMemoryDLQRepository,
+    ) -> None:
+        """A checkpoint-store outage is a liveness problem, not a poison event.
+
+        The checkpoint write used to sit inside the retry loop's `try`, so a
+        failing checkpoint store was indistinguishable from a failing handler:
+        the loop retried, re-applying the read-model mutation once per attempt,
+        and then wrote a successfully-projected event to the DLQ where an
+        operator would replay it again.
+        """
+
+        class BrokenCheckpoints(InMemoryCheckpointRepository):
+            async def update_checkpoint(self, *args: object, **kwargs: object) -> None:
+                raise ConnectionError("checkpoint store unreachable")
+
+        applied: list[UUID] = []
+
+        class CountingProjection(CheckpointTrackingProjection):
+            MAX_RETRIES = 2
+            RETRY_BACKOFF_BASE = 0
+
+            def subscribed_to(self) -> list[type[DomainEvent]]:
+                return [OrderCreated]
+
+            async def _process_event(self, event: DomainEvent) -> None:
+                applied.append(event.event_id)
+
+        projection = CountingProjection(
+            checkpoint_repo=BrokenCheckpoints(),
+            dlq_repo=dlq_repo,
+        )
+        event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
+
+        with pytest.raises(ConnectionError):
+            await projection.handle(event)
+
+        assert applied == [event.event_id], "the handler must run exactly once"
+        assert await dlq_repo.get_failed_events() == []
 
     @pytest.mark.asyncio
     async def test_failed_event_reraises_without_dlq_repo(

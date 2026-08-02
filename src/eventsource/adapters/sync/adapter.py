@@ -9,9 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import threading
 from collections.abc import Coroutine, Sequence
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any, TypeVar
 from uuid import UUID
 
@@ -28,6 +26,7 @@ from eventsource.ports import (
     StreamReadOptions,
     collect,
 )
+from eventsource.ports.lifecycle import SupportsClose
 
 logger = logging.getLogger(__name__)
 
@@ -42,10 +41,10 @@ class SyncEventStoreAdapter:
     synchronous contexts like Celery tasks, Django management commands,
     or RQ workers.
 
-    Handles two event loop scenarios:
-    1. No running event loop -> uses asyncio.run() (a fresh loop per call)
-    2. A running event loop is detected on the calling thread ->
-       uses run_coroutine_threadsafe() against that loop directly
+    There is exactly one supported calling context: a thread with no running
+    event loop. Each call gets a fresh loop via asyncio.run(). Calling from a
+    thread that already has a running loop raises RuntimeError -- see the
+    Warning below.
 
     Thread Safety:
         The adapter is thread-safe for concurrent calls from multiple threads.
@@ -73,25 +72,19 @@ class SyncEventStoreAdapter:
         ...     )
 
     Warning:
-        Using this adapter from within a running async context (e.g., an
-        async view that calls a sync library) will log a warning and use
-        run_coroutine_threadsafe(), which has additional overhead. Consider
-        using the async EventStore directly in async contexts.
+        Calling this adapter from a thread that already runs an event loop
+        (e.g. an async view reaching for a sync helper) raises RuntimeError.
+        There is no correct way to block a running loop's own thread on work
+        that loop must execute. Await the async EventStore directly instead,
+        or move the sync call to a worker thread (asyncio.to_thread).
 
     Related:
         `eventsource.testing.sync_facade.SyncStoreFacade` is the test-machinery
         counterpart: it owns one private event loop for its lifetime and has no
         timeouts. This adapter is for production sync callers (Celery, Django
-        management commands, RQ): per-call `asyncio.run`, a running-loop
-        `run_coroutine_threadsafe` fallback, and a timeout on every operation.
+        management commands, RQ): per-call `asyncio.run` and a timeout on every
+        operation.
     """
-
-    # Retained for API compatibility only: `_run_sync` never dispatches work
-    # to this executor. It is not used by the running-loop path either --
-    # that path runs the coroutine on the caller's own loop via
-    # `run_coroutine_threadsafe`, not on a worker thread from this pool.
-    _executor: ThreadPoolExecutor | None = None
-    _executor_lock: threading.Lock = threading.Lock()
 
     def __init__(
         self,
@@ -107,42 +100,9 @@ class SyncEventStoreAdapter:
         self._store = store
         self._timeout = timeout
 
-    @classmethod
-    def _get_executor(cls) -> ThreadPoolExecutor:
-        """Get or create the shared thread pool executor.
-
-        Retained for API compatibility; `_run_sync` does not use this
-        executor for either event loop scenario it handles.
-        """
-        with cls._executor_lock:
-            if cls._executor is None:
-                cls._executor = ThreadPoolExecutor(
-                    max_workers=4,
-                    thread_name_prefix="sync_adapter",
-                )
-            return cls._executor
-
-    @classmethod
-    def shutdown_executor(cls) -> None:
-        """
-        Shutdown the shared thread pool executor.
-
-        Retained for API compatibility. This executor is not used by
-        `_run_sync` -- the running-loop path runs coroutines on the caller's
-        own loop via `run_coroutine_threadsafe`, not on a worker thread here.
-        Calling this is safe (a no-op beyond releasing the pool, if one was
-        ever created via `_get_executor`) but has no effect on adapter
-        behavior. After calling this, the executor will be recreated on next
-        use of `_get_executor`.
-        """
-        with cls._executor_lock:
-            if cls._executor is not None:
-                cls._executor.shutdown(wait=True)
-                cls._executor = None
-
     def _run_sync(self, coro: Coroutine[Any, Any, T], timeout: float | None = None) -> T:
         """
-        Execute coroutine synchronously, handling all event loop scenarios.
+        Execute a coroutine synchronously on a fresh event loop.
 
         Args:
             coro: The coroutine to execute
@@ -152,34 +112,28 @@ class SyncEventStoreAdapter:
             The result of the coroutine
 
         Raises:
+            RuntimeError: If called from a thread with a running event loop
             TimeoutError: If operation exceeds timeout
             Exception: Any exception raised by the coroutine
         """
         effective_timeout = timeout if timeout is not None else self._timeout
 
         try:
-            # Check if there's a running event loop
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
         except RuntimeError:
-            loop = None
-
-        if loop is not None:
-            # We're in a running loop - use thread pool
-            logger.warning(
-                "SyncEventStoreAdapter called from running event loop. "
-                "Consider using async EventStore directly for better performance."
+            pass
+        else:
+            # Running the coroutine on the caller's own loop and then blocking
+            # that loop's thread for the result is a guaranteed deadlock: the
+            # loop cannot execute what it was just handed. There is no fallback
+            # that makes this work, so refuse it plainly.
+            coro.close()
+            raise RuntimeError(
+                "SyncEventStoreAdapter was called from a thread with a running "
+                "event loop. Blocking that loop on its own work would deadlock. "
+                "Await the async EventStore directly, or run this call in a "
+                "worker thread (e.g. await asyncio.to_thread(...))."
             )
-
-            future = asyncio.run_coroutine_threadsafe(coro, loop)
-
-            try:
-                return future.result(timeout=effective_timeout)
-            except TimeoutError:
-                future.cancel()
-                raise TimeoutError(
-                    f"Sync operation timed out after {effective_timeout}s "
-                    "(called from running event loop)"
-                ) from None
 
         # Create a new event loop with asyncio.run()
         # This is the recommended approach for Python 3.10+
@@ -319,6 +273,30 @@ class SyncEventStoreAdapter:
             The maximum position, or None if the store is empty.
         """
         return self._run_sync(self._store.current_position(), timeout=timeout)
+
+    def close(self, *, timeout: float | None = None) -> None:
+        """
+        Synchronously release the wrapped store's resources.
+
+        A no-op when the wrapped store does not implement `SupportsClose`.
+        Without this, a sync caller holding a store that owns a connection
+        (SQLite, PostgreSQL with `owns_engine`) has no way to release it and
+        the process hangs at exit. Idempotent, like the port it delegates to.
+
+        Args:
+            timeout: Override default timeout for this operation
+        """
+        store = self._store
+        if isinstance(store, SupportsClose):
+            self._run_sync(store.close(), timeout=timeout)
+
+    def __enter__(self) -> SyncEventStoreAdapter:
+        """Enter a context manager that closes the store on exit."""
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        """Close the wrapped store."""
+        self.close()
 
     @property
     def wrapped_store(self) -> FullEventStore:

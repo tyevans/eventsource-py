@@ -32,12 +32,6 @@ from eventsource.ports import (
     StreamReadOptions,
 )
 
-# Sentinel ints preserved for OptimisticLockError's expected_version field, which
-# predates ExpectedVersion and is still int-typed.
-_ANY_SENTINEL = -1
-_NO_STREAM_SENTINEL = 0
-_STREAM_EXISTS_SENTINEL = -2
-
 
 class PartitionedMemoryStore:
     """In-memory store with per-stream partitions and no global feed.
@@ -63,11 +57,11 @@ class PartitionedMemoryStore:
             return
         if expected.kind == "no_stream":
             if current != 0:
-                raise OptimisticLockError(stream.aggregate_id, _NO_STREAM_SENTINEL, current)
+                raise OptimisticLockError(stream.aggregate_id, "no_stream", current)
             return
         if expected.kind == "stream_exists":
             if current == 0:
-                raise OptimisticLockError(stream.aggregate_id, _STREAM_EXISTS_SENTINEL, current)
+                raise OptimisticLockError(stream.aggregate_id, "stream_exists", current)
             return
         if expected.kind == "exact":
             if current != expected.version:
