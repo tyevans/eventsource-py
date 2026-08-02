@@ -3,10 +3,14 @@ Unit tests for AggregateRepository type inference (DX-006).
 
 Tests cover:
 - Inference of aggregate_type from factory.aggregate_type attribute
-- Explicit aggregate_type parameter overrides inference
 - ValueError raised when inference fails
 - Rejection of "Unknown" and empty string as inferred values
-- Backward compatibility with existing code
+
+aggregate_type is always inferred from the aggregate factory's class
+attribute -- there is no constructor override (ADR pending, see
+docs/adrs/). This keeps the type stamped on events, the type used for
+stream categorization, and the type reported by the repository all
+sourced from a single place.
 """
 
 from unittest.mock import MagicMock
@@ -117,18 +121,8 @@ class TestAggregateTypeInference:
         repo: AggregateRepository[OrderAggregate] = AggregateRepository(
             event_store=mock_store,
             aggregate_factory=OrderAggregate,
-            # No aggregate_type provided - should be inferred
         )
         assert repo.aggregate_type == "Order"
-
-    def test_explicit_overrides_inference(self, mock_store: MagicMock) -> None:
-        """Explicit aggregate_type parameter overrides inference."""
-        repo: AggregateRepository[OrderAggregate] = AggregateRepository(
-            event_store=mock_store,
-            aggregate_factory=OrderAggregate,
-            aggregate_type="CustomOrder",  # Explicit override
-        )
-        assert repo.aggregate_type == "CustomOrder"
 
     def test_raises_when_default_unknown(self, mock_store: MagicMock) -> None:
         """ValueError raised when aggregate uses default 'Unknown'."""
@@ -176,10 +170,9 @@ class TestAggregateTypeInference:
             )
 
         error_msg = str(exc_info.value)
-        # Check helpful suggestions are included
+        # Check the fix suggestion is included
         assert "AggregateWithoutType" in error_msg
         assert "aggregate_type =" in error_msg
-        assert "AggregateRepository(..., aggregate_type=" in error_msg
 
     def test_different_aggregates_infer_correctly(self, mock_store: MagicMock) -> None:
         """Different aggregate types should infer their own types."""
@@ -194,56 +187,6 @@ class TestAggregateTypeInference:
 
         assert order_repo.aggregate_type == "Order"
         assert invoice_repo.aggregate_type == "Invoice"
-
-
-class TestBackwardCompatibility:
-    """Tests to ensure backward compatibility with existing code."""
-
-    @pytest.fixture
-    def mock_store(self) -> MagicMock:
-        """Create a mock event store."""
-        return MagicMock()
-
-    def test_explicit_type_still_works(self, mock_store: MagicMock) -> None:
-        """Existing code with explicit type continues to work."""
-        repo: AggregateRepository[OrderAggregate] = AggregateRepository(
-            event_store=mock_store,
-            aggregate_factory=OrderAggregate,
-            aggregate_type="ExplicitOrder",
-        )
-        assert repo.aggregate_type == "ExplicitOrder"
-
-    def test_explicit_type_with_all_params(self, mock_store: MagicMock) -> None:
-        """Repository with all parameters still works."""
-        publisher = MagicMock()
-        repo: AggregateRepository[OrderAggregate] = AggregateRepository(
-            event_store=mock_store,
-            aggregate_factory=OrderAggregate,
-            aggregate_type="Order",
-            event_publisher=publisher,
-            enable_tracing=False,
-        )
-        assert repo.aggregate_type == "Order"
-        assert repo.event_publisher is publisher
-
-    def test_can_use_explicit_unknown_override(self, mock_store: MagicMock) -> None:
-        """Can still explicitly set 'Unknown' if really needed."""
-        # If user explicitly passes "Unknown", it should work (not recommended but allowed)
-        repo: AggregateRepository[AggregateWithUnknownType] = AggregateRepository(
-            event_store=mock_store,
-            aggregate_factory=AggregateWithUnknownType,
-            aggregate_type="Unknown",  # Explicit - allowed
-        )
-        assert repo.aggregate_type == "Unknown"
-
-    def test_explicit_empty_allowed_but_not_recommended(self, mock_store: MagicMock) -> None:
-        """Can explicitly set empty string if needed (not recommended)."""
-        repo: AggregateRepository[AggregateWithEmptyType] = AggregateRepository(
-            event_store=mock_store,
-            aggregate_factory=AggregateWithEmptyType,
-            aggregate_type="",  # Explicit - allowed
-        )
-        assert repo.aggregate_type == ""
 
 
 class TestPropertyAccess:
@@ -261,15 +204,6 @@ class TestPropertyAccess:
             aggregate_factory=OrderAggregate,
         )
         assert repo.aggregate_type == "Order"
-
-    def test_aggregate_type_property_returns_explicit(self, mock_store: MagicMock) -> None:
-        """Property returns explicitly provided type."""
-        repo: AggregateRepository[OrderAggregate] = AggregateRepository(
-            event_store=mock_store,
-            aggregate_factory=OrderAggregate,
-            aggregate_type="MyOrder",
-        )
-        assert repo.aggregate_type == "MyOrder"
 
 
 class TestEdgeCases:
@@ -317,15 +251,6 @@ class TestEdgeCases:
             aggregate_factory=WhitespaceAggregate,
         )
         assert repo.aggregate_type == "   "
-
-    def test_none_aggregate_type_triggers_inference(self, mock_store: MagicMock) -> None:
-        """Passing None explicitly should trigger inference."""
-        repo: AggregateRepository[OrderAggregate] = AggregateRepository(
-            event_store=mock_store,
-            aggregate_factory=OrderAggregate,
-            aggregate_type=None,  # Explicit None triggers inference
-        )
-        assert repo.aggregate_type == "Order"
 
     def test_aggregate_type_inference_with_inheritance(self, mock_store: MagicMock) -> None:
         """Type inference should work with inherited aggregate_type."""

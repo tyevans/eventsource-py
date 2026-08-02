@@ -491,7 +491,6 @@ async def main():
     repo = AggregateRepository(
         event_store=event_store,
         aggregate_factory=ProductAggregate,
-        aggregate_type="Product",
         event_publisher=event_bus,
     )
 

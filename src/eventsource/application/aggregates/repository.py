@@ -67,7 +67,7 @@ class AggregateRepository[TAggregate: AggregateRoot[Any]]:
         >>> repo = AggregateRepository(
         ...     event_store=event_store,
         ...     aggregate_factory=OrderAggregate,
-        ...     aggregate_type="Order",
+        ...     # aggregate_type inferred from OrderAggregate.aggregate_type
         ...     # Snapshot configuration
         ...     snapshot_store=InMemorySnapshotStore(),
         ...     snapshot_threshold=100,  # Create snapshot every 100 events
@@ -89,7 +89,7 @@ class AggregateRepository[TAggregate: AggregateRoot[Any]]:
         >>> repo = AggregateRepository(
         ...     event_store=store,
         ...     aggregate_factory=OrderAggregate,
-        ...     aggregate_type="Order",
+        ...     # aggregate_type inferred from OrderAggregate.aggregate_type
         ... )
         >>>
         >>> # Create and save new aggregate
@@ -115,7 +115,6 @@ class AggregateRepository[TAggregate: AggregateRoot[Any]]:
         self,
         event_store: AggregateStore,
         aggregate_factory: type[TAggregate],
-        aggregate_type: str | None = None,
         event_publisher: EventPublisher | None = None,
         # Snapshot configuration
         snapshot_store: "SnapshotStore | None" = None,
@@ -130,17 +129,17 @@ class AggregateRepository[TAggregate: AggregateRoot[Any]]:
         """
         Initialize the repository.
 
-        The aggregate_type can be:
-        1. Explicitly provided via the aggregate_type parameter
-        2. Inferred from aggregate_factory.aggregate_type attribute
-
-        When both are provided, the explicit parameter takes precedence.
+        The aggregate_type is always inferred from the
+        aggregate_factory.aggregate_type class attribute -- the factory's
+        class attribute is the single source of truth. There is no way to
+        override it here, so it can never diverge from the value stamped
+        onto the aggregate's events.
 
         Args:
             event_store: Event store port for appending and reading this aggregate's stream
-            aggregate_factory: Class to instantiate when loading aggregates
-            aggregate_type: Optional type name of the aggregate (e.g., 'Order').
-                          If not provided, inferred from aggregate_factory.aggregate_type.
+            aggregate_factory: Class to instantiate when loading aggregates.
+                          Its aggregate_type class attribute is used as the
+                          type name (e.g., 'Order').
             event_publisher: Optional publisher for broadcasting events
             snapshot_store: Optional snapshot store for state caching.
                           When provided, enables snapshot-aware loading.
@@ -167,7 +166,7 @@ class AggregateRepository[TAggregate: AggregateRoot[Any]]:
                           Ignored if tracer is explicitly provided.
 
         Raises:
-            ValueError: If aggregate_type cannot be inferred and not provided.
+            ValueError: If aggregate_type cannot be inferred from the factory.
 
         Example with inference:
             >>> class OrderAggregate(DeclarativeAggregate[OrderState]):
@@ -177,13 +176,6 @@ class AggregateRepository[TAggregate: AggregateRoot[Any]]:
             ...     event_store=store,
             ...     aggregate_factory=OrderAggregate,
             ...     # aggregate_type inferred from OrderAggregate.aggregate_type
-            ... )
-
-        Example with explicit type:
-            >>> repo = AggregateRepository(
-            ...     event_store=store,
-            ...     aggregate_factory=OrderAggregate,
-            ...     aggregate_type="CustomOrder",  # Explicit override
             ... )
 
         Example with snapshot support:
@@ -210,11 +202,8 @@ class AggregateRepository[TAggregate: AggregateRoot[Any]]:
         self._aggregate_factory = aggregate_factory
         self._event_publisher = event_publisher
 
-        # Infer aggregate_type if not explicitly provided
-        if aggregate_type is None:
-            aggregate_type = self._infer_aggregate_type(aggregate_factory)
-
-        self._aggregate_type = aggregate_type
+        # aggregate_type is always inferred from the factory's class attribute
+        self._aggregate_type = self._infer_aggregate_type(aggregate_factory)
 
         # Snapshot configuration (exposed via public properties)
         self._snapshot_store = snapshot_store
@@ -270,12 +259,9 @@ class AggregateRepository[TAggregate: AggregateRoot[Any]]:
 
         raise ValueError(
             f"Cannot infer aggregate_type from {factory_name}. "
-            f"Either:\n"
-            f"  1. Add 'aggregate_type' class attribute to your aggregate class:\n"
+            f"Add an 'aggregate_type' class attribute to your aggregate class:\n"
             f"     class {factory_name}(DeclarativeAggregate[...]):\n"
-            f'         aggregate_type = "YourTypeName"\n'
-            f"  2. Pass aggregate_type explicitly to AggregateRepository:\n"
-            f'     AggregateRepository(..., aggregate_type="YourTypeName")'
+            f'         aggregate_type = "YourTypeName"'
         )
 
     def _stream(self, aggregate_id: UUID) -> StreamId:

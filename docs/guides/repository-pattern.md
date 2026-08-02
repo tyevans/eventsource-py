@@ -7,12 +7,12 @@ belong to — a string such as `"Order"` that is stamped onto every event and
 snapshot it writes.
 
 This guide shows how to wire a repository up so that string lives in exactly one
-place. Declare `aggregate_type` on the aggregate class, omit it at every
-construction site, and the repository infers it from
-`aggregate_factory.aggregate_type`. You will also find here how the inference
-rule behaves with inheritance, when passing `aggregate_type=` explicitly is still
-the right call, how to read the resolved value back off the repository, and how
-to fix `ValueError: Cannot infer aggregate_type from <YourClass>`.
+place. Declare `aggregate_type` on the aggregate class, and the repository always
+infers it from `aggregate_factory.aggregate_type` — there is no separate
+constructor parameter, so it cannot diverge from what the aggregate itself
+declares. You will also find here how the inference rule behaves with
+inheritance, how to read the resolved value back off the repository, and how to
+fix `ValueError: Cannot infer aggregate_type from <YourClass>`.
 
 ## Before you start
 
@@ -24,8 +24,8 @@ You need:
   `EventStore`.
 - An aggregate class you can edit. The inference rule reads a class attribute off
   the class you pass as `aggregate_factory`, so you need to be able to add one
-  line to that class — or, if it is third-party code you cannot change, be
-  prepared to use the explicit `aggregate_type=` escape hatch described below.
+  line to that class. There is no way to supply the type from outside the
+  class — if you cannot edit it, subclass it and set the attribute there.
 - An `EventStore` instance. Any implementation works; the examples here use
   `InMemoryEventStore` so they run without external services. Swap in
   `SQLiteEventStore` or `PostgreSQLEventStore` unchanged.
@@ -109,7 +109,7 @@ constructing anything:
 If that prints `'Order'` — read off the *class*, not an instance — Step 2 will
 work.
 
-## Step 2: Construct the repository without `aggregate_type`
+## Step 2: Construct the repository
 
 With the attribute in place, build the repository from just the store and the
 factory:
@@ -123,8 +123,7 @@ repo = AggregateRepository(
 )
 ```
 
-No `aggregate_type=` argument. The constructor declares it as
-`aggregate_type: str | None = None`, and when the value is `None` it calls
+There is no `aggregate_type=` parameter to pass. The constructor always calls
 `self._infer_aggregate_type(aggregate_factory)`, which reads
 `OrderAggregate.aggregate_type` and resolves to `"Order"`.
 
@@ -140,9 +139,8 @@ Confirm the resolved value before going further:
 ```
 
 `AggregateRepository.aggregate_type` is a read-only property returning whatever
-was resolved at construction — inferred or explicit, it reads the same. If this
-matches the string your existing events were written under, the repository will
-find that history.
+was inferred at construction. If this matches the string your existing events
+were written under, the repository will find that history.
 
 Inference happens once, in `__init__`, and its result is what everything
 downstream uses: the type recorded on spans (`ATTR_AGGREGATE_TYPE`), and the

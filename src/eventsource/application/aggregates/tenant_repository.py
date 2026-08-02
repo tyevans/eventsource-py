@@ -43,7 +43,7 @@ class TenantAwareRepository[TAggregate: AggregateRoot[Any]]:
         >>> from eventsource.application.aggregates import AggregateRepository
         >>>
         >>> # Create tenant-aware wrapper
-        >>> base_repo = AggregateRepository(event_store, OrderAggregate, "Order")
+        >>> base_repo = AggregateRepository(event_store, OrderAggregate)
         >>> tenant_repo = TenantAwareRepository(base_repo)
         >>>
         >>> # Use with tenant context

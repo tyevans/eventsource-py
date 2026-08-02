@@ -242,7 +242,6 @@ class TestRepositoryTracing:
         repo = AggregateRepository(
             event_store=store,
             aggregate_factory=TracingTestAggregate,
-            aggregate_type="TracingTestAggregate",
             enable_tracing=True,
         )
 
@@ -271,7 +270,6 @@ class TestRepositoryTracing:
         repo = AggregateRepository(
             event_store=store,
             aggregate_factory=TracingTestAggregate,
-            aggregate_type="TracingTestAggregate",
             enable_tracing=True,
         )
 
@@ -392,7 +390,6 @@ class TestTracingGracefulDegradation:
         repo = AggregateRepository(
             event_store=store,
             aggregate_factory=TracingTestAggregate,
-            aggregate_type="TracingTestAggregate",
             enable_tracing=False,
         )
 
@@ -426,7 +423,6 @@ class TestTraceIdConsistency:
         repo = AggregateRepository(
             event_store=store,
             aggregate_factory=TracingTestAggregate,
-            aggregate_type="TracingTestAggregate",
             event_publisher=bus,
             enable_tracing=True,
         )
@@ -512,7 +508,6 @@ class TestStandardAttributes:
         repo = AggregateRepository(
             event_store=store,
             aggregate_factory=TracingTestAggregate,
-            aggregate_type="TracingTestAggregate",
             enable_tracing=True,
         )
 

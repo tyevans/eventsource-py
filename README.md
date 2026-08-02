@@ -117,7 +117,6 @@ async def main():
     repo = AggregateRepository(
         event_store=store,
         aggregate_factory=Order,
-        aggregate_type="Order",
         event_publisher=bus,  # Publishes events to the bus after saving
     )
 
