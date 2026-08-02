@@ -6,7 +6,7 @@ native types (UUID, TIMESTAMP WITH TIME ZONE) and efficient UPSERT operations.
 """
 
 from datetime import UTC, datetime
-from typing import Any, Generic, TypeVar
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
@@ -31,11 +31,8 @@ from eventsource.ports.readmodels.exceptions import (
 from eventsource.ports.readmodels.model import ReadModel
 from eventsource.ports.readmodels.query import Filter, Query
 
-# Type variable for read model types
-TModel = TypeVar("TModel", bound=ReadModel)
 
-
-class PostgreSQLReadModelRepository(Generic[TModel]):
+class PostgreSQLReadModelRepository[TModel: ReadModel]:
     """
     PostgreSQL implementation of ReadModelRepository.
 

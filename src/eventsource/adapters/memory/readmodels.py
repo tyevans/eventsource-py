@@ -7,7 +7,6 @@ All data is stored in memory and lost when the process terminates.
 
 import asyncio
 from datetime import UTC, datetime
-from typing import Generic, TypeVar
 from uuid import UUID
 
 from eventsource.observability import Tracer, create_tracer
@@ -26,11 +25,8 @@ from eventsource.ports.readmodels.exceptions import (
 from eventsource.ports.readmodels.model import ReadModel
 from eventsource.ports.readmodels.query import Filter, Query
 
-# Type variable for read model types
-TModel = TypeVar("TModel", bound=ReadModel)
 
-
-class InMemoryReadModelRepository(Generic[TModel]):
+class InMemoryReadModelRepository[TModel: ReadModel]:
     """
     In-memory implementation of ReadModelRepository for testing.
 

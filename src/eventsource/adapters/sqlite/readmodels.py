@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Generic
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from eventsource.observability import Tracer, create_tracer
@@ -39,16 +39,10 @@ from eventsource.ports.readmodels.query import Filter, Query
 if TYPE_CHECKING:
     import aiosqlite
 
-# Type variable for read model types - reuse from base
-# Create type var locally to avoid import issues
-from typing import TypeVar
-
 from eventsource.ports.readmodels.model import ReadModel as _BaseReadModel
 
-TModel = TypeVar("TModel", bound=_BaseReadModel)
 
-
-class SQLiteReadModelRepository(Generic[TModel]):
+class SQLiteReadModelRepository[TModel: _BaseReadModel]:
     """
     SQLite implementation of ReadModelRepository.
 
