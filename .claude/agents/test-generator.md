@@ -123,6 +123,43 @@ async def test_sqlite_feature(sqlite_event_store):
     ...
 ```
 
+## Assertions Come From the Contract, Not From Output
+
+Two recurring defects are yours to prevent
+(`/home/ty/workspace/eventsource-py/.claude/rules/recurring-defects.md` §3, §4):
+
+### Never encode observed behavior as the spec
+
+Write the expected value from the docstring, port protocol, or ADR **before**
+running the code. A test written by pasting in whatever the code currently
+returns locks the bug in place and makes the real fix look like a regression.
+This has happened: `5d3692a` had to rename and invert
+`test_get_lag_metrics_no_filter_matches_any_event`, which asserted
+`latest_event_id is None` as the *expected* result one commit earlier.
+
+For a regression test, prove it red against the pre-fix source with
+`git checkout HEAD~1 -- <paths>` — **not** `git stash` (stash recreates
+`__pycache__` and has misled past waves).
+
+### Assert counters non-zero
+
+A metric no test asserts on can be permanently zero and nothing fails.
+`4609ba8`: `LiveRunner` read a `_position` attribute nothing in the tree ever
+set, so live subscriptions never checkpointed, the duplicate-suppression branch
+was unreachable, and `events_skipped_duplicate` was pinned at zero — through CI,
+into a release.
+
+When a feature adds a counter, stat, or span attribute, add a test that
+exercises the condition it counts and asserts it is **non-zero**. Asserting
+zero in a happy path is not coverage of a counter.
+
+### Port semantics go in the conformance suite
+
+If the behavior under test belongs to a port rather than one backend, the case
+goes in `src/eventsource/testing/conformance.py` or
+`src/eventsource/testing/conformance_ports/`, so every binding runs it. A test
+in `tests/unit/adapters/test_<backend>_*.py` cannot catch the next backend.
+
 ## Test File Naming
 
 - Unit tests: `/home/ty/workspace/eventsource-py/tests/unit/test_<module_name>.py`
@@ -163,4 +200,8 @@ Report back to orchestrator:
 - [ ] Integration tests have proper markers (`@pytest.mark.postgres`, etc.)
 - [ ] Tests cover happy path, error cases, and edge cases
 - [ ] All tests pass when run with `uv run pytest <file> -v`
-- [ ] No infrastructure imports in unit tests (use InMemory implementations)
+- [ ] No adapter imports in unit tests (use the memory adapters)
+- [ ] Assertions written from the documented contract, not from observed output
+- [ ] Regression tests proved red against `HEAD~1` (not `git stash`)
+- [ ] Any new counter/stat/metric asserted **non-zero** under its trigger condition
+- [ ] Port-level behavior placed in the conformance suite, not a per-backend test

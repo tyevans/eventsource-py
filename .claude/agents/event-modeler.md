@@ -68,8 +68,7 @@ Events should be additive only:
 ### DeclarativeAggregate Pattern (preferred)
 
 ```python
-from eventsource.aggregates.base import DeclarativeAggregate
-from eventsource.handlers import handles
+from eventsource import DeclarativeAggregate, handles
 
 
 class OrderAggregate(DeclarativeAggregate[OrderState]):
@@ -95,13 +94,17 @@ Key rules:
 - `@handles(EventType)` decorates the event handler method
 - Handler methods mutate `self.state` (the aggregate's state object)
 - Version is auto-incremented by the base class
-- See: `/home/ty/workspace/eventsource-py/src/eventsource/aggregates/base.py`
-- See: `/home/ty/workspace/eventsource-py/src/eventsource/handlers/decorators.py`
+- See: `/home/ty/workspace/eventsource-py/src/eventsource/domain/aggregate.py`
+- See: `/home/ty/workspace/eventsource-py/src/eventsource/domain/decorators.py`
+
+Note: the **decider** style (`DeciderAggregate`, `src/eventsource/domain/decider.py`)
+is the primary style this library teaches (ADR 0022/0043). Prefer it for new
+aggregates; the declarative and manual styles below remain supported.
 
 ### AggregateRoot Pattern (manual dispatch)
 
 ```python
-from eventsource.aggregates.base import AggregateRoot
+from eventsource import AggregateRoot
 
 
 class CounterAggregate(AggregateRoot[CounterState]):
@@ -117,8 +120,7 @@ class CounterAggregate(AggregateRoot[CounterState]):
 ### DeclarativeProjection Pattern
 
 ```python
-from eventsource.projections.base import DeclarativeProjection
-from eventsource.handlers import handles
+from eventsource import DeclarativeProjection, handles
 
 
 class OrderSummaryProjection(DeclarativeProjection):
@@ -132,7 +134,7 @@ class OrderSummaryProjection(DeclarativeProjection):
 ```
 
 The `subscribed_to()` method is auto-generated from `@handles` decorators.
-See: `/home/ty/workspace/eventsource-py/src/eventsource/projections/base.py`
+See: `/home/ty/workspace/eventsource-py/src/eventsource/application/projections/base.py`
 
 ## Testing Patterns
 
@@ -194,9 +196,17 @@ Report back to orchestrator:
 
 ## Quality Checklist
 
-- [ ] Events have `event_type` and `aggregate_type` class attributes
+- [ ] **Events do NOT hand-declare `event_type`** — it is derived via
+      `event_type_name()`. The one legitimate use is pinning a wire name that
+      must diverge from the class name, and it carries a comment saying so.
+      (A sweep deleted 246 redundant declarations; 26 had already drifted.
+      See `.claude/rules/recurring-defects.md` §2.)
+- [ ] **`aggregate_type` is declared only on the aggregate class** as a
+      required `ClassVar[str]`. Never pass it to `AggregateRepository` — that
+      parameter was removed in ADR 0046 because it silently won over the class
+      attribute.
 - [ ] Events use Pydantic `Field(...)` with descriptions
-- [ ] Events are in the core domain layer (no infrastructure imports)
+- [ ] Events are in the `domain/` ring (stdlib + pydantic only)
 - [ ] Aggregate commands validate before applying events
 - [ ] `@handles` decorators map events to handler methods
 - [ ] Projection `subscribed_to()` is auto-generated from `@handles`

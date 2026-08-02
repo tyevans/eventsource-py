@@ -32,28 +32,71 @@ Review code changes in the eventsource-py library for correctness, style, archit
 
 ## Architecture Rules to Enforce
 
-These are the layer boundaries defined in `/home/ty/workspace/eventsource-py/.claude/rules/architecture.md`:
+These are the ring boundaries defined in `/home/ty/workspace/eventsource-py/.claude/rules/architecture.md`
+(read it — it is authoritative and more detailed than this summary). Four rings,
+innermost first:
 
-1. **Core domain** (`events/`, `aggregates/`, `projections/`, `protocols.py`): No infrastructure imports. Only stdlib, pydantic, and other core modules.
-2. **Infrastructure** (`stores/`, `repositories/`, `bus/`, `infrastructure/`): May import core domain. Never import from other backends.
-3. **Public API** (`__init__.py`): Re-exports from all layers. Only module users import from.
+1. **`domain/`**: Entities. stdlib + pydantic only. No I/O, no knowledge of any outer ring.
+2. **`application/`**: Use cases. Depends on `domain/` and on the `ports/` it owns. Never on a concrete adapter or driver.
+3. **`ports/`**: Boundary protocols and the infrastructure exception hierarchy.
+4. **`adapters/`**: Concrete bindings (postgresql, sqlite, redis, kafka, rabbitmq, memory, sql, sync). May import inward. Never import from a sibling adapter.
+
+`stores/`, `repositories/`, `projections/`, `subscriptions/`, `events/`,
+`handlers/`, `infrastructure/`, top-level `protocols.py` and `exceptions.py`
+**no longer exist**. Flag any reference to them in code, tests, or docs.
+Import-linter contracts enforce the rings; `__init__.py` is a PEP 562 lazy
+front door.
+
+## Recurring Defect Shapes to Flag
+
+`/home/ty/workspace/eventsource-py/.claude/rules/recurring-defects.md` records
+the six mistakes this project actually repeats, derived from ~130 fix commits.
+Check every diff against them — most review value is here, not in style:
+
+1. **Silent divergence between adapters.** For any changed adapter method,
+   open the sibling adapters and compare semantics. Empty collections,
+   zero/`None` defaults, date truncation, and "unset vs. set-to-nothing" are
+   where they diverge. The case belongs in
+   `src/eventsource/testing/conformance*/`, not a per-backend test.
+2. **Redundant declaration sites.** A new parameter, field, or class attribute
+   that restates something already derivable. Ask: if these two disagreed,
+   which wins, is that documented, and is it observable? An override added
+   "for flexibility" whose only caller is its own test is this bug.
+3. **Inert code and always-zero metrics.** An attribute read that nothing
+   writes; a branch nothing reaches; a counter no test asserts non-zero.
+   Grep for the write site of any duck-typed read.
+4. **Tests encoding the bug as spec.** An assertion that matches current
+   output rather than the documented contract. Ask whether the test was
+   proved red before the fix.
+5. **Stale doc/ADR specifics.** Counts and file tables in ADR bodies; sweeps
+   that fixed the pages someone thought of rather than grep results.
+6. **ADR number collisions.** Re-check the number against `main` before merge.
 
 ## Event Sourcing Anti-Patterns to Flag
 
 - Modifying event fields after creation (events are immutable)
 - Missing `expected_version` in store operations (optimistic locking required)
 - Synchronous I/O in async code paths
-- Manual event registration (events auto-register via `__init_subclass__`)
-- Leaking infrastructure types into core domain
-- Missing `event_type` or `aggregate_type` class attributes on DomainEvent subclasses
+- **Hand-declared `event_type` on a `DomainEvent` subclass** — it is derived
+  via `event_type_name()`. The one legitimate use is pinning a wire name that
+  must diverge from the class name, and it needs a comment saying so.
+- **`aggregate_type` passed anywhere but the aggregate class** — it has one
+  source, `aggregate_factory.aggregate_type` (ADR 0046). It is a required
+  `ClassVar[str]` on `AggregateRoot`.
+- Leaking adapter types into `domain/` or `application/`
 
 ## Protocol Conformance Checklist
 
-When reviewing new implementations of EventStore, EventBus, or repository interfaces:
+When reviewing new implementations of EventStore, EventBus, or repository ports:
 
-- [ ] Implements all methods from the Protocol/ABC in `/home/ty/workspace/eventsource-py/src/eventsource/protocols.py` or relevant `interface.py`
+- [ ] Implements all methods from the Protocol in `/home/ty/workspace/eventsource-py/src/eventsource/ports/`
+- [ ] **Runs the shared conformance suite** — `src/eventsource/testing/conformance.py`
+      (EventStore, EventBus) or `src/eventsource/testing/conformance_ports/`
+      (checkpoints, DLQ, outbox, read models, locks, snapshots, feed). Hand-written
+      per-backend tests alone are a silent-divergence bug waiting to happen.
 - [ ] Async methods are truly async (not wrapping sync calls without executor)
-- [ ] Error handling uses library exceptions from `/home/ty/workspace/eventsource-py/src/eventsource/exceptions.py`
+- [ ] Error handling uses exceptions from `ports/exceptions.py` (infrastructure)
+      or `domain/exceptions.py` (domain) — the split is ADR 0041
 - [ ] Optional backend has try/except ImportError guard with `*_AVAILABLE` flag
 
 ## Public API Checklist
@@ -67,8 +110,9 @@ When `__init__.py` is changed:
 
 ## Code Style
 
-- ruff line-length: 100, target: py311
+- ruff line-length: 100, target: py313 (the floor is Python 3.13, ADR 0043)
 - ruff rules: E, F, I, N, W, UP, B, C4, SIM (E501 ignored)
+- Generics use PEP 695 syntax (`def f[T](...)`, `class C[T]`), not `TypeVar` (ADR 0045)
 - mypy strict mode
 - isort with `eventsource` as known first-party
 
@@ -116,7 +160,11 @@ Report back to orchestrator:
 ### Checks
 - [ ] ruff check passes
 - [ ] mypy passes
-- [ ] Architecture layers respected
+- [ ] Ring boundaries respected (no dead `stores/`/`repositories/`/`infrastructure/` refs)
 - [ ] Public API consistent
 - [ ] Tests cover changes
+- [ ] Adapter changes mirrored across siblings, pinned in the conformance suite
+- [ ] No redundant declaration site introduced
+- [ ] New counters/metrics asserted non-zero
+- [ ] ADR touched: no counts or file tables; number re-checked against `main`
 ```

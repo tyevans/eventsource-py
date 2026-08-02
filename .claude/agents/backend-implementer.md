@@ -29,30 +29,47 @@ Implement new backend adapters for the eventsource-py library's protocol-based i
 7. **Write integration tests**: With proper markers and Docker setup
 8. **Verify**: Run linter, type checker, and tests
 
-## Interface Definitions
+## Port Definitions
 
-Read these before implementing:
+All boundary protocols live in `src/eventsource/ports/`. Read the port before
+implementing:
 
-| Interface | Location |
-|-----------|----------|
-| EventStore | `/home/ty/workspace/eventsource-py/src/eventsource/stores/interface.py` |
-| EventBus | `/home/ty/workspace/eventsource-py/src/eventsource/bus/interface.py` |
-| CheckpointRepository | `/home/ty/workspace/eventsource-py/src/eventsource/repositories/checkpoint.py` |
-| DLQRepository | `/home/ty/workspace/eventsource-py/src/eventsource/repositories/dlq.py` |
-| OutboxRepository | `/home/ty/workspace/eventsource-py/src/eventsource/repositories/outbox.py` |
-| SnapshotStore | `/home/ty/workspace/eventsource-py/src/eventsource/snapshots/interface.py` |
-| Protocols | `/home/ty/workspace/eventsource-py/src/eventsource/protocols.py` |
+| Port | Location |
+|------|----------|
+| EventStore / GlobalEventFeed / positions | `ports/store.py`, `ports/positions.py` |
+| EventBus | `ports/bus.py` |
+| CheckpointRepository | `ports/checkpoints.py` |
+| DLQRepository | `ports/dlq.py` |
+| OutboxRepository | `ports/outbox.py` |
+| SnapshotStore | `ports/snapshots.py` |
+| ReadModelRepository | `ports/readmodels/` |
+| DistributedLock | `ports/locks.py` |
+| Subscribers / handlers | `ports/subscribers.py`, `ports/handlers.py` |
+| Infrastructure exceptions | `ports/exceptions.py` (domain errors live in `domain/exceptions.py`, ADR 0041) |
 
 ## Existing Backend Implementations (use as templates)
 
-| Backend | EventStore | EventBus | Repositories |
-|---------|-----------|----------|-------------|
-| PostgreSQL | `stores/postgresql.py` | -- | `repositories/*.py` (PostgreSQL classes) |
-| SQLite | `stores/sqlite.py` | -- | `repositories/*.py` (SQLite classes) |
-| InMemory | `stores/in_memory.py` | `bus/memory.py` | `repositories/*.py` (InMemory classes) |
-| Redis | -- | `bus/redis.py` | -- |
-| RabbitMQ | -- | `bus/rabbitmq.py` | -- |
-| Kafka | -- | `bus/kafka.py` | -- |
+All adapters live under `src/eventsource/adapters/<backend>/`: `memory`,
+`postgresql`, `sqlite`, `redis`, `kafka`, `rabbitmq`, plus shared `sql`/`_sql`,
+`_bus`, `serialization`, and `sync`. Read the sibling adapter for the *same
+port* you are implementing — that is the one you must not silently diverge from.
+
+## Conformance Is Not Optional
+
+The single most repeated defect in this codebase is two adapters implementing
+one port method with different semantics, each passing its own tests
+(`5d3692a`, `0c8d032`, `1cb21d1`, `97e2af0` — see
+`/home/ty/workspace/eventsource-py/.claude/rules/recurring-defects.md` §1).
+
+- Bind the shared suite: `src/eventsource/testing/conformance.py` (EventStore,
+  EventBus) or `src/eventsource/testing/conformance_ports/` (checkpoints, dlq,
+  outbox, readmodels, locks, snapshots, feed, stream_reader, category, appender).
+- Before writing each method, open the sibling adapters and compare the
+  semantics of: empty collections, `None`/zero defaults, date and time
+  truncation, "unset" vs "set to nothing", and partial-update field
+  preservation. These are exactly where past divergences happened.
+- If you discover a genuine semantic gap the conformance suite does not pin,
+  add the case there — not in a per-backend test file.
 
 ## Implementation Pattern
 
@@ -90,11 +107,11 @@ In `/home/ty/workspace/eventsource-py/src/eventsource/__init__.py`:
 
 ```python
 # For required backends: direct import
-from eventsource.stores.postgresql import PostgreSQLEventStore
+from eventsource.adapters.postgresql import PostgreSQLEventStore
 
 # For optional backends: conditional import
 try:
-    from eventsource.stores.sqlite import SQLiteEventStore  # noqa: F401
+    from eventsource.adapters.sqlite import SQLiteEventStore  # noqa: F401
     SQLITE_AVAILABLE = True
 except ImportError:
     SQLITE_AVAILABLE = False
@@ -119,13 +136,14 @@ Add to `/home/ty/workspace/eventsource-py/docker-compose.test.yml` if the backen
 
 From `/home/ty/workspace/eventsource-py/.claude/rules/definition-of-done.md`:
 
-1. Implements the relevant protocol/interface
-2. Lives under appropriate module (`stores/`, `bus/`, `repositories/`)
+1. Implements the relevant port protocol from `src/eventsource/ports/`
+2. Lives under `src/eventsource/adapters/<backend>/`
 3. Optional dependency guard with try/except ImportError
-4. Integration tests with appropriate pytest marker
-5. Docker service added to `docker-compose.test.yml` if needed
-6. `uv run ruff check` and `uv run mypy` pass
-7. Public API re-exported from `__init__.py` with `__all__` entry
+4. **Runs the shared conformance suite for every port it binds**
+5. Integration tests with appropriate pytest marker
+6. Docker service added to `docker-compose.test.yml` if needed
+7. `uv run ruff check` and `uv run mypy` pass
+8. Public API re-exported from `__init__.py` with `__all__` entry
 
 ## Investigation Protocol
 
@@ -159,8 +177,10 @@ Report back to orchestrator:
 ## Quality Checklist
 
 - [ ] All protocol methods implemented with correct signatures
+- [ ] **Shared conformance suite bound and passing for every port**
+- [ ] **Sibling adapters compared method-by-method; no silent semantic divergence**
 - [ ] Optional dependency guard with `*_AVAILABLE` flag
-- [ ] Error handling uses library exceptions from `exceptions.py`
+- [ ] Error handling uses `ports/exceptions.py` (infrastructure) or `domain/exceptions.py` (domain)
 - [ ] Async methods are truly async
 - [ ] Public API exported from `__init__.py` with `__all__` entry
 - [ ] `pyproject.toml` updated with optional dependency
