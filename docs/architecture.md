@@ -681,34 +681,25 @@ the transition go into a buffer instead of the handler
 that finishes does the buffer drain in arrival order. There is never a moment
 when both sources are feeding the handler concurrently.
 
-**At-least-once, with duplicate suppression as a service, not a guarantee.**
-Exactly-once delivery is not on offer, and pretending otherwise would be a
-lie about a distributed system. Once you have decided that gaps are
-unacceptable, the overlap between the two sources must be resolved in favour
-of delivering twice -- which is what the design does, on purpose: the bus
-subscription opens *before* catch-up finishes, so the events in the overlap
-window are both buffered from the bus and read from the store. The library
-then absorbs most of that overlap for you. `LiveRunner._process_live_event()`
-compares the event's position against `subscription.last_processed_position`
-and returns early for anything at or below it, counting the skip in
-`stats.events_skipped_duplicate`. (Contrast the neighbouring filter path: an
-event dropped by an event-type filter *does* still record its position, because
-it was legitimately consumed rather than already seen.) `TransitionResult`
-reports the suppression count as `buffer_events_skipped`, so the overlap is
-observable rather than hidden.
+**Exactly-once delivery, because the feed is the only source (ADR 0047).**
+The bus is not a delivery channel for live events; it is a wake-up signal.
+`LiveRunner` never inspects the bus payload -- on notification it drains
+`GlobalEventFeed.read_all(from_position=subscription.last_processed_position)`
+and delivers whatever the feed returns. Because `read_all()`'s `from_position`
+is exclusive and the checkpoint is re-read before every drain, a position
+already delivered is never read from the feed again: there is no overlap
+window to resolve, because there is only ever one ordered source feeding the
+handler, catch-up and live alike. (Contrast the event-type filter path: an
+event dropped by the subscriber's filter *does* still advance the checkpoint,
+because it was legitimately consumed rather than never read.)
 
-That filter is only as good as the position it is given, and this is the
-sharpest edge in the whole design. When `_get_event_position()` returns `None`
--- which it does for any bus backend that does not attach `_global_position`
-to delivered events -- the comparison cannot run, and the event is processed.
-The practical consequence is that handlers must be idempotent. Not "should
-be", as a matter of hygiene: the transition is *designed* to produce
-duplicates, and on some backends it cannot filter them. A projection that
-increments a counter without checking whether it has already seen the event
-will over-count across a restart. One that upserts by key will not. The
-library takes responsibility for never losing an event and for never showing
-you one out of order; it hands the last mile -- tolerating a repeat -- to you,
-because only your read model knows what a repeat means.
+The practical consequence is the opposite of what a bus-delivered design
+would require: handlers do **not** need to defend against redelivery from
+this mechanism. That does not make handlers exempt from idempotency in
+general -- broker-level at-least-once redelivery on Redis/RabbitMQ/Kafka
+(ADR 0007) and process crashes between delivery and checkpoint are still
+real failure modes a handler should tolerate -- but the catch-up/live
+transition specifically no longer manufactures duplicates for you to filter.
 
 The sections that follow trace how those three obligations produce the
 structure: first why the work is split across three collaborators rather than
@@ -732,14 +723,18 @@ returned `EventEnvelope`s, and stops when it reaches the target or a batch comes
 back empty. It owns its clock, so it can be paused mid-batch
 (`wait_if_paused()` is checked both between batches and between events within a
 batch), stopped at a safe point (`_stop_requested`), and slowed by
-backpressure. `LiveRunner` inverts all of that. It does not loop at all; it
-registers `_LiveEventHandler` instances via `event_bus.subscribe(...)` for each
-type in `subscriber.subscribed_to()` and is thereafter *called*. It cannot
-decide when the next event arrives, cannot decline one, and cannot read ahead.
-Merging a puller and a callback target into one class means one of the two runs
-in a mode where half its machinery -- batch limits and target positions on one
-side, buffers and duplicate filters on the other -- is inert, and the flag that
-says which is a permanent invitation to check the wrong branch.
+backpressure. `LiveRunner` inverts the trigger but not the read: it registers
+`_LiveEventHandler` instances via `event_bus.subscribe(...)` for each type in
+`subscriber.subscribed_to()`, and is *woken* by the bus rather than polling
+it. But once woken, it pulls, the same way `CatchUpRunner` does -- it calls
+`event_feed.read_all(from_position=...)` itself and walks whatever the feed
+returns (`_drain_feed()`). It cannot decide *when* the next wake-up arrives,
+but once it does, it decides what to read and how far, same as catch-up.
+Merging the two into one class would still cost you the mode flag -- one side
+computes `target_position - last_processed_position` and stops at a fixed
+target, the other drains to "whatever exists right now" and has no target at
+all -- so the split still earns its keep, just not on the axis of "pull vs.
+push" the two collaborators used to sit on either side of.
 
 **They also fail differently, and the difference is visible in their return
 types.** `CatchUpRunner.run_until_position()` returns a `CatchUpResult` with
@@ -748,9 +743,9 @@ catch-up run is a *bounded job* that either reached its target or did not, and
 the caller is expected to inspect the answer. `LiveRunner` has no equivalent
 return value anywhere -- `start()` returns `None`, and the per-event path
 accumulates into a mutable `LiveRunnerStats` (`events_received`,
-`events_processed`, `events_skipped_duplicate`, `events_skipped_filtered`,
-`events_failed`) that you sample rather than await. Following a stream has no
-completion, so it has no result. One class cannot honestly have both shapes.
+`events_processed`, `events_skipped_filtered`, `events_failed`) that you
+sample rather than await. Following a stream has no completion, so it has no
+result. One class cannot honestly have both shapes.
 
 **The third collaborator exists because the handoff is a decision neither
 runner is positioned to make.** `TransitionCoordinator.execute()` is the only
@@ -760,21 +755,25 @@ starts it with `buffer_events=True`, constructs `CatchUpRunner` and calls
 `run_until_position(target_position=self._watermark)`, calls `process_buffer()`,
 and finally `disable_buffer()`. Every ordering constraint in the protocol lives
 in that one method body, in the order the phases have to happen. The runners
-know nothing of each other: `CatchUpRunner` takes a `GlobalEventFeed` (the store
-port, not the concrete store) and no bus, `LiveRunner` takes an `EventBus` and
-no store, and neither imports the other.
+know nothing of each other, though both now depend on the store: `CatchUpRunner`
+takes a `GlobalEventFeed` (the store port, not the concrete store) and no bus;
+`LiveRunner` takes both an `EventBus` (the wake-up trigger) and the same
+`GlobalEventFeed` (ADR 0047) -- `TransitionCoordinator` passes its own
+`event_store` through to both constructors -- and neither runner imports the
+other.
 Both are handed the same `Subscription` and the same `CheckpointRepository`,
 and that shared `Subscription` -- specifically `last_processed_position`,
-advanced by `record_event_processed()` on the catch-up side and compared
-against on the live side -- is the entire channel between them.
+advanced by `record_event_processed()` on the catch-up side and re-read as
+`_drain_feed()`'s `from_position` on the live side -- is the entire
+coordination channel between them.
 
-That last detail is what the split buys. The duplicate suppression inside
-`LiveRunner._process_live_event()` (`position <= last_processed_position` ->
-skip, counted in `events_skipped_duplicate`) is not coordination logic; it is a
-local check against a value the subscription already carries. Because the
-runners communicate only through that value, the coordinator can sequence them
-without either runner exposing a "now switch" method, and each can be tested
-against a single source -- a store with no bus, a bus with no store.
+That last detail is what the split buys. Because `read_all(from_position=...)`
+is exclusive and both runners advance the same `last_processed_position`, a
+position `CatchUpRunner` has already recorded is structurally unreachable to
+`LiveRunner`'s next drain -- no duplicate check has to run, because the feed
+itself cannot return it. The runners communicate only through that value, so
+the coordinator can sequence them without either runner exposing a "now
+switch" method, and each can be tested against the store alone.
 
 **Ownership of the failed handoff is the clinching argument.** When any step
 raises, `execute()` sets `_phase = TransitionPhase.FAILED`, calls `_cleanup()`

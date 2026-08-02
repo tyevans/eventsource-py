@@ -3,13 +3,19 @@ Unit tests for the LiveRunner.
 
 Tests cover:
 - Basic live event processing
-- Event bus subscription management
-- Duplicate detection by position
+- Event bus subscription management (wake-up signal, not delivery)
+- Feed-driven ordering (the global feed, not the bus payload, is authoritative)
 - Buffer mode for catch-up to live transition
 - Checkpoint strategies (EVERY_EVENT, EVERY_BATCH, PERIODIC)
 - Error handling with continue_on_error
 - Graceful stop functionality
 - Statistics tracking
+
+The bus is a wake-up signal only: `LiveRunner` drains
+`GlobalEventFeed.read_all(from_position=...)` on every notification, so
+tests seed events into a real `InMemoryEventStore` (a `GlobalEventFeed`)
+before publishing a wake-up on the bus, mirroring `test_catchup_runner.py`'s
+idiom.
 """
 
 import asyncio
@@ -20,6 +26,7 @@ import pytest
 
 from eventsource.adapters.memory.bus import InMemoryEventBus
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
+from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.application.subscriptions import (
     CheckpointStrategy,
     Subscription,
@@ -27,15 +34,11 @@ from eventsource.application.subscriptions import (
     SubscriptionState,
 )
 from eventsource.application.subscriptions.runners import LiveRunner, LiveRunnerStats
+from eventsource.domain import StreamId
 from eventsource.domain.event import DomainEvent
-from eventsource.ports.positions import Position
+from eventsource.ports.positions import ExpectedVersion, Position
 
 # --- Sample Event Classes ---
-
-
-def pos(n: int) -> Position:
-    """Build a test-store position token standing in for an int position."""
-    return Position(store_id="test", key=(n,))
 
 
 class LiveTestEvent(DomainEvent):
@@ -84,6 +87,12 @@ def event_bus() -> InMemoryEventBus:
 
 
 @pytest.fixture
+def event_store() -> InMemoryEventStore:
+    """Create a fresh InMemoryEventStore (a real GlobalEventFeed)."""
+    return InMemoryEventStore()
+
+
+@pytest.fixture
 def checkpoint_repo() -> InMemoryCheckpointRepository:
     """Create a fresh InMemoryCheckpointRepository."""
     return InMemoryCheckpointRepository(enable_tracing=False)
@@ -118,14 +127,37 @@ def subscription(subscriber: MockLiveSubscriber, config: SubscriptionConfig) -> 
 def runner(
     event_bus: InMemoryEventBus,
     checkpoint_repo: InMemoryCheckpointRepository,
+    event_store: InMemoryEventStore,
     subscription: Subscription,
 ) -> LiveRunner:
     """Create a LiveRunner."""
     return LiveRunner(
         event_bus=event_bus,
         checkpoint_repo=checkpoint_repo,
+        event_feed=event_store,
         subscription=subscription,
     )
+
+
+async def append_event(store: InMemoryEventStore, event: DomainEvent) -> Position:
+    """Append one event directly to the store, returning its feed position."""
+    result = await store.append(
+        StreamId(aggregate_id=event.aggregate_id, category=event.aggregate_type),
+        [event],
+        ExpectedVersion.no_stream(),
+    )
+    assert result.position is not None
+    return result.position
+
+
+async def wake(bus: InMemoryEventBus) -> None:
+    """Publish a bus notification to wake a live runner into draining the feed.
+
+    The published event's content is never delivered -- only events already
+    committed to the store (via `append_event`) are; this call exists purely
+    to trigger `_handle_live_event`.
+    """
+    await bus.publish([LiveTestEvent(aggregate_id=uuid4(), data="__wake__")])
 
 
 # --- LiveRunnerStats Tests ---
@@ -139,7 +171,7 @@ class TestLiveRunnerStats:
         stats = LiveRunnerStats()
         assert stats.events_received == 0
         assert stats.events_processed == 0
-        assert stats.events_skipped_duplicate == 0
+        assert stats.events_skipped_filtered == 0
         assert stats.events_failed == 0
 
     def test_custom_values(self):
@@ -147,12 +179,12 @@ class TestLiveRunnerStats:
         stats = LiveRunnerStats(
             events_received=100,
             events_processed=90,
-            events_skipped_duplicate=5,
+            events_skipped_filtered=5,
             events_failed=5,
         )
         assert stats.events_received == 100
         assert stats.events_processed == 90
-        assert stats.events_skipped_duplicate == 5
+        assert stats.events_skipped_filtered == 5
         assert stats.events_failed == 5
 
 
@@ -167,17 +199,20 @@ class TestLiveRunnerBasic:
         self,
         event_bus: InMemoryEventBus,
         checkpoint_repo: InMemoryCheckpointRepository,
+        event_store: InMemoryEventStore,
         subscription: Subscription,
     ):
         """Test runner initializes correctly."""
         runner = LiveRunner(
             event_bus=event_bus,
             checkpoint_repo=checkpoint_repo,
+            event_feed=event_store,
             subscription=subscription,
         )
 
         assert runner.event_bus is event_bus
         assert runner.checkpoint_repo is checkpoint_repo
+        assert runner.event_feed is event_store
         assert runner.subscription is subscription
         assert runner.is_running is False
         assert runner.buffer_size == 0
@@ -280,14 +315,15 @@ class TestLiveRunnerEventProcessing:
         self,
         runner: LiveRunner,
         event_bus: InMemoryEventBus,
+        event_store: InMemoryEventStore,
         subscriber: MockLiveSubscriber,
     ):
-        """Test runner processes events published to the bus."""
+        """Test runner drains an event committed to the store on wake-up."""
         await runner.start()
 
-        # Publish an event
         event = LiveTestEvent(aggregate_id=uuid4(), data="test_data")
-        await event_bus.publish([event])
+        await append_event(event_store, event)
+        await wake(event_bus)
 
         # Wait briefly for async processing
         await asyncio.sleep(0.01)
@@ -302,15 +338,17 @@ class TestLiveRunnerEventProcessing:
         self,
         runner: LiveRunner,
         event_bus: InMemoryEventBus,
+        event_store: InMemoryEventStore,
         subscriber: MockLiveSubscriber,
     ):
-        """Test runner processes multiple event types."""
+        """Test runner processes multiple event types in one drain."""
         await runner.start()
 
-        # Publish different event types
         event1 = LiveTestEvent(aggregate_id=uuid4(), data="first")
         event2 = AnotherTestEvent(aggregate_id=uuid4(), value=42)
-        await event_bus.publish([event1, event2])
+        await append_event(event_store, event1)
+        await append_event(event_store, event2)
+        await wake(event_bus)
 
         await asyncio.sleep(0.01)
 
@@ -322,14 +360,14 @@ class TestLiveRunnerEventProcessing:
         self,
         runner: LiveRunner,
         event_bus: InMemoryEventBus,
+        event_store: InMemoryEventStore,
     ):
         """Test statistics are updated correctly."""
         await runner.start()
 
-        # Publish 5 events
         for i in range(5):
-            event = LiveTestEvent(aggregate_id=uuid4(), data=f"event_{i}")
-            await event_bus.publish([event])
+            await append_event(event_store, LiveTestEvent(aggregate_id=uuid4(), data=f"event_{i}"))
+        await wake(event_bus)
 
         await asyncio.sleep(0.01)
 
@@ -346,47 +384,50 @@ class TestLiveRunnerBufferMode:
     """Tests for buffer mode during catch-up to live transition."""
 
     @pytest.mark.asyncio
-    async def test_buffers_events_when_enabled(
+    async def test_buffers_wake_ups_when_enabled(
         self,
         runner: LiveRunner,
         event_bus: InMemoryEventBus,
+        event_store: InMemoryEventStore,
         subscriber: MockLiveSubscriber,
     ):
-        """Test events are buffered when buffer_events=True."""
+        """Test wake-ups are buffered (not drained) when buffer_events=True."""
         await runner.start(buffer_events=True)
 
-        # Publish events
         for i in range(3):
-            event = LiveTestEvent(aggregate_id=uuid4(), data=f"buffered_{i}")
-            await event_bus.publish([event])
+            await append_event(
+                event_store, LiveTestEvent(aggregate_id=uuid4(), data=f"buffered_{i}")
+            )
+            await wake(event_bus)
 
         await asyncio.sleep(0.01)
 
-        # Events should be buffered, not processed
+        # Nothing drained yet -- feed has events, but buffering held them off
         assert len(subscriber.handled_events) == 0
         assert runner.buffer_size == 3
-        assert runner.stats.events_received == 3
+        assert runner.stats.events_received == 0
         assert runner.stats.events_processed == 0
 
     @pytest.mark.asyncio
-    async def test_process_buffer_delivers_buffered_events(
+    async def test_process_buffer_drains_the_feed(
         self,
         runner: LiveRunner,
         event_bus: InMemoryEventBus,
+        event_store: InMemoryEventStore,
         subscriber: MockLiveSubscriber,
     ):
-        """Test process_buffer() delivers buffered events."""
+        """Test process_buffer() drains everything committed since the checkpoint."""
         await runner.start(buffer_events=True)
 
-        # Buffer some events
         for i in range(3):
-            event = LiveTestEvent(aggregate_id=uuid4(), data=f"buffered_{i}")
-            await event_bus.publish([event])
+            await append_event(
+                event_store, LiveTestEvent(aggregate_id=uuid4(), data=f"buffered_{i}")
+            )
+        await wake(event_bus)
 
         await asyncio.sleep(0.01)
-        assert runner.buffer_size == 3
+        assert runner.buffer_size == 1
 
-        # Process the buffer
         processed = await runner.process_buffer()
 
         assert processed == 3
@@ -414,87 +455,72 @@ class TestLiveRunnerBufferMode:
         self,
         runner: LiveRunner,
         event_bus: InMemoryEventBus,
+        event_store: InMemoryEventStore,
         subscriber: MockLiveSubscriber,
     ):
-        """Test events are processed directly after buffer is disabled."""
+        """Test events are drained directly after buffer is disabled."""
         await runner.start(buffer_events=True)
-
-        # Disable buffer
         await runner.disable_buffer()
 
-        # Now events should be processed directly
         event = LiveTestEvent(aggregate_id=uuid4(), data="direct")
-        await event_bus.publish([event])
+        await append_event(event_store, event)
+        await wake(event_bus)
 
         await asyncio.sleep(0.01)
 
         assert len(subscriber.handled_events) == 1
 
 
-# --- Duplicate Detection Tests ---
+# --- Feed Ordering Tests ---
+#
+# The catch-up-to-live duplicate suppression that used to live in
+# `_process_live_event` is gone: the global feed is the single ordered
+# source (ADR 0047), and `read_all(from_position=...)` never returns a
+# position at or before the checkpoint, so there is nothing to deduplicate.
 
 
-class TestLiveRunnerDuplicateDetection:
-    """Tests for duplicate event detection."""
+class TestLiveRunnerFeedOrdering:
+    """Tests that draining only ever moves forward from the checkpoint."""
 
     @pytest.mark.asyncio
-    async def test_skips_duplicate_by_position(
+    async def test_drains_only_events_past_the_checkpoint(
         self,
         runner: LiveRunner,
+        event_bus: InMemoryEventBus,
+        event_store: InMemoryEventStore,
         subscription: Subscription,
         subscriber: MockLiveSubscriber,
     ):
-        """Test events with position <= last_processed_position are skipped."""
-        # Set last processed position
-        subscription.last_processed_position = pos(100)
+        """Test events at/before the checkpoint are never re-delivered."""
+        events = [LiveTestEvent(aggregate_id=uuid4(), data=f"e{i}") for i in range(3)]
+        positions = [await append_event(event_store, e) for e in events]
+        subscription.last_processed_position = positions[0]
 
         await runner.start()
+        await wake(event_bus)
+        await asyncio.sleep(0.01)
 
-        # Create an event with position attached (simulating position metadata)
-        event = LiveTestEvent(aggregate_id=uuid4(), data="old_event")
-        event._position = pos(50)  # Position before last processed
-
-        # Process directly through internal method
-        await runner._handle_live_event(event)
-
-        assert len(subscriber.handled_events) == 0
-        assert runner.stats.events_skipped_duplicate == 1
+        assert [e.data for e in subscriber.handled_events] == ["e1", "e2"]
 
     @pytest.mark.asyncio
-    async def test_processes_event_with_higher_position(
+    async def test_position_always_present_from_the_feed(
         self,
         runner: LiveRunner,
-        subscription: Subscription,
-        subscriber: MockLiveSubscriber,
+        event_bus: InMemoryEventBus,
+        event_store: InMemoryEventStore,
+        checkpoint_repo: InMemoryCheckpointRepository,
     ):
-        """Test events with position > last_processed_position are processed."""
-        subscription.last_processed_position = pos(100)
-
+        """Test the runner checkpoints the feed-assigned position."""
         await runner.start()
 
-        # Create an event with position after last processed
-        event = LiveTestEvent(aggregate_id=uuid4(), data="new_event")
-        event._position = pos(150)
+        event = LiveTestEvent(aggregate_id=uuid4(), data="checkpointed")
+        position = await append_event(event_store, event)
+        await wake(event_bus)
 
-        await runner._handle_live_event(event)
+        await asyncio.sleep(0.01)
 
-        assert len(subscriber.handled_events) == 1
-        assert runner.stats.events_skipped_duplicate == 0
-
-    @pytest.mark.asyncio
-    async def test_processes_event_without_position(
-        self,
-        runner: LiveRunner,
-        subscriber: MockLiveSubscriber,
-    ):
-        """Test events without position metadata are processed."""
-        await runner.start()
-
-        # Event without position (normal case for live events)
-        event = LiveTestEvent(aggregate_id=uuid4(), data="no_position")
-        await runner._handle_live_event(event)
-
-        assert len(subscriber.handled_events) == 1
+        saved = await checkpoint_repo.get_position("LiveTestSubscription")
+        assert saved == position
 
 
 # --- Checkpoint Strategy Tests ---
@@ -508,6 +534,7 @@ class TestLiveRunnerCheckpointStrategies:
         self,
         event_bus: InMemoryEventBus,
         checkpoint_repo: InMemoryCheckpointRepository,
+        event_store: InMemoryEventStore,
         subscriber: MockLiveSubscriber,
     ):
         """Test EVERY_EVENT strategy saves checkpoint after each event."""
@@ -522,25 +549,25 @@ class TestLiveRunnerCheckpointStrategies:
         runner = LiveRunner(
             event_bus=event_bus,
             checkpoint_repo=checkpoint_repo,
+            event_feed=event_store,
             subscription=subscription,
         )
         await runner.start()
 
-        # Create event with position
         event = LiveTestEvent(aggregate_id=uuid4(), data="checkpoint_test")
-        event._position = pos(42)
+        position = await append_event(event_store, event)
+        await wake(event_bus)
+        await asyncio.sleep(0.01)
 
-        await runner._handle_live_event(event)
-
-        # Check checkpoint was saved
-        position = await checkpoint_repo.get_position("EveryEventLive")
-        assert position == pos(42)
+        saved = await checkpoint_repo.get_position("EveryEventLive")
+        assert saved == position
 
     @pytest.mark.asyncio
     async def test_every_batch_strategy_checkpoints_live(
         self,
         event_bus: InMemoryEventBus,
         checkpoint_repo: InMemoryCheckpointRepository,
+        event_store: InMemoryEventStore,
         subscriber: MockLiveSubscriber,
     ):
         """Test EVERY_BATCH strategy checkpoints after each event in live mode."""
@@ -555,25 +582,26 @@ class TestLiveRunnerCheckpointStrategies:
         runner = LiveRunner(
             event_bus=event_bus,
             checkpoint_repo=checkpoint_repo,
+            event_feed=event_store,
             subscription=subscription,
         )
         await runner.start()
 
-        # Create event with position
         event = LiveTestEvent(aggregate_id=uuid4(), data="batch_test")
-        event._position = pos(55)
-
-        await runner._handle_live_event(event)
+        position = await append_event(event_store, event)
+        await wake(event_bus)
+        await asyncio.sleep(0.01)
 
         # In live mode, EVERY_BATCH behaves like EVERY_EVENT
-        position = await checkpoint_repo.get_position("EveryBatchLive")
-        assert position == pos(55)
+        saved = await checkpoint_repo.get_position("EveryBatchLive")
+        assert saved == position
 
     @pytest.mark.asyncio
     async def test_periodic_strategy_respects_interval(
         self,
         event_bus: InMemoryEventBus,
         checkpoint_repo: InMemoryCheckpointRepository,
+        event_store: InMemoryEventStore,
         subscriber: MockLiveSubscriber,
     ):
         """Test PERIODIC strategy only saves when interval has elapsed."""
@@ -589,45 +617,30 @@ class TestLiveRunnerCheckpointStrategies:
         runner = LiveRunner(
             event_bus=event_bus,
             checkpoint_repo=checkpoint_repo,
+            event_feed=event_store,
             subscription=subscription,
         )
         await runner.start()
 
         # First event - should not checkpoint (interval not elapsed)
         event1 = LiveTestEvent(aggregate_id=uuid4(), data="first")
-        event1._position = pos(10)
-        await runner._handle_live_event(event1)
+        await append_event(event_store, event1)
+        await wake(event_bus)
+        await asyncio.sleep(0.01)
 
-        position = await checkpoint_repo.get_position("PeriodicLive")
-        assert position is None  # No checkpoint yet
+        assert await checkpoint_repo.get_position("PeriodicLive") is None
 
         # Wait for interval to elapse
         await asyncio.sleep(0.15)
 
         # Second event - should checkpoint now
         event2 = LiveTestEvent(aggregate_id=uuid4(), data="second")
-        event2._position = pos(20)
-        await runner._handle_live_event(event2)
+        position2 = await append_event(event_store, event2)
+        await wake(event_bus)
+        await asyncio.sleep(0.01)
 
-        position = await checkpoint_repo.get_position("PeriodicLive")
-        assert position == pos(20)
-
-    @pytest.mark.asyncio
-    async def test_no_checkpoint_without_position(
-        self,
-        runner: LiveRunner,
-        checkpoint_repo: InMemoryCheckpointRepository,
-    ):
-        """Test no checkpoint is saved when event has no position."""
-        await runner.start()
-
-        # Event without position
-        event = LiveTestEvent(aggregate_id=uuid4(), data="no_pos")
-        await runner._handle_live_event(event)
-
-        # No checkpoint should be saved
-        position = await checkpoint_repo.get_position("LiveTestSubscription")
-        assert position is None
+        saved = await checkpoint_repo.get_position("PeriodicLive")
+        assert saved == position2
 
 
 # --- Error Handling Tests ---
@@ -641,6 +654,7 @@ class TestLiveRunnerErrorHandling:
         self,
         event_bus: InMemoryEventBus,
         checkpoint_repo: InMemoryCheckpointRepository,
+        event_store: InMemoryEventStore,
     ):
         """Test continue_on_error=True continues after handler failure."""
         subscriber = MockLiveSubscriber()
@@ -655,13 +669,15 @@ class TestLiveRunnerErrorHandling:
         runner = LiveRunner(
             event_bus=event_bus,
             checkpoint_repo=checkpoint_repo,
+            event_feed=event_store,
             subscription=subscription,
         )
         await runner.start()
 
-        # Publish failing event
         event = LiveTestEvent(aggregate_id=uuid4(), data="fail")
-        await runner._handle_live_event(event)
+        await append_event(event_store, event)
+        await wake(event_bus)
+        await asyncio.sleep(0.01)
 
         # Should record failure but continue
         assert runner.stats.events_failed == 1
@@ -673,6 +689,7 @@ class TestLiveRunnerErrorHandling:
         self,
         event_bus: InMemoryEventBus,
         checkpoint_repo: InMemoryCheckpointRepository,
+        event_store: InMemoryEventStore,
     ):
         """Test continue_on_error=False propagates exception."""
         subscriber = MockLiveSubscriber()
@@ -687,12 +704,14 @@ class TestLiveRunnerErrorHandling:
         runner = LiveRunner(
             event_bus=event_bus,
             checkpoint_repo=checkpoint_repo,
+            event_feed=event_store,
             subscription=subscription,
         )
         await runner.start()
 
-        # Should raise the exception
         event = LiveTestEvent(aggregate_id=uuid4(), data="fail")
+        await append_event(event_store, event)
+
         with pytest.raises(ValueError):
             await runner._handle_live_event(event)
 
@@ -740,10 +759,9 @@ class TestLiveRunnerEdgeCases:
         self,
         runner: LiveRunner,
     ):
-        """Test process_buffer() with empty buffer."""
+        """Test process_buffer() with nothing buffered or on the feed."""
         await runner.start(buffer_events=True)
 
-        # Process empty buffer
         processed = await runner.process_buffer()
 
         assert processed == 0
@@ -752,17 +770,19 @@ class TestLiveRunnerEdgeCases:
     async def test_subscription_position_updated_with_position(
         self,
         runner: LiveRunner,
+        event_bus: InMemoryEventBus,
+        event_store: InMemoryEventStore,
         subscription: Subscription,
     ):
-        """Test subscription position is updated when event has position."""
+        """Test subscription position is updated to the feed's position."""
         await runner.start()
 
         event = LiveTestEvent(aggregate_id=uuid4(), data="positioned")
-        event._position = pos(999)
+        position = await append_event(event_store, event)
+        await wake(event_bus)
+        await asyncio.sleep(0.01)
 
-        await runner._handle_live_event(event)
-
-        assert subscription.last_processed_position == pos(999)
+        assert subscription.last_processed_position == position
         assert subscription.last_event_id == event.event_id
         assert subscription.last_event_type == "LiveTestEvent"
 
@@ -770,14 +790,17 @@ class TestLiveRunnerEdgeCases:
     async def test_events_processed_counter_updated(
         self,
         runner: LiveRunner,
+        event_bus: InMemoryEventBus,
+        event_store: InMemoryEventStore,
         subscription: Subscription,
     ):
         """Test events_processed is incremented."""
         await runner.start()
 
         for i in range(3):
-            event = LiveTestEvent(aggregate_id=uuid4(), data=f"event_{i}")
-            await runner._handle_live_event(event)
+            await append_event(event_store, LiveTestEvent(aggregate_id=uuid4(), data=f"event_{i}"))
+            await wake(event_bus)
+            await asyncio.sleep(0.01)
 
         assert subscription.events_processed == 3
 
@@ -785,14 +808,17 @@ class TestLiveRunnerEdgeCases:
     async def test_last_processed_at_updated(
         self,
         runner: LiveRunner,
+        event_bus: InMemoryEventBus,
+        event_store: InMemoryEventStore,
         subscription: Subscription,
     ):
         """Test last_processed_at timestamp is updated."""
         await runner.start()
         assert subscription.last_processed_at is None
 
-        event = LiveTestEvent(aggregate_id=uuid4(), data="timestamp_test")
-        await runner._handle_live_event(event)
+        await append_event(event_store, LiveTestEvent(aggregate_id=uuid4(), data="timestamp_test"))
+        await wake(event_bus)
+        await asyncio.sleep(0.01)
 
         assert subscription.last_processed_at is not None
         assert isinstance(subscription.last_processed_at, datetime)
@@ -806,16 +832,14 @@ class TestLiveRunnerEdgeCases:
         """Test buffer queue handles concurrent access safely."""
         await runner.start(buffer_events=True)
 
-        # Publish many events concurrently
-        async def publish_event(i: int) -> None:
-            event = LiveTestEvent(aggregate_id=uuid4(), data=f"concurrent_{i}")
-            await event_bus.publish([event])
+        async def publish_wake() -> None:
+            await wake(event_bus)
 
-        await asyncio.gather(*[publish_event(i) for i in range(10)])
+        await asyncio.gather(*[publish_wake() for _ in range(10)])
         await asyncio.sleep(0.05)
 
         assert runner.buffer_size == 10
-        assert runner.stats.events_received == 10
+        assert runner.stats.events_received == 0
 
     @pytest.mark.asyncio
     async def test_properties_accessible_after_stop(
@@ -835,18 +859,22 @@ class TestLiveRunnerEdgeCases:
     async def test_multiple_position_updates(
         self,
         runner: LiveRunner,
+        event_bus: InMemoryEventBus,
+        event_store: InMemoryEventStore,
         subscription: Subscription,
     ):
         """Test position is updated correctly with multiple events."""
         await runner.start()
 
-        positions = [10, 20, 30]
-        for n in positions:
-            event = LiveTestEvent(aggregate_id=uuid4(), data=f"pos_{n}")
-            event._position = pos(n)
-            await runner._handle_live_event(event)
+        last_position = None
+        for n in range(3):
+            last_position = await append_event(
+                event_store, LiveTestEvent(aggregate_id=uuid4(), data=f"pos_{n}")
+            )
+            await wake(event_bus)
+            await asyncio.sleep(0.01)
 
-        assert subscription.last_processed_position == pos(30)
+        assert subscription.last_processed_position == last_position
 
     @pytest.mark.asyncio
     async def test_config_accessible_on_runner(

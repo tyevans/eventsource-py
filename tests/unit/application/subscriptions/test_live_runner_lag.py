@@ -1,10 +1,17 @@
 """Live-phase lag reports received-but-not-yet-delivered events.
 
 `Subscription.lag` is `events_seen - events_delivered`, and its invariant
-requires callers to keep the two symmetric across any boundary. The
-catch-up runner did; the live runner counted deliveries without ever
-counting receipts, so lag read 0 throughout LIVE no matter how far behind
-the subscriber was. The bus delivery receipt is the live seen-point.
+requires callers to keep the two symmetric across any boundary.
+
+Before ADR 0047, the bus delivery receipt was the live seen-point, and the
+live runner delivered the bus payload directly -- a design that also left
+`_get_event_position` reading a `_position` attribute nothing ever set, so
+live checkpointing never advanced. Now the bus is a wake-up signal only:
+`LiveRunner` drains `GlobalEventFeed.read_all(from_position=...)` on each
+wake-up, and it is the envelope pulled from the feed -- not the bus
+notification -- that is the seen-point. Tests here seed a real
+`InMemoryEventStore` and drain through `_handle_live_event`, mirroring
+`test_live_runner.py`'s idiom.
 """
 
 import asyncio
@@ -14,13 +21,16 @@ import pytest
 
 from eventsource.adapters.memory.bus import InMemoryEventBus
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
+from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.application.subscriptions import (
     CheckpointStrategy,
     Subscription,
     SubscriptionConfig,
 )
 from eventsource.application.subscriptions.runners import LiveRunner
+from eventsource.domain import StreamId
 from eventsource.domain.event import DomainEvent
+from eventsource.ports.positions import ExpectedVersion
 
 pytestmark = pytest.mark.asyncio
 
@@ -49,7 +59,9 @@ class BlockingSubscriber:
         self.handled.append(event)
 
 
-def _runner(subscriber: BlockingSubscriber, **config_kwargs) -> LiveRunner:  # type: ignore[no-untyped-def]
+def _runner(
+    subscriber: BlockingSubscriber, event_store: InMemoryEventStore, **config_kwargs
+) -> LiveRunner:  # type: ignore[no-untyped-def]
     config = SubscriptionConfig(
         batch_size=10,
         checkpoint_strategy=CheckpointStrategy.EVERY_EVENT,
@@ -59,79 +71,115 @@ def _runner(subscriber: BlockingSubscriber, **config_kwargs) -> LiveRunner:  # t
     return LiveRunner(
         event_bus=InMemoryEventBus(enable_tracing=False),
         checkpoint_repo=InMemoryCheckpointRepository(enable_tracing=False),
+        event_feed=event_store,
         subscription=subscription,
     )
 
 
-def _event() -> LagTestEvent:
-    return LagTestEvent(aggregate_id=uuid4())
+async def _committed_event(store: InMemoryEventStore) -> LagTestEvent:
+    """A LagTestEvent already committed to the store, ready to be drained."""
+    event = LagTestEvent(aggregate_id=uuid4())
+    await store.append(
+        StreamId(aggregate_id=event.aggregate_id, category="LagTestAggregate"),
+        [event],
+        ExpectedVersion.no_stream(),
+    )
+    return event
 
 
 class TestLiveLagSignal:
     async def test_a_stalled_subscriber_shows_nonzero_lag(self) -> None:
+        store = InMemoryEventStore()
         subscriber = BlockingSubscriber()
-        runner = _runner(subscriber)
+        runner = _runner(subscriber, store)
 
-        tasks = [asyncio.create_task(runner._handle_live_event(_event())) for _ in range(3)]
+        events = [await _committed_event(store) for _ in range(3)]
+        # A single drain reads all three envelopes and blocks delivering the
+        # first, so one wake-up is enough to exercise the stall.
+        task = asyncio.create_task(runner._handle_live_event(events[0]))
         await asyncio.wait_for(subscriber.entered.wait(), 1.0)
 
         assert runner.subscription.lag >= 1
 
         subscriber.release.set()
-        await asyncio.gather(*tasks)
+        await task
 
         assert runner.subscription.lag == 0
 
     async def test_seen_and_delivered_stay_symmetric(self) -> None:
+        store = InMemoryEventStore()
         subscriber = BlockingSubscriber()
         subscriber.release.set()
-        runner = _runner(subscriber)
+        runner = _runner(subscriber, store)
 
         for _ in range(4):
-            await runner._handle_live_event(_event())
+            event = await _committed_event(store)
+            await runner._handle_live_event(event)
 
         assert runner.subscription._events_seen == runner.subscription._events_delivered
         assert runner.subscription.lag == 0
 
 
 class TestNetZeroDisposal:
-    async def test_a_filtered_event_without_a_position_leaves_no_lag(self) -> None:
+    async def test_a_filtered_event_leaves_no_lag(self) -> None:
+        store = InMemoryEventStore()
         subscriber = BlockingSubscriber()
         subscriber.release.set()
         # Subscribed to LagTestEvent only, so an unrelated type is filtered.
-        runner = _runner(subscriber, event_types=(LagTestEvent,))
+        runner = _runner(subscriber, store, event_types=(LagTestEvent,))
 
         class OtherEvent(DomainEvent):
             aggregate_type: str = "LagTestAggregate"
 
-        await runner._handle_live_event(OtherEvent(aggregate_id=uuid4()))
+        other = OtherEvent(aggregate_id=uuid4())
+        await store.append(
+            StreamId(aggregate_id=other.aggregate_id, category="LagTestAggregate"),
+            [other],
+            ExpectedVersion.no_stream(),
+        )
+
+        await runner._handle_live_event(other)
 
         assert runner.subscription.lag == 0
 
     async def test_a_swallowed_failure_leaves_no_lag(self) -> None:
+        store = InMemoryEventStore()
         subscriber = BlockingSubscriber()
         subscriber.release.set()
         subscriber.fail = True
-        runner = _runner(subscriber, continue_on_error=True)
+        runner = _runner(subscriber, store, continue_on_error=True)
 
-        await runner._handle_live_event(_event())
+        event = await _committed_event(store)
+        await runner._handle_live_event(event)
 
         assert runner.subscription.lag == 0
         assert runner.subscription.events_failed == 1
 
 
-class TestBufferedEventsCountAsLag:
-    async def test_transition_buffer_depth_is_lag(self) -> None:
+class TestBufferedWakeUpsDoNotCountAsLag:
+    """Buffering during transition no longer holds raw events, only wake-ups.
+
+    Lag is recorded per envelope pulled from the feed (`_drain_feed`), so a
+    buffered wake-up -- which drains nothing until `process_buffer()` runs
+    -- contributes no lag on its own; the lag shows up once the drain
+    actually reads the envelopes.
+    """
+
+    async def test_process_buffer_drain_is_the_lag_signal(self) -> None:
+        store = InMemoryEventStore()
         subscriber = BlockingSubscriber()
         subscriber.release.set()
-        runner = _runner(subscriber)
+        runner = _runner(subscriber, store)
         await runner.start(buffer_events=True)
 
         for _ in range(3):
-            await runner._handle_live_event(_event())
+            event = await _committed_event(store)
+            await runner._handle_live_event(event)
 
-        assert runner.subscription.lag == 3
+        assert runner.buffer_size == 3
+        assert runner.subscription.lag == 0
 
         await runner.process_buffer()
 
         assert runner.subscription.lag == 0
+        assert len(subscriber.handled) == 3

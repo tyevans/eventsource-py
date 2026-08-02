@@ -784,10 +784,17 @@ class TestLiveEvents:
 
         assert len(subscriber.handled_events) == 5
 
-        # Publish a live event
+        # Append a live event to the store (the source of truth) and
+        # publish it as a bus wake-up notification -- the live runner
+        # drains the feed rather than delivering the bus payload directly.
         live_event = ManagerTestEvent(
             aggregate_id=uuid4(),
             data="live_event",
+        )
+        await event_store.append(
+            StreamId(aggregate_id=live_event.aggregate_id, category="ManagerAggregate"),
+            [live_event],
+            ExpectedVersion.no_stream(),
         )
         await event_bus.publish([live_event])
 

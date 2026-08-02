@@ -41,6 +41,15 @@ at-most-once gap on Redis.
 implementation -- subscription state and its lock now live in the shared
 `SubscriptionRegistry` inside `BaseEventBus`, used by all four backends.
 
+**Amended by [0047 - Live Runner Checkpointing Is Feed-Driven, Not
+Bus-Driven](0047-live-runner-feed-driven-checkpointing.md)**, scoped to the
+live-subscription consumer only: `LiveRunner` no longer treats a
+bus-delivered `DomainEvent` as the thing to deliver to the subscriber --
+the payload is a wake-up signal, and `GlobalEventFeed.read_all(...)` is the
+delivery source. This ADR's delivery-semantics decisions for `EventBus`
+itself (at-least-once, per-handler isolation, no ordering guarantee) are
+unchanged and still govern every other consumer.
+
 ## Context
 
 `EventBus` is the fan-out seam of the library: aggregates and stores produce events, and projections, read models, and integration handlers consume them. Because the same abstract base class is implemented over an in-process dictionary *and* over three network brokers with very different semantics, the interface has to state plainly what it does and does not promise. Anything left implicit gets assumed away by users, and the assumption that bites hardest is "my handler runs exactly once, in order, and if it throws, publishing fails."
