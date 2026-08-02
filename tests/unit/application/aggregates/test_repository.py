@@ -13,6 +13,7 @@ Tests cover:
 - Integration with InMemoryEventStore
 """
 
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 import pytest
@@ -823,8 +824,8 @@ class TestComplexScenarios:
 
         # Add items
         order = await order_repository.load(order_id)
-        order.add_item("Widget A", 10.0)
-        order.add_item("Widget B", 15.0)
+        order.add_item("Widget A", Decimal("10.00"))
+        order.add_item("Widget B", Decimal("15.00"))
         await order_repository.save(order)
 
         # Ship order

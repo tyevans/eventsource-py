@@ -7,6 +7,7 @@ including pre-populated stores and event generators.
 
 import asyncio
 from collections.abc import Callable, Generator
+from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -163,7 +164,7 @@ def order_events_100(benchmark_aggregate_id: UUID) -> list[DomainEvent]:
                     aggregate_id=events[-1].aggregate_id if events else uuid4(),
                     aggregate_version=(i % 10) + 1,
                     item_name=f"Item {i}",
-                    price=float(i * 10),
+                    price=Decimal(i * 10),
                 )
             )
 

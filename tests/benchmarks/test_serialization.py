@@ -15,6 +15,7 @@ Target baselines:
 """
 
 import json
+from decimal import Decimal
 from typing import Any
 from uuid import uuid4
 
@@ -299,7 +300,7 @@ class TestEventTypeBenchmarks:
             aggregate_id=uuid4(),
             aggregate_version=2,
             item_name="Test Item",
-            price=99.99,
+            price=Decimal("99.99"),
         )
 
         def serialize() -> dict[str, Any]:
@@ -307,7 +308,9 @@ class TestEventTypeBenchmarks:
 
         result = benchmark(serialize)
         assert result["item_name"] == "Test Item"
-        assert result["price"] == 99.99
+        # to_dict() renders Decimal as its string form; see
+        # docs/guides/money-and-precision.md
+        assert result["price"] == "99.99"
 
 
 class TestRoundTripBenchmarks:

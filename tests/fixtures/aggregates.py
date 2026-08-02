@@ -11,6 +11,7 @@ Also provides state models:
 - OrderState: State for order aggregates
 """
 
+from decimal import Decimal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -49,7 +50,7 @@ class OrderState(BaseModel):
     order_id: UUID
     customer_id: UUID | None = None
     status: str = "draft"
-    total: float = 0.0
+    total: Decimal = Decimal("0")
     items: list[str] = Field(default_factory=list)
 
 
@@ -213,7 +214,7 @@ class AddOrderItem(DomainCommand):
     """Request to add an item to an order."""
 
     item_name: str
-    price: float
+    price: Decimal
 
 
 class ShipOrder(DomainCommand):
@@ -307,7 +308,7 @@ class OrderAggregate(DeciderAggregate[OrderState]):
         """Command: Create the order for a customer."""
         self.execute(CreateOrder(customer_id=customer_id))
 
-    def add_item(self, item_name: str, price: float) -> None:
+    def add_item(self, item_name: str, price: Decimal) -> None:
         """Command: Add an item to the order."""
         self.execute(AddOrderItem(item_name=item_name, price=price))
 

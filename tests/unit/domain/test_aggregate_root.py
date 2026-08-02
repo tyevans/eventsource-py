@@ -14,6 +14,7 @@ Tests cover:
 """
 
 import logging
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 import pytest
@@ -625,7 +626,7 @@ class TestCommandMethods:
 
         # Cannot add items without creating first
         with pytest.raises(ValueError, match="Cannot add items"):
-            aggregate.add_item("Widget", 10.0)
+            aggregate.add_item("Widget", Decimal("10.00"))
 
 
 class TestComplexStateManagement:
@@ -643,8 +644,8 @@ class TestComplexStateManagement:
         assert aggregate.state.customer_id == customer_id
 
         # Add items
-        aggregate.add_item("Widget A", 10.0)
-        aggregate.add_item("Widget B", 15.0)
+        aggregate.add_item("Widget A", Decimal("10.00"))
+        aggregate.add_item("Widget B", Decimal("15.00"))
         assert aggregate.state.items == ["Widget A", "Widget B"]
         assert aggregate.state.total == 25.0
 
@@ -918,11 +919,11 @@ class TestImmutableStatePatterns:
         """List updates should create new lists, not mutate."""
         aggregate = OrderAggregate(uuid4())
         aggregate.create(uuid4())
-        aggregate.add_item("Widget A", 10.0)
+        aggregate.add_item("Widget A", Decimal("10.00"))
 
         assert aggregate.state is not None
         items1 = aggregate.state.items
-        aggregate.add_item("Widget B", 15.0)
+        aggregate.add_item("Widget B", Decimal("15.00"))
         assert aggregate.state is not None
         items2 = aggregate.state.items
 

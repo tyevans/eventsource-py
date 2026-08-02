@@ -9,6 +9,7 @@ This module provides reusable event types for testing:
 Also provides an event factory function for creating test events with sensible defaults.
 """
 
+from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -70,7 +71,7 @@ class OrderItemAdded(DomainEvent):
 
     aggregate_type: str = "Order"
     item_name: str
-    price: float
+    price: Decimal
 
 
 @register_event

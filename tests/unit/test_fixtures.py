@@ -6,6 +6,7 @@ the expected functionality for other tests to use.
 """
 
 from collections.abc import Callable
+from decimal import Decimal
 from uuid import UUID
 
 import pytest
@@ -155,11 +156,11 @@ class TestOrderEvents:
             aggregate_id=uuid4(),
             aggregate_version=1,
             item_name="Widget",
-            price=10.50,
+            price=Decimal("10.50"),
         )
 
         assert event.item_name == "Widget"
-        assert event.price == 10.50
+        assert event.price == Decimal("10.50")
 
     def test_order_shipped_requires_tracking_number(self) -> None:
         """OrderShipped requires a tracking_number."""
@@ -213,7 +214,7 @@ class TestOrderState:
         state = OrderState(order_id=uuid4())
 
         assert state.status == "draft"
-        assert state.total == 0.0
+        assert state.total == Decimal("0")
         assert state.items == []
 
     def test_order_state_with_items(self) -> None:
@@ -224,12 +225,12 @@ class TestOrderState:
             order_id=uuid4(),
             customer_id=uuid4(),
             status="created",
-            total=25.0,
+            total=Decimal("25.00"),
             items=["Widget A", "Widget B"],
         )
 
         assert len(state.items) == 2
-        assert state.total == 25.0
+        assert state.total == Decimal("25.00")
 
 
 # =============================================================================
@@ -326,15 +327,39 @@ class TestOrderAggregate:
         customer_id = uuid4()
 
         aggregate.create(customer_id)
-        aggregate.add_item("Widget A", 10.0)
-        aggregate.add_item("Widget B", 15.0)
+        aggregate.add_item("Widget A", Decimal("10.00"))
+        aggregate.add_item("Widget B", Decimal("15.00"))
         aggregate.ship("TRACK123")
 
         assert aggregate.version == 4
         assert aggregate.state is not None
         assert aggregate.state.status == "shipped"
         assert aggregate.state.items == ["Widget A", "Widget B"]
-        assert aggregate.state.total == 25.0
+        assert aggregate.state.total == Decimal("25.00")
+
+    def test_running_total_accumulates_without_precision_loss(self) -> None:
+        """Repeated Decimal additions stay exact where float would drift.
+
+        Guards the reason OrderState.total is Decimal rather than float: the
+        error only shows up on accumulation, not on a single round trip. See
+        docs/guides/money-and-precision.md.
+        """
+        from uuid import uuid4
+
+        aggregate = OrderAggregate(uuid4())
+        aggregate.create(uuid4())
+
+        for _ in range(10):
+            aggregate.add_item("Dime", Decimal("0.10"))
+
+        assert aggregate.state is not None
+        assert aggregate.state.total == Decimal("1.00")
+
+        # The same arithmetic in float does not land on 1.0.
+        naive = 0.0
+        for _ in range(10):
+            naive += 0.10
+        assert naive != 1.0
 
     def test_cannot_create_twice(self) -> None:
         """OrderAggregate.create raises if already created."""
@@ -355,7 +380,7 @@ class TestOrderAggregate:
         aggregate.ship("TRACK123")
 
         with pytest.raises(ValueError, match="Cannot add items"):
-            aggregate.add_item("Widget", 10.0)
+            aggregate.add_item("Widget", Decimal("10.00"))
 
 
 # =============================================================================
