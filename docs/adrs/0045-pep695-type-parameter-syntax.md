@@ -134,7 +134,7 @@ none changed a signature.
 
 ### What was not converted
 
-Eight module-level `TypeVar`s survive in `src/eventsource/`, deliberately.
+Seven module-level `TypeVar`s survive in `src/eventsource/`, deliberately.
 Ruff does not flag them, and converting them would be a change in kind rather
 than in syntax. A reader who greps for `TypeVar` will find these, and they are
 not evidence that this ADR is stale:
@@ -147,13 +147,12 @@ not evidence that this ADR is stale:
 | `domain/aggregate.py:39` — `TEvent` | Used by `create_event()`; the plan explicitly told Task 1 to leave it. |
 | `testing/assertions.py:30` — `TEvent` | Shared across declarations in the module; unflagged. |
 | `application/migration/error_handling.py:34` — `T` | Shared across declarations; unflagged. |
-| `adapters/_bus/handler_adapter.py:22` — `T` | Shared across declarations; unflagged. |
-| `adapters/sync/adapter.py:34` — `T` | Shared across declarations; unflagged. |
+| `adapters/sync/adapter.py:34` — `T` | Single-use, unflagged; eligible for a later pass. |
 
-The common thread for the last five: a `TypeVar` used by more than one
-declaration in a module is not a shadowing hazard — nothing converted sits
-beside it under the same name — so the rule this ADR states does not reach
-them. They are eligible for a later pass, not a defect in this one.
+What every remaining row has in common is not how many declarations use it:
+**none of them sits beside a converted same-named parameter**, so this ADR's
+shadowing rule does not reach any of them. Each is eligible for a later pass,
+not a defect in this one.
 
 ### Bounds are evaluated eagerly and are not deferred annotations
 
@@ -209,7 +208,13 @@ in the tree are not inconsistency.
 
 ### Incidental changes
 
-Two changes belong to this wave without belonging to its Decision:
+Three changes belong to this wave without belonging to its Decision:
+
+- **A dead `TypeVar` was deleted.** Auditing the survivors for the table above
+  turned up `T = TypeVar("T")` in `adapters/_bus/handler_adapter.py` with no
+  users at all — the assignment was its only occurrence in the file. Ruff does
+  not flag an unused module-level assignment, which is how it survived; the
+  now-unused `TypeVar` import went with it.
 
 - **`.pre-commit-config.yaml` gained `default_language_version: python3.13`.**
   The `debug-statements` hook runs in pre-commit's own isolated environment,

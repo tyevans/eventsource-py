@@ -13,13 +13,11 @@ import asyncio
 import inspect
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Any, TypeVar
+from typing import Any
 
 from eventsource.domain.event import DomainEvent
 
 logger = logging.getLogger(__name__)
-
-T = TypeVar("T")
 
 
 # Type for async handler function
