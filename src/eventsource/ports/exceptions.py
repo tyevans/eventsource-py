@@ -11,7 +11,7 @@ polluting the entities ring.
 
 from __future__ import annotations
 
-from eventsource.domain.exceptions import EventSourceError
+from eventsource.domain.exceptions import EventSourceError, EventStoreError
 
 __all__ = [
     "CheckpointError",
@@ -117,10 +117,25 @@ class CheckpointNotFoundError(SubscriptionError):
         )
 
 
-class EventStoreConnectionError(SubscriptionError):
-    """Raised when unable to connect to the event store."""
+class EventStoreConnectionError(EventStoreError):
+    """Raised when a store adapter cannot reach its backing database.
 
-    pass
+    Wraps the driver's own exception (`sqlite3.OperationalError`,
+    `asyncpg`/SQLAlchemy connection errors) so callers get a library type
+    naming the store, with the original attached as `__cause__`. It was
+    previously a `SubscriptionError` subclass, which put a store-connection
+    failure under the subscription taxonomy and made
+    `except SubscriptionError` the only way to catch it.
+    """
+
+    def __init__(self, message: str, *, store: str | None = None) -> None:
+        """
+        Args:
+            message: What failed, in the library's terms
+            store: The adapter that failed, e.g. "SQLiteEventStore"
+        """
+        self.store = store
+        super().__init__(f"{store}: {message}" if store else message)
 
 
 class EventBusConnectionError(SubscriptionError):

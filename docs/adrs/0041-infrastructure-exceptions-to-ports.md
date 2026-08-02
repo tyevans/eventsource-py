@@ -17,6 +17,12 @@ their module changes.
 eventsource.domain.exceptions import LockAcquisitionError` (or any of the
 other twelve) now raises `ImportError`.
 
+**Amended by [0048 - Failure Paths Report Honestly and Retain What They Cannot
+Handle](0048-failure-paths-report-and-retain.md)**, scoped to one class:
+`EventStoreConnectionError` moves from `SubscriptionError` to
+`EventStoreError`. The module it lives in and the other twelve classes are
+unchanged.
+
 **Amends [ADR 0030](0030-top-level-module-ring-consolidation.md).** ADR
 0030's Decision is not retro-edited: `exceptions.py` still moved onto
 `domain/` exactly as that ADR describes. What changes is that

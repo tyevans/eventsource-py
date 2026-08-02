@@ -422,6 +422,12 @@ class KafkaConsumerLoop:
         # Get retry count from headers (for retried messages)
         retry_count = self._get_retry_count(message.headers)
 
+        # Honor the backoff this message was republished with. `retry_after`
+        # used to be written and never read, so the configured RetryPolicy had
+        # no effect on this backend at all -- the same config that made the
+        # RabbitMQ consumer back off made the Kafka consumer hot-loop.
+        await self._await_retry_after(message.headers)
+
         try:
             # Deserialize event - catch DeserializationError separately
             # as these will never succeed on retry
@@ -436,9 +442,13 @@ class KafkaConsumerLoop:
                         "error": str(e),
                     },
                 )
-                await self._send_to_dlq(message, e, retry_count, reason="deserialization_error")
-                if self._consumer:
+                retained = await self._send_to_dlq(
+                    message, e, retry_count, reason="deserialization_error"
+                )
+                if retained and self._consumer:
                     await self._consumer.commit()
+                elif not retained:
+                    self._warn_uncommitted(message, "deserialization_error")
 
                 if span:
                     span.set_status(Status(StatusCode.ERROR, str(e)))
@@ -563,6 +573,34 @@ class KafkaConsumerLoop:
                 return header_value.decode("utf-8")
 
         return None
+
+    async def _await_retry_after(self, headers: list[tuple[str, bytes]] | None) -> None:
+        """Wait until a republished message's scheduled retry time.
+
+        Republished messages carry a `retry_after` header: an absolute UTC
+        timestamp computed from the configured `RetryPolicy`. A message with
+        no such header (the ordinary first delivery) waits not at all.
+
+        Like the RabbitMQ consumer's inline backoff, this holds up the
+        partition while it waits -- Kafka's ordering guarantee is per
+        partition, so there is nowhere else for the message to go. Both
+        backends now apply the same policy the same way; a genuinely
+        non-blocking delay needs a dedicated retry topic and is tracked
+        separately.
+        """
+        value = self._get_header_value(headers, "retry_after")
+        if not value:
+            return
+
+        try:
+            retry_after = float(value)
+        except ValueError:
+            logger.warning("Ignoring unparseable retry_after header: %r", value)
+            return
+
+        remaining = retry_after - datetime.now(UTC).timestamp()
+        if remaining > 0:
+            await asyncio.sleep(remaining)
 
     def _get_retry_count(self, headers: list[tuple[str, bytes]] | None) -> int:
         """Get the retry count from message headers.
@@ -814,11 +852,15 @@ class KafkaConsumerLoop:
                     "error": str(error),
                 },
             )
-            # Send to DLQ
-            await self._send_to_dlq(message, error, retry_count)
-            # Commit to avoid infinite loop
-            if self._consumer:
+            # Send to DLQ, and commit only once it is actually there.
+            # Committing regardless would drop the event with no record of it
+            # anywhere -- the DLQ send fails silently when the producer is
+            # disconnected or DLQ routing is disabled.
+            retained = await self._send_to_dlq(message, error, retry_count)
+            if retained and self._consumer:
                 await self._consumer.commit()
+            elif not retained:
+                self._warn_uncommitted(message, "max_retries_exceeded")
             return
 
         # Calculate retry delay for logging (actual delay happens on next consumption)
@@ -836,19 +878,22 @@ class KafkaConsumerLoop:
             },
         )
 
-        # Republish the message with incremented retry count (non-blocking retry)
-        await self._republish_for_retry(message, retry_count + 1, delay)
+        # Republish the message with incremented retry count
+        retained = await self._republish_for_retry(message, retry_count + 1, delay)
 
-        # Commit the original message to avoid reprocessing
-        if self._consumer:
+        # Commit the original only once the retry copy exists. Committing a
+        # republish that never happened loses the event outright.
+        if retained and self._consumer:
             await self._consumer.commit()
+        elif not retained:
+            self._warn_uncommitted(message, "retry_republish")
 
     async def _republish_for_retry(
         self,
         message: Any,
         new_retry_count: int,
         delay: float,
-    ) -> None:
+    ) -> bool:
         """Republish a failed message for retry.
 
         Copies the original message with an updated retry count header
@@ -858,11 +903,29 @@ class KafkaConsumerLoop:
         Args:
             message: The original failed message.
             new_retry_count: The incremented retry count.
-            delay: Suggested delay before processing (for logging/future use).
+            delay: Delay before the republished copy becomes eligible for
+                processing, carried in its `retry_after` header.
+
+        Returns:
+            True when the event now lives somewhere durable -- republished to
+            the topic, or routed to the DLQ. False means it does not, and the
+            caller must not commit its offset.
         """
         if not self._producer:
-            logger.error("Cannot republish for retry: producer not connected")
-            return
+            # The caller commits this message's offset immediately after we
+            # return, so returning quietly here retains nothing and retries
+            # nothing -- the event is simply dropped. Route it to the DLQ, the
+            # same as a failed send.
+            logger.error(
+                "Cannot republish for retry: producer not connected; sending to DLQ",
+                extra={"retry_count": new_retry_count},
+            )
+            return await self._send_to_dlq(
+                message,
+                RuntimeError("producer not connected; cannot republish for retry"),
+                new_retry_count - 1,
+                reason="republish_failed",
+            )
 
         # Build new headers with updated retry count and retry timestamp
         new_headers: list[tuple[str, bytes]] = []
@@ -892,6 +955,7 @@ class KafkaConsumerLoop:
                     "retry_after": retry_after,
                 },
             )
+            return True
         except Exception as e:
             logger.error(
                 "Failed to republish message for retry, sending to DLQ",
@@ -899,7 +963,29 @@ class KafkaConsumerLoop:
                 exc_info=True,
             )
             # If we can't republish, send to DLQ to avoid message loss
-            await self._send_to_dlq(message, e, new_retry_count - 1, reason="republish_failed")
+            return await self._send_to_dlq(
+                message, e, new_retry_count - 1, reason="republish_failed"
+            )
+
+    def _warn_uncommitted(self, message: Any, stage: str) -> None:
+        """Log that an offset was deliberately left uncommitted.
+
+        Reached only when neither the retry topic nor the DLQ accepted the
+        message. Leaving the offset uncommitted means Kafka redelivers it,
+        which is noisy but preserves the event; committing would discard it
+        with no record anywhere.
+        """
+        logger.critical(
+            "Offset left uncommitted: message was neither retried nor sent to the DLQ. "
+            "It will be redelivered.",
+            extra={
+                "stage": stage,
+                "topic": message.topic,
+                "partition": message.partition,
+                "offset": message.offset,
+                "event_id": self._get_header_value(message.headers, "event_id"),
+            },
+        )
 
     def _calculate_retry_delay(self, retry_count: int) -> float:
         """Calculate delay for retry with exponential backoff and jitter.
@@ -922,11 +1008,17 @@ class KafkaConsumerLoop:
         error: Exception,
         retry_count: int,
         reason: str = "max_retries_exceeded",
-    ) -> None:
+    ) -> bool:
         """Send a failed message to the dead letter queue.
 
         Preserves the original message and adds DLQ-specific metadata
         in headers for debugging and replay.
+
+        Returns:
+            True when the caller may commit the offset: the message reached
+            the DLQ topic, or DLQ routing is disabled and dropping it is the
+            configured behavior. False means the message reached neither, and
+            committing would lose the event with no record anywhere.
 
         Args:
             message: The failed Kafka message.
@@ -938,6 +1030,9 @@ class KafkaConsumerLoop:
                 - "handler_error": Handler raised an unrecoverable error
         """
         if not self._config.enable_dlq:
+            # Turning the DLQ off is an explicit choice to drop poison
+            # messages rather than redeliver them forever, so the caller may
+            # commit. This is the one True that does not mean "stored".
             logger.warning(
                 "DLQ disabled, dropping failed message",
                 extra={
@@ -945,7 +1040,7 @@ class KafkaConsumerLoop:
                     "error": str(error),
                 },
             )
-            return
+            return True
 
         if not self._producer:
             logger.error(
@@ -954,7 +1049,7 @@ class KafkaConsumerLoop:
                     "event_type": self._get_header_value(message.headers, "event_type"),
                 },
             )
-            return
+            return False
 
         # Create DLQ headers with failure metadata
         dlq_headers = self._create_dlq_headers(message, error, retry_count, reason)
@@ -994,6 +1089,7 @@ class KafkaConsumerLoop:
                     "error": str(error)[:200],
                 },
             )
+            return True
 
         except Exception as e:
             logger.error(

@@ -121,7 +121,7 @@ That is the whole install for this tutorial. The distribution is named
 import eventsource
 ```
 
-The core package depends only on `pydantic` (v2) and `sqlalchemy` (v2), and it brings
+The core package depends on `pydantic` (v2), `sqlalchemy` (v2), and `orjson`, and it brings
 along everything the next four steps need: `DomainEvent`, `DomainCommand`,
 `register_event`, `DeciderAggregate`, `CommandRejectedError`, `AggregateRepository`,
 and `InMemoryEventStore`.

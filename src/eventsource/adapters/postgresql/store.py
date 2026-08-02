@@ -29,7 +29,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from eventsource.adapters._sql.positions import IntPositionCodec
@@ -43,6 +43,7 @@ from eventsource.ports import (
     AppendResult,
     CategoryReadOptions,
     EventEnvelope,
+    EventStoreConnectionError,
     ExpectedVersion,
     FeedReadOptions,
     Position,
@@ -60,12 +61,6 @@ except ImportError:  # pragma: no cover - exercised only without the optional de
 
 logger = logging.getLogger(__name__)
 
-# Sentinel ints preserved for OptimisticLockError's expected_version field, which
-# predates ExpectedVersion and is still int-typed. Mirrors stores/interface.py's
-# ExpectedVersion.ANY / NO_STREAM / STREAM_EXISTS constants for message fidelity.
-_ANY_SENTINEL = -1
-_NO_STREAM_SENTINEL = 0
-_STREAM_EXISTS_SENTINEL = -2
 
 _SELECT_COLUMNS = """
     global_position, event_id, event_type, aggregate_type, aggregate_id,
@@ -217,12 +212,21 @@ class PostgreSQLEventStore:
         async with self._schema_lock:
             if self._schema_ready:
                 return
-            async with self._engine.connect() as conn:
-                raw = await conn.get_raw_connection()
-                driver_connection = raw.driver_connection
-                assert driver_connection is not None
-                await driver_connection.execute(get_schema("events"))
-                await conn.commit()
+            try:
+                async with self._engine.connect() as conn:
+                    raw = await conn.get_raw_connection()
+                    driver_connection = raw.driver_connection
+                    assert driver_connection is not None
+                    await driver_connection.execute(get_schema("events"))
+                    await conn.commit()
+            except OperationalError as e:
+                # First contact with the database. A bad DSN, an unreachable
+                # host, or refused credentials surface here as a SQLAlchemy
+                # driver error naming neither the library nor this store.
+                raise EventStoreConnectionError(
+                    f"could not connect to PostgreSQL to create the schema: {e}",
+                    store=type(self).__name__,
+                ) from e
             self._schema_ready = True
 
     async def close(self) -> None:
@@ -244,11 +248,11 @@ class PostgreSQLEventStore:
             return
         if expected.kind == "no_stream":
             if current != 0:
-                raise OptimisticLockError(stream.aggregate_id, _NO_STREAM_SENTINEL, current)
+                raise OptimisticLockError(stream.aggregate_id, "no_stream", current)
             return
         if expected.kind == "stream_exists":
             if current == 0:
-                raise OptimisticLockError(stream.aggregate_id, _STREAM_EXISTS_SENTINEL, current)
+                raise OptimisticLockError(stream.aggregate_id, "stream_exists", current)
             return
         if expected.kind == "exact":
             if current != expected.version:
@@ -256,14 +260,16 @@ class PostgreSQLEventStore:
             return
         raise ValueError(f"unknown ExpectedVersion kind: {expected.kind!r}")
 
-    def _expected_sentinel(self, expected: ExpectedVersion) -> int:
-        if expected.kind == "any":
-            return _ANY_SENTINEL
-        if expected.kind == "no_stream":
-            return _NO_STREAM_SENTINEL
-        if expected.kind == "stream_exists":
-            return _STREAM_EXISTS_SENTINEL
-        return expected.version or 0
+    def _expected_description(self, expected: ExpectedVersion) -> int | str:
+        """What the caller asked for, as `OptimisticLockError` should report it.
+
+        A numeric version renders as a number; the non-numeric kinds render
+        by name, because reporting `no_stream` as the integer `0` claims the
+        caller expected a version they never wrote.
+        """
+        if expected.kind == "exact":
+            return expected.version or 0
+        return expected.kind
 
     def _classify_integrity_error(self, e: IntegrityError) -> str | None:
         """Classify an append `IntegrityError` by the real constraint name.
@@ -398,7 +404,7 @@ class PostgreSQLEventStore:
                     )
                     actual_version = result.scalar() or 0
                     raise OptimisticLockError(
-                        stream.aggregate_id, self._expected_sentinel(expected), actual_version
+                        stream.aggregate_id, self._expected_description(expected), actual_version
                     ) from e
                 raise
 

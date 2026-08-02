@@ -20,6 +20,7 @@ from eventsource.application.subscriptions import (
     create_catch_up_config,
     create_live_only_config,
 )
+from eventsource.domain.exceptions import EventStoreError
 from eventsource.ports.positions import Position
 
 
@@ -376,9 +377,16 @@ class TestSubscriptionExceptions:
             raise EventStoreConnectionError("Connection refused")
         assert "Connection refused" in str(exc_info.value)
 
-    def test_event_store_connection_error_is_subscription_error(self):
-        """Test EventStoreConnectionError is subclass of SubscriptionError."""
-        assert issubclass(EventStoreConnectionError, SubscriptionError)
+    def test_event_store_connection_error_is_an_event_store_error(self):
+        """EventStoreConnectionError belongs to the store taxonomy.
+
+        It was a SubscriptionError subclass, which filed a store-connection
+        failure under subscriptions and made `except SubscriptionError` the
+        only way to catch it -- including for callers that never ran a
+        subscription.
+        """
+        assert issubclass(EventStoreConnectionError, EventStoreError)
+        assert not issubclass(EventStoreConnectionError, SubscriptionError)
 
     def test_event_bus_connection_error(self):
         """Test EventBusConnectionError."""
@@ -411,7 +419,6 @@ class TestExceptionHierarchy:
             SubscriptionStateError("state error"),
             SubscriptionAlreadyExistsError("name"),
             CheckpointNotFoundError("projection"),
-            EventStoreConnectionError("connection error"),
             EventBusConnectionError("bus error"),
             TransitionError("transition error"),
         ]
@@ -423,6 +430,11 @@ class TestExceptionHierarchy:
                 assert caught is exc
             except Exception:
                 pytest.fail(f"{type(exc).__name__} was not caught by SubscriptionError")
+
+    def test_event_store_connection_error_is_not_in_that_catch_all(self):
+        """It is deliberately outside the subscription hierarchy."""
+        with pytest.raises(EventStoreError):
+            raise EventStoreConnectionError("connection error")
 
     def test_each_exception_is_distinct(self):
         """Test that each exception type can be caught separately."""

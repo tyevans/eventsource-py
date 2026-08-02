@@ -239,10 +239,10 @@ version = sync_store.get_stream_version(stream_id)
 The adapter's constructor takes a `FullEventStore` and a `timeout` (30 seconds by
 default, overridable per call via the keyword-only `timeout` argument). When no event
 loop is running it drives each coroutine with `asyncio.run` wrapped in
-`asyncio.wait_for`; when called from inside a running loop it dispatches via
-`asyncio.run_coroutine_threadsafe`. Either path raises `TimeoutError` when the bound is
-exceeded. `SyncEventStoreAdapter.shutdown_executor()` tears down the shared pool at
-application shutdown.
+`asyncio.wait_for`, raising `TimeoutError` when the bound is exceeded. Called from a
+thread that already runs a loop it raises `RuntimeError` rather than deadlocking on
+that loop. `close()` releases the wrapped store when the store owns a resource, and
+the adapter doubles as a context manager that closes on exit.
 
 ## Reference Pages
 

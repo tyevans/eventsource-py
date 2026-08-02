@@ -10,7 +10,6 @@ This module provides:
 - LiveRunner: Runner for real-time event processing
 """
 
-import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
@@ -118,14 +117,15 @@ class LiveRunner:
     # Internal state - not part of init
     _running: bool = field(default=False, init=False, repr=False)
     _subscribed: bool = field(default=False, init=False, repr=False)
-    # Wake signals, not events -- the feed is the source of truth for what
-    # to process, so buffering during transition only needs to remember
-    # "a wake happened", counted for `buffer_size`/lag observability.
-    _buffer: asyncio.Queue[None] = field(default_factory=asyncio.Queue, init=False, repr=False)
+    # Counts of wake signals, not events. The feed is the source of truth for
+    # what to process, so buffering only needs to remember *that* wakes
+    # happened; the count is kept for `buffer_size`/lag observability.
+    # These were `asyncio.Queue`s of `None`, which grew one interchangeable
+    # sentinel per bus notification and were then discarded wholesale at
+    # drain time -- unbounded retention of no information.
+    _buffered_wakes: int = field(default=0, init=False, repr=False)
     _buffer_enabled: bool = field(default=False, init=False, repr=False)
-    _pause_buffer: asyncio.Queue[None] = field(
-        default_factory=asyncio.Queue, init=False, repr=False
-    )
+    _paused_wakes: int = field(default=0, init=False, repr=False)
     _events_buffered_during_pause: int = field(default=0, init=False, repr=False)
     _stats: LiveRunnerStats = field(default_factory=LiveRunnerStats, init=False, repr=False)
     _last_checkpoint_time: float = field(default=0.0, init=False, repr=False)
@@ -252,23 +252,23 @@ class LiveRunner:
             # During transition, remember that a wake happened; the buffer
             # is drained (from the feed, not from stored events) once
             # catch-up completes and disables buffering.
-            await self._buffer.put(None)
+            self._buffered_wakes += 1
             logger.debug(
                 "Wake-up buffered",
                 extra={
                     "subscription": self.subscription.name,
-                    "buffer_size": self._buffer.qsize(),
+                    "buffer_size": self._buffered_wakes,
                 },
             )
         elif self.subscription.is_paused:
             # During pause, remember the wake for processing on resume.
-            await self._pause_buffer.put(None)
+            self._paused_wakes += 1
             self._events_buffered_during_pause += 1
             logger.debug(
                 "Wake-up buffered during pause",
                 extra={
                     "subscription": self.subscription.name,
-                    "pause_buffer_size": self._pause_buffer.qsize(),
+                    "pause_buffer_size": self._paused_wakes,
                 },
             )
         else:
@@ -527,14 +527,10 @@ class LiveRunner:
             "eventsource.live_runner.process_buffer",
             {
                 ATTR_SUBSCRIPTION_NAME: self.subscription.name,
-                ATTR_BUFFER_SIZE: self._buffer.qsize(),
+                ATTR_BUFFER_SIZE: self._buffered_wakes,
             },
         ) as span:
-            while not self._buffer.empty():
-                try:
-                    self._buffer.get_nowait()
-                except asyncio.QueueEmpty:
-                    break
+            self._buffered_wakes = 0
 
             processed = await self._drain_feed()
 
@@ -583,22 +579,18 @@ class LiveRunner:
             "eventsource.live_runner.process_pause_buffer",
             {
                 ATTR_SUBSCRIPTION_NAME: self.subscription.name,
-                ATTR_BUFFER_SIZE: self._pause_buffer.qsize(),
+                ATTR_BUFFER_SIZE: self._paused_wakes,
             },
         ) as span:
             logger.info(
                 "Processing pause buffer",
                 extra={
                     "subscription": self.subscription.name,
-                    "pause_buffer_size": self._pause_buffer.qsize(),
+                    "pause_buffer_size": self._paused_wakes,
                 },
             )
 
-            while not self._pause_buffer.empty():
-                try:
-                    self._pause_buffer.get_nowait()
-                except asyncio.QueueEmpty:
-                    break
+            self._paused_wakes = 0
 
             processed = await self._drain_feed()
 
@@ -661,12 +653,12 @@ class LiveRunner:
     @property
     def buffer_size(self) -> int:
         """Get current buffer size."""
-        return self._buffer.qsize()
+        return self._buffered_wakes
 
     @property
     def pause_buffer_size(self) -> int:
         """Get current pause buffer size (events queued during pause)."""
-        return self._pause_buffer.qsize()
+        return self._paused_wakes
 
     @property
     def events_buffered_during_pause(self) -> int:

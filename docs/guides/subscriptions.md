@@ -322,13 +322,13 @@ Positions are **exclusive** and opaque: the catch-up runner reads with `from_pos
 
 ### "checkpoint" when no checkpoint exists
 
-The first ever start of a subscription has no row in the checkpoint repository. `StartFromResolver` logs `"No checkpoint found, starting from beginning"` and resolves to `0`, so a fresh `"checkpoint"` subscription replays the whole store. That is usually what you want for a projection, but it means a mistyped subscription name silently triggers a full replay under a new checkpoint key instead of resuming the old one. Pin the name explicitly when it matters:
+The first ever start of a subscription has no row in the checkpoint repository. `StartFromResolver` logs `"No checkpoint found, starting from beginning"` and resolves to `None` — not a position value; positions are opaque adapter-owned tokens with no zero — so a fresh `"checkpoint"` subscription replays the whole store. That is usually what you want for a projection, but it means a mistyped subscription name silently triggers a full replay under a new checkpoint key instead of resuming the old one. Pin the name explicitly when it matters:
 
 ```python
 await manager.subscribe(OrderProjection(), name="orders-read-model")
 ```
 
-(`CheckpointNotFoundError` exists in `eventsource.domain.exceptions` for code that wants to treat a missing checkpoint as fatal; the resolver itself never raises it.)
+(`CheckpointNotFoundError` exists in `eventsource.ports.exceptions` for code that wants to treat a missing checkpoint as fatal; the resolver itself never raises it.)
 
 ### What "end" actually skips
 

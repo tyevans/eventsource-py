@@ -35,6 +35,7 @@ from eventsource.ports import (
     AppendResult,
     CategoryReadOptions,
     EventEnvelope,
+    EventStoreConnectionError,
     ExpectedVersion,
     FeedReadOptions,
     Position,
@@ -52,12 +53,6 @@ except ImportError:  # pragma: no cover - exercised only without the optional de
 
 logger = logging.getLogger(__name__)
 
-# Sentinel ints preserved for OptimisticLockError's expected_version field, which
-# predates ExpectedVersion and is still int-typed. Mirrors stores/interface.py's
-# ExpectedVersion.ANY / NO_STREAM / STREAM_EXISTS constants for message fidelity.
-_ANY_SENTINEL = -1
-_NO_STREAM_SENTINEL = 0
-_STREAM_EXISTS_SENTINEL = -2
 
 _SELECT_COLUMNS = """
     global_position, event_id, event_type, aggregate_type, aggregate_id,
@@ -142,7 +137,17 @@ class SQLiteEventStore:
             if self._connection is not None:
                 return self._connection
 
-            conn = await aiosqlite.connect(self._database)
+            try:
+                conn = await aiosqlite.connect(self._database)
+            except (aiosqlite.Error, OSError) as e:
+                # Without this the user sees a bare
+                # `sqlite3.OperationalError: unable to open database file`
+                # with nothing naming the library, the adapter, or the path.
+                raise EventStoreConnectionError(
+                    f"could not open the SQLite database at {self._database!r}: {e}",
+                    store=type(self).__name__,
+                ) from e
+
             await conn.execute("PRAGMA foreign_keys = ON")
             await conn.execute(f"PRAGMA busy_timeout = {self._busy_timeout}")
             if self._wal_mode:
@@ -180,11 +185,11 @@ class SQLiteEventStore:
             return
         if expected.kind == "no_stream":
             if current != 0:
-                raise OptimisticLockError(stream.aggregate_id, _NO_STREAM_SENTINEL, current)
+                raise OptimisticLockError(stream.aggregate_id, "no_stream", current)
             return
         if expected.kind == "stream_exists":
             if current == 0:
-                raise OptimisticLockError(stream.aggregate_id, _STREAM_EXISTS_SENTINEL, current)
+                raise OptimisticLockError(stream.aggregate_id, "stream_exists", current)
             return
         if expected.kind == "exact":
             if current != expected.version:
@@ -192,14 +197,16 @@ class SQLiteEventStore:
             return
         raise ValueError(f"unknown ExpectedVersion kind: {expected.kind!r}")
 
-    def _expected_sentinel(self, expected: ExpectedVersion) -> int:
-        if expected.kind == "any":
-            return _ANY_SENTINEL
-        if expected.kind == "no_stream":
-            return _NO_STREAM_SENTINEL
-        if expected.kind == "stream_exists":
-            return _STREAM_EXISTS_SENTINEL
-        return expected.version or 0
+    def _expected_description(self, expected: ExpectedVersion) -> int | str:
+        """What the caller asked for, as `OptimisticLockError` should report it.
+
+        A numeric version renders as a number; the non-numeric kinds render
+        by name, because reporting `no_stream` as the integer `0` claims the
+        caller expected a version they never wrote.
+        """
+        if expected.kind == "exact":
+            return expected.version or 0
+        return expected.kind
 
     async def append(
         self,
@@ -292,7 +299,7 @@ class SQLiteEventStore:
                     row = await cursor.fetchone()
                     actual_version = row[0] if row else 0
                     raise OptimisticLockError(
-                        stream.aggregate_id, self._expected_sentinel(expected), actual_version
+                        stream.aggregate_id, self._expected_description(expected), actual_version
                     ) from e
                 raise
             except BaseException:
@@ -454,8 +461,18 @@ class SQLiteEventStore:
         # `read_category`, which filters/orders on `stored_at`. `from_timestamp`
         # is inclusive per the port contract, hence `>=`.
         if options.from_timestamp is not None:
+            # `created_at` is TEXT, so this is a *lexical* comparison, and the
+            # stored values are all `datetime.now(UTC).isoformat()` -- offset
+            # `+00:00`. A bound rendered at any other offset sorts by its
+            # printed digits rather than the instant it denotes (a `+05:00`
+            # bound sorts after every stored row, silently returning nothing),
+            # so normalize to UTC before formatting. A naive datetime is read
+            # as UTC rather than compared offset-free, which would sort it
+            # ahead of every stored row for the same instant.
+            bound = options.from_timestamp
+            bound = bound.replace(tzinfo=UTC) if bound.tzinfo is None else bound.astimezone(UTC)
             query_parts.append("AND created_at >= ?")
-            params.append(options.from_timestamp.isoformat())
+            params.append(bound.isoformat())
 
         # `created_at` alone ties within a batch (SQLite stamps one `now`
         # per batch), so `global_position` breaks the tie deterministically.

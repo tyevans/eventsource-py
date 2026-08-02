@@ -195,7 +195,7 @@ def populated_benchmark_store_100(
     aggregate_id = sample_events_100[0].aggregate_id
 
     async def setup() -> None:
-        stream_id = StreamId(str(aggregate_id), "TestAggregate")
+        stream_id = StreamId(aggregate_id, "TestAggregate")
         await benchmark_store.append(
             stream_id,
             sample_events_100,
@@ -217,7 +217,7 @@ def populated_benchmark_store_1000(
     aggregate_id = sample_events_1000[0].aggregate_id
 
     async def setup() -> None:
-        stream_id = StreamId(str(aggregate_id), "TestAggregate")
+        stream_id = StreamId(aggregate_id, "TestAggregate")
         await benchmark_store.append(
             stream_id,
             sample_events_1000,

@@ -2,6 +2,17 @@
 
 **Status:** Accepted
 
+**Amended by [0048 - Failure Paths Report Honestly and Retain What They Cannot
+Handle](0048-failure-paths-report-and-retain.md)**, scoped to
+`SyncEventStoreAdapter`'s running-loop branch. That branch scheduled the
+coroutine onto the caller's own loop and then blocked that loop's thread
+waiting for it -- a guaranteed self-deadlock -- so it now raises
+`RuntimeError` instead. The shared `ThreadPoolExecutor` (`_executor`,
+`_get_executor()`, `shutdown_executor()`), which no code path ever dispatched
+to, is removed. The async-first decision and the `asyncio.run` /
+`asyncio.wait_for` no-loop path recorded below are unchanged. The addendum's
+discussion of the running-loop case describes the superseded behavior.
+
 Every I/O-bound interface in `eventsource` is defined as a coroutine function. `EventStore.append_events`, `EventStore.get_events`, `EventStore.read_all` (an async iterator), `EventBus.publish`, the snapshot stores, the checkpoint/outbox/DLQ repositories, `AggregateRepository`, and the projection and subscription runners are all `async def`. There is no parallel synchronous hierarchy behind them: the async definition is the interface, and the PostgreSQL, SQLite, Redis, RabbitMQ, Kafka, and in-memory backends implement it directly on top of asyncpg, aiosqlite, redis-py's asyncio client, aio-pika, and aiokafka.
 
 This ADR records why the library commits to that shape rather than offering sync and async APIs side by side, and what the commitment costs. The short version: an event-sourced system spends nearly all of its wall-clock time waiting on a database, a broker, or another service, and a subscription runner is by nature a set of long-lived concurrent consumers. `asyncio` expresses that workload with one execution model, one cancellation model, and one timeout model, where a thread-per-consumer design would need its own.

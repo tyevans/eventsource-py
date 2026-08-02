@@ -39,7 +39,7 @@ In these contexts each call takes the fast path: `asyncio.run(asyncio.wait_for(c
 
 ### Do not use it when
 
-**You are already in async code.** Inside FastAPI/Starlette async endpoints, `asyncio.run()`-driven scripts, or any coroutine, `await` the store directly. The adapter detects the running loop, emits a warning through the `eventsource.adapters.sync.adapter` logger, and falls back to `run_coroutine_threadsafe` — more overhead, and a deadlock risk if the calling thread *is* the loop thread. See [Warning: do not call the adapter from inside a running event loop](#warning-do-not-call-the-adapter-from-inside-a-running-event-loop).
+**You are already in async code.** Inside FastAPI/Starlette async endpoints, `asyncio.run()`-driven scripts, or any coroutine, `await` the store directly. The adapter detects the running loop and raises `RuntimeError` — there is no fallback, because every scheme for running the work on the caller's own loop deadlocks it. See [Warning: do not call the adapter from inside a running event loop](#warning-do-not-call-the-adapter-from-inside-a-running-event-loop).
 
 **You are bridging from async to sync-only third-party code.** Use your framework's bridge (`asgiref.sync.sync_to_async` in Django, `anyio.to_thread.run_sync`, `loop.run_in_executor`) so the adapter runs on a worker thread with no loop of its own — then it takes the fast path again.
 
@@ -114,7 +114,7 @@ Every one of them routes through the same private `_run_sync` helper, so they sh
 
 - **Timeouts.** The effective timeout is the per-call `timeout=` if you pass one, otherwise the adapter's default. Exceeding it raises `TimeoutError`. See [Controlling timeouts](#controlling-timeouts).
 - **Exceptions.** Anything the coroutine raises propagates unchanged to the sync caller — `OptimisticLockError` from a version conflict, `EventStoreError` from the backend, `ValidationError` from pydantic. There is no wrapping or swallowing, so `try`/`except` in sync code looks exactly like it would in async code.
-- **Execution strategy.** No running loop in the calling thread is the fast path (`asyncio.run`); a running loop triggers a logged warning and the `run_coroutine_threadsafe` path. See [How the adapter picks an execution strategy](#how-the-adapter-picks-an-execution-strategy).
+- **Execution strategy.** No running loop in the calling thread is the only supported case (`asyncio.run` per call); a running loop raises `RuntimeError`. See [How the adapter picks an execution strategy](#how-the-adapter-picks-an-execution-strategy).
 
 `read_stream`, `read_all`, and `read_category` wrap async iterators, so the sync adapter drains each into a plain `list[EventEnvelope]` before returning — nothing is converted to dicts or simplified on the way out:
 
@@ -369,11 +369,19 @@ Cheap existence check for one specific event id, distinct from `get_stream_versi
 Every call goes through `_run_sync`, which checks `asyncio.get_running_loop()` first:
 
 - **No running loop (the common case in Celery/Django/RQ/scripts).** `asyncio.run(asyncio.wait_for(coro, timeout))` — a fresh loop per call, torn down afterward.
-- **A running loop on the calling thread.** A warning is logged through the `eventsource.adapters.sync.adapter` logger, and the coroutine is scheduled onto that loop with `asyncio.run_coroutine_threadsafe(coro, loop)`, then awaited with a timeout via `future.result(timeout=...)`.
+- **A running loop on the calling thread.** The coroutine is closed and `RuntimeError` is raised immediately. Nothing is scheduled and nothing blocks.
 
 ### Warning: do not call the adapter from inside a running event loop
 
-If your calling thread already has a running loop — an async view, a coroutine, anything under `asyncio.run()` already — calling a sync adapter method still works, but takes the slower, warned-about path and carries a real deadlock risk if the loop you are scheduling onto is the same loop your calling code is blocking. Prefer awaiting the async store directly in that context; reserve `SyncEventStoreAdapter` for threads that have no loop of their own.
+If your calling thread already has a running loop — an async view, a coroutine, anything under `asyncio.run()` already — calling a sync adapter method raises:
+
+```
+SyncEventStoreAdapter was called from a thread with a running event loop.
+Blocking that loop on its own work would deadlock. Await the async EventStore
+directly, or run this call in a worker thread (e.g. await asyncio.to_thread(...)).
+```
+
+Earlier versions accepted the call, scheduled the coroutine onto that same loop, and blocked the loop's only thread waiting for it — so the loop could never run the work, and the call hung until the timeout expired. Prefer awaiting the async store directly; if you must reach the sync API, put it on a worker thread (`await asyncio.to_thread(...)`, `asgiref.sync.sync_to_async`, `anyio.to_thread.run_sync`), where no loop is running and the ordinary path applies.
 
 ## Controlling timeouts
 
@@ -383,4 +391,4 @@ Every sync method accepts `timeout: float | None = None` as its last, keyword-on
 sync_store.read_all(options=FeedReadOptions(limit=10_000), timeout=120.0)
 ```
 
-Exceeding the effective timeout raises `TimeoutError` regardless of which execution strategy is in play — the fast path via `asyncio.wait_for`, the running-loop path via `future.result(timeout=...)`.
+Exceeding the effective timeout raises `TimeoutError`, enforced inside the call's own loop by `asyncio.wait_for` so the coroutine is cancelled rather than abandoned.

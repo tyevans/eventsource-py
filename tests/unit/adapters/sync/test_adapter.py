@@ -7,7 +7,6 @@ from uuid import uuid4
 
 import pytest
 
-import eventsource.adapters.sync.adapter as adapter_module
 from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.adapters.sync import SyncEventStoreAdapter
 from eventsource.domain import StreamId
@@ -422,117 +421,79 @@ class TestSyncEventStoreAdapterTimeout:
             sync_store.event_exists(uuid4(), timeout=0.01)
 
 
-class TestSyncEventStoreAdapterExecutorManagement:
-    """Tests for executor lifecycle management."""
+class TestSyncEventStoreAdapterRunningLoop:
+    """Calling the adapter from a thread that already runs a loop.
 
-    def test_shutdown_executor(self) -> None:
-        """shutdown_executor cleans up executor."""
-        store = InMemoryEventStore()
-        _adapter = SyncEventStoreAdapter(store)
-
-        executor = SyncEventStoreAdapter._get_executor()
-        assert executor is not None
-
-        SyncEventStoreAdapter.shutdown_executor()
-        assert SyncEventStoreAdapter._executor is None
-
-        executor2 = SyncEventStoreAdapter._get_executor()
-        assert executor2 is not None
-
-        SyncEventStoreAdapter.shutdown_executor()
-
-    def test_executor_is_shared(self) -> None:
-        """Executor is shared across adapter instances."""
-        store1 = InMemoryEventStore()
-        store2 = InMemoryEventStore()
-
-        _adapter1 = SyncEventStoreAdapter(store1)
-        _adapter2 = SyncEventStoreAdapter(store2)
-
-        executor1 = SyncEventStoreAdapter._get_executor()
-        executor2 = SyncEventStoreAdapter._get_executor()
-
-        assert executor1 is executor2
-
-        SyncEventStoreAdapter.shutdown_executor()
-
-
-class _DummyFuture:
-    """Stand-in for the Future returned by `asyncio.run_coroutine_threadsafe`."""
-
-    def __init__(self, *, result: object = None, exception: BaseException | None = None) -> None:
-        self._result = result
-        self._exception = exception
-        self.cancelled = False
-
-    def result(self, timeout: float | None = None) -> object:
-        if self._exception is not None:
-            raise self._exception
-        return self._result
-
-    def cancel(self) -> None:
-        self.cancelled = True
-
-
-class TestRunSyncRunningLoopBranch:
-    """`_run_sync`'s "there is a running loop" branch (thread-in-loop pattern):
-    a coroutine calling a sync method sees `asyncio.get_running_loop()`
-    succeed and must go through `run_coroutine_threadsafe`, not fall through
-    to a fresh `asyncio.run()`. These tests fake the loop/future machinery
-    directly since the branch is inherently deadlock-prone to exercise with a
-    real second event loop pumping from the same thread that's blocked in it.
+    The old behavior handed the coroutine back to the caller's own loop via
+    `run_coroutine_threadsafe` and then blocked that loop's thread waiting for
+    it -- a guaranteed self-deadlock until the timeout expired. There is no
+    correct fallback, so the adapter refuses the call outright.
     """
 
-    async def _stub_coro(self) -> str:
-        return "should not run via asyncio.run fallback"
-
-    def test_success_returns_future_result_without_asyncio_run_fallback(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_raises_runtime_error_instead_of_deadlocking(self) -> None:
         store = InMemoryEventStore()
         sync_store = SyncEventStoreAdapter(store, timeout=5.0)
-
-        fake_loop = object()
-        monkeypatch.setattr(adapter_module.asyncio, "get_running_loop", lambda: fake_loop)
-
-        captured: dict[str, object] = {}
-
-        def fake_run_coroutine_threadsafe(coro: object, loop: object) -> _DummyFuture:
-            captured["coro"] = coro
-            captured["loop"] = loop
-            coro.close()  # type: ignore[attr-defined]
-            return _DummyFuture(result=42)
-
-        monkeypatch.setattr(
-            adapter_module.asyncio, "run_coroutine_threadsafe", fake_run_coroutine_threadsafe
-        )
-
-        result = sync_store._run_sync(self._stub_coro())
-
-        assert result == 42
-        assert captured["loop"] is fake_loop
-
-    def test_store_exception_propagates_unmodified(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A RuntimeError raised by the wrapped store must propagate as-is,
-        not be swallowed and retried via `asyncio.run()` on an
-        already-consumed coroutine."""
-        store = InMemoryEventStore()
-        sync_store = SyncEventStoreAdapter(store, timeout=5.0)
-
-        fake_loop = object()
-        monkeypatch.setattr(adapter_module.asyncio, "get_running_loop", lambda: fake_loop)
-
-        store_error = RuntimeError("boom from the store")
-
-        def fake_run_coroutine_threadsafe(coro: object, loop: object) -> _DummyFuture:
-            coro.close()  # type: ignore[attr-defined]
-            return _DummyFuture(exception=store_error)
-
-        monkeypatch.setattr(
-            adapter_module.asyncio, "run_coroutine_threadsafe", fake_run_coroutine_threadsafe
-        )
 
         with pytest.raises(RuntimeError) as exc_info:
-            sync_store._run_sync(self._stub_coro())
+            sync_store.get_stream_version(StreamId(aggregate_id=uuid4(), category="Sample"))
 
-        assert exc_info.value is store_error
+        message = str(exc_info.value)
+        assert "running event loop" in message
+        assert "asyncio.to_thread" in message
+
+    async def test_does_not_leak_the_unawaited_coroutine(
+        self, recwarn: pytest.WarningsRecorder
+    ) -> None:
+        """The refused coroutine is closed, so no "never awaited" warning."""
+        store = InMemoryEventStore()
+        sync_store = SyncEventStoreAdapter(store, timeout=5.0)
+
+        with pytest.raises(RuntimeError):
+            sync_store.event_exists(uuid4())
+
+        assert not [w for w in recwarn if issubclass(w.category, RuntimeWarning)]
+
+
+class _ClosableStore(InMemoryEventStore):
+    """An in-memory store that also implements `SupportsClose`."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.close_calls = 0
+
+    async def close(self) -> None:
+        self.close_calls += 1
+
+
+class TestSyncEventStoreAdapterClose:
+    """`close()` gives sync callers a way to release the wrapped store."""
+
+    def test_close_delegates_to_a_closable_store(self) -> None:
+        store = _ClosableStore()
+        sync_store = SyncEventStoreAdapter(store)
+
+        sync_store.close()
+
+        assert store.close_calls == 1
+
+    def test_close_is_idempotent(self) -> None:
+        store = _ClosableStore()
+        sync_store = SyncEventStoreAdapter(store)
+
+        sync_store.close()
+        sync_store.close()
+
+        assert store.close_calls == 2
+
+    def test_close_is_a_no_op_for_a_store_without_the_capability(self) -> None:
+        sync_store = SyncEventStoreAdapter(InMemoryEventStore())
+
+        sync_store.close()
+
+    def test_context_manager_closes_on_exit(self) -> None:
+        store = _ClosableStore()
+
+        with SyncEventStoreAdapter(store) as sync_store:
+            assert sync_store.wrapped_store is store
+
+        assert store.close_calls == 1

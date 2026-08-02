@@ -303,34 +303,11 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
 
         for attempt in range(max_attempts):
             try:
-                # Process the event in projection-specific logic
+                # Process the event in projection-specific logic. Nothing else
+                # belongs in this `try`: the retry loop treats every exception
+                # raised here as "the handler rejected this event", so widening
+                # the block makes an unrelated failure look like a poison event.
                 await self._process_event(event)
-
-                # Update checkpoint after successful processing
-                checkpoint_repo = self._checkpoint_repo
-                checkpoint_updated = checkpoint_repo is not None
-                if checkpoint_repo is not None:
-                    await record_checkpoint(
-                        checkpoint_repo, self._projection_name, event, self._tracer
-                    )
-
-                # Record whether a checkpoint was actually updated
-                if span is not None:
-                    span.set_attribute("checkpoint.updated", checkpoint_updated)
-
-                # Success - log and return
-                logger.debug(
-                    "Projection %s processed event %s (type: %s)",
-                    self._projection_name,
-                    event.event_id,
-                    event.event_type,
-                    extra={
-                        "projection": self._projection_name,
-                        "event_id": str(event.event_id),
-                        "event_type": event.event_type,
-                    },
-                )
-                return
 
             except Exception as e:
                 logger.error(
@@ -404,6 +381,71 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
                         },
                     )
                     await asyncio.sleep(backoff)
+                    continue
+
+            # The event applied cleanly. Checkpointing happens here, outside
+            # the retry loop, because a checkpoint-store failure is a liveness
+            # problem, not a poison event: retrying it would re-run
+            # `_process_event` (re-applying the read-model mutation), and
+            # exhausting the retries would DLQ an event the projection has
+            # already applied successfully -- so an operator replaying the DLQ
+            # would apply it yet again. `docs/architecture.md` has always
+            # described the intended ordering; the code had it in the wrong
+            # block.
+            await self._record_checkpoint_after_success(event, span)
+            logger.debug(
+                "Projection %s processed event %s (type: %s)",
+                self._projection_name,
+                event.event_id,
+                event.event_type,
+                extra={
+                    "projection": self._projection_name,
+                    "event_id": str(event.event_id),
+                    "event_type": event.event_type,
+                },
+            )
+            return
+
+    async def _record_checkpoint_after_success(
+        self, event: DomainEvent, span: "Span | None"
+    ) -> None:
+        """Record the checkpoint for an event the projection already applied.
+
+        Failure is re-raised so the caller (a subscription runner) sees a
+        stalled projection rather than silent progress loss, but it is never
+        routed to the DLQ and never re-runs the handler.
+        """
+        checkpoint_repo = self._checkpoint_repo
+        if checkpoint_repo is None:
+            if span is not None:
+                span.set_attribute("checkpoint.updated", False)
+            return
+
+        try:
+            await record_checkpoint(checkpoint_repo, self._projection_name, event, self._tracer)
+        except Exception as e:
+            if span is not None:
+                span.set_attribute("checkpoint.updated", False)
+                span.set_attribute("checkpoint.failed", True)
+            logger.critical(
+                "Projection %s applied event %s but could not record its "
+                "checkpoint: %s. The event will be re-delivered and re-applied "
+                "on restart; this is a checkpoint-store outage, not a bad event.",
+                self._projection_name,
+                event.event_id,
+                e,
+                exc_info=True,
+                extra={
+                    "projection": self._projection_name,
+                    "event_id": str(event.event_id),
+                    "event_type": event.event_type,
+                    "error": str(e),
+                },
+            )
+            raise
+
+        if span is not None:
+            span.set_attribute("checkpoint.updated", True)
 
     @abstractmethod
     async def _process_event(self, event: DomainEvent) -> None:

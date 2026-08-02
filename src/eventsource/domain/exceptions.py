@@ -18,13 +18,31 @@ class EventSourceError(Exception):
 class OptimisticLockError(EventSourceError):
     """Raised when there's a version conflict during event append."""
 
-    def __init__(self, aggregate_id: UUID, expected_version: int, actual_version: int) -> None:
+    def __init__(
+        self, aggregate_id: UUID, expected_version: int | str, actual_version: int
+    ) -> None:
+        """
+        Args:
+            aggregate_id: The aggregate whose append was rejected
+            expected_version: The version the caller required, or the name of
+                the non-numeric `ExpectedVersion` kind they used
+                (`"no_stream"`, `"stream_exists"`, `"any"`). Rendering the
+                kind by name matters: a store that reported `no_stream` as
+                the integer `0` told the user it expected a version they
+                never wrote.
+            actual_version: The stream's current version
+        """
         self.aggregate_id = aggregate_id
         self.expected_version = expected_version
         self.actual_version = actual_version
+        expectation = (
+            f"version {expected_version}"
+            if isinstance(expected_version, int)
+            else str(expected_version)
+        )
         super().__init__(
             f"Optimistic lock error for aggregate {aggregate_id}: "
-            f"expected version {expected_version}, but current version is {actual_version}"
+            f"expected {expectation}, but current version is {actual_version}"
         )
 
 
@@ -197,6 +215,43 @@ class AggregateNotCreatedError(EventSourceError):
             message += f" Hint: {suggestion}"
 
         super().__init__(message)
+
+
+class AggregateTypeMismatchError(EventSourceError):
+    """An event class declares a different aggregate_type than its aggregate.
+
+    Emitting `OrderShipped(aggregate_type="Shipment")` from an aggregate
+    whose `aggregate_type` is `"Order"` used to be silently restamped to
+    `"Order"` -- the declared value was accepted at import, then discarded
+    at emit time with no signal. Since `aggregate_type` becomes the stream
+    category, the disagreement is invisible in a save/load round-trip and
+    only shows up as events missing from a category read.
+
+    Attributes:
+        event_class: Name of the event class with the divergent declaration
+        event_aggregate_type: What the event class declares
+        aggregate_class: Name of the aggregate emitting it
+        aggregate_type: What the aggregate declares
+    """
+
+    def __init__(
+        self,
+        event_class: str,
+        event_aggregate_type: str,
+        aggregate_class: str,
+        aggregate_type: str,
+    ) -> None:
+        self.event_class = event_class
+        self.event_aggregate_type = event_aggregate_type
+        self.aggregate_class = aggregate_class
+        self.aggregate_type = aggregate_type
+        super().__init__(
+            f"{event_class} declares aggregate_type={event_aggregate_type!r} but is "
+            f"emitted from {aggregate_class}, which declares {aggregate_type!r}. "
+            f"An event's aggregate_type is its stream category, so the two must "
+            f"agree. Drop the declaration from {event_class} (the aggregate stamps "
+            f"it) or emit the event from the matching aggregate."
+        )
 
 
 class AggregateTypeNotSetError(EventSourceError):
