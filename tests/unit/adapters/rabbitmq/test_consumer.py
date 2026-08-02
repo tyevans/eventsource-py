@@ -24,7 +24,6 @@ class ConsumerTestEvent(DomainEvent):
     """Sample event used to exercise the consumer."""
 
     aggregate_type: str = "Order"
-    event_type: str = "ConsumerTestEvent"
     aggregate_id: UUID = uuid4()
 
 

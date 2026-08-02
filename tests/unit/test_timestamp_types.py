@@ -38,7 +38,6 @@ from eventsource.ports import ExpectedVersion, collect
 class SampleEvent(DomainEvent):
     """Sample event for testing."""
 
-    event_type: str = "SampleEvent"
     aggregate_type: str = "TestAggregate"
     data: str = "test"
 

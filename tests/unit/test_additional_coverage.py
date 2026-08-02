@@ -39,7 +39,6 @@ from eventsource.ports.handlers import (
 class AdditionalTestEvent(DomainEvent):
     """Test event for unit tests."""
 
-    event_type: str = "AdditionalTestEvent"
     aggregate_type: str = "Test"
     data: str = ""
 
@@ -47,7 +46,6 @@ class AdditionalTestEvent(DomainEvent):
 class AnotherCoverageEvent(DomainEvent):
     """Another test event."""
 
-    event_type: str = "AnotherCoverageEvent"
     aggregate_type: str = "Test"
     value: int = 0
 

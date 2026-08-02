@@ -21,14 +21,12 @@ SNAPSHOT_SIZES: dict[str, int] = {"small": 1_000, "medium": 50_000, "large": 500
 class BenchEvent(DomainEvent):
     """Generic benchmark event with a size-controlled payload."""
 
-    event_type: str = "BenchEvent"
     aggregate_type: str = "Bench"
     payload: str = ""
     seq: int = 0
 
 
 class BenchCounterIncremented(DomainEvent):
-    event_type: str = "BenchCounterIncremented"
     aggregate_type: str = "BenchCounter"
     increment: int = 1
 

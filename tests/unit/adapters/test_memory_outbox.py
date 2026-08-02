@@ -20,7 +20,6 @@ from eventsource.ports.outbox import OutboxEntry, OutboxRepository
 class SampleEvent(DomainEvent):
     """Sample event for outbox tests."""
 
-    event_type: str = "SampleEvent"
     aggregate_type: str = "SampleAggregate"
     test_field: str = "test_value"
 

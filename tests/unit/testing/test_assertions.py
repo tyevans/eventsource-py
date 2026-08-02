@@ -22,7 +22,6 @@ class SampleCreated(DomainEvent):
     """Test event for sample creation."""
 
     aggregate_type: str = "Sample"
-    event_type: str = "SampleCreated"
     name: str
 
 
@@ -30,7 +29,6 @@ class SampleUpdated(DomainEvent):
     """Test event for sample update."""
 
     aggregate_type: str = "Sample"
-    event_type: str = "SampleUpdated"
     new_value: int
 
 
@@ -38,14 +36,12 @@ class SampleDeleted(DomainEvent):
     """Test event for sample deletion."""
 
     aggregate_type: str = "Sample"
-    event_type: str = "SampleDeleted"
 
 
 class OtherEvent(DomainEvent):
     """Another test event type."""
 
     aggregate_type: str = "Other"
-    event_type: str = "OtherEvent"
     data: str
 
 

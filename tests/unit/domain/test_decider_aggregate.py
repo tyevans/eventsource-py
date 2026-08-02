@@ -13,13 +13,11 @@ from eventsource.domain.exceptions import CommandRejectedError
 
 
 class AccountOpened(DomainEvent):
-    event_type: str = "AccountOpened"
     aggregate_type: str = "Account"
     owner: str
 
 
 class MoneyDeposited(DomainEvent):
-    event_type: str = "MoneyDeposited"
     aggregate_type: str = "Account"
     amount: float
 

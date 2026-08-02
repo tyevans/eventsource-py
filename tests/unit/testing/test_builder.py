@@ -18,7 +18,6 @@ class SampleEvent(DomainEvent):
     """Sample event for testing EventBuilder."""
 
     aggregate_type: str = "Sample"
-    event_type: str = "SampleEvent"
     customer_id: UUID
     amount: float
 
@@ -27,7 +26,6 @@ class MinimalEvent(DomainEvent):
     """Minimal event with only required base fields."""
 
     aggregate_type: str = "Minimal"
-    event_type: str = "MinimalEvent"
 
 
 class TestEventBuilderInit:

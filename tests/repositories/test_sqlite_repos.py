@@ -47,7 +47,6 @@ pytestmark = [pytest.mark.sqlite, skip_if_no_aiosqlite]
 class TestSampleEvent(DomainEvent):
     """Sample event for repository tests."""
 
-    event_type: str = "TestSampleEvent"
     aggregate_type: str = "TestSampleAggregate"
     data: str = "test_data"
 

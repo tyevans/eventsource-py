@@ -44,7 +44,6 @@ from eventsource.ports.migration.models import (
 class TestEvent(DomainEvent):
     """Test event for unit tests."""
 
-    event_type: str = "TestEvent"
     aggregate_type: str = "TestAggregate"
     value: str = "test"
 

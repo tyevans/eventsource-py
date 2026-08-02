@@ -26,7 +26,6 @@ from eventsource.ports import ExpectedVersion
 
 class ThingHappened(DomainEvent):
     aggregate_type: str = "Thing"
-    event_type: str = "ThingHappened"
 
 
 class TestCrossLoopLockSafety:

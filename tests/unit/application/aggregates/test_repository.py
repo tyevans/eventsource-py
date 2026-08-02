@@ -52,7 +52,6 @@ class OrderState(BaseModel):
 class CounterIncremented(DomainEvent):
     """Event for incrementing counter."""
 
-    event_type: str = "CounterIncremented"
     aggregate_type: str = "Counter"
     increment: int = 1
 
@@ -60,7 +59,6 @@ class CounterIncremented(DomainEvent):
 class CounterDecremented(DomainEvent):
     """Event for decrementing counter."""
 
-    event_type: str = "CounterDecremented"
     aggregate_type: str = "Counter"
     decrement: int = 1
 
@@ -68,7 +66,6 @@ class CounterDecremented(DomainEvent):
 class OrderCreated(DomainEvent):
     """Event for order creation."""
 
-    event_type: str = "OrderCreated"
     aggregate_type: str = "Order"
     customer_id: UUID
 
@@ -76,7 +73,6 @@ class OrderCreated(DomainEvent):
 class OrderItemAdded(DomainEvent):
     """Event for adding item to order."""
 
-    event_type: str = "OrderItemAdded"
     aggregate_type: str = "Order"
     item_name: str
     price: float
@@ -85,7 +81,6 @@ class OrderItemAdded(DomainEvent):
 class OrderShipped(DomainEvent):
     """Event for shipping order."""
 
-    event_type: str = "OrderShipped"
     aggregate_type: str = "Order"
     tracking_number: str
 

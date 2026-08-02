@@ -36,7 +36,6 @@ from eventsource.ports import (
 class EdgeTestEvent(DomainEvent):
     """Simple test event."""
 
-    event_type: str = "EdgeTestEvent"
     aggregate_type: str = "Test"
     data: str = ""
 
@@ -44,7 +43,6 @@ class EdgeTestEvent(DomainEvent):
 class SampleOrderEvent(DomainEvent):
     """Order event for testing."""
 
-    event_type: str = "SampleOrderEvent"
     aggregate_type: str = "Order"
     order_data: str = ""
 

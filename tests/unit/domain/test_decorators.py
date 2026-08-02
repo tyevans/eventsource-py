@@ -16,14 +16,12 @@ from eventsource.domain.exceptions import DuplicateHandlerError, HandlerSignatur
 class TestEvent(DomainEvent):
     """Test event for decorator tests."""
 
-    event_type: str = "TestEvent"
     aggregate_type: str = "TestAggregate"
 
 
 class AnotherTestEvent(DomainEvent):
     """Another test event for decorator tests."""
 
-    event_type: str = "AnotherTestEvent"
     aggregate_type: str = "TestAggregate"
 
 

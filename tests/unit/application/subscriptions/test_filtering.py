@@ -30,7 +30,6 @@ from eventsource.domain.event import DomainEvent
 class OrderCreated(DomainEvent):
     """Order created event."""
 
-    event_type: str = "OrderCreated"
     aggregate_type: str = "Order"
     customer_id: str = "test"
 
@@ -38,7 +37,6 @@ class OrderCreated(DomainEvent):
 class OrderShipped(DomainEvent):
     """Order shipped event."""
 
-    event_type: str = "OrderShipped"
     aggregate_type: str = "Order"
     tracking_number: str = "123"
 
@@ -46,7 +44,6 @@ class OrderShipped(DomainEvent):
 class OrderCancelled(DomainEvent):
     """Order cancelled event."""
 
-    event_type: str = "OrderCancelled"
     aggregate_type: str = "Order"
     reason: str = ""
 
@@ -54,7 +51,6 @@ class OrderCancelled(DomainEvent):
 class PaymentReceived(DomainEvent):
     """Payment received event."""
 
-    event_type: str = "PaymentReceived"
     aggregate_type: str = "Payment"
     amount: float = 0.0
 
@@ -62,7 +58,6 @@ class PaymentReceived(DomainEvent):
 class UserRegistered(DomainEvent):
     """User registered event."""
 
-    event_type: str = "UserRegistered"
     aggregate_type: str = "User"
     email: str = "test@example.com"
 
@@ -70,7 +65,6 @@ class UserRegistered(DomainEvent):
 class UserUpdatedEvent(DomainEvent):
     """User updated event with 'Event' suffix."""
 
-    event_type: str = "UserUpdatedEvent"
     aggregate_type: str = "User"
     name: str = ""
 

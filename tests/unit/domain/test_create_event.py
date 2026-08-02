@@ -40,7 +40,6 @@ class OrderCreated(DomainEvent):
     """Event for order creation."""
 
     aggregate_type: str = "Order"
-    event_type: str = "OrderCreated"
     customer_id: UUID
 
 
@@ -48,7 +47,6 @@ class OrderShipped(DomainEvent):
     """Event for shipping order."""
 
     aggregate_type: str = "Order"
-    event_type: str = "OrderShipped"
     tracking_number: str
 
 
@@ -56,7 +54,6 @@ class OrderCancelled(DomainEvent):
     """Event for cancelling order."""
 
     aggregate_type: str = "Order"
-    event_type: str = "OrderCancelled"
     reason: str
 
 
@@ -478,7 +475,6 @@ class TestCreateEventEdgeCases:
 
         class SimpleEvent(DomainEvent):
             aggregate_type: str = "Simple"
-            event_type: str = "SimpleEvent"
 
         class SimpleState(BaseModel):
             id: UUID

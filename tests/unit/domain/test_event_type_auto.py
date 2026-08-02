@@ -101,7 +101,6 @@ class TestExplicitEventTypePreservation:
 
         class OrderCreated(DomainEvent):
             aggregate_type: str = "Order"
-            event_type: str = "OrderCreated"  # Matches class name
 
         event = OrderCreated(aggregate_id=uuid4(), aggregate_version=1)
         assert event.event_type == "OrderCreated"
@@ -247,7 +246,6 @@ class TestEventTypeMismatchWarning:
 
             class OrderCreated(DomainEvent):
                 aggregate_type: str = "Order"
-                event_type: str = "OrderCreated"  # Same as class name
 
         assert "differs from class name" not in caplog.text
 

@@ -42,7 +42,6 @@ from eventsource import (
 class AccountOpened(DomainEvent):
     """Event emitted when a bank account is opened."""
 
-    event_type: str = "AccountOpened"
     aggregate_type: str = "BankAccount"
 
     owner_name: str
@@ -53,7 +52,6 @@ class AccountOpened(DomainEvent):
 class MoneyDeposited(DomainEvent):
     """Event emitted when money is deposited."""
 
-    event_type: str = "MoneyDeposited"
     aggregate_type: str = "BankAccount"
 
     amount: float
@@ -63,7 +61,6 @@ class MoneyDeposited(DomainEvent):
 class MoneyWithdrawn(DomainEvent):
     """Event emitted when money is withdrawn."""
 
-    event_type: str = "MoneyWithdrawn"
     aggregate_type: str = "BankAccount"
 
     amount: float

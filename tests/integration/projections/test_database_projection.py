@@ -35,7 +35,6 @@ from tests.integration.conftest import (
 class OrderCreated(DomainEvent):
     """Test event for order creation."""
 
-    event_type: str = "OrderCreated"
     aggregate_type: str = "Order"
     order_number: str = Field(..., description="Order number")
     amount: float = Field(default=0.0, description="Order amount")
@@ -44,7 +43,6 @@ class OrderCreated(DomainEvent):
 class OrderShipped(DomainEvent):
     """Test event for order shipping."""
 
-    event_type: str = "OrderShipped"
     aggregate_type: str = "Order"
     tracking_number: str = Field(..., description="Tracking number")
 
@@ -52,7 +50,6 @@ class OrderShipped(DomainEvent):
 class OrderCancelled(DomainEvent):
     """Test event for order cancellation."""
 
-    event_type: str = "OrderCancelled"
     aggregate_type: str = "Order"
     reason: str = Field(..., description="Cancellation reason")
 

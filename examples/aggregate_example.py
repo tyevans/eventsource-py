@@ -35,7 +35,6 @@ from eventsource import (
 class CartCreated(DomainEvent):
     """Event emitted when a shopping cart is created."""
 
-    event_type: str = "CartCreated"
     aggregate_type: str = "ShoppingCart"
 
     customer_id: UUID
@@ -45,7 +44,6 @@ class CartCreated(DomainEvent):
 class ItemAddedToCart(DomainEvent):
     """Event emitted when an item is added to the cart."""
 
-    event_type: str = "ItemAddedToCart"
     aggregate_type: str = "ShoppingCart"
 
     product_id: UUID
@@ -58,7 +56,6 @@ class ItemAddedToCart(DomainEvent):
 class ItemRemovedFromCart(DomainEvent):
     """Event emitted when an item is removed from the cart."""
 
-    event_type: str = "ItemRemovedFromCart"
     aggregate_type: str = "ShoppingCart"
 
     product_id: UUID
@@ -68,7 +65,6 @@ class ItemRemovedFromCart(DomainEvent):
 class ItemQuantityChanged(DomainEvent):
     """Event emitted when item quantity is changed."""
 
-    event_type: str = "ItemQuantityChanged"
     aggregate_type: str = "ShoppingCart"
 
     product_id: UUID
@@ -80,7 +76,6 @@ class ItemQuantityChanged(DomainEvent):
 class CartCheckedOut(DomainEvent):
     """Event emitted when the cart is checked out."""
 
-    event_type: str = "CartCheckedOut"
     aggregate_type: str = "ShoppingCart"
 
     order_id: UUID
@@ -91,7 +86,6 @@ class CartCheckedOut(DomainEvent):
 class CartAbandoned(DomainEvent):
     """Event emitted when the cart is abandoned."""
 
-    event_type: str = "CartAbandoned"
     aggregate_type: str = "ShoppingCart"
 
     reason: str

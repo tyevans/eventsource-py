@@ -19,7 +19,6 @@ from eventsource.observability import create_tracer
 class SampleEvent(DomainEvent):
     """Sample event for checkpoint tests."""
 
-    event_type: str = "SampleEvent"
     aggregate_type: str = "Sample"
 
     value: int = Field(default=0)

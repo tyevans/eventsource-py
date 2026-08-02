@@ -34,7 +34,6 @@ from eventsource.domain.event import DomainEvent
 class OrderCreated(DomainEvent):
     """Sample event for testing."""
 
-    event_type: str = "OrderCreated"
     aggregate_type: str = "Order"
     order_number: str = Field(..., description="Order number")
 
@@ -42,7 +41,6 @@ class OrderCreated(DomainEvent):
 class OrderShipped(DomainEvent):
     """Sample event for testing."""
 
-    event_type: str = "OrderShipped"
     aggregate_type: str = "Order"
     tracking_number: str = Field(..., description="Tracking number")
 
@@ -50,7 +48,6 @@ class OrderShipped(DomainEvent):
 class OrderCancelled(DomainEvent):
     """Sample event for testing."""
 
-    event_type: str = "OrderCancelled"
     aggregate_type: str = "Order"
     reason: str = Field(default="", description="Cancellation reason")
 

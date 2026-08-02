@@ -39,7 +39,6 @@ from eventsource.ports.positions import ExpectedVersion
 class ManagerTestEvent(DomainEvent):
     """Simple test event for manager testing."""
 
-    event_type: str = "ManagerTestEvent"
     aggregate_type: str = "ManagerAggregate"
     data: str = "test"
 
@@ -47,7 +46,6 @@ class ManagerTestEvent(DomainEvent):
 class AnotherManagerEvent(DomainEvent):
     """Another test event type."""
 
-    event_type: str = "AnotherManagerEvent"
     aggregate_type: str = "ManagerAggregate"
     value: int = 0
 

@@ -37,7 +37,6 @@ from eventsource.domain.event_registry import (
 class OrderCreated(DomainEvent):
     """Sample event with explicit event_type default."""
 
-    event_type: str = "OrderCreated"
     aggregate_type: str = "Order"
 
     order_number: str = Field(..., description="Unique order number")
@@ -47,7 +46,6 @@ class OrderCreated(DomainEvent):
 class OrderShipped(DomainEvent):
     """Sample event with explicit event_type default."""
 
-    event_type: str = "OrderShipped"
     aggregate_type: str = "Order"
 
     tracking_number: str = Field(..., description="Shipping tracking number")
@@ -56,7 +54,6 @@ class OrderShipped(DomainEvent):
 class PaymentReceived(DomainEvent):
     """Sample event with explicit event_type default."""
 
-    event_type: str = "PaymentReceived"
     aggregate_type: str = "Payment"
 
     amount: float = Field(..., description="Payment amount")
@@ -314,7 +311,6 @@ class TestDecoratorRegistration:
 
         @register_event(registry=registry)
         class TestEvent(DomainEvent):
-            event_type: str = "TestEvent"
             aggregate_type: str = "Test"
 
         assert "TestEvent" in registry
@@ -326,7 +322,6 @@ class TestDecoratorRegistration:
 
         @register_event(registry=registry)
         class TestEvent(DomainEvent):
-            event_type: str = "TestEvent"
             aggregate_type: str = "Test"
 
         assert "TestEvent" in registry
@@ -337,7 +332,6 @@ class TestDecoratorRegistration:
 
         @register_event(event_type="custom.test.event", registry=registry)
         class TestEvent(DomainEvent):
-            event_type: str = "TestEvent"  # Ignored
             aggregate_type: str = "Test"
 
         assert "custom.test.event" in registry
@@ -349,7 +343,6 @@ class TestDecoratorRegistration:
 
         @register_event(registry=registry)
         class TestEvent(DomainEvent):
-            event_type: str = "TestEvent"
             aggregate_type: str = "Test"
             custom_field: str = "value"
 

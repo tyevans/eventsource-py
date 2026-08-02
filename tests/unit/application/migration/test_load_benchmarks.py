@@ -87,7 +87,6 @@ def tgt_pos(n: int) -> Position:
 class BenchmarkEvent(DomainEvent):
     """Test event for benchmarks."""
 
-    event_type: str = "BenchmarkEvent"
     aggregate_type: str = "BenchmarkAggregate"
     payload: str = ""
 

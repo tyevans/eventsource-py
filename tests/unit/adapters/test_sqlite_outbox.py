@@ -29,7 +29,6 @@ pytestmark = [pytest.mark.sqlite, skip_if_no_aiosqlite]
 class TestSampleEvent(DomainEvent):
     """Sample event for repository tests."""
 
-    event_type: str = "TestSampleEvent"
     aggregate_type: str = "TestSampleAggregate"
     data: str = "test_data"
 
@@ -327,7 +326,6 @@ class TestSQLiteOutboxRepositoryMultipleEvents:
 class SampleEvent(DomainEvent):
     """Sample event for the standalone SQLite outbox tests below."""
 
-    event_type: str = "SampleEvent"
     aggregate_type: str = "SampleAggregate"
     test_field: str = "test_value"
 

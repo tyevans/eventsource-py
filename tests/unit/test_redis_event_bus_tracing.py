@@ -42,7 +42,6 @@ from eventsource.observability import (
 class RedisTracingTestEvent(DomainEvent):
     """Test event for tracing tests."""
 
-    event_type: str = "RedisTracingTestEvent"
     aggregate_type: str = "RedisTracingTestAggregate"
     name: str
 

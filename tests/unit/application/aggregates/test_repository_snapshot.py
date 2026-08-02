@@ -48,7 +48,6 @@ class TestState(BaseModel):
 class TestEvent(DomainEvent):
     """Simple event for testing."""
 
-    event_type: str = "TestEvent"
     aggregate_type: str = "Test"
     value: str
 
@@ -56,7 +55,6 @@ class TestEvent(DomainEvent):
 class CountEvent(DomainEvent):
     """Event that increments count."""
 
-    event_type: str = "CountEvent"
     aggregate_type: str = "Test"
 
 

@@ -31,7 +31,6 @@ from eventsource.ports.positions import ExpectedVersion
 class SubTestOrderCreated(DomainEvent):
     """Test event for order creation in subscription integration tests."""
 
-    event_type: str = "SubTestOrderCreated"
     aggregate_type: str = "SubTestOrder"
     order_number: str = ""
     amount: float = 0.0
@@ -41,7 +40,6 @@ class SubTestOrderCreated(DomainEvent):
 class SubTestOrderShipped(DomainEvent):
     """Test event for order shipment in subscription integration tests."""
 
-    event_type: str = "SubTestOrderShipped"
     aggregate_type: str = "SubTestOrder"
     tracking_number: str = ""
 
@@ -50,7 +48,6 @@ class SubTestOrderShipped(DomainEvent):
 class SubTestOrderCancelled(DomainEvent):
     """Test event for order cancellation in subscription integration tests."""
 
-    event_type: str = "SubTestOrderCancelled"
     aggregate_type: str = "SubTestOrder"
     reason: str = ""
 

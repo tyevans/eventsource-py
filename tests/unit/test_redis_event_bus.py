@@ -32,7 +32,6 @@ from eventsource.domain.exceptions import HandlerDispatchError
 class SampleOrderCreated(DomainEvent):
     """Test event for order creation."""
 
-    event_type: str = "SampleOrderCreated"
     aggregate_type: str = "Order"
     order_number: str
     customer_id: UUID
@@ -41,7 +40,6 @@ class SampleOrderCreated(DomainEvent):
 class SampleOrderShipped(DomainEvent):
     """Test event for order shipping."""
 
-    event_type: str = "SampleOrderShipped"
     aggregate_type: str = "Order"
     tracking_number: str
 
@@ -49,7 +47,6 @@ class SampleOrderShipped(DomainEvent):
 class SamplePaymentReceived(DomainEvent):
     """Test event for payment."""
 
-    event_type: str = "SamplePaymentReceived"
     aggregate_type: str = "Payment"
     amount: float
 

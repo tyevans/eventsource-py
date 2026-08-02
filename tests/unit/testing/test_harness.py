@@ -26,14 +26,12 @@ class SampleEvent(DomainEvent):
     """Sample event for testing."""
 
     aggregate_type: str = "Sample"
-    event_type: str = "SampleEvent"
 
 
 class OtherEvent(DomainEvent):
     """Another event type for testing filtering."""
 
     aggregate_type: str = "Other"
-    event_type: str = "OtherEvent"
 
 
 class TestHarnessInstantiation:
