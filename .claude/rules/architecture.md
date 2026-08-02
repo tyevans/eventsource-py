@@ -26,7 +26,10 @@ The rings, innermost first:
    construction (ADR 0043). `domain/types.py` (type aliases:
    `AggregateId`, `EventId`, `TenantId`, `CorrelationId`, `CausationId` — plain
    `UUID` aliases threaded through `DomainEvent`/`DomainCommand` annotations —
-   and `TState`, a `TypeVar` (not a UUID alias); `Version`, `StreamPosition`, and `GlobalPosition` are deleted,
+   the module's entire contents; `TState` is not among them — it is a PEP 695
+   inline type parameter on `AggregateRoot[TState: BaseModel]` and
+   `DeciderAggregate`, declared at each class rather than as a shared `TypeVar`
+   (ADR 0045); `Version`, `StreamPosition`, and `GlobalPosition` are deleted,
    positions being opaque adapter-owned tokens per `ports/positions.py`, ADR
    0043), `domain/exceptions.py` (the
    domain exception hierarchy — `EventSourceError` root, aggregate/event/
