@@ -7,40 +7,37 @@ defaults:
   permission-mode: dontAsk
 
 members:
+  # Ownership follows the ring architecture (ADRs 0024-0046). The pre-rings
+  # directories (stores/, repositories/, infrastructure/, multitenancy/,
+  # events/, handlers/, projections/, subscriptions/, top-level protocols.py
+  # and exceptions.py) no longer exist.
+  #
+  # Precedence: `adapters/serialization/**` is the one deliberate overlap --
+  # it sits in the adapters ring but is perf-critical core plumbing, so
+  # `architect` owns it and `backend`'s broader `adapters/**` yields there.
+  # Every other path has exactly one owner.
+
   - name: architect
-    role: "Core interfaces, protocols, event models, registry, serialization, types"
+    role: "Domain ring, boundary ports, serialization, public front door"
     model: opus
     tools: [Read, Edit, Write, Glob, Grep, Bash]
     owns:
-      - "src/eventsource/protocols.py"
-      - "src/eventsource/events/**"
-      - "src/eventsource/types.py"
-      - "src/eventsource/exceptions.py"
-      - "src/eventsource/serialization/**"
+      - "src/eventsource/domain/**"
+      - "src/eventsource/ports/**"
+      - "src/eventsource/adapters/serialization/**"
       - "src/eventsource/__init__.py"
 
   - name: backend
-    role: "Store implementations, bus backends, infrastructure, repositories, locks"
+    role: "Adapters ring -- concrete store, bus, and repository bindings"
     tools: [Read, Edit, Write, Glob, Grep, Bash]
     owns:
-      - "src/eventsource/stores/**"
-      - "src/eventsource/bus/**"
-      - "src/eventsource/infrastructure/**"
-      - "src/eventsource/repositories/**"
-      - "src/eventsource/locks/**"
-      - "src/eventsource/snapshots/**"
+      - "src/eventsource/adapters/**"
 
   - name: domain
-    role: "Aggregates, projections, read models, handlers, subscriptions, multitenancy, GDPR"
+    role: "Application ring -- aggregate repositories, projections, subscriptions, migration"
     tools: [Read, Edit, Write, Glob, Grep, Bash]
     owns:
-      - "src/eventsource/aggregates/**"
-      - "src/eventsource/projections/**"
-      - "src/eventsource/readmodels/**"
-      - "src/eventsource/handlers/**"
-      - "src/eventsource/subscriptions/**"
-      - "src/eventsource/multitenancy/**"
-      - "src/eventsource/gdpr/**"
+      - "src/eventsource/application/**"
 
   - name: tester
     role: "Test strategy, coverage, fixtures, benchmarks, test helpers"

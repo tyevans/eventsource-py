@@ -43,23 +43,52 @@ Safely restructure code in the eventsource-py library without changing external 
 
 ## Common Refactoring Patterns in This Codebase
 
+### Collapsing Redundant Declaration Sites
+
+This is the highest-value refactor in this codebase and a recurring defect
+(`/home/ty/workspace/eventsource-py/.claude/rules/recurring-defects.md` §2).
+The same fact declared in N places, one silently winning:
+
+- `e40c026` — `aggregate_type` had three sources; the repository constructor
+  param won invisibly. 83 of 86 call sites were ceremony; the other 3 existed
+  only to test the override.
+- `9164a65` — hand-declared `event_type` on 246 sites, 26 already drifted.
+
+When you find one: derive the value from its single authoritative source,
+delete the redundant parameter outright (pre-1.0 **NO-SHIMS** policy — no
+deprecation window), and sweep every call site. Note that these collapses are
+breaking changes needing a CHANGELOG entry and usually an ADR.
+
+**Count sites with AST, not grep** — grep over-counts strings and comments and
+under-counts multi-line forms. **Sweep by grep results, not a curated file
+list**: past sweeps repeatedly missed pages nobody thought of (`84e3a22` is
+literally "second stale claim"). Cover `src/`, `tests/`, `docs/`, `examples/`,
+`README.md`, and docstrings.
+
 ### Backend Duplication
 
-The PostgreSQL, SQLite, and InMemory implementations often share logic. Look for opportunities to extract shared behavior into base classes or utility functions. However, respect the rule that infrastructure backends never import from each other.
+The PostgreSQL, SQLite, and memory adapters often share logic. Extract shared
+behavior into `adapters/_sql`/`adapters/sql` or a base class — but adapters
+never import from a sibling adapter. When consolidating, check first whether
+the implementations actually agree: several "duplications" turned out to be
+silent semantic divergences (`5d3692a`, `0c8d032`). Consolidating them without
+noticing picks a winner by accident. Pin the agreed semantic in the conformance
+suite as part of the refactor.
 
 ### Module Extraction
 
-When a file exceeds ~300 lines, consider splitting:
-- Interface/protocol stays in `interface.py` or `base.py`
-- Each implementation gets its own file
-- Re-export from `__init__.py` within the module
+When a file exceeds ~300 lines, consider splitting. `d24c830`/`90c191a`/
+`8fba399` (1533-line module → four-module DAG) is the worked example: extract
+the vocabulary *under* the existing module and bridge downstream to break
+cycles, and add an AST-based layering test to pin the new boundary.
 
 ### Protocol Refinement
 
-When multiple implementations share a pattern not captured in the protocol:
-- Consider whether it should become part of the protocol
+When multiple implementations share a pattern not captured in the port:
+- Consider whether it should become part of the port protocol
 - Or whether a shared mixin/base class is more appropriate
-- Protocols live in `/home/ty/workspace/eventsource-py/src/eventsource/protocols.py` or module-specific `protocols.py`
+- Ports live in `/home/ty/workspace/eventsource-py/src/eventsource/ports/`
+- Adding to a port means adding to the conformance suite in the same change
 
 ## Verification Commands
 
@@ -113,5 +142,9 @@ Report back to orchestrator:
 - [ ] `uv run ruff check src/ tests/` passes
 - [ ] `uv run mypy src/eventsource/` passes
 - [ ] Public API (`__init__.py` and `__all__`) unchanged
-- [ ] No cross-backend imports introduced
+- [ ] No cross-adapter imports introduced
 - [ ] No new external dependencies added
+- [ ] Symbol sweeps driven by grep results across `src/`, `tests/`, `docs/`,
+      `examples/`, `README.md` and docstrings — not a curated file list
+- [ ] Site counts done with AST, not grep
+- [ ] Consolidated implementations verified to actually agree before merging them

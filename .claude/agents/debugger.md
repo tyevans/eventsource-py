@@ -27,36 +27,56 @@ Diagnose and identify root causes of bugs in the eventsource-py library.
 5. **Verify diagnosis**: Confirm the root cause explains all symptoms
 6. **Report findings**: Provide a clear diagnosis with recommended fix
 
+## Triage Against Known Defect Shapes First
+
+Before tracing from scratch, check the symptom against
+`/home/ty/workspace/eventsource-py/.claude/rules/recurring-defects.md`. Six
+shapes account for most of this project's ~130 fix commits, and three of them
+have signatures you can test for in minutes:
+
+| Symptom | Suspect | First move |
+|---------|---------|-----------|
+| Works on one backend, not another | §1 silent divergence | Diff the two adapter methods; check empty collections, `None`/zero defaults, date truncation, partial-update field preservation |
+| A value is "wrong" but nothing errored | §2 redundant declaration site | Grep every place that fact is declared; find which one wins and whether that is documented |
+| A counter is always zero / a branch seems never taken / state never advances | §3 inert code | Grep for the **write site** of the attribute being read. If nothing writes it, that is the bug (`4609ba8`) |
+| A test asserts the behavior you think is wrong | §4 test encodes the bug | Read the port docstring/ADR for the real contract before "fixing" the code to match the test |
+
 ## Common Bug Categories in Event Sourcing
 
 ### Event Serialization Issues
-- Event type not found in registry (missing `__init_subclass__` registration)
+- Event type not found in registry
 - Pydantic validation failures on deserialization (schema mismatch)
 - UUID/datetime serialization format mismatches between backends
-- Check: `/home/ty/workspace/eventsource-py/src/eventsource/events/registry.py` and `/home/ty/workspace/eventsource-py/src/eventsource/serialization/json.py`
+- Check: `src/eventsource/domain/event_registry.py`, `src/eventsource/domain/event.py`,
+  `src/eventsource/adapters/serialization/`
 
 ### Optimistic Locking Failures
 - `OptimisticLockError` raised unexpectedly
 - Version mismatch between aggregate state and store
-- Check: `/home/ty/workspace/eventsource-py/src/eventsource/stores/interface.py` (ExpectedVersion)
-- Check: `/home/ty/workspace/eventsource-py/src/eventsource/aggregates/base.py` (version tracking)
+- Check: `src/eventsource/ports/store.py`, `src/eventsource/domain/aggregate.py`
 
-### Projection Issues
-- Checkpoint not advancing (events reprocessed)
+### Projection / Subscription Issues
+- Checkpoint not advancing (events reprocessed on restart — see `4609ba8`,
+  `1cb21d1`; both were checkpoint-position bugs)
 - DLQ entries accumulating (handler errors)
-- Missing event type in `subscribed_to()` list
-- Check: `/home/ty/workspace/eventsource-py/src/eventsource/projections/` directory
+- Catch-up terminating early (`3536c87` — an all-filtered batch read as "done")
+- Lag metrics reporting healthy when they are not (`5d3692a`)
+- Check: `src/eventsource/application/projections/`,
+  `src/eventsource/application/subscriptions/`, `src/eventsource/ports/checkpoints.py`
 
 ### Async/Concurrency Issues
-- Event loop already running errors
-- Deadlocks in database connections
-- Race conditions in subscription runners
-- Check: `/home/ty/workspace/eventsource-py/src/eventsource/subscriptions/` directory
+- Event loop already running errors; cross-loop sync calls (`8e45f15`)
+- Deadlocks in database connections; sqlite write-lock on read paths (`b455d6b`)
+- aiosqlite threads hanging pytest exit (`edb3264`)
+- Check: `src/eventsource/application/subscriptions/`, `src/eventsource/adapters/sync/`
 
 ### Multi-tenancy Issues
 - Tenant context not set (missing `tenant_context()` context manager)
-- Cross-tenant data leakage
-- Check: `/home/ty/workspace/eventsource-py/src/eventsource/multitenancy/` directory
+- Cross-tenant data leakage; cleared tenants resurrected by a stale token
+  stack (`5065a7e`)
+- Check: `src/eventsource/domain/tenant_context.py`, `src/eventsource/domain/tenant_events.py`,
+  `src/eventsource/application/aggregates/tenant_repository.py`
+  (top-level `multitenancy/` was dissolved, ADR 0038)
 
 ### Optional Dependency Issues
 - `ImportError` for optional backends not properly guarded
@@ -131,4 +151,10 @@ Report back to orchestrator:
 
 ### Prevention
 <Suggested test or rule to prevent recurrence>
+<If this matches a shape in .claude/rules/recurring-defects.md, name the section.
+If it is a NEW recurring shape, say so explicitly — the orchestrator should add it.>
+
+### Correct Home for the Regression Test
+<Conformance suite (port-level semantics) vs. per-backend test (backend-specific).
+Default to the conformance suite when more than one adapter implements the method.>
 ```

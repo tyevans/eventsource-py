@@ -2,6 +2,23 @@
 
 Quick reference for which agent to dispatch for each task type.
 
+## Read First
+
+`.claude/rules/recurring-defects.md` records the six defect shapes this project
+repeats, derived from an audit of ~130 fix commits. Every agent below has the
+relevant shapes wired into its checklist, but **orchestrators should name the
+applicable shape in the dispatch prompt** — agents catch far more when told what
+to look for than when left to rediscover it.
+
+Fast mapping from task to shape:
+
+| Task | Shapes most likely to bite |
+|------|---------------------------|
+| New/changed adapter | §1 silent divergence, §3 inert code |
+| New parameter, field, or class attribute | §2 redundant declaration site |
+| Bug fix | §4 test encodes the bug as spec |
+| Any wave touching docs or ADRs | §5 stale specifics, §6 ADR number collision |
+
 ## Agent Summary
 
 | Agent | Purpose | Model | Invoke When |
@@ -37,9 +54,10 @@ Quick reference for which agent to dispatch for each task type.
 3. `code-reviewer` -- Review protocol conformance and dependency guards
 
 ### Bug Fix
-1. `debugger` -- Diagnose root cause through pipeline tracing
+1. `debugger` -- Triage against `recurring-defects.md` shapes, then trace
 2. Appropriate implementation agent -- Apply the fix
-3. `test-generator` -- Regression test
+3. `test-generator` -- Regression test, proved red against `HEAD~1`; in the
+   conformance suite if the semantics belong to a port
 4. `code-reviewer` -- Review fix
 
 ### Refactoring
