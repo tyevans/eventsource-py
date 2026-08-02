@@ -145,17 +145,23 @@ From there, `uv run pytest tests/unit/ -v` should pass without any services runn
 - the `dev` **dependency group** (`[dependency-groups]` in `pyproject.toml`), which uv
   installs by default and which is where `bandit>=1.9.2` and `mypy>=1.19.0` live.
 
-That last point matters twice over. CI installs with `pip install -e ".[dev,all]"`
-(and `".[dev]"` for the lint job), which honours the `[project.optional-dependencies]`
-extras but **not** the PEP 735 dependency group. So a pip-based environment has no
-`bandit` on the path, and its `mypy` only has to satisfy the `dev` extra's looser
-`mypy>=1.8` — where a uv environment gets `>=1.19.0`, the version the pre-commit hook
-pins. If you install with pip rather than uv and want the full local gate to match,
-add both explicitly:
+That last point matters. CI installs with `uv sync --all-extras --locked` on every
+job and runs each tool through `uv run`, so it executes exactly the versions
+pinned in `uv.lock`; `make check` uses the same flags for the same reason. A
+`pip install -e ".[dev,all]"` environment is **not** equivalent: pip honours the
+`[project.optional-dependencies]` extras but not the PEP 735 dependency group, so
+it has no `bandit`, `pip-audit`, `import-linter`, or `pytest-timeout` on the path,
+and it floats tool versions above their pins instead of respecting the lock. If
+you install with pip rather than uv and want the full local gate to match, add the
+group's tools explicitly:
 
 ```bash
-pip install -e ".[dev,all]" bandit "mypy>=1.19.0"
+pip install -e ".[dev,all]" bandit pip-audit import-linter pytest-timeout
 ```
+
+Either way, install the `dev` **extra** — it is opt-in. Without it there is no
+`ruff` or `pytest` in the environment, and `uv run ruff` will quietly use whatever
+`ruff` is on your `PATH` instead of failing.
 
 Prefix commands with `uv run` and you never have to activate the virtualenv:
 
