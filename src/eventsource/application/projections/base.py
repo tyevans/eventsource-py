@@ -18,7 +18,7 @@ import asyncio
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 if TYPE_CHECKING:
@@ -58,7 +58,7 @@ UnregisteredEventHandling = str  # "ignore" | "warn" | "error"
 # - Static UUID: Always filter by this tenant
 # - Callable: Dynamic filter, called per-event (e.g., get_current_tenant)
 # - None: No filtering, process all events
-TenantFilter: TypeAlias = UUID | Callable[[], UUID | None] | None
+type TenantFilter = UUID | Callable[[], UUID | None] | None
 
 
 class Projection(ABC):

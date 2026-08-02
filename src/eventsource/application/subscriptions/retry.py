@@ -26,6 +26,9 @@ from typing import Any, TypeVar
 
 logger = logging.getLogger(__name__)
 
+# Used by CircuitBreaker.execute and RetryableOperation.execute, which are
+# out of scope for this conversion; retry_async declares its own scoped
+# type parameter below and shadows this name within its signature.
 T = TypeVar("T")
 
 
@@ -253,7 +256,7 @@ def is_retryable_exception(
     return isinstance(exception, retryable_exceptions)
 
 
-async def retry_async(
+async def retry_async[T](
     operation: Callable[[], Awaitable[T]],
     config: RetryConfig | None = None,
     retryable_exceptions: tuple[type[Exception], ...] = TRANSIENT_EXCEPTIONS,
