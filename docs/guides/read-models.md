@@ -478,7 +478,9 @@ Notable characteristics:
   handed to `model_validate`, which coerces what it can from the text. The
   sharp edge is `Decimal`, which the SQLite type map sends to `REAL` — a float
   column. Money columns will drift. Store amounts as integer minor units if you
-  need SQLite to be exact.
+  need SQLite to be exact — see [Money and Precision](money-and-precision.md) for
+  the trade-off against `Decimal`, which is exact on the event itself regardless of
+  which read-model backend you use.
 
 Good for embedded deployments, local development, and integration tests that
 want real SQL semantics without a server.

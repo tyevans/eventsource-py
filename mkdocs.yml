@@ -87,6 +87,7 @@ nav:
       - Subscription Manager: guides/subscriptions.md
       - Subscription Coordination: guides/subscription-coordination.md
       - Read Models: guides/read-models.md
+      - Money and Precision: guides/money-and-precision.md
       - Multi-Tenancy: guides/multi-tenant.md
       - Distributed Locks: guides/distributed-locks.md
       - Live Migration: guides/live-migration.md

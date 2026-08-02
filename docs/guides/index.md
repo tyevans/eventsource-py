@@ -154,6 +154,12 @@ For the design question behind these pages -- imperative `AggregateRoot` versus
 `DeclarativeAggregate` with `@handles` -- see
 [aggregate styles](../explanation/aggregate-styles.md).
 
+### Event modeling
+
+| Guide | Use it to |
+| --- | --- |
+| [Money and numeric precision](money-and-precision.md) | Model monetary amounts on events without losing precision -- why `float` fails, how `Decimal` round-trips, and when integer minor units are the better choice |
+
 ### Event stores
 
 | Guide | Use it to |

@@ -194,7 +194,7 @@ them living in the same stdlib modules as the supported types:
 | `datetime.date` | `date` is not a `datetime` subclass, so `isinstance(obj, datetime)` is `False`. (The reverse holds: `datetime` *is* a `date` subclass — but the encoder tests for `datetime`.) |
 | `datetime.time` | Unrelated class; no branch matches. |
 | `datetime.timedelta` | Unrelated class; no branch matches. |
-| `decimal.Decimal` | Not handled by `json.JSONEncoder` either. |
+| `decimal.Decimal` | Not handled by `json.JSONEncoder` either. Note this is about handing `json_dumps` a raw `Decimal`. A `Decimal` **field on an event** is fine: Pydantic's `model_dump(mode="json")` renders it to a string before this encoder sees it, and the field's annotation parses it back exactly. See [Money and Precision](../../../../docs/guides/money-and-precision.md). |
 | `bytes` / `bytearray` | No branch; `json` has no byte encoding. |
 | `set` / `frozenset` | Not a `list`; `json` does not coerce iterables. |
 | `enum.Enum` | Fails unless the member also subclasses `str` or `int`, in which case the stdlib serializes it as that primitive. |
