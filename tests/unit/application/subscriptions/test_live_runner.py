@@ -41,7 +41,6 @@ def pos(n: int) -> Position:
 class LiveTestEvent(DomainEvent):
     """Simple test event for live processing."""
 
-    event_type: str = "LiveTestEvent"
     aggregate_type: str = "LiveAggregate"
     data: str = "test"
 
@@ -49,7 +48,6 @@ class LiveTestEvent(DomainEvent):
 class AnotherTestEvent(DomainEvent):
     """Another test event type."""
 
-    event_type: str = "AnotherTestEvent"
     aggregate_type: str = "LiveAggregate"
     value: int = 0
 

@@ -11,14 +11,12 @@ from eventsource.domain.exceptions import HandlerSignatureError
 class TestEvent(DomainEvent):
     """Test event for registry tests."""
 
-    event_type: str = "TestEvent"
     aggregate_type: str = "TestAggregate"
 
 
 class AnotherTestEvent(DomainEvent):
     """Another test event for registry tests."""
 
-    event_type: str = "AnotherTestEvent"
     aggregate_type: str = "TestAggregate"
 
 

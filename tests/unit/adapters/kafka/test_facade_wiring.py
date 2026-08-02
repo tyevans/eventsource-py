@@ -41,7 +41,6 @@ from eventsource.domain.event import DomainEvent  # noqa: E402
 class SampleEvent(DomainEvent):
     """Minimal concrete DomainEvent for publish() wiring tests."""
 
-    event_type: str = "SampleEvent"
     aggregate_type: str = "SampleAggregate"
 
 

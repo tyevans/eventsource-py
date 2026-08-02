@@ -70,7 +70,6 @@ from eventsource.ports.migration.models import (
 class ChaosTestEvent(DomainEvent):
     """Test event for chaos testing."""
 
-    event_type: str = "ChaosTestEvent"
     aggregate_type: str = "ChaosAggregate"
     value: str = "test"
     sequence: int = 0

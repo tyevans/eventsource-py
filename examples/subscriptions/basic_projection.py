@@ -56,7 +56,6 @@ logger = logging.getLogger(__name__)
 class OrderPlaced(DomainEvent):
     """Event emitted when an order is placed."""
 
-    event_type: str = "OrderPlaced"
     aggregate_type: str = "Order"
 
     customer_id: UUID
@@ -68,7 +67,6 @@ class OrderPlaced(DomainEvent):
 class OrderShipped(DomainEvent):
     """Event emitted when an order is shipped."""
 
-    event_type: str = "OrderShipped"
     aggregate_type: str = "Order"
 
     tracking_number: str
@@ -79,7 +77,6 @@ class OrderShipped(DomainEvent):
 class OrderDelivered(DomainEvent):
     """Event emitted when an order is delivered."""
 
-    event_type: str = "OrderDelivered"
     aggregate_type: str = "Order"
 
     delivered_at: datetime
@@ -89,7 +86,6 @@ class OrderDelivered(DomainEvent):
 class OrderCancelled(DomainEvent):
     """Event emitted when an order is cancelled."""
 
-    event_type: str = "OrderCancelled"
     aggregate_type: str = "Order"
 
     reason: str

@@ -33,7 +33,6 @@ from eventsource.ports.positions import ExpectedVersion
 class PauseTestEvent(DomainEvent):
     """Simple test event for pause testing."""
 
-    event_type: str = "PauseTestEvent"
     aggregate_type: str = "PauseAggregate"
     data: str = "test"
 

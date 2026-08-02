@@ -12,7 +12,6 @@ from eventsource.domain.event import DomainEvent
 
 
 class IsolationEvent(DomainEvent):
-    event_type: str = "IsolationEvent"
     aggregate_type: str = "Isolation"
 
 

@@ -211,7 +211,6 @@ from eventsource import DomainEvent, register_event  # noqa: E402
 class TracingTestEvent(DomainEvent):
     """Test event for tracing integration tests."""
 
-    event_type: str = "TracingTestEvent"
     aggregate_type: str = "TracingTestAggregate"
     name: str
     value: int = 0
@@ -221,7 +220,6 @@ class TracingTestEvent(DomainEvent):
 class TracingTestEventCreated(DomainEvent):
     """Test event for aggregate creation in tracing tests."""
 
-    event_type: str = "TracingTestEventCreated"
     aggregate_type: str = "TracingTestAggregate"
     name: str
 
@@ -230,7 +228,6 @@ class TracingTestEventCreated(DomainEvent):
 class TracingTestEventUpdated(DomainEvent):
     """Test event for aggregate updates in tracing tests."""
 
-    event_type: str = "TracingTestEventUpdated"
     aggregate_type: str = "TracingTestAggregate"
     value: int
 

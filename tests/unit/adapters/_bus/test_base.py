@@ -10,7 +10,6 @@ from eventsource.domain.event_registry import EventRegistry, default_registry
 
 
 class BaseBusEvent(DomainEvent):
-    event_type: str = "BaseBusEvent"
     aggregate_type: str = "BaseBus"
 
 
@@ -210,7 +209,6 @@ async def test_drain_background_logs_and_suppresses_wait_errors(
 
 def test_get_subscriber_count_is_scoped_to_the_requested_event_type() -> None:
     class OtherBusEvent(DomainEvent):
-        event_type: str = "OtherBusEvent"
         aggregate_type: str = "BaseBus"
 
     bus = StubBus()

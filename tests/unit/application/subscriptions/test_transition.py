@@ -42,7 +42,6 @@ from eventsource.ports.positions import ExpectedVersion, Position
 class TransitionTestEvent(DomainEvent):
     """Simple test event for transition testing."""
 
-    event_type: str = "TransitionTestEvent"
     aggregate_type: str = "TransitionAggregate"
     data: str = "test"
 
@@ -50,7 +49,6 @@ class TransitionTestEvent(DomainEvent):
 class AnotherTransitionEvent(DomainEvent):
     """Another test event type."""
 
-    event_type: str = "AnotherTransitionEvent"
     aggregate_type: str = "TransitionAggregate"
     value: int = 0
 

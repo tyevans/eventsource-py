@@ -36,7 +36,6 @@ from eventsource.ports.migration.models import MigrationConfig, SyncLag
 class LagTestEvent(DomainEvent):
     """Test event for unit tests."""
 
-    event_type: str = "LagTestEvent"
     aggregate_type: str = "LagTestAggregate"
     data: str = "test"
 

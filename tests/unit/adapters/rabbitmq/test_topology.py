@@ -16,7 +16,6 @@ class OrderCreated(DomainEvent):
     """Sample event used to exercise bind_event_type."""
 
     aggregate_type: str = "Order"
-    event_type: str = "OrderCreated"
     aggregate_id: UUID = uuid4()
 
 

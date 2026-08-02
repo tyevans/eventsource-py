@@ -27,7 +27,6 @@ from eventsource.observability import create_tracer  # noqa: E402
 
 
 class SamplePublisherEvent(DomainEvent):
-    event_type: str = "SamplePublisherEvent"
     aggregate_type: str = "SampleAggregate"
     payload: str = ""
 

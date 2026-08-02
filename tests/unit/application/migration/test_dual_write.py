@@ -36,7 +36,6 @@ from eventsource.ports import AppendResult, ExpectedVersion, FullEventStore, Pos
 class TestEvent(DomainEvent):
     """Test event for unit tests."""
 
-    event_type: str = "TestEvent"
     aggregate_type: str = "TestAggregate"
     data: str = "test"
 

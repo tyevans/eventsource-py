@@ -1567,7 +1567,6 @@ class TestRabbitMQHandlerNormalization:
 
         # Create a test event - need a concrete subclass with event_type
         class TestEvent(DomainEvent):
-            event_type: str = "TestEvent"
             aggregate_type: str = "TestAggregate"
 
         event = TestEvent(aggregate_id=uuid4())
@@ -1592,7 +1591,6 @@ class TestRabbitMQHandlerNormalization:
 
         # Create a test event - need a concrete subclass with event_type
         class TestEvent(DomainEvent):
-            event_type: str = "TestEvent"
             aggregate_type: str = "TestAggregate"
 
         event = TestEvent(aggregate_id=uuid4())
@@ -1619,7 +1617,6 @@ class TestRabbitMQHandlerNormalization:
 
         # Create a test event - need a concrete subclass with event_type
         class TestEvent(DomainEvent):
-            event_type: str = "TestEvent"
             aggregate_type: str = "TestAggregate"
 
         event = TestEvent(aggregate_id=uuid4())
@@ -2617,7 +2614,6 @@ class TestRabbitMQDeclarationErrors:
 class SerializationTestEvent(DomainEvent):
     """Test event for serialization tests."""
 
-    event_type: str = "SerializationTestEvent"
     aggregate_type: str = "TestAggregate"
     data: str = "test"
 
@@ -2670,7 +2666,6 @@ class TestRabbitMQRoutingKey:
         """Test routing key with custom aggregate type."""
 
         class CustomEvent(DomainEvent):
-            event_type: str = "CustomEvent"
             aggregate_type: str = "CustomAggregate"
 
         event = CustomEvent(aggregate_id=uuid4())
@@ -3148,7 +3143,6 @@ class TestRabbitMQSerializationRoundTrip:
 class PublishTestEvent(DomainEvent):
     """Test event for publish tests."""
 
-    event_type: str = "PublishTestEvent"
     aggregate_type: str = "TestAggregate"
     data: str = "test"
 
@@ -3731,7 +3725,6 @@ class TestRabbitMQPublishWithDifferentEventTypes:
 class ConsumerTestEvent(DomainEvent):
     """Test event for consumer loop testing."""
 
-    event_type: str = "ConsumerTestEvent"
     aggregate_type: str = "ConsumerTest"
     data: str = "test"
 
@@ -4517,7 +4510,6 @@ class TestRabbitMQHandlerNormalizationEdgeCases:
         adapter = HandlerAdapter(handler)
 
         class TestEvent(DomainEvent):
-            event_type: str = "TestEvent"
             aggregate_type: str = "TestAggregate"
 
         event = TestEvent(aggregate_id=uuid4())
@@ -4545,7 +4537,6 @@ class TestRabbitMQHandlerNormalizationEdgeCases:
         adapter = HandlerAdapter(hybrid_handler)
 
         class TestEvent(DomainEvent):
-            event_type: str = "TestEvent"
             aggregate_type: str = "TestAggregate"
 
         event = TestEvent(aggregate_id=uuid4())
@@ -9200,7 +9191,6 @@ class TestOpenTelemetryTracing:
 
         # Create test event
         class TestEvent(DomainEvent):
-            event_type: str = "TestEvent"
             aggregate_type: str = "TestAggregate"
 
         event = TestEvent(aggregate_id=uuid4())
@@ -9254,7 +9244,6 @@ class TestOpenTelemetryTracing:
 
         # Create test event
         class TestEvent(DomainEvent):
-            event_type: str = "TestEvent"
             aggregate_type: str = "TestAggregate"
 
         event = TestEvent(aggregate_id=uuid4())
@@ -9308,7 +9297,6 @@ class TestOpenTelemetryTracing:
 
         # Create test event
         class TestEvent(DomainEvent):
-            event_type: str = "TestEvent"
             aggregate_type: str = "TestAggregate"
 
         event = TestEvent(aggregate_id=uuid4())
@@ -9357,7 +9345,6 @@ class TestOpenTelemetryTracing:
 
         # Create test event
         class TestEvent(DomainEvent):
-            event_type: str = "TestEvent"
             aggregate_type: str = "TestAggregate"
 
         event = TestEvent(aggregate_id=uuid4())
@@ -9389,7 +9376,6 @@ class TestOpenTelemetryTracing:
 
         # Create test event
         class TestEvent(DomainEvent):
-            event_type: str = "TestEvent"
             aggregate_type: str = "TestAggregate"
 
         event = TestEvent(aggregate_id=uuid4())
@@ -9411,7 +9397,6 @@ class TestOpenTelemetryTracing:
 
         # Create test event
         class TestEvent(DomainEvent):
-            event_type: str = "TestEvent"
             aggregate_type: str = "TestAggregate"
 
         event = TestEvent(aggregate_id=uuid4())
@@ -9447,7 +9432,6 @@ class TestOpenTelemetryConsumerTracing:
         registry = EventRegistry()
 
         class TestEvent(DomainEvent):
-            event_type: str = "TestEvent"
             aggregate_type: str = "TestAggregate"
 
         registry.register(TestEvent)
@@ -9524,7 +9508,6 @@ class TestOpenTelemetryConsumerTracing:
 
         # Create test event
         class TestEvent(DomainEvent):
-            event_type: str = "TestEvent"
             aggregate_type: str = "TestAggregate"
 
         event = TestEvent(aggregate_id=uuid4())
@@ -9576,7 +9559,6 @@ class TestOpenTelemetryConsumerTracing:
 
         # Create test event
         class TestEvent(DomainEvent):
-            event_type: str = "TestEvent"
             aggregate_type: str = "TestAggregate"
 
         event = TestEvent(aggregate_id=uuid4())
@@ -9623,7 +9605,6 @@ class TestOpenTelemetryConsumerTracing:
 
         # Create test event
         class TestEvent(DomainEvent):
-            event_type: str = "TestEvent"
             aggregate_type: str = "TestAggregate"
 
         event = TestEvent(aggregate_id=uuid4())
@@ -9711,7 +9692,6 @@ class TestOpenTelemetryGracefulDegradation:
 
         # Create test event
         class TestEvent(DomainEvent):
-            event_type: str = "TestEvent"
             aggregate_type: str = "TestAggregate"
 
         event = TestEvent(aggregate_id=uuid4())
@@ -9734,7 +9714,6 @@ class TestOpenTelemetryGracefulDegradation:
 
         # Create test event
         class TestEvent(DomainEvent):
-            event_type: str = "TestEvent"
             aggregate_type: str = "TestAggregate"
 
         event = TestEvent(aggregate_id=uuid4())
@@ -9991,7 +9970,6 @@ class TestBindEventType:
         mock_channel.declare_queue = AsyncMock(return_value=mock_queue)
 
         class OrderCreated(DomainEvent):
-            event_type: str = "OrderCreated"
             aggregate_type: str = "Order"
 
         bus = RabbitMQEventBus(config=config)
@@ -10014,7 +9992,6 @@ class TestBindEventType:
         config = RabbitMQEventBusConfig()
 
         class TestEvent(DomainEvent):
-            event_type: str = "TestEvent"
             aggregate_type: str = "Test"
 
         bus = RabbitMQEventBus(config=config)
@@ -10243,7 +10220,6 @@ class TestDirectExchangeRoutingKeyGeneration:
         mock_exchange.publish = AsyncMock()
 
         class OrderCreated(DomainEvent):
-            event_type: str = "OrderCreated"
             aggregate_type: str = "Order"
 
         event = OrderCreated(aggregate_id=uuid4())
@@ -10397,7 +10373,6 @@ class TestFanoutExchangeBroadcastBehavior:
         mock_exchange.publish = AsyncMock()
 
         class NotificationSent(DomainEvent):
-            event_type: str = "NotificationSent"
             aggregate_type: str = "Notification"
             message: str = "test"
 
@@ -10716,7 +10691,6 @@ class TestFanoutExchangeLogging:
         mock_exchange.publish = AsyncMock()
 
         class BroadcastEvent(DomainEvent):
-            event_type: str = "BroadcastEvent"
             aggregate_type: str = "System"
 
         event = BroadcastEvent(aggregate_id=uuid4())

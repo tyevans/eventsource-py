@@ -14,7 +14,6 @@ class OpenAccount(DomainCommand):
 
 
 class SomethingHappened(DomainEvent):
-    event_type: str = "SomethingHappened"
     aggregate_type: str = "Thing"
 
 

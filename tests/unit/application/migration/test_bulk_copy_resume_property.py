@@ -37,7 +37,6 @@ from eventsource.ports.migration.models import (
 class ResumePropertyEvent(DomainEvent):
     """Minimal event for the resume property; only identity/order matters."""
 
-    event_type: str = "ResumePropertyEvent"
     aggregate_type: str = "ResumePropertyAggregate"
 
 

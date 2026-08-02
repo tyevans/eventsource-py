@@ -72,7 +72,6 @@ async def position_after(store, n: int):
 class AdvTestUserRegistered(DomainEvent):
     """Test event for user registration in advanced tests."""
 
-    event_type: str = "AdvTestUserRegistered"
     aggregate_type: str = "AdvTestUser"
     username: str = ""
 
@@ -81,7 +80,6 @@ class AdvTestUserRegistered(DomainEvent):
 class AdvTestUserUpdated(DomainEvent):
     """Test event for user updates in advanced tests."""
 
-    event_type: str = "AdvTestUserUpdated"
     aggregate_type: str = "AdvTestUser"
     field: str = ""
 
@@ -90,7 +88,6 @@ class AdvTestUserUpdated(DomainEvent):
 class AdvTestPaymentReceived(DomainEvent):
     """Test event for payments in advanced tests."""
 
-    event_type: str = "AdvTestPaymentReceived"
     aggregate_type: str = "AdvTestPayment"
     amount: float = 0.0
 

@@ -106,7 +106,6 @@ def tgt_pos(n: int) -> Position:
 class SampleTestEvent(DomainEvent):
     """Generic test event for integration tests."""
 
-    event_type: str = "SampleTestEvent"
     aggregate_type: str = "SampleAggregate"
     value: str = "test"
 
@@ -114,7 +113,6 @@ class SampleTestEvent(DomainEvent):
 class OrderCreated(DomainEvent):
     """Test order created event."""
 
-    event_type: str = "OrderCreated"
     aggregate_type: str = "Order"
     customer_id: str = "customer-123"
     amount: float = 100.0
@@ -123,7 +121,6 @@ class OrderCreated(DomainEvent):
 class OrderUpdated(DomainEvent):
     """Test order updated event."""
 
-    event_type: str = "OrderUpdated"
     aggregate_type: str = "Order"
     new_amount: float = 150.0
 

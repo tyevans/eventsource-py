@@ -36,7 +36,6 @@ from eventsource.ports.positions import ExpectedVersion, Position
 class SampleTestEvent(DomainEvent):
     """Simple test event."""
 
-    event_type: str = "SampleTestEvent"
     aggregate_type: str = "SampleAggregate"
     data: str = "test"
 
@@ -44,7 +43,6 @@ class SampleTestEvent(DomainEvent):
 class SampleFailingEvent(DomainEvent):
     """Event that should cause handler to fail."""
 
-    event_type: str = "SampleFailingEvent"
     aggregate_type: str = "SampleAggregate"
     should_fail: bool = True
 

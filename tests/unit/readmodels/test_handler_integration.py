@@ -26,7 +26,6 @@ from eventsource.ports.readmodels import ReadModel
 class TestEvent(DomainEvent):
     """Test event for handler integration tests."""
 
-    event_type: str = "TestEvent"
     aggregate_type: str = "Test"
     value: str = Field(..., description="Test value")
 
@@ -34,7 +33,6 @@ class TestEvent(DomainEvent):
 class SecondTestEvent(DomainEvent):
     """Second test event for multiple handler tests."""
 
-    event_type: str = "SecondTestEvent"
     aggregate_type: str = "Test"
     data: str = Field(default="default", description="Test data")
 
@@ -42,7 +40,6 @@ class SecondTestEvent(DomainEvent):
 class UnhandledEvent(DomainEvent):
     """Event type with no handler for testing unregistered events."""
 
-    event_type: str = "UnhandledEvent"
     aggregate_type: str = "Test"
 
 

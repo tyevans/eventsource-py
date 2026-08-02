@@ -117,3 +117,6 @@ mutants/
 # Benchmark harness output
 bench/results/*
 !bench/results/.gitkeep
+
+# local review scratch
+/.fractal/

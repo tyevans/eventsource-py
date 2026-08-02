@@ -62,7 +62,6 @@ class SimpleState(BaseModel):
 class OrderCreated(DomainEvent):
     """Event for order creation."""
 
-    event_type: str = "OrderCreated"
     aggregate_type: str = "Order"
     customer_id: str
 
@@ -70,7 +69,6 @@ class OrderCreated(DomainEvent):
 class ItemAdded(DomainEvent):
     """Event for adding item to order."""
 
-    event_type: str = "ItemAdded"
     aggregate_type: str = "Order"
     product_id: str
     quantity: int
@@ -80,7 +78,6 @@ class ItemAdded(DomainEvent):
 class StatusChanged(DomainEvent):
     """Event for status change."""
 
-    event_type: str = "StatusChanged"
     aggregate_type: str = "Order"
     new_status: str
 
@@ -88,7 +85,6 @@ class StatusChanged(DomainEvent):
 class ValueSet(DomainEvent):
     """Simple event for value setting."""
 
-    event_type: str = "ValueSet"
     aggregate_type: str = "Simple"
     value: str
 

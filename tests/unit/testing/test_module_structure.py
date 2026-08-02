@@ -193,7 +193,6 @@ class TestImplementationStatus:
         from eventsource.testing import EventBuilder
 
         class TestEvent(DomainEvent):
-            event_type: str = "TestEvent"
             aggregate_type: str = "Test"
 
         # EventBuilder should now be fully implemented (DX-002)
@@ -246,7 +245,6 @@ class TestImplementationStatus:
             name: str = ""
 
         class TestEvent(DomainEvent):
-            event_type: str = "TestEvent"
             aggregate_type: str = "Test"
 
         class TestAggregate(AggregateRoot[TestState]):
@@ -273,7 +271,6 @@ class TestImplementationStatus:
         from eventsource.testing import InMemoryTestHarness, then_event_published
 
         class TestEvent(DomainEvent):
-            event_type: str = "TestEvent"
             aggregate_type: str = "Test"
 
         harness = InMemoryTestHarness()

@@ -64,7 +64,6 @@ logger = logging.getLogger(__name__)
 class PaymentReceived(DomainEvent):
     """Event emitted when a payment is received."""
 
-    event_type: str = "PaymentReceived"
     aggregate_type: str = "Payment"
 
     order_id: UUID
@@ -76,7 +75,6 @@ class PaymentReceived(DomainEvent):
 class PaymentFailed(DomainEvent):
     """Event emitted when a payment fails."""
 
-    event_type: str = "PaymentFailed"
     aggregate_type: str = "Payment"
 
     order_id: UUID
@@ -87,7 +85,6 @@ class PaymentFailed(DomainEvent):
 class PaymentRefunded(DomainEvent):
     """Event emitted when a payment is refunded."""
 
-    event_type: str = "PaymentRefunded"
     aggregate_type: str = "Payment"
 
     order_id: UUID

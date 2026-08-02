@@ -8,7 +8,6 @@ from eventsource.testing.recording import RecordingEventBus
 
 
 class RecordedEvent(DomainEvent):
-    event_type: str = "RecordedEvent"
     aggregate_type: str = "Recorded"
 
 

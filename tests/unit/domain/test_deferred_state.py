@@ -38,7 +38,6 @@ class ExtractionRequested(DomainEvent):
     """Event for extraction request."""
 
     aggregate_type: str = "Extraction"
-    event_type: str = "ExtractionRequested"
     page_id: UUID
     config: dict[str, Any]
 
@@ -47,7 +46,6 @@ class ExtractionCompleted(DomainEvent):
     """Event for extraction completion."""
 
     aggregate_type: str = "Extraction"
-    event_type: str = "ExtractionCompleted"
     result: str
 
 
@@ -67,7 +65,6 @@ class OrderCreated(DomainEvent):
     """Event for order creation."""
 
     aggregate_type: str = "Order"
-    event_type: str = "OrderCreated"
     customer_id: UUID
 
 
@@ -75,7 +72,6 @@ class OrderShipped(DomainEvent):
     """Event for order shipment."""
 
     aggregate_type: str = "Order"
-    event_type: str = "OrderShipped"
     tracking_number: str
 
 

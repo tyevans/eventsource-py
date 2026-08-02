@@ -32,7 +32,6 @@ pytestmark = pytest.mark.asyncio
 class ResumptionPropertyEvent(DomainEvent):
     """Minimal event for the resumption property."""
 
-    event_type: str = "ResumptionPropertyEvent"
     aggregate_type: str = "ResumptionPropertyAggregate"
 
 

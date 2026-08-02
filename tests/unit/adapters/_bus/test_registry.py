@@ -10,12 +10,10 @@ from eventsource.domain.event import DomainEvent
 
 
 class RegistryEventA(DomainEvent):
-    event_type: str = "RegistryEventA"
     aggregate_type: str = "Registry"
 
 
 class RegistryEventB(DomainEvent):
-    event_type: str = "RegistryEventB"
     aggregate_type: str = "Registry"
 
 

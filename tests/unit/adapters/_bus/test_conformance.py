@@ -10,7 +10,6 @@ from eventsource.testing.conformance import EventBusConformanceSuite
 
 
 class ConformanceEvent(DomainEvent):
-    event_type: str = "ConformanceEvent"
     aggregate_type: str = "Conformance"
 
 

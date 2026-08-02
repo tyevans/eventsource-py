@@ -17,7 +17,6 @@ from eventsource.domain.event_registry import EventRegistry
 
 
 class RoundtripEvent(DomainEvent):
-    event_type: str = "RoundtripEvent"
     aggregate_type: str = "Roundtrip"
     name: str = ""
     quantity: int = 0

@@ -54,7 +54,6 @@ class TracingTestState(BaseModel):
 class TracingTestEvent(DomainEvent):
     """Test event for tracing tests."""
 
-    event_type: str = "TracingTestEvent"
     aggregate_type: str = "TracingTest"
     value: str
 

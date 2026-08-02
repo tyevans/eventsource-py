@@ -34,7 +34,6 @@ class OrderState(BaseModel):
 class OrderCreated(DomainEvent):
     """Event for testing."""
 
-    event_type: str = "OrderCreated"
     aggregate_type: str = "Order"
 
 

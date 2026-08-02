@@ -33,7 +33,6 @@ class CounterState(BaseModel):
 class CounterIncremented(DomainEvent):
     """Event for incrementing counter."""
 
-    event_type: str = "CounterIncremented"
     aggregate_type: str = "Counter"
     increment: int = 1
 

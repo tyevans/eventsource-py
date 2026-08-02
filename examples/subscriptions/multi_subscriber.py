@@ -58,7 +58,6 @@ logger = logging.getLogger(__name__)
 class ProductCreated(DomainEvent):
     """Event emitted when a product is created."""
 
-    event_type: str = "ProductCreated"
     aggregate_type: str = "Product"
 
     name: str
@@ -70,7 +69,6 @@ class ProductCreated(DomainEvent):
 class ProductPriceChanged(DomainEvent):
     """Event emitted when a product price changes."""
 
-    event_type: str = "ProductPriceChanged"
     aggregate_type: str = "Product"
 
     old_price: float
@@ -81,7 +79,6 @@ class ProductPriceChanged(DomainEvent):
 class InventoryAdded(DomainEvent):
     """Event emitted when inventory is added."""
 
-    event_type: str = "InventoryAdded"
     aggregate_type: str = "Product"
 
     quantity: int
@@ -92,7 +89,6 @@ class InventoryAdded(DomainEvent):
 class InventoryReserved(DomainEvent):
     """Event emitted when inventory is reserved for an order."""
 
-    event_type: str = "InventoryReserved"
     aggregate_type: str = "Product"
 
     quantity: int
@@ -103,7 +99,6 @@ class InventoryReserved(DomainEvent):
 class InventorySold(DomainEvent):
     """Event emitted when inventory is sold."""
 
-    event_type: str = "InventorySold"
     aggregate_type: str = "Product"
 
     quantity: int

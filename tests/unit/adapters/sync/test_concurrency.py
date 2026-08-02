@@ -19,7 +19,6 @@ class SampleEvent(DomainEvent):
     """Sample event for testing."""
 
     aggregate_type: str = "Sample"
-    event_type: str = "SampleEvent"
     data: str = "test"
 
 

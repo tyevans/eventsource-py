@@ -109,7 +109,6 @@ from eventsource import DomainEvent, register_event  # noqa: E402
 class TestItemCreated(DomainEvent):
     """Test event for item creation."""
 
-    event_type: str = "TestItemCreated"
     aggregate_type: str = "TestItem"
     name: str
     quantity: int = 1
@@ -119,7 +118,6 @@ class TestItemCreated(DomainEvent):
 class TestItemUpdated(DomainEvent):
     """Test event for item updates."""
 
-    event_type: str = "TestItemUpdated"
     aggregate_type: str = "TestItem"
     name: str | None = None
     quantity: int | None = None
@@ -129,7 +127,6 @@ class TestItemUpdated(DomainEvent):
 class TestItemDeleted(DomainEvent):
     """Test event for item deletion."""
 
-    event_type: str = "TestItemDeleted"
     aggregate_type: str = "TestItem"
 
 
@@ -137,7 +134,6 @@ class TestItemDeleted(DomainEvent):
 class TestOrderCreated(DomainEvent):
     """Test event for order creation (used in e2e tests)."""
 
-    event_type: str = "TestOrderCreated"
     aggregate_type: str = "TestOrder"
     customer_id: UUID
     total_amount: float = 0.0
@@ -147,7 +143,6 @@ class TestOrderCreated(DomainEvent):
 class TestOrderItemAdded(DomainEvent):
     """Test event for adding items to an order."""
 
-    event_type: str = "TestOrderItemAdded"
     aggregate_type: str = "TestOrder"
     item_id: UUID
     item_name: str
@@ -159,7 +154,6 @@ class TestOrderItemAdded(DomainEvent):
 class TestOrderCompleted(DomainEvent):
     """Test event for order completion."""
 
-    event_type: str = "TestOrderCompleted"
     aggregate_type: str = "TestOrder"
     completed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 

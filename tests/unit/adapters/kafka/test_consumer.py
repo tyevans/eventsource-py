@@ -33,7 +33,6 @@ from eventsource.observability import create_tracer  # noqa: E402
 
 
 class SampleConsumerEvent(DomainEvent):
-    event_type: str = "SampleConsumerEvent"
     aggregate_type: str = "SampleAggregate"
     payload: str = ""
 
