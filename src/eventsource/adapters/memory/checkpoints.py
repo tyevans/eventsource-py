@@ -85,6 +85,7 @@ class InMemoryCheckpointRepository:
             async with self._lock:
                 existing = self._checkpoints.get(projection_name)
                 events_processed = (existing.events_processed + 1) if existing else 1
+                position = existing.position if existing else None
 
                 self._checkpoints[projection_name] = CheckpointData(
                     projection_name=projection_name,
@@ -92,6 +93,7 @@ class InMemoryCheckpointRepository:
                     last_event_type=event_type,
                     last_processed_at=now,
                     events_processed=events_processed,
+                    position=position,
                 )
 
     async def get_lag_metrics(
