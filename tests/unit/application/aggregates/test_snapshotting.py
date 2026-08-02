@@ -1,6 +1,7 @@
 """Tests for application.aggregates.snapshotting collaborators."""
 
 from datetime import UTC, datetime
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 import pytest
@@ -24,7 +25,7 @@ def _order_at_version(version: int) -> OrderAggregate:
     order = OrderAggregate(uuid4())
     order.create(uuid4())
     for i in range(version - 1):
-        order.add_item(f"item-{i}", 1.0)
+        order.add_item(f"item-{i}", Decimal("1.00"))
     return order
 
 

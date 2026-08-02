@@ -17,6 +17,7 @@ All fixtures are properly scoped and documented for easy reuse.
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator, Callable
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
@@ -280,13 +281,13 @@ def order_event_stream(aggregate_id: UUID, customer_id: UUID) -> list[DomainEven
             aggregate_id=aggregate_id,
             aggregate_version=2,
             item_name="Widget A",
-            price=10.0,
+            price=Decimal("10.00"),
         ),
         OrderItemAdded(
             aggregate_id=aggregate_id,
             aggregate_version=3,
             item_name="Widget B",
-            price=15.0,
+            price=Decimal("15.00"),
         ),
         OrderShipped(
             aggregate_id=aggregate_id,
@@ -474,8 +475,8 @@ def populated_order_aggregate(
     """
     aggregate = OrderAggregate(aggregate_id)
     aggregate.create(customer_id)
-    aggregate.add_item("Widget A", 10.0)
-    aggregate.add_item("Widget B", 15.0)
+    aggregate.add_item("Widget A", Decimal("10.00"))
+    aggregate.add_item("Widget B", Decimal("15.00"))
     return aggregate
 
 

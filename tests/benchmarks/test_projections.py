@@ -13,6 +13,7 @@ Target baselines:
 - Process 1000 events: < 500ms
 """
 
+from decimal import Decimal
 from typing import Any
 from uuid import uuid4
 
@@ -308,7 +309,7 @@ class TestProjectionOrderProcessingBenchmarks:
                         aggregate_id=order_id,
                         aggregate_version=j + 2,
                         item_name=f"Item {j}",
-                        price=10.0 * (j + 1),
+                        price=Decimal("10.00") * (j + 1),
                     )
                 )
             events.append(
