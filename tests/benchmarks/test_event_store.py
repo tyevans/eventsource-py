@@ -45,7 +45,7 @@ class TestEventStoreAppendBenchmarks:
         def append_one() -> Any:
             aggregate_id = uuid4()
             event = event_generator(SampleEvent, aggregate_id=aggregate_id)
-            stream_id = StreamId(str(aggregate_id), "TestAggregate")
+            stream_id = StreamId(aggregate_id, "TestAggregate")
             return run_async(
                 benchmark_store.append(
                     stream_id,
@@ -79,7 +79,7 @@ class TestEventStoreAppendBenchmarks:
 
         def append_batch() -> Any:
             store = InMemoryEventStore()
-            stream_id = StreamId(str(aggregate_id), "TestAggregate")
+            stream_id = StreamId(aggregate_id, "TestAggregate")
             return run_async(
                 store.append(
                     stream_id,
@@ -111,7 +111,7 @@ class TestEventStoreAppendBenchmarks:
 
         def append_batch() -> Any:
             store = InMemoryEventStore()
-            stream_id = StreamId(str(aggregate_id), "TestAggregate")
+            stream_id = StreamId(aggregate_id, "TestAggregate")
             return run_async(
                 store.append(
                     stream_id,
@@ -139,7 +139,7 @@ class TestEventStoreAppendBenchmarks:
             aggregate_id = uuid4()
 
             async def do_appends() -> None:
-                stream_id = StreamId(str(aggregate_id), "TestAggregate")
+                stream_id = StreamId(aggregate_id, "TestAggregate")
                 for i in range(100):
                     event = event_generator(
                         SampleEvent,
@@ -173,7 +173,7 @@ class TestEventStoreReadBenchmarks:
 
         def read_events() -> list[Any]:
             async def collect_events() -> list[Any]:
-                stream_id = StreamId(str(aggregate_id), "TestAggregate")
+                stream_id = StreamId(aggregate_id, "TestAggregate")
                 envelopes = []
                 async for envelope in populated_benchmark_store_100.read_stream(stream_id):
                     envelopes.append(envelope)
@@ -197,7 +197,7 @@ class TestEventStoreReadBenchmarks:
 
         def read_events() -> list[Any]:
             async def collect_events() -> list[Any]:
-                stream_id = StreamId(str(aggregate_id), "TestAggregate")
+                stream_id = StreamId(aggregate_id, "TestAggregate")
                 envelopes = []
                 async for envelope in populated_benchmark_store_1000.read_stream(stream_id):
                     envelopes.append(envelope)
@@ -239,7 +239,7 @@ class TestEventStoreReadBenchmarks:
         Benchmark: Read events using async iterator (read_stream).
         """
         aggregate_id = sample_events_100[0].aggregate_id
-        stream_id = StreamId(str(aggregate_id), "TestAggregate")
+        stream_id = StreamId(aggregate_id, "TestAggregate")
 
         def read_stream() -> list[Any]:
             async def collect() -> list[Any]:
@@ -266,7 +266,7 @@ class TestEventStoreReadBenchmarks:
         aggregate_id = sample_events_1000[0].aggregate_id
 
         def get_version() -> int:
-            stream_id = StreamId(str(aggregate_id), "TestAggregate")
+            stream_id = StreamId(aggregate_id, "TestAggregate")
             version: int = run_async(populated_benchmark_store_1000.get_stream_version(stream_id))
             return version
 
@@ -297,7 +297,7 @@ class TestEventStoreConcurrencyBenchmarks:
                 for _ in range(100):
                     aggregate_id = uuid4()
                     event = event_generator(SampleEvent, aggregate_id=aggregate_id)
-                    stream_id = StreamId(str(aggregate_id), "TestAggregate")
+                    stream_id = StreamId(aggregate_id, "TestAggregate")
                     tasks.append(
                         store.append(
                             stream_id,
@@ -323,7 +323,7 @@ class TestEventStoreConcurrencyBenchmarks:
         This tests how well the event store handles concurrent reads.
         """
         aggregate_id = sample_events_100[0].aggregate_id
-        stream_id = StreamId(str(aggregate_id), "TestAggregate")
+        stream_id = StreamId(aggregate_id, "TestAggregate")
 
         def concurrent_reads() -> None:
             async def do_concurrent() -> None:
@@ -370,7 +370,7 @@ class TestEventStoreConcurrencyBenchmarks:
                         )
                         for i in range(10)
                     ]
-                    stream_id = StreamId(str(agg_id), "TestAggregate")
+                    stream_id = StreamId(agg_id, "TestAggregate")
                     await store.append(
                         stream_id,
                         events,
@@ -388,7 +388,7 @@ class TestEventStoreConcurrencyBenchmarks:
                     if i % 2 == 0:
                         # Read operation
                         async def read_one(aid: Any) -> list[Any]:
-                            stream_id = StreamId(str(aid), "TestAggregate")
+                            stream_id = StreamId(aid, "TestAggregate")
                             envelopes = []
                             async for envelope in store.read_stream(stream_id):
                                 envelopes.append(envelope)
@@ -399,7 +399,7 @@ class TestEventStoreConcurrencyBenchmarks:
                         # Write operation to new aggregate
                         new_agg_id = uuid4()
                         event = event_generator(SampleEvent, aggregate_id=new_agg_id)
-                        stream_id = StreamId(str(new_agg_id), "TestAggregate")
+                        stream_id = StreamId(new_agg_id, "TestAggregate")
                         write_tasks.append(
                             store.append(
                                 stream_id,

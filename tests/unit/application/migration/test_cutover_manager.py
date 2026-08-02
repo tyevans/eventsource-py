@@ -442,6 +442,54 @@ class TestStrictZeroLagDefault:
         mock_router.resume_writes.assert_called_once_with(tenant_id)
 
     @pytest.mark.asyncio
+    async def test_rollback_restores_the_route_not_just_the_state(
+        self,
+        cutover_manager,
+        tenant_id,
+        migration_id,
+        target_store_id,
+        mock_lag_tracker,
+        mock_routing_repo,
+    ):
+        """Rollback used to declare DUAL_WRITE while traffic stayed on the target.
+
+        The route and the migration state are two writes. `_rollback` only
+        restored the second, so a "rolled back" tenant still had every request
+        going to the store the cutover had failed to complete.
+        """
+
+        # `get_routing` reflects whatever the last `set_routing` wrote, so
+        # the pre-cutover capture sees the source and the rollback sees the
+        # target the switch had already moved to.
+        async def current_routing(_tenant_id):
+            writes = mock_routing_repo.set_routing.call_args_list
+            store_id = writes[-1].args[1] if writes else "source-store"
+            return TenantRouting(
+                tenant_id=tenant_id,
+                store_id=store_id,
+                migration_state=TenantMigrationState.DUAL_WRITE,
+            )
+
+        mock_routing_repo.get_routing.side_effect = current_routing
+        mock_routing_repo.set_migration_state.side_effect = [
+            None,  # CUTOVER_PAUSED
+            Exception("state write failed"),  # MIGRATED
+            None,  # DUAL_WRITE, during rollback
+        ]
+
+        result = await cutover_manager.execute_cutover(
+            migration_id=migration_id,
+            tenant_id=tenant_id,
+            lag_tracker=mock_lag_tracker,
+            target_store_id=target_store_id,
+        )
+
+        assert result.success is False
+        assert result.rolled_back is True
+        restored_to = [call.args[1] for call in mock_routing_repo.set_routing.call_args_list]
+        assert restored_to[-1] == "source-store"
+
+    @pytest.mark.asyncio
     async def test_an_explicit_threshold_still_tolerates_lag(
         self,
         cutover_manager,

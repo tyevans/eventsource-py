@@ -16,6 +16,7 @@ from eventsource.domain.event_registry import (
 from eventsource.domain.exceptions import (
     AggregateNotCreatedError,
     AggregateNotFoundError,
+    AggregateTypeMismatchError,
     AggregateTypeNotSetError,
     CommandRejectedError,
     DuplicateEventError,
@@ -56,6 +57,7 @@ __all__ = [
     "AggregateNotCreatedError",
     "AggregateNotFoundError",
     "AggregateRoot",
+    "AggregateTypeMismatchError",
     "AggregateTypeNotSetError",
     "CausationId",
     "CommandRejectedError",

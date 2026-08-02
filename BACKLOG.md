@@ -318,12 +318,17 @@ unavailable, so no integration tests ran.
 > a repository double to reproduce. Two limitations the sweep created or
 > confirmed are recorded as new entries at the end.
 
-## Cutover's routing switch is not atomic and rollback does not revert it (P2)
+## Cutover's routing switch needs a real transaction, not compensation (P2)
 
-`set_routing()` and `set_migration_state(MIGRATED)` are two writes with no
-compensation; a failure between them leaves traffic pointed at the target while
-`_rollback()` declares the tenant `DUAL_WRITE` and never reverts the route.
-PLAUSIBLE — needs a repo double to force the interleaving.
+`set_routing()` and `set_migration_state(MIGRATED)` are still two writes. The
+ADR-0048 sweep made them safe rather than atomic: a failure between them now
+reverts the route before propagating, and `_rollback` restores the route as
+well as the state (it previously declared the tenant `DUAL_WRITE` while leaving
+every request on the target store). Compensation is what the port allows —
+`TenantRoutingRepository` exposes no multi-statement transaction — so a process
+crash between the two writes still leaves the pair inconsistent until an
+operator intervenes. A genuinely atomic switch needs the port to grow a
+transaction boundary.
 
 ## SubscriptionManager, shutdown.py, and migration/coordinator.py have outgrown their modules (P3)
 

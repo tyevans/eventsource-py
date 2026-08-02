@@ -55,6 +55,7 @@ See Also:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 from typing import TYPE_CHECKING
@@ -302,6 +303,13 @@ class CutoverManager:
         events_synced = 0
         rolled_back = False
 
+        # Captured before anything is changed. `_rollback` restores the
+        # migration *state* to DUAL_WRITE; without the store id it left the
+        # route pointed at the target, so a "rolled back" tenant would still
+        # have all its traffic on the store the cutover failed to complete.
+        source_routing = await self._routing_repo.get_routing(tenant_id)
+        source_store_id = source_routing.store_id if source_routing else None
+
         try:
             # Step 1: Pause writes for the tenant
             await self._router.pause_writes(tenant_id)
@@ -387,13 +395,33 @@ class CutoverManager:
                     reason="target_health_check_failed",
                 ) from e
 
-            # Step 9: Switch routing to target (atomic update)
+            # Step 9: Switch routing to target.
+            #
+            # These are two writes, not one atomic update. If the second
+            # fails, traffic is already on the target while the recorded
+            # state still says CUTOVER_PAUSED -- so compensate by putting the
+            # route back before letting the failure propagate to `_rollback`.
+            # The repository port has no multi-statement transaction, so
+            # compensation is the available tool; a genuinely atomic switch
+            # would need one.
             await self._routing_repo.set_routing(tenant_id, target_store_id)
-            await self._routing_repo.set_migration_state(
-                tenant_id,
-                TenantMigrationState.MIGRATED,
-                migration_id=migration_id,
-            )
+            try:
+                await self._routing_repo.set_migration_state(
+                    tenant_id,
+                    TenantMigrationState.MIGRATED,
+                    migration_id=migration_id,
+                )
+            except Exception:
+                if source_store_id is not None:
+                    with contextlib.suppress(Exception):
+                        await self._routing_repo.set_routing(tenant_id, source_store_id)
+                    logger.error(
+                        "Routing switch for tenant %s was reverted to %s: the state "
+                        "write to MIGRATED failed after the route had already moved",
+                        tenant_id,
+                        source_store_id,
+                    )
+                raise
 
             # Step 10: Clear the dual-write interceptor
             self._router.clear_dual_write_interceptor(tenant_id)
@@ -421,7 +449,7 @@ class CutoverManager:
                 e.elapsed_ms,
                 e.timeout_ms,
             )
-            rolled_back = await self._rollback(tenant_id, migration_id)
+            rolled_back = await self._rollback(tenant_id, migration_id, source_store_id)
             return CutoverResult(
                 success=False,
                 duration_ms=e.elapsed_ms,
@@ -437,7 +465,7 @@ class CutoverManager:
                 e.current_lag,
                 e.max_lag,
             )
-            rolled_back = await self._rollback(tenant_id, migration_id)
+            rolled_back = await self._rollback(tenant_id, migration_id, source_store_id)
             elapsed_ms = (time.perf_counter() - start_time) * 1000
             return CutoverResult(
                 success=False,
@@ -453,7 +481,7 @@ class CutoverManager:
                 tenant_id,
                 e,
             )
-            rolled_back = await self._rollback(tenant_id, migration_id)
+            rolled_back = await self._rollback(tenant_id, migration_id, source_store_id)
             elapsed_ms = (time.perf_counter() - start_time) * 1000
             return CutoverResult(
                 success=False,
@@ -468,7 +496,7 @@ class CutoverManager:
                 "Unexpected error during cutover for tenant %s",
                 tenant_id,
             )
-            rolled_back = await self._rollback(tenant_id, migration_id)
+            rolled_back = await self._rollback(tenant_id, migration_id, source_store_id)
             elapsed_ms = (time.perf_counter() - start_time) * 1000
             return CutoverResult(
                 success=False,
@@ -487,16 +515,22 @@ class CutoverManager:
         self,
         tenant_id: UUID,
         migration_id: UUID,
+        source_store_id: str | None,
     ) -> bool:
         """
         Rollback to dual-write state after cutover failure.
 
-        Restores the routing state to DUAL_WRITE so the migration can
-        continue or be retried.
+        Restores *both* halves of the switch: the route back to the source
+        store and the migration state to DUAL_WRITE, so the migration can
+        continue or be retried. Restoring only the state -- the previous
+        behavior -- declared the tenant DUAL_WRITE while leaving its traffic
+        on the target store.
 
         Args:
             tenant_id: Tenant being migrated.
             migration_id: ID of the migration.
+            source_store_id: The store the tenant was routed to before the
+                cutover began, or None if no routing existed to restore.
 
         Returns:
             True if rollback was successful, False otherwise.
@@ -509,14 +543,23 @@ class CutoverManager:
             },
         ):
             try:
+                # Only rewrite the route if it actually moved. Most cutover
+                # failures happen before step 9, and an unconditional write
+                # would turn a repository outage during validation into a
+                # failed rollback.
+                if source_store_id is not None:
+                    current = await self._routing_repo.get_routing(tenant_id)
+                    if current is not None and current.store_id != source_store_id:
+                        await self._routing_repo.set_routing(tenant_id, source_store_id)
                 await self._routing_repo.set_migration_state(
                     tenant_id,
                     TenantMigrationState.DUAL_WRITE,
                     migration_id=migration_id,
                 )
                 logger.info(
-                    "Rolled back tenant %s to DUAL_WRITE state",
+                    "Rolled back tenant %s to DUAL_WRITE state on store %s",
                     tenant_id,
+                    source_store_id,
                 )
                 return True
 
