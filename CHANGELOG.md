@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-08-03
+
+A single fix: the default snapshot policy could not fire for a large class of
+aggregates. Nothing about the API changes, and no action is required on upgrade
+— but a deployment whose aggregates emit several events per command will see
+snapshot writes begin where there were none, and loads shorten accordingly.
+
 ### Fixed
 
 - **`EveryNEvents(n)` snapshots when a save crosses a multiple of `n`, not when the version lands exactly on one** (ADR 0049). An aggregate that emits several events per command advances its version in strides, and whether a stride ever lands on a multiple is arithmetic: for a constant stride `s` from a starting version `v0`, some version is a multiple of `n` only if `gcd(s, n)` divides `-v0 mod n`. A stream starting at version 1 and advancing by 6 against the default threshold of 50 satisfies no such version — every version it reaches is odd and every multiple of 50 is even — so it snapshotted *never*, not merely late. Nothing failed: the snapshot store stayed empty and every load replayed the full history, a little slower each time. ADR 0017 documented the straddle and accepted it, and ADR 0021 carried the caveat forward; both assumed a later save would land on a boundary. **No action required** — affected aggregates begin snapshotting on the next save that crosses a multiple. The version a snapshot lands on now depends on how events were batched, rather than always being an exact multiple; nothing reads a snapshot by version, and each aggregate keeps one upserted row.
@@ -798,7 +805,8 @@ This release also finally lands the ADR 0038-0040 wave that was written for 0.8.
 - Automatic schema creation and migrations
 - GitHub Actions CI/CD pipeline
 
-[Unreleased]: https://github.com/tyevans/eventsource-py/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/tyevans/eventsource-py/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/tyevans/eventsource-py/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/tyevans/eventsource-py/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/tyevans/eventsource-py/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/tyevans/eventsource-py/compare/v0.5.0...v0.8.0
