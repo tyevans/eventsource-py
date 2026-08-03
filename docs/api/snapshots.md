@@ -68,7 +68,7 @@ decides *how* the write is executed — two independent `@runtime_checkable`
 `Protocol`s rather than the single merged `SnapshotStrategy` protocol ADR 0017
 originally defined. `SnapshotPolicy` has one member,
 `should_snapshot(aggregate, events_since_snapshot) -> bool`; the built-in
-`EveryNEvents(n)` fires when `aggregate.version > 0 and aggregate.version % n == 0`,
+`EveryNEvents(n)` fires when a save carries the version across a multiple of `n`,
 and `Never()` never fires (manual mode). `SnapshotScheduler` has
 `async schedule(write, *, aggregate_type, aggregate_id) -> Snapshot | None`
 plus `pending_count` and `await_pending()`; the built-in `ImmediateScheduler`
@@ -248,10 +248,13 @@ rebuilds from a fresh aggregate instance. A version that is merely inaccurate
 raises nothing and produces a wrong aggregate.
 
 `version` also drives the default snapshot cadence: `EveryNEvents(n).should_snapshot()`
-returns `aggregate.version > 0 and aggregate.version % n == 0`, so with
-`snapshot_threshold=100` (mapped internally to `EveryNEvents(100)`) snapshots
-land on versions 100, 200, 300, and so on — and a save that jumps the version
-past a multiple of the threshold skips that boundary entirely.
+returns true when the save moved the version out of one block of `n` and into a
+later one, so with `snapshot_threshold=100` (mapped internally to
+`EveryNEvents(100)`) a snapshot is written by whichever save first carries the
+version past 100, then past 200, and so on. The version it lands on need not be
+a multiple: an aggregate emitting several events per command advances in
+strides, and a stride need never coincide with a multiple at all. See
+[ADR 0049](../adrs/0049-snapshot-boundary-crossing.md).
 
 The field is not a store-level ordering key. Because each
 `(aggregate_id, aggregate_type)` pair holds at most one row, `save_snapshot`

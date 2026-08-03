@@ -339,7 +339,7 @@ split, there is only one place this logic lives — `AggregateSnapshotManager.cr
 anything: it propagates errors to whichever caller invoked it.
 
 `SnapshotPolicy.should_snapshot(aggregate, events_since_snapshot)` decides *when*. `EveryNEvents(n)`
-fires on `aggregate.version > 0 and aggregate.version % n == 0`; `Never()` never fires (manual
+fires when a save carries the version across a multiple of `n`; `Never()` never fires (manual
 mode). `SnapshotScheduler.schedule(write, *, aggregate_type, aggregate_id)` decides *how* a write
 executes and is where the automatic-path failure handling now lives: `ImmediateScheduler` awaits
 `write` (a `take_snapshot(...)` coroutine) inline and catches/logs failures; `BackgroundScheduler`
@@ -381,7 +381,7 @@ its `should_snapshot()` always returns `False`. Under the split design, manual m
 `Never()` — a policy with nothing to schedule, and no unrunnable method to carry.
 
 Only two policies ship, and only the boundary predicate matters — `EveryNEvents(n)` fires on a
-threshold boundary (`version > 0 and version % n == 0`); `Never()` never fires. The *execution*
+threshold boundary — crossing a multiple of `n`, not landing on one; `Never()` never fires. The *execution*
 differs between the two schedulers:
 
 - `ImmediateScheduler` — await the write inline; failures

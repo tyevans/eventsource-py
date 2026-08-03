@@ -645,20 +645,29 @@ The threshold is **not** "N events since the last snapshot." After a successful
 check is:
 
 ```python
-aggregate.version > 0 and aggregate.version % self._threshold == 0
+aggregate.version // threshold > (aggregate.version - events_in_save) // threshold
 ```
 
-That is, a snapshot is taken only when the aggregate's post-save version lands
-exactly on a multiple of the threshold. Two consequences worth planning around:
+That is, a snapshot is taken when the save carried the aggregate out of one
+block of `threshold` versions and into a later one. Two consequences worth
+planning around:
 
-- **A save that steps over the boundary skips the snapshot.** With
-  `snapshot_threshold=100`, an aggregate that goes from version 98 to 103 in one
-  save produces no snapshot, and none will be produced until version 200. If
-  your commands emit several events at a time, expect snapshots to be taken less
-  often than "every N events" implies.
-- **Snapshots land on stable version numbers.** Because the check is on absolute
-  version and each aggregate keeps a single upserted snapshot row, snapshots
-  accumulate at versions 100, 200, 300, ... rather than drifting.
+- **Crossing counts; landing does not.** With `snapshot_threshold=100`, an
+  aggregate that goes from version 98 to 103 in one save snapshots at 103. A
+  save that crosses several multiples at once still takes one snapshot, at the
+  version it reached — the intermediate one would be overwritten immediately,
+  since each aggregate keeps a single upserted snapshot row.
+- **The version a snapshot lands on depends on how events were batched.**
+  Snapshots no longer accumulate at exactly 100, 200, 300. Nothing reads a
+  snapshot by version, so this costs nothing; do not build anything that
+  assumes the old set.
+
+Until ADR 0049 the check required the version to *land* on a multiple
+(`version % threshold == 0`). That was not merely stricter: an aggregate whose
+saves advance by a constant stride can miss every multiple forever — six events
+per save from version 1 leaves the version permanently odd, so a threshold of
+50 was never satisfiable — and such an aggregate snapshotted never rather than
+late.
 
 If you need a different rule -- elapsed time, event type, state size --
 implement the `SnapshotPolicy` protocol (one method,
