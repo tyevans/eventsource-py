@@ -40,12 +40,17 @@ class SnapshotPolicy(Protocol):
 
 @dataclass(frozen=True)
 class EveryNEvents:
-    """Snapshot at deterministic version boundaries: version % n == 0.
+    """Snapshot when a save carries the aggregate past a multiple of n.
 
-    Keyed off the aggregate version (not events_since_snapshot) so that two
-    processes saving the same aggregate agree on where boundaries fall. A
-    save jumping the version across a boundary without landing on it takes
-    no snapshot — acceptable, snapshots are an optimization.
+    Keyed off the aggregate version rather than a per-repository counter, so
+    two processes saving the same aggregate agree on which save owes the
+    snapshot.
+
+    Crossing a boundary counts, not landing on one. An aggregate that emits
+    several events per command advances its version in strides, and a stride
+    that never lands on a multiple of n would otherwise snapshot *never*
+    rather than merely late: saves of six events from version 1 leave the
+    version permanently odd, so `version % 50 == 0` has no solution at all.
     """
 
     n: int
@@ -55,7 +60,10 @@ class EveryNEvents:
             raise ValueError(f"EveryNEvents requires n >= 1, got {self.n}")
 
     def should_snapshot(self, aggregate: AggregateRoot[Any], events_since_snapshot: int) -> bool:
-        return aggregate.version > 0 and aggregate.version % self.n == 0
+        if aggregate.version <= 0:
+            return False
+        version_before = aggregate.version - events_since_snapshot
+        return aggregate.version // self.n > version_before // self.n
 
 
 @dataclass(frozen=True)

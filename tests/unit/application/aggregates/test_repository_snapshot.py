@@ -567,6 +567,40 @@ class TestRepositoryAutoSnapshot:
         assert snapshot.version == 10
 
     @pytest.mark.asyncio
+    async def test_snapshots_happen_when_saves_never_land_on_a_multiple(
+        self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
+    ) -> None:
+        """A stream saving a constant number of events per save must still snapshot.
+
+        Every other test here saves a batch whose size divides the threshold,
+        so the version lands on a multiple. Real aggregates emit several events
+        per command: with three events per save and a threshold of five, the
+        versions are 3, 6, 9, 12 -- no multiple of five among them, and under a
+        land-on-the-boundary rule this stream snapshots exactly never.
+        """
+        repo = AggregateRepository(
+            event_store=event_store,
+            aggregate_factory=TestAggregate,
+            snapshot_store=snapshot_store,
+            snapshot_threshold=5,
+            snapshot_mode="sync",
+        )
+
+        aggregate_id = uuid4()
+        for save in range(4):
+            aggregate = TestAggregate(aggregate_id) if save == 0 else await repo.load(aggregate_id)
+            for _ in range(3):
+                aggregate.increment()
+            await repo.save(aggregate)
+
+        assert snapshot_store.snapshot_count > 0, (
+            "twelve events at a threshold of five produced no snapshot"
+        )
+        snapshot = await snapshot_store.get_snapshot(aggregate_id, "Test")
+        assert snapshot is not None
+        assert snapshot.version >= 5
+
+    @pytest.mark.asyncio
     async def test_snapshot_failure_doesnt_fail_save(self, event_store: InMemoryEventStore) -> None:
         """Snapshot failure doesn't fail the save operation."""
         mock_snapshot_store = MagicMock()
@@ -912,18 +946,37 @@ class TestSnapshotPolicyLogic:
             aggregate._version = version
             assert policy.should_snapshot(aggregate, events_since_snapshot=version) is True
 
-    def test_returns_false_between_thresholds(
+    def test_returns_false_within_one_interval(
         self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
-        """Returns False between threshold multiples."""
+        """Returns False for a save that never left the interval it started in."""
         from eventsource.application.aggregates.snapshotting import EveryNEvents
 
         policy = EveryNEvents(100)
         aggregate = TestAggregate(uuid4())
 
-        for version in [1, 50, 99, 101, 150, 199]:
+        # (version reached, events in this save) -- each stays inside one interval
+        for version, events in [(1, 1), (50, 49), (99, 9), (101, 1), (150, 10), (199, 9)]:
             aggregate._version = version
-            assert policy.should_snapshot(aggregate, events_since_snapshot=version) is False
+            assert policy.should_snapshot(aggregate, events_since_snapshot=events) is False
+
+    def test_returns_true_when_one_save_spans_several_multiples(
+        self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
+    ) -> None:
+        """A save crossing more than one multiple still owes one snapshot.
+
+        The snapshot records the state at the version reached, so passing two
+        boundaries at once does not mean two snapshots -- the intermediate one
+        would be immediately superseded.
+        """
+        from eventsource.application.aggregates.snapshotting import EveryNEvents
+
+        policy = EveryNEvents(100)
+        aggregate = TestAggregate(uuid4())
+
+        for version in [101, 150, 199, 250]:
+            aggregate._version = version
+            assert policy.should_snapshot(aggregate, events_since_snapshot=version) is True
 
     def test_returns_false_at_version_zero(
         self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore

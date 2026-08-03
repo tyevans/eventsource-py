@@ -262,10 +262,10 @@ The rule is exact, and it is worth reading before you run anything. After a succ
 `save()`, the repository asks the strategy `should_snapshot()`, which returns:
 
 ```python
-aggregate.version > 0 and aggregate.version % self._threshold == 0
+aggregate.version // threshold > (aggregate.version - events_in_save) // threshold
 ```
 
-That is a check on the *resulting version*, evaluated once per save. It is not a count of
+That is a check on the versions the save moved *between*, evaluated once per save. It is not a count of
 events written, and it does not track how long it has been since the last snapshot.
 Append one event and see:
 
@@ -287,9 +287,10 @@ count: 0
 
 Nothing was written. The aggregate crossed version 500 -- a perfectly good multiple of 100
 -- but it crossed it back in Step 2, on a repository that had no snapshot store. This save
-landed on 501, and 501 % 100 is 1, so `should_snapshot()` returned `False` and the manager
-returned early without touching the store. Note that `load()` here was still a full replay
-of 500 events, and `save()` appended exactly one.
+went from 500 to 501, which stays inside the same block of a hundred, so
+`should_snapshot()` returned `False` and the manager returned early without touching the
+store. Note that `load()` here was still a full replay of 500 events, and `save()` appended
+exactly one.
 
 Now push the aggregate onto the next boundary:
 
@@ -309,19 +310,22 @@ snapshot: Snapshot(Counter/4687a41d-..., v600, schema_v1)
 ```
 
 There it is -- your first snapshot, written by the library rather than by you. 99 events
-took the aggregate from 501 to 600, `600 % 100 == 0`, and `ImmediateScheduler`
-serialized the state and called `save_snapshot()` before `save()` returned. That is what
+took the aggregate from 501 to 600, carrying it out of the 500s and into the next block,
+and `ImmediateScheduler` serialized the state and called `save_snapshot()` before `save()`
+returned. That is what
 `snapshot_mode="sync"` buys you: by the time the `await repo.save(c)` line finishes, the
 snapshot is durable. (Under `"background"` it would not be -- you would need
 `await repo.await_pending_snapshots()` first.)
 
-Three consequences of "once per save, on the resulting version" that will bite you if you
-skip past them:
+Three consequences of "once per save, on the versions the save moved between" that will
+bite you if you skip past them:
 
-- **A single save can jump the boundary.** Had you awarded 198 points instead of 99, the
-  aggregate would have gone 501 -> 699 in one save, and 699 is not a multiple of 100. No
-  snapshot, no warning; the next chance is 700. Aggregates that save large batches want a
-  small threshold, an explicit `create_snapshot()` (Step 8), or both.
+- **A save that jumps several boundaries still snapshots once.** Had you awarded 198 points
+  instead of 99, the aggregate would have gone 501 -> 699 in one save, crossing 600. One
+  snapshot is written, at 699 -- not two. The version it lands on is wherever the save
+  ended, not the multiple it passed. (Before ADR 0049 this case wrote *nothing*, because
+  699 is not a multiple of 100; an aggregate whose saves never landed on a multiple could
+  go its whole life without a snapshot.)
 - **The snapshot reflects the whole aggregate, not the batch.** The state written at
   version 600 includes all 600 events, including the 500 that predate the snapshot store
   existing. Snapshots are always a full state capture, never a delta.
@@ -584,8 +588,9 @@ first. `SQLiteSnapshotStore` requires the `aiosqlite` extra; check
   grows with the aggregate's age.
 - Snapshotting turns on by passing `snapshot_store` to `AggregateRepository`;
   `snapshot_threshold` and `snapshot_mode` control when snapshots get written.
-- The automatic rule is `version % threshold == 0`, evaluated once per successful save --
-  so a save that jumps past a boundary skips it.
+- The automatic rule fires when a save carries the version across a multiple of
+  `threshold`, evaluated once per successful save -- a save that jumps several
+  multiples at once still takes one snapshot, at the version it reached.
 - `"sync"` writes before `save()` returns, `"background"` writes in a task
   (`await_pending_snapshots()` waits for it), `"manual"` never writes automatically.
 - `repo.create_snapshot(aggregate)` writes one on demand, in any mode, and raises

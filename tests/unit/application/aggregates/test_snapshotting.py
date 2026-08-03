@@ -78,6 +78,20 @@ class TestEveryNEvents:
         with pytest.raises(ValueError):
             EveryNEvents(-5)
 
+    def test_true_when_the_save_crosses_a_boundary(self, order_at_version_101):
+        """A save that straddles a boundary has passed it, and owes a snapshot.
+
+        Version 101 reached in one save of three events came from 98, so the
+        100 boundary is behind it. Requiring the version to *land* on the
+        boundary means a stream whose saves have a constant stride can miss
+        every boundary forever: with saves of 6 from version 1, no version is
+        ever even, so `version % 50 == 0` is unsatisfiable.
+        """
+        assert EveryNEvents(100).should_snapshot(order_at_version_101, 3) is True
+
+    def test_false_when_the_save_stayed_within_one_interval(self, order_at_version_101):
+        assert EveryNEvents(100).should_snapshot(order_at_version_101, 1) is False
+
     def test_satisfies_policy_protocol(self):
         assert isinstance(EveryNEvents(10), SnapshotPolicy)
 

@@ -12,6 +12,9 @@ carried forward into the application ring.
 ## Status
 
 Accepted. Supersedes [ADR 0017](0017-snapshot-strategy-pattern.md).
+**Amended by [ADR 0049](0049-snapshot-boundary-crossing.md)** — `EveryNEvents`
+fires on crossing a multiple of `n`, not on landing exactly on one. The
+composition this ADR decided is unchanged; only the predicate is.
 Implemented in `src/eventsource/application/aggregates/snapshotting.py`
 (`SnapshotPolicy`, `EveryNEvents`, `Never`, `SnapshotScheduler`,
 `ImmediateScheduler`, `BackgroundScheduler`, `take_snapshot()`,
@@ -98,6 +101,12 @@ side-effect free. Two implementations ship:
   across a multiple of `n` without landing on it takes no snapshot until the
   next boundary — acceptable, because snapshots are an optimization, not a
   guarantee.
+
+  **Amended by [ADR 0049](0049-snapshot-boundary-crossing.md).** The straddle
+  caveat was wrong to accept: for a constant save stride it is not "no
+  snapshot until the next boundary" but no snapshot ever, since a stride may
+  never land on a multiple at all. The predicate is now a crossing test. The
+  agreement property this paragraph is defending is preserved.
 - `Never` — `should_snapshot` always returns `False`. This is manual mode,
   expressed as a policy with nothing to schedule, rather than as a strategy
   with an unrunnable execution method.

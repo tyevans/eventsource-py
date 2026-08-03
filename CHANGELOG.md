@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`EveryNEvents(n)` snapshots when a save crosses a multiple of `n`, not when the version lands exactly on one** (ADR 0049). An aggregate that emits several events per command advances its version in strides, and whether a stride ever lands on a multiple is arithmetic: for a constant stride `s` from a starting version `v0`, some version is a multiple of `n` only if `gcd(s, n)` divides `-v0 mod n`. A stream starting at version 1 and advancing by 6 against the default threshold of 50 satisfies no such version — every version it reaches is odd and every multiple of 50 is even — so it snapshotted *never*, not merely late. Nothing failed: the snapshot store stayed empty and every load replayed the full history, a little slower each time. ADR 0017 documented the straddle and accepted it, and ADR 0021 carried the caveat forward; both assumed a later save would land on a boundary. **No action required** — affected aggregates begin snapshotting on the next save that crosses a multiple. The version a snapshot lands on now depends on how events were batched, rather than always being an exact multiple; nothing reads a snapshot by version, and each aggregate keeps one upserted row.
+
 ## [0.9.0] - 2026-08-01
 
 The first release on the completed ring architecture, and the largest breaking release to date. It spans ADRs 0038-0048: the multitenancy dissolution and out-of-ring settlement wave that finished the ring-migration campaign, the domain-hardening wave, the PEP 695 migration and Python 3.13 floor, and two audit waves that closed silent-failure paths across the store, bus, subscription, and migration surfaces.
