@@ -36,9 +36,21 @@ reconstructed payloads. Points worth carrying in from the research:
   heuristic exists only because git has no stream identity to key on; 2.51's
   path-walk mode moves toward what a stream-addressed store has natively.
 
-Open questions: whether this belongs behind an opt-in per store, what it does to
-the outbox and to any reader that touches payload bytes directly, and whether
-the codec/version tag lives on the row or in the payload header.
+**The blocker is the column type, and it is a public-contract decision.**
+`payload` is `JSONB NOT NULL`, commented "stored as JSONB for flexible
+querying", and the difference is observable: `docs/guides/repository-operations.md`
+tells users PostgreSQL's JSONB column deserializes to a `dict` where SQLite and
+InMemory do not. A compressed payload cannot be JSONB. So this cannot be a
+quiet default — it needs a decision about whether compression is opt-in per
+store, what happens to rows already written, and whether a store that opts in
+gives up JSONB queryability as a documented consequence. (No shipped adapter
+code queries into `payload` today, and the schema carries no GIN index on it,
+so the capability is advertised rather than used internally — but users' own
+SQL against the events table is outside our reach.)
+
+Other open questions: what it does to the outbox and to any reader that touches
+payload bytes directly, and whether the codec/version tag lives on the row or in
+the payload header.
 
 ## Investigate making sqlalchemy an optional dependency (P3)
 
