@@ -14,7 +14,9 @@ from typing import TYPE_CHECKING
 from eventsource.application.projections.base import DeclarativeProjection, TenantFilter
 from eventsource.application.projections.checkpoints import record_checkpoint
 from eventsource.application.projections.dlq import send_to_dlq
+from eventsource.application.projections.retry import RetryPolicy
 from eventsource.domain.event import DomainEvent
+from eventsource.observability import Tracer
 from eventsource.observability.attributes import (
     ATTR_EVENT_TYPE,
     ATTR_HANDLER_NAME,
@@ -87,6 +89,8 @@ class DatabaseProjection(DeclarativeProjection):
         dlq_repo: DLQRepository | None = None,
         enable_tracing: bool = False,
         *,
+        retry_policy: RetryPolicy | None = None,
+        tracer: Tracer | None = None,
         tenant_filter: TenantFilter = None,
     ) -> None:
         """
@@ -101,6 +105,11 @@ class DatabaseProjection(DeclarativeProjection):
                      If None, permanently failed events are not persisted.
             enable_tracing: If True and OpenTelemetry is available, emit traces.
                           Default is False (tracing off for high-frequency projections).
+                          Ignored if tracer is explicitly provided.
+            retry_policy: Policy for retry behavior.
+                         If None, uses ExponentialBackoffRetryPolicy with defaults.
+            tracer: Optional custom Tracer instance. If not provided, one is
+                   created based on enable_tracing setting.
             tenant_filter: Optional tenant filter. Can be:
                 - UUID: Static filter, only process events with this tenant_id
                 - Callable[[], UUID | None]: Dynamic filter, called per event
@@ -110,6 +119,8 @@ class DatabaseProjection(DeclarativeProjection):
             checkpoint_repo=checkpoint_repo,
             dlq_repo=dlq_repo,
             enable_tracing=enable_tracing,
+            retry_policy=retry_policy,
+            tracer=tracer,
             tenant_filter=tenant_filter,
         )
         self._session_factory = session_factory
