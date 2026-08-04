@@ -36,9 +36,9 @@ The class hierarchy is linear: `CheckpointTrackingProjection` extends `Projectio
 adds checkpointing, retry, and dead-letter handling; `DeclarativeProjection` extends
 that with `@handles`-based dispatch and tenant filtering; `DatabaseProjection` extends
 `DeclarativeProjection` with transactional handlers that receive a database connection.
-Each level narrows what a subclass has to implement, at the cost of a fixed set of
-constructor parameters — the constructors are not uniform down the chain, and the
-asymmetries are documented explicitly in the sections for each class.
+Each level narrows what a subclass has to implement while widening the constructor: a
+subclass adds parameters (`tenant_filter`, `session_factory`, `model_class`) and never
+drops one its parent accepts.
 
 Everything below describes the current source. Members with a leading underscore
 (`_process_event`, `_should_process_event`, `_execute_in_transaction`, and similar) are
@@ -83,14 +83,19 @@ that each attempt runs `_execute_in_transaction()` against a brand-new session �
 PostgreSQL transaction is unusable after any error, so retrying inside the failed
 transaction would fail unconditionally.
 
-Both `DeclarativeProjection` and `DatabaseProjection` narrow the constructor: they
-accept `checkpoint_repo`, `dlq_repo`, `enable_tracing`, and (keyword-only)
-`tenant_filter`, but **not** `retry_policy` or `tracer`, and they do not forward those
-to `CheckpointTrackingProjection.__init__`. Any projection built on those two classes
-therefore always runs the inline default policy — `ExponentialBackoffRetryPolicy` with
-`max_retries=2` (three total attempts), `initial_delay=2.0`, `exponential_base=2.0`,
-`jitter=0.1` — regardless of what is in `eventsource.application.projections.retry`. This is called
-out again under each class because it is the most common surprise in the package.
+Every subclass constructor accepts at least what its parent does. `DeclarativeProjection`,
+`DatabaseProjection`, and `ReadModelProjection` each take `checkpoint_repo`, `dlq_repo`,
+`enable_tracing`, and — keyword-only — `retry_policy`, `tracer`, and `tenant_filter`,
+forwarding all of them up to `CheckpointTrackingProjection.__init__`. Omitting
+`retry_policy` still means the inline default policy — `ExponentialBackoffRetryPolicy`
+with `max_retries=2` (three total attempts), `initial_delay=2.0`, `exponential_base=2.0`,
+`jitter=0.1` — which is not `DEFAULT_RETRY_POLICY` from
+`eventsource.application.projections.retry`.
+
+That superset property is enforced by
+`tests/unit/application/projections/test_constructor_widening.py`: these four
+constructors restate the same parameter list rather than forwarding `**kwargs`, and each
+one dropping a parameter silently is exactly what the test exists to catch.
 
 Storage defaults are disabled, not in-memory (ADR 0024). Omitting `checkpoint_repo`
 means no checkpoint is ever written — `get_checkpoint()` / `get_lag_metrics()` return
@@ -481,8 +486,8 @@ CheckpointTrackingProjection(
 
 All five parameters are optional and positional-or-keyword, so
 `MyProjection()` is valid and produces a fully functional projection with checkpoint
-tracking and DLQ capture both disabled. This is the widest constructor in the
-hierarchy — the two subclasses accept strictly fewer parameters.
+tracking and DLQ capture both disabled. Subclasses accept all five as well, though
+`retry_policy` and `tracer` become keyword-only from `DeclarativeProjection` down.
 
 | Parameter | Type | Default | Effect |
 | --- | --- | --- | --- |

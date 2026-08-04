@@ -11,7 +11,10 @@ import logging
 from typing import TYPE_CHECKING
 
 from eventsource.adapters.sql.projection import DatabaseProjection
+from eventsource.application.projections.base import TenantFilter
+from eventsource.application.projections.retry import RetryPolicy
 from eventsource.domain.event import DomainEvent
+from eventsource.observability import Tracer
 from eventsource.observability.attributes import (
     ATTR_EVENT_TYPE,
     ATTR_HANDLER_NAME,
@@ -129,6 +132,10 @@ class ReadModelProjection[TModel: ReadModel](DatabaseProjection):
         checkpoint_repo: ProjectionCheckpoints | None = None,
         dlq_repo: DLQRepository | None = None,
         enable_tracing: bool = False,
+        *,
+        retry_policy: RetryPolicy | None = None,
+        tracer: Tracer | None = None,
+        tenant_filter: TenantFilter = None,
     ) -> None:
         """
         Initialize the read model projection.
@@ -138,13 +145,25 @@ class ReadModelProjection[TModel: ReadModel](DatabaseProjection):
             model_class: The ReadModel subclass this projection manages
             checkpoint_repo: Repository for checkpoint storage
             dlq_repo: Repository for dead letter queue
-            enable_tracing: Whether to enable OpenTelemetry tracing
+            enable_tracing: Whether to enable OpenTelemetry tracing.
+                          Ignored if tracer is explicitly provided.
+            retry_policy: Policy for retry behavior.
+                         If None, uses ExponentialBackoffRetryPolicy with defaults.
+            tracer: Optional custom Tracer instance. If not provided, one is
+                   created based on enable_tracing setting.
+            tenant_filter: Optional tenant filter. Can be:
+                - UUID: Static filter, only process events with this tenant_id
+                - Callable[[], UUID | None]: Dynamic filter, called per event
+                - None: No filtering, process all events (default)
         """
         super().__init__(
             session_factory=session_factory,
             checkpoint_repo=checkpoint_repo,
             dlq_repo=dlq_repo,
             enable_tracing=enable_tracing,
+            retry_policy=retry_policy,
+            tracer=tracer,
+            tenant_filter=tenant_filter,
         )
         self._model_class = model_class
         self._current_repository: ReadModelRepository[TModel] | None = None

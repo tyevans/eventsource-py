@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-03
+
+A single fix, released as a minor because the fix is additive public API: three
+projection constructors now accept arguments they previously rejected with
+`TypeError`. Nothing existing changes meaning, and no action is required on
+upgrade.
+
+### Added
+
+- **`DeclarativeProjection`, `DatabaseProjection`, and `ReadModelProjection` accept `retry_policy` and `tracer`** (keyword-only), forwarding them to `CheckpointTrackingProjection.__init__`. `ReadModelProjection` additionally accepts `tenant_filter`, which its own parent already took.
+
+### Fixed
+
+- **Projection subclasses no longer silently narrow their parent's constructor.** `CheckpointTrackingProjection` accepts `retry_policy` and `tracer`, but every subclass re-declared the constructor and dropped both. Since `DeclarativeProjection` is its only subclass in the tree and every other projection base descends from it, the two parameters were reachable only by subclassing the abstract base directly — the one path the docs steer users away from, `@handles` routing being the advertised way to write a projection. There was no other way in: `_retry_policy` has no property setter, so the only workaround was assigning the private attribute after `super().__init__()` returned. The practical cost was the default policy — three attempts spanning roughly six seconds, the right shape for a projection writing over a network and the wrong one for a projection writing to a local SQLite file, where the realistic transient is a briefly-locked database that clears in milliseconds: the backoff bought nothing, delayed the DLQ entry saying something was genuinely wrong, and held up the subscription meanwhile. A test now asserts each subclass constructor is a superset of its parent's, since four signatures restating one parameter list is exactly the shape that drifts.
+
 ## [0.9.1] - 2026-08-03
 
 A single fix: the default snapshot policy could not fire for a large class of
@@ -805,7 +820,8 @@ This release also finally lands the ADR 0038-0040 wave that was written for 0.8.
 - Automatic schema creation and migrations
 - GitHub Actions CI/CD pipeline
 
-[Unreleased]: https://github.com/tyevans/eventsource-py/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/tyevans/eventsource-py/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/tyevans/eventsource-py/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/tyevans/eventsource-py/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/tyevans/eventsource-py/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/tyevans/eventsource-py/compare/v0.8.0...v0.8.1

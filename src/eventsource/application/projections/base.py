@@ -597,6 +597,8 @@ class DeclarativeProjection(CheckpointTrackingProjection):
         dlq_repo: DLQRepository | None = None,
         enable_tracing: bool = False,
         *,
+        retry_policy: RetryPolicy | None = None,
+        tracer: Tracer | None = None,
         tenant_filter: TenantFilter = None,
     ) -> None:
         """
@@ -615,6 +617,11 @@ class DeclarativeProjection(CheckpointTrackingProjection):
                      logged at critical and re-raised, as before.
             enable_tracing: If True and OpenTelemetry is available, emit traces.
                           Default is False (tracing off for high-frequency projections).
+                          Ignored if tracer is explicitly provided.
+            retry_policy: Policy for retry behavior.
+                         If None, uses ExponentialBackoffRetryPolicy with defaults.
+            tracer: Optional custom Tracer instance. If not provided, one is
+                   created based on enable_tracing setting.
             tenant_filter: Optional tenant filter. Can be:
                 - UUID: Static filter, only process events with this tenant_id
                 - Callable[[], UUID | None]: Dynamic filter, called per event
@@ -636,6 +643,8 @@ class DeclarativeProjection(CheckpointTrackingProjection):
         super().__init__(
             checkpoint_repo=checkpoint_repo,
             dlq_repo=dlq_repo,
+            retry_policy=retry_policy,
+            tracer=tracer,
             enable_tracing=enable_tracing,
         )
 
