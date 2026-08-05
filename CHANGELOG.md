@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-08-05
+
+A backlog sweep. One read-model defect fixed, one public exception renamed, and
+the Tier 0 boundary given the runtime check it had been specified for. The
+rename is the only thing requiring action on upgrade, and only for code that
+catches the read-model conflict by name.
+
 ### Breaking
 
 - **`eventsource.ports.readmodels.OptimisticLockError` is renamed `ReadModelVersionConflictError`** (ADR 0050). It shared the name with `eventsource.domain.exceptions.OptimisticLockError` — an unrelated `EventSourceError` subclass raised by `append`, taking `aggregate_id` where this one takes `model_id`, neither catching the other and neither deriving from the other. Only the import path distinguished them, so `except OptimisticLockError` read as though it covered both and covered exactly one. **No deprecation alias**, per the pre-1.0 no-shim policy: an alias would preserve the ambiguity the rename exists to remove. The domain name and import path are unchanged, so write-side code needs no action; code catching the read-model error by name must update its import, and code catching it via `ReadModelError` is unaffected.
@@ -835,7 +842,8 @@ This release also finally lands the ADR 0038-0040 wave that was written for 0.8.
 - Automatic schema creation and migrations
 - GitHub Actions CI/CD pipeline
 
-[Unreleased]: https://github.com/tyevans/eventsource-py/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/tyevans/eventsource-py/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/tyevans/eventsource-py/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/tyevans/eventsource-py/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/tyevans/eventsource-py/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/tyevans/eventsource-py/compare/v0.8.1...v0.9.0
