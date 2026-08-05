@@ -68,7 +68,7 @@ dev = [
     # they resolve together, and a lower floor here silently hands
     # `pip install -e ".[dev]"` users a mypy that fails the strict config.
     "mypy>=1.19.0",
-    "ruff>=0.14.8,<0.15",
+    "ruff>=0.14.8,<0.17",
     "testcontainers>=4.0",
     "pre-commit>=4.0",
 ]
