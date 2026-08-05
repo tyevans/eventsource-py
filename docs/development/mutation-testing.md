@@ -20,14 +20,17 @@ simply go unused. Instead it targets a small, curated set of modules chosen for 
 small, pure(ish), and high-consequence — code where a silent behavior change would be
 expensive and hard to notice by other means:
 
-| Module | Test subset |
-| --- | --- |
-| `src/eventsource/adapters/_sql/engine.py` | `tests/unit/test_engine.py` |
-| `src/eventsource/repositories/_dialect.py` | `tests/unit/repositories/test_dialect.py` |
-| `src/eventsource/serialization/json.py` | `tests/unit/serialization/` |
-| `src/eventsource/adapters/_bus/registry.py` | `tests/unit/adapters/_bus/test_registry.py` |
-| `src/eventsource/adapters/_bus/retry.py` | `tests/unit/adapters/_bus/test_retry.py` |
-| `src/eventsource/adapters/_bus/base.py` | `tests/unit/adapters/_bus/test_base.py` |
+| Selector | Module | Test subset |
+| --- | --- | --- |
+| `engine` | `src/eventsource/adapters/_sql/engine.py` | `tests/unit/test_engine.py` |
+| `dialect` | `src/eventsource/adapters/_sql/dialect.py` | `tests/unit/repositories/test_dialect*.py` |
+| `json` | `src/eventsource/adapters/serialization/json.py` | `tests/unit/adapters/serialization/` |
+| `checkpoint` | `src/eventsource/adapters/sql/checkpoints.py` | SQLite conformance + checkpoint position/tracing |
+| `dlq` | `src/eventsource/adapters/sql/dlq.py` | SQLite conformance + `tests/repositories/test_sqlite_repos.py` |
+
+The table above is prose; `MODULES` in `scripts/_mutmut_configure.py` is what
+actually runs, and `tests/unit/test_mutmut_configure.py` fails if any path in
+it has gone stale. Read that dict when the two disagree.
 
 As further modules stabilize, they become candidates for this set — but only added
 one module at a time, each with its own pinned test subset, and only if a run stays
@@ -45,10 +48,12 @@ and why two rather than a version pin or a full switch, is its own section below
 ## How to run it
 
 ```bash
-scripts/mutation.sh              # mutmut: all three modules, sequentially
-scripts/mutation.sh engine       # mutmut: just src/eventsource/adapters/_sql/engine.py
-scripts/mutation.sh dialect      # mutmut: just repositories/_dialect.py
-scripts/mutation.sh json         # mutmut: just serialization/json.py
+scripts/mutation.sh              # mutmut: engine, dialect, json -- sequentially
+scripts/mutation.sh engine       # mutmut: just adapters/_sql/engine.py
+scripts/mutation.sh dialect      # mutmut: just adapters/_sql/dialect.py
+scripts/mutation.sh json         # mutmut: just adapters/serialization/json.py
+scripts/mutation.sh checkpoint   # mutmut: just adapters/sql/checkpoints.py
+scripts/mutation.sh dlq          # mutmut: just adapters/sql/dlq.py
 
 scripts/mutation-cosmic-ray.sh engine   # cosmic-ray: decorated-function slice
 ```
@@ -220,7 +225,7 @@ After the `busy_timeout` fix: 52 mutants, 47 killed, 5 survived — the two
 remaining survivors are the `Mul_Div` and comparison-operator equivalents above.
 None real gaps, none out of scope.
 
-## Baseline and triage: `repositories/_dialect.py`
+## Baseline and triage: `adapters/_sql/dialect.py`
 
 **Baseline:** 27 mutants, 24 killed, 3 in mutmut's "no tests" category (functionally
 the same signal as survived: no test in the pinned subset exercises the mutated code
@@ -277,7 +282,7 @@ alongside `RetryPolicy` already exercises the module's full behavior.
 After triage: 192/248 killed (78 → 56 net survivors, all in the accepted
 log-message and one equivalent-mutant category above), 0 timeouts on a clean rerun.
 
-## Deferred: `serialization/json.py`
+## Deferred: `adapters/serialization/json.py`
 
 Left out of this pass — `impl-t2b-2` was mid-round rewriting the encoder (promoting
 `orjson` to a hard dependency, deleting the stdlib fallback, folding an integer-range

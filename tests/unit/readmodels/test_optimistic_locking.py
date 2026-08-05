@@ -204,10 +204,17 @@ class TestInMemoryOptimisticLocking:
         assert result.updated_at > original_updated_at
 
     @pytest.mark.asyncio
-    async def test_model_in_memory_is_updated(
+    async def test_version_advances_in_storage_not_on_the_callers_object(
         self, repo: InMemoryReadModelRepository[TestModel]
     ) -> None:
-        """Test that the model object is updated with new version after save."""
+        """The version bump lands in storage; the writer's object is its own.
+
+        This asserted `loaded.version == 2` while the memory adapter still
+        mutated the caller's model in place -- a memory-only behavior the
+        SQL adapters never had, since their bump happens in the row. The
+        contract is now pinned for all three backends by
+        `ReadModelRepositoryConformance`.
+        """
         model_id = uuid4()
         model = TestModel(id=model_id, name="original", value=1)
         await repo.save(model)
@@ -219,8 +226,11 @@ class TestInMemoryOptimisticLocking:
         loaded.name = "updated"
         await repo.save_with_version_check(loaded)
 
-        # The model object should now have version 2
-        assert loaded.version == 2
+        assert loaded.version == 1
+
+        reloaded = await repo.get(model_id)
+        assert reloaded is not None
+        assert reloaded.version == 2
 
     @pytest.mark.asyncio
     async def test_concurrent_updates_one_succeeds_one_fails(
