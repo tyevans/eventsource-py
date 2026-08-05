@@ -91,7 +91,7 @@ Any module that passes that test -- imports cleanly with nothing but the standar
 | `readmodels/schema.py` | pydantic (`FieldInfo`), stdlib `types`/`decimal`, plus `readmodels/base` | Read model schema derivation from pydantic fields |
 | `readmodels/repository.py` | (none beyond `readmodels/base`; `Query` imported under `TYPE_CHECKING`) | `ReadModelRepository` interface |
 | `readmodels/in_memory.py` | (none beyond readmodels base/query/exceptions and `observability`) | `InMemoryReadModelRepository` |
-| `readmodels/exceptions.py` | (none) | `ReadModelNotFoundError`, `OptimisticLockError` |
+| `readmodels/exceptions.py` | (none) | `ReadModelNotFoundError`, `ReadModelVersionConflictError` |
 
 `domain/`, `ports/`, and `application/` are Tier 0 in full, package `__init__`s included: every module under them resolves to stdlib, pydantic, and other Tier 0 in-library modules. This now includes `ports/checkpoints.py` and `ports/dlq.py`, and all five modules of `application/projections/` -- the pure and application-ring halves of the old checkpoint/DLQ Tier-0 blocker (see boundary finding 2, resolved by ADR 0024).
 
@@ -371,6 +371,8 @@ That three-hop chain -- down from the five-hop one this document recorded before
 The package-taint pattern this section documented for `repositories/__init__.py`, `testing/__init__.py`, `readmodels/`, and `adapters/postgresql/__init__.py` alike -- an eager `__init__` reaching a backend before the caller asked for one -- still applies *inside* those packages; ADR 0035 only lazy-loads the top-level front door, not every intermediate package `__init__` it might route through once a caller does ask for a name. `from eventsource.adapters.postgresql import PostgreSQLEventStore` still runs `adapters/postgresql/__init__.py` in full, including `snapshots.py`, exactly as before -- the fix is that nothing forces that import to happen just because a caller imported `eventsource` and wanted a completely unrelated name.
 
 So: **tier is a property of a module, not of the package that contains it**, and for anything reached exclusively through the four ring packages (`domain/`, `ports/`, `application/`, `adapters/memory/`), an import-time `sys.modules` check is now the authoritative verification, not just static grep plus manual import-walking. For adapter packages with their own eager internal re-exports (`adapters/postgresql/`, `adapters/testing/`, etc.), the same package-taint caveat as always applies once a caller does import something from them.
+
+**That check now runs in CI.** `tests/unit/test_core_surface_purity.py` imports each core-surface module in a fresh subprocess and fails if `sqlalchemy`, `redis`, `asyncpg`, `aiosqlite`, `aiokafka`, or `aio_pika` lands in `sys.modules`. It is not redundant with the import-linter contract, which reads `import` statements and therefore cannot see an `importlib.import_module`, a driver a third-party package registers on import, or a name the lazy front door resolves; the runtime check covers those and the static contract covers by-name dependencies that never execute. The contract's `forbidden_modules` was widened from `sqlalchemy` alone to the same six drivers at the same time -- redis had been an extra since the 0.5.0 demotion with nothing enforcing its absence from Tier 0.
 
 ### Checklist for a single module
 

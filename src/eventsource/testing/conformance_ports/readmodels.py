@@ -26,10 +26,10 @@ import pytest
 
 from eventsource.ports.readmodels import (
     Filter,
-    OptimisticLockError,
     Query,
     ReadModelNotFoundError,
     ReadModelRepository,
+    ReadModelVersionConflictError,
 )
 from eventsource.testing.conformance_ports._fixtures import ConformanceReadModel
 
@@ -185,7 +185,7 @@ class ReadModelRepositoryConformance(ABC):
         await store.save_with_version_check(first)
 
         second.name = "loser"
-        with pytest.raises(OptimisticLockError):
+        with pytest.raises(ReadModelVersionConflictError):
             await store.save_with_version_check(second)
 
     async def test_save_with_version_check_rejects_an_absent_model(self, store: Repo) -> None:

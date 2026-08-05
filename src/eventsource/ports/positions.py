@@ -16,6 +16,25 @@ class Position:
     compare and persist — never arithmetic. Key element types are uniform
     within one store (the adapter defines the shape); ordering between
     differently-shaped keys is undefined.
+
+    **`store_id` must be unique across every store whose positions can meet.**
+    It is the whole of the foreign-position guard: two stores sharing a
+    `store_id` are indistinguishable here, so `PositionForeignError` does not
+    fire and their positions compare as though they came from one feed —
+    silently, and wrongly, since the keys count different events. A checkpoint
+    persisted by one store then decodes as valid against the other.
+
+    The adapter defaults are unique only within a deployment, not globally:
+    `pg:{database}` collides for same-named databases on different servers,
+    `sqlite:{database}` for the same file path on different hosts and for
+    every `":memory:"` store, and `"memory"` for every `MemoryEventStore`.
+    Pass `store_id` explicitly whenever two distinct stores could otherwise
+    land on the same name — the defaults exist for the single-store case.
+
+    The defaults are deliberately not made more specific (host and port for
+    PostgreSQL, say): `store_id` is embedded in every persisted position and
+    checkpoint, so changing how one is derived invalidates the checkpoints of
+    every deployment that took the default.
     """
 
     store_id: str

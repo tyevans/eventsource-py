@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+from eventsource.adapters._common import check_expected, describe_expected
 from eventsource.adapters._sql.positions import IntPositionCodec
 from eventsource.adapters.serialization import json_dumps, json_loads
 from eventsource.adapters.sql.schemas import get_schema
@@ -106,6 +107,10 @@ class SQLiteEventStore:
         self._wal_mode = wal_mode
         self._busy_timeout = busy_timeout
         self._connection: aiosqlite.Connection | None = None
+        # Defaults to the database path, which is unique only within a host
+        # -- and is "sqlite::memory:" for every in-memory store. Pass
+        # store_id explicitly when two such stores could meet; see
+        # Position's docstring.
         self._store_id = store_id or f"sqlite:{database}"
         self._codec = IntPositionCodec(self._store_id)
         self._lock = asyncio.Lock()
@@ -180,34 +185,6 @@ class SQLiteEventStore:
             await self._connection.close()
             self._connection = None
 
-    def _check_expected(self, current: int, expected: ExpectedVersion, stream: StreamId) -> None:
-        if expected.kind == "any":
-            return
-        if expected.kind == "no_stream":
-            if current != 0:
-                raise OptimisticLockError(stream.aggregate_id, "no_stream", current)
-            return
-        if expected.kind == "stream_exists":
-            if current == 0:
-                raise OptimisticLockError(stream.aggregate_id, "stream_exists", current)
-            return
-        if expected.kind == "exact":
-            if current != expected.version:
-                raise OptimisticLockError(stream.aggregate_id, expected.version or 0, current)
-            return
-        raise ValueError(f"unknown ExpectedVersion kind: {expected.kind!r}")
-
-    def _expected_description(self, expected: ExpectedVersion) -> int | str:
-        """What the caller asked for, as `OptimisticLockError` should report it.
-
-        A numeric version renders as a number; the non-numeric kinds render
-        by name, because reporting `no_stream` as the integer `0` claims the
-        caller expected a version they never wrote.
-        """
-        if expected.kind == "exact":
-            return expected.version or 0
-        return expected.kind
-
     async def append(
         self,
         stream: StreamId,
@@ -234,7 +211,7 @@ class SQLiteEventStore:
                 row = await cursor.fetchone()
                 current_version = row[0] if row else 0
 
-                self._check_expected(current_version, expected, stream)
+                check_expected(current_version, expected, stream)
 
                 seen_in_batch: set[UUID] = set()
                 for event in events:
@@ -299,7 +276,7 @@ class SQLiteEventStore:
                     row = await cursor.fetchone()
                     actual_version = row[0] if row else 0
                     raise OptimisticLockError(
-                        stream.aggregate_id, self._expected_description(expected), actual_version
+                        stream.aggregate_id, describe_expected(expected), actual_version
                     ) from e
                 raise
             except BaseException:

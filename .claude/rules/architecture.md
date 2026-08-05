@@ -100,7 +100,11 @@ The rings, innermost first:
    `adapters/kafka/`, `adapters/rabbitmq/`; shared bus collaborators
    (`BaseEventBus`, `SubscriptionRegistry`) live under adapters-internal
    `adapters/_bus/`, the same pattern as `adapters/_sql/`; top-level `bus/` no
-   longer exists (ADR 0031). Snapshot store backends (`InMemorySnapshotStore`,
+   longer exists (ADR 0031). `adapters/_common/` is the third adapters-internal
+   package, and the one to reach for when the shared code is neither
+   dialect- nor transport-specific: port semantics every store adapter needs
+   and none of them should re-derive (`check_expected`, `describe_expected` —
+   ADR 0051). Snapshot store backends (`InMemorySnapshotStore`,
    `PostgreSQLSnapshotStore`, `SQLiteSnapshotStore`) live under `adapters/memory/`,
    `adapters/postgresql/`, `adapters/sqlite/`; `snapshots/` is no longer a
    transitional adapter location. Checkpoint and DLQ adapters (dialect-parameterized

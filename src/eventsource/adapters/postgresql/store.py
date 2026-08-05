@@ -32,6 +32,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from eventsource.adapters._common import check_expected, describe_expected
 from eventsource.adapters._sql.positions import IntPositionCodec
 from eventsource.adapters.serialization import json_dumps, json_loads
 from eventsource.adapters.sql.schemas import get_schema
@@ -166,6 +167,10 @@ class PostgreSQLEventStore:
             engine, class_=AsyncSession, expire_on_commit=False
         )
         database = engine.url.database or "postgres"
+        # Defaults to the database name alone, which collides for same-named
+        # databases on different servers. Pass store_id explicitly when two
+        # such stores could meet -- see Position's docstring for why the
+        # default is not made host-specific.
         self._store_id = store_id or f"pg:{database}"
         self._codec = IntPositionCodec(self._store_id)
         self._create_schema = create_schema
@@ -243,34 +248,6 @@ class PostgreSQLEventStore:
         if self._owns_engine:
             await self._engine.dispose()
 
-    def _check_expected(self, current: int, expected: ExpectedVersion, stream: StreamId) -> None:
-        if expected.kind == "any":
-            return
-        if expected.kind == "no_stream":
-            if current != 0:
-                raise OptimisticLockError(stream.aggregate_id, "no_stream", current)
-            return
-        if expected.kind == "stream_exists":
-            if current == 0:
-                raise OptimisticLockError(stream.aggregate_id, "stream_exists", current)
-            return
-        if expected.kind == "exact":
-            if current != expected.version:
-                raise OptimisticLockError(stream.aggregate_id, expected.version or 0, current)
-            return
-        raise ValueError(f"unknown ExpectedVersion kind: {expected.kind!r}")
-
-    def _expected_description(self, expected: ExpectedVersion) -> int | str:
-        """What the caller asked for, as `OptimisticLockError` should report it.
-
-        A numeric version renders as a number; the non-numeric kinds render
-        by name, because reporting `no_stream` as the integer `0` claims the
-        caller expected a version they never wrote.
-        """
-        if expected.kind == "exact":
-            return expected.version or 0
-        return expected.kind
-
     def _classify_integrity_error(self, e: IntegrityError) -> str | None:
         """Classify an append `IntegrityError` by the real constraint name.
 
@@ -333,7 +310,7 @@ class PostgreSQLEventStore:
                 )
                 current_version = result.scalar() or 0
 
-                self._check_expected(current_version, expected, stream)
+                check_expected(current_version, expected, stream)
 
                 seen_in_batch: set[UUID] = set()
                 for event in events:
@@ -404,7 +381,7 @@ class PostgreSQLEventStore:
                     )
                     actual_version = result.scalar() or 0
                     raise OptimisticLockError(
-                        stream.aggregate_id, self._expected_description(expected), actual_version
+                        stream.aggregate_id, describe_expected(expected), actual_version
                     ) from e
                 raise
 

@@ -1102,11 +1102,16 @@ when this aggregate was loaded. If the stream has moved since, the append fails
 and `OptimisticLockError` is raised carrying `aggregate_id`, `expected_version`,
 and `actual_version`. Nothing is written.
 
-That error is the write-side one, from `eventsource.domain.exceptions`. Keep it
-separate in your head from
-`eventsource.ports.readmodels.exceptions.OptimisticLockError`, which is keyed
-by `model_id` and belongs to a different problem; the section below on the two
-locks explains why they were never merged.
+That error is the write-side one, from `eventsource.domain.exceptions`. The
+read side runs its own, unrelated optimistic check --
+`save_with_version_check` raises
+`eventsource.ports.readmodels.ReadModelVersionConflictError`, keyed by
+`model_id` and guarding a row's save count rather than a stream's version (see
+"The read side" below on why that `version` column is not the aggregate's).
+The two are deliberately separate: neither derives from the other, and neither
+`except` clause catches the other's error. They were nonetheless both named
+`OptimisticLockError` until ADR 0050 renamed the read-model one, which made a
+distinction the type system enforced very easy to miss when reading.
 
 `ExpectedVersion` supplies three sentinels for the cases a plain integer cannot
 express: `NO_STREAM` (0) asserts the aggregate does not exist yet -- the right

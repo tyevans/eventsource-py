@@ -19,8 +19,8 @@ from eventsource.observability.attributes import (
     ATTR_READMODEL_TYPE,
 )
 from eventsource.ports.readmodels.exceptions import (
-    OptimisticLockError,
     ReadModelNotFoundError,
+    ReadModelVersionConflictError,
 )
 from eventsource.ports.readmodels.model import ReadModel
 from eventsource.ports.readmodels.query import Filter, Query
@@ -466,13 +466,13 @@ class InMemoryReadModelRepository[TModel: ReadModel]:
 
         Verifies that the current database version matches the model's
         version before updating. If versions don't match, raises
-        OptimisticLockError. On successful save, the version is incremented.
+        ReadModelVersionConflictError. On successful save, the version is incremented.
 
         Args:
             model: The read model to save
 
         Raises:
-            OptimisticLockError: If the version in storage doesn't match
+            ReadModelVersionConflictError: If the version in storage doesn't match
                 the model's version
             ReadModelNotFoundError: If the model doesn't exist in storage
 
@@ -481,7 +481,7 @@ class InMemoryReadModelRepository[TModel: ReadModel]:
             >>> summary.status = "shipped"
             >>> try:
             ...     await repo.save_with_version_check(summary)
-            ... except OptimisticLockError as e:
+            ... except ReadModelVersionConflictError as e:
             ...     print(f"Conflict: expected v{e.expected_version}")
         """
         with self._tracer.span(
@@ -499,7 +499,7 @@ class InMemoryReadModelRepository[TModel: ReadModel]:
                     raise ReadModelNotFoundError(model.id)
 
                 if existing.version != model.version:
-                    raise OptimisticLockError(
+                    raise ReadModelVersionConflictError(
                         model.id,
                         expected_version=model.version,
                         actual_version=existing.version,

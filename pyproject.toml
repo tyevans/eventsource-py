@@ -260,7 +260,7 @@ modules = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "Tier 0 modules must not import sqlalchemy"
+name = "Tier 0 modules must not import a database or broker driver"
 type = "forbidden"
 source_modules = [
     "eventsource.domain.event",
@@ -290,7 +290,14 @@ source_modules = [
     "eventsource.domain.tenant_context",
     "eventsource.domain.tenant_events",
 ]
-forbidden_modules = ["sqlalchemy"]
+forbidden_modules = [
+    "sqlalchemy",
+    "redis",
+    "asyncpg",
+    "aiosqlite",
+    "aiokafka",
+    "aio_pika",
+]
 
 # Full ring layering (ADR 0034). Higher layers may import lower, never the
 # reverse: adapters -> application -> ports -> domain. This subsumes the two

@@ -27,7 +27,7 @@ class ReadModelError(Exception):
     pass
 
 
-class OptimisticLockError(ReadModelError):
+class ReadModelVersionConflictError(ReadModelError):
     """
     Raised when optimistic locking fails due to version mismatch.
 
@@ -39,7 +39,7 @@ class OptimisticLockError(ReadModelError):
     1. Read model with current version N
     2. When saving, check that DB version is still N
     3. If match, save with version N+1
-    4. If mismatch, raise OptimisticLockError
+    4. If mismatch, raise ReadModelVersionConflictError
 
     Attributes:
         model_id: ID of the read model
@@ -51,7 +51,7 @@ class OptimisticLockError(ReadModelError):
         >>> summary.status = "shipped"
         >>> try:
         ...     await repo.save_with_version_check(summary)
-        ... except OptimisticLockError as e:
+        ... except ReadModelVersionConflictError as e:
         ...     # Handle conflict - reload and retry or fail
         ...     print(f"Conflict: expected v{e.expected_version}, found v{e.actual_version}")
         ...     # Option 1: Reload and retry
@@ -66,7 +66,7 @@ class OptimisticLockError(ReadModelError):
         actual_version: int | None = None,
     ) -> None:
         """
-        Initialize OptimisticLockError.
+        Initialize ReadModelVersionConflictError.
 
         Args:
             model_id: ID of the read model that had the conflict

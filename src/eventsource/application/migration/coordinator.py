@@ -1011,6 +1011,18 @@ class MigrationCoordinator:
                 # there is no failure list left to absorb. The pass still
                 # advanced the persisted checkpoint, which is what
                 # `_lag_anchor` falls back to without an interceptor.
+                #
+                # Logged distinctly from the converged case below: both
+                # return 0 and both leave the operator retrying cutover,
+                # but only this one means "the state that would have told
+                # you more is gone."
+                logger.info(
+                    "Resync pass complete for migration %s: no interceptor "
+                    "registered (coordinator restarted since dual-write "
+                    "began), so no failures could be absorbed; the pass "
+                    "advanced the persisted checkpoint",
+                    migration_id,
+                )
                 return 0
 
             # The pass began after installation (the interceptor has been
@@ -1018,7 +1030,13 @@ class MigrationCoordinator:
             # that) and ran to completion -- the two ordering facts only
             # the coordinator can attest. See
             # `DualWriteInterceptor.mark_copy_pass_complete`.
-            return interceptor.mark_copy_pass_complete(current.last_source_position)
+            absorbed = interceptor.mark_copy_pass_complete(current.last_source_position)
+            logger.info(
+                "Resync pass complete for migration %s: %d mirror failures absorbed",
+                migration_id,
+                absorbed,
+            )
+            return absorbed
 
     async def _run_copy_pass(self, copier: BulkCopier, migration: Migration) -> bool:
         """Run one copier pass, streaming progress to status observers.
