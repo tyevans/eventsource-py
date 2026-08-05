@@ -19,8 +19,8 @@ from eventsource.observability.attributes import (
     ATTR_READMODEL_TYPE,
 )
 from eventsource.ports.readmodels.exceptions import (
-    OptimisticLockError,
     ReadModelNotFoundError,
+    ReadModelVersionConflictError,
 )
 from eventsource.ports.readmodels.model import ReadModel
 from eventsource.ports.readmodels.query import Filter, Query
@@ -35,6 +35,13 @@ class InMemoryReadModelRepository[TModel: ReadModel]:
 
     This implementation is thread-safe via asyncio.Lock, making it
     suitable for testing async projections.
+
+    Stored models are private to the repository. Reads hand back a copy and
+    writes take a copy, so a caller can never hold a reference into the
+    store -- matching the SQL adapters, which hydrate a fresh instance from
+    a row on every read and mutate only the row on every write. Without
+    that, a model a caller saved or fetched could be mutated underneath it
+    by a later unrelated write, on the memory backend only.
 
     Attributes:
         model_class: The ReadModel subclass this repository manages
@@ -74,6 +81,16 @@ class InMemoryReadModelRepository[TModel: ReadModel]:
         self._models: dict[UUID, TModel] = {}
         self._lock = asyncio.Lock()
 
+    @staticmethod
+    def _detach(model: TModel) -> TModel:
+        """Return an independent copy, so no reference crosses the boundary.
+
+        Used on both sides: on read so the caller cannot reach the stored
+        object, and on write so a later store-side mutation (`soft_delete`,
+        `restore`, a version bump) cannot reach the caller's object.
+        """
+        return model.model_copy(deep=True)
+
     async def get(self, id: UUID) -> TModel | None:
         """
         Get a read model by ID.
@@ -95,7 +112,7 @@ class InMemoryReadModelRepository[TModel: ReadModel]:
                 model = self._models.get(id)
                 if model is None or model.is_deleted():
                     return None
-                return model
+                return self._detach(model)
 
     async def get_many(self, ids: list[UUID]) -> list[TModel]:
         """
@@ -119,7 +136,7 @@ class InMemoryReadModelRepository[TModel: ReadModel]:
                 for id_ in ids:
                     model = self._models.get(id_)
                     if model is not None and not model.is_deleted():
-                        result.append(model)
+                        result.append(self._detach(model))
                 return result
 
     async def save(self, model: TModel) -> None:
@@ -140,15 +157,12 @@ class InMemoryReadModelRepository[TModel: ReadModel]:
                 now = datetime.now(UTC)
                 existing = self._models.get(model.id)
 
-                if existing is None:
-                    # Insert - set updated_at
-                    model.updated_at = now
-                else:
-                    # Update - increment version and update timestamp
-                    model.version = existing.version + 1
-                    model.updated_at = now
+                stored = self._detach(model)
+                if existing is not None:
+                    stored.version = existing.version + 1
+                stored.updated_at = now
 
-                self._models[model.id] = model
+                self._models[model.id] = stored
 
     async def save_many(self, models: list[TModel]) -> None:
         """
@@ -169,13 +183,12 @@ class InMemoryReadModelRepository[TModel: ReadModel]:
                 for model in models:
                     existing = self._models.get(model.id)
 
-                    if existing is None:
-                        model.updated_at = now
-                    else:
-                        model.version = existing.version + 1
-                        model.updated_at = now
+                    stored = self._detach(model)
+                    if existing is not None:
+                        stored.version = existing.version + 1
+                    stored.updated_at = now
 
-                    self._models[model.id] = model
+                    self._models[model.id] = stored
 
     async def delete(self, id: UUID) -> bool:
         """
@@ -275,7 +288,7 @@ class InMemoryReadModelRepository[TModel: ReadModel]:
                 model = self._models.get(id)
                 if model is None or not model.is_deleted():
                     return None
-                return model
+                return self._detach(model)
 
     async def find_deleted(self, query: Query | None = None) -> list[TModel]:
         """
@@ -320,7 +333,7 @@ class InMemoryReadModelRepository[TModel: ReadModel]:
                 if query.limit is not None:
                     results = results[: query.limit]
 
-                return results
+                return [self._detach(m) for m in results]
 
     async def exists(self, id: UUID) -> bool:
         """
@@ -390,7 +403,7 @@ class InMemoryReadModelRepository[TModel: ReadModel]:
                 if query.limit is not None:
                     results = results[: query.limit]
 
-                return results
+                return [self._detach(m) for m in results]
 
     async def count(self, query: Query | None = None) -> int:
         """
@@ -453,13 +466,13 @@ class InMemoryReadModelRepository[TModel: ReadModel]:
 
         Verifies that the current database version matches the model's
         version before updating. If versions don't match, raises
-        OptimisticLockError. On successful save, the version is incremented.
+        ReadModelVersionConflictError. On successful save, the version is incremented.
 
         Args:
             model: The read model to save
 
         Raises:
-            OptimisticLockError: If the version in storage doesn't match
+            ReadModelVersionConflictError: If the version in storage doesn't match
                 the model's version
             ReadModelNotFoundError: If the model doesn't exist in storage
 
@@ -468,7 +481,7 @@ class InMemoryReadModelRepository[TModel: ReadModel]:
             >>> summary.status = "shipped"
             >>> try:
             ...     await repo.save_with_version_check(summary)
-            ... except OptimisticLockError as e:
+            ... except ReadModelVersionConflictError as e:
             ...     print(f"Conflict: expected v{e.expected_version}")
         """
         with self._tracer.span(
@@ -486,16 +499,16 @@ class InMemoryReadModelRepository[TModel: ReadModel]:
                     raise ReadModelNotFoundError(model.id)
 
                 if existing.version != model.version:
-                    raise OptimisticLockError(
+                    raise ReadModelVersionConflictError(
                         model.id,
                         expected_version=model.version,
                         actual_version=existing.version,
                     )
 
-                now = datetime.now(UTC)
-                model.version = existing.version + 1
-                model.updated_at = now
-                self._models[model.id] = model
+                stored = self._detach(model)
+                stored.version = existing.version + 1
+                stored.updated_at = datetime.now(UTC)
+                self._models[model.id] = stored
 
     def _apply_filter(self, model: TModel, filter_: Filter) -> bool:
         """

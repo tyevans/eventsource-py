@@ -8,16 +8,14 @@ provisioning so this module stays adapter-free and dialect-free.
 Protocol does not guarantee one), the resolution of `updated_at`, and any
 dialect-specific type coercion. Those stay in the per-backend test modules.
 
-**Adapter divergence, worked around rather than pinned:**
-`InMemoryReadModelRepository.get()` returns the live object stored in its
-dict rather than a hydrated copy, so two `get()` calls for the same id alias
-the same object -- mutating one is observed by "both". SQLite and
-PostgreSQL rehydrate a fresh instance from a row on every `get()` and do not
-have this aliasing. `test_save_with_version_check_rejects_a_stale_version`
-below builds its stale writer with `model_copy()` instead of a second
-`store.get()` for exactly this reason; that gives every backend an
-independent object and asserts the identical conflict-rejection behavior
-without depending on adapter-specific `get()` identity semantics.
+**Pinned here:** the repository owns its stored models. A read returns an
+object the caller may mutate freely without reaching storage, and a write
+takes a copy rather than adopting -- or mutating -- the caller's object.
+This was an in-memory-versus-SQL divergence before it was a contract: the
+SQL adapters hydrate a fresh instance per read and bump `version` in the
+row, while the in-memory adapter handed out its live dict entry and bumped
+`version` on the caller's object. The two cases below pin both directions
+for every backend.
 """
 
 import asyncio
@@ -28,10 +26,10 @@ import pytest
 
 from eventsource.ports.readmodels import (
     Filter,
-    OptimisticLockError,
     Query,
     ReadModelNotFoundError,
     ReadModelRepository,
+    ReadModelVersionConflictError,
 )
 from eventsource.testing.conformance_ports._fixtures import ConformanceReadModel
 
@@ -177,22 +175,56 @@ class ReadModelRepositoryConformance(ABC):
         await store.save(model)
         first = await store.get(model.id)
         assert first is not None
-        # An independent object holding the same (now-stale) version --
-        # built via model_copy() rather than a second store.get(), since
-        # InMemoryReadModelRepository's get() aliases the stored object
-        # while SQLite/PostgreSQL hydrate a fresh instance per get().
-        second = first.model_copy()
+        # Two independent readers of the same version, both from get() --
+        # which is only a valid way to build this scenario because reads
+        # are pinned below to return unaliased objects.
+        second = await store.get(model.id)
+        assert second is not None
 
         first.name = "winner"
         await store.save_with_version_check(first)
 
         second.name = "loser"
-        with pytest.raises(OptimisticLockError):
+        with pytest.raises(ReadModelVersionConflictError):
             await store.save_with_version_check(second)
 
     async def test_save_with_version_check_rejects_an_absent_model(self, store: Repo) -> None:
         with pytest.raises(ReadModelNotFoundError):
             await store.save_with_version_check(_model())
+
+    async def test_reads_do_not_alias_stored_state(self, store: Repo) -> None:
+        """Mutating a read result must not reach storage."""
+        model = _model(name="stored")
+        await store.save(model)
+
+        loaded = await store.get(model.id)
+        assert loaded is not None
+        loaded.name = "mutated locally"
+
+        again = await store.get(model.id)
+        assert again is not None
+        assert again.name == "stored"
+
+        [from_many] = await store.get_many([model.id])
+        assert from_many.name == "stored"
+        [from_find] = await store.find()
+        assert from_find.name == "stored"
+
+    async def test_writes_do_not_mutate_the_callers_model(self, store: Repo) -> None:
+        """A saved object stays the caller's, unchanged by later writes."""
+        model = _model(name="first")
+        await store.save(model)
+        version_after_save = model.version
+
+        # A second, unrelated write against the same id.
+        update = await store.get(model.id)
+        assert update is not None
+        update.name = "second"
+        await store.save(update)
+
+        # The caller's original object is untouched by both writes.
+        assert model.name == "first"
+        assert model.version == version_after_save
 
 
 __all__ = ["ReadModelRepositoryConformance"]

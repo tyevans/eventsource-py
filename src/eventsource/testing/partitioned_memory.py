@@ -9,10 +9,12 @@ This is the thing a consumer coded against `GlobalEventFeed` should fail to
 type-check against, and the thing `GlobalFeedConformance` should never be
 run against.
 
-Kept sqlalchemy-free and independent of any adapter: the expected-version
-dispatch below is a deliberate copy of the pattern in
-`eventsource.adapters.memory.store.InMemoryEventStore._check_expected`, not an
-import from it -- the testing package must not depend on a specific adapter.
+Kept sqlalchemy-free. Expected-version dispatch comes from
+`eventsource.adapters._common`, which is backend-agnostic port semantics
+shared by every store adapter -- not a specific adapter, which this package
+still must not depend on. It used to be a deliberate copy of the in-memory
+adapter's private method, one of four verbatim copies now down to one
+definition.
 """
 
 import asyncio
@@ -20,9 +22,10 @@ from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime
 from uuid import UUID
 
+from eventsource.adapters._common import check_expected
 from eventsource.domain import StreamId
 from eventsource.domain.event import DomainEvent
-from eventsource.domain.exceptions import DuplicateEventError, OptimisticLockError
+from eventsource.domain.exceptions import DuplicateEventError
 from eventsource.ports import (
     AppendResult,
     CategoryReadOptions,
@@ -52,23 +55,6 @@ class PartitionedMemoryStore:
         self._event_ids: set[UUID] = set()
         self._lock = asyncio.Lock()
 
-    def _check_expected(self, current: int, expected: ExpectedVersion, stream: StreamId) -> None:
-        if expected.kind == "any":
-            return
-        if expected.kind == "no_stream":
-            if current != 0:
-                raise OptimisticLockError(stream.aggregate_id, "no_stream", current)
-            return
-        if expected.kind == "stream_exists":
-            if current == 0:
-                raise OptimisticLockError(stream.aggregate_id, "stream_exists", current)
-            return
-        if expected.kind == "exact":
-            if current != expected.version:
-                raise OptimisticLockError(stream.aggregate_id, expected.version or 0, current)
-            return
-        raise ValueError(f"unknown ExpectedVersion kind: {expected.kind!r}")
-
     async def append(
         self,
         stream: StreamId,
@@ -83,7 +69,7 @@ class PartitionedMemoryStore:
             existing = self._streams.get(key, [])
             current_version = len(existing)
 
-            self._check_expected(current_version, expected, stream)
+            check_expected(current_version, expected, stream)
 
             seen_in_batch: set[UUID] = set()
             for event in events:

@@ -23,22 +23,29 @@ from pathlib import Path
 MODULES: dict[str, tuple[str, str | list[str]]] = {
     "engine": ("src/eventsource/adapters/_sql/engine.py", "tests/unit/test_engine.py"),
     "dialect": (
-        "src/eventsource/repositories/_dialect.py",
-        "tests/unit/repositories/test_dialect.py",
-    ),
-    "json": ("src/eventsource/serialization/json.py", "tests/unit/serialization/"),
-    "checkpoint": (
-        "src/eventsource/repositories/checkpoint.py",
+        "src/eventsource/adapters/_sql/dialect.py",
         [
-            "tests/unit/test_checkpoint_repository.py",
-            "tests/unit/test_checkpoint_position.py",
-            "tests/unit/repositories/test_checkpoint_tracing.py",
+            "tests/unit/repositories/test_dialect.py",
+            "tests/unit/repositories/test_dialect_properties.py",
+        ],
+    ),
+    "json": (
+        "src/eventsource/adapters/serialization/json.py",
+        "tests/unit/adapters/serialization/",
+    ),
+    "checkpoint": (
+        "src/eventsource/adapters/sql/checkpoints.py",
+        [
+            "tests/unit/adapters/test_sqlite_conformance.py",
+            "tests/unit/adapters/test_checkpoint_position.py",
+            "tests/unit/adapters/test_sql_checkpoint_tracing.py",
+            "tests/repositories/test_sqlite_repos.py",
         ],
     ),
     "dlq": (
-        "src/eventsource/repositories/dlq.py",
+        "src/eventsource/adapters/sql/dlq.py",
         [
-            "tests/unit/test_dlq_repository.py",
+            "tests/unit/adapters/test_sqlite_conformance.py",
             "tests/repositories/test_sqlite_repos.py",
         ],
     ),

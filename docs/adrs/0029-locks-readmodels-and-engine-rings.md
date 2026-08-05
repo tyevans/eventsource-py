@@ -34,6 +34,13 @@ as part of a pre-1.0 decision to stop carrying deprecation shims at all.
 `ModuleNotFoundError`; the ports/adapters split this ADR made is otherwise
 unaffected.
 
+**Amended by [ADR 0050](0050-read-model-version-conflict-error-name.md)**: the
+read-model `OptimisticLockError` this ADR placed in
+`ports/readmodels/exceptions.py` -- and whose name collision with the domain
+exception it recorded as a knowingly-deferred consequence -- is renamed
+`ReadModelVersionConflictError`. The subpackage split this ADR decided is
+otherwise unaffected.
+
 **Amends [ADR 0023](0023-postgresql-advisory-locks.md).** ADR 0023's Decision
 does not change and is not retro-edited: `PostgreSQLLockManager` remains the
 only production distributed-lock implementation, and its "PostgreSQL-only"

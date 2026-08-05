@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- **`eventsource.ports.readmodels.OptimisticLockError` is renamed `ReadModelVersionConflictError`** (ADR 0050). It shared the name with `eventsource.domain.exceptions.OptimisticLockError` — an unrelated `EventSourceError` subclass raised by `append`, taking `aggregate_id` where this one takes `model_id`, neither catching the other and neither deriving from the other. Only the import path distinguished them, so `except OptimisticLockError` read as though it covered both and covered exactly one. **No deprecation alias**, per the pre-1.0 no-shim policy: an alias would preserve the ambiguity the rename exists to remove. The domain name and import path are unchanged, so write-side code needs no action; code catching the read-model error by name must update its import, and code catching it via `ReadModelError` is unaffected.
+
+### Fixed
+
+- **`InMemoryReadModelRepository` no longer aliases the caller's objects.** `get`, `get_many`, `get_deleted`, `find`, and `find_deleted` returned the live dict entry, and `save`, `save_many`, and `save_with_version_check` adopted the caller's object and mutated it — bumping `version`, stamping `updated_at`. The SQL adapters do neither: they hydrate a fresh instance per read and bump `version` in the row. So a model a caller had saved or fetched could change underneath it from a later unrelated write, on the memory backend only, and a projection that held a reference across two saves saw a value it never assigned. Reads now return a copy and writes take one. The contract is pinned in `ReadModelRepositoryConformance` for all three backends rather than in the memory adapter's own tests, which is what let the divergence stand: the suite had *documented* it as a known adapter difference and routed around it.
+
+### Changed
+
+- **`check_expected` and `describe_expected` move to `adapters/_common/`** (ADR 0051), a new adapters-internal package beside `_sql/` (dialect-specific) and `_bus/` (transport-specific), for port semantics that belong to no backend. The expected-version dispatch existed verbatim in three store adapters and the partitioned-memory testing double. Internal only — no public API changes, and no behavior changes.
+- **The Tier 0 import-linter contract forbids six drivers, not just `sqlalchemy`**: `redis`, `asyncpg`, `aiosqlite`, `aiokafka`, and `aio_pika` join it. `redis` had been an optional extra since 0.5.0 with nothing enforcing its absence from the core surface. `tests/unit/test_core_surface_purity.py` asserts the same property at runtime, which the static contract cannot do for a dynamic import or a driver a third-party package registers on import.
+- **`store_id` uniqueness is documented** on `Position` and at each adapter's default. It is the whole of the foreign-position guard, and the defaults (`pg:{database}`, `sqlite::memory:`, `"memory"`) collide under conditions users hit — two stores sharing one make `PositionForeignError` silently not fire. The defaults are deliberately unchanged: `store_id` is embedded in every persisted position and checkpoint, so redefining one invalidates the checkpoints of every deployment that took it.
+- **`MigrationCoordinator.run_resync_pass` logs its two zero-return cases distinctly.** Converged and "coordinator restarted, no interceptor registered" both return 0 and both leave the operator retrying cutover; only the second means the state that would have explained more is gone.
+
 ## [0.10.0] - 2026-08-03
 
 A single fix, released as a minor because the fix is additive public API: three

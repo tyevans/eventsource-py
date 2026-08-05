@@ -9,19 +9,18 @@ exception family -- that users import for four different reasons.
 The adapter half lives under `eventsource.adapters.{memory,postgresql,
 sqlite,sql}`.
 
-Note: `OptimisticLockError` here is the read-model one
-(`model_id`, `expected_version`, `actual_version`), a `ReadModelError`
-subclass. It is a **different class** from
-`eventsource.domain.exceptions.OptimisticLockError`, which is raised on event
-append and derives from `EventSourceError`. Neither catches the other. See
-ADR 0029's recorded exception and the backlog item that resolves the name
-collision.
+`ReadModelVersionConflictError` (`model_id`, `expected_version`,
+`actual_version`) is the read-model conflict, a `ReadModelError` subclass.
+It was called `OptimisticLockError` until ADR 0050, which shared the name
+with `eventsource.domain.exceptions.OptimisticLockError` -- an unrelated
+`EventSourceError` subclass raised on event append, with a different
+constructor, that never caught it and was never caught by it.
 """
 
 from eventsource.ports.readmodels.exceptions import (
-    OptimisticLockError,
     ReadModelError,
     ReadModelNotFoundError,
+    ReadModelVersionConflictError,
 )
 from eventsource.ports.readmodels.model import ReadModel
 from eventsource.ports.readmodels.query import Filter, Query
@@ -32,7 +31,7 @@ from eventsource.ports.readmodels.repository import (
 
 __all__ = [
     "Filter",
-    "OptimisticLockError",
+    "ReadModelVersionConflictError",
     "Query",
     "ReadModel",
     "ReadModelError",

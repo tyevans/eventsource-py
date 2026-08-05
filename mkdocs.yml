@@ -173,6 +173,9 @@ nav:
       - "ADR-0046: aggregate_type Has One Source: the Aggregate Class": adrs/0046-aggregate-type-single-source.md
       - "ADR-0047: Live Runner Feed-Driven Checkpointing": adrs/0047-live-runner-feed-driven-checkpointing.md
       - "ADR-0048: Failure Paths Report and Retain": adrs/0048-failure-paths-report-and-retain.md
+      - "ADR-0049: Snapshots Fire on Crossing a Boundary": adrs/0049-snapshot-boundary-crossing.md
+      - "ADR-0050: Read-Model Version Conflict Error Name": adrs/0050-read-model-version-conflict-error-name.md
+      - "ADR-0051: adapters/_common Shared Port Semantics": adrs/0051-adapters-common-shared-port-semantics.md
   - Development:
       - development/index.md
       - Contributing: development/contributing.md

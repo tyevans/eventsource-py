@@ -9,10 +9,11 @@ from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime
 from uuid import UUID
 
+from eventsource.adapters._common import check_expected
 from eventsource.domain import StreamId
 from eventsource.domain.event import DomainEvent
 from eventsource.domain.event_registry import EventRegistry
-from eventsource.domain.exceptions import DuplicateEventError, OptimisticLockError
+from eventsource.domain.exceptions import DuplicateEventError
 from eventsource.ports import (
     AppendResult,
     CategoryReadOptions,
@@ -29,6 +30,11 @@ class InMemoryEventStore:
     """In-memory implementation of `FullEventStore`.
 
     Structural conformance only -- no inheritance from the port protocols.
+
+    `store_id` defaults to `"memory"` for *every* instance, so two of these
+    stores compare positions as though they shared a feed rather than raising
+    `PositionForeignError`. Give each one its own `store_id` in any test that
+    puts two in play at once; see `Position`'s docstring.
 
     Attributes:
         max_append_batch: No batch-size limit is enforced by this adapter.
@@ -62,23 +68,6 @@ class InMemoryEventStore:
         """1-based global position for the given 0-based `_events` index."""
         return Position(store_id=self._store_id, key=(index + 1,))
 
-    def _check_expected(self, current: int, expected: ExpectedVersion, stream: StreamId) -> None:
-        if expected.kind == "any":
-            return
-        if expected.kind == "no_stream":
-            if current != 0:
-                raise OptimisticLockError(stream.aggregate_id, "no_stream", current)
-            return
-        if expected.kind == "stream_exists":
-            if current == 0:
-                raise OptimisticLockError(stream.aggregate_id, "stream_exists", current)
-            return
-        if expected.kind == "exact":
-            if current != expected.version:
-                raise OptimisticLockError(stream.aggregate_id, expected.version or 0, current)
-            return
-        raise ValueError(f"unknown ExpectedVersion kind: {expected.kind!r}")
-
     async def append(
         self,
         stream: StreamId,
@@ -93,7 +82,7 @@ class InMemoryEventStore:
             indexes = self._streams.get(key, [])
             current_version = len(indexes)
 
-            self._check_expected(current_version, expected, stream)
+            check_expected(current_version, expected, stream)
 
             seen_in_batch: set[UUID] = set()
             for event in events:

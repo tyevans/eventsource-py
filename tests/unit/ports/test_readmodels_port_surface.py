@@ -9,17 +9,17 @@ import eventsource.ports.readmodels as _readmodels_port
 def test_public_names_import_from_the_port() -> None:
     from eventsource.ports.readmodels import (
         Filter,
-        OptimisticLockError,
         Query,
         ReadModel,
         ReadModelError,
         ReadModelNotFoundError,
         ReadModelRepository,
         ReadModelRepositoryProtocol,
+        ReadModelVersionConflictError,
     )
 
     assert ReadModelRepositoryProtocol is ReadModelRepository
-    assert issubclass(OptimisticLockError, ReadModelError)
+    assert issubclass(ReadModelVersionConflictError, ReadModelError)
     assert issubclass(ReadModelNotFoundError, ReadModelError)
     assert hasattr(ReadModel, "table_name")
     assert hasattr(Query, "with_filter")

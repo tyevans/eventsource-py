@@ -109,7 +109,7 @@ class ReadModelRepository(Protocol[TModel]):
             model: The read model to save
 
         Note:
-            Implementations may raise OptimisticLockError if version
+            Implementations may raise ReadModelVersionConflictError if version
             conflicts are detected (when optimistic locking is enabled).
 
         Example:
@@ -349,7 +349,7 @@ class ReadModelRepository(Protocol[TModel]):
 
         Verifies that the current database version matches the model's
         version before updating. If versions don't match, raises
-        OptimisticLockError. On successful save, the version is incremented.
+        ReadModelVersionConflictError. On successful save, the version is incremented.
 
         This method is useful when:
         - Multiple processes may update the same read model
@@ -360,13 +360,13 @@ class ReadModelRepository(Protocol[TModel]):
         1. Read model with current version N
         2. When saving, check that DB version is still N
         3. If match, save with version N+1
-        4. If mismatch, raise OptimisticLockError
+        4. If mismatch, raise ReadModelVersionConflictError
 
         Args:
             model: The read model to save. Must already exist in the database.
 
         Raises:
-            OptimisticLockError: If the version in database doesn't match
+            ReadModelVersionConflictError: If the version in database doesn't match
                 the model's version (concurrent modification detected)
             ReadModelNotFoundError: If the model doesn't exist in the database
 
@@ -388,7 +388,7 @@ class ReadModelRepository(Protocol[TModel]):
             >>> # Save with version check
             >>> try:
             ...     await repo.save_with_version_check(summary)
-            ... except OptimisticLockError as e:
+            ... except ReadModelVersionConflictError as e:
             ...     # Handle conflict - reload and retry or fail
             ...     print(f"Conflict: expected v{e.expected_version}, "
             ...           f"found v{e.actual_version}")

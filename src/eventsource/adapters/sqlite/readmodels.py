@@ -31,8 +31,8 @@ from eventsource.observability.attributes import (
     ATTR_READMODEL_TYPE,
 )
 from eventsource.ports.readmodels.exceptions import (
-    OptimisticLockError,
     ReadModelNotFoundError,
+    ReadModelVersionConflictError,
 )
 from eventsource.ports.readmodels.query import Filter, Query
 
@@ -543,13 +543,13 @@ class SQLiteReadModelRepository[TModel: _BaseReadModel]:
 
         Verifies that the current database version matches the model's
         version before updating. If versions don't match, raises
-        OptimisticLockError. On successful save, the version is incremented.
+        ReadModelVersionConflictError. On successful save, the version is incremented.
 
         Args:
             model: The read model to save
 
         Raises:
-            OptimisticLockError: If the version in database doesn't match
+            ReadModelVersionConflictError: If the version in database doesn't match
                 the model's version
             ReadModelNotFoundError: If the model doesn't exist in database
 
@@ -558,7 +558,7 @@ class SQLiteReadModelRepository[TModel: _BaseReadModel]:
             >>> summary.status = "shipped"
             >>> try:
             ...     await repo.save_with_version_check(summary)
-            ... except OptimisticLockError as e:
+            ... except ReadModelVersionConflictError as e:
             ...     print(f"Conflict: expected v{e.expected_version}")
         """
         with self._tracer.span(
@@ -614,7 +614,7 @@ class SQLiteReadModelRepository[TModel: _BaseReadModel]:
                 if check_row is None:
                     raise ReadModelNotFoundError(model.id)
                 else:
-                    raise OptimisticLockError(
+                    raise ReadModelVersionConflictError(
                         model.id,
                         expected_version=model.version,
                         actual_version=check_row[0],

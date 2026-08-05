@@ -2,6 +2,12 @@
 
 Open work items, carried over from the retired `bd` (beads) tracker.
 
+Everything below was verified open on 2026-08-04. Seventeen entries were
+removed in that sweep -- some closed by the work in the same PR, most closed
+by earlier work that never came back to update this file. What they were and
+where they went is recorded at the bottom, because "why is this not here
+anymore" is the question a backlog most often has to answer about itself.
+
 ## Delta-compress stored event payloads (P2)
 
 Event payloads are stored verbatim. An aggregate that keeps a document in its
@@ -54,44 +60,23 @@ the payload header.
 
 ## Investigate making sqlalchemy an optional dependency (P3)
 
-Investigate whether sqlalchemy can be moved from core deps to optional extras. Its
-current importers, per `grep -rlE '^(from|import) sqlalchemy' src/eventsource/`:
-`adapters/postgresql/outbox.py`, `adapters/postgresql/snapshots.py`,
-`adapters/postgresql/store.py`, `adapters/sql/checkpoints.py`,
-`adapters/_sql/connection.py`, `adapters/_sql/dialect.py`, `adapters/sql/dlq.py`,
-`engine.py`, `locks/postgresql.py`, `adapters/sql/migration/audit_log.py`,
-`adapters/sql/migration/migration.py`, `adapters/sql/migration/position_mapping.py`,
-`adapters/sql/migration/routing.py`, and `readmodels/postgresql.py`. (`stores/` and
-`repositories/` no longer exist — both were deleted by the store retirement and
-outbox ring migration slices; `migration/repositories/*.py` moved to
-`adapters/sql/migration/` when `eventsource.migration` joined the ring map,
-ADR 0034.) The key question: do any core interfaces import
-sqlalchemy at module level? If the interfaces are clean (pydantic-only), sqlalchemy
-can become optional. If not, identify what needs to change. This further lightens
-the base install toward the Tier 0 goal.
+Investigate whether sqlalchemy can be moved from core deps to optional extras.
+Its importers, per `grep -rlE '^(from|import) sqlalchemy' src/eventsource/`, are
+now confined to two packages -- `adapters/postgresql/` (`locks.py`, `outbox.py`,
+`readmodels.py`, `snapshots.py`, `store.py`) and the SQL adapter packages
+(`adapters/_sql/{connection,dialect,engine}.py`, `adapters/sql/{checkpoints,dlq}.py`,
+`adapters/sql/migration/*.py`), plus the Alembic templates under
+`adapters/sql/schemas/`.
+
+The entry's key question -- do any core interfaces import sqlalchemy at module
+level? -- is now answered, and the answer is no: the Tier 0 import-linter
+contract and `tests/unit/test_core_surface_purity.py` both enforce that they do
+not. What remains is the packaging half: moving sqlalchemy behind an extra,
+deciding what a plain install of `eventsource` can still do, and what the import
+error reads like when it cannot. That is a release-notes-and-extras decision
+rather than an investigation.
 
 Prerequisite (done): drop redis from core dependencies.
-
-## Add CI boundary check for core surface purity (P2)
-
-Add a test that imports only core surface modules (events, aggregates, protocols,
-`stores/interface`, `application/projections/base`, handlers, exceptions, types) and
-asserts no sqlalchemy/redis modules are in `sys.modules` afterward. This prevents
-accidental coupling from creeping in and makes a future Tier 0 extraction cheap.
-
-Note: import-linter contracts were added in commit 260c662 — check whether they
-already cover this before doing more work here. As of ADR 0024, import-linter now
-covers the whole `eventsource.application` ring plus the memory adapters, so the
-remaining question is narrower than it was: whether a runtime `sys.modules` assertion
-adds anything over the static contract, or whether the static contract alone is
-sufficient and this item can be closed. Task 3 Step 9 of the outbox ring migration
-(2026-07-31) added exactly this kind of check for one module —
-`uv run python -c "import sys, eventsource.ports.outbox; assert 'sqlalchemy' not in
-sys.modules"` — as a working example of the runtime assertion this item proposes
-generalizing.
-
-Prerequisite (done): document core surface boundary for future Tier 0 extraction
-(`docs/core-surface.md`).
 
 ## Deterministic or scheduled coverage for bus performance assertions (P3)
 
@@ -102,72 +87,6 @@ vs a 20% threshold on a green code path). Nothing in CI watches metrics overhead
 Either rewrite the assertions as deterministic proxies (count instrumentation calls
 rather than elapsed time) or add a scheduled, non-blocking benchmark workflow that
 runs `-m benchmark` and reports results.
-
-## Remove bus facade compat shims (P2) -- DONE via ADR 0031
-
-0.8.0: remove bus facade compat shims -- migrate ~90 white-box test call sites to
-collaborator access (`bus._connection_manager.*` etc.), delete the facade property
-shims and thin delegations on both backends. (The scheduled
-`record_reconnection`/`record_rebalance` removal landed with the
-aggregates-application-ring branch.)
-
-Resolved by the bus ring split (ADR 0031, 2026-07-31): `bus/` and its facade
-`__init__.py` are deleted outright, so there is no facade left to shim -- the
-~90 call sites are retargeted onto `eventsource.adapters._bus` and the
-per-backend collaborator modules directly, in the same pass as the ring
-move, rather than as a separate 0.8.0 migration.
-
-## Document store_id uniqueness expectations (P3)
-
-Default `store_id`s are not unique across distinct stores: `pg:{database}` collides
-for same-named databases on different servers, `sqlite::memory:` for every in-memory
-store, `"memory"` for every `MemoryEventStore`. The `PositionForeignError` guard
-silently passes for colliding ids. Document that `store_id` must be set explicitly
-when two distinct stores could share a name; consider deriving the pg default from
-host+port+database.
-
-## SQLite adapter: reads share the writer's connection (P3)
-
-Reads run on the same aiosqlite connection as `append` and outside the write lock,
-so a read scheduled between two of an append's INSERTs can observe uncommitted rows
-of the in-flight batch. Inherited from the legacy sqlite store design. Take reads on
-a separate connection (or under the write lock) so partial appends are never visible.
-
-## Share ExpectedVersion dispatch across store adapters (P3)
-
-All three adapters reimplement `_check_expected`/`_expected_sentinel` verbatim; the
-read_category batch-timestamp tie-break divergence showed what this duplication
-invites. Hoist into a shared `adapters/_common/` helper, and add a rules note that
-behavior asserted by a conformance suite should be implemented once.
-
-## Reconcile DLQ delete_resolved_events cutoff semantics (P3)
-
-`delete_resolved_events(older_than_days)` computes its cutoff differently per
-backend: `adapters/memory/dlq.py` truncates to midnight UTC before subtracting
-days, while `adapters/sql/dlq.py` subtracts from `now()` directly — so at
-`older_than_days=0` a moments-ago resolution is deleted by SQL backends but kept
-by the memory backend. The port docstring (`ports/dlq.py`, `delete_resolved_events`)
-does not specify cutoff semantics, which is why two conforming-looking adapters
-diverged. Pick one semantic, make both conform, update the conformance suite's
-per-backend day-zero tests back into the shared suite, and tighten the port
-docstring. Found by the Task 7 conformance review (projections-ring slice).
-
-## Catch-up can end early with completed=False when a batch is entirely filtered (P3)
-
-`_process_batch` in `subscriptions/runners/catchup.py` returns a delivered-event
-count of 0 when every envelope in a read batch is excluded by the subscription's
-event-type filter, and the outer catch-up loop breaks on a zero-delivered batch —
-even though the store position advanced and more of the feed remains unread. The
-loop conflates "empty read" (genuinely caught up) with "all filtered" (not caught
-up, just nothing this batch matched); catch-up exits with `completed=False` and the
-subscription is left short of the actual watermark. The live runner happens to
-cover the gap once it takes over, so this does not currently drop events end to
-end, but it means catch-up's own completion signal is unreliable for
-heavily-filtered subscriptions. Pre-existing behavior, surfaced by the store
-retirement slice (b) Task 3 review. Suggested fix direction: distinguish "empty
-read" from "all filtered" in `_process_batch`'s return contract (e.g. report
-envelopes-read alongside envelopes-delivered) so the loop can tell the two cases
-apart.
 
 ## Re-benchmark pg catch-up horizon predicate at scale (P2)
 
@@ -193,103 +112,6 @@ index path is exactly what needs re-measuring. Prior methodology + numbers (now
 describing a predicate that no longer exists): session artifact
 pg-catchup-bench.md (2026-07-31).
 
-## Wire position_mapper into BulkCopier's coordinator call site (P2)
-
-`MigrationCoordinator` never passes a `position_mapper` to `BulkCopier` on the default
-path, so an ordinary migration records no position mappings and subscription
-checkpoint translation (`SubscriptionMigrator` / `PositionMapper.translate_position`)
-has nothing to translate against. Spec §11 risk 2 (per-event append cost in
-`BulkCopier` with a position mapper attached) is therefore unmeasured in production
-use — the only place it gets exercised is tests that construct a mapper explicitly.
-Either wire `position_mapper` into the coordinator's default `BulkCopier`
-construction, or document the opt-in explicitly (a migration that wants checkpoint
-translation must pass a mapper itself) so the gap is a documented choice rather than
-an oversight. Surfaced by the store retirement slice (c) Task 6 review (2026-07-31).
-
-## No in-phase resync for dual-write mirror failures after bulk copy completes (P2)
-
-Once `BULK_COPY` finishes, `SyncLagTracker`'s lag anchor only advances through the
-dual-write mirror; a mirror failure during `DUAL_WRITE` clamps the anchor in place
-(fail-closed) via `first_failed_source_position`, and nothing in the `DUAL_WRITE`
-phase can run an absorbing copy pass to clear it — only `mark_copy_pass_complete`
-does, and that only runs during `BULK_COPY`. Today's remedy is abort-and-restart
-the migration. This should fold into the catch-up-cap "one more pass" operator API
-need: an operator-triggered resync entry point that runs a bounded catch-up copy
-pass while already in `DUAL_WRITE`, so a transient mirror failure late in a long
-migration doesn't force starting over. Surfaced by the store retirement slice (c)
-Task 6 review (2026-07-31); noted in `docs/guides/live-migration.md`.
-
-## Migrate bus/ interface and backends to ports/adapters (P2) -- DONE via ADR 0031
-
-`bus/` colocates the EventBus interface with InMemory, Redis, RabbitMQ, and
-Kafka backends. Ring migration: EventBus port into `ports/`, backends into
-`adapters/<backend>/bus.py`, guarded optional imports preserved, conformance
-suite already exists to anchor behavior. Coordinate with the existing "Remove
-bus facade compat shims (P2)" entry — shim removal scheduled for 0.8.0 should
-land first or together to avoid double-moving. Campaign residue item (2026-07-31).
-
-Resolved by ADR 0031 (2026-07-31): `EventBus` moved to `ports/bus.py`,
-`BaseEventBus`/`SubscriptionRegistry` to adapters-internal `adapters/_bus/`,
-and the four backends to `adapters/memory/bus.py`, `adapters/redis/`,
-`adapters/kafka/`, `adapters/rabbitmq/` (guarded optional imports preserved).
-Landed together with "Remove bus facade compat shims" above, per the
-coordination note.
-
-## Relocate subscriptions/ into the application ring (P2)
-
-`subscriptions/` (manager, runners, retry, health, flow control) is use-case
-orchestration operating purely on ports since the store retirement, but still
-lives as a top-level package outside `application/`. Relocate under
-`application/subscriptions/` with deprecation shims for public names, and
-extend the Tier-0 import-linter contract to cover it. Campaign residue item
-(2026-07-31).
-
-## Resolve the duplicate `OptimisticLockError` name (readmodels vs core) (P2)
-
-Two unrelated classes share the name: `eventsource.ports.readmodels.OptimisticLockError(ReadModelError)`
-with `(model_id, expected_version, actual_version=None)`, and
-`eventsource.exceptions.OptimisticLockError(EventSourceError)` with
-`(aggregate_id, expected_version, actual_version)`. They do not catch each
-other. Proposed resolution: rename the read-model one to
-`ReadModelVersionConflictError` with a deprecation alias. **The collision
-predates the structure slice A (locks/readmodels/engine ring migration,
-2026-07-31)** — record that, so a future reader does not attribute it to that
-slice.
-
-## Remove the `eventsource.locks` and `eventsource.readmodels` deprecation shims (P3) — Done (ADR 0030)
-
-Originally scheduled for 0.8.0. Removed ahead of schedule as part of the
-top-level module ring consolidation (ADR 0030, 2026-07-31), when the project
-adopted a no-deprecation-shim policy pre-1.0: `src/eventsource/locks/__init__.py`
-and `src/eventsource/readmodels/__init__.py` are deleted; `import
-eventsource.locks` / `import eventsource.readmodels` now raise
-`ModuleNotFoundError`. The `eventsource.locks` entry in the "Application
-ring must not import adapters" `forbidden_modules` contract in
-`pyproject.toml` is removed alongside it (owned by a separate task in the
-same slice).
-
-## InMemoryReadModelRepository aliases live objects (P3)
-
-`get()`/`get_many()` return the live dict entry rather than a copy, and
-`save()`/`save_with_version_check()` mutate the caller's object in place
-(bumps `.version`, sets `.updated_at`) — while `PostgreSQLReadModelRepository`
-and `SQLiteReadModelRepository` always hydrate fresh instances from the
-database. A caller holding a reference to a model it previously saved or
-fetched can have it silently mutated by a later, unrelated write against the
-same repository. Fix direction: `model_copy()` on read, copy-before-mutate on
-save, so all three backends present the same aliasing contract. Found by the
-readmodels conformance work (structure slice A, 2026-07-31).
-
-## Decide engine.py's ring placement (P3) — Done (ADR 0029, structure slice A)
-
-`engine.py` moved to `src/eventsource/adapters/_sql/engine.py` — `adapters/_sql/`
-rather than dissolving into the existing connection helpers (a distinct
-concern, not naturally absorbed by `connection.py` or `dialect.py`) and rather
-than `adapters/sql/engine.py` (whose package `__init__` eagerly imports
-`projection.py`, reaching into `application/projections/` — see ADR 0029 §3.2
-for the full rejected-alternatives argument). The lazy-init backlog item below
-is updated with the new import-chain shape.
-
 ## Small ring-consistency cleanups (P3)
 
 Batch of low-risk campaign leftovers (2026-07-31): (a) consider renaming
@@ -302,24 +124,14 @@ duplicate `ports/` definitions in spirit) with deprecation re-exports; (d) the
 readmodels port-purity `ast`-based test (verifying `ports/readmodels/` imports
 no sqlalchemy) is blind to relative imports — none exist in that package
 today, so this is not a live gap, but tighten the test if `ports/` ever
-adopts relative imports (structure slice A, 2026-07-31); (e)
-`scripts/_mutmut_configure.py`'s `dialect`, `checkpoint`, and `json`
-(actually `dlq`) selector entries point at `src/eventsource/repositories/...`,
-a package deleted in an earlier slice — those selectors are dead until
-retargeted at the modules' current locations or removed outright. Found by
-the A6 engine-move task (structure slice A, 2026-07-31), out of scope there
-by the task's own boundary.
+adopts relative imports (structure slice A, 2026-07-31). Found by the A6
+engine-move task (structure slice A, 2026-07-31), out of scope there by the
+task's own boundary.
 
-## Cutover can switch routing with up to cutover_max_lag_events missing (P2)
-
-`cutover_max_lag_events` defaults to 100 (migration/models.py:391); cutover.py:321
-allows cutover to succeed with up to that many source events absent from the
-target — a real loss window at routing switch, caught only by the non-fatal
-post-cutover consistency check. This undercuts dual_write.py's documented
-"stuck-until-recopied, never cutover over missing data" stance. Decide: default
-to 0 (strict), or document the loss window prominently in the live-migration
-guide. Pre-existing default, not a campaign regression; needs its own small
-spec. Surfaced by the whole-campaign final review (2026-07-31).
+Sub-item (e) -- `scripts/_mutmut_configure.py`'s selectors pointing at the
+deleted `repositories/` package -- is closed (2026-08-04). The selectors are
+retargeted and `tests/unit/test_mutmut_configure.py` now fails when one goes
+stale or when `mutation.sh`'s selector list drifts from the Python table.
 
 ## given_events supports one aggregate per scenario (P3)
 
@@ -328,14 +140,6 @@ scenario; multi-aggregate scenarios need manual store setup. Behavior is
 documented in docs/tutorials/08-testing.md (~line 323); this entry exists so
 the limitation is tracked as improvable, closing a ledger note from the
 aggregates slice (2026-07-31).
-
-## Differentiate run_resync_pass's two zero-return shapes in logs (P3)
-
-`MigrationCoordinator.run_resync_pass` returns 0 both when the migration is
-converged and when the coordinator restarted and has no interceptor registered
-(coordinator.py ~1010-1017). Operator outcome is identical (retry cutover), but
-a differentiating log line would make the restart shape visible. Deferred minor
-from the correctness-fixes slice final review (2026-07-31).
 
 ## Buffered live events dropped on stop/transition-failure leave lag inflated (P3)
 
@@ -355,18 +159,11 @@ Found by the correctness-fixes slice final review (2026-07-31).
 # Audit findings, 2026-08-02
 
 Surfaced by three parallel read-only audits (`adapters/`, `application/`, public
-API + DX). 28 findings total; the three Criticals fixed on the day are omitted
-here (PRs #112, #113, #114). Everything below is still open. Each was marked
-CONFIRMED (the reviewer executed something demonstrating it) or PLAUSIBLE
-(reasoned from code, not executed) — that distinction is preserved. Docker was
-unavailable, so no integration tests ran.
-
-> **Most of this section was closed by the ADR-0048 sweep** (see the CHANGELOG's
-> Unreleased entries and `docs/adrs/0048-failure-paths-report-and-retain.md`).
-> What remains below is what that sweep deliberately did not take on: work that
-> is a feature or a refactor rather than a defect fix, plus one item that needs
-> a repository double to reproduce. Two limitations the sweep created or
-> confirmed are recorded as new entries at the end.
+API + DX); 28 findings, three Criticals fixed on the day (PRs #112, #113, #114)
+and most of the rest closed by the ADR-0048 sweep (see
+`docs/adrs/0048-failure-paths-report-and-retain.md`). What remains below is what
+that sweep deliberately did not take on: work that is a feature or a refactor
+rather than a defect fix.
 
 ## Cutover's routing switch needs a real transaction, not compensation (P2)
 
@@ -402,3 +199,56 @@ does. A user developing on SQLite and deploying on PostgreSQL gets different
 delivery guarantees from identical code. CONFIRMED. The ADR-0048 sweep
 documented the gap in the event-bus guide rather than closing it: implementing
 it is a schema and transaction-boundary change. Still worth implementing.
+
+---
+
+# Closed, 2026-08-04
+
+Verified against the tree rather than taken on the entry's word. Two shapes:
+work this sweep did, and work already done whose entry outlived it -- the
+second being the larger group, and the reason a stale backlog costs more than
+an empty one.
+
+**Closed by this sweep** (see ADRs 0050 and 0051):
+
+- *InMemoryReadModelRepository aliases live objects* — reads now hand back a
+  copy and writes take one; pinned for all three backends in
+  `ReadModelRepositoryConformance` rather than the memory adapter's own tests.
+- *Resolve the duplicate `OptimisticLockError` name* — the read-model one is
+  `ReadModelVersionConflictError` (ADR 0050). No alias, per the no-shim policy.
+- *Share ExpectedVersion dispatch across store adapters* — `adapters/_common/`
+  (ADR 0051); four verbatim copies down to one definition.
+- *Add CI boundary check for core surface purity* — the runtime `sys.modules`
+  check exists as `tests/unit/test_core_surface_purity.py`, and the static
+  contract's driver list widened from `sqlalchemy` alone to six. The entry
+  asked whether the runtime check added anything over the static one; it does,
+  and the answer is written up in `docs/core-surface.md`.
+- *Document store_id uniqueness expectations* — documented on `Position` and
+  at each adapter default. The suggested "derive the pg default from
+  host+port+database" is deliberately **not** done: `store_id` is embedded in
+  every persisted position, so changing a default invalidates the checkpoints
+  of every deployment that took it.
+- *Differentiate run_resync_pass's two zero-return shapes in logs* — done.
+
+**Already closed; the entry was stale.** Each verified against the tree:
+
+- *SQLite adapter: reads share the writer's connection* — fixed; reads run
+  under the append lock, pinned by `tests/unit/adapters/test_sqlite_read_isolation.py`.
+- *Reconcile DLQ delete_resolved_events cutoff semantics* — both backends use
+  the rolling instant, and `ports/dlq.py` specifies it.
+- *Catch-up can end early with completed=False* — `_BatchOutcome` carries
+  `envelopes_read` alongside `events_delivered`, which is the fix the entry
+  proposed.
+- *Wire position_mapper into BulkCopier's coordinator call site* — one
+  `_build_copier` now serves both call sites.
+- *No in-phase resync for dual-write mirror failures* — `run_resync_pass`
+  exists.
+- *Cutover can switch routing with up to cutover_max_lag_events missing* —
+  `cutover_max_lag_events` defaults to 0 (strict).
+- *Relocate subscriptions/ into the application ring* — done (ADR 0032); no
+  top-level `subscriptions/` remains. Note the entry called for deprecation
+  shims, which the no-shim policy had already overtaken.
+- *Remove bus facade compat shims* / *Migrate bus/ to ports/adapters* — ADR
+  0031. Both entries already said so in their own bodies.
+- *Remove the locks/readmodels deprecation shims* — ADR 0030, likewise.
+- *Decide engine.py's ring placement* — ADR 0029, likewise.

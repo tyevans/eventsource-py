@@ -47,9 +47,19 @@ if it lives in `tests/unit/adapters/test_<backend>_*.py`, it cannot catch the
 next backend. Deleting the per-backend duplicates is part of the fix
 (`0c8d032` removed two).
 
+**Rule, second half:** *behavior a conformance suite asserts is implemented
+once.* A conformance suite pins that the adapters agree; it does not stop them
+from each deriving the agreement separately, and N independent derivations of
+one rule is N chances to drift. When the logic depends only on ports and domain
+types — not on storage — it belongs in `adapters/_common/` (or `_sql`/`_bus`
+when it is dialect- or transport-specific), not copied. `check_expected` was
+four verbatim copies across three adapters and a testing double before it moved
+there.
+
 **Reviewing:** for any changed adapter method, open the sibling adapters and
 compare. Empty collections, zero/`None` defaults, date and time truncation,
-and "not set" versus "set to nothing" are where they diverge.
+and "not set" versus "set to nothing" are where they diverge. A function that
+appears verbatim in two adapters is the same finding one step earlier.
 
 ## 2. Redundant declaration sites with undocumented precedence
 

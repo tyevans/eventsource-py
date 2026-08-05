@@ -4,11 +4,13 @@
 # See docs/development/mutation-testing.md for what's in the set, why, and
 # how to read the output. Usage:
 #
-#   scripts/mutation.sh              # all three modules, each against its
-#                                     # own test subset (sequential)
-#   scripts/mutation.sh engine       # just src/eventsource/adapters/_sql/engine.py
-#   scripts/mutation.sh dialect      # just repositories/_dialect.py
-#   scripts/mutation.sh json         # just serialization/json.py
+#   scripts/mutation.sh              # engine, dialect and json, each against
+#                                     # its own test subset (sequential)
+#   scripts/mutation.sh engine       # just adapters/_sql/engine.py
+#   scripts/mutation.sh dialect      # just adapters/_sql/dialect.py
+#   scripts/mutation.sh json         # just adapters/serialization/json.py
+#   scripts/mutation.sh checkpoint   # just adapters/sql/checkpoints.py
+#   scripts/mutation.sh dlq          # just adapters/sql/dlq.py
 #
 # mutmut 3.x reads [tool.mutmut] from pyproject.toml once at process start
 # and has no per-invocation override for only_mutate / test selection, so

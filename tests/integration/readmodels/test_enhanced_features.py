@@ -23,10 +23,10 @@ from eventsource.adapters.memory.readmodels import InMemoryReadModelRepository
 from eventsource.adapters.sql.readmodel_schema import generate_schema
 from eventsource.ports.readmodels import (
     Filter,
-    OptimisticLockError,
     Query,
     ReadModel,
     ReadModelNotFoundError,
+    ReadModelVersionConflictError,
 )
 
 from ..conftest import skip_if_no_postgres_infra
@@ -391,7 +391,7 @@ class TestOptimisticLocking:
         # Client 2 tries to save with stale version
         client2.name = "client2_update"
 
-        with pytest.raises(OptimisticLockError) as exc_info:
+        with pytest.raises(ReadModelVersionConflictError) as exc_info:
             await enhanced_repo.save_with_version_check(client2)
 
         error = exc_info.value
@@ -419,7 +419,7 @@ class TestOptimisticLocking:
         enhanced_repo: Any,
         enhanced_model_factory: Callable[..., EnhancedTestModel],
     ) -> None:
-        """Test OptimisticLockError has descriptive message."""
+        """Test ReadModelVersionConflictError has descriptive message."""
         model_id = uuid4()
         await enhanced_repo.save(enhanced_model_factory(id=model_id, name="test"))
 
@@ -434,7 +434,7 @@ class TestOptimisticLocking:
             version=1,
         )
 
-        with pytest.raises(OptimisticLockError) as exc_info:
+        with pytest.raises(ReadModelVersionConflictError) as exc_info:
             await enhanced_repo.save_with_version_check(stale)
 
         error_msg = str(exc_info.value)
@@ -475,9 +475,9 @@ class TestExceptions:
     """Tests for read model exceptions."""
 
     def test_optimistic_lock_error_with_actual_version(self) -> None:
-        """Test OptimisticLockError with actual version."""
+        """Test ReadModelVersionConflictError with actual version."""
         model_id = uuid4()
-        error = OptimisticLockError(model_id, expected_version=1, actual_version=2)
+        error = ReadModelVersionConflictError(model_id, expected_version=1, actual_version=2)
 
         assert error.model_id == model_id
         assert error.expected_version == 1
@@ -486,9 +486,9 @@ class TestExceptions:
         assert "2" in str(error)
 
     def test_optimistic_lock_error_without_actual_version(self) -> None:
-        """Test OptimisticLockError without actual version."""
+        """Test ReadModelVersionConflictError without actual version."""
         model_id = uuid4()
-        error = OptimisticLockError(model_id, expected_version=1)
+        error = ReadModelVersionConflictError(model_id, expected_version=1)
 
         assert error.actual_version is None
         assert "1" in str(error)
@@ -661,7 +661,7 @@ class TestCombinedFeatures:
 
         # Client 2 still has old version - should fail
         client2.name = "stale_update"
-        with pytest.raises(OptimisticLockError):
+        with pytest.raises(ReadModelVersionConflictError):
             await enhanced_repo.save_with_version_check(client2)
 
 
