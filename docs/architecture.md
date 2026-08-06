@@ -372,7 +372,8 @@ live store-to-store migration through the phases `PENDING`, `BULK_COPY`,
 projection-side collaborators `CheckpointTrackingProjection` calls into:
 the `record_checkpoint()` / `read_checkpoint()` / `lag_metrics_dict()` /
 `reset_checkpoint()` functions and the `send_to_dlq()` / `read_failed_events()`
-functions, the `RetryPolicy` protocol, and `ProjectionCoordinator`.
+functions, the `RetryPolicy` protocol, `ProjectionCoordinator`, and the `replay()` rebuild
+driver.
 
 What separates this tier from Tier 1 is not infrastructure but *time*. Tier 1
 answers "how is an event written down"; Tier 2 answers "what happens on the
@@ -1399,6 +1400,19 @@ adds the batch-shaped operations -- `dispatch_events`, `rebuild_all`,
 through all three: fan-out *within* one event is concurrent, but
 `dispatch_many` walks the list sequentially, because event order is the one
 thing the read side must not reorder.
+
+**`replay()` (`replay.py`)** answers the coordinator's other half: *rebuild this
+projection from the log and tell me how it went*. The coordinator's
+`rebuild_projection` takes the events as a list the caller has already read and
+filtered, which leaves the hard part -- positions, scoping, and what to do when a
+projection refuses -- outside the library. `replay` owns that loop. Its failure
+behaviour is deliberately the inverse of a live subscription's: a rejection is
+recorded and the fold continues, because stopping would deny the projection every
+event after the poison one, and the log is already written. It reads through the
+`GlobalEventFeed` port alone, forwards `tenant_id`/`aggregate_type` into the
+adapter's query rather than filtering after delivery, and returns a `ReplayReport`
+whose `failures` name the rejecting projection and carry the exception itself
+(ADR 0054).
 
 Every one of these is injectable. `CheckpointTrackingProjection.__init__` takes
 `checkpoint_repo`, `dlq_repo`, `retry_policy`, and `tracer`, each defaulting to

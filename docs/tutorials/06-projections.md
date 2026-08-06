@@ -188,9 +188,20 @@ The framework makes that a first-class operation. Every projection has `reset()`
 clears the checkpoint and then calls your `_truncate_read_models()`:
 
 ```python
+from eventsource.application.projections import replay
+
 await projection.reset()   # checkpoint cleared, your tables truncated
-# ...then replay events through projection.handle() to rebuild
+report = await replay(event_store, [projection])
+print(f"{report.applied} applied, {report.failed} failed")
 ```
+
+`replay()` is the rebuild driver: it reads the store's global feed and folds every
+event into the projections you hand it. A projection that raises on one event has the
+failure recorded in `report.failures` -- naming the event and carrying the exception --
+and the rebuild carries on, because stopping would deny the projection every event
+after the bad one. Pass `strict=True` to raise on the first rejection instead, and
+`tenant_id=` or `aggregate_type=` to rebuild one slice of a shared store without
+reading the rest. The projections API reference covers the report in full.
 
 Nothing about your domain history is at risk in that operation, because none of it lives
 in the read model. This is why projections can afford to be denormalized, duplicated, and
