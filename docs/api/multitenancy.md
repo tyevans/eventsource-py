@@ -94,10 +94,12 @@ It is *not* the right tool when:
 - **Tenants must be physically separated.** Nothing here shards or routes to
   per-tenant databases or schemas; every tenant's events live in the same
   stream space.
-- **You need loads filtered by tenant.** `enforce_on_load=True` only asserts
-  that a context exists -- it does not restrict which events come back.
+- **You need loads filtered by tenant.** `require_tenant_context=True` only
+  asserts that *a* context exists -- it never compares that context against the
+  aggregate, and it does not restrict which events come back. A `load()` in
+  tenant A's scope for an id belonging to tenant B returns B's aggregate.
   Pair this module with database-level isolation (for example PostgreSQL row
-  level security) when read isolation matters.
+  level security) when read isolation matters. See ADR 0057.
 - **You need projection or subscription filtering.** Projections and
   subscriptions have no tenant awareness in this feature; a projection reads
   every tenant's events unless you filter inside the handler.
@@ -275,7 +277,8 @@ missing scope surfaces as `TenantContextNotSetError` from code you did not write
 | --- | --- |
 | `TenantDomainEvent.with_tenant_context(**kwargs)` | Raises, unless an explicit `tenant_id` was passed in `kwargs` (the context is only consulted when the key is absent) |
 | `TenantAwareRepository.save()` with `validate_on_save=True` (default) | Raises before any event is appended |
-| `TenantAwareRepository.load()` / `load_or_create()` / `create_new()` with `enforce_on_load=True` | Raises before delegating to the wrapped repository |
+| `TenantAwareRepository.load()` / `load_or_create()` / `exists()` with `require_tenant_context=True` | Raises before delegating to the wrapped repository |
+| `TenantAwareRepository.create_new()`, at either setting | Never raises -- it allocates an in-memory aggregate and touches no storage |
 
 In each case the raise happens *before* the underlying store is touched, so a
 failed call leaves no partial write.

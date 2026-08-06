@@ -3,8 +3,9 @@ Unit tests for TenantAwareRepository.
 
 Tests cover:
 - Tenant validation on save()
-- Tenant context requirement on load() (with enforce_on_load)
-- Configuration options (validate_on_save, enforce_on_load)
+- Tenant context requirement on reads (with require_tenant_context)
+- Configuration options (validate_on_save, require_tenant_context)
+- The absence of read filtering, which is a documented non-guarantee
 - Delegation to underlying repository
 - Error handling and edge cases
 """
@@ -16,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
+from pydantic import BaseModel
 
 from eventsource import (
     TenantContextNotSetError,
@@ -24,7 +26,10 @@ from eventsource import (
     clear_tenant_context,
     tenant_scope,
 )
+from eventsource.adapters.memory.store import InMemoryEventStore
+from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.application.aggregates.tenant_repository import TenantAwareRepository
+from eventsource.domain.aggregate import AggregateRoot
 from eventsource.domain.event import DomainEvent
 
 
@@ -344,12 +349,12 @@ class TestTenantAwareRepositoryLoad:
         mock_repo.load.assert_called_once_with(aggregate_id)
         assert result is not None
 
-    async def test_load_without_enforce_does_not_require_context(
+    async def test_load_without_requirement_does_not_require_context(
         self, mock_repo: MagicMock
     ) -> None:
-        """load() works without context when enforce_on_load=False."""
+        """load() works without context when require_tenant_context=False."""
         tenant_repo: TenantAwareRepository[MockAggregate] = TenantAwareRepository(
-            mock_repo, enforce_on_load=False
+            mock_repo, require_tenant_context=False
         )
         aggregate_id = uuid4()
 
@@ -359,20 +364,20 @@ class TestTenantAwareRepositoryLoad:
         mock_repo.load.assert_called_once()
         assert result is not None
 
-    async def test_load_with_enforce_requires_context(self, mock_repo: MagicMock) -> None:
-        """load() raises TenantContextNotSetError when enforce_on_load=True and no context."""
+    async def test_load_with_requirement_requires_context(self, mock_repo: MagicMock) -> None:
+        """load() raises TenantContextNotSetError when require_tenant_context=True and no context."""
         tenant_repo: TenantAwareRepository[MockAggregate] = TenantAwareRepository(
-            mock_repo, enforce_on_load=True
+            mock_repo, require_tenant_context=True
         )
         aggregate_id = uuid4()
 
         with pytest.raises(TenantContextNotSetError):
             await tenant_repo.load(aggregate_id)
 
-    async def test_load_with_enforce_and_context_succeeds(self, mock_repo: MagicMock) -> None:
-        """load() works when enforce_on_load=True and context is set."""
+    async def test_load_with_requirement_and_context_succeeds(self, mock_repo: MagicMock) -> None:
+        """load() works when require_tenant_context=True and context is set."""
         tenant_repo: TenantAwareRepository[MockAggregate] = TenantAwareRepository(
-            mock_repo, enforce_on_load=True
+            mock_repo, require_tenant_context=True
         )
         aggregate_id = uuid4()
         tenant_id = uuid4()
@@ -413,12 +418,12 @@ class TestTenantAwareRepositoryExists:
         mock_repo.exists.assert_called_once_with(aggregate_id)
         assert result is True
 
-    async def test_exists_without_enforce_does_not_require_context(
+    async def test_exists_without_requirement_does_not_require_context(
         self, mock_repo: MagicMock
     ) -> None:
-        """exists() works without context when enforce_on_load=False."""
+        """exists() works without context when require_tenant_context=False."""
         tenant_repo: TenantAwareRepository[MockAggregate] = TenantAwareRepository(
-            mock_repo, enforce_on_load=False
+            mock_repo, require_tenant_context=False
         )
         aggregate_id = uuid4()
 
@@ -427,20 +432,20 @@ class TestTenantAwareRepositoryExists:
         mock_repo.exists.assert_called_once()
         assert result is True
 
-    async def test_exists_with_enforce_requires_context(self, mock_repo: MagicMock) -> None:
-        """exists() raises TenantContextNotSetError when enforce_on_load=True and no context."""
+    async def test_exists_with_requirement_requires_context(self, mock_repo: MagicMock) -> None:
+        """exists() raises TenantContextNotSetError when require_tenant_context=True and no context."""
         tenant_repo: TenantAwareRepository[MockAggregate] = TenantAwareRepository(
-            mock_repo, enforce_on_load=True
+            mock_repo, require_tenant_context=True
         )
         aggregate_id = uuid4()
 
         with pytest.raises(TenantContextNotSetError):
             await tenant_repo.exists(aggregate_id)
 
-    async def test_exists_with_enforce_and_context_succeeds(self, mock_repo: MagicMock) -> None:
-        """exists() works when enforce_on_load=True and context is set."""
+    async def test_exists_with_requirement_and_context_succeeds(self, mock_repo: MagicMock) -> None:
+        """exists() works when require_tenant_context=True and context is set."""
         tenant_repo: TenantAwareRepository[MockAggregate] = TenantAwareRepository(
-            mock_repo, enforce_on_load=True
+            mock_repo, require_tenant_context=True
         )
         aggregate_id = uuid4()
         tenant_id = uuid4()
@@ -481,10 +486,12 @@ class TestTenantAwareRepositoryLoadOrCreate:
         mock_repo.load_or_create.assert_called_once_with(aggregate_id)
         assert result is not None
 
-    async def test_load_or_create_with_enforce_requires_context(self, mock_repo: MagicMock) -> None:
-        """load_or_create() raises when enforce_on_load=True and no context."""
+    async def test_load_or_create_with_requirement_requires_context(
+        self, mock_repo: MagicMock
+    ) -> None:
+        """load_or_create() raises when require_tenant_context=True and no context."""
         tenant_repo: TenantAwareRepository[MockAggregate] = TenantAwareRepository(
-            mock_repo, enforce_on_load=True
+            mock_repo, require_tenant_context=True
         )
         aggregate_id = uuid4()
 
@@ -539,23 +546,23 @@ class TestTenantAwareRepositoryProperties:
     def test_repr(self, mock_repo: MagicMock) -> None:
         """__repr__ returns expected string representation."""
         tenant_repo: TenantAwareRepository[MockAggregate] = TenantAwareRepository(
-            mock_repo, enforce_on_load=True, validate_on_save=False
+            mock_repo, require_tenant_context=True, validate_on_save=False
         )
 
         repr_str = repr(tenant_repo)
 
         assert "TenantAwareRepository" in repr_str
         assert "MagicMock" in repr_str
-        assert "enforce_on_load=True" in repr_str
+        assert "require_tenant_context=True" in repr_str
         assert "validate_on_save=False" in repr_str
 
     def test_default_configuration(self, mock_repo: MagicMock) -> None:
-        """Default configuration has validate_on_save=True and enforce_on_load=False."""
+        """Default configuration has validate_on_save=True and require_tenant_context=False."""
         tenant_repo: TenantAwareRepository[MockAggregate] = TenantAwareRepository(mock_repo)
 
         # Check internal state via repr
         repr_str = repr(tenant_repo)
-        assert "enforce_on_load=False" in repr_str
+        assert "require_tenant_context=False" in repr_str
         assert "validate_on_save=True" in repr_str
 
 
@@ -649,3 +656,103 @@ class TestTenantMismatchErrorDetails:
             assert len(error.event_ids) == 2
             assert events[0].event_id in error.event_ids
             assert events[1].event_id in error.event_ids
+
+
+# =============================================================================
+# Documented non-guarantee: reads are NOT isolated by tenant
+# =============================================================================
+
+
+class TenantOrderState(BaseModel):
+    """State for the real aggregate used in the read-isolation tests."""
+
+    order_id: UUID
+    customer_id: UUID | None = None
+
+
+class TenantOrderAggregate(AggregateRoot[TenantOrderState]):
+    """Real aggregate over a real store, so reads exercise the actual load path."""
+
+    aggregate_type = "Order"
+
+    def _get_initial_state(self) -> TenantOrderState:
+        return TenantOrderState(order_id=self.aggregate_id)
+
+    def _apply(self, event: DomainEvent) -> None:
+        if isinstance(event, OrderCreated):
+            if self._state is None:
+                self._state = self._get_initial_state()
+            self._state = self._state.model_copy(update={"customer_id": event.customer_id})
+
+    def create(self, customer_id: UUID) -> None:
+        self.create_event(OrderCreated, customer_id=customer_id)
+
+
+class TestReadsAreNotTenantIsolated:
+    """
+    Pins the guarantee `require_tenant_context` does NOT make.
+
+    These tests assert the *documented* behavior of ADR 0018 and ADR 0057: the
+    flag is a precondition check on the ambient context, not read isolation.
+    They exist so that a future change which starts filtering reads has to come
+    here and say so deliberately -- and so that nobody reads the flag's name as
+    protection it does not provide.
+    """
+
+    def setup_method(self) -> None:
+        clear_tenant_context()
+
+    def teardown_method(self) -> None:
+        clear_tenant_context()
+
+    @pytest.fixture
+    def tenant_repo(self) -> TenantAwareRepository[TenantOrderAggregate]:
+        base: AggregateRepository[TenantOrderAggregate] = AggregateRepository(
+            event_store=InMemoryEventStore(),
+            aggregate_factory=TenantOrderAggregate,
+        )
+        return TenantAwareRepository(base, require_tenant_context=True)
+
+    async def test_load_returns_another_tenants_aggregate(
+        self, tenant_repo: TenantAwareRepository[TenantOrderAggregate]
+    ) -> None:
+        """A load inside tenant A's scope returns tenant B's aggregate, fully replayed."""
+        tenant_a, tenant_b = uuid4(), uuid4()
+        aggregate_id = uuid4()
+        customer_id = uuid4()
+
+        async with tenant_scope(tenant_b):
+            order = tenant_repo.create_new(aggregate_id)
+            order.create(customer_id=customer_id)
+            await tenant_repo.save(order)
+
+        async with tenant_scope(tenant_a):
+            leaked = await tenant_repo.load(aggregate_id)
+
+        # No filtering, no partial replay, no error: tenant A gets all of it.
+        assert leaked.version == 1
+        assert leaked.state is not None
+        assert leaked.state.customer_id == customer_id
+
+    async def test_exists_reports_another_tenants_aggregate(
+        self, tenant_repo: TenantAwareRepository[TenantOrderAggregate]
+    ) -> None:
+        """exists() is not scoped to a tenant either."""
+        tenant_a, tenant_b = uuid4(), uuid4()
+        aggregate_id = uuid4()
+
+        async with tenant_scope(tenant_b):
+            order = tenant_repo.create_new(aggregate_id)
+            order.create(customer_id=uuid4())
+            await tenant_repo.save(order)
+
+        async with tenant_scope(tenant_a):
+            assert await tenant_repo.exists(aggregate_id) is True
+
+    def test_create_new_is_unguarded_even_when_context_is_required(
+        self, tenant_repo: TenantAwareRepository[TenantOrderAggregate]
+    ) -> None:
+        """create_new() touches no storage, so it does not check the context."""
+        aggregate = tenant_repo.create_new(uuid4())
+
+        assert aggregate.version == 0

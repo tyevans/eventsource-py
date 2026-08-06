@@ -22,7 +22,7 @@ an event carries a foreign tenant, and `TenantContextNotSetError` when there is 
 at all. From there you will look at how context behaves across concurrent tasks and in
 synchronous callers, at manual control with `set_current_tenant()` /
 `get_current_tenant()` / `clear_tenant_context()`, and at the two configuration knobs
-`enforce_on_load` and `validate_on_save`.
+`require_tenant_context` and `validate_on_save`.
 
 Everything runs in memory -- no database and no Docker -- so you can watch the isolation
 rules fire immediately. That also makes an important limitation visible along the way:
@@ -53,8 +53,9 @@ By the end that file contains:
 4. **Two deliberate failures**: a `TenantMismatchError` raised when tenant B's scope tries
    to save an event stamped for tenant A, and a `TenantContextNotSetError` raised when
    you save with no scope at all.
-5. **A strict variant** constructed with `enforce_on_load=True`, so `load()`, `exists()`,
-   and `load_or_create()` also refuse to run outside a scope.
+5. **A strict variant** constructed with `require_tenant_context=True`, so `load()`,
+   `exists()`, and `load_or_create()` also refuse to run outside a scope -- while still
+   returning whatever the id points at, including another tenant's aggregate.
 6. **A concurrency check**: two `asyncio` tasks in different `tenant_scope()` blocks
    running at once, each seeing only its own tenant -- because the context lives in a
    `ContextVar`, not a global.
@@ -178,12 +179,14 @@ the others leave open.
 Two limits are worth internalizing now rather than discovering in production.
 
 **These are write-side guarantees only.** `TenantAwareRepository.load()` does not filter
-events by tenant. With the default `enforce_on_load=False` it is a plain delegation; with
-`enforce_on_load=True` it checks only that *a* tenant context exists before loading. The
-docstring is explicit that filtering "would require EventStore changes." If two tenants'
-events somehow share an aggregate stream, a load returns all of them. Read isolation has
-to come from your storage layer -- separate databases, separate schemas, or PostgreSQL
-row-level security. Step 15 covers this.
+events by tenant. With the default `require_tenant_context=False` it is a plain
+delegation; with `require_tenant_context=True` it checks only that *a* tenant context
+exists before loading -- it never compares that context against the aggregate it returns.
+Hand it an aggregate id belonging to tenant B while inside tenant A's scope and you get
+tenant B's aggregate, fully replayed and without an error. The flag is named for what it
+does, a precondition on the caller, precisely so it is not mistaken for read isolation
+(ADR 0057). Read isolation has to come from your storage layer -- separate databases,
+separate schemas, or PostgreSQL row-level security. Step 15 covers this.
 
 **Events without a `tenant_id` are skipped, not rejected.** `_validate_tenant_consistency`
 reads `getattr(event, "tenant_id", None)` and `continue`s when it is `None`. This is a
