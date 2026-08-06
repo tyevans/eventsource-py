@@ -177,6 +177,13 @@ class InMemoryEventStore:
                 e for e in envelopes if getattr(e.event, "tenant_id", None) == options.tenant_id
             ]
 
+        # Filtered on the stream category, not `event.aggregate_type`: the SQL
+        # adapters store the stream's category in the `aggregate_type` column,
+        # so this is the same fact, and reading it from the envelope keeps the
+        # three feeds answering identically.
+        if options.aggregate_type is not None:
+            envelopes = [e for e in envelopes if e.stream_id.category == options.aggregate_type]
+
         if options.limit is not None:
             envelopes = envelopes[: options.limit]
 
