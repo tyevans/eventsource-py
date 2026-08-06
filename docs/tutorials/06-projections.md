@@ -446,6 +446,35 @@ no arguments on `DeclarativeProjection` -- clearing the dictionary is entirely y
 The base implementation does nothing, so a projection that skips it will happily replay
 events on top of stale rows. Implement it from the start.
 
+### If your read model is a store rather than a table
+
+The projection above owns a dictionary. Real ones usually own something with a port
+behind it -- a repository, a graph store, a vector index. `StoreProjection[TStore]` is
+`DeclarativeProjection` with that store held for you as `self._store`:
+
+```python
+from eventsource.application.projections import StoreProjection, handles
+
+
+class OrderProjection(StoreProjection[OrderStore]):
+    @handles(OrderCreated)
+    async def _on_created(self, _context: object, event: OrderCreated) -> None:
+        await self._store.upsert(event.order)
+
+
+projection = OrderProjection(order_store)
+```
+
+The value is in what you do not write. If you later need a constructor parameter of your
+own, you declare that one and forward the rest -- `def __init__(self, store, batch_size=100,
+**options: Unpack[ProjectionOptions])` -- and `retry_policy`, `tracer`, and
+`tenant_filter` still reach the base. Spelling the parent's parameters out by hand is how
+projections have historically dropped them by accident. See the projections API reference
+for the full constructor.
+
+If the read model is a SQL table, keep reading: `DatabaseProjection` in Step 4 is the
+case where the "store" is a session and a transaction.
+
 You now have routing, checkpoints, and rebuild in about twenty lines. What is missing is
 somewhere real to write. The next step defines that table.
 

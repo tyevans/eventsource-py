@@ -179,6 +179,7 @@ nav:
       - "ADR-0052: Feed Read Aggregate-Type Filter": adrs/0052-feed-read-aggregate-type-filter.md
       - "ADR-0053: SQLite Snapshot Store Owns Its Connection": adrs/0053-sqlite-snapshot-store-owns-its-connection.md
       - "ADR-0054: Projection Replay Driver": adrs/0054-projection-replay-driver.md
+      - "ADR-0055: Generic Store Projection Base": adrs/0055-generic-store-projection-base.md
   - Development:
       - development/index.md
       - Contributing: development/contributing.md

@@ -30,6 +30,7 @@ from eventsource.application.projections.replay import (
     ReplayReport,
     replay,
 )
+from eventsource.application.projections.store import ProjectionOptions, StoreProjection
 from eventsource.domain.decorators import (
     get_handled_event_type,
     handles,
@@ -49,10 +50,12 @@ __all__ = [
     "EventSubscriber",
     "Projection",
     "ProjectionCoordinator",
+    "ProjectionOptions",
     "ProjectionRegistry",
     "ReplayFailedError",
     "ReplayFailure",
     "ReplayReport",
+    "StoreProjection",
     "SubscriberRegistry",
     "SyncEventHandler",
     "SyncProjection",
