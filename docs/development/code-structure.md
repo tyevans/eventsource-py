@@ -41,7 +41,7 @@ thing, you can find its directory.
 | --- | --- |
 | `domain/` | Entities ring: `AggregateRoot`, `DeclarativeAggregate` (`aggregate.py`), `StreamId` |
 | `application/aggregates/` | Use-case ring: `AggregateRepository`, plus the `SnapshotPolicy`/`SnapshotScheduler` collaborators (`snapshotting.py`) |
-| `application/projections/` | Use-case ring: `Projection`/`CheckpointTrackingProjection`/`DeclarativeProjection` (`base.py`), `ProjectionCoordinator`/`ProjectionRegistry`/`SubscriberRegistry` (`coordinator.py`), the checkpoint and DLQ functions (`checkpoints.py`, `dlq.py`), retry policies (`retry.py`) |
+| `application/projections/` | Use-case ring: `Projection`/`CheckpointTrackingProjection`/`DeclarativeProjection` (`base.py`), `ProjectionCoordinator`/`ProjectionRegistry`/`SubscriberRegistry` (`coordinator.py`), the checkpoint and DLQ functions (`checkpoints.py`, `dlq.py`), retry policies (`retry.py`), the `replay()` rebuild driver (`replay.py`) |
 | `ports/` | Boundary interfaces: `Snapshot`/`SnapshotStore` (`snapshots.py`), `ProjectionCheckpoints`/`SubscriptionPositions`/`CheckpointRepository` (`checkpoints.py`), `DLQRepository` (`dlq.py`), `OutboxRepository`/`outbox_event_data` (`outbox.py`), store/bus/envelope/position ports |
 | `adapters/` | Interface adapters: snapshot, checkpoint, DLQ, outbox, and event store implementations, one subpackage per technology (`memory/`, `postgresql/`, `sqlite/` — each with its own `outbox.py`) plus the dialect-parameterized SQL adapters (`sql/`, with private helpers in `_sql/`) that serve both PostgreSQL and SQLite for checkpoints, DLQ, and `DatabaseProjection` |
 | `events/` | `DomainEvent` (`base.py`) and the `EventRegistry` (`registry.py`) |
