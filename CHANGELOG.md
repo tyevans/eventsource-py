@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- **`TenantAwareRepository`'s `enforce_on_load` keyword is renamed `require_tenant_context`** (ADR 0057). The flag enforces nothing about what is loaded: it calls `get_required_tenant()` and delegates, never comparing the resolved tenant against the aggregate and never filtering events. A `load()` inside tenant A's scope for an id belonging to tenant B returns B's aggregate, fully replayed, at either setting. ADR 0018 §6 recorded that as deliberate, but the name promised enforcement the code does not perform, and consumers have twice reported it as a bug. The new name states the precondition it does impose -- a tenant scope must be active. **No deprecation alias**, per the pre-1.0 no-shim policy: `enforce_on_load=` now raises `TypeError`, which is the point. Runtime behavior is otherwise unchanged; nothing previously prevented is now allowed.
+
+### Changed
+
+- **The absence of read isolation is documented where it is read, not only in an ADR.** The `TenantAwareRepository` class docstring and its `load()`, `exists()`, and `load_or_create()` docstrings, `docs/tutorials/16-multi-tenancy.md`, and `docs/api/multitenancy.md` now state that reads are never filtered by tenant and that isolation must come from the storage layer. ADR 0057 also replaces ADR 0018 §6's justification, which argued from `EventStore.get_events` and `ReadOptions.tenant_id` -- neither of which survived the rings campaign -- with one that holds on the current `read_stream`/`StreamReadOptions` path. `docs/api/multitenancy.md` additionally corrected a table row claiming `create_new()` raises when a context is required; it never has, and it touches no storage.
+
 ## [0.11.0] - 2026-08-05
 
 A backlog sweep. One read-model defect fixed, one public exception renamed, and

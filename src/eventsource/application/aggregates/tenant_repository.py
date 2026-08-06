@@ -2,7 +2,8 @@
 Tenant-aware repository wrapper for multi-tenant applications.
 
 This module provides TenantAwareRepository, a wrapper class that enforces
-tenant isolation by validating tenant consistency on save operations.
+tenant isolation on the *write* path by validating tenant consistency on save.
+It provides no read isolation; see ADR 0018 and ADR 0057.
 """
 
 from __future__ import annotations
@@ -25,11 +26,21 @@ class TenantAwareRepository[TAggregate: AggregateRoot[Any]]:
 
     Wraps an existing AggregateRepository to add tenant validation:
     - On save(): Validates all uncommitted events have correct tenant_id
-    - On load(): Optionally requires tenant context (if enforce_on_load=True)
+    - On read: Optionally requires a tenant context to be set
+      (if require_tenant_context=True)
 
     This wrapper uses the composition pattern, delegating actual persistence
     to the underlying AggregateRepository while adding tenant-specific
     validation logic.
+
+    Read isolation is NOT provided (ADR 0018, ADR 0057):
+        ``require_tenant_context=True`` asserts that *a* tenant scope is
+        active. It does not compare that scope against the aggregate being
+        read, and it does not restrict which events come back. Loading an
+        aggregate id belonging to tenant B from inside tenant A's scope
+        succeeds and returns B's aggregate. Read isolation has to come from
+        the storage layer -- PostgreSQL row-level security, or a separate
+        schema or database per tenant.
 
     Thread Safety:
         The wrapper is thread-safe when the underlying repository is.
@@ -54,7 +65,7 @@ class TenantAwareRepository[TAggregate: AggregateRoot[Any]]:
 
     Attributes:
         _repository: The underlying AggregateRepository
-        _enforce_on_load: Whether to require tenant context on load
+        _require_tenant_context: Whether reads require a tenant context to be set
         _validate_on_save: Whether to validate tenant consistency on save
     """
 
@@ -62,7 +73,7 @@ class TenantAwareRepository[TAggregate: AggregateRoot[Any]]:
         self,
         repository: AggregateRepository[TAggregate],
         *,
-        enforce_on_load: bool = False,
+        require_tenant_context: bool = False,
         validate_on_save: bool = True,
     ) -> None:
         """
@@ -70,21 +81,24 @@ class TenantAwareRepository[TAggregate: AggregateRoot[Any]]:
 
         Args:
             repository: The underlying aggregate repository to wrap
-            enforce_on_load: If True, require tenant context when loading.
-                           Currently validates context exists but does not
-                           filter events (filtering requires EventStore changes).
-                           Default False.
+            require_tenant_context: If True, ``load()``, ``load_or_create()``,
+                           and ``exists()`` raise when no tenant scope is
+                           active. This is a *precondition check only*: the
+                           resolved tenant is never compared against the
+                           aggregate, and no events are filtered. It does not
+                           give you read isolation -- see the class docstring
+                           and ADR 0057. Default False.
             validate_on_save: If True (default), validate that all uncommitted
                             events have the correct tenant_id before saving.
 
         Example:
-            >>> # Default: validate on save, no enforcement on load
+            >>> # Default: validate on save, no context required on reads
             >>> tenant_repo = TenantAwareRepository(order_repo)
             >>>
-            >>> # Strict mode: require context on both load and save
+            >>> # Strict mode: require a scope on reads, validate on writes
             >>> strict_repo = TenantAwareRepository(
             ...     order_repo,
-            ...     enforce_on_load=True,
+            ...     require_tenant_context=True,
             ...     validate_on_save=True,
             ... )
             >>>
@@ -95,7 +109,7 @@ class TenantAwareRepository[TAggregate: AggregateRoot[Any]]:
             ... )
         """
         self._repository = repository
-        self._enforce_on_load = enforce_on_load
+        self._require_tenant_context = require_tenant_context
         self._validate_on_save = validate_on_save
 
     @property
@@ -209,12 +223,12 @@ class TenantAwareRepository[TAggregate: AggregateRoot[Any]]:
 
     async def load(self, aggregate_id: UUID) -> TAggregate:
         """
-        Load aggregate, optionally requiring tenant context.
+        Load aggregate, optionally requiring a tenant context to be set.
 
-        If enforce_on_load=True, validates that a tenant context exists
-        before loading. This does not filter events by tenant (which
-        would require EventStore changes) but ensures operations occur
-        within a proper tenant context.
+        If require_tenant_context=True, raises when no tenant scope is active.
+        That is the entire check. The events replayed to rebuild the aggregate
+        are NOT filtered by tenant, and the active tenant is never compared
+        against the aggregate's own tenant.
 
         Args:
             aggregate_id: The aggregate's unique identifier
@@ -223,7 +237,7 @@ class TenantAwareRepository[TAggregate: AggregateRoot[Any]]:
             The loaded aggregate
 
         Raises:
-            TenantContextNotSetError: If enforce_on_load=True and no context
+            TenantContextNotSetError: If require_tenant_context=True and no context
             AggregateNotFoundError: If aggregate doesn't exist
 
         Example:
@@ -231,12 +245,15 @@ class TenantAwareRepository[TAggregate: AggregateRoot[Any]]:
             ...     order = await tenant_repo.load(order_id)
             ...     print(f"Loaded order: {order.state.order_number}")
 
-        Note:
-            If enforce_on_load=False (default), all events for the aggregate
-            are loaded regardless of tenant. Use this when tenant isolation
-            is enforced at the database level (e.g., PostgreSQL RLS).
+        Warning:
+            This method never provides read isolation, at either setting.
+            Given an aggregate id belonging to another tenant, it returns that
+            tenant's aggregate -- with require_tenant_context=True the only
+            difference is that it first insists you are inside *some* scope.
+            Enforce read isolation at the database level (PostgreSQL RLS, or a
+            schema or database per tenant). See ADR 0018 and ADR 0057.
         """
-        if self._enforce_on_load:
+        if self._require_tenant_context:
             # Validate context exists (raises TenantContextNotSetError if not)
             tenant_id = get_required_tenant()
             logger.debug(
@@ -244,35 +261,34 @@ class TenantAwareRepository[TAggregate: AggregateRoot[Any]]:
                 aggregate_id,
                 tenant_id,
             )
-            # Note: Actual filtering by tenant requires EventStore changes.
-            # This validates the context exists, but doesn't filter events.
-            # Future enhancement: Add tenant_id parameter to repository.load()
+            # This is deliberately only a precondition check: tenant_id is
+            # not passed down and no events are filtered (ADR 0057).
 
         return await self._repository.load(aggregate_id)
 
     async def exists(self, aggregate_id: UUID) -> bool:
         """
-        Check if aggregate exists, considering tenant context.
+        Check if aggregate exists.
 
-        If enforce_on_load=True, validates that a tenant context exists
-        before checking. Otherwise, delegates directly to the underlying
-        repository.
+        If require_tenant_context=True, raises when no tenant scope is active,
+        then delegates. The existence check itself is not scoped to a tenant:
+        an aggregate belonging to another tenant reports True.
 
         Args:
             aggregate_id: The aggregate's unique identifier
 
         Returns:
-            True if aggregate exists (and within current tenant if enforced)
+            True if the aggregate exists in the store, for any tenant
 
         Raises:
-            TenantContextNotSetError: If enforce_on_load=True and no context
+            TenantContextNotSetError: If require_tenant_context=True and no context
 
         Example:
             >>> async with tenant_scope(tenant_id):
             ...     if await tenant_repo.exists(order_id):
             ...         order = await tenant_repo.load(order_id)
         """
-        if self._enforce_on_load:
+        if self._require_tenant_context:
             # Validate context exists
             get_required_tenant()
 
@@ -282,8 +298,9 @@ class TenantAwareRepository[TAggregate: AggregateRoot[Any]]:
         """
         Load an existing aggregate or create a new one.
 
-        Delegates to the underlying repository's load_or_create method,
-        with optional tenant context validation.
+        Delegates to the underlying repository's load_or_create method. If
+        require_tenant_context=True, raises first when no tenant scope is
+        active; as with load(), nothing is filtered by tenant.
 
         Args:
             aggregate_id: ID of the aggregate
@@ -292,7 +309,7 @@ class TenantAwareRepository[TAggregate: AggregateRoot[Any]]:
             Existing aggregate if found, or new empty aggregate
 
         Raises:
-            TenantContextNotSetError: If enforce_on_load=True and no context
+            TenantContextNotSetError: If require_tenant_context=True and no context
 
         Example:
             >>> async with tenant_scope(tenant_id):
@@ -300,7 +317,7 @@ class TenantAwareRepository[TAggregate: AggregateRoot[Any]]:
             ...     if order.version == 0:
             ...         order.create(customer_id=customer_id)
         """
-        if self._enforce_on_load:
+        if self._require_tenant_context:
             get_required_tenant()
 
         return await self._repository.load_or_create(aggregate_id)
@@ -331,7 +348,7 @@ class TenantAwareRepository[TAggregate: AggregateRoot[Any]]:
         return (
             f"TenantAwareRepository("
             f"repository={type(self._repository).__name__}, "
-            f"enforce_on_load={self._enforce_on_load}, "
+            f"require_tenant_context={self._require_tenant_context}, "
             f"validate_on_save={self._validate_on_save})"
         )
 
