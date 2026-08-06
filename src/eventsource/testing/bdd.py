@@ -43,7 +43,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Sequence
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from eventsource.domain import StreamId
 from eventsource.domain.aggregate import AggregateRoot
@@ -371,8 +371,11 @@ class DeciderScenario:
     Example:
         >>> (DeciderScenario(OrderAggregate)
         ...     .given(OrderCreated(aggregate_id=oid, aggregate_version=1, ...))
-        ...     .when(ShipOrder(tracking_number="T"))
+        ...     .when(ShipOrder(order_id=oid, tracking_number="T"))
         ...     .then_events(OrderShipped))
+
+    The scenario has no aggregate id of its own: ``initial_state()`` takes no
+    arguments and the command names the aggregate it targets.
     """
 
     def __init__(
@@ -381,8 +384,7 @@ class DeciderScenario:
         *,
         decide: Callable[[Any, Any], list[DomainEvent]] | None = None,
         evolve: Callable[[Any, DomainEvent], Any] | None = None,
-        initial_state: Callable[[UUID], Any] | None = None,
-        aggregate_id: UUID | None = None,
+        initial_state: Callable[[], Any] | None = None,
     ) -> None:
         if aggregate_class is not None:
             decide = aggregate_class.decide
@@ -395,8 +397,7 @@ class DeciderScenario:
             )
         self._decide = decide
         self._evolve = evolve
-        self._aggregate_id = aggregate_id if aggregate_id is not None else uuid4()
-        self._state = initial_state(self._aggregate_id)
+        self._state = initial_state()
         self._events: list[DomainEvent] | None = None
         self._error: BaseException | None = None
 

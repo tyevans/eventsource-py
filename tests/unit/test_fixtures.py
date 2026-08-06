@@ -208,11 +208,10 @@ class TestOrderState:
     """Tests for OrderState model."""
 
     def test_order_state_creation(self) -> None:
-        """OrderState can be created with required fields."""
-        from uuid import uuid4
+        """OrderState defaults describe an order that does not exist yet."""
+        state = OrderState()
 
-        state = OrderState(order_id=uuid4())
-
+        assert state.customer_id is None
         assert state.status == "draft"
         assert state.total == Decimal("0")
         assert state.items == []
@@ -222,7 +221,6 @@ class TestOrderState:
         from uuid import uuid4
 
         state = OrderState(
-            order_id=uuid4(),
             customer_id=uuid4(),
             status="created",
             total=Decimal("25.00"),

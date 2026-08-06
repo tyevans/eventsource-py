@@ -180,6 +180,7 @@ nav:
       - "ADR-0053: SQLite Snapshot Store Owns Its Connection": adrs/0053-sqlite-snapshot-store-owns-its-connection.md
       - "ADR-0054: Projection Replay Driver": adrs/0054-projection-replay-driver.md
       - "ADR-0055: Generic Store Projection Base": adrs/0055-generic-store-projection-base.md
+      - "ADR-0056: Decider initial_state() Is Nullary": adrs/0056-decider-initial-state-is-nullary.md
   - Development:
       - development/index.md
       - Contributing: development/contributing.md

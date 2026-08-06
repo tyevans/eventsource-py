@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- **`DeciderAggregate.initial_state()` takes no arguments** (ADR 0056). It was declared `initial_state(aggregate_id: UUID) -> TState`, and that parameter was the route by which `decide` learned the aggregate id: state carried an id field, and `decide` read it back out when constructing events. The state of a decider is the fold of one aggregate's events, and the value before any event is one value for the aggregate *type* — the id belongs on the command, which names the aggregate it targets. **No shim**, per the pre-1.0 no-shim policy: there is no two-argument overload, no `*args`, and no signature sniffing. A subclass that still declares the parameter defines fine — `abstractmethod` does not check signatures — and raises `TypeError: initial_state() missing 1 required positional argument` the first time it is instantiated. To upgrade a `DeciderAggregate` subclass: delete the parameter from `initial_state` and drop the id field from its state model; add the target id to each command class; and in `decide`, capture that id in the `match` arm (`case ShipOrder(order_id=order_id, ...)`) and pass it as the event's `aggregate_id` instead of reading `state.order_id`. `_get_initial_state()`, `_apply()`, and `__init__` are unchanged — they are instance methods and still have `self.aggregate_id`.
+- **`DeciderScenario` no longer accepts `aggregate_id=`**, and its `initial_state=` argument is now a zero-argument callable. The scenario's only use for an aggregate id was feeding `initial_state`; the aggregate a command targets is named by the command. Drop the argument — the events passed to `given()` already carry their own `aggregate_id`.
+
 ## [0.11.0] - 2026-08-05
 
 A backlog sweep. One read-model defect fixed, one public exception renamed, and

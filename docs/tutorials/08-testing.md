@@ -106,7 +106,6 @@ class OrderShipped(DomainEvent):
 
 
 class OrderState(BaseModel):
-    order_id: UUID
     customer_id: UUID | None = None
     total: Decimal = Decimal("0")
     status: str = "new"
@@ -114,21 +113,22 @@ class OrderState(BaseModel):
 
 
 class ShipOrder(DomainCommand):
+    order_id: UUID
     tracking_number: str
 
 
-def initial_state(order_id: UUID) -> OrderState:
+def initial_state() -> OrderState:
     """Return the initial state for a new aggregate."""
-    return OrderState(order_id=order_id, status="new")
+    return OrderState(status="new")
 
 
 def decide(command: ShipOrder, state: OrderState) -> list[DomainEvent]:
     """Given a command and the current state, decide what events to produce."""
     match command:
-        case ShipOrder(tracking_number=tn):
+        case ShipOrder(order_id=oid, tracking_number=tn):
             if state.status != "paid":
                 raise CommandRejectedError("Cannot ship unpaid order")
-            return [OrderShipped(aggregate_id=state.order_id, tracking_number=tn)]
+            return [OrderShipped(aggregate_id=oid, tracking_number=tn)]
         case _:
             raise CommandRejectedError(f"Unknown command: {command}")
 
@@ -152,8 +152,8 @@ class Order(DeciderAggregate[OrderState, ShipOrder]):
     aggregate_type = "Order"
 
     @staticmethod
-    def initial_state(aggregate_id: UUID) -> OrderState:
-        return initial_state(aggregate_id)
+    def initial_state() -> OrderState:
+        return initial_state()
 
     @staticmethod
     def decide(command: ShipOrder, state: OrderState) -> list[DomainEvent]:
@@ -190,7 +190,7 @@ def test_paid_order_ships():
         OrderPaid(aggregate_id=order_id, aggregate_version=2,
                  amount=Decimal("99.99")),
      )
-     .when(ShipOrder(tracking_number="TRACK123"))
+     .when(ShipOrder(order_id=order_id, tracking_number="TRACK123"))
      .then_events(OrderShipped))
 ```
 
@@ -218,7 +218,7 @@ def test_unpaid_order_cannot_ship():
         OrderCreated(aggregate_id=order_id, aggregate_version=1,
                     customer_id=uuid4(), total=Decimal("99.99")),
      )
-     .when(ShipOrder(tracking_number="TRACK123"))
+     .when(ShipOrder(order_id=order_id, tracking_number="TRACK123"))
      .then_rejected(match="Cannot ship unpaid"))
 ```
 
@@ -228,7 +228,7 @@ the regex. `then_rejected` is not limited to `CommandRejectedError` -- if your
 explicitly and it is checked the same way:
 
 ```python
-     .when(ShipOrder(tracking_number="TRACK123"))
+     .when(ShipOrder(order_id=order_id, tracking_number="TRACK123"))
      .then_rejected(ValueError, match="Cannot ship unpaid"))
 ```
 
@@ -240,7 +240,7 @@ produced:
 ```python
 scenario = (DeciderScenario(Order)
     .given(...)
-    .when(ShipOrder(tracking_number="TRACK123")))
+    .when(ShipOrder(order_id=order_id, tracking_number="TRACK123")))
 
 for event in scenario.events:
     print(f"Produced: {event}")
@@ -267,12 +267,11 @@ class OrderAggregate(DeclarativeAggregate[OrderState]):
     aggregate_type: str = "Order"
 
     def _get_initial_state(self) -> OrderState:
-        return OrderState(order_id=self.aggregate_id)
+        return OrderState()
 
     @handles(OrderCreated)
     def _on_created(self, event: OrderCreated) -> None:
         self._state = OrderState(
-            order_id=self.aggregate_id,
             customer_id=event.customer_id,
             total=event.total,
             status="created",

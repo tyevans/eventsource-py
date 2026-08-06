@@ -40,8 +40,8 @@ declares `event_type` by hand — see [Step 1](#step-1-define-your-events) for w
 
 Around those events you will write:
 
-- **`AccountState`** — a frozen pydantic `BaseModel` holding `account_id`,
-  `owner_name`, `balance`, and `is_open`. This is derived data, not the source of
+- **`AccountState`** — a frozen pydantic `BaseModel` holding `owner_name`,
+  `balance`, and `is_open`. This is derived data, not the source of
   truth — it exists so `decide()` has something to read.
 - **Three commands** — `OpenAccount`, `Deposit`, and `Withdraw`, each a
   `DomainCommand` subclass carrying the intent's payload.
@@ -314,7 +314,6 @@ class AccountState(BaseModel):
 
     model_config = {"frozen": True}
 
-    account_id: UUID
     owner_name: str = ""
     balance: Decimal = Decimal("0")
     is_open: bool = False
@@ -355,8 +354,11 @@ Frozen means `evolve()` in Step 3 produces a *new* instance with
 `model_copy(update={...})` on every event rather than mutating one in place — the same
 discipline events themselves follow, applied to their fold.
 
-- **`account_id: UUID`** — required, no default. Every state instance is tied to a
-  specific account, and `initial_state()` fills it from the aggregate id.
+- **No id field.** The state is the fold of one account's events, and which account
+  that is comes from the command — every one of the three carries `account_id`, and
+  `decide()` stamps it onto the events it returns. That is why `initial_state()` takes
+  no arguments: the state before anything has happened is the same value for every
+  account.
 - **`owner_name`**, **`balance`**, **`is_open`** — defaulted, and the defaults
   describe an account that does not exist yet: nameless, empty, closed. That is what
   `initial_state()` returns before any event has been applied.
@@ -402,9 +404,9 @@ class BankAccountAggregate(DeciderAggregate[AccountState, AccountCommand]):
     aggregate_type = "BankAccount"
 
     @staticmethod
-    def initial_state(aggregate_id: UUID) -> AccountState:
+    def initial_state() -> AccountState:
         """Return the state of an account before any event has occurred."""
-        return AccountState(account_id=aggregate_id)
+        return AccountState()
 
     @staticmethod
     def decide(command: AccountCommand, state: AccountState) -> list[DomainEvent]:
@@ -416,10 +418,12 @@ class BankAccountAggregate(DeciderAggregate[AccountState, AccountCommand]):
                 raise CommandRejectedError(
                     "initial balance cannot be negative", command=command
                 )
-            case OpenAccount(owner_name=owner_name, initial_balance=initial_balance), _:
+            case OpenAccount(
+                account_id=account_id, owner_name=owner_name, initial_balance=initial_balance
+            ), _:
                 return [
                     AccountOpened(
-                        aggregate_id=state.account_id,
+                        aggregate_id=account_id,
                         owner_name=owner_name,
                         initial_balance=initial_balance,
                     )
@@ -430,8 +434,8 @@ class BankAccountAggregate(DeciderAggregate[AccountState, AccountCommand]):
                 raise CommandRejectedError(
                     "deposit amount must be positive", command=command
                 )
-            case Deposit(amount=amount), _:
-                return [MoneyDeposited(aggregate_id=state.account_id, amount=amount)]
+            case Deposit(account_id=account_id, amount=amount), _:
+                return [MoneyDeposited(aggregate_id=account_id, amount=amount)]
             case Withdraw(), AccountState(is_open=False):
                 raise CommandRejectedError("account is not open", command=command)
             case Withdraw(amount=amount), _ if amount <= 0:
@@ -442,8 +446,8 @@ class BankAccountAggregate(DeciderAggregate[AccountState, AccountCommand]):
                 raise CommandRejectedError(
                     f"insufficient balance: {balance}", command=command
                 )
-            case Withdraw(amount=amount), _:
-                return [MoneyWithdrawn(aggregate_id=state.account_id, amount=amount)]
+            case Withdraw(account_id=account_id, amount=amount), _:
+                return [MoneyWithdrawn(aggregate_id=account_id, amount=amount)]
 
     @staticmethod
     def evolve(state: AccountState, event: DomainEvent) -> AccountState:

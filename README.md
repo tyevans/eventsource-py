@@ -167,10 +167,12 @@ from eventsource import DeciderAggregate, DomainCommand, CommandRejectedError
 
 # Commands - intents as values, may be rejected
 class PlaceOrder(DomainCommand):
+    order_id: UUID
     customer_id: UUID
     total: float
 
 class ShipOrder(DomainCommand):
+    order_id: UUID
     tracking_number: str
 
 OrderCommand = PlaceOrder | ShipOrder
@@ -180,19 +182,19 @@ class Order(DeciderAggregate[OrderState]):
     aggregate_type = "Order"
 
     @staticmethod
-    def initial_state(aggregate_id: UUID) -> OrderState:
-        return OrderState(order_id=aggregate_id)
+    def initial_state() -> OrderState:
+        return OrderState()
 
     @staticmethod
     def decide(command: OrderCommand, state: OrderState) -> list[DomainEvent]:
         """Command + current state -> new events (or a rejection)."""
         match command, state:
-            case PlaceOrder(customer_id=cid, total=total), OrderState(status="draft"):
-                return [OrderPlaced(aggregate_id=state.order_id, customer_id=cid, total=total)]
+            case PlaceOrder(order_id=oid, customer_id=cid, total=total), OrderState(status="draft"):
+                return [OrderPlaced(aggregate_id=oid, customer_id=cid, total=total)]
             case PlaceOrder(), _:
                 raise CommandRejectedError("Order already placed", command)
-            case ShipOrder(tracking_number=tn), OrderState(status="placed"):
-                return [OrderShipped(aggregate_id=state.order_id, tracking_number=tn)]
+            case ShipOrder(order_id=oid, tracking_number=tn), OrderState(status="placed"):
+                return [OrderShipped(aggregate_id=oid, tracking_number=tn)]
             case ShipOrder(), _:
                 raise CommandRejectedError("Order must be placed before shipping", command)
 
@@ -213,11 +215,12 @@ from `DeciderAggregate`, and everything else (events, state, projection, wiring)
 identical to the example above, and so is the output:
 
 ```python
-order = repo.create_new(uuid4())
-order.execute(PlaceOrder(customer_id=uuid4(), total=100.0))
+order_id = uuid4()
+order = repo.create_new(order_id)
+order.execute(PlaceOrder(order_id=order_id, customer_id=uuid4(), total=100.0))
 await repo.save(order)
 
-order.execute(ShipOrder(tracking_number="TRACK-001"))
+order.execute(ShipOrder(order_id=order_id, tracking_number="TRACK-001"))
 await repo.save(order)
 ```
 
