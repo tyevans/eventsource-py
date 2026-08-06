@@ -13,6 +13,7 @@ The package is organized into five source modules:
 | Module | Contains |
 | --- | --- |
 | `eventsource.application.projections.base` | `Projection`, `SyncProjection`, `EventHandlerBase`, `CheckpointTrackingProjection`, `DeclarativeProjection`, `TenantFilter` |
+| `eventsource.application.projections.store` | `StoreProjection`, `ProjectionOptions` |
 | `eventsource.application.projections.coordinator` | `ProjectionRegistry`, `ProjectionCoordinator`, `SubscriberRegistry` |
 | `eventsource.application.projections.retry` | `RetryPolicy`, `ExponentialBackoffRetryPolicy`, `NoRetryPolicy`, `FilteredRetryPolicy`, `DEFAULT_RETRY_POLICY` |
 | `eventsource.application.projections.checkpoints` | `record_checkpoint`, `read_checkpoint`, `lag_metrics_dict`, `reset_checkpoint` |
@@ -76,6 +77,7 @@ Subclasses choose their level by how much of `_process_event` they want to write
 | --- | --- | --- |
 | `CheckpointTrackingProjection` | `subscribed_to()`, `_process_event()`, optionally `_truncate_read_models()` | checkpointing, retry, DLQ, tracing hooks |
 | `DeclarativeProjection` | `@handles(EventType)` methods | the above, plus auto-generated `subscribed_to()`, dispatch through `HandlerRegistry`, and tenant filtering |
+| `StoreProjection[TStore]` | `@handles` methods writing to `self._store` | the above, with one store held for you and the whole parent constructor forwarded |
 | `DatabaseProjection` | `@handles` methods taking `(self, conn, event)` | the above, plus a fresh SQLAlchemy session and transaction per attempt, committed on success and rolled back on error |
 
 `DatabaseProjection` reimplements the retry loop rather than reusing the parent's, so
@@ -92,10 +94,20 @@ with `max_retries=2` (three total attempts), `initial_delay=2.0`, `exponential_b
 `jitter=0.1` — which is not `DEFAULT_RETRY_POLICY` from
 `eventsource.application.projections.retry`.
 
+This is a contract, not just an observed property: **every projection base's
+constructor accepts at least what its parent's accepts, permanently, in every
+release.** A parameter may be added; one is never removed. A subclass author
+can therefore write a constructor without tracking which release introduced
+which parameter — and one forwarding `**options` names no parameter at all, so
+the only version floor it needs is the one for the base class it subclasses
+(ADR 0055).
+
 That superset property is enforced by
-`tests/unit/application/projections/test_constructor_widening.py`: these four
-constructors restate the same parameter list rather than forwarding `**kwargs`, and each
-one dropping a parameter silently is exactly what the test exists to catch.
+`tests/unit/application/projections/test_constructor_widening.py`: these constructors
+restate the same parameter list rather than forwarding `**kwargs`, and each one dropping
+a parameter silently is exactly what the test exists to catch. `StoreProjection` is the
+one that does not restate it — it forwards `**options: Unpack[ProjectionOptions]`, and
+the same test expands that TypedDict's keys to check it by the same rule (ADR 0055).
 
 Storage defaults are disabled, not in-memory (ADR 0024). Omitting `checkpoint_repo`
 means no checkpoint is ever written — `get_checkpoint()` / `get_lag_metrics()` return
@@ -114,12 +126,13 @@ registered projections that subscribe to its type.
 
 ## Import Surface (`eventsource.application.projections`)
 
-The barrel module `eventsource/application/projections/__init__.py` re-exports 20 names.
+The barrel module `eventsource/application/projections/__init__.py` re-exports 22 names.
 This is the complete `__all__`, grouped as the source groups it:
 
 | Group | Names | Defined in |
 | --- | --- | --- |
 | Base classes | `Projection`, `SyncProjection`, `EventHandlerBase`, `CheckpointTrackingProjection`, `DeclarativeProjection` | `eventsource.application.projections.base` |
+| Store projections | `StoreProjection`, `ProjectionOptions` | `eventsource.application.projections.store` |
 | Type aliases | `TenantFilter` | `eventsource.application.projections.base` |
 | Decorators | `handles`, `get_handled_event_type`, `is_event_handler` | `eventsource.domain.decorators` (re-export) |
 | Coordinators and registries | `ProjectionRegistry`, `ProjectionCoordinator`, `SubscriberRegistry` | `eventsource.application.projections.coordinator` |
@@ -539,3 +552,67 @@ configuration type is shared with the subscription machinery.
   invoke `super().__init__()`, but a hand-written subclass that overrides `__init__`
   without chaining leaves `_checkpoint_repo`, `_dlq_repo`, and `_retry_policy`
   unset, and `handle()` fails with `AttributeError` on the first event.
+
+## `StoreProjection`
+
+`eventsource.application.projections.store.StoreProjection[TStore]` is a
+`DeclarativeProjection` that holds exactly one store and hands it to your handlers as
+`self._store`. Use it when the projection's read model is a single object with its own
+port — a graph store, a vector store, a repository — rather than a SQL table, which is
+`DatabaseProjection`'s case.
+
+```python
+from eventsource.application.projections import StoreProjection, handles
+
+
+class OrderProjection(StoreProjection[OrderStore]):
+    @handles(OrderCreated)
+    async def _on_created(self, _context: object, event: OrderCreated) -> None:
+        await self._store.upsert(event.order)
+
+
+projection = OrderProjection(order_store, checkpoint_repo=repo)
+```
+
+`TStore` is a type parameter, not a concrete type: the class names no adapter and no
+driver, which is what keeps it in the application ring (ADR 0024 sent
+`DatabaseProjection` to `adapters/sql` for naming an `async_sessionmaker`).
+
+### Constructor
+
+```python
+def __init__(self, store: TStore, **options: Unpack[ProjectionOptions]) -> None
+```
+
+`store` is the only parameter this class declares. Everything else is
+`ProjectionOptions`, a `TypedDict` naming exactly what `DeclarativeProjection.__init__`
+accepts — `checkpoint_repo`, `dlq_repo`, `enable_tracing`, `retry_policy`, `tracer`,
+`tenant_filter` — so the options stay individually typed and checked (PEP 692), unlike
+`**kwargs: Any`. They are keyword-only here.
+
+### Adding your own parameters
+
+This is the reason the class exists. A subclass that needs constructor parameters of its
+own declares only those and forwards the rest as one opaque `**options`, so it never
+names — and never drops — a parameter belonging to its parent:
+
+```python
+from typing import Unpack
+
+from eventsource.application.projections import ProjectionOptions, StoreProjection
+
+
+class BatchingProjection(StoreProjection[OrderStore]):
+    def __init__(
+        self,
+        store: OrderStore,
+        batch_size: int = 100,
+        **options: Unpack[ProjectionOptions],
+    ) -> None:
+        self._batch_size = batch_size
+        super().__init__(store, **options)
+```
+
+`retry_policy`, `tracer`, and `tenant_filter` reach the base through that forward, and
+keep reaching it when the parent gains options in a future release — which is the failure
+0.10.0 fixed inside this tree and this class removes outside it.

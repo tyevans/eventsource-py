@@ -108,6 +108,10 @@ if TYPE_CHECKING:
         DeclarativeProjection,
         Projection,
     )
+    from eventsource.application.projections.store import (
+        ProjectionOptions,
+        StoreProjection,
+    )
     from eventsource.domain import StreamId
     from eventsource.domain.aggregate import AggregateRoot, DeclarativeAggregate
     from eventsource.domain.command import DomainCommand
@@ -321,6 +325,8 @@ __all__ = [
     "Projection",
     "CheckpointTrackingProjection",
     "DeclarativeProjection",
+    "StoreProjection",
+    "ProjectionOptions",
     "DatabaseProjection",
     # ReadModel Projections (Phase 3)
     "ReadModelProjection",
@@ -494,6 +500,8 @@ _LAZY: dict[str, str] = {
     "Projection": "eventsource.application.projections.base",
     "CheckpointTrackingProjection": "eventsource.application.projections.base",
     "DeclarativeProjection": "eventsource.application.projections.base",
+    "StoreProjection": "eventsource.application.projections.store",
+    "ProjectionOptions": "eventsource.application.projections.store",
     "DatabaseProjection": "eventsource.adapters.sql.projection",
     "ReadModelProjection": "eventsource.adapters.sql.readmodel_projection",
     "ReadModel": "eventsource.ports.readmodels",
