@@ -126,6 +126,11 @@ class ReplayReport:
     refusal because that is what names the projection to fix. Counting both
     independently is how they drift apart; deriving one means they cannot.
 
+    The per-event derivation keys on `event_id`, the one identifier every
+    failure carries. `position` would be the intuitive key and is the wrong
+    one: it is optional by contract, so a feedless store would collapse an
+    entire failed rebuild into a count of one.
+
     The derivation is only exact while nothing was dropped, so `failed` is a
     lower bound whenever `failures_truncated` is non-zero. That is the honest
     reading of a capped list, and the reason the cap is reported rather than
@@ -144,9 +149,15 @@ class ReplayReport:
     def failed(self) -> int:
         """Events at least one *retained* failure names.
 
+        Distinct by `event_id`, not by `position`: `position` is
+        `Position | None`, and a feedless store sets it on nothing, so
+        deduping on it would fold every failure of such a rebuild into one
+        and report `1` for any number of failed events. `event_id` is always
+        present and identifies the event at least as precisely.
+
         A lower bound when `failures_truncated` is non-zero.
         """
-        return len({failure.position for failure in self.failures})
+        return len({failure.event_id for failure in self.failures})
 
 
 class ReplayFailedError(ProjectionError):

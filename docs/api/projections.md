@@ -615,8 +615,10 @@ report = await replay(event_store, [orders], tenant_id=tenant, aggregate_type="O
 | `failed` (property) | Events at least one retained failure names — per *event*, not per rejection. |
 
 `failed` and `len(failures)` legitimately differ: two projections rejecting one event is
-one failed event and two failures. `failed` is derived from the distinct positions rather
-than stored, so the two cannot drift apart.
+one failed event and two failures. `failed` is derived from the distinct `event_id`s
+rather than stored, so the two cannot drift apart. It keys on `event_id` and not on
+`position` because `position` is `Position | None` — a feedless store sets it on nothing,
+and keying on it would report `1` for a rebuild in which every event failed.
 
 `failed` is exact only while `failures_truncated` is zero, and a lower bound otherwise.
 

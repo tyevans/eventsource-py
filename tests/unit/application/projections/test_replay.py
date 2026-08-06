@@ -15,7 +15,7 @@ in the only form a port exposes one.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
@@ -117,6 +117,30 @@ class NonAdvancingFeed:
     ) -> AsyncIterator[EventEnvelope]:
         while True:
             yield _envelope(OrderPlaced(aggregate_id=uuid4()))
+
+    async def current_position(self) -> Position | None:
+        return None
+
+
+class PositionlessFeed:
+    """A feed whose envelopes carry no position.
+
+    `EventEnvelope.position` is `Position | None`, and `ReplayFailure` keeps it
+    that way rather than asserting -- a feedless store is a documented case,
+    and the rebuild path's whole job is not to crash. Anything deriving a
+    count from `position` therefore has to cope with `None` repeating.
+    """
+
+    def __init__(self, events: Sequence[DomainEvent]) -> None:
+        self._events = events
+
+    async def read_all(
+        self,
+        from_position: Position | None = None,
+        options: FeedReadOptions | None = None,
+    ) -> AsyncIterator[EventEnvelope]:
+        for event in self._events:
+            yield _envelope(event)
 
     async def current_position(self) -> Position | None:
         return None
@@ -225,6 +249,33 @@ class TestFailedCountsEventsAndFailuresCountRejections:
         store = await _store_with(OrderPlaced(aggregate_id=uuid4()))
         report = await replay(store, [])
         assert report.applied == 1
+
+    async def test_failed_counts_events_when_the_feed_supplies_no_positions(self) -> None:
+        """A position-less feed must not collapse every failure into one.
+
+        `ReplayFailure.position` is `Position | None` by contract, so a
+        derivation that dedupes on it counts every `None` as the same event
+        and reports one failure for a whole failed rebuild. `failed` answers
+        "how many events did not reach the read models"; three events that
+        each failed are three, whether or not the adapter numbers them.
+        """
+        events = [OrderPlaced(aggregate_id=uuid4()) for _ in range(3)]
+        feed = PositionlessFeed(events)
+
+        report = await replay(feed, [RejectsEverything("no")])
+
+        assert [f.position for f in report.failures] == [None, None, None]
+        assert report.failed == 3
+
+    async def test_one_positionless_event_rejected_twice_is_still_one_event(self) -> None:
+        """The dedupe still has to dedupe -- fixing the undercount must not
+        turn `failed` into `len(failures)`."""
+        feed = PositionlessFeed([OrderPlaced(aggregate_id=uuid4())])
+
+        report = await replay(feed, [RejectsEverything("left"), RejectsEverything("right")])
+
+        assert len(report.failures) == 2
+        assert report.failed == 1
 
     def test_failed_cannot_be_supplied_independently_of_the_failures(self) -> None:
         """Restoring a `failed` argument is the change that would let the two

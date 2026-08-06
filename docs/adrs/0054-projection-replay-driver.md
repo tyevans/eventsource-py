@@ -62,12 +62,20 @@ route from that message to the poison event, and the exception that would have
 supplied one was discarded inside the `except`. A caller can always turn
 detail into a raise; no caller can turn a count back into detail.
 
-`failed` is a property derived from the distinct positions in `failures`, not
+`failed` is a property derived from the distinct event ids in `failures`, not
 a field counted alongside it. Two projections can reject one event, and the
 two numbers then legitimately differ: `failed` answers "how much of the log did
 not reach the read models", which is per event, while `failures` has one entry
 per refusal because that is what names the projection to fix. Counting both is
 how they drift apart; deriving one means they cannot.
+
+The derivation keys on `event_id` rather than on `position`, which is the
+intuitive choice and the wrong one. `position` is optional by contract —
+`ReplayFailure` keeps it `Position | None` deliberately, because the rebuild
+path's job is not to crash on an adapter that supplies none — so keying on it
+would fold every failure of a feedless rebuild into a count of one. A count
+that undercounts silently is the same dishonesty `failures_truncated` exists
+to prevent, one level down.
 
 The rejecting projection is recorded by class name rather than by reference. A
 report is something an operator reads or logs, and holding the live projection
