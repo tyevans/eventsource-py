@@ -68,7 +68,7 @@ dev = [
     # they resolve together, and a lower floor here silently hands
     # `pip install -e ".[dev]"` users a mypy that fails the strict config.
     "mypy>=1.19.0",
-    "ruff>=0.14.8,<0.15",
+    "ruff>=0.14.8,<0.17",
     "testcontainers>=4.0",
     "pre-commit>=4.0",
 ]
@@ -172,8 +172,11 @@ target-version = "py313"
 # ruff >= 0.14 formats Python code blocks inside Markdown. The snippets in our
 # agent and docs Markdown are illustrative and deliberately abbreviated
 # (`...` bodies, partial classes); reformatting them serves no one and made
-# `ruff format --check .` fail repo-wide. The upper pin above stops a future
-# release from silently widening what `--check` covers again.
+# `ruff format --check .` fail repo-wide. This exclude is what fixes that; the
+# upper pin above is a second line of defence against a release silently
+# widening what `--check` covers again. The pin now admits 0.15 and 0.16, so
+# that defence is thinner than it was -- `uv.lock` still pins one exact
+# version, and crossing a minor is a deliberate `uv lock --upgrade`.
 extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
