@@ -360,3 +360,6 @@ class Query:
         if self.include_deleted:
             parts.append("(including deleted)")
         return " ".join(parts) if parts else "(all records)"
+
+
+__all__ = ["Filter", "Query"]
