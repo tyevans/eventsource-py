@@ -119,8 +119,17 @@ or service-dependent suites are deliberately *not* part of `make check`:
 ```bash
 make integration      # starts Postgres + Redis via docker compose first
 make mutation         # mutmut over the curated set
+make floors           # unit suite against the declared dependency floors
 make docs             # mkdocs --strict + runnable-example validation
 ```
+
+`make floors` is the one gate that deliberately does *not* run against
+`uv.lock`. Everything else here resolves to the pinned versions, which sit near
+the top of every declared range, so the `>=` bounds in `pyproject.toml` are
+never executed and a floor that is too low cannot fail anything. It has its own
+workflow, `.github/workflows/dependency-floors.yml`, which runs on pull
+requests touching `pyproject.toml` and weekly. See
+[Dependency Floors](dependency-floors.md).
 
 `make check` is CI parity by construction: `.github/workflows/ci.yml` installs
 with `uv sync --all-extras --locked` and invokes each tool through `uv run`,

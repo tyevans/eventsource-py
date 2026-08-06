@@ -32,7 +32,7 @@ BENCH_COMPOSE := docker compose -f docker-compose.bench.yml
 .DEFAULT_GOAL := help
 .PHONY: help install check lint format types arch sec audit test test-changed cov \
         integration integration-up integration-down mutation mutation-cosmic \
-        docs docs-examples precommit fix clean \
+        floors docs docs-examples precommit fix clean \
         bench-up bench-down bench bench-quick bench-report
 
 ## ---------------------------------------------------------------------------
@@ -121,6 +121,14 @@ integration: integration-up  ## Integration suite against real Postgres/Redis
 
 mutation:  ## mutmut against the curated set (slow -- see docs/development/mutation-testing.md)
 	scripts/mutation.sh $(MODULE)
+
+# Deliberately NOT part of `make check`. Every other gate there runs against
+# uv.lock; this one exists precisely to resolve differently, and it needs
+# network access to do it. It has a CI job of its own
+# (.github/workflows/dependency-floors.yml) rather than a step in ci.yml, so
+# the "gate here, job there" parity the header describes still holds.
+floors:  ## Unit suite against the declared dependency floors (slow, needs network)
+	scripts/check_dependency_floors.sh
 
 ## ---------------------------------------------------------------------------
 ## Benchmark harness (bench/)

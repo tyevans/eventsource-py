@@ -142,8 +142,8 @@ Two runtime dependencies, both declared in the `dependencies` array of `pyprojec
 
 ```toml
 dependencies = [
-    "pydantic>=2.0,<3.0",
-    "sqlalchemy>=2.0,<3.0",
+    "pydantic>=2.8.0,<3.0",
+    "sqlalchemy[asyncio]>=2.0.43,<3.0",
 ]
 ```
 
@@ -213,13 +213,13 @@ The full set of declared extras:
 
 | Extra | Packages pulled in | Enables |
 | --- | --- | --- |
-| `postgresql` | `asyncpg>=0.27.0,<1.0` | PostgreSQL event store, snapshot store, checkpoint/DLQ/outbox repositories, advisory locks |
+| `postgresql` | `asyncpg>=0.30.0,<1.0` | PostgreSQL event store, snapshot store, checkpoint/DLQ/outbox repositories, advisory locks |
 | `sqlite` | `aiosqlite>=0.19.0,<1.0` | SQLite event store, snapshot store, and repositories |
-| `redis` | `redis>=5.0,<6.0` | `RedisEventBus` |
-| `rabbitmq` | `aio-pika>=9.0.0` | `RabbitMQEventBus` |
-| `kafka` | `aiokafka>=0.9.0,<1.0.0` | `KafkaEventBus` |
-| `kafka-schema-registry` | `aiokafka` plus `confluent-kafka>=2.0.0,<3.0.0` | Kafka bus plus the Confluent client for a custom schema-registry serializer |
-| `telemetry` | `opentelemetry-api>=1.0,<2.0`, `opentelemetry-sdk>=1.0,<2.0` | Tracing and metrics instrumentation |
+| `redis` | `redis>=8.0,<9.0` | `RedisEventBus` |
+| `rabbitmq` | `aio-pika>=9.0.5` | `RabbitMQEventBus` |
+| `kafka` | `aiokafka>=0.12.0,<1.0.0` | `KafkaEventBus` |
+| `kafka-schema-registry` | `aiokafka` plus `confluent-kafka>=2.6.0,<3.0.0` | Kafka bus plus the Confluent client for a custom schema-registry serializer |
+| `telemetry` | `opentelemetry-api>=1.16.0,<2.0`, `opentelemetry-sdk>=1.16.0,<2.0` | Tracing and metrics instrumentation |
 | `all` | `postgresql,sqlite,redis,rabbitmq,kafka,telemetry` | Every runtime backend |
 | `all-backends` | `postgresql,sqlite` | Both storage backends only |
 | `dev` | pytest stack, mypy, ruff, testcontainers, pre-commit | Contributor toolchain |
@@ -294,13 +294,13 @@ and this is what you get otherwise:
 KafkaNotAvailableError: ...
 ```
 
-**`redis`** pins `redis>=5.0,<6.0` and uses `redis.asyncio`. The 5.x floor matters: the asyncio client's API stabilized there, and 4.x is not supported. Only `bus/redis.py` imports it -- there is no Redis-backed store, snapshot, or repository in the library.
+**`redis`** pins `redis>=8.0,<9.0` and uses `redis.asyncio`. The floor moved up from 5.x when redis-py's typing improved enough for the bus to type-check against it (ADR 0015); 4.x was never supported. Only `bus/redis.py` imports it -- there is no Redis-backed store, snapshot, or repository in the library.
 
-**`rabbitmq`** installs `aio-pika>=9.0.0` (no upper bound). `RabbitMQEventBus` connects over AMQP through `aio-pika` and adds a second, independent guard for OpenTelemetry context propagation: `PROPAGATION_AVAILABLE` is true only when both `aio-pika` and the OTel propagation API are importable, so trace headers are injected into published messages only if you also installed `telemetry`.
+**`rabbitmq`** installs `aio-pika>=9.0.5` (no upper bound). The floor is 9.0.5 rather than 9.0.0 because releases below it import `pkg_resources`, which no longer exists on Python 3.13. `RabbitMQEventBus` connects over AMQP through `aio-pika` and adds a second, independent guard for OpenTelemetry context propagation: `PROPAGATION_AVAILABLE` is true only when both `aio-pika` and the OTel propagation API are importable, so trace headers are injected into published messages only if you also installed `telemetry`.
 
-**`kafka`** installs `aiokafka>=0.9.0,<1.0.0`, from which `bus/kafka.py` imports `AIOKafkaProducer`, `AIOKafkaConsumer`, `TopicPartition`, the rebalance-listener ABC, and the Kafka error types. When the import fails these names are bound to `None` (and the listener base to `object`) so the module body still evaluates. Like RabbitMQ, the Kafka bus has a separate `PROPAGATION_AVAILABLE` guard for OTel propagation and metrics.
+**`kafka`** installs `aiokafka>=0.12.0,<1.0.0`, from which `bus/kafka.py` imports `AIOKafkaProducer`, `AIOKafkaConsumer`, `TopicPartition`, the rebalance-listener ABC, and the Kafka error types. When the import fails these names are bound to `None` (and the listener base to `object`) so the module body still evaluates. Like RabbitMQ, the Kafka bus has a separate `PROPAGATION_AVAILABLE` guard for OTel propagation and metrics.
 
-**`kafka-schema-registry`** adds `confluent-kafka>=2.0.0,<3.0.0` on top of the same `aiokafka` pin. This extra is a convenience for *your* code, not a switch inside the library: no module under `src/eventsource/` imports `confluent_kafka`. The library's serialization boundary is the `EventSerializer` base class in `bus/kafka.py`, whose default implementation is JSON via Pydantic; its docstring points at subclassing it for Avro or Protobuf against a registry client. Install this extra when you intend to write such a serializer and pass it to the bus -- installing it alone changes nothing about the default behavior. It is also the only extra that pulls a package with meaningful native-build implications, since `confluent-kafka` wraps `librdkafka`.
+**`kafka-schema-registry`** adds `confluent-kafka>=2.6.0,<3.0.0` on top of the same `aiokafka` pin. This extra is a convenience for *your* code, not a switch inside the library: no module under `src/eventsource/` imports `confluent_kafka`. The library's serialization boundary is the `EventSerializer` base class in `bus/kafka.py`, whose default implementation is JSON via Pydantic; its docstring points at subclassing it for Avro or Protobuf against a registry client. Install this extra when you intend to write such a serializer and pass it to the bus -- installing it alone changes nothing about the default behavior. It is also the only extra that pulls a package with meaningful native-build implications, since `confluent-kafka` wraps `librdkafka`.
 
 Note the test markers: `kafka` and `rabbitmq` tests are excluded from the default `pytest` run and must be selected explicitly with `-m kafka` or `-m rabbitmq`, whereas `redis` tests run as part of the normal integration suite.
 
@@ -310,7 +310,7 @@ Note the test markers: `kafka` and `rabbitmq` tests are excluded from the defaul
 pip install "eventsource-py[telemetry]"
 ```
 
-This extra installs `opentelemetry-api` and `opentelemetry-sdk`, both `>=1.0,<2.0`. Instrumentation is spread across the codebase but funnels through a single guard in `src/eventsource/observability/tracing.py`:
+This extra installs `opentelemetry-api` and `opentelemetry-sdk`, both `>=1.16.0,<2.0`. Instrumentation is spread across the codebase but funnels through a single guard in `src/eventsource/observability/tracing.py`:
 
 ```python
 try:

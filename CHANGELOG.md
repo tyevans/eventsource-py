@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- **Most declared dependency floors are raised, and `sqlalchemy` is now declared as `sqlalchemy[asyncio]`.** `pydantic>=2.0` to `>=2.8.0`, `sqlalchemy>=2.0` to `sqlalchemy[asyncio]>=2.0.43`, `orjson>=3.9` to `>=3.10.7`, `asyncpg>=0.27.0` to `>=0.30.0`, `aio-pika>=9.0.0` to `>=9.0.5`, `aiokafka>=0.9.0` to `>=0.12.0`, `confluent-kafka>=2.0.0` to `>=2.6.0`, and both OpenTelemetry packages `>=1.0` to `>=1.16.0`. Breaking only for an install that pinned a dependency below one of the new bounds — and no such install ever worked, which is the point. The old floors predated `requires-python = ">=3.13"` (ADR 0043): five of them have no wheel for any interpreter this package supports and fail to build from source, and `aio-pika` below 9.0.5 imports `pkg_resources`, removed in 3.13. SQLAlchemy is the subtlest of the set, and failed twice. First, it gated `greenlet` behind a marker that excluded Python 3.13 until 2.0.37, so a bare install resolved and imported cleanly and then failed every async call with `the greenlet library is required`; naming the `[asyncio]` extra states the dependency this library actually has instead of inheriting it from someone else's marker. Second, with that fixed, `adapters/_sql/engine.py` calls `Dialect.detect_autocommit_setting()`, which does not exist before 2.0.43 — hence that floor rather than 2.0. Resolved versions in `uv.lock` are unchanged, so nothing moves for anyone installing from the lock.
+
+### Added
+
+- **`make floors` and a `Dependency floors` CI workflow.** Every other gate installs with `uv sync --locked`, which resolves near the top of every declared range, so the `>=` bounds were the one point in the supported range nothing exercised — a floor that was too low could not fail anything. The new gate installs with `uv --resolution lowest-direct` into a throwaway environment, putting every declared dependency exactly on its bound, and runs the existing unit suite there. It is deliberately not part of `make check`: it is the one gate that must not use the lockfile, and it needs network access. `lowest-direct` rather than `lowest` because transitive versions are not something this project declares or promises. Documented in `docs/development/dependency-floors.md`; it is what found the floor breakage above.
+
+
 ## [0.11.0] - 2026-08-05
 
 A backlog sweep. One read-model defect fixed, one public exception renamed, and

@@ -20,14 +20,22 @@ classifiers = [
 ]
 
 dependencies = [
-    "pydantic>=2.0,<3.0",
-    "sqlalchemy>=2.0,<3.0",
-    "orjson>=3.9",
+    "pydantic>=2.8.0,<3.0",
+    # The [asyncio] extra, not bare sqlalchemy: everything here uses
+    # create_async_engine, which needs greenlet. SQLAlchemy gates its greenlet
+    # dependency behind a platform marker that excluded Python 3.13 until
+    # 2.0.37, so a bare "sqlalchemy" install on 3.13 resolves and imports
+    # perfectly and then fails every async call with "the greenlet library is
+    # required". Naming the extra states the requirement we actually have
+    # instead of inheriting it by accident. See
+    # docs/development/dependency-floors.md.
+    "sqlalchemy[asyncio]>=2.0.43,<3.0",
+    "orjson>=3.10.7",
 ]
 
 [project.optional-dependencies]
 postgresql = [
-    "asyncpg>=0.27.0,<1.0",
+    "asyncpg>=0.30.0,<1.0",
 ]
 sqlite = [
     "aiosqlite>=0.19.0,<1.0",
@@ -36,18 +44,18 @@ redis = [
     "redis>=8.0,<9.0",
 ]
 telemetry = [
-    "opentelemetry-api>=1.0,<2.0",
-    "opentelemetry-sdk>=1.0,<2.0",
+    "opentelemetry-api>=1.16.0,<2.0",
+    "opentelemetry-sdk>=1.16.0,<2.0",
 ]
 rabbitmq = [
-    "aio-pika>=9.0.0",
+    "aio-pika>=9.0.5",
 ]
 kafka = [
-    "aiokafka>=0.9.0,<1.0.0",
+    "aiokafka>=0.12.0,<1.0.0",
 ]
 kafka-schema-registry = [
-    "aiokafka>=0.9.0,<1.0.0",
-    "confluent-kafka>=2.0.0,<3.0.0",
+    "aiokafka>=0.12.0,<1.0.0",
+    "confluent-kafka>=2.6.0,<3.0.0",
 ]
 all = [
     "eventsource-py[postgresql,sqlite,redis,rabbitmq,kafka,telemetry]",

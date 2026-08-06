@@ -184,4 +184,5 @@ nav:
       - Code Structure: development/code-structure.md
       - Testing: development/testing.md
       - Mutation Testing: development/mutation-testing.md
+      - Dependency Floors: development/dependency-floors.md
   - FAQ: faq.md

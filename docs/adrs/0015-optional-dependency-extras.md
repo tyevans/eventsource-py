@@ -16,6 +16,24 @@ The preceding change under this decision was demoting `redis` from a core depend
 
 One part of the decision is knowingly unimplemented: asyncpg has no `*_AVAILABLE` guard, so the PostgreSQL paths import their driver unconditionally and surface a missing `postgresql` extra later, at driver-URL resolution, instead of at the guard. That inconsistency is documented under Consequences rather than treated as a bug to be silently fixed, because closing it changes the failure mode users currently see.
 
+Amended again, after the Python floor rose to 3.13 (ADR 0043): the `>=` bound on most
+of these dependencies was raised. The decision stands unchanged -- drivers remain
+opt-in extras, each with a lower bound and, where warranted, an upper one -- but the
+bounds recorded in this ADR when it was written no longer describe the supported
+range, and should be read as history rather than as the current contract.
+`pyproject.toml` is the only authority for what those bounds are.
+
+The reason is worth recording, because it generalises. A `>=` bound is never exercised
+by the project's own CI: `uv sync --locked` resolves to one pinned set near the *top* of
+every declared range, so the bottom of the range is the one point nothing executes, and
+a bound that is too low cannot fail anything. When a gate was finally built to resolve
+at the declared floors (`make floors`), most of these bounds turned out to predate
+Python 3.13 and describe an environment that cannot exist -- our own `requires-python`
+excludes every interpreter those releases support. That coupling is the durable lesson:
+**raising the Python floor invalidates every dependency floor beneath it**, and nothing
+in the ordinary gate set notices. See
+[Dependency Floors](../development/dependency-floors.md).
+
 Amended by [ADR 0024](0024-projection-persistence-ports.md).
 
 ## Context

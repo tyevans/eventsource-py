@@ -42,8 +42,8 @@ You need:
 - **Python 3.13+** and a working install of `eventsource-py`. Nothing in this
   guide requires a database or broker — the examples use `InMemoryEventBus`
   and other in-memory components so they run anywhere.
-- **The `telemetry` extra**, which pulls in `opentelemetry-api>=1.0,<2.0` and
-  `opentelemetry-sdk>=1.0,<2.0`. Without it `OTEL_AVAILABLE` is `False` and
+- **The `telemetry` extra**, which pulls in `opentelemetry-api>=1.16.0,<2.0` and
+  `opentelemetry-sdk>=1.16.0,<2.0`. Without it `OTEL_AVAILABLE` is `False` and
   everything below silently degrades to no-ops. Installation is covered in the
   next section.
 - **Somewhere for spans to go.** The SDK ships a console exporter that is enough
@@ -100,8 +100,8 @@ The `telemetry` extra adds exactly two packages:
 
 ```toml
 telemetry = [
-    "opentelemetry-api>=1.0,<2.0",
-    "opentelemetry-sdk>=1.0,<2.0",
+    "opentelemetry-api>=1.16.0,<2.0",
+    "opentelemetry-sdk>=1.16.0,<2.0",
 ]
 ```
 
