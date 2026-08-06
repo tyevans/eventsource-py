@@ -1,6 +1,5 @@
 """Conformance tests for SQLiteEventStore against the port suites."""
 
-import threading
 import time
 from collections.abc import AsyncIterator
 from uuid import uuid4
@@ -262,17 +261,25 @@ def test_sync_facade_close_closes_underlying_store() -> None:
     )
     del stream
 
-    before = threading.active_count()
+    # aiosqlite.Connection *is* a Thread, so the store's own worker can be
+    # identified rather than inferred from a global count. An earlier version
+    # asserted `threading.active_count() == before - 1`, which reads as
+    # precision and is not: the count is process-wide, so any other test's
+    # connection thread exiting during this window makes the delta larger than
+    # one and fails a passing implementation. That is exactly what happened
+    # when the suite ran in a single process rather than under xdist.
+    worker = store._connection
+    assert worker is not None, "the append above should have opened the connection"
+    assert worker.is_alive()
 
     facade.close()
 
     deadline = time.monotonic() + 2.0
-    after = threading.active_count()
-    while after > before - 1 and time.monotonic() < deadline:
+    while worker.is_alive() and time.monotonic() < deadline:
         time.sleep(0.01)
-        after = threading.active_count()
 
-    assert after == before - 1
+    assert not worker.is_alive(), "closing the facade must release the store's aiosqlite thread"
+    assert store._connection is None
 
 
 async def test_reopening_same_file_backed_db_does_not_fail_on_additive_column(
