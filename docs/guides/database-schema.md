@@ -83,7 +83,7 @@ construct.
 | `event_outbox` | `get_schema("outbox")` | `PostgreSQLOutboxRepository`, `SQLiteOutboxRepository`, and the event stores when you append and enqueue in one transaction | postgresql, sqlite |
 | `projection_checkpoints` | `get_schema("checkpoints")` | `PostgreSQLCheckpointRepository`, `SQLiteCheckpointRepository` -- resumable projections and subscriptions | postgresql, sqlite |
 | `dead_letter_queue` | `get_schema("dlq")` | `PostgreSQLDLQRepository`, `SQLiteDLQRepository` | postgresql, sqlite |
-| `snapshots` | `get_schema("snapshots")` | `PostgreSQLSnapshotStore`, `SQLiteSnapshotStore` | postgresql, sqlite |
+| `snapshots` | `get_schema("snapshots")` | `PostgreSQLSnapshotStore`; `SQLiteSnapshotStore` applies the sqlite variant itself on connect | postgresql, sqlite |
 | `events` (partitioned) | `get_schema("events_partitioned")` | drop-in replacement for `events` on high-volume PostgreSQL | postgresql only |
 | `tenant_migrations`, `tenant_routing`, `migration_position_mappings`, `migration_audit_log` | `get_schema("migration")` | `PostgreSQLMigrationRepository` -- live store-to-store migration tooling | postgresql only |
 

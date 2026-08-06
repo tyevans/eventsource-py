@@ -338,10 +338,12 @@ The work splits three ways, and the guide follows that order:
   `SQLiteSnapshotStore` and `PostgreSQLSnapshotStore` are imported from
   `eventsource.adapters.sqlite` / `eventsource.adapters.postgresql` respectively.
   All three implement the same `SnapshotStore` interface (`eventsource.ports.snapshots`).
-  Neither SQL store creates its own table -- apply
-  the bundled `snapshots` schema first (`get_schema("snapshots")`, or the sqlite
-  variant; see [set up the database schema](database-schema.md)). `SQLiteSnapshotStore`
-  needs the `sqlite` extra and raises `SQLiteNotAvailableError` without it.
+  `PostgreSQLSnapshotStore` does not create its own table -- apply the bundled
+  `snapshots` schema first (`get_schema("snapshots")`; see [set up the database
+  schema](database-schema.md)). `SQLiteSnapshotStore` applies the sqlite variant
+  itself when it opens its connection; it needs the `sqlite` extra, raises
+  `SQLiteNotAvailableError` without it, and owns that connection -- close it
+  with `await store.close()`.
 - **On the repository.** Snapshotting is configured where the plumbing lives, via
   `snapshot_store`, `snapshot_threshold`, and `snapshot_mode` -- `"sync"` writes
   before `save()` returns, `"background"` hands the write to a fire-and-forget task

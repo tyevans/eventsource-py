@@ -94,6 +94,14 @@ CREATE INDEX IF NOT EXISTS idx_events_tenant_id
 CREATE INDEX IF NOT EXISTS idx_events_type_tenant_timestamp
     ON events (aggregate_type, tenant_id, timestamp);
 
+-- Composite index for aggregate-type-filtered feed reads
+-- Optimizes: FeedReadOptions(aggregate_type=...) -- filter by type, resume
+-- from a global position, return in global-position order. SQLite needs no
+-- counterpart: global_position is its rowid there, so the plain
+-- idx_events_aggregate_type is already ordered by it.
+CREATE INDEX IF NOT EXISTS idx_events_type_position
+    ON events (aggregate_type, global_position);
+
 -- Index for aggregate stream loading with version ordering
 -- Optimizes loading full aggregate history in order
 CREATE INDEX IF NOT EXISTS idx_events_aggregate_version

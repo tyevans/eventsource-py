@@ -112,8 +112,9 @@ The SQLite store is an optional import: if `aiosqlite` is missing,
 `None`, and constructing it raises `SQLiteNotAvailableError`. Guard on
 `SQLITE_AVAILABLE` if your code must run in both configurations.
 
-For the durable stores, create the `snapshots` table before first use. The
-schema ships with the library:
+`PostgreSQLSnapshotStore` needs the `snapshots` table to exist before first
+use; `SQLiteSnapshotStore` applies its own schema (idempotently) when it opens
+its connection. The schema ships with the library either way:
 
 - PostgreSQL: `src/eventsource/adapters/sql/schemas/templates/snapshots.sql`
 - SQLite: `src/eventsource/adapters/sql/schemas/templates/sqlite/snapshots.sql`
@@ -459,6 +460,10 @@ Backed by `aiosqlite`, one file on disk:
 from eventsource.adapters.sqlite import SQLiteSnapshotStore
 
 store = SQLiteSnapshotStore("snapshots.db")
+try:
+    ...
+finally:
+    await store.close()
 ```
 
 Saves use `INSERT OR REPLACE`; the `state` dict is stored as a JSON `TEXT`
@@ -466,7 +471,7 @@ column via `json.dumps()`, and `created_at` as an ISO-8601 string. Both are
 decoded on read, so the `Snapshot` you get back has a real `dict` and a real
 `datetime`.
 
-Three things to know before you rely on it:
+Four things to know before you rely on it:
 
 - **The import is optional.** If `aiosqlite` is not installed,
   `eventsource.adapters.sqlite.SQLITE_AVAILABLE` is `False` and `SQLiteSnapshotStore`
@@ -474,11 +479,19 @@ Three things to know before you rely on it:
   call, not a clean `ImportError`. Guard on `SQLITE_AVAILABLE` in code that must
   run in both configurations. When the class is importable but `aiosqlite` is
   not, the constructor raises `SQLiteNotAvailableError`.
-- **`":memory:"` does not work as a store.** The constructor accepts it and
-  `store.database_path` reports it, but every operation opens its own
-  `aiosqlite.connect(database_path)`, so an in-memory path gives each call a
-  fresh, empty database -- saves vanish and every load misses. Use a real file
-  path, or `InMemorySnapshotStore` if what you wanted was an ephemeral store.
+- **You must close it.** The store opens one `aiosqlite` connection on first
+  use and reuses it for its lifetime; `aiosqlite` backs each connection with a
+  **non-daemon** thread, which keeps the interpreter alive at shutdown until
+  someone closes it. `SQLiteSnapshotStore` implements
+  [`SupportsClose`](../architecture.md), so `await store.close()` releases it,
+  idempotently, and a later call reopens. Nothing else in the library closes a
+  snapshot store for you.
+- **`":memory:"` works.** Because the connection is held open for the store's
+  lifetime, an in-memory path behaves like any other -- `close()` discards the
+  database with the connection. (Before the connection was shared, every
+  operation opened its own, so an in-memory store saw a fresh empty database on
+  every call; saves vanished and every load missed.) `InMemorySnapshotStore` is
+  still the simpler choice for tests that don't need SQL.
 - **SQLite is single-writer.** Concurrent snapshot writes serialize. That is
   fine at the volumes snapshotting produces (one write per aggregate per
   threshold crossing), but it is the reason this store is scoped to single-node

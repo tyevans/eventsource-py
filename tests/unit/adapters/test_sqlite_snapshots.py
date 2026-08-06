@@ -3,6 +3,7 @@
 import asyncio
 import os
 import tempfile
+import threading
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -11,10 +12,8 @@ import pytest
 from tests.conftest import AIOSQLITE_AVAILABLE, skip_if_no_aiosqlite
 
 if AIOSQLITE_AVAILABLE:
-    import aiosqlite
-
-    from eventsource.adapters.sql.schemas import get_schema
     from eventsource.adapters.sqlite.snapshots import SQLITE_AVAILABLE, SQLiteSnapshotStore
+    from eventsource.ports.lifecycle import SupportsClose
     from eventsource.ports.snapshots import Snapshot
 
 
@@ -50,13 +49,10 @@ class TestSQLiteSnapshotStoreOperations:
 
     @pytest.fixture
     async def store(self, db_path):
-        """Create store with initialized schema."""
-        # Create schema
-        async with aiosqlite.connect(db_path) as conn:
-            schema = get_schema("snapshots", "sqlite")
-            await conn.executescript(schema)
-
-        return SQLiteSnapshotStore(db_path)
+        """Create a store; it applies its own schema on first use."""
+        store = SQLiteSnapshotStore(db_path)
+        yield store
+        await store.close()
 
     @pytest.fixture
     def sample_snapshot(self):
@@ -354,11 +350,7 @@ class TestSQLiteSnapshotStoreFilePersistence:
 
             aggregate_id = uuid4()
 
-            # First session: create schema and save snapshot
-            async with aiosqlite.connect(db_path) as conn:
-                schema = get_schema("snapshots", "sqlite")
-                await conn.executescript(schema)
-
+            # First session: the store applies its own schema on first use
             store1 = SQLiteSnapshotStore(db_path)
             snapshot = Snapshot(
                 aggregate_id=aggregate_id,
@@ -369,13 +361,109 @@ class TestSQLiteSnapshotStoreFilePersistence:
                 created_at=datetime.now(UTC),
             )
             await store1.save_snapshot(snapshot)
+            await store1.close()
 
             # Second session: verify snapshot persisted
             store2 = SQLiteSnapshotStore(db_path)
-            loaded = await store2.get_snapshot(aggregate_id, "Order")
+            try:
+                loaded = await store2.get_snapshot(aggregate_id, "Order")
+            finally:
+                await store2.close()
 
             assert loaded is not None
             assert loaded.state["persisted"] is True
+
+
+class TestSQLiteSnapshotStoreLifecycle:
+    """Tests for the SupportsClose capability and the shared connection."""
+
+    def test_satisfies_supports_close(self):
+        assert isinstance(SQLiteSnapshotStore(":memory:"), SupportsClose)
+
+    @pytest.mark.asyncio
+    async def test_close_is_idempotent(self):
+        store = SQLiteSnapshotStore(":memory:")
+        await store.snapshot_exists(uuid4(), "Order")
+
+        await store.close()
+        await store.close()
+
+    @pytest.mark.asyncio
+    async def test_close_before_first_use_is_a_no_op(self):
+        await SQLiteSnapshotStore(":memory:").close()
+
+    @pytest.mark.asyncio
+    async def test_close_releases_the_aiosqlite_worker_thread(self):
+        """The reason `close()` exists: aiosqlite's worker is non-daemon.
+
+        A thread nothing releases keeps the interpreter alive at shutdown,
+        which is what forced consumers to thread one shared store instance
+        through every call site rather than construct a second one.
+        """
+        before = {t.name for t in threading.enumerate()}
+
+        store = SQLiteSnapshotStore(":memory:")
+        await store.snapshot_exists(uuid4(), "Order")
+        during = {t.name for t in threading.enumerate()}
+        assert during - before, "expected aiosqlite to have started a worker thread"
+
+        await store.close()
+        # The worker exits asynchronously once its queue drains.
+        for _ in range(100):
+            if not ({t.name for t in threading.enumerate()} - before):
+                break
+            await asyncio.sleep(0.01)
+
+        assert {t.name for t in threading.enumerate()} - before == set()
+
+    @pytest.mark.asyncio
+    async def test_memory_database_keeps_one_connection_across_operations(self):
+        """A per-operation connection would see a different, empty ":memory:" db."""
+        store = SQLiteSnapshotStore(":memory:")
+        try:
+            aggregate_id = uuid4()
+            await store.save_snapshot(
+                Snapshot(
+                    aggregate_id=aggregate_id,
+                    aggregate_type="Order",
+                    version=1,
+                    state={"in": "memory"},
+                    schema_version=1,
+                    created_at=datetime.now(UTC),
+                )
+            )
+
+            loaded = await store.get_snapshot(aggregate_id, "Order")
+        finally:
+            await store.close()
+
+        assert loaded is not None
+        assert loaded.state["in"] == "memory"
+
+    @pytest.mark.asyncio
+    async def test_reopens_after_close(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = SQLiteSnapshotStore(os.path.join(tmpdir, "reopen.db"))
+            aggregate_id = uuid4()
+            await store.save_snapshot(
+                Snapshot(
+                    aggregate_id=aggregate_id,
+                    aggregate_type="Order",
+                    version=1,
+                    state={"round": "trip"},
+                    schema_version=1,
+                    created_at=datetime.now(UTC),
+                )
+            )
+            await store.close()
+
+            try:
+                loaded = await store.get_snapshot(aggregate_id, "Order")
+            finally:
+                await store.close()
+
+            assert loaded is not None
+            assert loaded.state["round"] == "trip"
 
 
 class TestSQLiteSnapshotStoreConcurrency:
@@ -389,12 +477,10 @@ class TestSQLiteSnapshotStoreConcurrency:
 
     @pytest.fixture
     async def store(self, db_path):
-        """Create store with initialized schema."""
-        async with aiosqlite.connect(db_path) as conn:
-            schema = get_schema("snapshots", "sqlite")
-            await conn.executescript(schema)
-
-        return SQLiteSnapshotStore(db_path)
+        """Create a store; it applies its own schema on first use."""
+        store = SQLiteSnapshotStore(db_path)
+        yield store
+        await store.close()
 
     @pytest.mark.asyncio
     async def test_concurrent_save_operations(self, store):

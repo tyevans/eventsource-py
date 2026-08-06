@@ -133,6 +133,90 @@ class GlobalFeedConformance(ABC):
 
         assert [e.event.payload for e in envelopes] == ["1", "3"]  # type: ignore[attr-defined]
 
+    async def test_aggregate_type_filter_honored(self, store: _AppenderFeed) -> None:
+        wanted = make_stream(category="Conformance", aggregate_id=uuid4())
+        other = make_stream(category="ConformanceOther", aggregate_id=uuid4())
+
+        await store.append(
+            wanted,
+            [ConformanceEvent(aggregate_id=wanted.aggregate_id, payload="1")],
+            ExpectedVersion.any_(),
+        )
+        await store.append(
+            other,
+            [
+                ConformanceEvent(
+                    aggregate_id=other.aggregate_id,
+                    aggregate_type="ConformanceOther",
+                    payload="2",
+                )
+            ],
+            ExpectedVersion.any_(),
+        )
+        await store.append(
+            wanted,
+            [ConformanceEvent(aggregate_id=wanted.aggregate_id, payload="3")],
+            ExpectedVersion.any_(),
+        )
+
+        envelopes = await collect(
+            store.read_all(options=FeedReadOptions(aggregate_type="Conformance"))
+        )
+
+        assert [e.event.payload for e in envelopes] == ["1", "3"]  # type: ignore[attr-defined]
+
+    async def test_aggregate_type_filter_composes_with_position_and_limit(
+        self, store: _AppenderFeed
+    ) -> None:
+        wanted = make_stream(category="Conformance", aggregate_id=uuid4())
+        other = make_stream(category="ConformanceOther", aggregate_id=uuid4())
+
+        for i in range(4):
+            await store.append(
+                wanted,
+                [ConformanceEvent(aggregate_id=wanted.aggregate_id, payload=str(i))],
+                ExpectedVersion.any_(),
+            )
+            await store.append(
+                other,
+                [
+                    ConformanceEvent(
+                        aggregate_id=other.aggregate_id,
+                        aggregate_type="ConformanceOther",
+                        payload=f"other-{i}",
+                    )
+                ],
+                ExpectedVersion.any_(),
+            )
+
+        options = FeedReadOptions(aggregate_type="Conformance")
+        first = await collect(store.read_all(options=options))
+        assert [e.event.payload for e in first] == ["0", "1", "2", "3"]  # type: ignore[attr-defined]
+
+        # The limit bounds the events *returned after filtering*, not the rows
+        # scanned -- so resuming from the last one returned continues the
+        # filtered sequence rather than skipping past the interleaved rows.
+        page = await collect(
+            store.read_all(options=FeedReadOptions(aggregate_type="Conformance", limit=2))
+        )
+        assert [e.event.payload for e in page] == ["0", "1"]  # type: ignore[attr-defined]
+        assert page[-1].position is not None
+
+        rest = await collect(store.read_all(from_position=page[-1].position, options=options))
+        assert [e.event.payload for e in rest] == ["2", "3"]  # type: ignore[attr-defined]
+
+    async def test_aggregate_type_filter_no_match_returns_empty(self, store: _AppenderFeed) -> None:
+        stream = make_stream()
+        await store.append(
+            stream, [ConformanceEvent(aggregate_id=stream.aggregate_id)], ExpectedVersion.any_()
+        )
+
+        envelopes = await collect(
+            store.read_all(options=FeedReadOptions(aggregate_type="NeverAppended"))
+        )
+
+        assert envelopes == []
+
     async def test_position_round_trip_resumption(self, store: _AppenderFeed) -> None:
         stream = make_stream()
         for i in range(3):

@@ -454,13 +454,22 @@ async for envelope in store.read_stream(stream, options):
 @dataclass(frozen=True, slots=True)
 class FeedReadOptions:
     tenant_id: UUID | None = None
+    aggregate_type: str | None = None
     limit: int | None = None
 ```
 
 | Field | Default | Description |
 | --- | --- | --- |
 | `tenant_id` | `None` | Restrict to one tenant; `None` means all tenants |
+| `aggregate_type` | `None` | Restrict to one aggregate type (stream category); `None` means all types |
 | `limit` | `None` | Maximum events to return; `None` means unlimited |
+
+`aggregate_type` is the same fact as `StreamId.category` and the stored
+`aggregate_type` column, and the SQL adapters push it into the `WHERE` clause --
+so a consumer interested in one type should pass it rather than reading the whole
+feed and discarding the rest. Note the difference from `read_category`, which
+filters on the same column but orders by storage time; a feed read stays ordered
+by global position, so a position taken from one page resumes the next.
 
 Deliberately narrower than the retired `ReadOptions`: no `direction` (feed reads are
 always forward -- see `ReadDirection` above) and no `from_timestamp`/`to_timestamp`

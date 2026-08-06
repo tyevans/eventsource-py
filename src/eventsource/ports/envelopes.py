@@ -86,14 +86,23 @@ class StreamReadOptions:
 class FeedReadOptions:
     """Options for reading from the global event feed.
 
-    Configures tenant filtering and result limit for feed reads.
+    Configures tenant filtering, aggregate-type filtering, and result limit
+    for feed reads.
 
     Attributes:
         tenant_id: Tenant to filter by; None for all tenants
+        aggregate_type: Aggregate type (stream category) to filter by; None for
+            all types. Same fact as `StreamId.category` and the stored
+            `aggregate_type` column -- a feed read filtered this way is
+            ordered by global position like any other feed read, unlike
+            `read_category`, which orders by storage time. Push the filter
+            here rather than discarding events in the consumer: adapters
+            translate it into an indexed predicate.
         limit: Maximum number of events to return; None for no limit
     """
 
     tenant_id: UUID | None = None
+    aggregate_type: str | None = None
     limit: int | None = None
 
 
