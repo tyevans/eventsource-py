@@ -19,7 +19,7 @@ A decider models the aggregate as three pure functions over plain values, with a
 `DeciderAggregate` adapter wiring them into the repository:
 
 ```python
-def initial_state(invoice_id: UUID) -> InvoiceState: ...
+def initial_state() -> InvoiceState: ...
 def decide(command: InvoiceCommand, state: InvoiceState) -> list[DomainEvent]: ...
 def evolve(state: InvoiceState, event: DomainEvent) -> InvoiceState: ...
 ```
@@ -28,6 +28,8 @@ def evolve(state: InvoiceState, event: DomainEvent) -> InvoiceState: ...
 produce?" — it returns events or raises a rejection. `evolve` answers "given a fact,
 what's the next state?" — the same fold that replay and `decide`'s own view of current
 state are built from. Neither function touches `self`, versions, or anything async.
+`initial_state` takes no arguments: the aggregate a command targets is named by the
+command, so identity never has to travel through the fold.
 
 ### Worked example: Invoice
 
@@ -61,42 +63,45 @@ class InvoicePaid(DomainEvent):
 
 
 class InvoiceState(BaseModel):
-    invoice_id: UUID
     customer_id: UUID | None = None
     amount: Decimal = Decimal("0")
     status: str = "draft"
 
 
 class Draft(DomainCommand):
+    invoice_id: UUID
     customer_id: UUID
     amount: Decimal
 
 
 class Send(DomainCommand):
-    pass
+    invoice_id: UUID
 
 
 class Pay(DomainCommand):
+    invoice_id: UUID
     amount: Decimal
 
 
 InvoiceCommand = Draft | Send | Pay
 
 
-def initial_state(invoice_id: UUID) -> InvoiceState:
-    return InvoiceState(invoice_id=invoice_id)
+def initial_state() -> InvoiceState:
+    return InvoiceState()
 
 
 def decide(command: InvoiceCommand, state: InvoiceState) -> list[DomainEvent]:
     match command, state:
-        case Draft(customer_id=cid, amount=amt), InvoiceState(status="draft", customer_id=None):
-            return [InvoiceDrafted(aggregate_id=state.invoice_id, customer_id=cid, amount=amt)]
-        case Send(), InvoiceState(status="draft", customer_id=not None):
-            return [InvoiceSent(aggregate_id=state.invoice_id)]
-        case Pay(amount=amt), InvoiceState(status="sent"):
+        case Draft(invoice_id=iid, customer_id=cid, amount=amt), InvoiceState(
+            status="draft", customer_id=None
+        ):
+            return [InvoiceDrafted(aggregate_id=iid, customer_id=cid, amount=amt)]
+        case Send(invoice_id=iid), InvoiceState(status="draft", customer_id=not None):
+            return [InvoiceSent(aggregate_id=iid)]
+        case Pay(invoice_id=iid, amount=amt), InvoiceState(status="sent"):
             if amt != state.amount:
                 raise CommandRejectedError(f"Expected payment of {state.amount}, got {amt}")
-            return [InvoicePaid(aggregate_id=state.invoice_id, amount=amt)]
+            return [InvoicePaid(aggregate_id=iid, amount=amt)]
         case _:
             raise CommandRejectedError(f"Cannot apply {type(command).__name__} to a {state.status} invoice")
 
@@ -117,8 +122,8 @@ class Invoice(DeciderAggregate[InvoiceState, InvoiceCommand]):
     aggregate_type = "Invoice"
 
     @staticmethod
-    def initial_state(aggregate_id: UUID) -> InvoiceState:
-        return initial_state(aggregate_id)
+    def initial_state() -> InvoiceState:
+        return initial_state()
 
     @staticmethod
     def decide(command: InvoiceCommand, state: InvoiceState) -> list[DomainEvent]:

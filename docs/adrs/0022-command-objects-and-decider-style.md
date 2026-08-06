@@ -16,6 +16,12 @@ shared `_provenance_updates()` helper, so the ambient tenant-context
 fallback now applies to every command type the decider handles, not only
 `DomainCommand` subclasses.
 
+**Amended by [ADR 0056](0056-decider-initial-state-is-nullary.md)**
+(`initial_state` takes no arguments; `decide` obtains the aggregate id from the
+command, which names the aggregate it targets. The rest of Decision 2 — eager
+state initialization, `execute()`'s stamping and precedence, atomic rejection —
+is unchanged).
+
 ## Context
 
 The library shipped two aggregate styles (hand-written `_apply` on

@@ -47,7 +47,6 @@ class CounterState(BaseModel):
 class OrderState(BaseModel):
     """State model for order aggregates with complex nested data."""
 
-    order_id: UUID
     customer_id: UUID | None = None
     status: str = "draft"
     total: Decimal = Decimal("0")
@@ -207,12 +206,14 @@ class DeclarativeCounterAggregate(DeclarativeAggregate[CounterState]):
 class CreateOrder(DomainCommand):
     """Request to create an order for a customer."""
 
+    order_id: UUID
     customer_id: UUID
 
 
 class AddOrderItem(DomainCommand):
     """Request to add an item to an order."""
 
+    order_id: UUID
     item_name: str
     price: Decimal
 
@@ -220,6 +221,7 @@ class AddOrderItem(DomainCommand):
 class ShipOrder(DomainCommand):
     """Request to ship an order with a tracking number."""
 
+    order_id: UUID
     tracking_number: str
 
 
@@ -240,30 +242,32 @@ class OrderAggregate(DeciderAggregate[OrderState]):
     aggregate_type = "Order"
 
     @staticmethod
-    def initial_state(aggregate_id: UUID) -> OrderState:
+    def initial_state() -> OrderState:
         """Return the initial state for a new order."""
-        return OrderState(order_id=aggregate_id)
+        return OrderState()
 
     @staticmethod
     def decide(command: object, state: OrderState) -> list[DomainEvent]:
         """Given current state, return the events a command produces, or raise."""
         match command, state:
-            case CreateOrder(customer_id=customer_id), OrderState(status="draft"):
+            case CreateOrder(order_id=order_id, customer_id=customer_id), OrderState(
+                status="draft"
+            ):
                 return [
                     OrderCreated(
-                        aggregate_id=state.order_id,
+                        aggregate_id=order_id,
                         customer_id=customer_id,
                     )
                 ]
             case CreateOrder(), _:
                 # Behavior-preserving: original guard was `self.version > 0`.
                 raise ValueError("Order already exists")
-            case AddOrderItem(item_name=item_name, price=price), OrderState(status=status) if (
-                status not in ("draft", "shipped")
-            ):
+            case AddOrderItem(order_id=order_id, item_name=item_name, price=price), OrderState(
+                status=status
+            ) if status not in ("draft", "shipped"):
                 return [
                     OrderItemAdded(
-                        aggregate_id=state.order_id,
+                        aggregate_id=order_id,
                         item_name=item_name,
                         price=price,
                     )
@@ -272,10 +276,12 @@ class OrderAggregate(DeciderAggregate[OrderState]):
                 # Behavior-preserving: original guard was
                 # `not self._state or self._state.status == "shipped"`.
                 raise ValueError("Cannot add items to this order")
-            case ShipOrder(tracking_number=tracking_number), OrderState(status="created"):
+            case ShipOrder(order_id=order_id, tracking_number=tracking_number), OrderState(
+                status="created"
+            ):
                 return [
                     OrderShipped(
-                        aggregate_id=state.order_id,
+                        aggregate_id=order_id,
                         tracking_number=tracking_number,
                     )
                 ]
@@ -306,12 +312,12 @@ class OrderAggregate(DeciderAggregate[OrderState]):
 
     def create(self, customer_id: UUID) -> None:
         """Command: Create the order for a customer."""
-        self.execute(CreateOrder(customer_id=customer_id))
+        self.execute(CreateOrder(order_id=self.aggregate_id, customer_id=customer_id))
 
     def add_item(self, item_name: str, price: Decimal) -> None:
         """Command: Add an item to the order."""
-        self.execute(AddOrderItem(item_name=item_name, price=price))
+        self.execute(AddOrderItem(order_id=self.aggregate_id, item_name=item_name, price=price))
 
     def ship(self, tracking_number: str) -> None:
         """Command: Ship the order with a tracking number."""
-        self.execute(ShipOrder(tracking_number=tracking_number))
+        self.execute(ShipOrder(order_id=self.aggregate_id, tracking_number=tracking_number))

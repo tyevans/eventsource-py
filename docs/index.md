@@ -336,6 +336,8 @@ each store its own.
 static functions, `decide` and `evolve`, plus an `aggregate_type` class attribute.
 `decide(command, state)` returns the events a command produces or raises
 `CommandRejectedError`; `evolve(state, event)` folds one event into the next state.
+The command names the aggregate it targets, which is where `decide` gets the
+`aggregate_id` for the events it returns — `initial_state()` takes no arguments.
 Nothing else about the domain touches `self`, so both functions are trivial to unit
 test without an event store in sight:
 
@@ -348,8 +350,8 @@ class AccountAggregate(DeciderAggregate[AccountState, AccountCommand]):
         match command, state:
             case Withdraw(amount=amt), AccountState(balance=bal) if amt > bal:
                 raise CommandRejectedError(f"insufficient balance: {bal}")
-            case Withdraw(amount=amt), _:
-                return [MoneyWithdrawn(aggregate_id=state.account_id, amount=amt)]
+            case Withdraw(account_id=account_id, amount=amt), _:
+                return [MoneyWithdrawn(aggregate_id=account_id, amount=amt)]
             # ... initial_state() and evolve() elided, same shape
 ```
 

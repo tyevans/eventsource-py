@@ -80,7 +80,6 @@ class MoneyWithdrawn(DomainEvent):
 class BankAccountState(BaseModel):
     """Current state of a BankAccount aggregate."""
 
-    account_id: UUID
     owner_name: str = ""
     balance: float = 0.0
     is_open: bool = False
@@ -99,6 +98,7 @@ class BankAccountState(BaseModel):
 class OpenAccount(DomainCommand):
     """Request to open a new bank account."""
 
+    account_id: UUID
     owner_name: str
     initial_balance: float = 0.0
 
@@ -106,12 +106,14 @@ class OpenAccount(DomainCommand):
 class DepositMoney(DomainCommand):
     """Request to deposit money into an account."""
 
+    account_id: UUID
     amount: float
 
 
 class WithdrawMoney(DomainCommand):
     """Request to withdraw money from an account."""
 
+    account_id: UUID
     amount: float
 
 
@@ -129,34 +131,36 @@ class BankAccountAggregate(DeciderAggregate[BankAccountState]):
     aggregate_type = "BankAccount"
 
     @staticmethod
-    def initial_state(aggregate_id: UUID) -> BankAccountState:
-        return BankAccountState(account_id=aggregate_id)
+    def initial_state() -> BankAccountState:
+        return BankAccountState()
 
     @staticmethod
     def decide(command: object, state: BankAccountState) -> list[DomainEvent]:
         match command, state:
-            case OpenAccount(owner_name=name, initial_balance=balance), BankAccountState(
-                is_open=False
-            ):
+            case OpenAccount(
+                account_id=account_id, owner_name=name, initial_balance=balance
+            ), BankAccountState(is_open=False):
                 return [
                     AccountOpened(
-                        aggregate_id=state.account_id,
+                        aggregate_id=account_id,
                         owner_name=name,
                         initial_balance=balance,
                     )
                 ]
             case OpenAccount(), _:
                 raise CommandRejectedError("account is already open", command=command)
-            case DepositMoney(amount=amount), BankAccountState(is_open=True):
+            case DepositMoney(account_id=account_id, amount=amount), BankAccountState(is_open=True):
                 if amount <= 0:
                     raise CommandRejectedError("deposit must be positive", command=command)
-                return [MoneyDeposited(aggregate_id=state.account_id, amount=amount)]
-            case WithdrawMoney(amount=amount), BankAccountState(is_open=True):
+                return [MoneyDeposited(aggregate_id=account_id, amount=amount)]
+            case WithdrawMoney(account_id=account_id, amount=amount), BankAccountState(
+                is_open=True
+            ):
                 if amount <= 0:
                     raise CommandRejectedError("withdrawal must be positive", command=command)
                 if amount > state.balance:
                     raise CommandRejectedError("insufficient funds", command=command)
-                return [MoneyWithdrawn(aggregate_id=state.account_id, amount=amount)]
+                return [MoneyWithdrawn(aggregate_id=account_id, amount=amount)]
             case ((DepositMoney() | WithdrawMoney()), _):
                 raise CommandRejectedError("account is not open", command=command)
             case _:
@@ -202,7 +206,7 @@ async def main():
     print(f"\n1. Opening account {account_id}")
 
     account = repo.create_new(account_id)
-    account.execute(OpenAccount(owner_name="Alice", initial_balance=100.0))
+    account.execute(OpenAccount(account_id=account_id, owner_name="Alice", initial_balance=100.0))
     await repo.save(account)
 
     print(f"   Owner: {account.state.owner_name}")
@@ -213,8 +217,8 @@ async def main():
     print("\n2. Loading account and making deposits")
 
     loaded_account = await repo.load(account_id)
-    loaded_account.execute(DepositMoney(amount=50.0))
-    loaded_account.execute(DepositMoney(amount=25.0))
+    loaded_account.execute(DepositMoney(account_id=account_id, amount=50.0))
+    loaded_account.execute(DepositMoney(account_id=account_id, amount=25.0))
     await repo.save(loaded_account)
 
     print(f"   Balance after deposits: ${loaded_account.state.balance:.2f}")
@@ -224,7 +228,7 @@ async def main():
     print("\n3. Making a withdrawal")
 
     account = await repo.load(account_id)
-    account.execute(WithdrawMoney(amount=30.0))
+    account.execute(WithdrawMoney(account_id=account_id, amount=30.0))
     await repo.save(account)
 
     print(f"   Balance after withdrawal: ${account.state.balance:.2f}")
@@ -248,12 +252,12 @@ async def main():
 
     account = await repo.load(account_id)
     try:
-        account.execute(WithdrawMoney(amount=1000.0))  # More than balance
+        account.execute(WithdrawMoney(account_id=account_id, amount=1000.0))  # More than balance
     except CommandRejectedError as e:
         print(f"   Withdrawal blocked: {e}")
 
     try:
-        account.execute(DepositMoney(amount=-50.0))  # Negative amount
+        account.execute(DepositMoney(account_id=account_id, amount=-50.0))  # Negative amount
     except CommandRejectedError as e:
         print(f"   Deposit blocked: {e}")
 

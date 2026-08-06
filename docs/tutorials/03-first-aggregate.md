@@ -67,7 +67,7 @@ class OrderAggregate(DeciderAggregate[OrderState, OrderCommand]):
     aggregate_type = "Order"
 
     @staticmethod
-    def initial_state(aggregate_id: UUID) -> OrderState: ...
+    def initial_state() -> OrderState: ...
 
     @staticmethod
     def decide(command: OrderCommand, state: OrderState) -> list[DomainEvent]: ...
@@ -128,7 +128,6 @@ from pydantic import BaseModel
 
 
 class OrderState(BaseModel):
-    order_id: UUID
     customer_id: UUID | None = None
     total: Decimal = Decimal("0")
     status: str = "pending"
@@ -146,10 +145,12 @@ machinery would break on it: `_serialize_state()` calls `self._state.model_dump(
 and `_restore_from_snapshot()` calls `state_type.model_validate(state_dict)`. Those two
 methods only exist because the state is a pydantic model.
 
-**Every field except `order_id` has a default.** In Step 4 you will write
+**Every field has a default, and there is no id field.** In Step 4 you will write
 `initial_state()`, which constructs an `OrderState` before any event has been applied --
 a blank order that exists only so `evolve()` has something to fold the first event into.
-Defaults are what make that one-line constructor possible. Fields that are unknown until
+Defaults are what make that no-argument constructor possible. The order's identity is
+not among them: which order a command is about is carried by the *command* (Step 3),
+which is where `decide()` reads it from when it builds an event. Fields that are unknown until
 an event arrives (`customer_id`, `tracking_number`) are typed as optional; fields with a
 sensible zero value (`total`, `status`) get one.
 
@@ -191,8 +192,7 @@ addresses -- those belong in a projection (see
 keep it small.
 
 A useful test: for each field, name the `decide()` branch that reads it. `status` is
-read by every branch to reject invalid transitions. `order_id` identifies the
-aggregate. `customer_id` and `total` are there because a real system would check them
+read by every branch to reject invalid transitions. `customer_id` and `total` are there because a real system would check them
 (a refund limit, an ownership check) and because they make the folded state visible when
 you print it in Step 8. `tracking_number` records the shipment. Nothing else earns a
 slot.
@@ -216,7 +216,7 @@ from pydantic import BaseModel, ConfigDict
 class OrderState(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    order_id: UUID
+    customer_id: UUID | None = None
     # ... as above
 ```
 
@@ -371,24 +371,30 @@ from eventsource import DomainCommand
 
 
 class CreateOrder(DomainCommand):
+    order_id: UUID
     customer_id: UUID
     total: Decimal
 
 
 class ShipOrder(DomainCommand):
+    order_id: UUID
     tracking_number: str
 
 
 class CancelOrder(DomainCommand):
+    order_id: UUID
     reason: str
 
 
 OrderCommand = CreateOrder | ShipOrder | CancelOrder
 ```
 
-Three classes, four payload lines -- one less than the events, because commands carry no
-`aggregate_type`. A command does not belong to a stream the way an event does; it is
-handed to an aggregate instance that already knows its own identity.
+Three classes, and every one of them names the order it targets. Commands carry no
+`aggregate_type` -- a command does not belong to a stream the way an event does -- but
+they do carry the aggregate id, because that is the only route by which `decide()`, a
+pure function with no `self`, learns which order it is deciding about. `decide()` copies
+it onto every event it returns as `aggregate_id`, which is why `initial_state()` in
+Step 4 needs no arguments.
 
 `OrderCommand`, the union of all three, is the vocabulary of everything this order can
 be asked to do. Step 4 hands it to `DeciderAggregate` as a second type parameter, which
@@ -419,7 +425,7 @@ library: a command's entire lifetime is the one `decide()` call that consumes it
 ### Commands are frozen, and have no `causation_id` of their own
 
 ```python
-command = ShipOrder(tracking_number="1Z999")
+command = ShipOrder(order_id=order_id, tracking_number="1Z999")
 command.tracking_number = "1Z000"   # pydantic ValidationError: instance is frozen
 ```
 
@@ -446,8 +452,8 @@ class OrderAggregate(DeciderAggregate[OrderState, OrderCommand]):
     aggregate_type = "Order"
 
     @staticmethod
-    def initial_state(aggregate_id: UUID) -> OrderState:
-        return OrderState(order_id=aggregate_id)
+    def initial_state() -> OrderState:
+        return OrderState()
 ```
 
 Three lines of substance, and each one carries weight.
@@ -517,15 +523,14 @@ This is the first real departure from the two-abstract-method `AggregateRoot` yo
 have already met (or will meet in the "other styles" section below). There,
 `_get_initial_state()` is a factory the base class never invokes on your behalf -- your
 own `_apply()` has to call it, and `self.state` is `None` until it does. Here,
-`DeciderAggregate.__init__` calls `self.initial_state(aggregate_id)` immediately and
+`DeciderAggregate.__init__` calls `self.initial_state()` immediately and
 assigns the result:
 
 ```python
-some_id = uuid4()
-print(OrderAggregate.initial_state(some_id))
+print(OrderAggregate.initial_state())
 ```
 
-That prints `OrderState(order_id=..., customer_id=None, total=Decimal('0'),
+That prints `OrderState(customer_id=None, total=Decimal('0'),
 status='pending', tracking_number=None)` -- calling a `@staticmethod` needs no aggregate
 instance, which is why this runs even though `OrderAggregate` cannot be instantiated
 yet (`decide` and `evolve` are still unimplemented; more on that in Step 6). Once the
@@ -537,7 +542,7 @@ unconditionally, with no `if state is None` guard anywhere in the domain code.
 
 `initial_state()` is a `@staticmethod` for the same reason `decide()` and `evolve()`
 will be: none of the three touch `self`, only their arguments. That is what makes them
-independently testable -- `OrderAggregate.initial_state(some_uuid)` is a plain function
+independently testable -- `OrderAggregate.initial_state()` is a plain function
 call, no aggregate instance required.
 
 ### Keep it cheap and deterministic
@@ -546,14 +551,15 @@ call, no aggregate instance required.
 10) once more per `load_from_history()` call on a fresh instance. Two rules follow:
 
 - **No I/O.** No database reads, no clock lookups that end up in state, no random values.
-  The initial state must be identical every time it is built for a given
-  `aggregate_id`, or replaying the same history twice would produce two different
-  aggregates.
-- **Derive nothing but identity.** The `aggregate_id` argument is the only thing
-  available and the only thing you should use. Everything else arrives as an event.
+  The initial state must be identical every time it is built, or replaying the same
+  history twice would produce two different aggregates.
+- **It takes no arguments, and that is the point.** "Before anything has happened" is
+  one value for the whole aggregate type, not one per order. There is nothing to derive
+  from, and nothing you need to: everything else arrives as an event.
 
 If you catch yourself wanting a parameter here -- a tenant, a currency, a customer --
-that is a fact about the order, and facts arrive in `OrderCreated`.
+that is a fact about the order, and facts arrive in `OrderCreated`. If you want the
+order id, it is on the command that `decide()` is holding.
 
 With a starting state defined, the aggregate needs a way to fold events into it.
 
@@ -567,8 +573,8 @@ class OrderAggregate(DeciderAggregate[OrderState, OrderCommand]):
     aggregate_type = "Order"
 
     @staticmethod
-    def initial_state(aggregate_id: UUID) -> OrderState:
-        return OrderState(order_id=aggregate_id)
+    def initial_state() -> OrderState:
+        return OrderState()
 
     @staticmethod
     def evolve(state: OrderState, event: DomainEvent) -> OrderState:
@@ -614,7 +620,7 @@ One sharp edge to know about: **`model_copy(update=...)` does not run validation
 Pydantic copies the values in as-is:
 
 ```python
-state = OrderState(order_id=order_id)
+state = OrderState()
 state.model_copy(update={"total": "not-a-number"}).total
 # 'not-a-number' -- a str sitting in a Decimal field, no error
 ```
@@ -672,17 +678,21 @@ class OrderAggregate(DeciderAggregate[OrderState, OrderCommand]):
     @staticmethod
     def decide(command: OrderCommand, state: OrderState) -> list[DomainEvent]:
         match command, state:
-            case CreateOrder(customer_id=customer_id, total=total), OrderState(status="pending"):
+            case CreateOrder(
+                order_id=order_id, customer_id=customer_id, total=total
+            ), OrderState(status="pending"):
                 return [
                     OrderCreated(
-                        aggregate_id=state.order_id, customer_id=customer_id, total=total
+                        aggregate_id=order_id, customer_id=customer_id, total=total
                     )
                 ]
             case CreateOrder(), _:
                 raise CommandRejectedError("order already exists", command=command)
-            case ShipOrder(tracking_number=tracking_number), OrderState(status="created"):
+            case ShipOrder(order_id=order_id, tracking_number=tracking_number), OrderState(
+                status="created"
+            ):
                 return [
-                    OrderShipped(aggregate_id=state.order_id, tracking_number=tracking_number)
+                    OrderShipped(aggregate_id=order_id, tracking_number=tracking_number)
                 ]
             case ShipOrder(), OrderState(status="cancelled"):
                 raise CommandRejectedError("cannot ship a cancelled order", command=command)
@@ -691,7 +701,7 @@ class OrderAggregate(DeciderAggregate[OrderState, OrderCommand]):
             case CancelOrder(), OrderState(status="cancelled"):
                 raise CommandRejectedError("order is already cancelled", command=command)
             case CancelOrder(reason=reason), _:
-                return [OrderCancelled(aggregate_id=state.order_id, reason=reason)]
+                return [OrderCancelled(aggregate_id=order_id, reason=reason)]
             case _:
                 raise CommandRejectedError(f"unknown command: {command!r}", command=command)
 ```
@@ -717,7 +727,7 @@ Each `case` matches a *pair*: what was asked, and what is true right now. That p
 is the whole reason `decide()` takes `state` as an argument instead of reading
 `self.state` -- the function is pure, so every branch is a plain, testable fact about
 "given this command and this state, what happens?" You can call
-`OrderAggregate.decide(CreateOrder(...), OrderState(order_id=some_id))` directly in a
+`OrderAggregate.decide(CreateOrder(...), OrderState())` directly in a
 unit test, no aggregate instance, no event store, no repository.
 
 The order of the `case` arms matters, as it does in any `match`: put the arm that should
@@ -736,11 +746,12 @@ aggregate. It takes a message and, optionally, the command that was rejected, wh
 caller's job:
 
 ```python
-order = OrderAggregate(uuid4())
-order.execute(CreateOrder(customer_id=uuid4(), total=Decimal("10.00")))
-order.execute(ShipOrder(tracking_number="1Z999"))
+order_id = uuid4()
+order = OrderAggregate(order_id)
+order.execute(CreateOrder(order_id=order_id, customer_id=uuid4(), total=Decimal("10.00")))
+order.execute(ShipOrder(order_id=order_id, tracking_number="1Z999"))
 try:
-    order.execute(ShipOrder(tracking_number="1Z000"))
+    order.execute(ShipOrder(order_id=order_id, tracking_number="1Z000"))
 except CommandRejectedError as e:
     print(f"rejected: {e}")
     print(e.command)
@@ -779,17 +790,18 @@ Add a small driver to the bottom of `first_aggregate.py`:
 ```python
 from uuid import uuid4
 
-order = OrderAggregate(uuid4())
+order_id = uuid4()
+order = OrderAggregate(order_id)
 print(order.state)
 print(order.version)
 print(order.uncommitted_events)
 
-order.execute(CreateOrder(customer_id=uuid4(), total=Decimal("42.00")))
+order.execute(CreateOrder(order_id=order_id, customer_id=uuid4(), total=Decimal("42.00")))
 print(order.state)
 print(order.version)
 print(len(order.uncommitted_events))
 
-order.execute(ShipOrder(tracking_number="1Z999"))
+order.execute(ShipOrder(order_id=order_id, tracking_number="1Z999"))
 print(order.state)
 print(order.version)
 ```
@@ -844,8 +856,8 @@ front door, and it is the only method on `DeciderAggregate` that is not a `@stat
 
 ## Step 9: What gets stamped onto each event
 
-Look again at what `decide()` builds: `OrderCreated(aggregate_id=state.order_id,
-customer_id=customer_id, total=total)`. No `aggregate_version`, no `aggregate_type`, no
+Look again at what `decide()` builds: `OrderCreated(aggregate_id=order_id,
+customer_id=customer_id, total=total)` -- the `order_id` captured off the command. No `aggregate_version`, no `aggregate_type`, no
 `causation_id`. Those are exactly the fields `execute()`'s stamping step (`_stamp()`)
 fills in before the event is applied, and it is worth seeing what lands where. Add this
 after the `ShipOrder` call from Step 7:
@@ -905,7 +917,7 @@ flag is the only thing that distinguishes "this event is new, queue it for persi
 (`execute()`, Step 8) from "this event already happened, just fold it" (`load_from_history()`,
 here).
 
-`replayed` starts from `initial_state(order.aggregate_id)` -- the same blank order
+`replayed` starts from `initial_state()` -- the same blank order
 `order` itself started from -- and folds the identical two events through the identical
 `evolve()`. There is exactly one place that turns events into state on this class, and
 you wrote it once in Step 5; that is why the assertion holds.
@@ -938,8 +950,10 @@ including how to move an aggregate from one style to another, read
 
 ## Key Takeaways
 
-- `DeciderAggregate[TState, TCommand]` needs three static methods: `initial_state(aggregate_id)`,
+- `DeciderAggregate[TState, TCommand]` needs three static methods: `initial_state()`,
   `decide(command, state)`, and `evolve(state, event)`. None of them touch `self`.
+- `initial_state()` takes no arguments. The aggregate a command targets is named by the
+  command, and `decide()` stamps that id onto the events it returns.
 - `state` is never `None` on a `DeciderAggregate` -- `initial_state()` runs eagerly in
   `__init__`, so `decide()` and `evolve()` never need a null check.
 - Commands are `DomainCommand` subclasses: frozen, never persisted, and structurally
