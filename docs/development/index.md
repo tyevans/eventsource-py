@@ -139,7 +139,7 @@ From there, `uv run pytest tests/unit/ -v` should pass without any services runn
 
 `uv sync --all-extras` creates `.venv/` in the repo root and installs:
 
-- the runtime dependencies (`pydantic>=2`, `sqlalchemy>=2`);
+- the runtime dependencies (`pydantic>=2.8`, `sqlalchemy[asyncio]>=2.0.43`, `orjson>=3.10.7`);
 - **every** optional extra declared in `pyproject.toml` — including `dev`, `docs`,
   `benchmark`, and each backend extra;
 - the `dev` **dependency group** (`[dependency-groups]` in `pyproject.toml`), which uv
@@ -184,13 +184,13 @@ actually needs:
 
 | Extra | Installs | Enables |
 | --- | --- | --- |
-| `postgresql` | `asyncpg>=0.27,<1.0` | PostgreSQL event store, snapshot store, advisory locks, repositories |
+| `postgresql` | `asyncpg>=0.30,<1.0` | PostgreSQL event store, snapshot store, advisory locks, repositories |
 | `sqlite` | `aiosqlite>=0.19,<1.0` | SQLite event store, snapshot store, repositories |
-| `redis` | `redis>=5.0,<6.0` | Redis event bus |
-| `rabbitmq` | `aio-pika>=9.0` | RabbitMQ event bus |
-| `kafka` | `aiokafka>=0.9,<1.0` | Kafka event bus |
-| `kafka-schema-registry` | `aiokafka` + `confluent-kafka>=2.0,<3.0` | Kafka bus with Schema Registry integration |
-| `telemetry` | `opentelemetry-api`/`-sdk` `>=1.0,<2.0` | OpenTelemetry tracing in `observability/` |
+| `redis` | `redis>=8.0,<9.0` | Redis event bus |
+| `rabbitmq` | `aio-pika>=9.0.5` | RabbitMQ event bus |
+| `kafka` | `aiokafka>=0.12,<1.0` | Kafka event bus |
+| `kafka-schema-registry` | `aiokafka` + `confluent-kafka>=2.6,<3.0` | Kafka bus with Schema Registry integration |
+| `telemetry` | `opentelemetry-api`/`-sdk` `>=1.16.0,<2.0` | OpenTelemetry tracing in `observability/` |
 | `benchmark` | `pytest-benchmark>=4.0` | `tests/benchmarks/` |
 | `dev` | pytest, pytest-asyncio, pytest-cov, pytest-benchmark, `mypy>=1.8`, `ruff>=0.14.8`, `testcontainers>=4.0`, pre-commit | the test and lint toolchain |
 | `docs` | mkdocs, mkdocs-material, mkdocstrings[python], pymdown-extensions | building this site |
@@ -248,13 +248,15 @@ uv run pre-commit install
 
 Three details are worth knowing before you trust — or debug — a hook result.
 
-**The hooks run in their own environments, not your `.venv`.** The `mypy` hook pins its
-own `additional_dependencies`: `pydantic>=2.0`, `sqlalchemy>=2.0`, `redis==5.3.1`,
-`opentelemetry-api>=1.0`, `aio-pika>=9.0.0`, `aiosqlite>=0.20.0`. If you add a new
-third-party import to `src/`, the hook will not see its types until you add that package
-to the list — which is the usual reason a local `uv run mypy` passes while the hook
-fails. Note also that the hook's mypy version (1.19.0) is pinned independently of the
-`mypy>=1.19.0` in the `dev` dependency group; they can drift apart.
+**The Python hooks run in your `.venv`, not their own.** `ruff`, `ruff-format`, `mypy`,
+`bandit` and `import-linter` are `repo: local` hooks with `language: system`, invoked
+through `uv run`, so they see exactly the versions in `uv.lock` — the same ones CI and
+`make check` use. They previously ran in pre-commit-managed environments with a
+hand-maintained `additional_dependencies` list restating the project's runtime
+dependencies for mypy to type against; that list drifted (it was missing `orjson`,
+a core dependency) and mypy failed in the hook while passing everywhere else, which is
+why the copy was deleted rather than corrected. Do not reintroduce it: it is a second
+declaration site for facts `pyproject.toml` already owns.
 
 **Two hooks are stricter than CI, two are looser.** CI runs no `pre-commit` job at all —
 it runs `ruff check .` and `ruff format --check .` across the whole repo and `mypy src/`.

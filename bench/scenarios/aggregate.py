@@ -108,7 +108,7 @@ async def _prepare_e2e_decider(
     chunk = 100
     while remaining > 0:
         for _ in range(min(chunk, remaining)):
-            aggregate.execute(BenchIncrement())
+            aggregate.execute(BenchIncrement(counter_id=aggregate.aggregate_id))
         await repo.save(aggregate)
         remaining -= chunk
     return aggregate_id
@@ -128,7 +128,7 @@ async def _load_mutate_save_decider(
     for _ in range(iterations):
         t0 = time.perf_counter()
         aggregate = await repo.load(aggregate_id)
-        aggregate.execute(BenchIncrement())
+        aggregate.execute(BenchIncrement(counter_id=aggregate.aggregate_id))
         await repo.save(aggregate)
         durations.append(time.perf_counter() - t0)
     return Measurement(

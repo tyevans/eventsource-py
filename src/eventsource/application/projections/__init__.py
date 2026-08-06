@@ -24,6 +24,13 @@ from eventsource.application.projections.coordinator import (
     SubscriberRegistry,
 )
 from eventsource.application.projections.dlq import read_failed_events, send_to_dlq
+from eventsource.application.projections.replay import (
+    ReplayFailedError,
+    ReplayFailure,
+    ReplayReport,
+    replay,
+)
+from eventsource.application.projections.store import ProjectionOptions, StoreProjection
 from eventsource.domain.decorators import (
     get_handled_event_type,
     handles,
@@ -43,7 +50,12 @@ __all__ = [
     "EventSubscriber",
     "Projection",
     "ProjectionCoordinator",
+    "ProjectionOptions",
     "ProjectionRegistry",
+    "ReplayFailedError",
+    "ReplayFailure",
+    "ReplayReport",
+    "StoreProjection",
     "SubscriberRegistry",
     "SyncEventHandler",
     "SyncProjection",
@@ -55,6 +67,7 @@ __all__ = [
     "read_checkpoint",
     "read_failed_events",
     "record_checkpoint",
+    "replay",
     "reset_checkpoint",
     "send_to_dlq",
 ]

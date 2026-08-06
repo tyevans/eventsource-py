@@ -121,3 +121,6 @@ class ReadModelNotFoundError(ReadModelError):
         """
         self.model_id = model_id
         super().__init__(f"Read model {model_id} not found")
+
+
+__all__ = ["ReadModelError", "ReadModelNotFoundError", "ReadModelVersionConflictError"]

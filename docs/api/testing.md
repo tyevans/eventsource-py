@@ -108,7 +108,7 @@ helpers to check the outcome. Everything is in-memory, so no Docker services or
 
 `eventsource.testing` ships inside the `eventsource-py` distribution. There is
 no `testing` extra to install, and the package needs nothing beyond the core
-dependencies (`pydantic>=2.0,<3.0` and `sqlalchemy>=2.0,<3.0`) declared in
+dependencies (`pydantic>=2.8.0,<3.0` and `sqlalchemy[asyncio]>=2.0.43,<3.0`) declared in
 `[project.dependencies]`. A plain install is enough:
 
 ```bash
@@ -646,8 +646,8 @@ class Order(DeciderAggregate[OrderState]):
     aggregate_type = "Order"
 
     @staticmethod
-    def initial_state(aggregate_id: UUID) -> OrderState:
-        return OrderState(order_id=aggregate_id)
+    def initial_state() -> OrderState:
+        return OrderState()
 
     @staticmethod
     def decide(command: object, state: OrderState) -> list[DomainEvent]:
@@ -668,14 +668,14 @@ DeciderScenario(
     *,
     decide: Callable[[Any, Any], list[DomainEvent]] | None = None,
     evolve: Callable[[Any, DomainEvent], Any] | None = None,
-    initial_state: Callable[[UUID], Any] | None = None,
-    aggregate_id: UUID | None = None,
+    initial_state: Callable[[], Any] | None = None,
 ) -> DeciderScenario
 ```
 
 Create a scenario by passing a `DeciderAggregate` subclass (which provides the three
-functions) or by passing the three functions directly. If `aggregate_id` is not
-provided, one is generated.
+functions) or by passing the three functions directly. The scenario has no aggregate
+id of its own: `initial_state()` takes no arguments, and the aggregate a command
+targets is named by the command.
 
 ```python
 from eventsource.testing import DeciderScenario
@@ -712,10 +712,9 @@ scenario = (
 )
 ```
 
-`given()` does not check that the events it is handed belong to the scenario's
-`aggregate_id` -- it folds whatever it is given through `evolve` unconditionally, so
-passing an event stamped with a different `aggregate_id` is folded in silently rather
-than rejected.
+`given()` does not check that the events it is handed belong to one aggregate -- it
+folds whatever it is given through `evolve` unconditionally, so events stamped with
+different `aggregate_id`s are folded in silently rather than rejected.
 
 #### `when(command: object) -> DeciderScenario`
 
@@ -723,7 +722,7 @@ Runs `decide(command, state)`, capturing either the returned events or any raise
 exception. The scenario records the outcome for inspection by `then_*` methods.
 
 ```python
-scenario = scenario.when(ShipOrder(tracking_number="TRACK123"))
+scenario = scenario.when(ShipOrder(order_id=order_id, tracking_number="TRACK123"))
 ```
 
 #### `then_events(*event_types: type[DomainEvent]) -> DeciderScenario`
@@ -776,7 +775,7 @@ def test_paid_order_ships():
         OrderCreated(aggregate_id=order_id, aggregate_version=1, ...),
         OrderPaid(aggregate_id=order_id, aggregate_version=2, ...),
      )
-     .when(ShipOrder(tracking_number="TRACK123"))
+     .when(ShipOrder(order_id=order_id, tracking_number="TRACK123"))
      .then_events(OrderShipped))
 
 def test_unpaid_order_cannot_ship():
@@ -784,7 +783,7 @@ def test_unpaid_order_cannot_ship():
 
     (DeciderScenario(Order)
      .given(OrderCreated(aggregate_id=order_id, aggregate_version=1, ...))
-     .when(ShipOrder(tracking_number="TRACK123"))
+     .when(ShipOrder(order_id=order_id, tracking_number="TRACK123"))
      .then_rejected(match="Cannot ship unpaid"))  # exc_type defaults to CommandRejectedError
 ```
 

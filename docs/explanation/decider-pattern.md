@@ -20,10 +20,16 @@ can be unit-tested with plain asserts and no async machinery.
 A decider is three pure functions over plain values:
 
 ```python
-def initial_state(order_id: UUID) -> OrderState: ...
+def initial_state() -> OrderState: ...
 def decide(command: OrderCommand, state: OrderState) -> list[OrderEvent]: ...
 def evolve(state: OrderState, event: OrderEvent) -> OrderState: ...
 ```
+
+`initial_state` takes no arguments. The state before anything has happened is one
+value for the aggregate *type*, not one per aggregate id — the aggregate a command
+targets is named by the **command**, which is where identity belongs and is why the
+fold never needs it. Every event `decide` returns gets its `aggregate_id` from the
+command.
 
 `decide` answers "given what has happened, is this request allowed, and what new facts
 does it produce?" — it either returns events or raises a rejection. `evolve` answers
@@ -36,10 +42,12 @@ Commands become values too — small frozen models rather than method calls:
 
 ```python
 class PlaceOrder(BaseModel):
+    order_id: UUID
     customer_id: UUID
     total: float
 
 class ShipOrder(BaseModel):
+    order_id: UUID
     tracking_number: str
 
 OrderCommand = PlaceOrder | ShipOrder
@@ -52,12 +60,12 @@ With commands and state both being pydantic models, `match` can dispatch on the
 ```python
 def decide(command: OrderCommand, state: OrderState) -> list[OrderEvent]:
     match command, state:
-        case PlaceOrder(customer_id=cid, total=total), OrderState(status="draft"):
-            return [OrderPlaced(aggregate_id=state.order_id, customer_id=cid, total=total)]
+        case PlaceOrder(order_id=oid, customer_id=cid, total=total), OrderState(status="draft"):
+            return [OrderPlaced(aggregate_id=oid, customer_id=cid, total=total)]
         case PlaceOrder(), _:
             raise ValueError("Order already placed")
-        case ShipOrder(tracking_number=tn), OrderState(status="placed"):
-            return [OrderShipped(aggregate_id=state.order_id, tracking_number=tn)]
+        case ShipOrder(order_id=oid, tracking_number=tn), OrderState(status="placed"):
+            return [OrderShipped(aggregate_id=oid, tracking_number=tn)]
         case ShipOrder(), _:
             raise ValueError("Order must be placed before shipping")
 ```
@@ -98,8 +106,8 @@ class Order(DeciderAggregate[OrderState, OrderCommand]):
     aggregate_type = "Order"
 
     @staticmethod
-    def initial_state(aggregate_id: UUID) -> OrderState:
-        return initial_state(aggregate_id)
+    def initial_state() -> OrderState:
+        return initial_state()
 
     @staticmethod
     def decide(command: OrderCommand, state: OrderState) -> list[DomainEvent]:
@@ -112,7 +120,7 @@ class Order(DeciderAggregate[OrderState, OrderCommand]):
 
 There is no `_apply`, no `_get_initial_state`, and no hand-rolled `decider_state`
 property to guard against `None`. `DeciderAggregate.__init__` calls
-`initial_state(aggregate_id)` eagerly, so `state` is a real `OrderState` from the
+`initial_state()` eagerly, so `state` is a real `OrderState` from the
 moment the aggregate is constructed — the very first `PlaceOrder` matches
 `(PlaceOrder(), OrderState(status="draft"))` correctly, with no fallback to remember.
 That fallback was the one genuine integration gotcha of the pattern on this library,
@@ -123,11 +131,12 @@ Callers issue commands as values through `execute()`, inherited from
 `DeciderAggregate`:
 
 ```python
-order = repo.create_new(uuid4())
-order.execute(PlaceOrder(customer_id=uuid4(), total=100.0))
+order_id = uuid4()
+order = repo.create_new(order_id)
+order.execute(PlaceOrder(order_id=order_id, customer_id=uuid4(), total=100.0))
 await repo.save(order)
 
-order.execute(ShipOrder(tracking_number="TRACK-001"))
+order.execute(ShipOrder(order_id=order_id, tracking_number="TRACK-001"))
 await repo.save(order)
 ```
 
@@ -186,13 +195,16 @@ The purchase is testability and reviewability of the domain in isolation:
 
 ```python
 def test_cannot_ship_draft_order():
-    state = initial_state(order_id)
+    state = initial_state()
     with pytest.raises(ValueError, match="must be placed"):
-        decide(ShipOrder(tracking_number="X"), state)
+        decide(ShipOrder(order_id=order_id, tracking_number="X"), state)
 
 def test_place_then_ship():
-    state = initial_state(order_id)
-    for cmd in (PlaceOrder(customer_id=cid, total=100.0), ShipOrder(tracking_number="X")):
+    state = initial_state()
+    for cmd in (
+        PlaceOrder(order_id=order_id, customer_id=cid, total=100.0),
+        ShipOrder(order_id=order_id, tracking_number="X"),
+    ):
         for event in decide(cmd, state):
             state = evolve(state, event)
     assert state.status == "shipped"
@@ -255,13 +267,13 @@ class Order(AggregateRoot[OrderState]):
     aggregate_type = "Order"
 
     def _get_initial_state(self) -> OrderState:
-        return initial_state(self.aggregate_id)
+        return initial_state()
 
     @property
     def decider_state(self) -> OrderState:
         # AggregateRoot._state is None until the first event; a decider
         # needs a real initial state to match against before that.
-        return self._state if self._state is not None else initial_state(self.aggregate_id)
+        return self._state if self._state is not None else initial_state()
 
     def _apply(self, event: DomainEvent) -> None:
         self._state = evolve(self.decider_state, event)

@@ -32,7 +32,6 @@ class BenchCounterIncremented(DomainEvent):
 
 
 class BenchCounterState(BaseModel):
-    counter_id: UUID
     value: int = 0
 
 
@@ -42,7 +41,7 @@ class BenchCounter(DeclarativeAggregate[BenchCounterState]):
     aggregate_type = "BenchCounter"
 
     def _get_initial_state(self) -> BenchCounterState:
-        return BenchCounterState(counter_id=self.aggregate_id)
+        return BenchCounterState()
 
     @handles(BenchCounterIncremented)
     def _on_incremented(self, event: BenchCounterIncremented) -> None:
@@ -63,6 +62,7 @@ class BenchCounter(DeclarativeAggregate[BenchCounterState]):
 class BenchIncrement(DomainCommand):
     """Command counterpart to ``BenchCounter.increment`` for the decider variant."""
 
+    counter_id: UUID
     amount: int = 1
 
 
@@ -72,14 +72,14 @@ class BenchDeciderCounter(DeciderAggregate[BenchCounterState]):
     aggregate_type = BenchCounter.aggregate_type
 
     @staticmethod
-    def initial_state(aggregate_id: UUID) -> BenchCounterState:
-        return BenchCounterState(counter_id=aggregate_id)
+    def initial_state() -> BenchCounterState:
+        return BenchCounterState()
 
     @staticmethod
     def decide(command: object, state: BenchCounterState) -> list[DomainEvent]:
         match command:
-            case BenchIncrement(amount=amount):
-                return [BenchCounterIncremented(aggregate_id=state.counter_id, increment=amount)]
+            case BenchIncrement(counter_id=counter_id, amount=amount):
+                return [BenchCounterIncremented(aggregate_id=counter_id, increment=amount)]
             case _:
                 raise CommandRejectedError(f"unknown command: {command!r}", command=command)
 

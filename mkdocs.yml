@@ -178,10 +178,15 @@ nav:
       - "ADR-0051: adapters/_common Shared Port Semantics": adrs/0051-adapters-common-shared-port-semantics.md
       - "ADR-0052: Feed Read Aggregate-Type Filter": adrs/0052-feed-read-aggregate-type-filter.md
       - "ADR-0053: SQLite Snapshot Store Owns Its Connection": adrs/0053-sqlite-snapshot-store-owns-its-connection.md
+      - "ADR-0054: Projection Replay Driver": adrs/0054-projection-replay-driver.md
+      - "ADR-0055: Generic Store Projection Base": adrs/0055-generic-store-projection-base.md
+      - "ADR-0056: Decider initial_state() Is Nullary": adrs/0056-decider-initial-state-is-nullary.md
+      - "ADR-0057: Tenant Load Enforcement Is a Precondition": adrs/0057-tenant-load-enforcement.md
   - Development:
       - development/index.md
       - Contributing: development/contributing.md
       - Code Structure: development/code-structure.md
       - Testing: development/testing.md
       - Mutation Testing: development/mutation-testing.md
+      - Dependency Floors: development/dependency-floors.md
   - FAQ: faq.md

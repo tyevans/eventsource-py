@@ -102,3 +102,15 @@ class FullEventStore(
 async def collect(it: AsyncIterator[EventEnvelope]) -> list[EventEnvelope]:
     """Drain an async iterator into a list."""
     return [item async for item in it]
+
+
+__all__ = [
+    "AggregateStore",
+    "CategoryQuery",
+    "EventAppender",
+    "EventLookup",
+    "FullEventStore",
+    "GlobalEventFeed",
+    "StreamReader",
+    "collect",
+]

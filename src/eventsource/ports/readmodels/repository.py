@@ -400,3 +400,6 @@ class ReadModelRepository(Protocol[TModel]):
 
 # Type alias for backwards compatibility and convenience
 ReadModelRepositoryProtocol = ReadModelRepository
+
+
+__all__ = ["ReadModelRepository", "ReadModelRepositoryProtocol"]

@@ -249,3 +249,6 @@ class ReadModel(BaseModel):
             f"updated_at={self.updated_at!r}"
             f"{deleted_str})"
         )
+
+
+__all__ = ["ReadModel"]

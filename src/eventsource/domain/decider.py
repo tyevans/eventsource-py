@@ -31,8 +31,10 @@ class DeciderAggregate[TState: BaseModel, TCommand = object](AggregateRoot[TStat
     None on this class, so ``decide`` always has a real state to match on.
 
     Contract note: ``DomainEvent.aggregate_id`` is a required field, so
-    ``decide`` must set it. ``initial_state(aggregate_id)`` receives the id
-    precisely so state carries the aggregate's identity for decide to use.
+    ``decide`` must set it — from the command, which names the aggregate it
+    targets. ``initial_state()`` takes no arguments: the state before any
+    event has occurred is one value per aggregate *type*, not one per id,
+    and identity belongs on the command rather than in the fold.
 
     Subscript with two type parameters — ``DeciderAggregate[MyState,
     MyCommandUnion]`` — to get mypy exhaustiveness checking on a userland
@@ -44,11 +46,11 @@ class DeciderAggregate[TState: BaseModel, TCommand = object](AggregateRoot[TStat
 
     def __init__(self, aggregate_id: UUID) -> None:
         super().__init__(aggregate_id)
-        self._state = self.initial_state(aggregate_id)
+        self._state = self.initial_state()
 
     @staticmethod
     @abstractmethod
-    def initial_state(aggregate_id: UUID) -> TState:
+    def initial_state() -> TState:
         """Return the state of an aggregate before any event has occurred."""
 
     @staticmethod
@@ -73,10 +75,10 @@ class DeciderAggregate[TState: BaseModel, TCommand = object](AggregateRoot[TStat
         return self._state
 
     def _get_initial_state(self) -> TState:
-        return self.initial_state(self.aggregate_id)
+        return self.initial_state()
 
     def _apply(self, event: DomainEvent) -> None:
-        base = self._state if self._state is not None else self.initial_state(self.aggregate_id)
+        base = self._state if self._state is not None else self.initial_state()
         self._state = self.evolve(base, event)
 
     def execute(self, command: TCommand) -> list[DomainEvent]:

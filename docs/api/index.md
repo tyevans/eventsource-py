@@ -378,7 +378,9 @@ for `@handles`-based routing. `DatabaseProjection` lives in `eventsource.adapter
 instead -- its constructor takes a SQLAlchemy `async_sessionmaker`, which makes it an
 adapter, not an application-ring class. The barrel exports `Projection`,
 `CheckpointTrackingProjection`, `DeclarativeProjection`, and `DatabaseProjection` plus
-`ReadModelProjection`; the `application.projections` package additionally exports
+`ReadModelProjection` and the `replay()` rebuild driver with its `ReplayReport` /
+`ReplayFailure` / `ReplayFailedError` types; the `application.projections` package
+additionally exports
 `SyncProjection`, `EventHandlerBase`, the `TenantFilter` alias, the `handles` /
 `get_handled_event_type` / `is_event_handler` helpers, and the `ProjectionRegistry`,
 `ProjectionCoordinator`, and `SubscriberRegistry` that drive projections as a group. The

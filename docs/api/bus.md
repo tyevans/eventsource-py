@@ -133,7 +133,7 @@ need to branch before construction.
 | --- | --- | --- | --- | --- |
 | Transport | Python objects in-process | Redis Streams | AMQP exchange + queues | Kafka topics |
 | Extra | none (core install) | `eventsource-py[redis]` | `eventsource-py[rabbitmq]` | `eventsource-py[kafka]` |
-| Driver | — | `redis>=5.0,<6.0` | `aio-pika>=9.0.0` | `aiokafka>=0.9.0,<1.0.0` |
+| Driver | — | `redis>=8.0,<9.0` | `aio-pika>=9.0.5` | `aiokafka>=0.12.0,<1.0.0` |
 | Scope | single process | multi-process / multi-host | multi-process / multi-host | multi-process / multi-host |
 | Durability | none — events are lost on restart | events persisted in the stream | durable exchange and queues | durable topic log |
 | Delivery | in-process call, once per handler | at-least-once | at-least-once | at-least-once |

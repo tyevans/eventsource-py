@@ -86,6 +86,16 @@ optional dependency; `PostgreSQLEventStore` is importable unconditionally but ne
 | `PostgreSQLEventStore` | Adapter | `eventsource.adapters.postgresql` |
 | `SQLiteEventStore` | Adapter (optional) | `eventsource.adapters.sqlite` |
 
+The "Defining module" column is also the deepest import path that works. Each of
+these modules declares an explicit `__all__`, so each name is importable from the
+module that defines it -- and every port name is additionally importable from
+`eventsource.ports` and from the `eventsource` barrel. What does not work is
+importing a name from a neighbouring module that merely imports it to write its
+own annotations. `from eventsource.ports.store import FeedReadOptions`
+fails under a strict type checker (`--no-implicit-reexport`) for that reason:
+`store.py` uses that record without owning it. Import it from
+`eventsource.ports.envelopes`, `eventsource.ports`, or `eventsource`.
+
 None of the ports is `@runtime_checkable` -- `isinstance(store, StreamReader)` does not
 work out of the box. That is a deliberate default (see the module docstring in
 `ports/store.py`); add the decorator only where a consumer genuinely needs the

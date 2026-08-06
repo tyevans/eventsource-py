@@ -6,6 +6,7 @@ silently overwritten, which turned a wrong declaration into a wrong stream
 category that no save/load round-trip could reveal.
 """
 
+from dataclasses import dataclass
 from uuid import UUID, uuid4
 
 import pytest
@@ -58,24 +59,29 @@ def test_create_event_accepts_a_matching_declaration() -> None:
     assert event.aggregate_type == "Order"
 
 
-class OrderDecider(DeciderAggregate[dict[str, str], object]):
+@dataclass(frozen=True)
+class ShipIt:
+    order_id: UUID
+
+
+class OrderDecider(DeciderAggregate[dict[str, str], ShipIt]):
     aggregate_type = "Order"
 
     @staticmethod
-    def initial_state(aggregate_id: UUID) -> dict[str, str]:
-        return {"id": str(aggregate_id)}
+    def initial_state() -> dict[str, str]:
+        return {}
 
     @staticmethod
     def evolve(state: dict[str, str], event: DomainEvent) -> dict[str, str]:
         return state
 
     @staticmethod
-    def decide(command: object, state: dict[str, str]) -> list[DomainEvent]:
-        return [Shipped(aggregate_id=UUID(state["id"]))]
+    def decide(command: ShipIt, state: dict[str, str]) -> list[DomainEvent]:
+        return [Shipped(aggregate_id=command.order_id)]
 
 
 def test_decider_rejects_a_divergent_declaration() -> None:
     decider = OrderDecider(uuid4())
 
     with pytest.raises(AggregateTypeMismatchError):
-        decider.execute(object())
+        decider.execute(ShipIt(order_id=decider.aggregate_id))

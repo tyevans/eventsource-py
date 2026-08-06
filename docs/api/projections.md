@@ -13,10 +13,12 @@ The package is organized into five source modules:
 | Module | Contains |
 | --- | --- |
 | `eventsource.application.projections.base` | `Projection`, `SyncProjection`, `EventHandlerBase`, `CheckpointTrackingProjection`, `DeclarativeProjection`, `TenantFilter` |
+| `eventsource.application.projections.store` | `StoreProjection`, `ProjectionOptions` |
 | `eventsource.application.projections.coordinator` | `ProjectionRegistry`, `ProjectionCoordinator`, `SubscriberRegistry` |
 | `eventsource.application.projections.retry` | `RetryPolicy`, `ExponentialBackoffRetryPolicy`, `NoRetryPolicy`, `FilteredRetryPolicy`, `DEFAULT_RETRY_POLICY` |
 | `eventsource.application.projections.checkpoints` | `record_checkpoint`, `read_checkpoint`, `lag_metrics_dict`, `reset_checkpoint` |
 | `eventsource.application.projections.dlq` | `send_to_dlq`, `read_failed_events` |
+| `eventsource.application.projections.replay` | `replay`, `ReplayReport`, `ReplayFailure`, `ReplayFailedError` |
 | `eventsource.ports.handlers` | `AsyncEventHandler` |
 
 `DatabaseProjection` itself lives in `eventsource.adapters.sql.projection`.
@@ -76,6 +78,7 @@ Subclasses choose their level by how much of `_process_event` they want to write
 | --- | --- | --- |
 | `CheckpointTrackingProjection` | `subscribed_to()`, `_process_event()`, optionally `_truncate_read_models()` | checkpointing, retry, DLQ, tracing hooks |
 | `DeclarativeProjection` | `@handles(EventType)` methods | the above, plus auto-generated `subscribed_to()`, dispatch through `HandlerRegistry`, and tenant filtering |
+| `StoreProjection[TStore]` | `@handles` methods writing to `self._store` | the above, with one store held for you and the whole parent constructor forwarded |
 | `DatabaseProjection` | `@handles` methods taking `(self, conn, event)` | the above, plus a fresh SQLAlchemy session and transaction per attempt, committed on success and rolled back on error |
 
 `DatabaseProjection` reimplements the retry loop rather than reusing the parent's, so
@@ -92,10 +95,20 @@ with `max_retries=2` (three total attempts), `initial_delay=2.0`, `exponential_b
 `jitter=0.1` — which is not `DEFAULT_RETRY_POLICY` from
 `eventsource.application.projections.retry`.
 
+This is a contract, not just an observed property: **every projection base's
+constructor accepts at least what its parent's accepts, permanently, in every
+release.** A parameter may be added; one is never removed. A subclass author
+can therefore write a constructor without tracking which release introduced
+which parameter — and one forwarding `**options` names no parameter at all, so
+the only version floor it needs is the one for the base class it subclasses
+(ADR 0055).
+
 That superset property is enforced by
-`tests/unit/application/projections/test_constructor_widening.py`: these four
-constructors restate the same parameter list rather than forwarding `**kwargs`, and each
-one dropping a parameter silently is exactly what the test exists to catch.
+`tests/unit/application/projections/test_constructor_widening.py`: these constructors
+restate the same parameter list rather than forwarding `**kwargs`, and each one dropping
+a parameter silently is exactly what the test exists to catch. `StoreProjection` is the
+one that does not restate it — it forwards `**options: Unpack[ProjectionOptions]`, and
+the same test expands that TypedDict's keys to check it by the same rule (ADR 0055).
 
 Storage defaults are disabled, not in-memory (ADR 0024). Omitting `checkpoint_repo`
 means no checkpoint is ever written — `get_checkpoint()` / `get_lag_metrics()` return
@@ -112,19 +125,25 @@ subscription runner, or the `ProjectionCoordinator`/`ProjectionRegistry` pair in
 `eventsource.application.projections.coordinator`, which fan a single event out to the
 registered projections that subscribe to its type.
 
+To *rebuild* a projection from the log rather than follow it live, use
+[`replay()`](#rebuilding-a-projection-replay) — the coordinator polls forever and stops
+on a failure, which is the wrong shape for a foreground rebuild.
+
 ## Import Surface (`eventsource.application.projections`)
 
-The barrel module `eventsource/application/projections/__init__.py` re-exports 20 names.
+The barrel module `eventsource/application/projections/__init__.py` re-exports 27 names.
 This is the complete `__all__`, grouped as the source groups it:
 
 | Group | Names | Defined in |
 | --- | --- | --- |
 | Base classes | `Projection`, `SyncProjection`, `EventHandlerBase`, `CheckpointTrackingProjection`, `DeclarativeProjection` | `eventsource.application.projections.base` |
+| Store projections | `StoreProjection`, `ProjectionOptions` | `eventsource.application.projections.store` |
 | Type aliases | `TenantFilter` | `eventsource.application.projections.base` |
 | Decorators | `handles`, `get_handled_event_type`, `is_event_handler` | `eventsource.domain.decorators` (re-export) |
 | Coordinators and registries | `ProjectionRegistry`, `ProjectionCoordinator`, `SubscriberRegistry` | `eventsource.application.projections.coordinator` |
 | Checkpoint functions | `record_checkpoint`, `read_checkpoint`, `lag_metrics_dict`, `reset_checkpoint` | `eventsource.application.projections.checkpoints` |
 | DLQ functions | `send_to_dlq`, `read_failed_events` | `eventsource.application.projections.dlq` |
+| Replay | `replay`, `ReplayReport`, `ReplayFailure`, `ReplayFailedError` | `eventsource.application.projections.replay` |
 | Protocols | `EventHandler`, `SyncEventHandler`, `EventSubscriber` | `eventsource.ports.handlers` (re-export) |
 
 `DatabaseProjection` is **not** in this barrel — it lives in
@@ -165,8 +184,9 @@ changes failure behavior, the deep import is the normal case, not an edge case.
 ### Relationship to the top-level `eventsource` package
 
 The top-level `eventsource/__init__.py` re-exports a strict subset: `Projection`,
-`CheckpointTrackingProjection`, `DeclarativeProjection`, `DatabaseProjection`, and
-`handles`. It does **not** export `SyncProjection`, `EventHandlerBase`, `TenantFilter`,
+`CheckpointTrackingProjection`, `DeclarativeProjection`, `DatabaseProjection`,
+`handles`, and the four replay names (`replay`, `ReplayReport`, `ReplayFailure`,
+`ReplayFailedError`). It does **not** export `SyncProjection`, `EventHandlerBase`, `TenantFilter`,
 `get_handled_event_type`, `is_event_handler`, or any of the coordinator classes, the
 checkpoint functions, or the DLQ functions — those require
 `eventsource.application.projections`. The protocols (`EventHandler`, `SyncEventHandler`,
@@ -539,3 +559,178 @@ configuration type is shared with the subscription machinery.
   invoke `super().__init__()`, but a hand-written subclass that overrides `__init__`
   without chaining leaves `_checkpoint_repo`, `_dlq_repo`, and `_retry_policy`
   unset, and `handle()` fails with `AttributeError` on the first event.
+
+## Rebuilding a projection: `replay()`
+
+```python
+async def replay(
+    feed: GlobalEventFeed,
+    projections: Sequence[EventSubscriber],
+    *,
+    from_position: Position | None = None,
+    tenant_id: UUID | None = None,
+    aggregate_type: str | None = None,
+    strict: bool = False,
+    max_events: int = MAX_EVENTS_PER_REPLAY,
+    max_failures: int = MAX_FAILURES_PER_REPLAY,
+    on_failure: Callable[[ReplayFailure], None] | None = None,
+) -> ReplayReport: ...
+```
+
+Reads the global feed from `from_position` and folds every event into every projection,
+returning a report (ADR 0054). This is the answer to "how do I rebuild a projection from
+the log" — `ProjectionCoordinator` is the other job, live catch-up on a timer, and its
+`rebuild_projection()` takes the events as a materialized list you have already read and
+filtered yourself.
+
+```python
+from eventsource.application.projections import replay
+
+report = await replay(event_store, [orders, invoices])
+print(f"{report.applied} applied, {report.failed} failed")
+```
+
+`feed` is type-hinted `GlobalEventFeed`, the narrowest port that suffices: `replay`
+appends nothing, reads no stream, and looks up no event id. Any store adapter satisfies
+it, as does a hand-written stand-in.
+
+**A poison event does not stop the rebuild.** A projection that raises has its failure
+recorded and the fold continues, because the alternative — stopping — denies the
+projection every event after the bad one. This is deliberately the opposite of what a
+live subscription does, where re-raising is what prevents checkpointing past a failure.
+
+`from_position` is exclusive, matching `read_all`; `None` starts from the beginning,
+which is what a rebuild wants. `replay` does **not** checkpoint: persist
+`report.last_position` yourself if the rebuild is to be resumed.
+
+### Scoping the read
+
+`tenant_id=` and `aggregate_type=` are forwarded to the adapter as `FeedReadOptions` and
+pushed into its query (ADR 0052), so rebuilding one tenant or one aggregate type out of a
+shared store is an indexed read rather than a scan. Naming neither sends no options
+object at all.
+
+This is narrower than `tenant_filter` on the projection, which is applied *after*
+delivery and therefore pays for the whole read either way.
+
+```python
+report = await replay(event_store, [orders], tenant_id=tenant, aggregate_type="Order")
+```
+
+### `ReplayReport`
+
+| Field | Meaning |
+| --- | --- |
+| `applied` | Events delivered that no projection rejected. An event every projection ignores still counts. |
+| `last_position` | The last position the (possibly filtered) read reached; `None` for an empty feed. |
+| `failures` | One `ReplayFailure` per *rejection*, capped at `max_failures`. |
+| `failures_truncated` | Failures that occurred but are not in `failures`. |
+| `failed` (property) | Events at least one retained failure names — per *event*, not per rejection. |
+
+`failed` and `len(failures)` legitimately differ: two projections rejecting one event is
+one failed event and two failures. `failed` is derived from the distinct `event_id`s
+rather than stored, so the two cannot drift apart. It keys on `event_id` and not on
+`position` because `position` is `Position | None` — a feedless store sets it on nothing,
+and keying on it would report `1` for a rebuild in which every event failed.
+
+`failed` is exact only while `failures_truncated` is zero, and a lower bound otherwise.
+
+### `ReplayFailure`
+
+A frozen dataclass carrying `position`, `event_id`, `event_type`, `projection` (the
+rejecting class's name), and `error` — the exception object itself, not a string about
+it. A count alone gives an operator no route back to the poison event.
+
+### Bounding the failure list
+
+Every retained failure pins a live exception and, through its traceback, every frame's
+locals. `max_failures` (default 1000) caps what the report holds; `failures_truncated`
+counts what the cap dropped, so a truncated report says so rather than quietly reading
+like a complete one.
+
+`on_failure` is called for **every** failure regardless of the cap, so a caller who needs
+all of them can stream them somewhere that is not memory:
+
+```python
+report = await replay(event_store, [orders], on_failure=log_replay_failure)
+if report.failures_truncated:
+    print(f"{report.failures_truncated} more failures -- see the log")
+```
+
+### `strict=True` and `ReplayFailedError`
+
+Raises on the first rejection instead of carrying on, carrying the `ReplayFailure` as
+`.failure` and the original exception as `__cause__`. Use it in tests and on a first
+deployment, where a silent partial rebuild is most costly and least visible.
+
+`ReplayFailedError` subclasses `ProjectionError`, so `except ProjectionError` catches it
+alongside a live projection's failure. `on_failure` still fires before the raise.
+
+### `max_events`
+
+The feed is adapter-supplied and the loop's termination depends on it, so a cursor that
+failed to advance would hang. `max_events` (default 10,000,000) turns that into a
+`RuntimeError` naming the last position reached.
+## `StoreProjection`
+
+`eventsource.application.projections.store.StoreProjection[TStore]` is a
+`DeclarativeProjection` that holds exactly one store and hands it to your handlers as
+`self._store`. Use it when the projection's read model is a single object with its own
+port — a graph store, a vector store, a repository — rather than a SQL table, which is
+`DatabaseProjection`'s case.
+
+```python
+from eventsource.application.projections import StoreProjection, handles
+
+
+class OrderProjection(StoreProjection[OrderStore]):
+    @handles(OrderCreated)
+    async def _on_created(self, _context: object, event: OrderCreated) -> None:
+        await self._store.upsert(event.order)
+
+
+projection = OrderProjection(order_store, checkpoint_repo=repo)
+```
+
+`TStore` is a type parameter, not a concrete type: the class names no adapter and no
+driver, which is what keeps it in the application ring (ADR 0024 sent
+`DatabaseProjection` to `adapters/sql` for naming an `async_sessionmaker`).
+
+### Constructor
+
+```python
+def __init__(self, store: TStore, **options: Unpack[ProjectionOptions]) -> None
+```
+
+`store` is the only parameter this class declares. Everything else is
+`ProjectionOptions`, a `TypedDict` naming exactly what `DeclarativeProjection.__init__`
+accepts — `checkpoint_repo`, `dlq_repo`, `enable_tracing`, `retry_policy`, `tracer`,
+`tenant_filter` — so the options stay individually typed and checked (PEP 692), unlike
+`**kwargs: Any`. They are keyword-only here.
+
+### Adding your own parameters
+
+This is the reason the class exists. A subclass that needs constructor parameters of its
+own declares only those and forwards the rest as one opaque `**options`, so it never
+names — and never drops — a parameter belonging to its parent:
+
+```python
+from typing import Unpack
+
+from eventsource.application.projections import ProjectionOptions, StoreProjection
+
+
+class BatchingProjection(StoreProjection[OrderStore]):
+    def __init__(
+        self,
+        store: OrderStore,
+        batch_size: int = 100,
+        **options: Unpack[ProjectionOptions],
+    ) -> None:
+        self._batch_size = batch_size
+        super().__init__(store, **options)
+```
+
+`retry_policy`, `tracer`, and `tenant_filter` reach the base through that forward, and
+keep reaching it when the parent gains options in a future release — which is the failure
+0.10.0 fixed inside this tree and this class removes outside it.

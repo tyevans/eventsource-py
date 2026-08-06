@@ -108,6 +108,16 @@ if TYPE_CHECKING:
         DeclarativeProjection,
         Projection,
     )
+    from eventsource.application.projections.replay import (
+        ReplayFailedError,
+        ReplayFailure,
+        ReplayReport,
+        replay,
+    )
+    from eventsource.application.projections.store import (
+        ProjectionOptions,
+        StoreProjection,
+    )
     from eventsource.domain import StreamId
     from eventsource.domain.aggregate import AggregateRoot, DeclarativeAggregate
     from eventsource.domain.command import DomainCommand
@@ -321,7 +331,14 @@ __all__ = [
     "Projection",
     "CheckpointTrackingProjection",
     "DeclarativeProjection",
+    "StoreProjection",
+    "ProjectionOptions",
     "DatabaseProjection",
+    # Projection replay / rebuild
+    "replay",
+    "ReplayFailure",
+    "ReplayReport",
+    "ReplayFailedError",
     # ReadModel Projections (Phase 3)
     "ReadModelProjection",
     "ReadModel",
@@ -494,6 +511,12 @@ _LAZY: dict[str, str] = {
     "Projection": "eventsource.application.projections.base",
     "CheckpointTrackingProjection": "eventsource.application.projections.base",
     "DeclarativeProjection": "eventsource.application.projections.base",
+    "replay": "eventsource.application.projections.replay",
+    "ReplayFailure": "eventsource.application.projections.replay",
+    "ReplayReport": "eventsource.application.projections.replay",
+    "ReplayFailedError": "eventsource.application.projections.replay",
+    "StoreProjection": "eventsource.application.projections.store",
+    "ProjectionOptions": "eventsource.application.projections.store",
     "DatabaseProjection": "eventsource.adapters.sql.projection",
     "ReadModelProjection": "eventsource.adapters.sql.readmodel_projection",
     "ReadModel": "eventsource.ports.readmodels",

@@ -1,0 +1,57 @@
+# Dependency floor verification.
+#
+# Every job in ci.yml installs with `uv sync --all-extras --locked`, so they all
+# run against one pinned set of versions sitting near the top of every declared
+# range. The `>=` bounds in pyproject.toml are therefore never exercised, and a
+# floor that is too low cannot fail anything: it ships, and it breaks for the
+# first user who installs at the bottom of the range.
+#
+# This job resolves with `--resolution lowest-direct` instead, putting every
+# declared dependency exactly on its `>=` bound, and runs the unit suite there.
+# It lives in its own workflow rather than as a job in ci.yml because it is the
+# one gate that must NOT use the lockfile -- keeping it separate makes that
+# deliberate rather than looking like an oversight.
+#
+# Local equivalent: `make floors`.
+#
+# Triggers: any PR that touches the declarations themselves, plus a weekly run
+# so a yank or a withdrawn wheel on a floored release is noticed without
+# waiting for someone to edit pyproject.toml.
+
+name: Dependency floors
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pyproject.toml'
+      - 'scripts/check_dependency_floors.sh'
+      - '.github/workflows/dependency-floors.yml'
+  schedule:
+    - cron: '37 5 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: floors-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  floors:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: '3.13'
+          # No cache: this job's whole purpose is to resolve differently from
+          # every other job, and a shared cache key would be misleading.
+          enable-cache: false
+
+      - name: Unit suite at declared dependency floors
+        run: scripts/check_dependency_floors.sh

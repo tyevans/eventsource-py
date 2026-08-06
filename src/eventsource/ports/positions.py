@@ -132,3 +132,6 @@ class ExpectedVersion:
         if version < 0:
             raise ValueError(f"exact version must be >= 0, got {version}")
         return cls(kind="exact", version=version)
+
+
+__all__ = ["ExpectedVersion", "Position"]

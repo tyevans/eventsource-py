@@ -601,3 +601,11 @@ class MigrationAuditLogRepository(Protocol):
             Number of matching audit entries
         """
         ...
+
+
+__all__ = [
+    "MigrationAuditLogRepository",
+    "MigrationRepository",
+    "PositionMappingRepository",
+    "TenantRoutingRepository",
+]

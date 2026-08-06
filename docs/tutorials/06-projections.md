@@ -188,9 +188,20 @@ The framework makes that a first-class operation. Every projection has `reset()`
 clears the checkpoint and then calls your `_truncate_read_models()`:
 
 ```python
+from eventsource.application.projections import replay
+
 await projection.reset()   # checkpoint cleared, your tables truncated
-# ...then replay events through projection.handle() to rebuild
+report = await replay(event_store, [projection])
+print(f"{report.applied} applied, {report.failed} failed")
 ```
+
+`replay()` is the rebuild driver: it reads the store's global feed and folds every
+event into the projections you hand it. A projection that raises on one event has the
+failure recorded in `report.failures` -- naming the event and carrying the exception --
+and the rebuild carries on, because stopping would deny the projection every event
+after the bad one. Pass `strict=True` to raise on the first rejection instead, and
+`tenant_id=` or `aggregate_type=` to rebuild one slice of a shared store without
+reading the rest. The projections API reference covers the report in full.
 
 Nothing about your domain history is at risk in that operation, because none of it lives
 in the read model. This is why projections can afford to be denormalized, duplicated, and
@@ -434,6 +445,35 @@ print(await projection.get_checkpoint()) # None
 no arguments on `DeclarativeProjection` -- clearing the dictionary is entirely your code.
 The base implementation does nothing, so a projection that skips it will happily replay
 events on top of stale rows. Implement it from the start.
+
+### If your read model is a store rather than a table
+
+The projection above owns a dictionary. Real ones usually own something with a port
+behind it -- a repository, a graph store, a vector index. `StoreProjection[TStore]` is
+`DeclarativeProjection` with that store held for you as `self._store`:
+
+```python
+from eventsource.application.projections import StoreProjection, handles
+
+
+class OrderProjection(StoreProjection[OrderStore]):
+    @handles(OrderCreated)
+    async def _on_created(self, _context: object, event: OrderCreated) -> None:
+        await self._store.upsert(event.order)
+
+
+projection = OrderProjection(order_store)
+```
+
+The value is in what you do not write. If you later need a constructor parameter of your
+own, you declare that one and forward the rest -- `def __init__(self, store, batch_size=100,
+**options: Unpack[ProjectionOptions])` -- and `retry_policy`, `tracer`, and
+`tenant_filter` still reach the base. Spelling the parent's parameters out by hand is how
+projections have historically dropped them by accident. See the projections API reference
+for the full constructor.
+
+If the read model is a SQL table, keep reading: `DatabaseProjection` in Step 4 is the
+case where the "store" is a session and a transaction.
 
 You now have routing, checkpoints, and rebuild in about twenty lines. What is missing is
 somewhere real to write. The next step defines that table.

@@ -1166,3 +1166,19 @@ class MigrationAuditEntry:
             "operator": self.operator,
             "occurred_at": self.occurred_at.isoformat(),
         }
+
+
+__all__ = [
+    "AuditEventType",
+    "CutoverResult",
+    "Migration",
+    "MigrationAuditEntry",
+    "MigrationConfig",
+    "MigrationPhase",
+    "MigrationResult",
+    "MigrationStatus",
+    "PositionMapping",
+    "SyncLag",
+    "TenantMigrationState",
+    "TenantRouting",
+]

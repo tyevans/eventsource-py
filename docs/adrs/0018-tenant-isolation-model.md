@@ -12,6 +12,13 @@ including the parts that are deliberately incomplete.
 `domain/exceptions.py`; the isolation model and Decision described below
 are unchanged).
 
+**Amended by ADR 0057** (§6's `enforce_on_load` is renamed
+`require_tenant_context`, and §6's argument for why filtering was not
+implemented cites an `EventStore` interface that no longer exists; the
+conclusion -- no tenant filtering on the aggregate-load path, read isolation
+delegated to the database per §7 -- is restated there on current grounds and
+stands).
+
 ## Context
 
 ### What multi-tenancy has to solve in an event-sourced system

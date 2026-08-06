@@ -123,3 +123,13 @@ class CategoryReadOptions:
     tenant_id: UUID | None = None
     from_timestamp: datetime | None = None
     limit: int | None = None
+
+
+__all__ = [
+    "AppendResult",
+    "CategoryReadOptions",
+    "EventEnvelope",
+    "FeedReadOptions",
+    "ReadDirection",
+    "StreamReadOptions",
+]
