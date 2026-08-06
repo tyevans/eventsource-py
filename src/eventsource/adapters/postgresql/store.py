@@ -537,6 +537,10 @@ class PostgreSQLEventStore:
             query_parts.append("AND tenant_id = :tenant_id")
             params["tenant_id"] = options.tenant_id
 
+        if options.aggregate_type is not None:
+            query_parts.append("AND aggregate_type = :aggregate_type")
+            params["aggregate_type"] = options.aggregate_type
+
         query_parts.append("ORDER BY global_position ASC")
 
         if options.limit is not None:

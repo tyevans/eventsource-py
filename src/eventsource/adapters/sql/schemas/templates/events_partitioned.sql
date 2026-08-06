@@ -100,6 +100,11 @@ CREATE INDEX IF NOT EXISTS idx_events_timestamp
 CREATE INDEX IF NOT EXISTS idx_events_type_tenant_timestamp
     ON events (aggregate_type, tenant_id, timestamp);
 
+-- Composite index for aggregate-type-filtered feed reads
+-- Optimizes FeedReadOptions(aggregate_type=...)
+CREATE INDEX IF NOT EXISTS idx_events_type_position
+    ON events (aggregate_type, global_position);
+
 -- Index for aggregate stream loading
 CREATE INDEX IF NOT EXISTS idx_events_aggregate_version
     ON events (aggregate_id, aggregate_type, version);

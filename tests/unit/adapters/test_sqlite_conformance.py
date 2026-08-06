@@ -1,6 +1,5 @@
 """Conformance tests for SQLiteEventStore against the port suites."""
 
-import tempfile
 import threading
 import time
 from collections.abc import AsyncIterator
@@ -103,13 +102,12 @@ class TestSQLiteCategoryQuery(CategoryQueryConformance):
 class TestSQLiteSnapshotStore(SnapshotStoreConformance):
     @pytest.fixture
     async def store(self) -> AsyncIterator[SQLiteSnapshotStore]:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = f"{tmpdir}/snapshots.db"
-            async with aiosqlite.connect(db_path) as conn:
-                schema = get_schema("snapshots", "sqlite")
-                await conn.executescript(schema)
-                await conn.commit()
-            yield SQLiteSnapshotStore(db_path)
+        # ":memory:" works because the store keeps one connection open for
+        # its lifetime; before it did, every operation opened its own
+        # connection and saw a different, empty database.
+        store = SQLiteSnapshotStore(":memory:")
+        yield store
+        await store.close()
 
 
 class TestSQLiteCheckpointRepository(CheckpointRepositoryConformance):

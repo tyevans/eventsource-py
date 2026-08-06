@@ -176,6 +176,8 @@ nav:
       - "ADR-0049: Snapshots Fire on Crossing a Boundary": adrs/0049-snapshot-boundary-crossing.md
       - "ADR-0050: Read-Model Version Conflict Error Name": adrs/0050-read-model-version-conflict-error-name.md
       - "ADR-0051: adapters/_common Shared Port Semantics": adrs/0051-adapters-common-shared-port-semantics.md
+      - "ADR-0052: Feed Read Aggregate-Type Filter": adrs/0052-feed-read-aggregate-type-filter.md
+      - "ADR-0053: SQLite Snapshot Store Owns Its Connection": adrs/0053-sqlite-snapshot-store-owns-its-connection.md
   - Development:
       - development/index.md
       - Contributing: development/contributing.md

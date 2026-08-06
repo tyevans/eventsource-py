@@ -385,6 +385,10 @@ class SQLiteEventStore:
             query_parts.append("AND tenant_id = ?")
             params.append(str(options.tenant_id))
 
+        if options.aggregate_type is not None:
+            query_parts.append("AND aggregate_type = ?")
+            params.append(options.aggregate_type)
+
         query_parts.append("ORDER BY global_position ASC")
 
         if options.limit is not None:

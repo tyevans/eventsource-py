@@ -1060,7 +1060,9 @@ of the append, `None` for feedless stores).
 | `limit` | `int \| None` | `None` (unbounded) |
 
 **`FeedReadOptions`** configures a global-feed read: `tenant_id` (`UUID | None`,
-default `None` for all tenants) and `limit` (`int | None`).
+default `None` for all tenants), `aggregate_type` (`str | None`, default `None`
+for all types — the stream category, pushed into the adapter's `WHERE` clause),
+and `limit` (`int | None`).
 
 **`CategoryReadOptions`** configures a category read: `tenant_id`, `from_timestamp`
 (`datetime | None` — filters on `EventEnvelope.stored_at`, not the event's own
