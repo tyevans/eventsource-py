@@ -218,12 +218,12 @@ front of you actually asks for -- there is no penalty for adding one later.
 
 | Extra | Installs | First needed in |
 | --- | --- | --- |
-| `postgresql` | `asyncpg>=0.27` | Tutorial 11 -- PostgreSQL |
+| `postgresql` | `asyncpg>=0.30` | Tutorial 11 -- PostgreSQL |
 | `sqlite` | `aiosqlite>=0.19` | Tutorial 12 -- SQLite |
-| `redis` | `redis>=5.0,<6.0` | Tutorial 17 -- Redis |
-| `kafka` | `aiokafka>=0.9,<1.0` | Tutorial 18 -- Kafka |
+| `redis` | `redis>=8.0,<9.0` | Tutorial 17 -- Redis |
+| `kafka` | `aiokafka>=0.12,<1.0` | Tutorial 18 -- Kafka |
 | `rabbitmq` | `aio-pika>=9.0` | Tutorial 19 -- RabbitMQ |
-| `telemetry` | `opentelemetry-api`, `opentelemetry-sdk` (both `>=1.0,<2.0`) | Tutorial 20 -- Observability |
+| `telemetry` | `opentelemetry-api`, `opentelemetry-sdk` (both `>=1.16.0,<2.0`) | Tutorial 20 -- Observability |
 
 Combine them in one command:
 

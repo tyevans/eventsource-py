@@ -108,7 +108,7 @@ helpers to check the outcome. Everything is in-memory, so no Docker services or
 
 `eventsource.testing` ships inside the `eventsource-py` distribution. There is
 no `testing` extra to install, and the package needs nothing beyond the core
-dependencies (`pydantic>=2.0,<3.0` and `sqlalchemy>=2.0,<3.0`) declared in
+dependencies (`pydantic>=2.8.0,<3.0` and `sqlalchemy[asyncio]>=2.0.43,<3.0`) declared in
 `[project.dependencies]`. A plain install is enough:
 
 ```bash

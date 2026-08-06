@@ -194,9 +194,9 @@ is behind an optional extra, so add the one you chose in the previous section:
 pip install eventsource-py
 
 # One extra per distributed backend
-pip install "eventsource-py[redis]"       # RedisEventBus     (redis>=5.0,<6.0)
-pip install "eventsource-py[rabbitmq]"    # RabbitMQEventBus  (aio-pika>=9.0.0)
-pip install "eventsource-py[kafka]"       # KafkaEventBus     (aiokafka>=0.9.0,<1.0.0)
+pip install "eventsource-py[redis]"       # RedisEventBus     (redis>=8.0,<9.0)
+pip install "eventsource-py[rabbitmq]"    # RabbitMQEventBus  (aio-pika>=9.0.5)
+pip install "eventsource-py[kafka]"       # KafkaEventBus     (aiokafka>=0.12.0,<1.0.0)
 ```
 
 Extras compose, so a service that consumes from Redis and writes projections to
