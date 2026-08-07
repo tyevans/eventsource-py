@@ -200,6 +200,83 @@ delivery guarantees from identical code. CONFIRMED. The ADR-0048 sweep
 documented the gap in the event-bus guide rather than closing it: implementing
 it is a schema and transaction-boundary change. Still worth implementing.
 
+## An unclosed connection-owning adapter is undiagnosable (P2)
+
+Found while upgrading a downstream consumer (research-team) from 0.10 to 0.12.
+ADR 0053 is right that `SQLiteSnapshotStore` should own one connection and
+require closing. What it costs is a failure mode with no path back to the
+cause.
+
+`aiosqlite` backs each connection with a **non-daemon** thread. When a store is
+not closed, that thread outlives the event loop that created it, and the first
+thing it tries to do afterwards raises `RuntimeError: Event loop is closed`
+from inside `aiosqlite`'s worker. Nothing in that traceback names the store,
+the path it was opened against, or the code that constructed it. Under pytest
+it surfaces as `PytestUnhandledThreadExceptionWarning` attributed to whichever
+test happened to be running when the thread woke -- which is essentially never
+the test that leaked. The consumer's first sighting was attributed to a test
+that opens no store of any kind.
+
+The upgrade turned up three separate leaked sites this way, and the only
+workable method was to grep every construction of a connection-owning adapter
+and audit each by hand. Two were in test fixtures; one was a consumer-side
+factory that constructed a snapshot store internally and returned it to
+nobody, so no caller *could* have closed it. That last shape is worth noting on
+its own: before 0.12 it was correct code, and the change silently converted it
+into a guaranteed leak.
+
+Worth doing, roughly in order of value per effort:
+
+- **A finalizer that warns and names the store.** `__del__` emitting a
+  `ResourceWarning` carrying the db path turns a mystery into a one-line fix.
+  Python's own `socket` and `asyncio` do exactly this, and `tracemalloc` then
+  supplies the allocation traceback for free.
+- **Async context manager support.** `async with SQLiteSnapshotStore(path) as
+  store:` makes the correct thing the short thing. `SupportsClose` already
+  fixes the protocol; `__aenter__`/`__aexit__` is small.
+- **Say it in the adapter docstring, not only the changelog.** A consumer
+  upgrading reads the class; a consumer writing new code never sees the
+  changelog entry at all.
+
+Whether the worker thread should be daemon is a separate question and probably
+"no" -- a daemon thread would trade a loud error for a silently truncated
+write. The complaint is not that the thread survives, it is that nothing says
+which store it belongs to.
+
+## `_stamp` does not check that an event targets its own aggregate (P2)
+
+Also found in the 0.10 -> 0.12 upgrade, and a direct consequence of ADR 0056.
+
+Moving the aggregate id out of `initial_state()` and onto the command is the
+right call, and the ADR's migration recipe -- put the target id on the command,
+read it back in `decide`'s `match` arm -- is what a consumer follows. But it
+makes the id something the caller now *repeats*: the aggregate already knows
+it, and the command states it again. Nothing compares the two.
+
+`DeciderAggregate(a).execute(CreateThing(thing_id=b, ...))` is accepted in
+full. `decide` is a static function and cannot see the aggregate; `_stamp`
+fills in `aggregate_version`, `aggregate_type` and provenance, and passes
+`aggregate_id` through untouched because `decide` set it explicitly. The event
+is then appended to `a`'s stream carrying `aggregate_id=b`. The fold of `a`
+subsequently reads an event that says it belongs somewhere else -- the exact
+condition event sourcing exists to preclude, reached through the API's own
+recommended pattern.
+
+Under the old signature this was unrepresentable: state took its id from
+`initial_state(aggregate_id)`, so it was the aggregate's id by construction.
+The upgrade removed that guarantee without replacing it.
+
+`_stamp` is the natural home for the check -- it already inspects
+`model_fields_set`, and already rejects a divergent `aggregate_type` via
+`_reject_divergent_aggregate_type`, which is precisely the analogous invariant
+one field over. Rejecting a divergent explicitly-set `aggregate_id` would cost
+one comparison and close it for every consumer.
+
+The downstream consumer worked around it with a mixin that overrides
+`execute`, compares a declared target field against `self.aggregate_id`, and
+raises `CommandRejectedError` on a mismatch. That works, but every consumer
+following ADR 0056 needs it, which is the argument for it being upstream.
+
 ---
 
 # Closed, 2026-08-04
