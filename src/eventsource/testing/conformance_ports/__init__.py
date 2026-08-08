@@ -13,7 +13,8 @@ Suites: `AppenderConformance`, `StreamReaderConformance`,
 `SnapshotStoreConformance`, `ProjectionCheckpointsConformance`,
 `SubscriptionPositionsConformance`, `CheckpointRepositoryConformance`,
 `DLQRepositoryConformance`, `DistributedLockConformance`, `OutboxRepositoryConformance`,
-`ReadModelRepositoryConformance`.
+`ReadModelRepositoryConformance`, `SupportsCloseConformance`,
+`LeaderElectorConformance`.
 
 This package sits beside the legacy `eventsource.testing.conformance`
 module and will replace it once all adapters migrate to the port suites.
@@ -26,9 +27,14 @@ from eventsource.testing.conformance_ports.checkpoints import (
     ProjectionCheckpointsConformance,
     SubscriptionPositionsConformance,
 )
+from eventsource.testing.conformance_ports.coordination import LeaderElectorConformance
 from eventsource.testing.conformance_ports.dlq import DLQRepositoryConformance
 from eventsource.testing.conformance_ports.event_lookup import EventLookupConformance
 from eventsource.testing.conformance_ports.feed import GlobalFeedConformance
+from eventsource.testing.conformance_ports.lifecycle import (
+    CallerOwnedResourceCase,
+    SupportsCloseConformance,
+)
 from eventsource.testing.conformance_ports.locks import DistributedLockConformance
 from eventsource.testing.conformance_ports.outbox import OutboxRepositoryConformance
 from eventsource.testing.conformance_ports.readmodels import ReadModelRepositoryConformance
@@ -55,4 +61,7 @@ __all__ = [
     "DistributedLockConformance",
     "OutboxRepositoryConformance",
     "ReadModelRepositoryConformance",
+    "SupportsCloseConformance",
+    "CallerOwnedResourceCase",
+    "LeaderElectorConformance",
 ]
