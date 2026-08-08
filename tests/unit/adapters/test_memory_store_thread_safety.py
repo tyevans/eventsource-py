@@ -20,10 +20,14 @@ from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.adapters.sync import SyncEventStoreAdapter
 from eventsource.domain import StreamId
 from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import EventRegistry, register_event
 from eventsource.domain.exceptions import OptimisticLockError
 from eventsource.ports import ExpectedVersion
 
+_REGISTRY = EventRegistry()
 
+
+@register_event(registry=_REGISTRY)
 class ThingHappened(DomainEvent):
     aggregate_type: str = "Thing"
 
@@ -35,7 +39,7 @@ class TestCrossLoopLockSafety:
     expected OptimisticLockError from losing the race."""
 
     def test_concurrent_sync_appends_never_raise_loop_errors(self) -> None:
-        store = InMemoryEventStore()
+        store = InMemoryEventStore(event_registry=_REGISTRY)
         sync_store = SyncEventStoreAdapter(store, timeout=5.0)
         agg_id = uuid4()
         stream = StreamId(aggregate_id=agg_id, category="Thing")

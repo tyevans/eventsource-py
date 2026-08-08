@@ -184,6 +184,48 @@ class TestAllExports:
             assert obj is not None, f"Export '{name}' is None or missing"
 
 
+class TestPortConformanceSuitesReExported:
+    """The port conformance suites are part of the public testing surface.
+
+    They are documented in docs/guides/validate-custom-backend.md as the way
+    to validate a custom backend, so they must be reachable from
+    ``eventsource.testing`` directly and not only from the nested
+    ``eventsource.testing.conformance_ports`` package.
+    """
+
+    def test_port_suites_importable_from_testing(self) -> None:
+        """Every conformance_ports suite is re-exported by eventsource.testing."""
+        import eventsource.testing
+        from eventsource.testing import conformance_ports
+
+        missing = [
+            name for name in conformance_ports.__all__ if not hasattr(eventsource.testing, name)
+        ]
+        assert not missing, f"conformance_ports suites not re-exported: {missing}"
+
+    def test_port_suites_are_the_same_objects(self) -> None:
+        """Re-exports are the suites themselves, not shadowing duplicates."""
+        import eventsource.testing
+        from eventsource.testing import conformance_ports
+
+        for name in conformance_ports.__all__:
+            assert getattr(eventsource.testing, name) is getattr(conformance_ports, name)
+
+    def test_port_suites_listed_in_all(self) -> None:
+        """Re-exported suites are declared public via __all__."""
+        from eventsource.testing import __all__, conformance_ports
+
+        missing = set(conformance_ports.__all__) - set(__all__)
+        assert not missing, f"conformance_ports suites missing from __all__: {missing}"
+
+    def test_named_suite_import_works(self) -> None:
+        """The import spelling shown in the docs resolves."""
+        from eventsource.testing import AppenderConformance, StreamReaderConformance
+
+        assert AppenderConformance is not None
+        assert StreamReaderConformance is not None
+
+
 class TestImplementationStatus:
     """Tests that all components are fully implemented."""
 

@@ -36,11 +36,16 @@ from eventsource.application.subscriptions import (
 from eventsource.application.subscriptions.runners import LiveRunner, LiveRunnerStats
 from eventsource.domain import StreamId
 from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import EventRegistry, register_event
 from eventsource.ports.positions import ExpectedVersion, Position
 
 # --- Sample Event Classes ---
 
 
+_REGISTRY = EventRegistry()
+
+
+@register_event(registry=_REGISTRY)
 class LiveTestEvent(DomainEvent):
     """Simple test event for live processing."""
 
@@ -48,6 +53,7 @@ class LiveTestEvent(DomainEvent):
     data: str = "test"
 
 
+@register_event(registry=_REGISTRY)
 class AnotherTestEvent(DomainEvent):
     """Another test event type."""
 
@@ -89,7 +95,7 @@ def event_bus() -> InMemoryEventBus:
 @pytest.fixture
 def event_store() -> InMemoryEventStore:
     """Create a fresh InMemoryEventStore (a real GlobalEventFeed)."""
-    return InMemoryEventStore()
+    return InMemoryEventStore(event_registry=_REGISTRY)
 
 
 @pytest.fixture

@@ -32,9 +32,13 @@ import pytest
 from eventsource.adapters.memory import InMemoryEventStore
 from eventsource.domain import StreamId
 from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import EventRegistry, register_event
 from eventsource.ports import ExpectedVersion, collect
 
+_REGISTRY = EventRegistry()
 
+
+@register_event(registry=_REGISTRY)
 class SampleEvent(DomainEvent):
     """Sample event for testing."""
 
@@ -48,7 +52,7 @@ class TestInMemoryEventStoreTimestampTypes:
     @pytest.mark.asyncio
     async def test_get_events_by_type_none_timestamp(self) -> None:
         """read_category with no from_timestamp filter returns all events."""
-        store = InMemoryEventStore()
+        store = InMemoryEventStore(event_registry=_REGISTRY)
 
         event1 = SampleEvent(
             aggregate_id=uuid4(),

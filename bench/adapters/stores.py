@@ -18,7 +18,7 @@ class MemoryStoreAdapter(BenchAdapter[FullEventStore]):
     name = "memory"
 
     async def create(self) -> FullEventStore:
-        return InMemoryEventStore()
+        return InMemoryEventStore(event_registry=make_registry())
 
 
 class PostgresStoreAdapter(BenchAdapter[FullEventStore]):

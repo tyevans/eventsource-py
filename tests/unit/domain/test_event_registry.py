@@ -358,12 +358,25 @@ class TestDefaultRegistry:
     """Tests for the default module-level registry."""
 
     def setup_method(self) -> None:
-        """Clean up default registry before each test."""
+        """Snapshot the default registry, then clear it so the test starts empty.
+
+        `default_registry` is process-global and populated at import time by
+        every `@register_event` in the tree. Clearing it without restoring
+        leaks an empty registry into every test that runs afterwards -- which
+        now fails at append time, because the in-memory stores resolve event
+        types through it.
+        """
+        self._saved = {
+            event_type: default_registry.get(event_type)
+            for event_type in default_registry.list_types()
+        }
         default_registry.clear()
 
     def teardown_method(self) -> None:
-        """Clean up default registry after each test."""
+        """Restore exactly the registrations that existed before this test."""
         default_registry.clear()
+        for event_type, event_class in self._saved.items():
+            default_registry.register(event_class, event_type)
 
     def test_decorator_uses_default_registry(self) -> None:
         """Decorator without registry parameter uses default."""

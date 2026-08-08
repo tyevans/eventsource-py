@@ -30,6 +30,7 @@ from eventsource.application.projections.replay import (
     replay,
 )
 from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import EventRegistry, register_event
 from eventsource.domain.exceptions import ProjectionError
 from eventsource.domain.stream_id import StreamId
 from eventsource.ports.envelopes import EventEnvelope, FeedReadOptions
@@ -42,10 +43,15 @@ TENANT_A = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 TENANT_B = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 
 
+_REGISTRY = EventRegistry()
+
+
+@register_event(registry=_REGISTRY)
 class OrderPlaced(DomainEvent):
     aggregate_type: str = "Order"
 
 
+@register_event(registry=_REGISTRY)
 class InvoiceIssued(DomainEvent):
     aggregate_type: str = "Invoice"
 
@@ -165,7 +171,7 @@ async def _append(store: InMemoryEventStore, event: DomainEvent) -> None:
 
 
 async def _store_with(*events: DomainEvent) -> InMemoryEventStore:
-    store = InMemoryEventStore()
+    store = InMemoryEventStore(event_registry=_REGISTRY)
     for event in events:
         await _append(store, event)
     return store
@@ -507,7 +513,7 @@ class TestTheScopedReplaySeesOnlyThatSlice:
         assert scoped.last_position < whole.last_position
 
     async def test_an_empty_feed_reports_no_last_position(self) -> None:
-        report = await replay(InMemoryEventStore(), [Collecting()])
+        report = await replay(InMemoryEventStore(event_registry=_REGISTRY), [Collecting()])
         assert report.last_position is None
         assert report.applied == 0
 

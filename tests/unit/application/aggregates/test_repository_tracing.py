@@ -27,6 +27,7 @@ from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.domain import StreamId
 from eventsource.domain.aggregate import AggregateRoot
 from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import EventRegistry, register_event
 from eventsource.observability import (
     ATTR_AGGREGATE_ID,
     ATTR_AGGREGATE_TYPE,
@@ -51,6 +52,10 @@ class TracingTestState(BaseModel):
     items: list[str] = Field(default_factory=list)
 
 
+_REGISTRY = EventRegistry()
+
+
+@register_event(registry=_REGISTRY)
 class TracingTestEvent(DomainEvent):
     """Test event for tracing tests."""
 
@@ -99,7 +104,7 @@ class TestAggregateRepositoryTracingComposition:
 
     @pytest.fixture
     def event_store(self) -> InMemoryEventStore:
-        return InMemoryEventStore()
+        return InMemoryEventStore(event_registry=_REGISTRY)
 
     def test_uses_tracer_composition(self):
         """AggregateRepository uses Tracer composition pattern."""
@@ -171,7 +176,7 @@ class TestAggregateRepositorySpanCreation:
 
     @pytest.fixture
     def event_store(self) -> InMemoryEventStore:
-        return InMemoryEventStore()
+        return InMemoryEventStore(event_registry=_REGISTRY)
 
     @pytest.fixture
     def snapshot_store(self) -> InMemorySnapshotStore:
@@ -370,7 +375,7 @@ class TestAggregateRepositoryTracingDisabled:
 
     @pytest.fixture
     def event_store(self) -> InMemoryEventStore:
-        return InMemoryEventStore()
+        return InMemoryEventStore(event_registry=_REGISTRY)
 
     @pytest.fixture
     def snapshot_store(self) -> InMemorySnapshotStore:
@@ -474,7 +479,7 @@ class TestAggregateRepositorySpanDynamicAttributes:
 
     @pytest.fixture
     def event_store(self) -> InMemoryEventStore:
-        return InMemoryEventStore()
+        return InMemoryEventStore(event_registry=_REGISTRY)
 
     @pytest.fixture
     def snapshot_store(self) -> InMemorySnapshotStore:
@@ -629,7 +634,7 @@ class TestAggregateRepositoryTracingMultipleEvents:
 
     @pytest.fixture
     def event_store(self) -> InMemoryEventStore:
-        return InMemoryEventStore()
+        return InMemoryEventStore(event_registry=_REGISTRY)
 
     @pytest.mark.asyncio
     async def test_multiple_events_count_attribute(self, event_store, mock_tracer):
