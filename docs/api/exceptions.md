@@ -360,7 +360,7 @@ Optimistic lock error for aggregate <aggregate_id>: expected version
 
 Note that `eventsource.ports.readmodels.exceptions` defines an unrelated class with
 the same name. See
-[Name collision: eventsource.ports.readmodels.exceptions.OptimisticLockError](#name-collision-eventsourceportsreadmodelsexceptionsoptimisticlockerror).
+[Name collision: eventsource.ports.readmodels.exceptions.OptimisticLockError](#optimisticlockerror).
 
 ### Attributes: aggregate_id, expected_version, actual_version
 
@@ -481,7 +481,7 @@ Note that the read-model backends (`readmodels/postgresql.py`,
 `readmodels/sqlite.py`, `readmodels/in_memory.py`) also raise an
 `OptimisticLockError` — but the one from `eventsource.ports.readmodels.exceptions`,
 which is a different class. See
-[Name collision](#name-collision-eventsourcereadmodelsexceptionsoptimisticlockerror).
+[Name collision](#optimisticlockerror).
 
 ### Handling: retry-on-conflict pattern
 
