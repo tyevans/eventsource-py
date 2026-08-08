@@ -81,12 +81,7 @@ class SQLiteEventStore:
     directly and must never be routed through the public read helpers.
 
     Structural conformance only -- no inheritance from the port protocols.
-
-    Attributes:
-        max_append_batch: No batch-size limit is enforced by this adapter.
     """
-
-    max_append_batch: int | None = None
 
     def __init__(
         self,

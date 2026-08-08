@@ -26,22 +26,6 @@ from ..conftest import skip_if_no_postgres_infra
 pytestmark = [pytest.mark.integration, pytest.mark.postgres, skip_if_no_postgres_infra]
 
 
-def _make_registry():
-    """Fresh registry with `ConformanceEvent` registered.
-
-    Mirrors the SQLite adapter's conformance test module: `ConformanceEvent`
-    is never registered into `default_registry`, and PostgreSQL round-trips
-    events through JSONB, so it must be able to look the class up again on
-    read.
-    """
-    from eventsource.domain.event_registry import EventRegistry
-    from eventsource.testing.conformance_ports._fixtures import ConformanceEvent
-
-    registry = EventRegistry()
-    registry.register(ConformanceEvent)
-    return registry
-
-
 from eventsource.adapters.postgresql import (  # noqa: E402
     PostgreSQLEventStore,
     PostgreSQLSnapshotStore,
@@ -59,7 +43,11 @@ from eventsource.testing.conformance_ports import (  # noqa: E402
     SnapshotStoreConformance,
     StreamReaderConformance,
 )
-from eventsource.testing.conformance_ports._fixtures import make_event, make_stream  # noqa: E402
+from eventsource.testing.conformance_ports._fixtures import (  # noqa: E402
+    make_conformance_registry,
+    make_event,
+    make_stream,
+)
 
 
 async def _fresh_store(connection_url: str) -> PostgreSQLEventStore:
@@ -74,7 +62,7 @@ async def _fresh_store(connection_url: str) -> PostgreSQLEventStore:
     async with engine.begin() as conn:
         await conn.execute(text("DROP TABLE IF EXISTS events CASCADE"))
     return PostgreSQLEventStore(
-        engine, event_registry=_make_registry(), create_schema=True, owns_engine=True
+        engine, event_registry=make_conformance_registry(), create_schema=True, owns_engine=True
     )
 
 
@@ -383,8 +371,8 @@ async def test_store_id_stable_across_restarts(ports_postgres_connection_url: st
     engine_a: AsyncEngine = create_async_engine(ports_postgres_connection_url)
     engine_b: AsyncEngine = create_async_engine(ports_postgres_connection_url)
     try:
-        store_a = PostgreSQLEventStore(engine_a, event_registry=_make_registry())
-        store_b = PostgreSQLEventStore(engine_b, event_registry=_make_registry())
+        store_a = PostgreSQLEventStore(engine_a, event_registry=make_conformance_registry())
+        store_b = PostgreSQLEventStore(engine_b, event_registry=make_conformance_registry())
         assert store_a.store_id == store_b.store_id
         assert store_a.store_id == f"pg:{engine_a.url.database}"
     finally:

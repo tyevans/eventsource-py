@@ -14,24 +14,6 @@ from tests.conftest import skip_if_no_aiosqlite
 pytestmark = [pytest.mark.sqlite, skip_if_no_aiosqlite]
 
 
-def _make_registry():
-    """Fresh registry with `ConformanceEvent` registered.
-
-    `ConformanceEvent` (from the shared conformance fixtures) is never
-    registered into `default_registry` -- registration is explicit
-    (`@register_event` / `EventRegistry.register`), unlike the memory
-    adapter, which stores Python objects directly and never needs a
-    registry. SQLite round-trips events through JSON, so it must be able
-    to look the class up again on read.
-    """
-    from eventsource.domain.event_registry import EventRegistry
-    from eventsource.testing.conformance_ports._fixtures import ConformanceEvent
-
-    registry = EventRegistry()
-    registry.register(ConformanceEvent)
-    return registry
-
-
 from eventsource import create_async_engine  # noqa: E402
 from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository  # noqa: E402
 from eventsource.adapters.sql.dlq import SQLDLQRepository  # noqa: E402
@@ -52,6 +34,7 @@ from eventsource.testing.conformance_ports import (  # noqa: E402
 )
 from eventsource.testing.conformance_ports._fixtures import (  # noqa: E402
     ConformanceEvent,
+    make_conformance_registry,
     make_stream,
 )
 from eventsource.testing.conformance_ports.stateful import StoreStateMachine  # noqa: E402
@@ -61,7 +44,7 @@ from eventsource.testing.sync_facade import SyncStoreFacade  # noqa: E402
 class TestSQLiteAppender(AppenderConformance):
     @pytest.fixture
     async def store(self) -> AsyncIterator[SQLiteEventStore]:
-        store = SQLiteEventStore(":memory:", event_registry=_make_registry())
+        store = SQLiteEventStore(":memory:", event_registry=make_conformance_registry())
         yield store
         await store.close()
 
@@ -69,7 +52,7 @@ class TestSQLiteAppender(AppenderConformance):
 class TestSQLiteStreamReader(StreamReaderConformance):
     @pytest.fixture
     async def store(self) -> AsyncIterator[SQLiteEventStore]:
-        store = SQLiteEventStore(":memory:", event_registry=_make_registry())
+        store = SQLiteEventStore(":memory:", event_registry=make_conformance_registry())
         yield store
         await store.close()
 
@@ -77,7 +60,7 @@ class TestSQLiteStreamReader(StreamReaderConformance):
 class TestSQLiteEventLookup(EventLookupConformance):
     @pytest.fixture
     async def store(self) -> AsyncIterator[SQLiteEventStore]:
-        store = SQLiteEventStore(":memory:", event_registry=_make_registry())
+        store = SQLiteEventStore(":memory:", event_registry=make_conformance_registry())
         yield store
         await store.close()
 
@@ -85,7 +68,7 @@ class TestSQLiteEventLookup(EventLookupConformance):
 class TestSQLiteGlobalFeed(GlobalFeedConformance):
     @pytest.fixture
     async def store(self) -> AsyncIterator[SQLiteEventStore]:
-        store = SQLiteEventStore(":memory:", event_registry=_make_registry())
+        store = SQLiteEventStore(":memory:", event_registry=make_conformance_registry())
         yield store
         await store.close()
 
@@ -93,7 +76,7 @@ class TestSQLiteGlobalFeed(GlobalFeedConformance):
 class TestSQLiteCategoryQuery(CategoryQueryConformance):
     @pytest.fixture
     async def store(self) -> AsyncIterator[SQLiteEventStore]:
-        store = SQLiteEventStore(":memory:", event_registry=_make_registry())
+        store = SQLiteEventStore(":memory:", event_registry=make_conformance_registry())
         yield store
         await store.close()
 
@@ -179,7 +162,9 @@ class TestSQLiteOutboxRepository(OutboxRepositoryConformance):
 
 class SQLiteStateMachine(StoreStateMachine):
     def make_store(self) -> SyncStoreFacade:
-        return SyncStoreFacade(SQLiteEventStore(":memory:", event_registry=_make_registry()))
+        return SyncStoreFacade(
+            SQLiteEventStore(":memory:", event_registry=make_conformance_registry())
+        )
 
 
 TestSQLiteStateful = SQLiteStateMachine.TestCase
@@ -201,7 +186,7 @@ async def test_append_rolls_back_on_non_integrity_error(monkeypatch) -> None:
     """
     from eventsource.ports import CategoryReadOptions
 
-    store = SQLiteEventStore(":memory:", event_registry=_make_registry())
+    store = SQLiteEventStore(":memory:", event_registry=make_conformance_registry())
     stream = make_stream()
 
     import eventsource.adapters.sqlite.store as sqlite_store_module
@@ -251,7 +236,7 @@ def test_sync_facade_close_closes_underlying_store() -> None:
     `threading.Thread`; leaving it open leaks a thread per facade and
     prevents clean interpreter shutdown.
     """
-    store = SQLiteEventStore(":memory:", event_registry=_make_registry())
+    store = SQLiteEventStore(":memory:", event_registry=make_conformance_registry())
     facade = SyncStoreFacade(store)
     stream = make_stream()
     facade.append(
@@ -295,14 +280,14 @@ async def test_reopening_same_file_backed_db_does_not_fail_on_additive_column(
     """
     db_path = str(tmp_path / "reopen.db")
 
-    store1 = SQLiteEventStore(db_path, event_registry=_make_registry())
+    store1 = SQLiteEventStore(db_path, event_registry=make_conformance_registry())
     conn1 = await store1._conn()
     async with conn1.execute("PRAGMA table_info(projection_checkpoints)") as cursor:
         columns1 = {row[1] for row in await cursor.fetchall()}
     assert "position_token" in columns1
     await store1.close()
 
-    store2 = SQLiteEventStore(db_path, event_registry=_make_registry())
+    store2 = SQLiteEventStore(db_path, event_registry=make_conformance_registry())
     conn2 = await store2._conn()
     async with conn2.execute("PRAGMA table_info(projection_checkpoints)") as cursor:
         columns2 = {row[1] for row in await cursor.fetchall()}

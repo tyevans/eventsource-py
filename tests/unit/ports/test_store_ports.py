@@ -52,7 +52,6 @@ class TestAggregateStorePort:
         members = set(get_protocol_members(AggregateStore))
         assert members == {
             "append",
-            "max_append_batch",
             "read_stream",
             "get_stream_version",
         }

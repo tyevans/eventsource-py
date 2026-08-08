@@ -25,6 +25,7 @@ from eventsource.application.migration.consistency import ConsistencyVerifier
 from eventsource.application.migration.position_mapper import PositionMapper
 from eventsource.domain import StreamId
 from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import EventRegistry, register_event
 from eventsource.ports import ExpectedVersion, FeedReadOptions, Position
 from eventsource.ports.migration.models import (
     Migration,
@@ -33,7 +34,10 @@ from eventsource.ports.migration.models import (
     PositionMapping,
 )
 
+_REGISTRY = EventRegistry()
 
+
+@register_event(registry=_REGISTRY)
 class ResumePropertyEvent(DomainEvent):
     """Minimal event for the resume property; only identity/order matters."""
 
@@ -120,8 +124,8 @@ async def test_bulk_copy_resumes_to_a_source_equal_target(
     events_total = sum(streams)
     crash_after = min(crash_after, events_total)
 
-    source_store = InMemoryEventStore("source")
-    target_store = InMemoryEventStore("target")
+    source_store = InMemoryEventStore("source", event_registry=_REGISTRY)
+    target_store = InMemoryEventStore("target", event_registry=_REGISTRY)
     await _append_streams(source_store, tenant_id, streams)
 
     mapping_repo = FakePositionMappingRepository()

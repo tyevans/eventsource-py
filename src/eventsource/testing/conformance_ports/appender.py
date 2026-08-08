@@ -12,10 +12,18 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.domain.exceptions import DuplicateEventError, OptimisticLockError
+from eventsource.domain.exceptions import (
+    DuplicateEventError,
+    EventTypeNotFoundError,
+    OptimisticLockError,
+)
 from eventsource.ports import AppendResult, ExpectedVersion
 from eventsource.ports.store import EventAppender, StreamReader
-from eventsource.testing.conformance_ports._fixtures import make_event, make_stream
+from eventsource.testing.conformance_ports._fixtures import (
+    UnregisteredEvent,
+    make_event,
+    make_stream,
+)
 
 
 class _AppenderUnderTest(EventAppender, StreamReader, Protocol):
@@ -150,6 +158,28 @@ class AppenderConformance(ABC):
         assert result_a.position is not None
         assert result_b.position is not None
         assert result_b.position > result_a.position
+
+    async def test_unregistered_event_type_is_rejected(self, store: _AppenderUnderTest) -> None:
+        """An event whose `event_type` is not in the store's registry fails.
+
+        The SQL-family adapters round-trip events through JSON and raise
+        `EventTypeNotFoundError` when the class cannot be looked up again on
+        read. The in-memory adapters hold live `DomainEvent` objects, so they
+        would never notice -- which is exactly the divergence that lets a
+        missing registration pass in tests and explode in production. They
+        validate on `append` instead, so the failure mode matches even though
+        the moment of detection is earlier.
+
+        `pytest.raises` therefore wraps both the write and the read-back: a
+        store may reject at either point, but it must reject.
+        """
+        stream = make_stream()
+        event = UnregisteredEvent(aggregate_id=stream.aggregate_id)
+
+        with pytest.raises(EventTypeNotFoundError):
+            await store.append(stream, [event], ExpectedVersion.no_stream())
+            async for _ in store.read_stream(stream):
+                pass
 
     async def test_append_result_type(self, store: _AppenderUnderTest) -> None:
         stream = make_stream()

@@ -45,6 +45,7 @@ from eventsource.application.migration.sync_lag_tracker import SyncLagTracker
 from eventsource.application.migration.write_pause import WritePauseManager
 from eventsource.domain import StreamId
 from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import EventRegistry, register_event
 from eventsource.ports import ExpectedVersion, FeedReadOptions, Position
 from eventsource.ports.migration.models import (
     Migration,
@@ -59,6 +60,10 @@ from eventsource.ports.migration.models import (
 # =============================================================================
 
 
+_REGISTRY = EventRegistry()
+
+
+@register_event(registry=_REGISTRY)
 class SampleTestEvent(DomainEvent):
     """Sample event for integration tests."""
 
@@ -66,6 +71,7 @@ class SampleTestEvent(DomainEvent):
     value: str = "test"
 
 
+@register_event(registry=_REGISTRY)
 class OrderCreated(DomainEvent):
     """Test order created event."""
 
@@ -74,6 +80,7 @@ class OrderCreated(DomainEvent):
     amount: float = 100.0
 
 
+@register_event(registry=_REGISTRY)
 class OrderConfirmed(DomainEvent):
     """Test order confirmed event."""
 
@@ -423,13 +430,13 @@ class MockLockManager:
 @pytest.fixture
 def source_store() -> InMemoryEventStore:
     """Create source (shared) event store."""
-    return InMemoryEventStore("source")
+    return InMemoryEventStore("source", event_registry=_REGISTRY)
 
 
 @pytest.fixture
 def target_store() -> InMemoryEventStore:
     """Create target (dedicated) event store."""
-    return InMemoryEventStore("target")
+    return InMemoryEventStore("target", event_registry=_REGISTRY)
 
 
 @pytest.fixture
@@ -1005,8 +1012,6 @@ class FlakyTarget:
     `FullEventStore` is expected and lets the wrapped store see only the
     appends it does not reject.
     """
-
-    max_append_batch: int | None = None
 
     def __init__(self, inner: InMemoryEventStore, *, reject_first: int = 0) -> None:
         self._inner = inner
@@ -1618,8 +1623,6 @@ class GatedFeedStore:
     operation passes straight through.
     """
 
-    max_append_batch: int | None = None
-
     def __init__(self, inner: InMemoryEventStore, *, gate_after: int = 3) -> None:
         self._inner = inner
         self._gate_after = gate_after
@@ -1683,8 +1686,8 @@ class TestWriteActiveTenantFirstPassCutover:
         write_pause_manager: WritePauseManager,
     ) -> None:
         """Writes landing mid-copy are mirrored, and cutover fires first pass."""
-        inner_source = InMemoryEventStore("source")
-        target_store = InMemoryEventStore("target")
+        inner_source = InMemoryEventStore("source", event_registry=_REGISTRY)
+        target_store = InMemoryEventStore("target", event_registry=_REGISTRY)
         source = GatedFeedStore(inner_source, gate_after=3)
 
         router = TenantStoreRouter(

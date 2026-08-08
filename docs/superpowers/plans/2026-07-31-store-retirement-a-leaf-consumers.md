@@ -110,7 +110,7 @@ class AggregateStore(EventAppender, StreamReader, Protocol):
     """
 ```
 
-Note for implementers writing test doubles against this port: `EventAppender` declares a `max_append_batch: int | None` **attribute**, not just methods. A hand-rolled fake or `Mock(spec=...)` that omits it does not satisfy `AggregateStore` under mypy. Set `max_append_batch: int | None = None` on every double.
+~~Note for implementers writing test doubles against this port: `EventAppender` declares a `max_append_batch: int | None` **attribute**, not just methods. A hand-rolled fake or `Mock(spec=...)` that omits it does not satisfy `AggregateStore` under mypy. Set `max_append_batch: int | None = None` on every double.~~ **Obsolete:** `max_append_batch` was never read anywhere in the tree and has been deleted from the port and every implementer. Test doubles no longer need to declare it.
 
 - [ ] **Step 3: re-export from `ports/__init__.py`**
 

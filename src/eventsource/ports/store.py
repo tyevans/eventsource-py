@@ -28,8 +28,6 @@ from eventsource.ports.positions import ExpectedVersion, Position
 class EventAppender(Protocol):
     """Port for appending events to a stream with optimistic concurrency."""
 
-    max_append_batch: int | None
-
     async def append(
         self,
         stream: StreamId,

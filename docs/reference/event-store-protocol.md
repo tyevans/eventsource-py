@@ -176,8 +176,6 @@ append is a no-op.
 
 ```python
 class EventAppender(Protocol):
-    max_append_batch: int | None
-
     async def append(
         self,
         stream: StreamId,
@@ -189,14 +187,18 @@ class EventAppender(Protocol):
 The only write operation in the ports surface. `stream` identifies the target stream;
 `events` is the non-empty sequence of new `DomainEvent`s to append; `expected` is one of
 the four `ExpectedVersion` constructions and gates the write with optimistic
-concurrency. `max_append_batch` is an instance attribute, not a method -- `None` means
-the adapter enforces no batch-size limit (true of all three bundled adapters today).
+concurrency.
 
 Guarantees:
 
 - The append is atomic: either every event in `events` is committed, or none are.
 - A version mismatch against `expected` raises `OptimisticLockError`.
 - A duplicate `event_id` anywhere in `events` raises `DuplicateEventError`.
+- An event whose `event_type` is not registered in the store's `EventRegistry` raises
+  `EventTypeNotFoundError`. The serializing adapters (PostgreSQL, SQLite) cannot
+  reconstruct the class on read, so they raise there; the in-memory adapters hold live
+  objects and would never notice, so they validate on `append` instead. Either way a
+  missing `@register_event` fails in every backend rather than only in production.
 - An empty `events` sequence raises `ValueError` (not a silent successful no-op, which
   was the legacy behavior).
 - `AppendResult.position` is the position of the **first** appended event, not the

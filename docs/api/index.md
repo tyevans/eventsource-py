@@ -1104,8 +1104,10 @@ classmethods rather than passed as a raw int:
 | `SQLiteEventStore` | barrel when `SQLITE_AVAILABLE`, `eventsource.adapters.sqlite` | `aiosqlite` | `SQLiteEventStore(database: str, event_registry=None, *, store_id=None, wal_mode=True, busy_timeout=5000)` |
 
 All three implement `FullEventStore` structurally — no inheritance from the port
-Protocols — and carry a `max_append_batch: int | None` class attribute (`None` for all
-three: no batch-size limit is enforced by any bundled adapter).
+Protocols. All three also resolve every appended event's `event_type` through their
+`event_registry` (defaulting to `default_registry`): the SQL adapters on read, where
+they must reconstruct the class, and `InMemoryEventStore` on `append`, so an
+unregistered event type fails identically in tests and in production.
 
 **`InMemoryEventStore`** keeps events in dictionaries guarded by a lock, and loses
 everything on process exit. It is the intended store for unit tests and prototypes, not

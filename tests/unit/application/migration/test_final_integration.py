@@ -72,6 +72,7 @@ from eventsource.application.migration.sync_lag_tracker import SyncLagTracker
 from eventsource.application.migration.write_pause import WritePauseManager
 from eventsource.domain import StreamId
 from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import EventRegistry, register_event
 from eventsource.ports.migration.models import (
     AuditEventType,
     Migration,
@@ -103,6 +104,10 @@ def tgt_pos(n: int) -> Position:
 # =============================================================================
 
 
+_REGISTRY = EventRegistry()
+
+
+@register_event(registry=_REGISTRY)
 class SampleTestEvent(DomainEvent):
     """Generic test event for integration tests."""
 
@@ -110,6 +115,7 @@ class SampleTestEvent(DomainEvent):
     value: str = "test"
 
 
+@register_event(registry=_REGISTRY)
 class OrderCreated(DomainEvent):
     """Test order created event."""
 
@@ -118,6 +124,7 @@ class OrderCreated(DomainEvent):
     amount: float = 100.0
 
 
+@register_event(registry=_REGISTRY)
 class OrderUpdated(DomainEvent):
     """Test order updated event."""
 
@@ -678,13 +685,13 @@ class MockLockManager:
 @pytest.fixture
 def source_store() -> InMemoryEventStore:
     """Create source (shared) event store."""
-    return InMemoryEventStore("source")
+    return InMemoryEventStore("source", event_registry=_REGISTRY)
 
 
 @pytest.fixture
 def target_store() -> InMemoryEventStore:
     """Create target (dedicated) event store."""
-    return InMemoryEventStore("target")
+    return InMemoryEventStore("target", event_registry=_REGISTRY)
 
 
 @pytest.fixture
