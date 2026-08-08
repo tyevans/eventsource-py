@@ -22,6 +22,7 @@ from eventsource.adapters.memory.dlq import InMemoryDLQRepository
 from eventsource.adapters.memory.outbox import InMemoryOutboxRepository
 from eventsource.domain import StreamId
 from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import EventRegistry, register_event
 from eventsource.ports import (
     CategoryReadOptions,
     ExpectedVersion,
@@ -33,6 +34,10 @@ from eventsource.ports import (
 # --- Test Event Classes ---
 
 
+_REGISTRY = EventRegistry()
+
+
+@register_event(registry=_REGISTRY)
 class EdgeTestEvent(DomainEvent):
     """Simple test event."""
 
@@ -40,6 +45,7 @@ class EdgeTestEvent(DomainEvent):
     data: str = ""
 
 
+@register_event(registry=_REGISTRY)
 class SampleOrderEvent(DomainEvent):
     """Order event for testing."""
 
@@ -55,7 +61,7 @@ class TestInMemoryEventStoreEdgeCases:
 
     @pytest.fixture
     def store(self) -> InMemoryEventStore:
-        return InMemoryEventStore()
+        return InMemoryEventStore(event_registry=_REGISTRY)
 
     @pytest.mark.asyncio
     async def test_get_events_by_type_with_timestamp_filter(self, store: InMemoryEventStore):
@@ -467,7 +473,7 @@ class TestConcurrentAccess:
     @pytest.mark.asyncio
     async def test_concurrent_event_store_reads_writes(self):
         """Test concurrent reads and writes to event store with asyncio.Lock."""
-        store = InMemoryEventStore()
+        store = InMemoryEventStore(event_registry=_REGISTRY)
         aggregate_ids = [uuid4() for _ in range(5)]
 
         async def write_events(agg_id: uuid4):
@@ -506,7 +512,7 @@ class TestSerializationEdgeCases:
     @pytest.mark.asyncio
     async def test_event_with_special_characters(self):
         """Test event with special characters in data."""
-        store = InMemoryEventStore()
+        store = InMemoryEventStore(event_registry=_REGISTRY)
         aggregate_id = uuid4()
         stream = StreamId(aggregate_id=aggregate_id, category="Test")
 
@@ -523,7 +529,7 @@ class TestSerializationEdgeCases:
     @pytest.mark.asyncio
     async def test_event_with_unicode_characters(self):
         """Test event with Unicode characters."""
-        store = InMemoryEventStore()
+        store = InMemoryEventStore(event_registry=_REGISTRY)
         aggregate_id = uuid4()
         stream = StreamId(aggregate_id=aggregate_id, category="Test")
 
@@ -539,7 +545,7 @@ class TestSerializationEdgeCases:
     @pytest.mark.asyncio
     async def test_event_with_empty_string(self):
         """Test event with empty string data."""
-        store = InMemoryEventStore()
+        store = InMemoryEventStore(event_registry=_REGISTRY)
         aggregate_id = uuid4()
         stream = StreamId(aggregate_id=aggregate_id, category="Test")
 

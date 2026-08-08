@@ -31,11 +31,16 @@ from eventsource.application.subscriptions import (
 )
 from eventsource.domain import StreamId
 from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import EventRegistry, register_event
 from eventsource.ports.positions import ExpectedVersion
 
 # --- Sample Event Classes ---
 
 
+_REGISTRY = EventRegistry()
+
+
+@register_event(registry=_REGISTRY)
 class ManagerTestEvent(DomainEvent):
     """Simple test event for manager testing."""
 
@@ -43,6 +48,7 @@ class ManagerTestEvent(DomainEvent):
     data: str = "test"
 
 
+@register_event(registry=_REGISTRY)
 class AnotherManagerEvent(DomainEvent):
     """Another test event type."""
 
@@ -91,7 +97,7 @@ class CustomerProjection(MockSubscriber):
 @pytest.fixture
 def event_store() -> InMemoryEventStore:
     """Create a fresh InMemoryEventStore (a real GlobalEventFeed)."""
-    return InMemoryEventStore()
+    return InMemoryEventStore(event_registry=_REGISTRY)
 
 
 @pytest.fixture

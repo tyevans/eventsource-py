@@ -30,12 +30,24 @@ from eventsource.application.subscriptions import (
 from eventsource.application.subscriptions.runners import LiveRunner
 from eventsource.domain import StreamId
 from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import EventRegistry, register_event
 from eventsource.ports.positions import ExpectedVersion
 
 pytestmark = pytest.mark.asyncio
 
 
+_REGISTRY = EventRegistry()
+
+
+@register_event(registry=_REGISTRY)
 class LagTestEvent(DomainEvent):
+    aggregate_type: str = "LagTestAggregate"
+
+
+@register_event(registry=_REGISTRY)
+class OtherEvent(DomainEvent):
+    """A type no subscriber under test is subscribed to, so it gets filtered."""
+
     aggregate_type: str = "LagTestAggregate"
 
 
@@ -89,7 +101,7 @@ async def _committed_event(store: InMemoryEventStore) -> LagTestEvent:
 
 class TestLiveLagSignal:
     async def test_a_stalled_subscriber_shows_nonzero_lag(self) -> None:
-        store = InMemoryEventStore()
+        store = InMemoryEventStore(event_registry=_REGISTRY)
         subscriber = BlockingSubscriber()
         runner = _runner(subscriber, store)
 
@@ -107,7 +119,7 @@ class TestLiveLagSignal:
         assert runner.subscription.lag == 0
 
     async def test_seen_and_delivered_stay_symmetric(self) -> None:
-        store = InMemoryEventStore()
+        store = InMemoryEventStore(event_registry=_REGISTRY)
         subscriber = BlockingSubscriber()
         subscriber.release.set()
         runner = _runner(subscriber, store)
@@ -122,14 +134,11 @@ class TestLiveLagSignal:
 
 class TestNetZeroDisposal:
     async def test_a_filtered_event_leaves_no_lag(self) -> None:
-        store = InMemoryEventStore()
+        store = InMemoryEventStore(event_registry=_REGISTRY)
         subscriber = BlockingSubscriber()
         subscriber.release.set()
         # Subscribed to LagTestEvent only, so an unrelated type is filtered.
         runner = _runner(subscriber, store, event_types=(LagTestEvent,))
-
-        class OtherEvent(DomainEvent):
-            aggregate_type: str = "LagTestAggregate"
 
         other = OtherEvent(aggregate_id=uuid4())
         await store.append(
@@ -143,7 +152,7 @@ class TestNetZeroDisposal:
         assert runner.subscription.lag == 0
 
     async def test_a_swallowed_failure_leaves_no_lag(self) -> None:
-        store = InMemoryEventStore()
+        store = InMemoryEventStore(event_registry=_REGISTRY)
         subscriber = BlockingSubscriber()
         subscriber.release.set()
         subscriber.fail = True
@@ -166,7 +175,7 @@ class TestBufferedWakeUpsDoNotCountAsLag:
     """
 
     async def test_process_buffer_drain_is_the_lag_signal(self) -> None:
-        store = InMemoryEventStore()
+        store = InMemoryEventStore(event_registry=_REGISTRY)
         subscriber = BlockingSubscriber()
         subscriber.release.set()
         runner = _runner(subscriber, store)

@@ -139,12 +139,7 @@ class PostgreSQLEventStore:
     structurally.
 
     Structural conformance only -- no inheritance from the port protocols.
-
-    Attributes:
-        max_append_batch: No batch-size limit is enforced by this adapter.
     """
-
-    max_append_batch: int | None = None
 
     def __init__(
         self,

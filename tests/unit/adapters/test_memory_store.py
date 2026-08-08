@@ -5,10 +5,14 @@ import pytest
 from eventsource.adapters.memory import InMemoryEventStore
 from eventsource.domain import StreamId
 from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import EventRegistry, register_event
 from eventsource.domain.exceptions import DuplicateEventError, OptimisticLockError
 from eventsource.ports import ExpectedVersion, collect
 
+_REGISTRY = EventRegistry()
 
+
+@register_event(registry=_REGISTRY)
 class ThingHappened(DomainEvent):
     aggregate_type: str = "Thing"
 
@@ -19,7 +23,7 @@ def sid() -> StreamId:
 
 @pytest.fixture
 def store() -> InMemoryEventStore:
-    return InMemoryEventStore()
+    return InMemoryEventStore(event_registry=_REGISTRY)
 
 
 class TestAppend:

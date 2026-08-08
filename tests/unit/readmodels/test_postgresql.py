@@ -93,7 +93,14 @@ class TestPostgreSQLReadModelRepositoryConstruction:
 
 
 class TestFilterToSQL:
-    """Tests for filter to SQL conversion."""
+    """PostgreSQL's rendering of a filter.
+
+    The *semantics* -- which operators exist, how they treat NULL, and that
+    an unknown field or operator raises -- are pinned once for every backend
+    in `ReadModelRepositoryConformance`. What stays here is only what makes
+    this dialect different: named parameters, and `= ANY` / `!= ALL` over a
+    single bound array instead of an expanded placeholder list.
+    """
 
     @pytest.fixture
     def repo(self) -> PostgreSQLReadModelRepository[OrderSummary]:
@@ -101,71 +108,41 @@ class TestFilterToSQL:
         mock_conn = MagicMock()
         return PostgreSQLReadModelRepository(mock_conn, OrderSummary, enable_tracing=False)
 
-    def test_filter_eq(self, repo: PostgreSQLReadModelRepository[OrderSummary]) -> None:
-        """Test equality filter SQL generation."""
-        clause, param = repo._filter_to_sql(Filter.eq("status", "active"), 0)
-
-        assert clause == "status = :p0"
-        assert param == "p0"
-
-    def test_filter_ne(self, repo: PostgreSQLReadModelRepository[OrderSummary]) -> None:
-        """Test not-equal filter SQL generation."""
-        clause, param = repo._filter_to_sql(Filter.ne("status", "cancelled"), 1)
-
-        assert clause == "status != :p1"
-        assert param == "p1"
-
-    def test_filter_gt(self, repo: PostgreSQLReadModelRepository[OrderSummary]) -> None:
-        """Test greater-than filter SQL generation."""
-        clause, param = repo._filter_to_sql(Filter.gt("total_amount", 100), 2)
-
-        assert clause == "total_amount > :p2"
-        assert param == "p2"
-
-    def test_filter_gte(self, repo: PostgreSQLReadModelRepository[OrderSummary]) -> None:
-        """Test greater-than-or-equal filter SQL generation."""
-        clause, param = repo._filter_to_sql(Filter.gte("total_amount", 100), 3)
-
-        assert clause == "total_amount >= :p3"
-        assert param == "p3"
-
-    def test_filter_lt(self, repo: PostgreSQLReadModelRepository[OrderSummary]) -> None:
-        """Test less-than filter SQL generation."""
-        clause, param = repo._filter_to_sql(Filter.lt("total_amount", 50), 4)
-
-        assert clause == "total_amount < :p4"
-        assert param == "p4"
-
-    def test_filter_lte(self, repo: PostgreSQLReadModelRepository[OrderSummary]) -> None:
-        """Test less-than-or-equal filter SQL generation."""
-        clause, param = repo._filter_to_sql(Filter.lte("total_amount", 50), 5)
-
-        assert clause == "total_amount <= :p5"
-        assert param == "p5"
-
-    def test_filter_in(self, repo: PostgreSQLReadModelRepository[OrderSummary]) -> None:
-        """Test IN filter SQL generation."""
-        clause, param = repo._filter_to_sql(Filter.in_("status", ["a", "b"]), 6)
-
-        assert clause == "status = ANY(:p6)"
-        assert param == "p6"
-
-    def test_filter_not_in(self, repo: PostgreSQLReadModelRepository[OrderSummary]) -> None:
-        """Test NOT IN filter SQL generation."""
-        clause, param = repo._filter_to_sql(Filter.not_in("status", ["c", "d"]), 7)
-
-        assert clause == "status != ALL(:p7)"
-        assert param == "p7"
-
-    def test_filter_unknown_operator(
+    def test_scalar_operators_bind_named_parameters(
         self, repo: PostgreSQLReadModelRepository[OrderSummary]
     ) -> None:
-        """Test unknown operator raises ValueError."""
-        # Create a filter with an invalid operator by directly constructing
-        invalid_filter = Filter(field="status", operator="invalid", value="x")  # type: ignore[arg-type]
+        clause, params = repo._filter_to_sql(Filter.eq("status", "active"), 0)
+        assert clause == "status = :p0"
+        assert params == {"p0": "active"}
 
-        with pytest.raises(ValueError, match="Unknown operator: invalid"):
-            repo._filter_to_sql(invalid_filter, 0)
+        clause, params = repo._filter_to_sql(Filter.gt("total_amount", 100), 2)
+        assert clause == "total_amount > :p2"
+        assert params == {"p2": 100}
+
+    def test_null_tolerant_operators_say_so_explicitly(
+        self, repo: PostgreSQLReadModelRepository[OrderSummary]
+    ) -> None:
+        """SQL would drop NULL rows from `!=`; the contract keeps them."""
+        clause, params = repo._filter_to_sql(Filter.ne("status", "cancelled"), 1)
+        assert clause == "(status IS NULL OR status != :p1)"
+        assert params == {"p1": "cancelled"}
+
+    def test_list_operators_bind_one_array_parameter(
+        self, repo: PostgreSQLReadModelRepository[OrderSummary]
+    ) -> None:
+        clause, params = repo._filter_to_sql(Filter.in_("status", ["a", "b"]), 6)
+        assert clause == "status = ANY(:p6)"
+        assert params == {"p6": ["a", "b"]}
+
+        clause, params = repo._filter_to_sql(Filter.not_in("status", ["c", "d"]), 7)
+        assert clause == "(status IS NULL OR status != ALL(:p7))"
+        assert params == {"p7": ["c", "d"]}
+
+    def test_empty_list_operators_render_without_parameters(
+        self, repo: PostgreSQLReadModelRepository[OrderSummary]
+    ) -> None:
+        assert repo._filter_to_sql(Filter.in_("status", []), 0) == ("1 = 0", {})
+        assert repo._filter_to_sql(Filter.not_in("status", []), 0) == ("1 = 1", {})
 
 
 class TestBuildSelectQuery:

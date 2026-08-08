@@ -95,7 +95,15 @@ class TestSQLiteReadModelRepositoryConstruction:
 
 
 class TestFilterToSQL:
-    """Tests for filter to SQL conversion with SQLite syntax."""
+    """SQLite's rendering of a filter.
+
+    The *semantics* -- which operators exist, how they treat NULL, and that
+    an unknown field or operator raises -- are pinned once for every backend
+    in `ReadModelRepositoryConformance`. What stays here is only what makes
+    this dialect different: positional parameters, an expanded placeholder
+    list for `IN`, and UUID values coerced to text because that is how
+    SQLite stores them.
+    """
 
     @pytest.fixture
     def repo(self) -> SQLiteReadModelRepository[OrderSummary]:
@@ -103,85 +111,52 @@ class TestFilterToSQL:
         mock_conn = MagicMock()
         return SQLiteReadModelRepository(mock_conn, OrderSummary, enable_tracing=False)
 
-    def test_filter_eq(self, repo: SQLiteReadModelRepository[OrderSummary]) -> None:
-        """Test equality filter SQL generation with positional parameter."""
+    def test_scalar_operators_bind_positional_parameters(
+        self, repo: SQLiteReadModelRepository[OrderSummary]
+    ) -> None:
         clause, params = repo._filter_to_sql(Filter.eq("status", "active"))
-
         assert clause == "status = ?"
         assert params == ["active"]
 
-    def test_filter_ne(self, repo: SQLiteReadModelRepository[OrderSummary]) -> None:
-        """Test not-equal filter SQL generation."""
-        clause, params = repo._filter_to_sql(Filter.ne("status", "cancelled"))
-
-        assert clause == "status != ?"
-        assert params == ["cancelled"]
-
-    def test_filter_gt(self, repo: SQLiteReadModelRepository[OrderSummary]) -> None:
-        """Test greater-than filter SQL generation."""
-        clause, params = repo._filter_to_sql(Filter.gt("total_amount", 100))
-
-        assert clause == "total_amount > ?"
-        assert params == [100]
-
-    def test_filter_gte(self, repo: SQLiteReadModelRepository[OrderSummary]) -> None:
-        """Test greater-than-or-equal filter SQL generation."""
         clause, params = repo._filter_to_sql(Filter.gte("total_amount", 100))
-
         assert clause == "total_amount >= ?"
         assert params == [100]
 
-    def test_filter_lt(self, repo: SQLiteReadModelRepository[OrderSummary]) -> None:
-        """Test less-than filter SQL generation."""
-        clause, params = repo._filter_to_sql(Filter.lt("total_amount", 50))
+    def test_null_tolerant_operators_say_so_explicitly(
+        self, repo: SQLiteReadModelRepository[OrderSummary]
+    ) -> None:
+        """SQL would drop NULL rows from `!=`; the contract keeps them."""
+        clause, params = repo._filter_to_sql(Filter.ne("status", "cancelled"))
+        assert clause == "(status IS NULL OR status != ?)"
+        assert params == ["cancelled"]
 
-        assert clause == "total_amount < ?"
-        assert params == [50]
-
-    def test_filter_lte(self, repo: SQLiteReadModelRepository[OrderSummary]) -> None:
-        """Test less-than-or-equal filter SQL generation."""
-        clause, params = repo._filter_to_sql(Filter.lte("total_amount", 50))
-
-        assert clause == "total_amount <= ?"
-        assert params == [50]
-
-    def test_filter_in(self, repo: SQLiteReadModelRepository[OrderSummary]) -> None:
-        """Test IN filter SQL generation with multiple placeholders."""
+    def test_list_operators_expand_to_one_placeholder_per_value(
+        self, repo: SQLiteReadModelRepository[OrderSummary]
+    ) -> None:
         clause, params = repo._filter_to_sql(Filter.in_("status", ["a", "b", "c"]))
-
         assert clause == "status IN (?,?,?)"
         assert params == ["a", "b", "c"]
 
-    def test_filter_not_in(self, repo: SQLiteReadModelRepository[OrderSummary]) -> None:
-        """Test NOT IN filter SQL generation."""
         clause, params = repo._filter_to_sql(Filter.not_in("status", ["c", "d"]))
-
-        assert clause == "status NOT IN (?,?)"
+        assert clause == "(status IS NULL OR status NOT IN (?,?))"
         assert params == ["c", "d"]
 
-    def test_filter_unknown_operator(self, repo: SQLiteReadModelRepository[OrderSummary]) -> None:
-        """Test unknown operator raises ValueError."""
-        # Create a filter with an invalid operator by directly constructing
-        invalid_filter = Filter(field="status", operator="invalid", value="x")  # type: ignore[arg-type]
+    def test_empty_list_operators_render_without_parameters(
+        self, repo: SQLiteReadModelRepository[OrderSummary]
+    ) -> None:
+        assert repo._filter_to_sql(Filter.in_("status", [])) == ("1 = 0", [])
+        assert repo._filter_to_sql(Filter.not_in("status", [])) == ("1 = 1", [])
 
-        with pytest.raises(ValueError, match="Unknown operator: invalid"):
-            repo._filter_to_sql(invalid_filter)
-
-    def test_filter_with_uuid_value(self, repo: SQLiteReadModelRepository[OrderSummary]) -> None:
-        """Test UUID values are converted to strings."""
+    def test_uuid_values_are_coerced_to_text(
+        self, repo: SQLiteReadModelRepository[OrderSummary]
+    ) -> None:
         test_uuid = uuid4()
         clause, params = repo._filter_to_sql(Filter.eq("id", test_uuid))
-
         assert clause == "id = ?"
         assert params == [str(test_uuid)]
 
-    def test_filter_in_with_uuid_values(
-        self, repo: SQLiteReadModelRepository[OrderSummary]
-    ) -> None:
-        """Test UUID values in list are converted to strings."""
         uuid1, uuid2 = uuid4(), uuid4()
         clause, params = repo._filter_to_sql(Filter.in_("id", [uuid1, uuid2]))
-
         assert clause == "id IN (?,?)"
         assert params == [str(uuid1), str(uuid2)]
 

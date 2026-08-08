@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from eventsource.domain import StreamId
 from eventsource.domain.aggregate import AggregateRoot
 from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import register_event
 from eventsource.testing import InMemoryTestHarness
 from eventsource.testing.bdd import (
     given_events,
@@ -30,6 +31,7 @@ from eventsource.testing.bdd import (
 # =============================================================================
 
 
+@register_event
 class SampleCreated(DomainEvent):
     """Test event for sample creation."""
 
@@ -37,6 +39,7 @@ class SampleCreated(DomainEvent):
     name: str
 
 
+@register_event
 class SampleUpdated(DomainEvent):
     """Test event for sample update."""
 
@@ -44,12 +47,14 @@ class SampleUpdated(DomainEvent):
     new_value: int
 
 
+@register_event
 class SampleDeleted(DomainEvent):
     """Test event for sample deletion."""
 
     aggregate_type: str = "Sample"
 
 
+@register_event
 class OtherAggregateCreated(DomainEvent):
     """Test event for a different aggregate type."""
 

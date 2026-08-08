@@ -62,7 +62,6 @@ def sid(aggregate_id=None, category: str = "TestAggregate") -> StreamId:
 def create_mock_store(store_id: str = "store", position_key: tuple = (100,)) -> MagicMock:
     """Create a mock FullEventStore with proper async iterator support."""
     store = MagicMock()
-    store.max_append_batch = None
     store.append = AsyncMock(
         side_effect=lambda stream, events, expected: AppendResult(
             stream=stream,
@@ -1310,8 +1309,6 @@ class TestRouterStructuralConformance:
     ) -> None:
         """mypy-checked structural conformance, plus a call through each member."""
         _: FullEventStore = router
-
-        assert router.max_append_batch is None
 
         stream = StreamId(aggregate_id=uuid4(), category="TestAggregate")
         event = TestEvent(aggregate_id=stream.aggregate_id)

@@ -17,18 +17,21 @@ from eventsource.adapters.memory.dlq import InMemoryDLQRepository
 from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.domain import StreamId
 from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import register_event
 from eventsource.ports import ExpectedVersion
 from eventsource.ports.positions import Position
 from eventsource.testing import InMemoryTestHarness
 
 
-class SampleEvent(DomainEvent):
+@register_event
+class HarnessSampleEvent(DomainEvent):
     """Sample event for testing."""
 
     aggregate_type: str = "Sample"
 
 
-class OtherEvent(DomainEvent):
+@register_event
+class HarnessOtherEvent(DomainEvent):
     """Another event type for testing filtering."""
 
     aggregate_type: str = "Other"
@@ -108,7 +111,7 @@ class TestHarnessPublishedEvents:
     @pytest.mark.asyncio
     async def test_published_events_tracks_single_event(self, harness: InMemoryTestHarness) -> None:
         """published_events reflects a single event published to bus."""
-        event = SampleEvent(
+        event = HarnessSampleEvent(
             aggregate_id=uuid4(),
             aggregate_type="Sample",
             aggregate_version=1,
@@ -123,12 +126,12 @@ class TestHarnessPublishedEvents:
         self, harness: InMemoryTestHarness
     ) -> None:
         """published_events reflects multiple events published to bus."""
-        event1 = SampleEvent(
+        event1 = HarnessSampleEvent(
             aggregate_id=uuid4(),
             aggregate_type="Sample",
             aggregate_version=1,
         )
-        event2 = SampleEvent(
+        event2 = HarnessSampleEvent(
             aggregate_id=uuid4(),
             aggregate_type="Sample",
             aggregate_version=1,
@@ -144,12 +147,12 @@ class TestHarnessPublishedEvents:
         self, harness: InMemoryTestHarness
     ) -> None:
         """published_events accumulates events from multiple publish calls."""
-        event1 = SampleEvent(
+        event1 = HarnessSampleEvent(
             aggregate_id=uuid4(),
             aggregate_type="Sample",
             aggregate_version=1,
         )
-        event2 = SampleEvent(
+        event2 = HarnessSampleEvent(
             aggregate_id=uuid4(),
             aggregate_type="Sample",
             aggregate_version=1,
@@ -162,7 +165,7 @@ class TestHarnessPublishedEvents:
     @pytest.mark.asyncio
     async def test_published_events_returns_copy(self, harness: InMemoryTestHarness) -> None:
         """published_events returns a copy to prevent external mutation."""
-        event = SampleEvent(
+        event = HarnessSampleEvent(
             aggregate_id=uuid4(),
             aggregate_type="Sample",
             aggregate_version=1,
@@ -188,7 +191,7 @@ class TestHarnessClearPublishedEvents:
     @pytest.mark.asyncio
     async def test_clear_published_events_clears_list(self, harness: InMemoryTestHarness) -> None:
         """clear_published_events clears all published events."""
-        event = SampleEvent(
+        event = HarnessSampleEvent(
             aggregate_id=uuid4(),
             aggregate_type="Sample",
             aggregate_version=1,
@@ -210,10 +213,10 @@ class TestHarnessClearPublishedEvents:
         async def handler(event: DomainEvent) -> None:
             events_received.append(event)
 
-        harness.event_bus.subscribe(SampleEvent, handler)
+        harness.event_bus.subscribe(HarnessSampleEvent, handler)
 
         # Publish and clear
-        event1 = SampleEvent(
+        event1 = HarnessSampleEvent(
             aggregate_id=uuid4(),
             aggregate_type="Sample",
             aggregate_version=1,
@@ -222,7 +225,7 @@ class TestHarnessClearPublishedEvents:
         harness.clear_published_events()
 
         # Subscriptions should still work
-        event2 = SampleEvent(
+        event2 = HarnessSampleEvent(
             aggregate_id=uuid4(),
             aggregate_type="Sample",
             aggregate_version=1,
@@ -237,7 +240,7 @@ class TestHarnessClearPublishedEvents:
     ) -> None:
         """clear_published_events does not affect event store."""
         aggregate_id = uuid4()
-        event = SampleEvent(
+        event = HarnessSampleEvent(
             aggregate_id=aggregate_id,
             aggregate_type="Sample",
             aggregate_version=1,
@@ -276,7 +279,7 @@ class TestHarnessReset:
         """reset() creates a new event store instance."""
         old_store = harness.event_store
         aggregate_id = uuid4()
-        event = SampleEvent(
+        event = HarnessSampleEvent(
             aggregate_id=aggregate_id,
             aggregate_type="Sample",
             aggregate_version=1,
@@ -298,7 +301,7 @@ class TestHarnessReset:
     async def test_reset_creates_new_event_bus(self, harness: InMemoryTestHarness) -> None:
         """reset() creates a new event bus instance."""
         old_bus = harness.event_bus
-        event = SampleEvent(
+        event = HarnessSampleEvent(
             aggregate_id=uuid4(),
             aggregate_type="Sample",
             aggregate_version=1,
@@ -384,26 +387,26 @@ class TestHarnessGetEventsOfType:
 
     def test_get_events_of_type_empty_initially(self, harness: InMemoryTestHarness) -> None:
         """get_events_of_type returns empty list initially."""
-        result = harness.get_events_of_type(SampleEvent)
+        result = harness.get_events_of_type(HarnessSampleEvent)
         assert result == []
 
     @pytest.mark.asyncio
     async def test_get_events_of_type_filters_correctly(self, harness: InMemoryTestHarness) -> None:
         """get_events_of_type filters events by type."""
-        sample_event = SampleEvent(
+        sample_event = HarnessSampleEvent(
             aggregate_id=uuid4(),
             aggregate_type="Sample",
             aggregate_version=1,
         )
-        other_event = OtherEvent(
+        other_event = HarnessOtherEvent(
             aggregate_id=uuid4(),
             aggregate_type="Other",
             aggregate_version=1,
         )
         await harness.event_bus.publish([sample_event, other_event])
 
-        sample_events = harness.get_events_of_type(SampleEvent)
-        other_events = harness.get_events_of_type(OtherEvent)
+        sample_events = harness.get_events_of_type(HarnessSampleEvent)
+        other_events = harness.get_events_of_type(HarnessOtherEvent)
 
         assert len(sample_events) == 1
         assert sample_events[0] == sample_event
@@ -415,24 +418,24 @@ class TestHarnessGetEventsOfType:
         self, harness: InMemoryTestHarness
     ) -> None:
         """get_events_of_type returns all events of the requested type."""
-        event1 = SampleEvent(
+        event1 = HarnessSampleEvent(
             aggregate_id=uuid4(),
             aggregate_type="Sample",
             aggregate_version=1,
         )
-        event2 = SampleEvent(
+        event2 = HarnessSampleEvent(
             aggregate_id=uuid4(),
             aggregate_type="Sample",
             aggregate_version=1,
         )
-        event3 = OtherEvent(
+        event3 = HarnessOtherEvent(
             aggregate_id=uuid4(),
             aggregate_type="Other",
             aggregate_version=1,
         )
         await harness.event_bus.publish([event1, event2, event3])
 
-        sample_events = harness.get_events_of_type(SampleEvent)
+        sample_events = harness.get_events_of_type(HarnessSampleEvent)
 
         assert len(sample_events) == 2
         assert sample_events[0] == event1
@@ -441,14 +444,14 @@ class TestHarnessGetEventsOfType:
     @pytest.mark.asyncio
     async def test_get_events_of_type_with_no_matches(self, harness: InMemoryTestHarness) -> None:
         """get_events_of_type returns empty list when no matches."""
-        event = SampleEvent(
+        event = HarnessSampleEvent(
             aggregate_id=uuid4(),
             aggregate_type="Sample",
             aggregate_version=1,
         )
         await harness.event_bus.publish([event])
 
-        result = harness.get_events_of_type(OtherEvent)
+        result = harness.get_events_of_type(HarnessOtherEvent)
 
         assert result == []
 
@@ -469,7 +472,7 @@ class TestHarnessRepr:
     async def test_repr_shows_published_count(self) -> None:
         """__repr__ shows correct published event count."""
         harness = InMemoryTestHarness()
-        event = SampleEvent(
+        event = HarnessSampleEvent(
             aggregate_id=uuid4(),
             aggregate_type="Sample",
             aggregate_version=1,
@@ -493,7 +496,7 @@ class TestHarnessIntegration:
     async def test_event_store_and_bus_work_together(self, harness: InMemoryTestHarness) -> None:
         """Event store and bus can be used together."""
         aggregate_id = uuid4()
-        event = SampleEvent(
+        event = HarnessSampleEvent(
             aggregate_id=aggregate_id,
             aggregate_type="Sample",
             aggregate_version=1,
@@ -529,7 +532,7 @@ class TestHarnessIntegration:
             subscription_id="my-projection",
             position=expected,
             event_id=event_id,
-            event_type="SampleEvent",
+            event_type="HarnessSampleEvent",
         )
 
         position = await harness.checkpoint_repo.get_position("my-projection")
@@ -543,7 +546,7 @@ class TestHarnessIntegration:
         await harness.dlq_repo.add_failed_event(
             event_id=event_id,
             projection_name="my-projection",
-            event_type="SampleEvent",
+            event_type="HarnessSampleEvent",
             event_data={"key": "value"},
             error=ValueError("Test error"),
             retry_count=3,
@@ -560,12 +563,12 @@ class TestHarnessIntegration:
         agg1_id = uuid4()
         agg2_id = uuid4()
 
-        event1 = SampleEvent(
+        event1 = HarnessSampleEvent(
             aggregate_id=agg1_id,
             aggregate_type="Sample",
             aggregate_version=1,
         )
-        event2 = SampleEvent(
+        event2 = HarnessSampleEvent(
             aggregate_id=agg2_id,
             aggregate_type="Sample",
             aggregate_version=1,

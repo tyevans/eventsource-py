@@ -8,8 +8,10 @@ model lookup failures.
 
 from uuid import UUID
 
+from eventsource.domain.exceptions import EventSourceError
 
-class ReadModelError(Exception):
+
+class ReadModelError(EventSourceError):
     """
     Base exception for read model operations.
 

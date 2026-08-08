@@ -45,6 +45,7 @@ from eventsource.application.migration.sync_lag_tracker import SyncLagTracker
 from eventsource.application.migration.write_pause import WritePausedError, WritePauseManager
 from eventsource.domain import StreamId
 from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import EventRegistry, register_event
 from eventsource.ports import (
     AppendResult,
     CategoryReadOptions,
@@ -67,6 +68,10 @@ from eventsource.ports.migration.models import (
 # =============================================================================
 
 
+_REGISTRY = EventRegistry()
+
+
+@register_event(registry=_REGISTRY)
 class ChaosTestEvent(DomainEvent):
     """Test event for chaos testing."""
 
@@ -133,14 +138,12 @@ class FailureInjectableStore:
         >>> await store.append(stream, events, expected)  # Raises InjectedFailureError
     """
 
-    max_append_batch: int | None = None
-
     def __init__(
         self,
         inner_store: InMemoryEventStore | None = None,
     ) -> None:
         """Initialize with optional inner store."""
-        self._inner = inner_store or InMemoryEventStore()
+        self._inner = inner_store or InMemoryEventStore(event_registry=_REGISTRY)
         self._failure_config = FailureConfig()
         self._is_available = True
         self._available_event = asyncio.Event()
@@ -828,7 +831,7 @@ class TestNetworkPartitionSimulation:
     ) -> None:
         """Test dual-write continues to source when target is partitioned."""
         # Use regular InMemoryEventStore for source (no failure injection)
-        source_store = InMemoryEventStore()
+        source_store = InMemoryEventStore(event_registry=_REGISTRY)
         target_store = FailureInjectableStore()
 
         interceptor = DualWriteInterceptor(
@@ -875,7 +878,7 @@ class TestProcessCrashDuringDualWrite:
     ) -> None:
         """Test that dual-write ensures no data loss on source during failures."""
         # Use regular store for source, failing store for target
-        source_store = InMemoryEventStore()
+        source_store = InMemoryEventStore(event_registry=_REGISTRY)
         target_store = FailureInjectableStore()
 
         interceptor = DualWriteInterceptor(
@@ -1155,7 +1158,7 @@ class TestTargetStoreFailures:
         tenant_id: UUID,
     ) -> None:
         """Test that source writes succeed even when target completely fails."""
-        source_store = InMemoryEventStore()
+        source_store = InMemoryEventStore(event_registry=_REGISTRY)
         target_store = FailureInjectableStore()
 
         interceptor = DualWriteInterceptor(
@@ -1211,7 +1214,7 @@ class TestTargetStoreFailures:
         tenant_id: UUID,
     ) -> None:
         """Test that target failure rate is tracked for monitoring."""
-        source_store = InMemoryEventStore()
+        source_store = InMemoryEventStore(event_registry=_REGISTRY)
         target_store = FailureInjectableStore()
 
         interceptor = DualWriteInterceptor(
@@ -1255,7 +1258,7 @@ class TestTargetStoreFailures:
         tenant_id: UUID,
     ) -> None:
         """Test that writes to target resume after recovery."""
-        source_store = InMemoryEventStore()
+        source_store = InMemoryEventStore(event_registry=_REGISTRY)
         target_store = FailureInjectableStore()
 
         interceptor = DualWriteInterceptor(
@@ -1402,7 +1405,7 @@ class TestTimeoutScenarios:
         tenant_id: UUID,
     ) -> None:
         """Test that slow target causes sync lag to accumulate."""
-        source_store = InMemoryEventStore()
+        source_store = InMemoryEventStore(event_registry=_REGISTRY)
         target_store = FailureInjectableStore()
 
         # Target with delays
@@ -1572,7 +1575,7 @@ class TestComprehensiveFailureScenarios:
         tenant_id: UUID,
     ) -> None:
         """Test handling of multiple failure types during dual-write."""
-        source_store = InMemoryEventStore()
+        source_store = InMemoryEventStore(event_registry=_REGISTRY)
         target_store = FailureInjectableStore()
 
         interceptor = DualWriteInterceptor(

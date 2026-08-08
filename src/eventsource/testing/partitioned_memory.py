@@ -22,9 +22,10 @@ from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime
 from uuid import UUID
 
-from eventsource.adapters._common import check_expected
+from eventsource.adapters._common import check_expected, check_registered
 from eventsource.domain import StreamId
 from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import EventRegistry, default_registry
 from eventsource.domain.exceptions import DuplicateEventError
 from eventsource.ports import (
     AppendResult,
@@ -43,14 +44,10 @@ class PartitionedMemoryStore:
     `CategoryQuery`. Does not implement `GlobalEventFeed`: there is no
     `read_all` or `current_position` method, and `EventEnvelope.position`
     is always None.
-
-    Attributes:
-        max_append_batch: No batch-size limit is enforced by this store.
     """
 
-    max_append_batch: int | None = None
-
-    def __init__(self) -> None:
+    def __init__(self, event_registry: EventRegistry | None = None) -> None:
+        self._event_registry = event_registry or default_registry
         self._streams: dict[str, list[EventEnvelope]] = {}
         self._event_ids: set[UUID] = set()
         self._lock = asyncio.Lock()
@@ -63,6 +60,11 @@ class PartitionedMemoryStore:
     ) -> AppendResult:
         if not events:
             raise ValueError("cannot append an empty batch of events")
+
+        # Same reason as InMemoryEventStore: this store never deserializes,
+        # so an unregistered event type would go unnoticed here and fail on
+        # the first read against a serializing backend.
+        check_registered(events, self._event_registry)
 
         async with self._lock:
             key = stream.render()

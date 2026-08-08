@@ -9,10 +9,10 @@ from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime
 from uuid import UUID
 
-from eventsource.adapters._common import check_expected
+from eventsource.adapters._common import check_expected, check_registered
 from eventsource.domain import StreamId
 from eventsource.domain.event import DomainEvent
-from eventsource.domain.event_registry import EventRegistry
+from eventsource.domain.event_registry import EventRegistry, default_registry
 from eventsource.domain.exceptions import DuplicateEventError
 from eventsource.ports import (
     AppendResult,
@@ -35,12 +35,7 @@ class InMemoryEventStore:
     stores compare positions as though they shared a feed rather than raising
     `PositionForeignError`. Give each one its own `store_id` in any test that
     puts two in play at once; see `Position`'s docstring.
-
-    Attributes:
-        max_append_batch: No batch-size limit is enforced by this adapter.
     """
-
-    max_append_batch: int | None = None
 
     def __init__(
         self,
@@ -49,7 +44,7 @@ class InMemoryEventStore:
         event_registry: EventRegistry | None = None,
     ) -> None:
         self._store_id = store_id
-        self._event_registry = event_registry
+        self._event_registry = event_registry or default_registry
         self._events: list[EventEnvelope] = []
         self._streams: dict[str, list[int]] = {}
         self._event_ids: set[UUID] = set()
@@ -76,6 +71,13 @@ class InMemoryEventStore:
     ) -> AppendResult:
         if not events:
             raise ValueError("cannot append an empty batch of events")
+
+        # This store keeps live DomainEvent objects and never deserializes,
+        # so nothing here would ever consult the registry. Validate anyway:
+        # otherwise a missing `@register_event` passes in tests against this
+        # adapter and raises EventTypeNotFoundError on the first read against
+        # SQLite or PostgreSQL. Pinned by AppenderConformance.
+        check_registered(events, self._event_registry)
 
         with self._lock:
             key = stream.render()

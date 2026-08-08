@@ -24,11 +24,16 @@ from eventsource.application.subscriptions import (
 from eventsource.application.subscriptions.runners import CatchUpRunner
 from eventsource.domain import StreamId
 from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import EventRegistry, register_event
 from eventsource.ports.positions import ExpectedVersion
 
 pytestmark = pytest.mark.asyncio
 
 
+_REGISTRY = EventRegistry()
+
+
+@register_event(registry=_REGISTRY)
 class ResumptionPropertyEvent(DomainEvent):
     """Minimal event for the resumption property."""
 
@@ -99,7 +104,7 @@ async def test_catchup_delivers_every_event_exactly_once_across_a_restart(
     redeliver; one that advances past an undelivered event would skip. Both
     are single-comparison errors in the batch loop, and both fail here.
     """
-    event_store = InMemoryEventStore()
+    event_store = InMemoryEventStore(event_registry=_REGISTRY)
     checkpoint_repo = InMemoryCheckpointRepository(enable_tracing=False)
 
     await _populate(event_store, batches)

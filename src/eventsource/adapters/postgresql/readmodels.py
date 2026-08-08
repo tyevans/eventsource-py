@@ -12,6 +12,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from eventsource.adapters._common import POSTGRESQL, filter_to_sql
 from eventsource.adapters._sql.connection import sql_connection
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
@@ -645,9 +646,9 @@ class PostgreSQLReadModelRepository[TModel: ReadModel]:
             where_clauses.append("deleted_at IS NULL")
 
         for i, filter_ in enumerate(query.filters):
-            clause, param_name = self._filter_to_sql(filter_, i)
+            clause, filter_params = self._filter_to_sql(filter_, i)
             where_clauses.append(clause)
-            params[param_name] = filter_.value
+            params.update(filter_params)
 
         if where_clauses:
             parts.append("WHERE " + " AND ".join(where_clauses))
@@ -683,9 +684,9 @@ class PostgreSQLReadModelRepository[TModel: ReadModel]:
             where_clauses.append("deleted_at IS NULL")
 
         for i, filter_ in enumerate(query.filters):
-            clause, param_name = self._filter_to_sql(filter_, i)
+            clause, filter_params = self._filter_to_sql(filter_, i)
             where_clauses.append(clause)
-            params[param_name] = filter_.value
+            params.update(filter_params)
 
         if where_clauses:
             parts.append("WHERE " + " AND ".join(where_clauses))
@@ -709,9 +710,9 @@ class PostgreSQLReadModelRepository[TModel: ReadModel]:
         where_clauses = ["deleted_at IS NOT NULL"]
 
         for i, filter_ in enumerate(query.filters):
-            clause, param_name = self._filter_to_sql(filter_, i)
+            clause, filter_params = self._filter_to_sql(filter_, i)
             where_clauses.append(clause)
-            params[param_name] = filter_.value
+            params.update(filter_params)
 
         parts.append("WHERE " + " AND ".join(where_clauses))
 
@@ -728,41 +729,35 @@ class PostgreSQLReadModelRepository[TModel: ReadModel]:
 
         return " ".join(parts), params
 
-    def _filter_to_sql(self, filter_: Filter, index: int) -> tuple[str, str]:
+    def _filter_to_sql(self, filter_: Filter, index: int) -> tuple[str, dict[str, Any]]:
         """
-        Convert a Filter to SQL clause.
+        Convert a Filter to a SQL clause and its bound parameters.
+
+        Delegates the operator dispatch to `adapters/_common` so this
+        adapter cannot drift from its siblings -- see
+        `ReadModelRepository.find` for the semantics.
 
         Args:
             filter_: Filter condition to convert
-            index: Index for parameter naming
+            index: Index used to keep parameter names unique across filters
 
         Returns:
-            Tuple of (SQL clause, parameter name)
+            Tuple of (SQL clause, parameter dict)
 
         Raises:
-            ValueError: If operator is unknown
+            ValueError: On an unknown field name or an unknown operator
         """
-        param_name = f"p{index}"
-        field = filter_.field
+        params: dict[str, Any] = {}
 
-        if filter_.operator == "eq":
-            return f"{field} = :{param_name}", param_name
-        elif filter_.operator == "ne":
-            return f"{field} != :{param_name}", param_name
-        elif filter_.operator == "gt":
-            return f"{field} > :{param_name}", param_name
-        elif filter_.operator == "gte":
-            return f"{field} >= :{param_name}", param_name
-        elif filter_.operator == "lt":
-            return f"{field} < :{param_name}", param_name
-        elif filter_.operator == "lte":
-            return f"{field} <= :{param_name}", param_name
-        elif filter_.operator == "in":
-            return f"{field} = ANY(:{param_name})", param_name
-        elif filter_.operator == "not_in":
-            return f"{field} != ALL(:{param_name})", param_name
-        else:
-            raise ValueError(f"Unknown operator: {filter_.operator}")
+        def bind(value: Any) -> str:
+            # `p{index}` for the first (usually only) value of this filter;
+            # suffixed only if a dialect ever binds more than one.
+            name = f"p{index}" if not params else f"p{index}_{len(params)}"
+            params[name] = value
+            return f":{name}"
+
+        clause = filter_to_sql(self._model_class, filter_, POSTGRESQL, bind)
+        return clause, params
 
     @property
     def model_class(self) -> type[TModel]:

@@ -173,8 +173,6 @@ class DualWriteInterceptor:
         >>> await router.append(stream, events, ExpectedVersion.exact(0))
 
     Attributes:
-        max_append_batch: The interceptor imposes no batch-size limit of
-            its own; the source store enforces whatever limit it has.
         _source: The authoritative source event store.
         _target: The target event store being migrated to.
         _tenant_id: The tenant this interceptor handles.
@@ -188,8 +186,6 @@ class DualWriteInterceptor:
         _coverage_complete: A copy pass starting after installation has
             completed, so the install window is provably empty.
     """
-
-    max_append_batch: int | None = None
 
     def __init__(
         self,

@@ -25,6 +25,7 @@ from eventsource.application.migration.sync_lag_tracker import (
 )
 from eventsource.domain import StreamId
 from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import EventRegistry, register_event
 from eventsource.ports import ExpectedVersion, Position
 from eventsource.ports.migration.models import MigrationConfig, SyncLag
 
@@ -33,6 +34,10 @@ from eventsource.ports.migration.models import MigrationConfig, SyncLag
 # =============================================================================
 
 
+_REGISTRY = EventRegistry()
+
+
+@register_event(registry=_REGISTRY)
 class LagTestEvent(DomainEvent):
     """Test event for unit tests."""
 
@@ -68,13 +73,13 @@ async def seed_events(store: InMemoryEventStore, count: int) -> Position | None:
 @pytest.fixture
 def source_store() -> InMemoryEventStore:
     """Create an empty source event store."""
-    return InMemoryEventStore(store_id="source")
+    return InMemoryEventStore(store_id="source", event_registry=_REGISTRY)
 
 
 @pytest.fixture
 def target_store() -> InMemoryEventStore:
     """Create an empty target event store."""
-    return InMemoryEventStore(store_id="target")
+    return InMemoryEventStore(store_id="target", event_registry=_REGISTRY)
 
 
 @pytest.fixture

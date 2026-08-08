@@ -53,7 +53,6 @@ def sid(aggregate_id=None, category: str = "TestAggregate") -> StreamId:
 def create_mock_store(store_id: str = "store", position_key: tuple = (100,)) -> MagicMock:
     """Create a mock FullEventStore with proper async support."""
     store = MagicMock()
-    store.max_append_batch = None
     store.append = AsyncMock(
         side_effect=lambda stream, events, expected: AppendResult(
             stream=stream,
@@ -734,8 +733,6 @@ class TestRouterIntegration:
         )
 
         _: FullEventStore = interceptor  # mypy-checked structural conformance
-
-        assert interceptor.max_append_batch is None
 
         aggregate_id = uuid4()
         stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")

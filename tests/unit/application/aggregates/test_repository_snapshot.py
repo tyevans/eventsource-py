@@ -28,6 +28,7 @@ from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.domain import StreamId
 from eventsource.domain.aggregate import AggregateRoot
 from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import EventRegistry, register_event
 from eventsource.domain.exceptions import AggregateNotFoundError
 from eventsource.ports import ExpectedVersion
 from eventsource.ports.snapshots import Snapshot
@@ -45,6 +46,10 @@ class TestState(BaseModel):
     items: list[str] = Field(default_factory=list)
 
 
+_REGISTRY = EventRegistry()
+
+
+@register_event(registry=_REGISTRY)
 class TestEvent(DomainEvent):
     """Simple event for testing."""
 
@@ -52,6 +57,7 @@ class TestEvent(DomainEvent):
     value: str
 
 
+@register_event(registry=_REGISTRY)
 class CountEvent(DomainEvent):
     """Event that increments count."""
 
@@ -133,7 +139,7 @@ class TestRepositoryConstructor:
 
     @pytest.fixture
     def event_store(self) -> InMemoryEventStore:
-        return InMemoryEventStore()
+        return InMemoryEventStore(event_registry=_REGISTRY)
 
     @pytest.fixture
     def snapshot_store(self) -> InMemorySnapshotStore:
@@ -204,7 +210,7 @@ class TestRepositorySnapshotLoad:
 
     @pytest.fixture
     def event_store(self) -> InMemoryEventStore:
-        return InMemoryEventStore()
+        return InMemoryEventStore(event_registry=_REGISTRY)
 
     @pytest.fixture
     def snapshot_store(self) -> InMemorySnapshotStore:
@@ -465,7 +471,7 @@ class TestRepositoryAutoSnapshot:
 
     @pytest.fixture
     def event_store(self) -> InMemoryEventStore:
-        return InMemoryEventStore()
+        return InMemoryEventStore(event_registry=_REGISTRY)
 
     @pytest.fixture
     def snapshot_store(self) -> InMemorySnapshotStore:
@@ -635,7 +641,7 @@ class TestRepositoryManualSnapshot:
 
     @pytest.fixture
     def event_store(self) -> InMemoryEventStore:
-        return InMemoryEventStore()
+        return InMemoryEventStore(event_registry=_REGISTRY)
 
     @pytest.fixture
     def snapshot_store(self) -> InMemorySnapshotStore:
@@ -742,7 +748,7 @@ class TestRepositoryBackgroundSnapshot:
 
     @pytest.fixture
     def event_store(self) -> InMemoryEventStore:
-        return InMemoryEventStore()
+        return InMemoryEventStore(event_registry=_REGISTRY)
 
     @pytest.fixture
     def snapshot_store(self) -> InMemorySnapshotStore:
@@ -874,7 +880,7 @@ class TestSnapshotPolicyLogic:
 
     @pytest.fixture
     def event_store(self) -> InMemoryEventStore:
-        return InMemoryEventStore()
+        return InMemoryEventStore(event_registry=_REGISTRY)
 
     @pytest.fixture
     def snapshot_store(self) -> InMemorySnapshotStore:
@@ -1001,7 +1007,7 @@ class TestFullCycleIntegration:
 
     @pytest.fixture
     def event_store(self) -> InMemoryEventStore:
-        return InMemoryEventStore()
+        return InMemoryEventStore(event_registry=_REGISTRY)
 
     @pytest.fixture
     def snapshot_store(self) -> InMemorySnapshotStore:
@@ -1129,7 +1135,7 @@ class TestEdgeCases:
 
     @pytest.fixture
     def event_store(self) -> InMemoryEventStore:
-        return InMemoryEventStore()
+        return InMemoryEventStore(event_registry=_REGISTRY)
 
     @pytest.fixture
     def snapshot_store(self) -> InMemorySnapshotStore:

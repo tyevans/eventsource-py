@@ -278,6 +278,33 @@ class ReadModelRepository(Protocol[TModel]):
 
         Supports filtering, ordering, and pagination. Soft-deleted records
         are excluded unless `include_deleted=True` is set in the query.
+        Filters combine with AND. `offset` skips from the start of the
+        ordered result, and applies with or without a `limit`.
+
+        Filter semantics (identical on every backend):
+
+        **A field with no value is distinct from every value.** Where the
+        stored field is NULL/None, `eq`, `in`, and the four ordering
+        operators (`gt`, `gte`, `lt`, `lte`) do NOT match -- "no value" is
+        neither equal to nor ordered against one -- while `ne` and `not_in`
+        DO match, because a field with no value differs from whatever was
+        asked for.
+
+        This is Python's semantics, not SQL's three-valued logic, and it is
+        a deliberate choice against the grain of the SQL adapters. The
+        reasoning: `find` is defined over read models, which are objects
+        whose optional fields are `None`, not over table rows. A caller
+        writing `Filter.ne("status", "cancelled")` is asking for "everything
+        that is not cancelled", and a row whose status was never set is not
+        cancelled. SQL's answer -- silently dropping those rows -- is the
+        single most common surprise in this area, and it is invisible: it
+        looks like a smaller result set, never like an error. The SQL
+        adapters therefore emit an explicit `IS NULL OR ...` for the two
+        NULL-tolerant operators.
+
+        **`in` with an empty list matches nothing; `not_in` with an empty
+        list matches everything.** The degenerate cases follow from the rule
+        above rather than from any dialect's handling of empty arrays.
 
         Args:
             query: Query with filters, ordering, pagination.
@@ -285,6 +312,12 @@ class ReadModelRepository(Protocol[TModel]):
 
         Returns:
             List of matching read models
+
+        Raises:
+            ValueError: If a filter names a field the read model does not
+                have, or an operator outside `Filter`'s eight. Both are
+                caller bugs, and both MUST fail loudly: reporting them as
+                "nothing matched" hides a typo behind an empty result set.
 
         Warning:
             Without a limit, this may return a large number of records.
@@ -309,12 +342,19 @@ class ReadModelRepository(Protocol[TModel]):
         Useful for pagination or checking how many records match
         without retrieving them all.
 
+        Filters, NULL handling, and the unknown-field/unknown-operator
+        errors are exactly `find()`'s -- `count(q)` is always
+        `len(find(q))` with `limit`/`offset` ignored.
+
         Args:
             query: Query with filters.
                    If None, counts all non-deleted records.
 
         Returns:
             Number of matching read models
+
+        Raises:
+            ValueError: As `find()` -- unknown field name or unknown operator.
 
         Example:
             >>> total = await repo.count()  # Total non-deleted records

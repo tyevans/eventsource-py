@@ -396,12 +396,18 @@ in Python, one pass per filter, before ordering and slicing. For the tens or
 hundreds of rows a test creates that is free; it is not a query engine, and a
 prototype that grows past a few thousand rows will feel it.
 
-**Filters are evaluated in Python, so type coercion differs.** `_apply_filter`
-compares with the raw Python objects — `Decimal` stays `Decimal`, a `datetime`
-stays a `datetime`, and `in` / `not_in` use Python containment. SQL backends
-compare after a round trip through the database's type system. An `eq` filter
-on a `Decimal` that passes here can behave differently against SQLite, where
+**Filters are evaluated in Python, so type coercion differs.** Comparisons run
+against the raw Python objects — `Decimal` stays `Decimal`, a `datetime` stays
+a `datetime`, and `in` / `not_in` use Python containment. SQL backends compare
+after a round trip through the database's type system. An `eq` filter on a
+`Decimal` that passes here can behave differently against SQLite, where
 `Decimal` lands in a `REAL` column.
+
+*Operator* semantics, on the other hand, do not differ: every backend dispatches
+through one shared table, so which operators exist, how they treat a `None`
+field, and the fact that an unknown field name or operator raises `ValueError`
+are the same everywhere. See `ReadModelRepository.find` for the rules and
+`ReadModelRepositoryConformance` for the matrix that pins them.
 
 **Ordering has no null handling.** `find` sorts with
 `getattr(model, query.order_by)` as the key, so ordering by a nullable field

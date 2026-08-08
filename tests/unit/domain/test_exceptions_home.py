@@ -83,9 +83,10 @@ def test_snapshot_error_hierarchy() -> None:
     )
     assert issubclass(domain_exceptions.SnapshotSchemaVersionError, domain_exceptions.SnapshotError)
     assert issubclass(domain_exceptions.SnapshotNotFoundError, domain_exceptions.SnapshotError)
-    # Deliberately not an EventSourceError -- preserved verbatim from the
-    # pre-move contract.
-    assert not issubclass(domain_exceptions.SnapshotError, domain_exceptions.EventSourceError)
+    # Rooted at EventSourceError so `except EventSourceError` at a library
+    # boundary catches snapshot failures. The universal-base rule is pinned
+    # for the whole package in tests/unit/test_exception_hierarchy.py.
+    assert issubclass(domain_exceptions.SnapshotError, domain_exceptions.EventSourceError)
 
 
 def test_domain_package_re_exports_exceptions_and_types() -> None:

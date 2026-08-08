@@ -50,6 +50,7 @@ from eventsource.application.migration.write_pause import (
 )
 from eventsource.domain import StreamId
 from eventsource.domain.event import DomainEvent
+from eventsource.domain.exceptions import EventSourceError
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_AGGREGATE_ID,
@@ -77,7 +78,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class StoreNotFoundError(Exception):
+class StoreNotFoundError(EventSourceError):
     """
     Raised when a store ID cannot be resolved to a registered store.
 
@@ -127,13 +128,7 @@ class TenantStoreRouter:
         >>>
         >>> # Operations route based on tenant
         >>> await router.append(stream, events, ExpectedVersion.exact(0))
-
-    Attributes:
-        max_append_batch: The router imposes no batch-size limit of its
-            own; the store it routes to enforces whatever limit it has.
     """
-
-    max_append_batch: int | None = None
 
     def __init__(
         self,

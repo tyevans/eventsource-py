@@ -31,12 +31,16 @@ from eventsource.application.migration.bulk_copier import (
 from eventsource.application.migration.exceptions import BulkCopyError
 from eventsource.domain import StreamId
 from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import EventRegistry, register_event
 from eventsource.domain.exceptions import DuplicateEventError, OptimisticLockError
 from eventsource.ports import AppendResult, EventEnvelope, ExpectedVersion, Position
 from eventsource.ports.migration.models import Migration, MigrationConfig, MigrationPhase
 
-
 # Test event class for testing
+_REGISTRY = EventRegistry()
+
+
+@register_event(registry=_REGISTRY)
 class TestEvent(DomainEvent):
     """Test event for unit tests."""
 
@@ -1093,7 +1097,7 @@ class TestBulkCopierOverlapWithLiveMirror:
         """A batched group straddling an already-present event must not be
         skipped wholesale: the absent events still reach the target, in
         source stream order."""
-        target_store = InMemoryEventStore("target")
+        target_store = InMemoryEventStore("target", event_registry=_REGISTRY)
         tenant_id = uuid4()
         aggregate_id = uuid4()
         stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")

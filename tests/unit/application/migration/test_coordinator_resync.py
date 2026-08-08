@@ -149,12 +149,15 @@ class TestDefaultPathRecordsMappings:
         from eventsource.adapters.memory.store import InMemoryEventStore
         from eventsource.domain import StreamId
         from eventsource.ports import ExpectedVersion
-        from eventsource.testing.conformance_ports._fixtures import ConformanceEvent
+        from eventsource.testing.conformance_ports._fixtures import (
+            ConformanceEvent,
+            make_conformance_registry,
+        )
 
         migration = _migration(MigrationPhase.BULK_COPY, config)
 
-        source = InMemoryEventStore()
-        target = InMemoryEventStore()
+        source = InMemoryEventStore(event_registry=make_conformance_registry())
+        target = InMemoryEventStore(event_registry=make_conformance_registry())
         aggregate_id = uuid4()
         stream = StreamId(aggregate_id=aggregate_id, category="Conformance")
         # The bulk copier counts and reads events scoped to the migration's
@@ -204,12 +207,15 @@ class TestResyncThenStrictCutover:
         from eventsource.adapters.memory.store import InMemoryEventStore
         from eventsource.domain import StreamId
         from eventsource.ports import ExpectedVersion
-        from eventsource.testing.conformance_ports._fixtures import ConformanceEvent
+        from eventsource.testing.conformance_ports._fixtures import (
+            ConformanceEvent,
+            make_conformance_registry,
+        )
 
         migration = _migration(MigrationPhase.DUAL_WRITE)
 
-        source = InMemoryEventStore()
-        target = InMemoryEventStore()
+        source = InMemoryEventStore(event_registry=make_conformance_registry())
+        target = InMemoryEventStore(event_registry=make_conformance_registry())
         aggregate_id = uuid4()
         stream = StreamId(aggregate_id=aggregate_id, category="Conformance")
         # The bulk copier scopes its feed read to the migration's tenant

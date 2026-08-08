@@ -13,12 +13,16 @@ from eventsource.testing.conformance_ports import (
     EventLookupConformance,
     StreamReaderConformance,
 )
-from eventsource.testing.conformance_ports._fixtures import make_event, make_stream
+from eventsource.testing.conformance_ports._fixtures import (
+    make_conformance_registry,
+    make_event,
+    make_stream,
+)
 from eventsource.testing.partitioned_memory import PartitionedMemoryStore
 
 
 async def test_read_stream_envelopes_carry_none_position() -> None:
-    store = PartitionedMemoryStore()
+    store = PartitionedMemoryStore(make_conformance_registry())
     stream = make_stream()
     await store.append(stream, [make_event(stream.aggregate_id)], ExpectedVersion.no_stream())
 
@@ -28,13 +32,13 @@ async def test_read_stream_envelopes_carry_none_position() -> None:
 
 
 def test_store_has_no_feed_surface() -> None:
-    store = PartitionedMemoryStore()
+    store = PartitionedMemoryStore(make_conformance_registry())
     assert not hasattr(store, "read_all")
     assert not hasattr(store, "current_position")
 
 
 async def test_basic_append_and_read_round_trip() -> None:
-    store = PartitionedMemoryStore()
+    store = PartitionedMemoryStore(make_conformance_registry())
     stream = make_stream()
     events = [make_event(stream.aggregate_id, payload=str(i)) for i in range(2)]
 
@@ -52,22 +56,22 @@ class TestPartitionedAppender(AppenderConformance):
 
     @pytest.fixture
     async def store(self) -> AsyncIterator[PartitionedMemoryStore]:
-        yield PartitionedMemoryStore()
+        yield PartitionedMemoryStore(make_conformance_registry())
 
 
 class TestPartitionedStreamReader(StreamReaderConformance):
     @pytest.fixture
     async def store(self) -> AsyncIterator[PartitionedMemoryStore]:
-        yield PartitionedMemoryStore()
+        yield PartitionedMemoryStore(make_conformance_registry())
 
 
 class TestPartitionedEventLookup(EventLookupConformance):
     @pytest.fixture
     async def store(self) -> AsyncIterator[PartitionedMemoryStore]:
-        yield PartitionedMemoryStore()
+        yield PartitionedMemoryStore(make_conformance_registry())
 
 
 class TestPartitionedCategoryQuery(CategoryQueryConformance):
     @pytest.fixture
     async def store(self) -> AsyncIterator[PartitionedMemoryStore]:
-        yield PartitionedMemoryStore()
+        yield PartitionedMemoryStore(make_conformance_registry())

@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
+from eventsource.adapters._common import SQLITE, filter_to_sql
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_BATCH_SIZE,
@@ -718,9 +719,12 @@ class SQLiteReadModelRepository[TModel: _BaseReadModel]:
             direction = query.order_direction.upper()
             parts.append(f"ORDER BY {query.order_by} {direction}")
 
-        # LIMIT / OFFSET
+        # LIMIT / OFFSET. SQLite rejects a bare OFFSET, so an offset with no
+        # limit needs LIMIT -1 (SQLite's "no limit") to stay a legal statement.
         if query.limit is not None:
             parts.append(f"LIMIT {query.limit}")
+        elif query.offset:
+            parts.append("LIMIT -1")
         if query.offset:
             parts.append(f"OFFSET {query.offset}")
 
@@ -781,9 +785,12 @@ class SQLiteReadModelRepository[TModel: _BaseReadModel]:
             direction = query.order_direction.upper()
             parts.append(f"ORDER BY {query.order_by} {direction}")
 
-        # LIMIT / OFFSET
+        # LIMIT / OFFSET. SQLite rejects a bare OFFSET, so an offset with no
+        # limit needs LIMIT -1 (SQLite's "no limit") to stay a legal statement.
         if query.limit is not None:
             parts.append(f"LIMIT {query.limit}")
+        elif query.offset:
+            parts.append("LIMIT -1")
         if query.offset:
             parts.append(f"OFFSET {query.offset}")
 
@@ -793,6 +800,12 @@ class SQLiteReadModelRepository[TModel: _BaseReadModel]:
         """
         Convert a Filter to SQL clause with parameters.
 
+        Delegates the operator dispatch to `adapters/_common` so this
+        adapter cannot drift from its siblings -- see
+        `ReadModelRepository.find` for the semantics. UUID-to-text coercion
+        is this dialect's contribution, declared once in the shared
+        `SQLITE` dialect.
+
         Args:
             filter_: Filter condition to convert
 
@@ -800,37 +813,16 @@ class SQLiteReadModelRepository[TModel: _BaseReadModel]:
             Tuple of (SQL clause, parameter list)
 
         Raises:
-            ValueError: If operator is unknown
+            ValueError: On an unknown field name or an unknown operator
         """
-        field = filter_.field
-        value = filter_.value
+        params: list[Any] = []
 
-        # Convert UUID values to string for SQLite
-        if isinstance(value, UUID):
-            value = str(value)
-        elif isinstance(value, list):
-            value = [str(v) if isinstance(v, UUID) else v for v in value]
+        def bind(value: Any) -> str:
+            params.append(value)
+            return "?"
 
-        if filter_.operator == "eq":
-            return f"{field} = ?", [value]
-        elif filter_.operator == "ne":
-            return f"{field} != ?", [value]
-        elif filter_.operator == "gt":
-            return f"{field} > ?", [value]
-        elif filter_.operator == "gte":
-            return f"{field} >= ?", [value]
-        elif filter_.operator == "lt":
-            return f"{field} < ?", [value]
-        elif filter_.operator == "lte":
-            return f"{field} <= ?", [value]
-        elif filter_.operator == "in":
-            placeholders = ",".join("?" * len(value))
-            return f"{field} IN ({placeholders})", list(value)
-        elif filter_.operator == "not_in":
-            placeholders = ",".join("?" * len(value))
-            return f"{field} NOT IN ({placeholders})", list(value)
-        else:
-            raise ValueError(f"Unknown operator: {filter_.operator}")
+        clause = filter_to_sql(self._model_class, filter_, SQLITE, bind)
+        return clause, params
 
     @property
     def model_class(self) -> type[TModel]:

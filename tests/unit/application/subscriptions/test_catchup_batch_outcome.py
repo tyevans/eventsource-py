@@ -20,17 +20,23 @@ from eventsource.application.subscriptions import (
 from eventsource.application.subscriptions.runners import CatchUpRunner
 from eventsource.domain import StreamId
 from eventsource.domain.event import DomainEvent
+from eventsource.domain.event_registry import EventRegistry, register_event
 from eventsource.ports.positions import ExpectedVersion
 
 pytestmark = pytest.mark.asyncio
 
 
+_REGISTRY = EventRegistry()
+
+
+@register_event(registry=_REGISTRY)
 class FilteredOutEvent(DomainEvent):
     """Type A -- never matches the subscription's filter."""
 
     aggregate_type: str = "BatchOutcomeAggregate"
 
 
+@register_event(registry=_REGISTRY)
 class DeliveredEvent(DomainEvent):
     """Type B -- the only type the subscription subscribes to."""
 
@@ -80,7 +86,7 @@ def _make_runner(store: InMemoryEventStore, subscriber: RecordingSubscriber) -> 
 
 class TestAllFilteredBatches:
     async def test_a_wholly_filtered_feed_still_reaches_the_target(self) -> None:
-        store = InMemoryEventStore()
+        store = InMemoryEventStore(event_registry=_REGISTRY)
         # Five type-A events at batch_size=2 -- three batches, every one
         # of them delivering nothing.
         await _append(store, [FilteredOutEvent] * 5)
@@ -98,7 +104,7 @@ class TestAllFilteredBatches:
         assert subscriber.delivered == []
 
     async def test_an_interior_all_filtered_batch_does_not_end_catch_up(self) -> None:
-        store = InMemoryEventStore()
+        store = InMemoryEventStore(event_registry=_REGISTRY)
         # batch_size=2: [B, A], [A, A], [A, B] -- the middle batch
         # delivers nothing, and the final B is only reached if the loop
         # keeps going.
