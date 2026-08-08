@@ -25,10 +25,10 @@ A few conventions used throughout:
   so examples say `from eventsource import ...` rather than reaching into
   submodules, except where a subpackage such as `eventsource.application.subscriptions` is
   the documented import path.
-- "Core" means the parts that work with only `pydantic` and `sqlalchemy`
-  installed. Anything requiring `asyncpg`, `aiosqlite`, `redis`, `aio-pika`,
-  `aiokafka`, or OpenTelemetry is called out as needing an extra.
-- Answers describe eventsource-py 0.5.0 on Python 3.13+.
+- "Core" means the parts that work with only `pydantic`, `sqlalchemy`, and
+  `orjson` installed. Anything requiring `asyncpg`, `aiosqlite`, `redis`,
+  `aio-pika`, `aiokafka`, or OpenTelemetry is called out as needing an extra.
+- Answers describe eventsource-py 0.12.0 on Python 3.13+.
 
 ## Concepts
 
@@ -152,19 +152,21 @@ to answer a point lookup by id. That works fine, and it is what
 
 ## Installation and dependencies
 
-### Why are pydantic and sqlalchemy the only required dependencies?
+### Why are pydantic, sqlalchemy, and orjson the only required dependencies?
 
-Because those two are the only things the *core* abstractions cannot be written
-without. `DomainEvent` is a pydantic `BaseModel` — validation, JSON round-trips,
-and `frozen=True` immutability all come from pydantic, so it is not an optional
-detail but the definition of what an event is. SQLAlchemy is required because
-the SQL-backed stores and repositories are written against SQLAlchemy's async
-engine and session machinery rather than against a specific driver:
-`PostgreSQLEventStore` takes a plain `AsyncEngine` you construct (it builds its
-own `async_sessionmaker` internally) and issues `text()` statements against it,
-so the only import at module scope is `sqlalchemy` — `asyncpg` is imported
-lazily behind an `ASYNCPG_AVAILABLE` guard and is only required when you
-actually instantiate the store.
+Because those three are the only things the *core* abstractions cannot be
+written without. `DomainEvent` is a pydantic `BaseModel` — validation, JSON
+round-trips, and `frozen=True` immutability all come from pydantic, so it is
+not an optional detail but the definition of what an event is. SQLAlchemy is
+required because the SQL-backed stores and repositories are written against
+SQLAlchemy's async engine and session machinery rather than against a specific
+driver: `PostgreSQLEventStore` takes a plain `AsyncEngine` you construct (it
+builds its own `async_sessionmaker` internally) and issues `text()` statements
+against it, so the only import at module scope is `sqlalchemy` — `asyncpg` is
+imported lazily behind an availability guard and is only required when you
+actually instantiate the store. `orjson` is required because the serialization
+layer's JSON encode/decode path (`json_dumps`/`json_loads`) wraps it directly
+with no stdlib fallback — every event payload round-trips through it.
 
 That split is the whole trick. SQLAlchemy is the *interface* to a database;
 `asyncpg` and `aiosqlite` are the *drivers*, and they live in extras. A `pip

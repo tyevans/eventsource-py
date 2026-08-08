@@ -12,7 +12,7 @@ pip install eventsource-py
 import eventsource
 ```
 
-The core package is deliberately thin. It depends only on `pydantic` and `sqlalchemy`; every storage backend, message bus, and observability integration is an opt-in extra. Installing the core package alone gives you the domain model (`DomainEvent`, `AggregateRoot`, projections, subscriptions) plus the in-memory implementations of `EventStore`, `EventBus`, and the checkpoint/DLQ/outbox repositories -- enough to build and test an entire event-sourced application without any external service running.
+The core package is deliberately thin. It depends only on `pydantic`, `sqlalchemy`, and `orjson`; every storage backend, message bus, and observability integration is an opt-in extra. Installing the core package alone gives you the domain model (`DomainEvent`, `AggregateRoot`, projections, subscriptions) plus the in-memory implementations of `EventStore`, `EventBus`, and the checkpoint/DLQ/outbox repositories -- enough to build and test an entire event-sourced application without any external service running.
 
 The package ships a `py.typed` marker, so type checkers resolve its annotations directly from the installed distribution with no separate stub package.
 
@@ -82,12 +82,13 @@ from eventsource import AggregateRoot, DomainEvent, InMemoryEventStore
 
 ### What the core install pulls in
 
-The `dependencies` list in `pyproject.toml` contains exactly two entries:
+The `dependencies` list in `pyproject.toml` contains exactly three entries:
 
 | Dependency | Constraint | Why it is required |
 | --- | --- | --- |
-| `pydantic` | `>=2.0,<3.0` | `DomainEvent` is a Pydantic v2 `BaseModel`; event payloads are validated and serialized through it. Pydantic v1 is not supported. |
-| `sqlalchemy` | `>=2.0,<3.0` | The SQL-backed stores and the checkpoint/DLQ/outbox repositories are written against the SQLAlchemy 2.0 async API. |
+| `pydantic` | `>=2.8.0,<3.0` | `DomainEvent` is a Pydantic v2 `BaseModel`; event payloads are validated and serialized through it. Pydantic v1 is not supported. |
+| `sqlalchemy` | `>=2.0.43,<3.0` (with the `[asyncio]` extra) | The SQL-backed stores and the checkpoint/DLQ/outbox repositories are written against the SQLAlchemy 2.0 async API. |
+| `orjson` | `>=3.10.7` | The serialization layer's fast JSON encode/decode path; `json_dumps`/`json_loads` wrap it directly with no stdlib fallback. |
 
 Note that SQLAlchemy is a *core* dependency even though no database is required at runtime -- it supplies the shared SQL layer that the `postgresql` and `sqlite` extras attach a driver to. Installing the core package does **not** install a driver, so no database connection is possible until you add one of those extras.
 
@@ -119,7 +120,7 @@ The installed version is available at runtime, resolved from package metadata:
 ```python
 import eventsource
 
-eventsource.__version__  # e.g. "0.5.0"
+eventsource.__version__  # e.g. "0.12.0"
 ```
 
 When running from a source checkout that has not been installed, this falls back to `"0.0.0.dev0"` rather than raising.
@@ -128,30 +129,31 @@ The wheel includes a `py.typed` marker (`src/eventsource/py.typed`), so `mypy`, 
 
 ### Pinning
 
-The project follows semantic versioning and is currently at `0.5.0`, classified as `Development Status :: 4 - Beta`. Because the public API can still change in minor releases before 1.0, pin at least the minor version in applications:
+The project follows semantic versioning and is currently at `0.12.0`, classified as `Development Status :: 4 - Beta`. Because the public API can still change in minor releases before 1.0, pin at least the minor version in applications:
 
 ```
-eventsource-py>=0.5,<0.6
+eventsource-py>=0.12,<0.13
 ```
 
-Libraries that depend on `eventsource-py` should prefer a compatible-release constraint (`~=0.5`) and let the application pick the exact version.
+Libraries that depend on `eventsource-py` should prefer a compatible-release constraint (`~=0.12`) and let the application pick the exact version.
 
 ## Core Dependencies
 
-Two runtime dependencies, both declared in the `dependencies` array of `pyproject.toml`:
+Three runtime dependencies, all declared in the `dependencies` array of `pyproject.toml`:
 
 ```toml
 dependencies = [
     "pydantic>=2.8.0,<3.0",
     "sqlalchemy[asyncio]>=2.0.43,<3.0",
+    "orjson>=3.10.7",
 ]
 ```
 
-Their transitive closure adds only the packages those two require themselves (`pydantic-core`, `annotated-types`, `typing-extensions` for Pydantic; `greenlet` and `typing-extensions` for SQLAlchemy on platforms where SQLAlchemy requests it). Nothing else is installed.
+Their transitive closure adds only the packages those three require themselves (`pydantic-core`, `annotated-types`, `typing-extensions` for Pydantic; `greenlet` and `typing-extensions` for SQLAlchemy on platforms where SQLAlchemy requests it; `orjson` has no further dependencies). Nothing else is installed.
 
 ### pydantic (`>=2.0,<3.0`)
 
-Pydantic is the event model. `DomainEvent` in `src/eventsource/events/base.py` subclasses `pydantic.BaseModel` and declares its metadata fields with `Field(...)`:
+Pydantic is the event model. `DomainEvent` in `src/eventsource/domain/event.py` subclasses `pydantic.BaseModel` and declares its metadata fields with `Field(...)`:
 
 - `event_id: UUID` (default `uuid4()`), `event_type: str` (derived from the class name when left blank), `event_version: int` (`ge=1`), `occurred_at: datetime` (default `datetime.now(UTC)`).
 - `aggregate_id: UUID` and `aggregate_type: str` (both required), `aggregate_version: int` (`ge=1`).
@@ -173,9 +175,9 @@ SQLAlchemy is the shared SQL layer, not a database driver. The library uses its 
 
 - `adapters/postgresql/store.py` and `adapters/postgresql/snapshots.py` -- the PostgreSQL event and snapshot stores.
 - `adapters/sql/checkpoints.py`, `adapters/sql/dlq.py`, `adapters/postgresql/outbox.py`, and the shared `adapters/_sql/connection.py` helper. (`adapters/sqlite/outbox.py` is not on this list -- it is written against `aiosqlite`, not sqlalchemy.)
-- `adapters/sql/projection.py` and `readmodels/` -- database-backed projections and read models, which accept an engine or sessionmaker. `application/projections/base.py`, by contrast, is sqlalchemy-free: it defines the checkpoint/DLQ/retry orchestration against pure ports and only the `adapters/sql/` implementations pull in the driver.
-- `locks/postgresql.py` -- advisory locks.
-- `migration/repositories/` -- the live-migration bookkeeping tables.
+- `adapters/sql/projection.py`, `adapters/sql/readmodel_projection.py`, and the per-backend `adapters/postgresql/readmodels.py` / `adapters/sqlite/readmodels.py` -- database-backed projections and read models, which accept an engine or sessionmaker. `application/projections/base.py`, by contrast, is sqlalchemy-free: it defines the checkpoint/DLQ/retry orchestration against pure ports and only the `adapters/sql/` implementations pull in the driver.
+- `adapters/postgresql/locks.py` -- advisory locks.
+- `adapters/sql/migration/` -- the live-migration bookkeeping tables (audit log, position mapping, routing).
 
 Because the async API is used throughout, SQLAlchemy 1.4 and the 2.0 legacy synchronous patterns are out of scope; the `<3.0` bound again guards against a future major release.
 
@@ -232,7 +234,7 @@ Extras are additive and independent: installing `postgresql` does not imply `sql
 
 Both storage extras add a **driver** to the SQLAlchemy core dependency; neither adds SQL code of its own.
 
-`postgresql` installs `asyncpg`. Note that no module in `src/eventsource/` imports `asyncpg` directly -- `stores/postgresql.py`, `snapshots/postgresql.py`, `locks/postgresql.py`, and the SQL repositories are written entirely against SQLAlchemy's async API. `asyncpg` is loaded by SQLAlchemy when you create the engine:
+`postgresql` installs `asyncpg`. Note that no module in `src/eventsource/` imports `asyncpg` directly -- `adapters/postgresql/store.py`, `adapters/postgresql/snapshots.py`, `adapters/postgresql/locks.py`, and the SQL repositories are written entirely against SQLAlchemy's async API. `asyncpg` is loaded by SQLAlchemy when you create the engine:
 
 ```python
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -258,7 +260,7 @@ except ImportError:
 
 `SQLCheckpointRepository` and `SQLDLQRepository` (`eventsource.adapters.sql`) are not behind this guard: they are dialect-parameterized over the same SQLAlchemy async API PostgreSQL and SQLite both already require through the core `sqlalchemy` dependency, so they're unconditional exports regardless of which optional driver extra is installed.
 
-The practical consequence: without the `sqlite` extra, `from eventsource import SQLiteEventStore` raises `ImportError` -- the name is simply not bound. Check `SQLITE_AVAILABLE` (or `AIOSQLITE_AVAILABLE`) if you need to branch. `SQLiteSnapshotStore` is the exception; it guards `aiosqlite` internally and raises `SQLiteNotAvailableError` (a subclass of `ImportError`) from its constructor instead.
+The practical consequence: `from eventsource import SQLiteEventStore` succeeds even without the `sqlite` extra installed -- the class is always exported. Check `SQLITE_AVAILABLE` (or `AIOSQLITE_AVAILABLE`) if you need to branch; constructing the store without `aiosqlite` installed raises a plain `ImportError` at `__init__` time, not at import time. `SQLiteSnapshotStore` behaves the same way but raises the more specific `SQLiteNotAvailableError` (a subclass of `ImportError`) from its constructor. `SQLiteOutboxRepository` is the one exception -- it is appended to `__all__` only when `SQLITE_AVAILABLE` is `True`, so it really is absent from the namespace without the extra.
 
 The two backends are not interchangeable in storage representation. PostgreSQL uses `JSONB` columns and the `uuid-ossp` extension; SQLite has no `JSONB` type, so payloads are stored as `TEXT`. Choose PostgreSQL for production, SQLite for embedded deployments and fast local integration tests without Docker.
 
