@@ -36,8 +36,15 @@ from eventsource.testing.conformance_ports._fixtures import ConformanceReadModel
 Repo = ReadModelRepository[ConformanceReadModel]
 
 
-def _model(name: str = "conformance", count: int = 0) -> ConformanceReadModel:
-    return ConformanceReadModel(id=uuid4(), name=name, count=count)
+def _model(
+    name: str = "conformance", count: int = 0, note: str | None = None
+) -> ConformanceReadModel:
+    return ConformanceReadModel(id=uuid4(), name=name, count=count, note=note)
+
+
+def _bad_filter(field: str, operator: str, value: object) -> Filter:
+    """A `Filter` with an operator outside the `Literal` -- reachable at runtime."""
+    return Filter(field=field, operator=operator, value=value)  # type: ignore[arg-type]
 
 
 class ReadModelRepositoryConformance(ABC):
@@ -131,6 +138,107 @@ class ReadModelRepositoryConformance(ABC):
         await store.save_many([alpha, beta])
         found = await store.find(Query(filters=[Filter.eq("name", "alpha")]))
         assert [m.id for m in found] == [alpha.id]
+
+    async def test_find_supports_every_comparison_operator(self, store: Repo) -> None:
+        """All eight operators, against a field that has a value in every row."""
+        await store.save_many([_model(name=f"m{i}", count=i) for i in (1, 2, 3)])
+
+        async def counts(filter_: Filter) -> list[int]:
+            return sorted(m.count for m in await store.find(Query(filters=[filter_])))
+
+        assert await counts(Filter.eq("count", 2)) == [2]
+        assert await counts(Filter.ne("count", 2)) == [1, 3]
+        assert await counts(Filter.gt("count", 2)) == [3]
+        assert await counts(Filter.gte("count", 2)) == [2, 3]
+        assert await counts(Filter.lt("count", 2)) == [1]
+        assert await counts(Filter.lte("count", 2)) == [1, 2]
+        assert await counts(Filter.in_("count", [1, 3])) == [1, 3]
+        assert await counts(Filter.not_in("count", [1, 3])) == [2]
+
+    async def test_a_null_field_is_distinct_from_every_value(self, store: Repo) -> None:
+        """NULL means "no value": it equals nothing, and differs from everything.
+
+        The judgment call, pinned: `ne` and `not_in` MATCH a row whose field
+        is NULL (Python semantics), rather than dropping it the way SQL's
+        three-valued logic would. Ordering comparisons and `eq`/`in` do not
+        match it, because "no value" is neither greater nor less than one.
+        """
+        await store.save_many([_model(name="present", note="set"), _model(name="absent")])
+
+        async def names(filter_: Filter) -> list[str]:
+            return sorted(m.name for m in await store.find(Query(filters=[filter_])))
+
+        assert await names(Filter.eq("note", "set")) == ["present"]
+        assert await names(Filter.in_("note", ["set"])) == ["present"]
+        assert await names(Filter.gt("note", "a")) == ["present"]
+        assert await names(Filter.gte("note", "a")) == ["present"]
+        assert await names(Filter.lt("note", "zzz")) == ["present"]
+        assert await names(Filter.lte("note", "zzz")) == ["present"]
+
+        assert await names(Filter.ne("note", "set")) == ["absent"]
+        assert await names(Filter.not_in("note", ["set"])) == ["absent"]
+
+    async def test_empty_in_matches_nothing_and_empty_not_in_matches_everything(
+        self, store: Repo
+    ) -> None:
+        await store.save_many([_model(name="a"), _model(name="b")])
+        assert await store.find(Query(filters=[Filter.in_("name", [])])) == []
+        assert len(await store.find(Query(filters=[Filter.not_in("name", [])]))) == 2
+        assert await store.count(Query(filters=[Filter.in_("name", [])])) == 0
+        assert await store.count(Query(filters=[Filter.not_in("name", [])])) == 2
+
+    async def test_filtering_on_an_unknown_field_raises(self, store: Repo) -> None:
+        """A typo'd field name is a bug, not an empty result set."""
+        bogus = Query(filters=[Filter.eq("no_such_field", "x")])
+        await store.save(_model())
+        with pytest.raises(ValueError, match="no_such_field"):
+            await store.find(bogus)
+        with pytest.raises(ValueError, match="no_such_field"):
+            await store.count(bogus)
+        with pytest.raises(ValueError, match="no_such_field"):
+            await store.find_deleted(bogus)
+
+    async def test_an_unknown_operator_raises(self, store: Repo) -> None:
+        """Never silently drop every row -- an unknown operator is a bug."""
+        bogus = Query(filters=[_bad_filter("name", "like", "x")])
+        await store.save(_model())
+        with pytest.raises(ValueError, match="like"):
+            await store.find(bogus)
+        with pytest.raises(ValueError, match="like"):
+            await store.count(bogus)
+        with pytest.raises(ValueError, match="like"):
+            await store.find_deleted(bogus)
+
+    async def test_find_filters_on_uuid_values(self, store: Repo) -> None:
+        wanted = _model(name="wanted")
+        other = _model(name="other")
+        await store.save_many([wanted, other])
+        found = await store.find(Query(filters=[Filter.eq("id", wanted.id)]))
+        assert [m.id for m in found] == [wanted.id]
+        both = await store.find(Query(filters=[Filter.in_("id", [wanted.id, other.id])]))
+        assert sorted(m.name for m in both) == ["other", "wanted"]
+
+    async def test_find_offsets_results(self, store: Repo) -> None:
+        await store.save_many([_model(name=f"m{i}", count=i) for i in range(3)])
+        page = await store.find(Query(order_by="count", offset=1))
+        assert [m.count for m in page] == [1, 2]
+        one = await store.find(Query(order_by="count", offset=1, limit=1))
+        assert [m.count for m in one] == [1]
+
+    async def test_include_deleted_shows_soft_deleted_rows(self, store: Repo) -> None:
+        live = _model(name="live")
+        gone = _model(name="gone")
+        await store.save_many([live, gone])
+        await store.soft_delete(gone.id)
+
+        everything = await store.find(Query(include_deleted=True))
+        assert sorted(m.name for m in everything) == ["gone", "live"]
+        assert await store.count(Query(include_deleted=True)) == 2
+
+        filtered = await store.find(
+            Query(filters=[Filter.eq("name", "gone")], include_deleted=True)
+        )
+        assert [m.id for m in filtered] == [gone.id]
 
     async def test_find_orders_and_limits(self, store: Repo) -> None:
         await store.save_many([_model(name=f"m{i}", count=i) for i in range(3)])

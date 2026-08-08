@@ -9,6 +9,7 @@ import asyncio
 from datetime import UTC, datetime
 from uuid import UUID
 
+from eventsource.adapters._common import check_filters, matches_filter
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_BATCH_SIZE,
@@ -315,7 +316,9 @@ class InMemoryReadModelRepository[TModel: ReadModel]:
                 # Start with only deleted models
                 results = [m for m in self._models.values() if m.is_deleted()]
 
-                # Apply filters
+                # Apply filters. Validated first: an empty candidate set
+                # must not hide a typo'd field or a bad operator.
+                check_filters(self._model_class, query.filters)
                 for filter_ in query.filters:
                     results = [m for m in results if self._apply_filter(m, filter_)]
 
@@ -385,7 +388,9 @@ class InMemoryReadModelRepository[TModel: ReadModel]:
                 if not query.include_deleted:
                     results = [m for m in results if not m.is_deleted()]
 
-                # Apply filters
+                # Apply filters. Validated first: an empty candidate set
+                # must not hide a typo'd field or a bad operator.
+                check_filters(self._model_class, query.filters)
                 for filter_ in query.filters:
                     results = [m for m in results if self._apply_filter(m, filter_)]
 
@@ -432,7 +437,9 @@ class InMemoryReadModelRepository[TModel: ReadModel]:
                 if not query.include_deleted:
                     results = [m for m in results if not m.is_deleted()]
 
-                # Apply filters
+                # Apply filters. Validated first: an empty candidate set
+                # must not hide a typo'd field or a bad operator.
+                check_filters(self._model_class, query.filters)
                 for filter_ in query.filters:
                     results = [m for m in results if self._apply_filter(m, filter_)]
 
@@ -514,33 +521,21 @@ class InMemoryReadModelRepository[TModel: ReadModel]:
         """
         Apply a single filter to a model.
 
+        Delegates to the shared dispatch in `adapters/_common` so this
+        adapter cannot drift from the SQL ones -- see
+        `ReadModelRepository.find` for the semantics.
+
         Args:
             model: The model to check
             filter_: The filter condition
 
         Returns:
             True if the model matches the filter
-        """
-        value = getattr(model, filter_.field, None)
 
-        if filter_.operator == "eq":
-            return bool(value == filter_.value)
-        elif filter_.operator == "ne":
-            return bool(value != filter_.value)
-        elif filter_.operator == "gt":
-            return bool(value > filter_.value)
-        elif filter_.operator == "gte":
-            return bool(value >= filter_.value)
-        elif filter_.operator == "lt":
-            return bool(value < filter_.value)
-        elif filter_.operator == "lte":
-            return bool(value <= filter_.value)
-        elif filter_.operator == "in":
-            return bool(value in filter_.value)
-        elif filter_.operator == "not_in":
-            return bool(value not in filter_.value)
-        else:
-            return False
+        Raises:
+            ValueError: On an unknown field name or an unknown operator.
+        """
+        return matches_filter(model, filter_)
 
     @property
     def model_class(self) -> type[TModel]:
