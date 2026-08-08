@@ -21,6 +21,99 @@ Expect this to take about 15 minutes.
 
 ---
 
+## First, the Smallest Thing That Works
+
+Before the walkthrough, here is the whole idea in one runnable file. It is a wallet,
+not a bank account, and it has exactly one event, one command, and no business rules —
+but it saves to an event store and rebuilds itself from history, which is the entire
+point of the library. Everything in the rest of this tutorial is elaboration on this
+shape.
+
+Save it as `wallet.py` and run `python wallet.py`:
+
+```python
+import asyncio
+from decimal import Decimal
+from uuid import UUID, uuid4
+
+from pydantic import BaseModel
+
+from eventsource import (
+    AggregateRepository,
+    DeciderAggregate,
+    DomainCommand,
+    DomainEvent,
+    InMemoryEventStore,
+    register_event,
+)
+
+
+@register_event
+class MoneyDeposited(DomainEvent):
+    aggregate_type: str = "Wallet"
+    amount: Decimal
+
+
+class Deposit(DomainCommand):
+    wallet_id: UUID
+    amount: Decimal
+
+
+class WalletState(BaseModel):
+    balance: Decimal = Decimal("0")
+
+
+class Wallet(DeciderAggregate[WalletState, Deposit]):
+    aggregate_type = "Wallet"
+
+    @staticmethod
+    def initial_state() -> WalletState:
+        return WalletState()
+
+    @staticmethod
+    def decide(command: Deposit, state: WalletState) -> list[DomainEvent]:
+        return [MoneyDeposited(aggregate_id=command.wallet_id, amount=command.amount)]
+
+    @staticmethod
+    def evolve(state: WalletState, event: DomainEvent) -> WalletState:
+        match event:
+            case MoneyDeposited(amount=amount):
+                return state.model_copy(update={"balance": state.balance + amount})
+            case _:
+                return state
+
+
+async def main() -> None:
+    repo = AggregateRepository(event_store=InMemoryEventStore(), aggregate_factory=Wallet)
+
+    wallet_id = uuid4()
+    wallet = repo.create_new(wallet_id)
+    wallet.execute(Deposit(wallet_id=wallet_id, amount=Decimal("25")))
+    await repo.save(wallet)
+
+    reloaded = await repo.load(wallet_id)
+    print(f"balance: {reloaded.state.balance}")
+    print(f"version: {reloaded.version}")
+
+
+asyncio.run(main())
+```
+
+```
+balance: 25
+version: 1
+```
+
+Five pieces: an **event** (`MoneyDeposited`), a **command** (`Deposit`), a **state**
+(`WalletState`), a **decider** that turns one into the other (`Wallet`), and a
+**repository** that moves events to and from a store. `reloaded` never saw the deposit
+happen — it was rebuilt by replaying the one stored event through `evolve()`.
+
+If that made sense, the walkthrough below adds the parts a real domain needs: multiple
+events, invariants that can refuse a command, and an explanation of every line.
+
+---
+
 ## What You'll Build
 
 You will build a `BankAccount` — the smallest domain that still has real invariants to
@@ -608,3 +701,26 @@ and storage. Everything past this point — projections, subscriptions, other ba
 builds on exactly this pattern; see [Projections](tutorials/06-projections.md)
 to keep going, or [aggregate styles](explanation/aggregate-styles.md) if you want to
 see the same domain written the other two ways this library supports.
+
+### Testing what you just wrote
+
+You do not have to hand-roll fixtures for any of this. The package ships a test
+toolkit at `eventsource.testing`:
+
+```python
+from eventsource.testing import DeciderScenario, EventBuilder, InMemoryTestHarness
+```
+
+`DeciderScenario` exercises `decide()` and `evolve()` as the pure functions they are —
+given some past events, when a command, then these events (or this rejection) — with
+no store, no bus, and no event loop involved. `InMemoryTestHarness` gives you a
+pre-wired in-memory store, bus, and repository when you want to test the persistence
+seam too, alongside the `given_events` / `when_command` / `then_event_published` BDD
+helpers, `EventBuilder` for constructing test events, `EventAssertions` for readable
+failures, and `RecordingEventBus` for asserting on what was published.
+
+The same module exports the **port conformance suites** — `AppenderConformance`,
+`StreamReaderConformance`, `CheckpointRepositoryConformance` and a dozen siblings.
+Subclass one and supply a `store` fixture and your own backend is held to exactly the
+contract the built-in adapters are held to; see
+[Validate a Custom Backend](guides/validate-custom-backend.md).
