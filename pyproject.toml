@@ -211,6 +211,10 @@ dev = [
     "pytest-timeout>=2.3",
     "pip-audit>=2.7",
     "pytest-xdist>=3.5",
+    # Transitive via cosmic-ray. Floored to clear GHSA-9rj7-rf2p-w77r and four
+    # sibling advisories that `make audit` fails on; cosmic-ray itself is
+    # unpinned above 3.1.
+    "gitpython>=3.1.58",
 ]
 
 [tool.mutmut]
