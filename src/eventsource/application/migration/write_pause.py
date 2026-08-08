@@ -52,13 +52,15 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
+from eventsource.domain.exceptions import EventSourceError
+
 if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
 
 
-class WritePausedError(Exception):
+class WritePausedError(EventSourceError):
     """
     Raised when a write operation times out waiting for pause to end.
 

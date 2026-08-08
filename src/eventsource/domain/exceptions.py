@@ -327,12 +327,7 @@ class DuplicateEventError(EventSourceError):
     """An event with this event_id already exists in the store."""
 
 
-# NOTE: intentionally `Exception`, not `EventSourceError` -- this is the
-# pre-move contract preserved verbatim from the old eventsource.snapshots
-# package. `except EventSourceError` deliberately does not catch snapshot
-# errors; rebasing this hierarchy is a breaking change reserved for a
-# future major version.
-class SnapshotError(Exception):
+class SnapshotError(EventSourceError):
     """
     Base exception for snapshot-related errors.
 

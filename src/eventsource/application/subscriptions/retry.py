@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from eventsource.domain.exceptions import EventSourceError
+
 logger = logging.getLogger(__name__)
 
 
@@ -168,7 +170,7 @@ class CircuitBreakerConfig:
             raise ValueError(f"half_open_max_calls must be >= 1, got {self.half_open_max_calls}.")
 
 
-class RetryError(Exception):
+class RetryError(EventSourceError):
     """
     Raised when all retry attempts fail.
 
@@ -184,7 +186,7 @@ class RetryError(Exception):
         self.last_error = last_error
 
 
-class CircuitBreakerOpenError(Exception):
+class CircuitBreakerOpenError(EventSourceError):
     """
     Raised when the circuit breaker is open and blocking requests.
 

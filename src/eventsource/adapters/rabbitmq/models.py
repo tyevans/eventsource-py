@@ -6,8 +6,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from eventsource.domain.exceptions import EventSourceError
 
-class RabbitMQNotAvailableError(ImportError):
+
+class RabbitMQNotAvailableError(EventSourceError, ImportError):
     """Raised when aio-pika package is not installed.
 
     This exception is raised when attempting to use RabbitMQ functionality
@@ -227,7 +229,7 @@ class HealthCheckResult:
     details: dict[str, Any] | None = None
 
 
-class ShutdownError(Exception):
+class ShutdownError(EventSourceError):
     """Raised when an operation is attempted after shutdown.
 
     This exception is raised when attempting to publish events or start
@@ -248,7 +250,7 @@ class ShutdownError(Exception):
         super().__init__(message)
 
 
-class BatchPublishError(Exception):
+class BatchPublishError(EventSourceError):
     """Raised when a batch publish operation has failures.
 
     This exception is raised when one or more events in a batch fail to publish.

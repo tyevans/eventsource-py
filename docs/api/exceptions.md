@@ -70,12 +70,13 @@ serializing an event, and running a projection. Everything there derives from
 group.
 
 **Subsystem errors** live beside the code that raises them (or, for
-`SnapshotError`, alongside the core hierarchy in `eventsource.domain.exceptions`
-despite not deriving from it) — `eventsource.application.migration`,
+`SnapshotError`, alongside the core hierarchy in `eventsource.domain.exceptions`)
+— `eventsource.application.migration`,
 `eventsource.ports.readmodels.exceptions`, and the optional bus backends each
-define their own families. These are *not*
-subclasses of `EventSourceError`; catching the core base class will not catch
-them. (`LockAcquisitionError`, `LockNotHeldError`, and `SubscriptionError`
+define their own families. They are *also*
+`EventSourceError` subclasses: `except EventSourceError` is a reliable
+library-boundary handler, and each family root narrows it further.
+(`LockAcquisitionError`, `LockNotHeldError`, and `SubscriptionError`
 are `EventSourceError` subclasses too, but live in `eventsource.ports.exceptions`
 rather than `eventsource.domain.exceptions` as of ADR 0041 — see the diagram
 below.)
@@ -128,19 +129,24 @@ checkpoints, subscriptions), not domain concepts; roughly a third of the old
 intermediate base classes beyond `SubscriptionError` — every other error is
 exactly one level below the root.
 
-Every other error family in the library is rooted at a plain Python builtin,
-not at `EventSourceError`:
+Every other error family in the library is *also* rooted at `EventSourceError`.
+Several keep a builtin base alongside it, so the builtin-shaped `except` clauses
+callers already wrote keep working:
 
-| Family | Root | Base class |
+| Family | Root | Base classes |
 | --- | --- | --- |
-| Snapshots | `SnapshotError` | `Exception` (defined in `eventsource.domain.exceptions`, alongside but not part of the core hierarchy) |
-| Read models | `ReadModelError` | `Exception` |
-| Subscriptions | `SubscriptionError` | `Exception` |
-| Event registry | `EventTypeNotFoundError` | `KeyError` |
-| Event registry | `DuplicateEventTypeError` | `ValueError` |
-| Optional backends | `RedisNotAvailableError`, `RabbitMQNotAvailableError`, `KafkaNotAvailableError`, `SQLiteNotAvailableError` | `ImportError` |
+| Snapshots | `SnapshotError` | `EventSourceError` (defined in `eventsource.domain.exceptions`) |
+| Read models | `ReadModelError` | `EventSourceError` |
+| Subscriptions | `SubscriptionError` | `EventSourceError` |
+| Event registry | `EventTypeNotFoundError` | `EventSourceError` (no longer also a `KeyError`, ADR 0042) |
+| Event registry | `DuplicateEventTypeError` | `EventSourceError` (no longer also a `ValueError`, ADR 0042) |
+| Optional backends | `RabbitMQNotAvailableError` | `EventSourceError`, `ImportError` |
+| Optional backends | `RedisNotAvailableError`, `KafkaNotAvailableError`, `SQLiteNotAvailableError` | `ImportError` |
 
-Catching `EventSourceError` will not catch any of these.
+`except EventSourceError` catches every family in this table except the three
+remaining optional-backend import sentinels, which are raised only when an
+extra is missing and are deliberately `ImportError`-shaped.
+`tests/unit/test_exception_hierarchy.py` is the guard that keeps this true.
 
 ### Hierarchy diagram
 
@@ -201,30 +207,30 @@ Exception
 │       ├── EventBusConnectionError
 │       └── TransitionError
 │
-├── SnapshotError                             eventsource.domain.exceptions
-│   │                                          (not a subclass of EventSourceError)
-│   ├── SnapshotDeserializationError
-│   ├── SnapshotSchemaVersionError
-│   └── SnapshotNotFoundError
-│
-├── ReadModelError                            eventsource.ports.readmodels.exceptions
-│   ├── OptimisticLockError                    (distinct from the core one)
-│   └── ReadModelNotFoundError
-│
-├── (standalone, direct Exception subclasses)
+├── EventSourceError                          (subsystem roots and standalones)
+│   ├── SnapshotError                         eventsource.domain.exceptions
+│   │   ├── SnapshotDeserializationError
+│   │   ├── SnapshotSchemaVersionError
+│   │   └── SnapshotNotFoundError
+│   ├── ReadModelError                        eventsource.ports.readmodels.exceptions
+│   │   ├── ReadModelVersionConflictError      (ADR 0050: was OptimisticLockError)
+│   │   └── ReadModelNotFoundError
 │   ├── RetryError                            eventsource.application.subscriptions.retry
 │   ├── CircuitBreakerOpenError               eventsource.application.subscriptions.retry
 │   │                                          (distinct from the migration one)
 │   ├── StoreNotFoundError                    eventsource.application.migration.router
 │   ├── WritePausedError                      eventsource.application.migration.write_pause
 │   ├── ShutdownError                         eventsource.adapters.rabbitmq
-│   └── BatchPublishError                     eventsource.adapters.rabbitmq
+│   ├── BatchPublishError                     eventsource.adapters.rabbitmq
+│   └── RabbitMQNotAvailableError             eventsource.adapters.rabbitmq
+│                                              (also an ImportError)
 │
 ├── ValueError
 │   └── DeserializationError                  eventsource.adapters.kafka
 └── ImportError
     ├── RedisNotAvailableError                eventsource.adapters.redis
     ├── RabbitMQNotAvailableError             eventsource.adapters.rabbitmq
+    │                                          (also an EventSourceError, above)
     ├── KafkaNotAvailableError                eventsource.adapters.kafka
     └── SQLiteNotAvailableError               eventsource.adapters.sqlite.snapshots
 ```
@@ -233,14 +239,13 @@ Only the migration family has depth beyond one level; everywhere else the
 hierarchy is flat, so specificity comes from the attributes an error carries
 rather than from its position in the tree.
 
-Two names appear twice in the tree. `OptimisticLockError` is defined both in
-`eventsource.domain.exceptions` (aggregate append conflicts) and in
-`eventsource.ports.readmodels.exceptions` (read-model row conflicts), and the
-two are unrelated classes — catching one will not catch the other. (This
-collision predates ADR 0029 and is tracked in `BACKLOG.md`.) `CircuitBreakerOpenError`
-is likewise defined twice, in `eventsource.application.migration.exceptions` (a
-`MigrationError`) and in `eventsource.application.subscriptions.retry` (a bare `Exception`).
-Import these by module rather than pulling both into one namespace.
+One name appears twice in the tree. `CircuitBreakerOpenError` is defined in
+`eventsource.application.migration.exceptions` (a `MigrationError`) and in
+`eventsource.application.subscriptions.retry` (a direct `EventSourceError`
+subclass); the two are unrelated classes, so catching one will not catch the
+other. Import it by module rather than pulling both into one namespace.
+(The read-model conflict error was the second such collision until ADR 0050
+renamed it to `ReadModelVersionConflictError`.)
 
 ## EventSourceError
 
