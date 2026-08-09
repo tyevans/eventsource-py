@@ -9,7 +9,6 @@ This module provides a unified error handling strategy for subscriptions:
 - Health check integration
 
 The error handling system integrates with:
-- Backpressure (PHASE2-001)
 - Graceful shutdown (PHASE2-002)
 - Retry mechanisms (PHASE2-003)
 """

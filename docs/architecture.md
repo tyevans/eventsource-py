@@ -382,7 +382,7 @@ answers "how is an event written down"; Tier 2 answers "what happens on the
 hundredth restart, when one consumer is slow, another is crash-looping, and a
 deploy is rolling underneath both". Its concerns -- resumption from a
 checkpoint, duplicate suppression across the catch-up-to-live seam,
-backpressure, poison-event quarantine, signal handling and phased drain -- only
+poison-event quarantine, signal handling and phased drain -- only
 exist because delivery is at-least-once and processes are mortal. None of them
 are visible in a single pass through the loop, which is exactly why they are
 separated from the projections they drive: a projection stays a fold over
@@ -568,7 +568,7 @@ Fusing them is how projections end up with bespoke, half-correct catch-up loops.
 registration, health and error aggregation -- and it delegates almost
 everything. Registration lives in `registry.py`, start/stop in `lifecycle.py`,
 draining in `shutdown.py`, retry and circuit breaking in `retry.py`,
-backpressure in `flow_control.py`, pausing in `pause_resume.py`, and the
+in-flight counting in `flow_control.py`, pausing in `pause_resume.py`, and the
 catch-up-to-live handoff in `transition.py` and `runners/`. The manager is a
 facade over collaborators, not a god object, because each of those concerns has
 its own lifecycle and its own tests.
@@ -725,8 +725,8 @@ so there is no `direction` field to set -- walks the
 returned `EventEnvelope`s, and stops when it reaches the target or a batch comes
 back empty. It owns its clock, so it can be paused mid-batch
 (`wait_if_paused()` is checked both between batches and between events within a
-batch), stopped at a safe point (`_stop_requested`), and slowed by
-backpressure. `LiveRunner` inverts the trigger but not the read: it registers
+batch), and stopped at a safe point (`_stop_requested`).
+`LiveRunner` inverts the trigger but not the read: it registers
 `_LiveEventHandler` instances via `event_bus.subscribe(...)` for each type in
 `subscriber.subscribed_to()`, and is *woken* by the bus rather than polling
 it. But once woken, it pulls, the same way `CatchUpRunner` does -- it calls

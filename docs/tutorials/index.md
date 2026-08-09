@@ -95,7 +95,7 @@ swap `InMemoryEventStore` for `PostgreSQLEventStore`, apply the SQL schema, and 
 PostgreSQL advisory locks to serialize work across processes. You do the same with
 `SQLiteEventStore` and `SQLiteSnapshotStore` for local development and tests. You stand
 up a `SubscriptionManager` that owns the lifecycle of your projections -- runners, retry
-policy, health reporting, flow control -- so consumers keep up without you babysitting
+policy, health reporting, checkpointing -- so consumers keep up without you babysitting
 them. You add snapshots so an order with thousands of events still loads in constant
 time. And you close the gap between "committed to the database" and "published to the
 bus" with the outbox pattern, using `PostgreSQLOutboxRepository`, plus the operational

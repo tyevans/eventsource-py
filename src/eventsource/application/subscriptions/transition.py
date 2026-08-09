@@ -470,8 +470,9 @@ class TransitionCoordinator:
         """
         Get the FlowController for this subscription, if running.
 
-        The FlowController is accessed through the live runner and is
-        used for backpressure management and drain operations during shutdown.
+        The FlowController is accessed through the live runner. It counts
+        in-flight events so shutdown can wait for the drain; it does not
+        limit concurrency, because delivery is sequential.
 
         Returns:
             FlowController instance if live runner is active, None otherwise

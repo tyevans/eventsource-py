@@ -47,7 +47,7 @@ class SubscriptionConfig:
     Configuration for a subscription.
 
     Controls how the subscription reads events, manages checkpoints,
-    and handles backpressure.
+    filters, retries, and shuts down.
 
     Attributes:
         start_from: Where to start reading events
