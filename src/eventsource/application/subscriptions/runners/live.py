@@ -308,7 +308,7 @@ class LiveRunner:
             Number of envelopes processed (including filtered ones)
         """
         processed = 0
-        options = FeedReadOptions(limit=self.config.batch_size)
+        options = FeedReadOptions(tenant_id=self.config.tenant_id, limit=self.config.batch_size)
 
         while not self._stop_requested:
             from_position = self.subscription.last_processed_position
