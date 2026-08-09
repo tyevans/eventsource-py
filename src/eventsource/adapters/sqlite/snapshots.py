@@ -30,13 +30,20 @@ from eventsource.observability.attributes import (
 )
 from eventsource.ports.snapshots import Snapshot
 
-# Optional dependency handling
+# Optional dependency handling. Named AIOSQLITE_AVAILABLE (not
+# SQLITE_AVAILABLE) because it is the aiosqlite driver being guarded here,
+# not Python's always-available sqlite3 stdlib module -- and to match
+# store.py's identically-guarded import of the same package, so the two
+# don't spell the same fact two different ways (recurring-defects §2). This
+# module's own copy is intentional (each guarded import needs its own
+# try/except), but only store.py's copy is re-exported from
+# adapters/sqlite/__init__.py -- see that module's docstring.
 try:
     import aiosqlite
 
-    SQLITE_AVAILABLE = True
+    AIOSQLITE_AVAILABLE = True
 except ImportError:
-    SQLITE_AVAILABLE = False
+    AIOSQLITE_AVAILABLE = False
     aiosqlite = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
@@ -126,7 +133,7 @@ class SQLiteSnapshotStore:
         Raises:
             SQLiteNotAvailableError: If aiosqlite is not installed.
         """
-        if not SQLITE_AVAILABLE:
+        if not AIOSQLITE_AVAILABLE:
             raise SQLiteNotAvailableError()
 
         self._tracer = tracer or create_tracer(__name__, enable_tracing)

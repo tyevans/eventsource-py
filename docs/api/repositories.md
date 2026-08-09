@@ -113,7 +113,7 @@ Most of these names are additionally re-exported from `eventsource` itself:
 `SQLiteOutboxRepository` is exported too, but only conditionally —
 `eventsource/__init__.py` imports it inside a `try/except ImportError`
 alongside `SQLiteEventStore` and adds it to `__all__` only when
-`SQLITE_AVAILABLE` is `True` (that is, when `aiosqlite` is installed).
+`AIOSQLITE_AVAILABLE` is `True` (that is, when `aiosqlite` is installed).
 
 ### Method naming convention (`get_` / `add_` / `mark_` / `increment_` / `cleanup_`)
 
@@ -286,7 +286,7 @@ imports `aiosqlite` only under `if TYPE_CHECKING:`. Only
 
 The top-level namespace behaves differently: `eventsource/__init__.py` imports
 `SQLiteOutboxRepository` inside a `try/except ImportError` next to
-`SQLiteEventStore` and appends it to `__all__` only when `SQLITE_AVAILABLE`
+`SQLiteEventStore` and appends it to `__all__` only when `AIOSQLITE_AVAILABLE`
 is `True`. `from eventsource import SQLiteOutboxRepository` therefore fails on a
 machine without `aiosqlite`, while
 `from eventsource.adapters.sqlite import SQLiteOutboxRepository` succeeds. Prefer

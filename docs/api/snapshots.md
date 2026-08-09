@@ -20,13 +20,13 @@ The machinery spans five source modules, across three rings:
 | `eventsource.domain.exceptions` | Entities | `SnapshotError`, `SnapshotDeserializationError`, `SnapshotSchemaVersionError`, `SnapshotNotFoundError` |
 | `eventsource.adapters.memory.snapshots` | Adapters | `InMemorySnapshotStore` |
 | `eventsource.adapters.postgresql.snapshots` | Adapters | `PostgreSQLSnapshotStore` |
-| `eventsource.adapters.sqlite.snapshots` | Adapters | `SQLiteSnapshotStore`, `SQLITE_AVAILABLE`, `SQLiteNotAvailableError` |
+| `eventsource.adapters.sqlite.snapshots` | Adapters | `SQLiteSnapshotStore`, `AIOSQLITE_AVAILABLE`, `SQLiteNotAvailableError` |
 | `eventsource.application.aggregates.snapshotting` | Application | `SnapshotPolicy`, `EveryNEvents`, `Never`, `SnapshotScheduler`, `ImmediateScheduler`, `BackgroundScheduler`, `take_snapshot()`, `read_valid_snapshot()` |
 
 Import paths differ by name. `Snapshot`, `SnapshotStore`,
 `InMemorySnapshotStore`, and the four exception types are re-exported from the
 top-level `eventsource` namespace. `PostgreSQLSnapshotStore` and
-`SQLiteSnapshotStore` (plus its own `SQLITE_AVAILABLE` /
+`SQLiteSnapshotStore` (plus its own `AIOSQLITE_AVAILABLE` /
 `SQLiteNotAvailableError`) are exported only from their respective adapter
 packages — `eventsource.adapters.postgresql` /
 `eventsource.adapters.sqlite`. The policy and scheduler classes and
@@ -60,7 +60,7 @@ that can store JSON.
 appending, so reading back always yields the latest capture. Three backends
 ship in-tree: `InMemorySnapshotStore` (dict-backed, for tests and single-process
 use), `PostgreSQLSnapshotStore`, and `SQLiteSnapshotStore` (gated behind its
-adapter package's own `SQLITE_AVAILABLE`, raising `SQLiteNotAvailableError`
+adapter package's own `AIOSQLITE_AVAILABLE`, raising `SQLiteNotAvailableError`
 when `aiosqlite` is not installed).
 
 A `SnapshotPolicy` decides *when* a snapshot is written; a `SnapshotScheduler`

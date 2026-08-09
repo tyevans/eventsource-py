@@ -283,7 +283,7 @@ What happens if you skip an extra depends on which one:
   named error, not a traceback from somewhere inside the library.
 - **SQLite fails at construction, not import.** `SQLiteEventStore` is always
   re-exported from `eventsource`, so `from eventsource import SQLiteEventStore`
-  succeeds either way; `SQLITE_AVAILABLE` (backed by `AIOSQLITE_AVAILABLE`) records
+  succeeds either way; `AIOSQLITE_AVAILABLE` records
   whether `aiosqlite` actually imported. Without the extra, *constructing* the
   store raises a plain `ImportError` at `__init__` time -- so if a Tutorial 12
   example fails when you instantiate the store, that is why. (`SQLiteOutboxRepository`

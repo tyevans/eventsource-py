@@ -208,7 +208,7 @@ alongside `mypy>=1.19.0`, not in an extra. See the previous page for why that ma
 #### How a missing extra shows up
 
 Optional imports are guarded in the source by `try/except ImportError` with a
-`*_AVAILABLE` flag — `SQLITE_AVAILABLE` in the top-level `__init__.py`, `REDIS_AVAILABLE`,
+`*_AVAILABLE` flag — `AIOSQLITE_AVAILABLE` in the top-level `__init__.py`, `REDIS_AVAILABLE`,
 `RABBITMQ_AVAILABLE`, and `KAFKA_AVAILABLE` in the corresponding `bus/` modules. Nothing
 fails at import time; the failure is deferred to the point of use, and it names the extra:
 

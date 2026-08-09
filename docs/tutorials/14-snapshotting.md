@@ -580,7 +580,7 @@ snapshot_store = PostgreSQLSnapshotStore(session_factory)
 
 with `get_schema("snapshots")` (PostgreSQL is the default backend) applied to the database
 first. `SQLiteSnapshotStore` requires the `aiosqlite` extra; check
-`eventsource.adapters.sqlite.SQLITE_AVAILABLE` if you need to degrade gracefully.
+`eventsource.adapters.sqlite.AIOSQLITE_AVAILABLE` if you need to degrade gracefully.
 
 ## What you learned
 

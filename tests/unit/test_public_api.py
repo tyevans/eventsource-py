@@ -37,7 +37,6 @@ CORE_RINGS_EXPORTS = [
     "SQLiteEventStore",
     "ASYNCPG_AVAILABLE",
     "AIOSQLITE_AVAILABLE",
-    "SQLITE_AVAILABLE",
     "SyncEventStoreAdapter",
     "DuplicateEventError",
     "PositionDecodeError",

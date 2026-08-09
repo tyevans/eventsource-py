@@ -55,13 +55,13 @@ The bundled adapters:
 ```python
 from eventsource import InMemoryEventStore, PostgreSQLEventStore
 
-from eventsource import SQLITE_AVAILABLE
+from eventsource import AIOSQLITE_AVAILABLE
 
-if SQLITE_AVAILABLE:
+if AIOSQLITE_AVAILABLE:
     from eventsource import SQLiteEventStore
 ```
 
-Guard the `SQLiteEventStore` import on `SQLITE_AVAILABLE` since `aiosqlite` is an
+Guard the `SQLiteEventStore` import on `AIOSQLITE_AVAILABLE` since `aiosqlite` is an
 optional dependency; `PostgreSQLEventStore` is importable unconditionally but needs
 `asyncpg` at call time, gated by `ASYNCPG_AVAILABLE`.
 

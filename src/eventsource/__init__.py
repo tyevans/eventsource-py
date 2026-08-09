@@ -95,7 +95,6 @@ if TYPE_CHECKING:
     from eventsource.adapters.sql.readmodel_projection import ReadModelProjection
     from eventsource.adapters.sqlite import (
         AIOSQLITE_AVAILABLE,
-        SQLITE_AVAILABLE,
         SQLiteEventStore,
         SQLiteOutboxRepository,  # noqa: F401 -- conditionally exported, see __all__ below
     )
@@ -397,7 +396,6 @@ __all__ = [
     "PositionForeignError",
     # Optional-driver availability flags
     "AIOSQLITE_AVAILABLE",
-    "SQLITE_AVAILABLE",
     "SQLiteEventStore",
 ]
 
@@ -410,6 +408,16 @@ __all__ = [
 # eventsource` -- exactly the eager optional-driver import ADR 0035 exists to
 # prevent, and the reason the front door pulled in 177 modules. `find_spec`
 # answers the same question without running any of it.
+#
+# This is a third mechanism computing the same underlying fact as
+# `AIOSQLITE_AVAILABLE` (re-exported from `eventsource.adapters.sqlite`,
+# itself set by an actual `import aiosqlite` try/except in store.py) -- not
+# a redundant copy of it. The two answer different questions at different
+# times: `AIOSQLITE_AVAILABLE` is read only once `adapters.sqlite` is
+# already loaded (so eagerly importing aiosqlite there costs nothing extra);
+# `_AIOSQLITE_AVAILABLE_FOR_ALL` is read *before* deciding whether to import
+# `adapters.sqlite` at all, from this lazy front door, where an eager
+# `import aiosqlite` would defeat the point of `__getattr__`-based laziness.
 def _module_installed(name: str) -> bool:
     from importlib.util import find_spec
 
@@ -566,7 +574,6 @@ _LAZY: dict[str, str] = {
     "PositionDecodeError": "eventsource.ports.exceptions",
     "PositionForeignError": "eventsource.ports.exceptions",
     "AIOSQLITE_AVAILABLE": "eventsource.adapters.sqlite",
-    "SQLITE_AVAILABLE": "eventsource.adapters.sqlite",
     "SQLiteEventStore": "eventsource.adapters.sqlite",
     "SQLiteOutboxRepository": "eventsource.adapters.sqlite",
 }
