@@ -662,3 +662,68 @@ class TestConcurrentExecution:
 
         # Fast should start while slow is running
         assert fast_start_idx < slow_end_idx
+
+    @pytest.mark.asyncio
+    async def test_registry_dispatch_respects_max_concurrency(self) -> None:
+        """ProjectionRegistry never runs more than max_concurrency handlers
+        at once, even when fan-out is wider than the bound."""
+        in_flight = 0
+        peak_in_flight = 0
+        peak_lock = asyncio.Lock()
+
+        class TrackedProjection(Projection):
+            async def handle(self, event: DomainEvent) -> None:
+                nonlocal in_flight, peak_in_flight
+                async with peak_lock:
+                    in_flight += 1
+                    peak_in_flight = max(peak_in_flight, in_flight)
+                await asyncio.sleep(0.05)
+                async with peak_lock:
+                    in_flight -= 1
+
+            async def reset(self) -> None:
+                pass
+
+        registry = ProjectionRegistry(max_concurrency=3)
+        for _ in range(10):
+            registry.register_projection(TrackedProjection())
+
+        event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
+        await registry.dispatch(event)
+
+        assert peak_in_flight <= 3
+        # Sanity: with 10 projections and no cap, uncapped would hit 10.
+        assert peak_in_flight == 3
+
+    @pytest.mark.asyncio
+    async def test_subscriber_registry_dispatch_respects_max_concurrency(
+        self,
+    ) -> None:
+        """SubscriberRegistry never runs more than max_concurrency subscribers
+        at once, even when fan-out is wider than the bound."""
+        in_flight = 0
+        peak_in_flight = 0
+        peak_lock = asyncio.Lock()
+
+        class TrackedSubscriber(EventSubscriber):
+            def subscribed_to(self) -> list[type[DomainEvent]]:
+                return [OrderCreated]
+
+            async def handle(self, event: DomainEvent) -> None:
+                nonlocal in_flight, peak_in_flight
+                async with peak_lock:
+                    in_flight += 1
+                    peak_in_flight = max(peak_in_flight, in_flight)
+                await asyncio.sleep(0.05)
+                async with peak_lock:
+                    in_flight -= 1
+
+        registry = SubscriberRegistry(max_concurrency=2)
+        for _ in range(8):
+            registry.register(TrackedSubscriber())
+
+        event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
+        await registry.dispatch(event)
+
+        assert peak_in_flight <= 2
+        assert peak_in_flight == 2

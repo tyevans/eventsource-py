@@ -49,12 +49,16 @@ class ProjectionRegistry:
         >>>
         >>> # With tracing enabled
         >>> registry = ProjectionRegistry(enable_tracing=True)
+        >>>
+        >>> # Cap fan-out concurrency for a large registry
+        >>> registry = ProjectionRegistry(max_concurrency=16)
     """
 
     def __init__(
         self,
         tracer: Tracer | None = None,
         enable_tracing: bool = False,
+        max_concurrency: int | None = None,
     ) -> None:
         """
         Initialize the projection registry.
@@ -65,12 +69,21 @@ class ProjectionRegistry:
             enable_tracing: If True and OpenTelemetry is available, emit traces.
                           Default is False (tracing off for high-frequency operations).
                           Ignored if tracer is explicitly provided.
+            max_concurrency: Maximum number of projections/handlers dispatched
+                          concurrently for a single event. `None` (the
+                          default) leaves fan-out uncapped. The bound applies
+                          per `dispatch()` call, not across the registry's
+                          lifetime, and is enforced with one semaphore owned
+                          by this instance -- never construct a new one per
+                          call, which multiplies the effective ceiling under
+                          concurrent callers.
         """
         self._projections: list[Projection] = []
         self._handlers: list[EventHandlerBase] = []
         # Composition-based tracing (replaces TracingMixin)
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
+        self._semaphore = asyncio.Semaphore(max_concurrency) if max_concurrency else None
 
     def register_projection(self, projection: Projection) -> None:
         """
@@ -166,20 +179,28 @@ class ProjectionRegistry:
         ):
             await self._dispatch_internal(event)
 
+    async def _bounded(self, coro: Any) -> Any:
+        """Run `coro` under the fan-out semaphore, if one is configured."""
+        if self._semaphore is None:
+            return await coro
+        async with self._semaphore:
+            return await coro
+
     async def _dispatch_internal(self, event: DomainEvent) -> None:
         """Internal dispatch implementation without tracing context."""
         # Prepare projection tasks
         projection_tasks = []
         for projection in self._projections:
-            projection_tasks.append(projection.handle(event))
+            projection_tasks.append(self._bounded(projection.handle(event)))
 
         # Prepare handler tasks
         handler_tasks = []
         for handler in self._handlers:
             if handler.can_handle(event):
-                handler_tasks.append(handler.handle(event))
+                handler_tasks.append(self._bounded(handler.handle(event)))
 
-        # Execute all projections and handlers concurrently
+        # Execute all projections and handlers concurrently, up to
+        # max_concurrency at a time if configured.
         # return_exceptions=True prevents one failure from stopping others
         all_tasks = projection_tasks + handler_tasks
         if all_tasks:
@@ -260,27 +281,28 @@ class ProjectionRegistry:
 
 class ProjectionCoordinator:
     """
-    Coordinates event distribution from event store to projections.
+    Batch-shaped operations over a ProjectionRegistry.
 
-    The coordinator:
-    1. Sets up the event bus connection
-    2. Registers projections as subscribers
-    3. Polls event store and dispatches to projections
-    4. Supports rebuilding projections by replaying events
-    5. Handles batching and resumption
-    6. Optional OpenTelemetry tracing support (disabled by default)
+    The coordinator does not poll or subscribe to anything itself -- it has
+    no event bus connection and no background task. It is driven by an
+    external caller (a subscription runner, `replay()`, or application code)
+    that already has events in hand and wants them dispatched, rebuilt, or
+    caught up against the registered projections. Concretely, it adds:
 
-    This is a generic coordinator that doesn't depend on specific
-    Honeybadger types. Application-specific coordinators should
-    extend or wrap this class.
+    1. `dispatch_events` -- dispatch a batch of events to the registry
+    2. `rebuild_all` / `rebuild_projection` -- rebuild by replaying events
+    3. `catchup` -- process events since a checkpoint without resetting
+    4. `health_check` / `get_projection_info` -- introspection
+    5. Optional OpenTelemetry tracing support (disabled by default)
+
+    Live polling and catch-up subscriptions live in
+    `application/subscriptions/`; rebuilding a projection from the global
+    feed on its own is `replay()` in `application/projections/replay.py`.
 
     Example:
-        >>> coordinator = ProjectionCoordinator(
-        ...     registry=registry,
-        ...     event_store=event_store,
-        ... )
-        >>> await coordinator.start()  # Begin polling
-        >>> await coordinator.rebuild_projection(order_projection)
+        >>> coordinator = ProjectionCoordinator(registry=registry)
+        >>> await coordinator.dispatch_events(events)
+        >>> await coordinator.rebuild_projection(order_projection, events)
         >>>
         >>> # With tracing enabled
         >>> coordinator = ProjectionCoordinator(registry=registry, enable_tracing=True)
@@ -289,8 +311,6 @@ class ProjectionCoordinator:
     def __init__(
         self,
         registry: ProjectionRegistry,
-        batch_size: int = 100,
-        poll_interval_seconds: float = 1.0,
         tracer: Tracer | None = None,
         enable_tracing: bool = False,
     ) -> None:
@@ -299,8 +319,6 @@ class ProjectionCoordinator:
 
         Args:
             registry: Registry containing projections
-            batch_size: Number of events to process per batch
-            poll_interval_seconds: How often to poll for new events
             tracer: Optional custom Tracer instance. If not provided, one is
                    created based on enable_tracing setting.
             enable_tracing: If True and OpenTelemetry is available, emit traces.
@@ -308,10 +326,6 @@ class ProjectionCoordinator:
                           Ignored if tracer is explicitly provided.
         """
         self.registry = registry
-        self.batch_size = batch_size
-        self.poll_interval_seconds = poll_interval_seconds
-        self._running = False
-        self._task: asyncio.Task[None] | None = None
         # Composition-based tracing (replaces TracingMixin)
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
@@ -476,8 +490,6 @@ class ProjectionCoordinator:
             "handler_count": self.registry.get_handler_count(),
             "projections": projection_names,
             "handlers": handler_names,
-            "batch_size": self.batch_size,
-            "poll_interval_seconds": self.poll_interval_seconds,
         }
 
 
@@ -492,11 +504,25 @@ class SubscriberRegistry:
         >>> registry = SubscriberRegistry()
         >>> registry.register(order_projection)
         >>> subscribers = registry.get_subscribers_for(OrderCreated)
+        >>>
+        >>> # Cap fan-out concurrency for a large registry
+        >>> registry = SubscriberRegistry(max_concurrency=16)
     """
 
-    def __init__(self) -> None:
-        """Initialize the subscriber registry."""
+    def __init__(self, max_concurrency: int | None = None) -> None:
+        """
+        Initialize the subscriber registry.
+
+        Args:
+            max_concurrency: Maximum number of subscribers dispatched
+                          concurrently for a single event. `None` (the
+                          default) leaves fan-out uncapped. Enforced with one
+                          semaphore owned by this instance -- see
+                          `ProjectionRegistry.__init__` for why it must not
+                          be constructed per call.
+        """
         self._subscribers: list[EventSubscriber] = []
+        self._semaphore = asyncio.Semaphore(max_concurrency) if max_concurrency else None
 
     def register(self, subscriber: EventSubscriber) -> None:
         """
@@ -544,6 +570,13 @@ class SubscriberRegistry:
         """
         return [s for s in self._subscribers if event_type in s.subscribed_to()]
 
+    async def _bounded(self, coro: Any) -> Any:
+        """Run `coro` under the fan-out semaphore, if one is configured."""
+        if self._semaphore is None:
+            return await coro
+        async with self._semaphore:
+            return await coro
+
     async def dispatch(self, event: DomainEvent) -> None:
         """
         Dispatch an event to all interested subscribers.
@@ -564,7 +597,7 @@ class SubscriberRegistry:
             )
             return
 
-        tasks = [s.handle(event) for s in subscribers]
+        tasks = [self._bounded(s.handle(event)) for s in subscribers]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         for i, result in enumerate(results):

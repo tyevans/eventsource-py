@@ -126,8 +126,10 @@ subscription runner, or the `ProjectionCoordinator`/`ProjectionRegistry` pair in
 registered projections that subscribe to its type.
 
 To *rebuild* a projection from the log rather than follow it live, use
-[`replay()`](#rebuilding-a-projection-replay) — the coordinator polls forever and stops
-on a failure, which is the wrong shape for a foreground rebuild.
+[`replay()`](#rebuilding-a-projection-replay). `ProjectionCoordinator.rebuild_projection`
+takes the events as a list the caller has already read; a live subscription runner polls
+forever and stops on a failure, which is the wrong shape for a foreground rebuild —
+`replay()` owns the read loop itself and records a failure without stopping instead.
 
 ## Import Surface (`eventsource.application.projections`)
 

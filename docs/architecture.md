@@ -1395,8 +1395,12 @@ cannot stall its siblings, and equally cannot tell the caller it is broken.
 implementations, routing by `subscribed_to()` so a subscriber is only invoked
 for event types it declared. `ProjectionCoordinator` sits above a registry and
 adds the batch-shaped operations -- `dispatch_events`, `rebuild_all`,
-`rebuild_projection`, `catchup`, `health_check` -- with `batch_size` and
-`poll_interval_seconds` as its knobs. Note the ordering asymmetry that runs
+`rebuild_projection`, `catchup`, `health_check`. It does not poll or hold an
+event bus connection itself; something else -- a subscription runner or
+`replay()` -- drives it with events already in hand. Fan-out concurrency
+within `ProjectionRegistry`/`SubscriberRegistry` is capped by an optional
+`max_concurrency`, enforced with one semaphore owned by the registry
+instance rather than one per call. Note the ordering asymmetry that runs
 through all three: fan-out *within* one event is concurrent, but
 `dispatch_many` walks the list sequentially, because event order is the one
 thing the read side must not reorder.
