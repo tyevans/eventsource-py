@@ -151,10 +151,7 @@ class LiveRunner:
         self._enable_tracing = self._tracer.enabled
 
         self.config = self.subscription.config
-        self._flow_controller = FlowController(
-            max_in_flight=self.config.max_in_flight,
-            backpressure_threshold=self.config.backpressure_threshold,
-        )
+        self._flow_controller = FlowController()
 
         # Event filtering - create from config/subscriber
         self._filter = EventFilter.from_config_and_subscriber(
@@ -738,17 +735,6 @@ class LiveRunner:
         """
         assert self._flow_controller is not None
         return self._flow_controller.stats
-
-    @property
-    def is_backpressured(self) -> bool:
-        """
-        Check if runner is experiencing backpressure.
-
-        Returns:
-            True if at or above backpressure threshold
-        """
-        assert self._flow_controller is not None
-        return self._flow_controller.is_backpressured
 
     @property
     def circuit_breaker(self) -> CircuitBreaker | None:

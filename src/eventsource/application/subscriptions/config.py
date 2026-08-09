@@ -56,8 +56,6 @@ class SubscriptionConfig:
             - "checkpoint": Resume from last checkpoint (default)
             - Position: Start from a specific opaque feed position
         batch_size: Number of events to read in each batch during catch-up
-        max_in_flight: Maximum events being processed concurrently
-        backpressure_threshold: Fraction (0-1) at which to signal backpressure
         checkpoint_strategy: When to persist checkpoint updates
         checkpoint_interval_seconds: Interval for PERIODIC strategy
         processing_timeout: Max seconds to wait for event processing
@@ -74,8 +72,6 @@ class SubscriptionConfig:
         >>> config = SubscriptionConfig(
         ...     start_from="beginning",
         ...     batch_size=500,
-        ...     max_in_flight=2000,
-        ...     backpressure_threshold=0.8,
         ... )
         >>>
         >>> # Tenant-scoped subscription for multi-tenant migration
@@ -91,10 +87,6 @@ class SubscriptionConfig:
 
     # Batch processing settings
     batch_size: int = 100
-    max_in_flight: int = 1000
-
-    # Backpressure settings
-    backpressure_threshold: float = 0.8
 
     # Checkpoint behavior
     checkpoint_strategy: CheckpointStrategy = CheckpointStrategy.EVERY_BATCH
@@ -133,13 +125,6 @@ class SubscriptionConfig:
                 "Use a value like 100 (default) or adjust based on your processing speed."
             )
 
-        # Validate max_in_flight
-        if self.max_in_flight < 1:
-            raise ValueError(
-                f"max_in_flight must be positive, got {self.max_in_flight}. "
-                "Use a value like 1000 (default) for reasonable backpressure."
-            )
-
         # Validate timeouts
         if self.processing_timeout <= 0:
             raise ValueError(
@@ -157,13 +142,6 @@ class SubscriptionConfig:
         if self.checkpoint_interval_seconds <= 0:
             raise ValueError(
                 f"checkpoint_interval_seconds must be positive, got {self.checkpoint_interval_seconds}."
-            )
-
-        # Validate backpressure_threshold
-        if not 0.0 <= self.backpressure_threshold <= 1.0:
-            raise ValueError(
-                f"backpressure_threshold must be between 0.0 and 1.0, "
-                f"got {self.backpressure_threshold}."
             )
 
         # Validate retry settings

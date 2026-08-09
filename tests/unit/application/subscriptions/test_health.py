@@ -378,59 +378,6 @@ class TestSubscriptionHealthChecker:
         # STARTING state is UNKNOWN, which is worse than HEALTHY
         assert result.overall_status in (HealthStatus.UNKNOWN, HealthStatus.HEALTHY)
 
-    def test_check_with_flow_controller(
-        self,
-        subscription: Subscription,
-    ):
-        """Test health check with flow controller."""
-        # Create mock flow controller
-        flow_controller = MagicMock()
-        flow_controller.is_backpressured = False
-        flow_controller.stats = MagicMock()
-        flow_controller.stats.events_in_flight = 10
-        flow_controller.stats.peak_in_flight = 50
-        flow_controller.stats.pause_count = 0
-
-        checker = SubscriptionHealthChecker(
-            subscription=subscription,
-            flow_controller=flow_controller,
-        )
-
-        result = checker.check()
-
-        backpressure_indicator = next(
-            (i for i in result.indicators if i.name == "backpressure"),
-            None,
-        )
-        assert backpressure_indicator is not None
-        assert backpressure_indicator.status == HealthStatus.HEALTHY
-
-    def test_check_with_backpressure(
-        self,
-        subscription: Subscription,
-    ):
-        """Test health check when under backpressure."""
-        flow_controller = MagicMock()
-        flow_controller.is_backpressured = True
-        flow_controller.stats = MagicMock()
-        flow_controller.stats.events_in_flight = 900
-        flow_controller.stats.peak_in_flight = 1000
-        flow_controller.stats.pause_count = 5
-
-        checker = SubscriptionHealthChecker(
-            subscription=subscription,
-            flow_controller=flow_controller,
-        )
-
-        result = checker.check()
-
-        backpressure_indicator = next(
-            (i for i in result.indicators if i.name == "backpressure"),
-            None,
-        )
-        assert backpressure_indicator is not None
-        assert backpressure_indicator.status == HealthStatus.DEGRADED
-
     def test_check_with_circuit_breaker_closed(
         self,
         subscription: Subscription,

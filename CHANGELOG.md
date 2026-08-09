@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- **`SubscriptionConfig.max_in_flight` and `backpressure_threshold` are deleted, and `FlowController` no longer limits concurrency.** Both subscription runners await each event's `handle()` to completion before starting the next, so at most one event was ever in flight per subscription and the semaphore these fields configured never blocked -- a real-runner reproduction measured `peak_in_flight == 1` with `max_in_flight=1000`. `FlowController` now only tracks in-flight count and gives graceful shutdown a drain latch (`wait_for_drain`, used by `SubscriptionManager` shutdown); its constructor takes no arguments. Also deleted: `FlowController.is_paused`, `is_backpressured`, `utilization`, `available_capacity`, `wait_for_capacity` (zero callers anywhere in the tree), and the `FlowControlStats` fields `peak_in_flight`, `pause_count`, `total_pause_time_seconds`. `HealthCheckConfig.backpressure_warning_duration_seconds` and `backpressure_critical_duration_seconds` are deleted along with `SubscriptionHealthChecker`'s `flow_controller` constructor parameter and its `_check_backpressure` indicator -- the duration thresholds were never measured against anything, so the warning/critical distinction could never fire. No shim, per the pre-1.0 no-shim policy.
+
 ## [0.13.0] - 2026-08-09
 
 A conformance release. Every item here is one fact that was stored in more than

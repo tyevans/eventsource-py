@@ -161,11 +161,8 @@ class CatchUpRunner:
                 subscription.subscriber,
             )
 
-        # Flow control for backpressure
-        self._flow_controller = FlowController(
-            max_in_flight=self.config.max_in_flight,
-            backpressure_threshold=self.config.backpressure_threshold,
-        )
+        # In-flight tracking / drain latch for graceful shutdown
+        self._flow_controller = FlowController()
 
         # Retry mechanism with optional circuit breaker
         self._circuit_breaker: CircuitBreaker | None = None
@@ -644,16 +641,6 @@ class CatchUpRunner:
             FlowControlStats snapshot
         """
         return self._flow_controller.stats
-
-    @property
-    def is_backpressured(self) -> bool:
-        """
-        Check if runner is experiencing backpressure.
-
-        Returns:
-            True if at or above backpressure threshold
-        """
-        return self._flow_controller.is_backpressured
 
     @property
     def circuit_breaker(self) -> CircuitBreaker | None:

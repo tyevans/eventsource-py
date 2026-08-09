@@ -842,7 +842,7 @@ it and returns `CatchUpResult(completed=False, error=e)` rather than raising.
 Catch-up reports its failures as data, because the coordinator above it needs
 to decide what to do about them.
 
-**Per event, the sequence is filter, then flow-control slot, then deliver, then
+**Per event, the sequence is filter, then acquire, then deliver, then
 record.** The filter is checked first, before delivery, and a filtered-out
 event still calls `record_event_processed()` -- position advances even for
 events this subscriber does not care about, because position is progress
@@ -850,9 +850,12 @@ through the *stream*, not a count of work done. Skipping the position update
 for filtered events would mean a subscription with a narrow filter never
 appearing to move, and re-reading the same span forever after a restart.
 Delivery itself happens inside `async with await self._flow_controller.acquire()`,
-so the number of in-flight events is bounded by `max_in_flight` (default 1000);
-the position update happens inside that same block, before the slot is
-released. Handler failure is routed by `continue_on_error` (default `True`):
+but events are delivered one at a time -- each `handle()` call is awaited to
+completion before the next iteration -- so at most one event is ever in
+flight per subscription; `FlowController` tracks that and lets graceful
+shutdown wait for drain, it does not bound concurrency. The position update
+happens inside that same block, before the slot is released. Handler failure
+is routed by `continue_on_error` (default `True`):
 either way `record_event_failed()` is called and failure metrics are recorded,
 but only with `continue_on_error=False` does the exception escape and end the
 run.

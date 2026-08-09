@@ -240,7 +240,7 @@ Because `config.event_types` overrides the subscriber during catch-up but the *l
 
 ### Handle events one at a time
 
-During catch-up, `handle()` is called once per event in global-position order and awaited before the next event is delivered. On the live path the bus invokes the same method per event, guarded by a flow-control slot (`max_in_flight`), after duplicate and filter checks. Design for three things:
+During catch-up, `handle()` is called once per event in global-position order and awaited before the next event is delivered. The live runner does the same — it reads from the global feed rather than the bus (see [ADR 0047](../adrs/0047-live-runner-feed-driven-checkpointing.md)), delivering one event at a time after duplicate and filter checks. Design for three things:
 
 **Raising is how you signal failure — but nothing retries your handler.** The `RetryableOperation` and circuit breaker configured on a subscription wrap the runner's *own* I/O: reading batches from the event store and saving checkpoints. Your `handle()` call is not wrapped. An exception out of `handle()` records failure metrics and `subscription.events_failed` / `last_error`, then either propagates or is logged and swallowed — it is not retried and it is not automatically written to the DLQ. Retrying a flaky database write inside `handle()` is your job.
 

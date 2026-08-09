@@ -1494,7 +1494,7 @@ runner in the background and returns immediately, which is why the snippet sleep
 | a `Position` | Start from that specific opaque position token. |
 
 The rest of the config is throughput and safety knobs -- `batch_size` (100),
-`max_in_flight` (1000), `processing_timeout` (30s), `continue_on_error` (True), plus
+`processing_timeout` (30s), `continue_on_error` (True), plus
 event/aggregate/tenant filters. `event_types` on the config *overrides* the projection's
 `subscribed_to()`, which is occasionally what you want and more often a surprise; leave
 it unset and let the `@handles` decorators speak.

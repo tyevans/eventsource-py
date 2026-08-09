@@ -4,7 +4,6 @@ Health check module for subscription management.
 Provides comprehensive health checks that incorporate:
 - Subscription state and statistics
 - Error rates and patterns
-- Backpressure status
 - Circuit breaker state
 - Retry statistics
 - DLQ backlog
@@ -22,7 +21,6 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from eventsource.application.subscriptions.error_handling import SubscriptionErrorHandler
-    from eventsource.application.subscriptions.flow_control import FlowController
     from eventsource.application.subscriptions.retry import CircuitBreaker, RetryableOperation
     from eventsource.application.subscriptions.subscription import Subscription
 
@@ -125,13 +123,6 @@ class HealthCheckConfig:
     max_lag_events_critical: int = 10000
     """Critical if lag exceeds this many events."""
 
-    # Backpressure thresholds
-    backpressure_warning_duration_seconds: float = 60.0
-    """Warn if backpressured for this long."""
-
-    backpressure_critical_duration_seconds: float = 300.0
-    """Critical if backpressured for this long."""
-
     # Circuit breaker
     circuit_open_is_unhealthy: bool = True
     """Treat open circuit breaker as unhealthy."""
@@ -151,7 +142,6 @@ class SubscriptionHealthChecker:
     Evaluates subscription health based on multiple indicators:
     - State (running, stopped, error)
     - Error statistics
-    - Backpressure status
     - Circuit breaker state
     - Lag metrics
     - DLQ backlog
@@ -168,7 +158,6 @@ class SubscriptionHealthChecker:
         subscription: "Subscription",
         config: HealthCheckConfig | None = None,
         error_handler: "SubscriptionErrorHandler | None" = None,
-        flow_controller: "FlowController | None" = None,
         circuit_breaker: "CircuitBreaker | None" = None,
         retry_operation: "RetryableOperation | None" = None,
     ) -> None:
@@ -179,14 +168,12 @@ class SubscriptionHealthChecker:
             subscription: The subscription to check
             config: Health check thresholds
             error_handler: Error handler for error statistics
-            flow_controller: Flow controller for backpressure status
             circuit_breaker: Circuit breaker for circuit state
             retry_operation: Retry operation for retry statistics
         """
         self.subscription = subscription
         self.config = config or HealthCheckConfig()
         self._error_handler = error_handler
-        self._flow_controller = flow_controller
         self._circuit_breaker = circuit_breaker
         self._retry_operation = retry_operation
 
@@ -209,10 +196,6 @@ class SubscriptionHealthChecker:
 
         # Check lag
         indicators.append(self._check_lag())
-
-        # Check backpressure
-        if self._flow_controller:
-            indicators.append(self._check_backpressure())
 
         # Check circuit breaker
         if self._circuit_breaker:
@@ -359,42 +342,6 @@ class SubscriptionHealthChecker:
                 status=HealthStatus.HEALTHY,
                 message=f"Lag within limits: {lag} events",
                 details={"lag_events": lag},
-            )
-
-    def _check_backpressure(self) -> HealthIndicator:
-        """Check backpressure status indicator."""
-        if self._flow_controller is None:
-            return HealthIndicator(
-                name="backpressure",
-                status=HealthStatus.UNKNOWN,
-                message="Flow controller not available",
-            )
-
-        stats = self._flow_controller.stats
-        is_backpressured = self._flow_controller.is_backpressured
-
-        if is_backpressured:
-            return HealthIndicator(
-                name="backpressure",
-                status=HealthStatus.DEGRADED,
-                message="Subscription experiencing backpressure",
-                details={
-                    "is_backpressured": True,
-                    "events_in_flight": stats.events_in_flight,
-                    "peak_in_flight": stats.peak_in_flight,
-                    "pause_count": stats.pause_count,
-                },
-            )
-        else:
-            return HealthIndicator(
-                name="backpressure",
-                status=HealthStatus.HEALTHY,
-                message="No backpressure",
-                details={
-                    "is_backpressured": False,
-                    "events_in_flight": stats.events_in_flight,
-                    "peak_in_flight": stats.peak_in_flight,
-                },
             )
 
     def _check_circuit_breaker(self) -> HealthIndicator:

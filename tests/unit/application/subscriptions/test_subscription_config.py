@@ -37,11 +37,6 @@ class TestSubscriptionConfigDefaults:
         config = SubscriptionConfig()
         assert config.batch_size == 100
 
-    def test_default_max_in_flight(self):
-        """Test default max_in_flight is 1000."""
-        config = SubscriptionConfig()
-        assert config.max_in_flight == 1000
-
     def test_default_checkpoint_strategy(self):
         """Test default checkpoint_strategy is EVERY_BATCH."""
         config = SubscriptionConfig()
@@ -116,11 +111,6 @@ class TestSubscriptionConfigCustomValues:
         config = SubscriptionConfig(batch_size=500)
         assert config.batch_size == 500
 
-    def test_custom_max_in_flight(self):
-        """Test custom max_in_flight."""
-        config = SubscriptionConfig(max_in_flight=2000)
-        assert config.max_in_flight == 2000
-
     def test_custom_checkpoint_strategy_every_event(self):
         """Test checkpoint_strategy=EVERY_EVENT."""
         config = SubscriptionConfig(checkpoint_strategy=CheckpointStrategy.EVERY_EVENT)
@@ -173,20 +163,6 @@ class TestSubscriptionConfigValidation:
             SubscriptionConfig(batch_size=-10)
         assert "batch_size must be positive" in str(exc_info.value)
         assert "got -10" in str(exc_info.value)
-
-    def test_invalid_max_in_flight_zero(self):
-        """Test max_in_flight=0 raises ValueError."""
-        with pytest.raises(ValueError) as exc_info:
-            SubscriptionConfig(max_in_flight=0)
-        assert "max_in_flight must be positive" in str(exc_info.value)
-        assert "got 0" in str(exc_info.value)
-
-    def test_invalid_max_in_flight_negative(self):
-        """Test negative max_in_flight raises ValueError."""
-        with pytest.raises(ValueError) as exc_info:
-            SubscriptionConfig(max_in_flight=-100)
-        assert "max_in_flight must be positive" in str(exc_info.value)
-        assert "got -100" in str(exc_info.value)
 
     def test_invalid_processing_timeout_zero(self):
         """Test processing_timeout=0 raises ValueError."""
