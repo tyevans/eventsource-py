@@ -229,6 +229,76 @@ class TestVerifyConsistency:
         assert len(report.violations) == 1
         assert report.violations[0].violation_type == "count_mismatch"
 
+    async def test_verify_consistency_with_violations_records_metric(
+        self, coordinator_deps: dict
+    ) -> None:
+        """verify_consistency() reports each violation through the real
+        MigrationMetrics instance for this migration -- not a standalone
+        metrics object the test constructs and calls directly."""
+        from eventsource.application.migration.metrics import (
+            clear_metrics_registry,
+            get_migration_metrics,
+        )
+
+        clear_metrics_registry()
+        migration_id = uuid4()
+        tenant_id = uuid4()
+        target_store = AsyncMock()
+
+        migration = Migration(
+            id=migration_id,
+            tenant_id=tenant_id,
+            source_store_id="default",
+            target_store_id="dedicated",
+            phase=MigrationPhase.DUAL_WRITE,
+        )
+
+        coordinator_deps["migration_repo"].get = AsyncMock(return_value=migration)
+
+        coordinator = MigrationCoordinator(
+            **coordinator_deps,
+            enable_tracing=False,
+        )
+        coordinator._target_stores[migration_id] = target_store
+
+        violations = [
+            ConsistencyViolation(
+                violation_type="count_mismatch",
+                stream_id="test_stream",
+                source_value="1000",
+                target_value="999",
+            ),
+            ConsistencyViolation(
+                violation_type="hash_mismatch",
+                stream_id="other_stream",
+                source_value="abc",
+                target_value="def",
+            ),
+        ]
+        expected_report = make_verification_report(
+            tenant_id=tenant_id,
+            level=VerificationLevel.COUNT,
+            source_event_count=1000,
+            target_event_count=999,
+            streams_verified=10,
+            is_consistent=False,
+            violations=violations,
+        )
+
+        with patch(
+            "eventsource.application.migration.coordinator.ConsistencyVerifier"
+        ) as mock_verifier_cls:
+            mock_verifier = MagicMock()
+            mock_verifier.verify_tenant_consistency = AsyncMock(return_value=expected_report)
+            mock_verifier_cls.return_value = mock_verifier
+
+            await coordinator.verify_consistency(migration_id)
+
+        snapshot = get_migration_metrics(str(migration_id), str(tenant_id)).get_snapshot()
+        assert snapshot.verification_failures == 2
+
+        clear_metrics_registry()
+
     @pytest.mark.asyncio
     async def test_verify_consistency_migration_not_found(self, coordinator_deps: dict) -> None:
         """Test verify_consistency raises MigrationNotFoundError."""

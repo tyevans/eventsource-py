@@ -66,6 +66,7 @@ from eventsource.application.migration.exceptions import (
     CutoverLagError,
     CutoverTimeoutError,
 )
+from eventsource.application.migration.metrics import get_migration_metrics
 from eventsource.observability import ATTR_TENANT_ID, Tracer, create_tracer
 from eventsource.ports import Position
 from eventsource.ports.exceptions import LockAcquisitionError
@@ -247,7 +248,7 @@ class CutoverManager:
                     lock_key,
                     timeout=self._lock_acquisition_timeout,
                 ):
-                    return await self._execute_cutover_locked(
+                    result = await self._execute_cutover_locked(
                         migration_id=migration_id,
                         tenant_id=tenant_id,
                         lag_tracker=lag_tracker,
@@ -263,12 +264,18 @@ class CutoverManager:
                     tenant_id,
                     e,
                 )
-                return CutoverResult(
+                result = CutoverResult(
                     success=False,
                     duration_ms=0.0,
                     error_message=f"Failed to acquire cutover lock: {e}",
                     rolled_back=False,
                 )
+
+            get_migration_metrics(str(migration_id), str(tenant_id)).record_cutover_duration(
+                result.duration_ms,
+                success=result.success,
+            )
+            return result
 
     async def _execute_cutover_locked(
         self,

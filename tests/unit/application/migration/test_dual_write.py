@@ -464,6 +464,41 @@ class TestAppendTargetFailure:
             assert "Target write failed" in warning_msg
             assert str(aggregate_id) in warning_msg
 
+    async def test_target_failure_records_metric_when_migration_id_set(
+        self,
+        source_store: MagicMock,
+        target_store: MagicMock,
+        tenant_id: uuid4,
+    ) -> None:
+        """A mirror failure reports through the real MigrationMetrics
+        instance for this migration when migration_id is set -- not a
+        standalone metrics object the test constructs and calls directly."""
+        from eventsource.application.migration.metrics import (
+            clear_metrics_registry,
+            get_migration_metrics,
+        )
+
+        clear_metrics_registry()
+        migration_id = uuid4()
+        interceptor_with_migration = DualWriteInterceptor(
+            source_store=source_store,
+            target_store=target_store,
+            tenant_id=tenant_id,
+            migration_id=migration_id,
+            enable_tracing=False,
+        )
+        aggregate_id = uuid4()
+        event = TestEvent(aggregate_id=aggregate_id)
+        stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
+        target_store.append.side_effect = Exception("Connection refused")
+
+        await interceptor_with_migration.append(stream, [event], ExpectedVersion.no_stream())
+
+        snapshot = get_migration_metrics(str(migration_id), str(tenant_id)).get_snapshot()
+        assert snapshot.failed_target_writes == 1
+
+        clear_metrics_registry()
+
     async def test_multiple_target_failures_tracked(
         self,
         interceptor: DualWriteInterceptor,

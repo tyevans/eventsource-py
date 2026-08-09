@@ -306,6 +306,38 @@ class TestSuccessfulCutover:
         mock_router.clear_dual_write_interceptor.assert_called_once_with(tenant_id)
 
     @pytest.mark.asyncio
+    async def test_successful_cutover_records_duration_metric(
+        self,
+        cutover_manager,
+        tenant_id,
+        migration_id,
+        target_store_id,
+        mock_lag_tracker,
+    ):
+        """execute_cutover() reports through the real MigrationMetrics
+        instance for this migration -- not a standalone metrics object the
+        test constructs and calls directly."""
+        from eventsource.application.migration.metrics import (
+            clear_metrics_registry,
+            get_migration_metrics,
+        )
+
+        clear_metrics_registry()
+
+        result = await cutover_manager.execute_cutover(
+            migration_id=migration_id,
+            tenant_id=tenant_id,
+            lag_tracker=mock_lag_tracker,
+            target_store_id=target_store_id,
+        )
+
+        assert result.success is True
+        snapshot = get_migration_metrics(str(migration_id), str(tenant_id)).get_snapshot()
+        assert snapshot.cutover_durations == [result.duration_ms]
+
+        clear_metrics_registry()
+
+    @pytest.mark.asyncio
     async def test_successful_cutover_with_small_lag(
         self,
         cutover_manager,

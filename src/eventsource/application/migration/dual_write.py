@@ -53,6 +53,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+from eventsource.application.migration.metrics import get_migration_metrics
 from eventsource.domain import StreamId
 from eventsource.domain.event import DomainEvent
 from eventsource.observability import (
@@ -193,6 +194,7 @@ class DualWriteInterceptor:
         target_store: FullEventStore,
         tenant_id: UUID,
         *,
+        migration_id: UUID | None = None,
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
         max_failure_history: int = 1000,
@@ -204,6 +206,12 @@ class DualWriteInterceptor:
             source_store: The authoritative source event store.
             target_store: The target event store being migrated to.
             tenant_id: The tenant ID this interceptor is for.
+            migration_id: Optional migration ID. When set, a failed mirror
+                write reports to that migration's `MigrationMetrics` (the
+                `migration.target.writes.failed` counter). Omitted by
+                tests and any caller not tracking a specific migration --
+                the mirror still runs and records the failure internally
+                either way, only the metric emission is skipped.
             tracer: Optional custom Tracer instance.
             enable_tracing: Whether to enable OpenTelemetry tracing.
             max_failure_history: Maximum number of failures to track (older entries
@@ -215,6 +223,7 @@ class DualWriteInterceptor:
         self._source = source_store
         self._target = target_store
         self._tenant_id = tenant_id
+        self._migration_id = migration_id
         self._max_failure_history = max_failure_history
 
         # Failure tracking
@@ -612,6 +621,11 @@ class DualWriteInterceptor:
                     f"Target write failed for tenant {self._tenant_id}, "
                     f"stream {stream.render()}: {e}"
                 )
+                if self._migration_id is not None:
+                    get_migration_metrics(
+                        str(self._migration_id),
+                        str(self._tenant_id),
+                    ).record_failed_target_write(error_type=type(e).__name__)
                 if source_result.position is not None:
                     if len(self._unabsorbed_failure_positions) >= self._max_failure_history:
                         # Fail-closed: dropping a position would make a
