@@ -157,6 +157,16 @@ class SnapshotStore(Protocol):
             The snapshot if found, None otherwise.
             Never raises for missing snapshots - returns None instead.
 
+        Raises:
+            SnapshotDeserializationError: Implementors should raise this
+                (``domain.exceptions``, ADR 0017) if the stored state cannot
+                be deserialized -- callers going through
+                ``read_valid_snapshot()`` never see it (it is caught there
+                and treated as a cache miss); it exists so a store can say
+                precisely why a snapshot was unusable instead of letting a
+                driver-specific exception (e.g. ``json.JSONDecodeError``)
+                escape.
+
         Example:
             >>> snapshot = await snapshot_store.get_snapshot(
             ...     aggregate_id=order_id,

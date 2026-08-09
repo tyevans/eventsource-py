@@ -21,6 +21,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from eventsource.adapters.postgresql.snapshots import PostgreSQLSnapshotStore
+from eventsource.domain.exceptions import SnapshotDeserializationError
 from eventsource.observability import MockTracer
 from eventsource.ports.snapshots import Snapshot
 
@@ -224,6 +225,39 @@ class TestPostgreSQLSnapshotStoreBasic:
 
         assert result is not None
         assert result.state == {"value": "from_json", "count": 10}
+
+    @pytest.mark.asyncio
+    async def test_get_snapshot_raises_deserialization_error_on_malformed_state(
+        self,
+        store: PostgreSQLSnapshotStore,
+        mock_session: AsyncMock,
+        aggregate_id: UUID,
+    ) -> None:
+        """A row whose state column is not valid JSON must raise
+        SnapshotDeserializationError, not let json.JSONDecodeError escape.
+
+        In production the `snapshots.state` column is JSONB, so PostgreSQL
+        itself rejects malformed JSON at write time -- this exercises the
+        adapter's own defense-in-depth against state written outside
+        save_snapshot() (an older schema revision, a hand-run migration,
+        direct SQL), which mocking the row lets us do without a real
+        database enforcing the column type.
+        """
+        row = MagicMock()
+        row.aggregate_id = aggregate_id
+        row.aggregate_type = "TestAggregate"
+        row.version = 5
+        row.schema_version = 1
+        row.state = "{not valid json"
+        row.created_at = datetime.now(UTC)
+
+        mock_session.execute.return_value = create_mock_result([row])
+
+        with pytest.raises(SnapshotDeserializationError) as exc_info:
+            await store.get_snapshot(aggregate_id, "TestAggregate")
+
+        assert exc_info.value.aggregate_id == aggregate_id
+        assert exc_info.value.aggregate_type == "TestAggregate"
 
     @pytest.mark.asyncio
     async def test_delete_snapshot_exists(

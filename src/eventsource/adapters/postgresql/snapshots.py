@@ -15,6 +15,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from eventsource.domain.exceptions import SnapshotDeserializationError
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_AGGREGATE_ID,
@@ -164,6 +165,16 @@ class PostgreSQLSnapshotStore:
 
         Returns:
             The snapshot if found, None otherwise
+
+        Raises:
+            SnapshotDeserializationError: If the stored ``state`` column
+                cannot be parsed as JSON. The ``snapshots.state`` column is
+                ``JSONB``, so PostgreSQL itself rejects malformed JSON at
+                write time -- this is defense-in-depth for the contract
+                (ADR 0017, ``domain/exceptions.py``) rather than a failure
+                mode reachable through this adapter's own write path; it
+                guards against state written outside ``save_snapshot()``
+                (an older schema revision, a hand-run migration, direct SQL).
         """
         with self._tracer.span(
             "eventsource.snapshot.get",
@@ -204,7 +215,14 @@ class PostgreSQLSnapshotStore:
             # Parse state from JSON
             state = row.state
             if isinstance(state, str):
-                state = json.loads(state)
+                try:
+                    state = json.loads(state)
+                except (json.JSONDecodeError, TypeError) as e:
+                    raise SnapshotDeserializationError(
+                        aggregate_id=row.aggregate_id,
+                        aggregate_type=row.aggregate_type,
+                        original_error=e,
+                    ) from e
 
             snapshot = Snapshot(
                 aggregate_id=row.aggregate_id,

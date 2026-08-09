@@ -358,17 +358,28 @@ class SnapshotDeserializationError(SnapshotError):
     replay, which will recreate the snapshot with valid data.
 
     Who raises this:
-        Not the library. `read_valid_snapshot()` catches every failure from
-        the store and returns `None` so the aggregate replays in full -- a
-        snapshot is a read optimization, so the worst outcome of any snapshot
-        failure is a slower load, never a failed one (ADR 0017).
+        `SQLiteSnapshotStore` and `PostgreSQLSnapshotStore` raise it from
+        `get_snapshot()` when the stored `state` column fails to deserialize
+        as JSON (SQLite's `TEXT` column has no server-side validation, so
+        this is a real corruption path there; PostgreSQL's `JSONB` column
+        rejects malformed JSON at write time, so the check there is
+        defense-in-depth against state written outside `save_snapshot()`).
+        `InMemorySnapshotStore` never deserializes at all -- it holds the
+        actual `Snapshot` object -- so it has no equivalent failure mode and
+        never raises this.
 
-        This type is published for `SnapshotStore` implementors, who raise it
-        to say precisely why a snapshot was unusable rather than letting a
-        bare `ValidationError` escape, and for callers who wrap a store to get
-        stricter behavior than the default degradation. Either way the library
-        catches it on the load path. Catch `SnapshotError` to handle the whole
-        family at once.
+        Regardless of source, callers never see it through the normal load
+        path: `read_valid_snapshot()` catches every failure from the store
+        and returns `None` so the aggregate replays in full -- a snapshot is
+        a read optimization, so the worst outcome of any snapshot failure is
+        a slower load, never a failed one (ADR 0017).
+
+        This type is also published for third-party `SnapshotStore`
+        implementors, who should raise it the same way to say precisely why
+        a snapshot was unusable rather than letting a bare `ValidationError`
+        or driver-specific exception escape, and for callers who wrap a
+        store to get stricter behavior than the default degradation. Catch
+        `SnapshotError` to handle the whole family at once.
 
         The example below is written from inside such a store.
 

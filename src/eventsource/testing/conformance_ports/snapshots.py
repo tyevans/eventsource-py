@@ -18,10 +18,11 @@ adapter instance.
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime
 from typing import Protocol, runtime_checkable
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
+from eventsource.domain.exceptions import SnapshotDeserializationError
 from eventsource.ports.snapshots import Snapshot, SnapshotStore, SnapshotTypeInvalidation
 
 
@@ -192,3 +193,72 @@ class SnapshotStoreConformance(SnapshotConformance, SnapshotTypeInvalidationConf
     All three snapshot adapters shipped with the library (in-memory,
     SQLite, PostgreSQL) implement both Protocols today.
     """
+
+
+class SnapshotDeserializationConformance(ABC):
+    """Conformance suite for the `SnapshotDeserializationError` contract.
+
+    Optional, like `SnapshotTypeInvalidationConformance`: a store that
+    cannot exhibit a deserialization failure at all does not implement this
+    -- it is not required to prove a negative. Bind this only for a backend
+    where malformed on-disk state is a real, reachable condition, which
+    requires the ability to write a raw, possibly-invalid state value
+    directly into storage (bypassing the adapter's own serialization, which
+    only ever writes valid JSON). Two of the three shipped adapters do NOT
+    bind this:
+
+    - `InMemorySnapshotStore` never deserializes -- it holds the actual
+      `Snapshot` object in memory -- so it has no equivalent failure mode.
+    - `PostgreSQLSnapshotStore`'s `state` column is `JSONB`, so PostgreSQL
+      itself rejects malformed JSON at write time; there is no INSERT that
+      reaches `get_snapshot()`'s deserialization step with invalid JSON to
+      parse. (The adapter still raises `SnapshotDeserializationError`
+      defensively -- see its docstring -- this suite just can't exercise
+      that path portably the way it can for a free-text column.)
+
+    `SQLiteSnapshotStore` binds this today: its `state` column is `TEXT`
+    with no server-side JSON validation, so on-disk corruption is a real
+    condition its `get_snapshot()` must handle.
+    """
+
+    @abstractmethod
+    @pytest.fixture
+    def store(self) -> object:
+        """Yield a fresh adapter instance implementing `SnapshotStore`."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def _write_raw_state(
+        self,
+        store: SnapshotStore,
+        *,
+        aggregate_id: UUID,
+        aggregate_type: str,
+        raw_state: str,
+    ) -> None:
+        """Insert a snapshot row with `raw_state` as the literal stored
+        value for the state column, bypassing the adapter's own JSON
+        encoding -- so `raw_state` need not be valid JSON. Each binding
+        implements this with its own raw connection/session, matching how
+        its `save_snapshot()` writes a row (same columns, same table),
+        except the state value is written verbatim instead of
+        `json.dumps()`-encoded.
+        """
+        raise NotImplementedError
+
+    async def test_get_snapshot_raises_deserialization_error_on_malformed_state(
+        self, store: SnapshotStore
+    ) -> None:
+        aggregate_id = uuid4()
+        await self._write_raw_state(
+            store,
+            aggregate_id=aggregate_id,
+            aggregate_type="Order",
+            raw_state="{not valid json",
+        )
+
+        with pytest.raises(SnapshotDeserializationError) as exc_info:
+            await store.get_snapshot(aggregate_id, "Order")
+
+        assert exc_info.value.aggregate_id == aggregate_id
+        assert exc_info.value.aggregate_type == "Order"
