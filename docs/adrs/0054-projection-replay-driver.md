@@ -20,11 +20,10 @@ went" without the caller writing the loop.
 
 ## Context
 
-A live subscription runner polls on a timer and fans new events out to
-registered projections via `ProjectionCoordinator`/`ProjectionRegistry`. That
-is live catch-up: an ongoing background activity whose correct response to a
-failure is to stop and not checkpoint past it, so the event is not skipped on
-restart.
+`ProjectionCoordinator` polls on a timer and fans new events out to registered
+projections. That is live catch-up: an ongoing background activity whose
+correct response to a failure is to stop and not checkpoint past it, so the
+event is not skipped on restart.
 
 A rebuild is the other job, and every property differs. It is a foreground
 operation someone is waiting on, over a log that is already written, whose
