@@ -62,6 +62,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
@@ -81,16 +82,29 @@ from eventsource.application.migration.exceptions import (
     MigrationNotFoundError,
     MigrationStateError,
 )
+from eventsource.application.migration.metrics import (
+    get_migration_metrics,
+    release_migration_metrics,
+)
 from eventsource.application.migration.subscription_migrator import (
     MigrationSummary,
     SubscriptionMigrator,
 )
 from eventsource.application.migration.sync_lag_tracker import SyncLagTracker
 from eventsource.observability import Tracer, create_tracer
+from eventsource.observability.attributes import (
+    ATTR_MIGRATION_ID,
+    ATTR_MIGRATION_PHASE,
+    ATTR_MIGRATION_SOURCE_STORE,
+    ATTR_MIGRATION_TARGET_STORE,
+    ATTR_MIGRATION_TENANT_ID,
+)
 from eventsource.ports import FullEventStore, Position
 from eventsource.ports.migration.models import (
+    AuditEventType,
     CutoverResult,
     Migration,
+    MigrationAuditEntry,
     MigrationConfig,
     MigrationPhase,
     MigrationResult,
@@ -106,6 +120,7 @@ if TYPE_CHECKING:
     from eventsource.ports.checkpoints import CheckpointRepository
     from eventsource.ports.locks import DistributedLock
     from eventsource.ports.migration.repositories import (
+        MigrationAuditLogRepository,
         MigrationRepository,
         TenantRoutingRepository,
     )
@@ -204,6 +219,7 @@ class MigrationCoordinator:
         lock_manager: DistributedLock | None = None,
         position_mapper: PositionMapper | None = None,
         checkpoint_repo: CheckpointRepository | None = None,
+        audit_log_repo: MigrationAuditLogRepository | None = None,
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ):
@@ -222,6 +238,12 @@ class MigrationCoordinator:
                 Required for subscription migration in P3-005.
             checkpoint_repo: CheckpointRepository for subscription checkpoints.
                 Required for subscription migration in P3-005.
+            audit_log_repo: Optional MigrationAuditLogRepository. When
+                provided, phase transitions, cutover outcomes, and
+                terminal states (completed/failed/aborted) are recorded
+                as audit entries. Omitted by default -- a coordinator
+                built without one behaves exactly as before, auditing is
+                purely additive.
             tracer: Optional custom Tracer instance.
             enable_tracing: Whether to enable OpenTelemetry tracing
         """
@@ -234,6 +256,7 @@ class MigrationCoordinator:
         self._router = router
         self._source_store_id = source_store_id
         self._lock_manager = lock_manager
+        self._audit_log_repo = audit_log_repo
 
         # Active copiers by migration_id
         self._active_copiers: dict[UUID, BulkCopier] = {}
@@ -269,6 +292,25 @@ class MigrationCoordinator:
         # Subscription migration summaries by migration_id
         self._subscription_summaries: dict[UUID, MigrationSummary] = {}
 
+    async def _record_audit(self, entry: MigrationAuditEntry) -> None:
+        """Write an audit entry if an audit log repository was configured.
+
+        No-ops silently when `audit_log_repo` was omitted -- auditing is
+        an optional capability, not a required dependency. A failed
+        write is logged, not raised: an audit trail gap must not fail
+        the migration operation that produced it.
+        """
+        if self._audit_log_repo is None:
+            return
+        try:
+            await self._audit_log_repo.record(entry)
+        except Exception:
+            logger.exception(
+                "Failed to record audit entry %s for migration %s",
+                entry.event_type.value,
+                entry.migration_id,
+            )
+
     async def start_migration(
         self,
         tenant_id: UUID,
@@ -301,7 +343,9 @@ class MigrationCoordinator:
         with self._tracer.span(
             "eventsource.coordinator.start_migration",
             {
-                "tenant_id": str(tenant_id),
+                ATTR_MIGRATION_TENANT_ID: str(tenant_id),
+                ATTR_MIGRATION_SOURCE_STORE: self._source_store_id,
+                ATTR_MIGRATION_TARGET_STORE: target_store_id,
                 "target_store_id": target_store_id,
             },
         ):
@@ -334,6 +378,19 @@ class MigrationCoordinator:
                 tenant_id,
                 self._source_store_id,
                 target_store_id,
+            )
+
+            await self._record_audit(
+                MigrationAuditEntry.migration_started(
+                    migration_id=migration.id,
+                    occurred_at=datetime.now(UTC),
+                    operator=created_by,
+                    details={
+                        "tenant_id": str(tenant_id),
+                        "source_store_id": self._source_store_id,
+                        "target_store_id": target_store_id,
+                    },
+                )
             )
 
             # Ensure tenant has routing entry
@@ -389,7 +446,7 @@ class MigrationCoordinator:
         """
         with self._tracer.span(
             "eventsource.coordinator.get_status",
-            {"migration.id": str(migration_id)},
+            {ATTR_MIGRATION_ID: str(migration_id)},
         ):
             migration = await self._migration_repo.get(migration_id)
             if migration is None:
@@ -413,7 +470,7 @@ class MigrationCoordinator:
         """
         with self._tracer.span(
             "eventsource.coordinator.pause_migration",
-            {"migration.id": str(migration_id)},
+            {ATTR_MIGRATION_ID: str(migration_id)},
         ):
             migration = await self._migration_repo.get(migration_id)
             if migration is None:
@@ -463,7 +520,7 @@ class MigrationCoordinator:
         """
         with self._tracer.span(
             "eventsource.coordinator.resume_migration",
-            {"migration.id": str(migration_id)},
+            {ATTR_MIGRATION_ID: str(migration_id)},
         ):
             migration = await self._migration_repo.get(migration_id)
             if migration is None:
@@ -510,7 +567,7 @@ class MigrationCoordinator:
         """
         with self._tracer.span(
             "eventsource.coordinator.abort_migration",
-            {"migration.id": str(migration_id)},
+            {ATTR_MIGRATION_ID: str(migration_id)},
         ):
             migration = await self._migration_repo.get(migration_id)
             if migration is None:
@@ -542,6 +599,7 @@ class MigrationCoordinator:
 
             # Clean up P2 resources (lag trackers, target store references)
             self._cleanup_migration_resources(migration_id)
+            release_migration_metrics(str(migration_id))
 
             # Update migration state
             await self._migration_repo.update_phase(
@@ -553,6 +611,19 @@ class MigrationCoordinator:
                 await self._migration_repo.record_error(migration_id, f"Aborted: {reason}")
 
             logger.info("Aborted migration %s: %s", migration_id, reason)
+
+            await self._record_audit(
+                MigrationAuditEntry(
+                    id=None,
+                    migration_id=migration_id,
+                    event_type=AuditEventType.MIGRATION_ABORTED,
+                    old_phase=migration.phase,
+                    new_phase=MigrationPhase.ABORTED,
+                    details={"reason": reason} if reason else None,
+                    operator=None,
+                    occurred_at=datetime.now(UTC),
+                )
+            )
 
             # Clean up status queues
             self._cleanup_status_queues(migration_id)
@@ -745,7 +816,7 @@ class MigrationCoordinator:
         with self._tracer.span(
             "eventsource.coordinator.stream_status",
             {
-                "migration.id": str(migration_id),
+                ATTR_MIGRATION_ID: str(migration_id),
                 "update_interval": update_interval,
             },
         ):
@@ -805,8 +876,9 @@ class MigrationCoordinator:
         with self._tracer.span(
             "eventsource.coordinator.run_bulk_copy",
             {
-                "migration.id": str(migration.id),
-                "tenant_id": str(migration.tenant_id),
+                ATTR_MIGRATION_ID: str(migration.id),
+                ATTR_MIGRATION_TENANT_ID: str(migration.tenant_id),
+                ATTR_MIGRATION_PHASE: MigrationPhase.BULK_COPY.value,
             },
         ):
             # Install the interceptor BEFORE the copy pass starts, so its
@@ -817,6 +889,7 @@ class MigrationCoordinator:
             copier = self._build_copier(migration, target_store)
 
             self._active_copiers[migration.id] = copier
+            phase_start = time.monotonic()
 
             try:
                 completed = await self._run_copy_pass(copier, migration)
@@ -869,6 +942,9 @@ class MigrationCoordinator:
                 await self._fail_migration(migration, str(e))
 
             finally:
+                get_migration_metrics(
+                    str(migration.id), str(migration.tenant_id)
+                ).record_phase_duration("bulk_copy", time.monotonic() - phase_start)
                 self._active_copiers.pop(migration.id, None)
                 self._active_tasks.pop(migration.id, None)
 
@@ -964,7 +1040,7 @@ class MigrationCoordinator:
         """
         with self._tracer.span(
             "eventsource.coordinator.run_resync_pass",
-            {"migration.id": str(migration_id)},
+            {ATTR_MIGRATION_ID: str(migration_id)},
         ):
             migration = await self._migration_repo.get(migration_id)
             if migration is None:
@@ -1090,6 +1166,7 @@ class MigrationCoordinator:
             source_store=self._source_store,
             target_store=target_store,
             tenant_id=migration.tenant_id,
+            migration_id=migration.id,
             enable_tracing=self._enable_tracing,
         )
         self._router.set_dual_write_interceptor(migration.tenant_id, interceptor)
@@ -1121,8 +1198,9 @@ class MigrationCoordinator:
         with self._tracer.span(
             "eventsource.coordinator.transition_to_dual_write",
             {
-                "migration.id": str(migration.id),
-                "tenant_id": str(migration.tenant_id),
+                ATTR_MIGRATION_ID: str(migration.id),
+                ATTR_MIGRATION_TENANT_ID: str(migration.tenant_id),
+                ATTR_MIGRATION_PHASE: MigrationPhase.DUAL_WRITE.value,
             },
         ):
             # Reuse the interceptor installed at bulk-copy start (created
@@ -1135,6 +1213,7 @@ class MigrationCoordinator:
                 target_store=target_store,
                 config=migration.config,
                 tenant_id=migration.tenant_id,
+                migration_id=migration.id,
                 enable_tracing=self._enable_tracing,
             )
             self._lag_trackers[migration.id] = lag_tracker
@@ -1156,6 +1235,15 @@ class MigrationCoordinator:
                 "Migration %s transitioned to dual-write phase for tenant %s",
                 migration.id,
                 migration.tenant_id,
+            )
+
+            await self._record_audit(
+                MigrationAuditEntry.phase_change(
+                    migration_id=migration.id,
+                    old_phase=MigrationPhase.BULK_COPY,
+                    new_phase=MigrationPhase.DUAL_WRITE,
+                    occurred_at=datetime.now(UTC),
+                )
             )
 
             # Notify status update
@@ -1193,7 +1281,10 @@ class MigrationCoordinator:
         """
         with self._tracer.span(
             "eventsource.coordinator.trigger_cutover",
-            {"migration.id": str(migration_id)},
+            {
+                ATTR_MIGRATION_ID: str(migration_id),
+                ATTR_MIGRATION_PHASE: MigrationPhase.CUTOVER.value,
+            },
         ):
             migration = await self._migration_repo.get(migration_id)
             if migration is None:
@@ -1229,6 +1320,19 @@ class MigrationCoordinator:
                 "Starting cutover for migration %s, tenant %s",
                 migration_id,
                 migration.tenant_id,
+            )
+
+            await self._record_audit(
+                MigrationAuditEntry(
+                    id=None,
+                    migration_id=migration_id,
+                    event_type=AuditEventType.CUTOVER_INITIATED,
+                    old_phase=MigrationPhase.DUAL_WRITE,
+                    new_phase=MigrationPhase.CUTOVER,
+                    details=None,
+                    operator=None,
+                    occurred_at=datetime.now(UTC),
+                )
             )
 
             # Execute cutover
@@ -1343,6 +1447,23 @@ class MigrationCoordinator:
             subscriptions_migrated,
         )
 
+        await self._record_audit(
+            MigrationAuditEntry(
+                id=None,
+                migration_id=migration.id,
+                event_type=AuditEventType.CUTOVER_COMPLETED,
+                old_phase=MigrationPhase.CUTOVER,
+                new_phase=MigrationPhase.COMPLETED,
+                details={
+                    "target_store_id": migration.target_store_id,
+                    "consistency_verified": consistency_verified,
+                    "subscriptions_migrated": subscriptions_migrated,
+                },
+                operator=None,
+                occurred_at=datetime.now(UTC),
+            )
+        )
+
         # Clean up resources (but keep reports and summaries for retrieval)
         # Note: _cleanup_migration_resources now also cleans reports/summaries,
         # so we clean selectively here
@@ -1381,6 +1502,19 @@ class MigrationCoordinator:
             "Cutover rolled back for migration %s: %s",
             migration.id,
             result.error_message,
+        )
+
+        await self._record_audit(
+            MigrationAuditEntry(
+                id=None,
+                migration_id=migration.id,
+                event_type=AuditEventType.CUTOVER_ROLLED_BACK,
+                old_phase=MigrationPhase.CUTOVER,
+                new_phase=MigrationPhase.DUAL_WRITE,
+                details={"error_message": result.error_message},
+                operator=None,
+                occurred_at=datetime.now(UTC),
+            )
         )
 
         # Notify status update
@@ -1565,6 +1699,7 @@ class MigrationCoordinator:
 
         # Clean up status queues
         self._cleanup_status_queues(migration.id)
+        release_migration_metrics(str(migration.id))
 
     async def _fail_migration(self, migration: Migration, error: str) -> None:
         """
@@ -1591,11 +1726,25 @@ class MigrationCoordinator:
 
         # Clean up P2 resources (lag trackers, target store references)
         self._cleanup_migration_resources(migration.id)
+        release_migration_metrics(str(migration.id))
 
         logger.error(
             "Migration %s failed: %s",
             migration.id,
             error,
+        )
+
+        await self._record_audit(
+            MigrationAuditEntry(
+                id=None,
+                migration_id=migration.id,
+                event_type=AuditEventType.MIGRATION_FAILED,
+                old_phase=migration.phase,
+                new_phase=MigrationPhase.FAILED,
+                details={"error": error},
+                operator=None,
+                occurred_at=datetime.now(UTC),
+            )
         )
 
         # Clean up status queues
@@ -1780,7 +1929,7 @@ class MigrationCoordinator:
         with self._tracer.span(
             "eventsource.coordinator.verify_consistency",
             {
-                "migration.id": str(migration_id),
+                ATTR_MIGRATION_ID: str(migration_id),
                 "level": level.value,
                 "sample_percentage": sample_percentage,
             },
@@ -1836,6 +1985,32 @@ class MigrationCoordinator:
                     migration_id,
                     len(report.violations),
                 )
+                metrics = get_migration_metrics(str(migration_id), str(migration.tenant_id))
+                for violation in report.violations:
+                    metrics.record_verification_failure(failure_type=violation.violation_type)
+
+            await self._record_audit(
+                MigrationAuditEntry(
+                    id=None,
+                    migration_id=migration_id,
+                    event_type=(
+                        AuditEventType.VERIFICATION_COMPLETED
+                        if report.is_consistent
+                        else AuditEventType.VERIFICATION_FAILED
+                    ),
+                    old_phase=None,
+                    new_phase=None,
+                    details={
+                        "level": level.value,
+                        "is_consistent": report.is_consistent,
+                        "source_event_count": report.source_event_count,
+                        "target_event_count": report.target_event_count,
+                        "violation_count": len(report.violations),
+                    },
+                    operator=None,
+                    occurred_at=datetime.now(UTC),
+                )
+            )
 
             return report
 
@@ -1884,7 +2059,7 @@ class MigrationCoordinator:
         with self._tracer.span(
             "eventsource.coordinator.migrate_subscriptions",
             {
-                "migration.id": str(migration_id),
+                ATTR_MIGRATION_ID: str(migration_id),
                 "dry_run": dry_run,
             },
         ):
