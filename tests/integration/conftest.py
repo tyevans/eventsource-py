@@ -638,7 +638,7 @@ def redis_event_bus_factory(
             redis_url=redis_connection_url,
             stream_prefix="test_events",
             consumer_group="test_group",
-            batch_size=10,
+            stream_read_count=10,
             block_ms=1000,
             single_connection_client=True,  # Avoid event loop issues in tests
         )

@@ -2971,12 +2971,12 @@ class TestAdvancedBatchPublishing:
         registry = EventRegistry()
         registry.register(TestItemCreated)
 
-        # Create bus with small batch_size to force chunking
+        # Create bus with small publish_chunk_size to force chunking
         config = RabbitMQEventBusConfig(
             rabbitmq_url=rabbitmq_connection_url,
             exchange_name=f"test_chunking_{unique_suffix}",
             consumer_group=f"chunk_test_{unique_suffix}",
-            batch_size=10,  # Small chunk size
+            publish_chunk_size=10,  # Small chunk size
             max_concurrent_publishes=5,
             durable=False,
             auto_delete=True,

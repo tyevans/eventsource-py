@@ -626,7 +626,7 @@ class TestRedisEventBusConformance(EventBusConformanceSuite):
             redis_url=redis_connection_url,
             stream_prefix=f"conformance_{request.node.name}",
             consumer_group="conformance_group",
-            batch_size=10,
+            stream_read_count=10,
             block_ms=200,
         )
         self._bus = RedisEventBus(config=config)
