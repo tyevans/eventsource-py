@@ -43,6 +43,7 @@ from eventsource.observability.attributes import (
     ATTR_MESSAGING_OPERATION,
     ATTR_MESSAGING_SYSTEM,
 )
+from eventsource.ports.exceptions import EventBusConnectionError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -171,10 +172,10 @@ class KafkaConsumerLoop:
             auto_reconnect: If True, automatically reconnect on errors.
 
         Raises:
-            RuntimeError: If not connected or already consuming.
+            EventBusConnectionError: If not connected.
         """
         if not self._connection.is_connected or not self._consumer:
-            raise RuntimeError("Not connected to Kafka. Call connect() first.")
+            raise EventBusConnectionError("Not connected to Kafka. Call connect() first.")
 
         if self._consuming:
             logger.warning("Already consuming events")

@@ -23,6 +23,8 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
+from eventsource.ports.exceptions import EventBusConnectionError
+
 if TYPE_CHECKING:
     from eventsource.adapters.kafka.config import KafkaEventBusConfig
     from eventsource.adapters.kafka.connection import KafkaConnectionManager
@@ -159,11 +161,11 @@ class KafkaDLQAdmin:
             - replay_count: Number of times this message has been replayed
 
         Raises:
-            RuntimeError: If not connected to Kafka.
+            EventBusConnectionError: If not connected to Kafka.
             ValueError: If use_consumer_group=True but dlq_consumer_group not set.
         """
         if not self._connection.is_connected:
-            raise RuntimeError("Not connected to Kafka")
+            raise EventBusConnectionError("Not connected to Kafka")
 
         group_id = None
         if use_consumer_group:
@@ -264,11 +266,11 @@ class KafkaDLQAdmin:
             True if message was successfully republished.
 
         Raises:
-            RuntimeError: If not connected to Kafka.
+            EventBusConnectionError: If not connected to Kafka.
             ValueError: If message not found at specified location or max replays exceeded.
         """
         if not self._connection.is_connected:
-            raise RuntimeError("Not connected to Kafka")
+            raise EventBusConnectionError("Not connected to Kafka")
         producer = self._connection.require_producer()
 
         async with self._dlq_consumer(
@@ -371,10 +373,10 @@ class KafkaDLQAdmin:
             Approximate count of DLQ messages across all partitions.
 
         Raises:
-            RuntimeError: If not connected to Kafka.
+            EventBusConnectionError: If not connected to Kafka.
         """
         if not self._connection.is_connected:
-            raise RuntimeError("Not connected to Kafka")
+            raise EventBusConnectionError("Not connected to Kafka")
 
         total_count = 0
 

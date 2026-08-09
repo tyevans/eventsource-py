@@ -56,6 +56,7 @@ from eventsource.adapters.rabbitmq.publisher import RabbitMQPublisher
 from eventsource.adapters.rabbitmq.topology import RabbitMQTopology
 from eventsource.domain.event import DomainEvent
 from eventsource.observability import OTEL_AVAILABLE, Tracer, create_tracer
+from eventsource.ports.exceptions import EventBusConnectionError
 
 if TYPE_CHECKING:
     from eventsource.domain.event_registry import EventRegistry
@@ -679,7 +680,7 @@ class RabbitMQEventBus(BaseEventBus):
             event_type: The DomainEvent subclass to bind for.
 
         Raises:
-            RuntimeError: If not connected or queue/exchange not initialized.
+            EventBusConnectionError: If not connected or queue/exchange not initialized.
 
         Example:
             >>> # For direct exchange - only receive OrderCreated events
@@ -693,7 +694,7 @@ class RabbitMQEventBus(BaseEventBus):
             >>> # Now queue will receive OrderCreated events
         """
         if not self._connected:
-            raise RuntimeError("Not connected or queue/exchange not initialized")
+            raise EventBusConnectionError("Not connected or queue/exchange not initialized")
         await self._topology.bind_event_type(event_type)
 
     async def bind_routing_key(self, routing_key: str) -> None:
@@ -710,7 +711,7 @@ class RabbitMQEventBus(BaseEventBus):
                 For direct exchanges, this must be an exact match.
 
         Raises:
-            RuntimeError: If not connected or queue/exchange not initialized.
+            EventBusConnectionError: If not connected or queue/exchange not initialized.
 
         Example:
             >>> # Bind to all Order events on topic exchange
@@ -719,7 +720,7 @@ class RabbitMQEventBus(BaseEventBus):
             >>> await bus.bind_routing_key("Order.OrderCreated")
         """
         if not self._connected:
-            raise RuntimeError("Not connected or queue/exchange not initialized")
+            raise EventBusConnectionError("Not connected or queue/exchange not initialized")
         await self._topology.bind_routing_key(routing_key)
 
     async def _declare_dlq(self) -> None:

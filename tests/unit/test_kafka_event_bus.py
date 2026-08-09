@@ -26,6 +26,7 @@ from eventsource.adapters.kafka import (
 from eventsource.domain.event import DomainEvent
 from eventsource.domain.event_registry import EventRegistry
 from eventsource.domain.exceptions import HandlerDispatchError
+from eventsource.ports.exceptions import EventBusConnectionError
 
 # --- Test Events ---
 # Prefixed with Sample to avoid pytest collection warnings
@@ -884,7 +885,7 @@ class TestKafkaEventBus:
         """Test publishing without connection raises error."""
         bus = KafkaEventBus(event_registry=event_registry)
 
-        with pytest.raises(RuntimeError, match="Not connected"):
+        with pytest.raises(EventBusConnectionError, match="Not connected"):
             await bus.publish([sample_event])
 
     @pytest.mark.asyncio

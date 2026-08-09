@@ -32,6 +32,7 @@ from eventsource.adapters.rabbitmq import (
 )
 from eventsource.domain.event import DomainEvent
 from eventsource.domain.event_registry import EventRegistry
+from eventsource.ports.exceptions import EventBusConnectionError
 
 
 class TestRabbitMQEventBusConfig:
@@ -9990,7 +9991,7 @@ class TestBindEventType:
 
         bus = RabbitMQEventBus(config=config)
 
-        with pytest.raises(RuntimeError, match="Not connected"):
+        with pytest.raises(EventBusConnectionError, match="Not connected"):
             await bus.bind_event_type(TestEvent)
 
 
@@ -10083,7 +10084,7 @@ class TestBindRoutingKey:
         config = RabbitMQEventBusConfig()
         bus = RabbitMQEventBus(config=config)
 
-        with pytest.raises(RuntimeError, match="Not connected"):
+        with pytest.raises(EventBusConnectionError, match="Not connected"):
             await bus.bind_routing_key("some.key")
 
 

@@ -20,6 +20,7 @@ from eventsource.adapters.kafka.connection import KafkaConnectionManager  # noqa
 from eventsource.adapters.kafka.dlq import KafkaDLQAdmin  # noqa: E402
 from eventsource.adapters.kafka.models import KafkaEventBusStats  # noqa: E402
 from eventsource.adapters.kafka.serialization import EventSerializer  # noqa: E402
+from eventsource.ports.exceptions import EventBusConnectionError  # noqa: E402
 
 
 def _make_dlq_admin(producer: Any = None) -> KafkaDLQAdmin:
@@ -83,7 +84,7 @@ class TestGetMessageCount:
         admin = _make_dlq_admin()
         admin._connection._connected = False
 
-        with pytest.raises(RuntimeError, match="Not connected"):
+        with pytest.raises(EventBusConnectionError, match="Not connected"):
             await admin.get_message_count()
 
 
@@ -122,7 +123,7 @@ class TestGetMessages:
         admin = _make_dlq_admin()
         admin._connection._connected = False
 
-        with pytest.raises(RuntimeError, match="Not connected"):
+        with pytest.raises(EventBusConnectionError, match="Not connected"):
             await admin.get_messages()
 
 
@@ -157,7 +158,7 @@ class TestReplayMessage:
         admin = _make_dlq_admin(producer=AsyncMock())
         admin._connection._connected = False
 
-        with pytest.raises(RuntimeError, match="Not connected"):
+        with pytest.raises(EventBusConnectionError, match="Not connected"):
             await admin.replay_message(partition=0, offset=0)
 
 

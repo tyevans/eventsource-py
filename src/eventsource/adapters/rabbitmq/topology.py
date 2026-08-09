@@ -19,6 +19,7 @@ from eventsource.adapters.rabbitmq import serialization
 from eventsource.adapters.rabbitmq.config import RabbitMQEventBusConfig
 from eventsource.adapters.rabbitmq.models import QueueInfo
 from eventsource.domain.event import DomainEvent
+from eventsource.ports.exceptions import EventBusConnectionError
 
 if TYPE_CHECKING:
     from aio_pika.abc import AbstractExchange, AbstractQueue
@@ -321,10 +322,10 @@ class RabbitMQTopology:
             event_type: The DomainEvent subclass to bind for.
 
         Raises:
-            RuntimeError: If queue/exchange not initialized.
+            EventBusConnectionError: If queue/exchange not initialized.
         """
         if not self._consumer_queue or not self._exchange:
-            raise RuntimeError("Not connected or queue/exchange not initialized")
+            raise EventBusConnectionError("Not connected or queue/exchange not initialized")
 
         # Generate routing key for this event type
         # Use the same pattern as publish: {aggregate_type}.{event_type}
@@ -365,10 +366,10 @@ class RabbitMQTopology:
                 For direct exchanges, this must be an exact match.
 
         Raises:
-            RuntimeError: If queue/exchange not initialized.
+            EventBusConnectionError: If queue/exchange not initialized.
         """
         if not self._consumer_queue or not self._exchange:
-            raise RuntimeError("Not connected or queue/exchange not initialized")
+            raise EventBusConnectionError("Not connected or queue/exchange not initialized")
 
         await self._consumer_queue.bind(
             exchange=self._exchange,
