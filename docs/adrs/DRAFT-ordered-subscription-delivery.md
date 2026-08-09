@@ -117,10 +117,21 @@ preserve the property that progress never outruns completed work.
 handed a run of events to handle as a unit, with the position advanced once
 after the whole run succeeds. This is safe for exactly the reason per-event
 concurrency is not: the batch completes before the position moves, so progress
-still cannot outrun work. A failure re-delivers the batch from the last
-recorded position, which is the same at-least-once behavior a single event
-already has, at a coarser grain. The events within a batch are still applied in
-order.
+still cannot outrun work. The events within a batch are still applied in order.
+
+**Failure is at-least-once at the batch's grain, and that has a consequence
+worth stating.** A crash mid-batch re-delivers the whole batch from the last
+recorded position — the same guarantee a single event already carries, just
+coarser. A batch handler that *raises* is different: delivery falls back to
+handing the batch's events over one at a time, so the ordinary per-event
+error handling applies to each rather than the runner having to invent
+partial-batch semantics it has no way to determine. Either path can re-deliver
+events the failed batch had already applied, because a handler that raises
+partway through cannot report how far it got. **A batch handler must therefore
+be idempotent over its batch.** That is not a new requirement — at-least-once
+delivery already demanded idempotence per event — but the window widens from
+one event to one batch, and a handler written to be idempotent per event is
+not automatically idempotent per batch.
 
 The interface for this already existed and was already documented before the
 runners called it. The catch-up runner now dispatches through `handle_batch()`

@@ -1413,12 +1413,21 @@ what is fatal, and let it propagate:
 
 ```python
 class StrictSnapshotStore:
-    """Refuses to silently ignore a corrupt snapshot."""
+    """Refuses to silently ignore a corrupt snapshot.
+
+    Only `get_snapshot` needs new behavior; the other four `SnapshotStore`
+    methods delegate unchanged. Delegate them explicitly rather than relying
+    on `__getattr__` -- `SnapshotStore` is a `Protocol`, so a missing method
+    is a type error at the call site, not an `AttributeError` you will see
+    in a test.
+    """
 
     def __init__(self, inner: SnapshotStore) -> None:
         self._inner = inner
 
-    async def get_snapshot(self, aggregate_id, aggregate_type):
+    async def get_snapshot(
+        self, aggregate_id: UUID, aggregate_type: str
+    ) -> Snapshot | None:
         snapshot = await self._inner.get_snapshot(aggregate_id, aggregate_type)
         if snapshot is not None and not self._looks_valid(snapshot):
             raise SnapshotDeserializationError(
@@ -1426,6 +1435,28 @@ class StrictSnapshotStore:
                 aggregate_type=aggregate_type,
             )
         return snapshot
+
+    def _looks_valid(self, snapshot: Snapshot) -> bool:
+        """Whatever "usable" means for your state model -- for example,
+        `YourState.model_validate(snapshot.state)` inside a try/except."""
+        ...
+
+    # Delegated unchanged.
+    async def save_snapshot(self, snapshot: Snapshot) -> None:
+        await self._inner.save_snapshot(snapshot)
+
+    async def delete_snapshot(self, aggregate_id: UUID, aggregate_type: str) -> bool:
+        return await self._inner.delete_snapshot(aggregate_id, aggregate_type)
+
+    async def snapshot_exists(self, aggregate_id: UUID, aggregate_type: str) -> bool:
+        return await self._inner.snapshot_exists(aggregate_id, aggregate_type)
+
+    async def delete_snapshots_by_type(
+        self, aggregate_type: str, schema_version_below: int | None = None
+    ) -> int:
+        return await self._inner.delete_snapshots_by_type(
+            aggregate_type, schema_version_below
+        )
 ```
 
 Note what this does and does not buy you. `read_valid_snapshot()` catches
