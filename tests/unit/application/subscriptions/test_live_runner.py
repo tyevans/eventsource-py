@@ -891,3 +891,126 @@ class TestLiveRunnerEdgeCases:
         """Test config is accessible on runner."""
         assert runner.config is config
         assert runner.config.checkpoint_strategy == CheckpointStrategy.EVERY_EVENT
+
+
+# --- Bounded Drain / Stop-Pause Responsiveness Tests ---
+#
+# Regression coverage for two bugs: the live drain read the feed with no
+# `FeedReadOptions.limit` (unbounded materialization, unlike catch-up which
+# passes `config.batch_size`), and neither `stop()` nor `pause()` had any
+# effect on a drain already in progress -- `_drain_feed` never consulted
+# `_running` or `subscription.wait_if_paused()` between envelopes.
+
+
+class _RecordingFeed:
+    """Wraps a GlobalEventFeed and records the options passed to read_all."""
+
+    def __init__(self, inner: InMemoryEventStore) -> None:
+        self._inner = inner
+        self.read_all_calls: list[tuple[Position | None, object]] = []
+
+    async def read_all(self, from_position=None, options=None):
+        self.read_all_calls.append((from_position, options))
+        async for envelope in self._inner.read_all(from_position, options):
+            yield envelope
+
+    async def current_position(self):
+        return await self._inner.current_position()
+
+
+class TestLiveRunnerBoundedDrain:
+    """Test the live drain bounds each read instead of materializing the feed."""
+
+    @pytest.mark.asyncio
+    async def test_drain_passes_a_limit_from_batch_size(
+        self,
+        event_bus: InMemoryEventBus,
+        checkpoint_repo: InMemoryCheckpointRepository,
+        event_store: InMemoryEventStore,
+        subscription: Subscription,
+        config: SubscriptionConfig,
+    ):
+        """Test _drain_feed reads the feed with a bounded limit, not an unbounded read."""
+        recording_feed = _RecordingFeed(event_store)
+        runner = LiveRunner(
+            event_bus=event_bus,
+            checkpoint_repo=checkpoint_repo,
+            event_feed=recording_feed,
+            subscription=subscription,
+        )
+        await runner.start()
+
+        await append_event(event_store, LiveTestEvent(aggregate_id=uuid4(), data="bounded"))
+        await wake(event_bus)
+        await asyncio.sleep(0.01)
+
+        assert recording_feed.read_all_calls, "read_all was never called"
+        for _from_position, options in recording_feed.read_all_calls:
+            assert options is not None, "read_all called with no options -- unbounded read"
+            assert options.limit == config.batch_size
+
+
+class TestLiveRunnerStopPauseResponsiveness:
+    """Test that stop() and pause() take effect on an in-flight drain."""
+
+    @pytest.mark.asyncio
+    async def test_stop_halts_an_in_flight_drain(
+        self,
+        runner: LiveRunner,
+        event_bus: InMemoryEventBus,
+        event_store: InMemoryEventStore,
+        subscriber: MockLiveSubscriber,
+    ):
+        """Test stop() during a drain stops delivery before the whole feed is processed."""
+        subscriber.handle_delay = 0.05
+        await runner.start()
+
+        total_events = 6
+        for i in range(total_events):
+            await append_event(event_store, LiveTestEvent(aggregate_id=uuid4(), data=f"e{i}"))
+
+        drain_task = asyncio.create_task(wake(event_bus))
+        # Let the drain begin and process roughly one event before stopping.
+        await asyncio.sleep(0.06)
+        await runner.stop()
+
+        await asyncio.wait_for(drain_task, timeout=2.0)
+
+        assert len(subscriber.handled_events) < total_events
+
+    @pytest.mark.asyncio
+    async def test_pause_takes_effect_mid_drain(
+        self,
+        runner: LiveRunner,
+        event_bus: InMemoryEventBus,
+        event_store: InMemoryEventStore,
+        subscription: Subscription,
+        subscriber: MockLiveSubscriber,
+    ):
+        """Test pause() during a drain blocks further delivery until resume()."""
+        subscriber.handle_delay = 0.02
+        await runner.start()
+
+        total_events = 6
+        for i in range(total_events):
+            await append_event(event_store, LiveTestEvent(aggregate_id=uuid4(), data=f"e{i}"))
+
+        drain_task = asyncio.create_task(wake(event_bus))
+        # Let the drain begin and process roughly one event before pausing.
+        await asyncio.sleep(0.03)
+        await subscription.pause()
+
+        # Wait well past the time an un-paused drain would need to finish
+        # all `total_events` (6 * 0.02s = 0.12s) to prove pause(), not mere
+        # delay, is what is holding the rest of the batch back.
+        await asyncio.sleep(0.3)
+        processed_while_paused = len(subscriber.handled_events)
+        assert processed_while_paused < total_events, (
+            "pause() had no effect -- drain ran to completion while paused"
+        )
+        assert not drain_task.done(), "drain completed instead of blocking on pause"
+
+        await subscription.resume()
+        await asyncio.wait_for(drain_task, timeout=2.0)
+
+        assert len(subscriber.handled_events) == total_events

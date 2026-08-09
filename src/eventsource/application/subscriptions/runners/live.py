@@ -39,7 +39,7 @@ from eventsource.observability.attributes import (
     ATTR_POSITION,
     ATTR_SUBSCRIPTION_NAME,
 )
-from eventsource.ports.envelopes import EventEnvelope
+from eventsource.ports.envelopes import EventEnvelope, FeedReadOptions
 from eventsource.ports.positions import Position
 
 if TYPE_CHECKING:
@@ -116,6 +116,12 @@ class LiveRunner:
 
     # Internal state - not part of init
     _running: bool = field(default=False, init=False, repr=False)
+    # Mirrors `CatchUpRunner._stop_requested`: a distinct signal from
+    # `_running` so `stop()` can interrupt a drain already in flight
+    # (checked per envelope in `_drain_feed`) without depending on `start()`
+    # having been called first -- `_running` alone stays False in that case
+    # and would otherwise prevent the drain from doing anything.
+    _stop_requested: bool = field(default=False, init=False, repr=False)
     _subscribed: bool = field(default=False, init=False, repr=False)
     # Counts of wake signals, not events. The feed is the source of truth for
     # what to process, so buffering only needs to remember *that* wakes
@@ -187,6 +193,7 @@ class LiveRunner:
                 return
 
             self._running = True
+            self._stop_requested = False
             self._buffer_enabled = buffer_events
             self._last_checkpoint_time = time.monotonic()
 
@@ -280,21 +287,60 @@ class LiveRunner:
         Read and process every envelope on the global feed past our checkpoint.
 
         This is the single ordered source of live events: the subscription's
-        `last_processed_position` is re-read before each envelope is
+        `last_processed_position` is re-read before each bounded read is
         requested from `event_feed`, so a drain always starts exactly where
         the last one (or catch-up) left off. No duplicate suppression is
         needed -- a position is read from the feed at most once.
+
+        Each read is bounded by `config.batch_size` (`FeedReadOptions.limit`,
+        the same knob catch-up uses) rather than draining the feed in one
+        unbounded call -- adapters materialize the full result set before
+        yielding the first envelope, so an unbounded live read is a memory
+        hazard on a busy feed. The loop re-reads bounded batches until one
+        comes back short of the limit (the feed has nothing more right now).
+
+        `_stop_requested` and `subscription.wait_if_paused()` are checked
+        before every envelope, mirroring `CatchUpRunner._process_batch`, so
+        `stop()` and `pause()` take effect mid-drain instead of only at the
+        next wake-up.
 
         Returns:
             Number of envelopes processed (including filtered ones)
         """
         processed = 0
-        from_position = self.subscription.last_processed_position
-        async for envelope in self.event_feed.read_all(from_position=from_position):
-            self._stats.events_received += 1
-            await self.subscription.record_events_seen(1)
-            await self._process_live_event(envelope)
-            processed += 1
+        options = FeedReadOptions(limit=self.config.batch_size)
+
+        while not self._stop_requested:
+            from_position = self.subscription.last_processed_position
+            envelopes_in_batch = 0
+            stopped = False
+
+            async for envelope in self.event_feed.read_all(
+                from_position=from_position, options=options
+            ):
+                if self._stop_requested:
+                    stopped = True
+                    break
+
+                await self.subscription.wait_if_paused()
+                if self._stop_requested:
+                    stopped = True
+                    break
+
+                self._stats.events_received += 1
+                await self.subscription.record_events_seen(1)
+                await self._process_live_event(envelope)
+                processed += 1
+                envelopes_in_batch += 1
+
+            if stopped:
+                break
+
+            # A batch shorter than the requested limit means the feed has
+            # nothing more right now -- stop polling until the next wake-up.
+            if envelopes_in_batch < self.config.batch_size:
+                break
+
         return processed
 
     async def _process_live_event(self, envelope: EventEnvelope) -> None:
@@ -624,6 +670,7 @@ class LiveRunner:
                 return
 
             self._running = False
+            self._stop_requested = True
 
             # Unsubscribe from bus using stored handler references
             if self._subscribed:
