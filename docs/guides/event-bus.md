@@ -138,7 +138,7 @@ differences that should drive your choice:
 
 - **`RedisEventBus`** publishes every event to a single Redis stream named
   `{stream_prefix}:stream`, with a DLQ at `{stream_prefix}:stream_dlq`.
-  Consumption uses Redis consumer groups, batched reads (`batch_size`,
+  Consumption uses Redis consumer groups, batched reads (`stream_read_count`,
   `block_ms`), and recovery of messages abandoned by a dead consumer after
   `pending_idle_ms`. It is the lightest distributed option if Redis is already
   in your stack, and batch publishes are pipelined.
@@ -154,7 +154,7 @@ differences that should drive your choice:
   every message is keyed by `str(event.aggregate_id)`, so all events for one
   aggregate land on the same partition and stay ordered relative to each other
   even as you scale consumers out. It also exposes the most operational surface
-  — `acks`, `compression_type`, batching (`batch_size`, `linger_ms`),
+  — `acks`, `compression_type`, batching (`producer_max_batch_bytes`, `linger_ms`),
   `auto_offset_reset`, SASL/SSL security settings — plus optional OpenTelemetry
   metrics via `enable_metrics`.
 

@@ -42,7 +42,12 @@ class KafkaEventBusConfig:
             - "snappy": Fast compression
             - "lz4": Balanced compression
             - "zstd": Best compression ratio
-        batch_size: Maximum size in bytes for batching messages.
+        producer_max_batch_bytes: Maximum size in bytes of a producer batch
+            before it is sent, forwarded as-is to
+            ``AIOKafkaProducer(max_batch_size=...)``. Unrelated to Redis's
+            ``stream_read_count`` or RabbitMQ's ``publish_chunk_size``, which
+            count events, not bytes, and bound the opposite side of the
+            wire (consume/publish chunking, not producer buffering).
         linger_ms: Time to wait for additional messages before sending batch.
         auto_offset_reset: Where to start consuming when no offset exists:
             - "earliest": Start from beginning (default)
@@ -145,7 +150,7 @@ class KafkaEventBusConfig:
     # Producer settings
     acks: str = "all"
     compression_type: str | None = "gzip"
-    batch_size: int = 16384
+    producer_max_batch_bytes: int = 16384
     linger_ms: int = 5
 
     # Consumer settings
@@ -264,7 +269,7 @@ class KafkaEventBusConfig:
             "bootstrap_servers": self.bootstrap_servers,
             "acks": self.acks,
             "compression_type": self.compression_type,
-            "max_batch_size": self.batch_size,
+            "max_batch_size": self.producer_max_batch_bytes,
             "linger_ms": self.linger_ms,
         }
         self._add_security_config(config)

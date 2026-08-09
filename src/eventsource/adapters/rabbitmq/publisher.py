@@ -247,7 +247,7 @@ class RabbitMQPublisher:
             raise RuntimeError("Exchange not initialized")
 
         total_events = len(events)
-        chunk_size = self._config.batch_size
+        chunk_size = self._config.publish_chunk_size
         max_concurrent = self._config.max_concurrent_publishes
 
         self._logger.debug(
@@ -399,7 +399,7 @@ class RabbitMQPublisher:
             Dictionary with batch statistics
         """
         total_events = len(events)
-        chunk_size = self._config.batch_size
+        chunk_size = self._config.publish_chunk_size
         max_concurrent = self._config.max_concurrent_publishes
 
         self._logger.debug(
@@ -551,7 +551,7 @@ class RabbitMQPublisher:
 
         This method provides optimized batch publishing using concurrent
         asyncio.gather() to publish multiple events in parallel. Large
-        batches are automatically chunked based on config.batch_size to
+        batches are automatically chunked based on config.publish_chunk_size to
         prevent overwhelming the broker.
 
         Args:

@@ -91,7 +91,7 @@ def config():
         stream_prefix="test_events",
         consumer_group="test_group",
         consumer_name="test_consumer",
-        batch_size=10,
+        stream_read_count=10,
         block_ms=100,
         max_retries=3,
         pending_idle_ms=1000,

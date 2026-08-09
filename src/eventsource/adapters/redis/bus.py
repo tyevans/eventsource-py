@@ -106,7 +106,12 @@ class RedisEventBusConfig:
         stream_prefix: Prefix for Redis stream names (default: "events")
         consumer_group: Name of the consumer group (default: "default")
         consumer_name: Name of this consumer instance (auto-generated if None)
-        batch_size: Maximum events to read per iteration (default: 100)
+        stream_read_count: Maximum events to read per XREADGROUP call
+            (forwarded as the ``count`` kwarg; default: 100). Also used as
+            the default batch size for ``recover_pending_messages()``'s
+            XPENDING/XCLAIM calls. Unrelated to Kafka's or RabbitMQ's
+            batch-size-shaped config fields -- this one bounds a single
+            consume-side read, not a producer buffer or a publish chunk.
         block_ms: Milliseconds to block waiting for new messages (default: 5000)
         max_retries: Maximum retries before sending to DLQ (default: 3)
         pending_idle_ms: Minimum idle time before claiming pending messages (default: 60000)
@@ -125,7 +130,7 @@ class RedisEventBusConfig:
     stream_prefix: str = "events"
     consumer_group: str = "default"
     consumer_name: str | None = None
-    batch_size: int = 100
+    stream_read_count: int = 100
     block_ms: int = 5000
     max_retries: int = 3
     pending_idle_ms: int = 60000  # 1 minute
@@ -545,7 +550,7 @@ class RedisEventBus(BaseEventBus):
                         groupname=self._config.consumer_group,
                         consumername=actual_consumer_name,
                         streams={self._config.stream_name: ">"},
-                        count=self._config.batch_size,
+                        count=self._config.stream_read_count,
                         block=self._config.block_ms,
                     ),
                 )
@@ -892,7 +897,7 @@ class RedisEventBus(BaseEventBus):
         self,
         min_idle_time_ms: int | None = None,
         max_retries: int | None = None,
-        batch_size: int | None = None,
+        stream_read_count: int | None = None,
     ) -> dict[str, int]:
         """
         Recover pending messages that have been idle too long.
@@ -904,7 +909,7 @@ class RedisEventBus(BaseEventBus):
         Args:
             min_idle_time_ms: Minimum idle time in ms before claiming (default: from config)
             max_retries: Maximum retries before sending to DLQ (default: from config)
-            batch_size: Maximum messages to recover in one batch (default: from config)
+            stream_read_count: Maximum messages to recover in one batch (default: from config)
 
         Returns:
             Dictionary with recovery statistics:
@@ -929,8 +934,8 @@ class RedisEventBus(BaseEventBus):
             min_idle_time_ms = self._config.pending_idle_ms
         if max_retries is None:
             max_retries = self._config.max_retries
-        if batch_size is None:
-            batch_size = self._config.batch_size
+        if stream_read_count is None:
+            stream_read_count = self._config.stream_read_count
 
         stats = {
             "checked": 0,
@@ -970,7 +975,7 @@ class RedisEventBus(BaseEventBus):
                     groupname=self._config.consumer_group,
                     min="-",
                     max="+",
-                    count=batch_size,
+                    count=stream_read_count,
                 ),
             )
 

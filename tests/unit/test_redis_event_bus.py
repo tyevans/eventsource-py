@@ -117,7 +117,7 @@ def config() -> RedisEventBusConfig:
         stream_prefix="test_events",
         consumer_group="test_group",
         consumer_name="test_consumer",
-        batch_size=10,
+        stream_read_count=10,
         block_ms=100,
         max_retries=3,
         pending_idle_ms=1000,
@@ -191,7 +191,7 @@ class TestRedisEventBusConfig:
         assert config.stream_prefix == "events"
         assert config.consumer_group == "default"
         assert config.consumer_name is not None  # Auto-generated
-        assert config.batch_size == 100
+        assert config.stream_read_count == 100
         assert config.block_ms == 5000
         assert config.max_retries == 3
         assert config.pending_idle_ms == 60000
@@ -206,7 +206,7 @@ class TestRedisEventBusConfig:
             stream_prefix="myapp",
             consumer_group="workers",
             consumer_name="worker-1",
-            batch_size=50,
+            stream_read_count=50,
             max_retries=5,
         )
 
@@ -214,7 +214,7 @@ class TestRedisEventBusConfig:
         assert config.stream_prefix == "myapp"
         assert config.consumer_group == "workers"
         assert config.consumer_name == "worker-1"
-        assert config.batch_size == 50
+        assert config.stream_read_count == 50
         assert config.max_retries == 5
 
     def test_stream_name_property(self):

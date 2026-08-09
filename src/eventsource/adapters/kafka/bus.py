@@ -768,7 +768,7 @@ class KafkaEventBus(BaseEventBus):
                     "messaging.destination": self._config.topic_name,
                 },
             )
-            self._metrics.batch_size.record(len(events))
+            self._metrics.batch_publish_size.record(len(events))
 
         logger.debug(
             "Events published successfully",

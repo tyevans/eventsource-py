@@ -213,7 +213,7 @@ class TestKafkaEventBusConfig:
         assert config.consumer_name is not None  # Auto-generated
         assert config.acks == "all"
         assert config.compression_type == "gzip"
-        assert config.batch_size == 16384
+        assert config.producer_max_batch_bytes == 16384
         assert config.linger_ms == 5
         assert config.auto_offset_reset == "earliest"
         assert config.security_protocol == "PLAINTEXT"
@@ -579,7 +579,7 @@ class TestKafkaEventBusConfigProducerConsumer:
             bootstrap_servers="kafka:9092",
             acks="all",
             compression_type="gzip",
-            batch_size=32768,
+            producer_max_batch_bytes=32768,
             linger_ms=10,
             security_protocol="PLAINTEXT",
         )
@@ -1176,7 +1176,7 @@ class TestKafkaEventBusMetricsInfrastructure:
         assert hasattr(metrics, "publish_duration")
         assert hasattr(metrics, "consume_duration")
         assert hasattr(metrics, "handler_duration")
-        assert hasattr(metrics, "batch_size")
+        assert hasattr(metrics, "batch_publish_size")
 
 
 @pytest.mark.skipif(not KAFKA_AVAILABLE, reason="aiokafka not installed")

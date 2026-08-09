@@ -189,7 +189,7 @@ class TestPublishConcurrencyBound:
             rabbitmq_url="amqp://guest:guest@localhost:5672/",
             exchange_name="test-events",
             consumer_group="test-group",
-            batch_size=100,
+            publish_chunk_size=100,
             max_concurrent_publishes=max_concurrent,
         )
 

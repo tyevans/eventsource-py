@@ -11168,14 +11168,14 @@ class TestBatchPublishingConfig:
     """Tests for batch publishing configuration options."""
 
     def test_default_batch_size(self) -> None:
-        """Test default batch_size is 100."""
+        """Test default publish_chunk_size is 100."""
         config = RabbitMQEventBusConfig()
-        assert config.batch_size == 100
+        assert config.publish_chunk_size == 100
 
     def test_custom_batch_size(self) -> None:
-        """Test custom batch_size configuration."""
-        config = RabbitMQEventBusConfig(batch_size=50)
-        assert config.batch_size == 50
+        """Test custom publish_chunk_size configuration."""
+        config = RabbitMQEventBusConfig(publish_chunk_size=50)
+        assert config.publish_chunk_size == 50
 
     def test_default_max_concurrent_publishes(self) -> None:
         """Test default max_concurrent_publishes is 10."""
@@ -11259,7 +11259,7 @@ class TestPublishBatchMethod:
             rabbitmq_url="amqp://test:test@localhost/",
             exchange_name="test-events",
             consumer_group="test-group",
-            batch_size=10,
+            publish_chunk_size=10,
             max_concurrent_publishes=5,
         )
 
@@ -11316,7 +11316,7 @@ class TestPublishBatchMethod:
 
         config = RabbitMQEventBusConfig(
             rabbitmq_url="amqp://test:test@localhost/",
-            batch_size=5,  # Small batch size to force chunking
+            publish_chunk_size=5,  # Small chunk size to force chunking
             max_concurrent_publishes=3,
         )
 
@@ -11339,7 +11339,7 @@ class TestPublishBatchMethod:
 
         assert result["total"] == 12
         assert result["published"] == 12
-        assert result["chunks"] == 3  # 12 events / 5 batch_size = 3 chunks
+        assert result["chunks"] == 3  # 12 events / 5 publish_chunk_size = 3 chunks
 
     @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
@@ -11449,7 +11449,7 @@ class TestPublishMethodBatchOptimization:
             rabbitmq_url="amqp://test:test@localhost/",
             exchange_name="test-events",
             consumer_group="test-group",
-            batch_size=10,
+            publish_chunk_size=10,
             max_concurrent_publishes=5,
         )
 

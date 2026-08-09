@@ -93,9 +93,13 @@ class RabbitMQEventBusConfig:
             - headers: Ignored (routing uses header matching).
             When None (default), the binding pattern is automatically chosen
             based on exchange type. Set explicitly to override.
-        batch_size: Maximum number of events to publish concurrently in a single
-            batch operation. Large batches are automatically chunked to prevent
-            overwhelming the broker. Default is 100.
+        publish_chunk_size: Maximum number of events per chunk when publishing a
+            batch. Large batches are split into chunks of this size to prevent
+            overwhelming the broker; `max_concurrent_publishes` then bounds how
+            many publishes within a chunk run concurrently. Default is 100.
+            Unrelated to Kafka's `producer_max_batch_bytes` (a byte threshold)
+            or Redis's `stream_read_count` (a consume-side read count) --
+            this one counts events on the publish side.
         max_concurrent_publishes: Maximum number of concurrent publish operations
             within a batch chunk. Controls the level of parallelism when publishing
             batches. Default is 10.
@@ -141,7 +145,7 @@ class RabbitMQEventBusConfig:
     retry_jitter: float = 0.1
     shutdown_timeout: float = 30.0
     routing_key_pattern: str | None = None
-    batch_size: int = 100
+    publish_chunk_size: int = 100
     max_concurrent_publishes: int = 10
 
     def __post_init__(self) -> None:
