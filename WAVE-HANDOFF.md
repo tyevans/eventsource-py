@@ -135,6 +135,21 @@ canonical ID went blind exactly at cutover. Emit both rather than break the sche
 
 ---
 
+## Watch items (not defects today)
+
+- `release_migration_metrics()` is pinned by a test asserting the call *happens*,
+  not *where in the call graph*. If `_complete_cutover` is refactored, the same
+  "cleanup wired to a method with no real caller" shape could reappear silently —
+  which is exactly how that bug arose. Speculative, not acted on.
+- `PostgreSQL` binds the snapshot-deserialization contract via a hand-written
+  regression test rather than the shared conformance mixin (JSONB structurally
+  prevents the suite's raw-write injection). Documented in that test's docstring.
+  A third backend with a TEXT-like column should bind the mixin, not copy the
+  hand-written test.
+- Four `rabbitmq/dlq.py` `require_channel()` sites look like the ones #21 fixed but
+  are guarded behind graceful early-returns — dead paths, not untyped raises.
+  Correctly untouched; noted so the next audit doesn't re-flag them.
+
 ## Before this merges
 
 1. **Full unit suite is UNVERIFIED** (#31) — never completed cleanly; concurrent
