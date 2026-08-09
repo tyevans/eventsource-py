@@ -133,21 +133,22 @@ class _AcquireCtx:
 
 
 class TestCutoverManagerSpanAttributes:
-    async def test_execute_cutover_sets_migration_id_attribute(
+    async def test_execute_cutover_sets_both_migration_id_attributes(
         self, isolated_tracer: tuple[Any, Any]
     ) -> None:
-        """execute_cutover() records a migration-id attribute on its real
-        span -- under cutover.py's own local ATTR_MIGRATION_ID constant
-        ("eventsource.cutover.migration_id"), which predates and differs
-        from the canonical eventsource.observability.attributes constant
-        of the same Python name ("eventsource.migration.id"). This is a
-        naming collision, not a gap: cutover.py already reports the
-        migration id, just under a different wire string. Reported as a
-        finding rather than silently renamed, since renaming an
-        already-emitted attribute string is a schema-breaking change per
-        architecture.md."""
+        """execute_cutover() records the migration id under BOTH
+        cutover.py's own ATTR_CUTOVER_MIGRATION_ID ("eventsource.cutover.
+        migration_id", emitted since the migration system's first commit)
+        AND the canonical eventsource.observability.attributes.
+        ATTR_MIGRATION_ID ("eventsource.migration.id"). These used to be
+        two constants sharing the Python name ATTR_MIGRATION_ID with
+        different wire strings -- a query filtering on the canonical
+        attribute silently missed every cutover span. Fixed additively
+        (emit both) rather than by unifying on one string, since removing
+        the cutover-local one would break any dashboard already filtering
+        on it (architecture.md's telemetry schema stability rule)."""
         from eventsource.application.migration.cutover import (
-            ATTR_MIGRATION_ID as CUTOVER_LOCAL_ATTR_MIGRATION_ID,
+            ATTR_CUTOVER_MIGRATION_ID,
         )
 
         tracer, exporter = isolated_tracer
@@ -188,10 +189,9 @@ class TestCutoverManagerSpanAttributes:
         spans = exporter.get_finished_spans()
         cutover_spans = [s for s in spans if s.name == "eventsource.cutover.execute"]
         assert len(cutover_spans) == 1
-        assert _attrs(cutover_spans[0])[CUTOVER_LOCAL_ATTR_MIGRATION_ID] == str(migration_id)
-        # And confirm the canonical constant is NOT what's emitted here --
-        # pins the collision so a future fix doesn't have to rediscover it.
-        assert ATTR_MIGRATION_ID not in _attrs(cutover_spans[0])
+        attrs = _attrs(cutover_spans[0])
+        assert attrs[ATTR_CUTOVER_MIGRATION_ID] == str(migration_id)
+        assert attrs[ATTR_MIGRATION_ID] == str(migration_id)
 
 
 class TestCoordinatorSpanAttributes:

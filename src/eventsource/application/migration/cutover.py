@@ -68,6 +68,7 @@ from eventsource.application.migration.exceptions import (
 )
 from eventsource.application.migration.metrics import get_migration_metrics
 from eventsource.observability import ATTR_TENANT_ID, Tracer, create_tracer
+from eventsource.observability.attributes import ATTR_MIGRATION_ID
 from eventsource.ports import Position
 from eventsource.ports.exceptions import LockAcquisitionError
 from eventsource.ports.locks import migration_lock_key
@@ -86,8 +87,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# Custom attribute keys for cutover tracing
-ATTR_MIGRATION_ID = "eventsource.cutover.migration_id"
+# Custom attribute keys for cutover tracing. ATTR_CUTOVER_MIGRATION_ID is
+# distinct from the canonical eventsource.observability.attributes.
+# ATTR_MIGRATION_ID ("eventsource.migration.id") -- both are emitted on
+# every cutover span (see execute_cutover/_rollback below) so a query
+# filtering on either attribute sees cutover spans. Additive rather than
+# a rename: this attribute string has been emitted since the migration
+# system's first commit, and removing it would break any dashboard or
+# saved query already filtering on it (architecture.md's telemetry
+# schema stability rule).
+ATTR_CUTOVER_MIGRATION_ID = "eventsource.cutover.migration_id"
 ATTR_CUTOVER_TIMEOUT_MS = "eventsource.cutover.timeout_ms"
 ATTR_CUTOVER_DURATION_MS = "eventsource.cutover.duration_ms"
 ATTR_CUTOVER_SUCCESS = "eventsource.cutover.success"
@@ -227,6 +236,7 @@ class CutoverManager:
         with self._tracer.span(
             "eventsource.cutover.execute",
             {
+                ATTR_CUTOVER_MIGRATION_ID: str(migration_id),
                 ATTR_MIGRATION_ID: str(migration_id),
                 ATTR_TENANT_ID: str(tenant_id),
                 ATTR_CUTOVER_TIMEOUT_MS: effective_timeout_ms,
@@ -546,6 +556,7 @@ class CutoverManager:
             "eventsource.cutover.rollback",
             {
                 ATTR_TENANT_ID: str(tenant_id),
+                ATTR_CUTOVER_MIGRATION_ID: str(migration_id),
                 ATTR_MIGRATION_ID: str(migration_id),
             },
         ):
