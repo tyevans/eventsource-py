@@ -51,6 +51,12 @@ class KafkaEventBusConfig:
         heartbeat_interval_ms: Consumer heartbeat interval in milliseconds.
         max_poll_interval_ms: Maximum time between poll calls before consumer
             is considered failed.
+        fetch_max_bytes: Maximum bytes the broker returns per fetch across
+            all partitions, bounding in-process buffering. Forwarded as-is
+            to ``AIOKafkaConsumer(fetch_max_bytes=...)``.
+        max_partition_fetch_bytes: Maximum bytes the broker returns per
+            partition in a single fetch. Forwarded as-is to
+            ``AIOKafkaConsumer(max_partition_fetch_bytes=...)``.
         max_retries: Maximum retry attempts before sending to DLQ.
         retry_base_delay: Base delay in seconds for exponential backoff.
         retry_max_delay: Maximum delay in seconds between retries.
@@ -147,6 +153,8 @@ class KafkaEventBusConfig:
     session_timeout_ms: int = 30000
     heartbeat_interval_ms: int = 10000
     max_poll_interval_ms: int = 300000
+    fetch_max_bytes: int = 52428800  # aiokafka default (50 MiB)
+    max_partition_fetch_bytes: int = 1048576  # aiokafka default (1 MiB)
 
     # Error handling
     max_retries: int = 3
@@ -262,8 +270,23 @@ class KafkaEventBusConfig:
         self._add_security_config(config)
         return config
 
-    def get_consumer_config(self) -> dict[str, Any]:
+    def get_consumer_config(self, **overrides: Any) -> dict[str, Any]:
         """Get aiokafka consumer configuration dict.
+
+        This is the single construction path for every ``AIOKafkaConsumer``
+        built from this config -- the long-lived main consumer (via
+        :class:`~eventsource.adapters.kafka.connection.KafkaConnectionManager`)
+        and every short-lived DLQ consumer (via
+        :class:`~eventsource.adapters.kafka.dlq.KafkaDLQAdmin`) both call this
+        method so a field added here reaches every consumer automatically.
+        Callers that need different values for a specific client (e.g. a DLQ
+        consumer's ``group_id`` or a one-shot ``consumer_timeout_ms``) pass
+        them as keyword overrides rather than constructing a second dict.
+
+        Args:
+            **overrides: Keys to override or add on top of the derived
+                defaults, e.g. ``group_id=None`` for an unmanaged DLQ
+                consumer or ``consumer_timeout_ms=5000`` for a bounded poll.
 
         Returns:
             Dictionary of consumer configuration for AIOKafkaConsumer.
@@ -276,8 +299,27 @@ class KafkaEventBusConfig:
             "session_timeout_ms": self.session_timeout_ms,
             "heartbeat_interval_ms": self.heartbeat_interval_ms,
             "max_poll_interval_ms": self.max_poll_interval_ms,
+            "fetch_max_bytes": self.fetch_max_bytes,
+            "max_partition_fetch_bytes": self.max_partition_fetch_bytes,
             "enable_auto_commit": False,  # Manual commit for at-least-once
         }
+        self._add_security_config(config)
+        config.update(overrides)
+        return config
+
+    def get_security_config(self) -> dict[str, Any]:
+        """Get just the security portion of the config as its own dict.
+
+        For code paths that need to build Kafka client kwargs by some means
+        other than :meth:`get_producer_config` / :meth:`get_consumer_config`
+        (e.g. clients that intentionally omit consumer-specific settings).
+        Delegates to :meth:`_add_security_config` so there is exactly one
+        derivation of the security dict, not a second copy that can drift.
+
+        Returns:
+            Dictionary of security settings.
+        """
+        config: dict[str, Any] = {}
         self._add_security_config(config)
         return config
 

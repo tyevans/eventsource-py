@@ -628,6 +628,54 @@ class TestKafkaEventBusConfigProducerConsumer:
         assert consumer_config["client_id"] == "worker-1"
         assert consumer_config["auto_offset_reset"] == "earliest"
         assert consumer_config["enable_auto_commit"] is False
+        assert consumer_config["fetch_max_bytes"] == 52428800
+        assert consumer_config["max_partition_fetch_bytes"] == 1048576
+
+    def test_get_consumer_config_fetch_bounds_configurable(self) -> None:
+        """fetch_max_bytes/max_partition_fetch_bytes reach the consumer kwargs."""
+        config = KafkaEventBusConfig(
+            fetch_max_bytes=1024,
+            max_partition_fetch_bytes=512,
+            security_protocol="PLAINTEXT",
+        )
+
+        consumer_config = config.get_consumer_config()
+
+        assert consumer_config["fetch_max_bytes"] == 1024
+        assert consumer_config["max_partition_fetch_bytes"] == 512
+
+    def test_get_consumer_config_overrides(self) -> None:
+        """Keyword overrides win over the derived defaults (used by DLQ consumers)."""
+        config = KafkaEventBusConfig(
+            consumer_group="main-group",
+            security_protocol="PLAINTEXT",
+        )
+
+        consumer_config = config.get_consumer_config(group_id=None, consumer_timeout_ms=5000)
+
+        assert consumer_config["group_id"] is None
+        assert consumer_config["consumer_timeout_ms"] == 5000
+        # Unrelated defaults are still present.
+        assert consumer_config["fetch_max_bytes"] == 52428800
+
+    def test_get_security_config_matches_producer_and_consumer(self) -> None:
+        """get_security_config() is the same derivation used everywhere else."""
+        config = KafkaEventBusConfig(
+            security_protocol="SASL_SSL",
+            sasl_mechanism="PLAIN",
+            sasl_username="user",
+            sasl_password="pass",
+            ssl_check_hostname=False,
+        )
+
+        security_config = config.get_security_config()
+        consumer_config = config.get_consumer_config()
+        producer_config = config.get_producer_config()
+
+        assert security_config["ssl_check_hostname"] is False
+        for key in security_config:
+            assert consumer_config[key] == security_config[key]
+            assert producer_config[key] == security_config[key]
 
     def test_get_consumer_config_with_security(self) -> None:
         """Test consumer configuration with security settings."""

@@ -7,8 +7,10 @@ dead letter queue.
 The facade still owns the public ``get_dlq_messages`` / ``replay_dlq_message``
 / ``get_dlq_message_count`` signatures and delegates to this collaborator,
 which builds throwaway ``AIOKafkaConsumer`` instances via
-:meth:`KafkaConnectionManager.get_security_config` and publishes replays via
-:meth:`KafkaConnectionManager.require_producer`.
+:meth:`~eventsource.adapters.kafka.config.KafkaEventBusConfig.get_consumer_config`
+-- the same construction path the long-lived main consumer uses, so a field
+added there (security, fetch bounds, ...) reaches DLQ consumers too -- and
+publishes replays via :meth:`KafkaConnectionManager.require_producer`.
 """
 
 from __future__ import annotations
@@ -101,21 +103,24 @@ class KafkaDLQAdmin:
         build/start/stop boilerplate and guarantees ``stop()`` runs even if
         the caller's body raises.
 
+        Construction goes through
+        :meth:`~eventsource.adapters.kafka.config.KafkaEventBusConfig.get_consumer_config`
+        -- the same builder the long-lived main consumer uses -- so DLQ
+        consumers never silently miss a field (security settings, fetch
+        bounds, ...) that the main consumer gets.
+
         Args:
             *topics: Topics to subscribe to at construction time. Omit to
                 build an unsubscribed consumer (e.g. for manual ``assign``).
-            **kwargs: Additional keyword arguments forwarded to
-                ``AIOKafkaConsumer``, merged over the shared bootstrap
-                servers and security config.
+            **kwargs: Overrides forwarded to
+                :meth:`KafkaEventBusConfig.get_consumer_config`, merged over
+                the shared defaults (e.g. ``group_id=None`` for an unmanaged
+                consumer, ``consumer_timeout_ms=...`` for a bounded poll).
 
         Yields:
             The started ``AIOKafkaConsumer``.
         """
-        consumer_kwargs: dict[str, Any] = {
-            "bootstrap_servers": self._config.bootstrap_servers,
-            **self._connection.get_security_config(),
-            **kwargs,
-        }
+        consumer_kwargs = self._config.get_consumer_config(**kwargs)
         dlq_consumer = AIOKafkaConsumer(*topics, **consumer_kwargs)
         try:
             await dlq_consumer.start()

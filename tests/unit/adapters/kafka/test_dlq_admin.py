@@ -176,3 +176,46 @@ class TestDlqConsumerHelper:
 
         mock_consumer.start.assert_awaited_once()
         mock_consumer.stop.assert_awaited_once()
+
+    async def test_ssl_check_hostname_reaches_dlq_consumer_kwargs(self) -> None:
+        """A DLQ consumer must honor ssl_check_hostname like the main consumer.
+
+        Regression test for the security-config drift: DLQ consumers were
+        built from a separate, incomplete security dict
+        (``KafkaConnectionManager.get_security_config()``) that omitted
+        ``ssl_check_hostname`` entirely, so setting it False on the config
+        (the documented escape hatch for self-signed / hostname-mismatched
+        certs) was silently dropped for every DLQ client while still being
+        honored by the main producer/consumer.
+        """
+        with patch.object(KafkaEventBusConfig, "_validate_security_config"):
+            config = KafkaEventBusConfig(  # type: ignore[arg-type]
+                bootstrap_servers="localhost:9092",
+                security_protocol="SSL",
+                ssl_check_hostname=False,
+            )
+        stats = KafkaEventBusStats()
+        connection = KafkaConnectionManager(config=config, stats=stats, metrics=None)
+        connection._connected = True
+
+        admin = KafkaDLQAdmin(
+            config=config,
+            connection=connection,
+            serializer=EventSerializer(),
+            stats=stats,
+        )
+
+        mock_consumer = AsyncMock()
+        captured_kwargs: dict[str, Any] = {}
+
+        def fake_consumer_ctor(*topics: Any, **kwargs: Any) -> Any:
+            captured_kwargs.update(kwargs)
+            return mock_consumer
+
+        with patch(
+            "eventsource.adapters.kafka.dlq.AIOKafkaConsumer", side_effect=fake_consumer_ctor
+        ):
+            async with admin._dlq_consumer("some-topic", group_id=None):
+                pass
+
+        assert captured_kwargs["ssl_check_hostname"] is False

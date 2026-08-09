@@ -249,30 +249,15 @@ class KafkaConnectionManager:
     def get_security_config(self) -> dict[str, Any]:
         """Get security configuration for additional consumers.
 
-        Creates a dictionary of security settings suitable for creating
-        additional Kafka consumers (e.g., for DLQ inspection).
+        Delegates to :meth:`KafkaEventBusConfig.get_security_config` so this
+        is a thin passthrough rather than a second derivation of the
+        security dict -- see that method's docstring for why a second
+        derivation is exactly the defect this collapses.
 
         Returns:
             Dictionary of security settings.
         """
-        config: dict[str, Any] = {
-            "security_protocol": self._config.security_protocol,
-        }
-
-        if self._config.sasl_mechanism:
-            config["sasl_mechanism"] = self._config.sasl_mechanism
-        if self._config.sasl_username:
-            config["sasl_plain_username"] = self._config.sasl_username
-        if self._config.sasl_password:
-            config["sasl_plain_password"] = self._config.sasl_password
-        if self._config.ssl_cafile:
-            config["ssl_cafile"] = self._config.ssl_cafile
-        if self._config.ssl_certfile:
-            config["ssl_certfile"] = self._config.ssl_certfile
-        if self._config.ssl_keyfile:
-            config["ssl_keyfile"] = self._config.ssl_keyfile
-
-        return config
+        return self._config.get_security_config()
 
     # =========================================================================
     # Metrics Recording
