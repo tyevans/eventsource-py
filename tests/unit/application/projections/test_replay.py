@@ -24,6 +24,7 @@ import pytest
 
 from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.application.projections.replay import (
+    REPLAY_BATCH_SIZE,
     ReplayFailedError,
     ReplayFailure,
     ReplayReport,
@@ -397,6 +398,59 @@ class TestTheFailureListIsBoundedAndSaysSo:
         assert [f.event_id for f in streamed] == [poison.event_id]
 
 
+class TestTheReadIsBounded:
+    """The adapters materialize a feed read before yielding the first
+    envelope, so an unbounded read is an unbounded allocation however the
+    events are consumed. The bound has to be on the read itself."""
+
+    async def test_every_read_carries_a_limit(self) -> None:
+        store = await _store_with(OrderPlaced(aggregate_id=uuid4()))
+        feed = RecordingFeed(store)
+
+        await replay(feed, [Collecting()])
+
+        assert feed.calls
+        for _, options in feed.calls:
+            assert options is not None
+            assert options.limit == REPLAY_BATCH_SIZE
+
+    async def test_a_feed_longer_than_one_batch_is_read_in_several(self) -> None:
+        store = await _store_with(*(OrderPlaced(aggregate_id=uuid4()) for _ in range(5)))
+        feed = RecordingFeed(store)
+        collecting = Collecting()
+
+        report = await replay(feed, [collecting], batch_size=2)
+
+        # 2 + 2 + 1: the short final batch is what ends the loop.
+        assert len(feed.calls) == 3
+        assert [options.limit for _, options in feed.calls if options] == [2, 2, 2]
+        # Every event still arrives, exactly once and in order.
+        assert len(collecting.seen) == 5
+        assert report.applied == 5
+
+    async def test_each_batch_resumes_after_the_previous_one(self) -> None:
+        """`from_position` is exclusive, so no event is seen twice or skipped."""
+        store = await _store_with(*(OrderPlaced(aggregate_id=uuid4()) for _ in range(4)))
+        feed = RecordingFeed(store)
+        collecting = Collecting()
+
+        await replay(feed, [collecting], batch_size=2)
+
+        cursors = [from_position for from_position, _ in feed.calls]
+        assert cursors[0] is None
+        assert all(cursor is not None for cursor in cursors[1:])
+        assert len({event.event_id for event in collecting.seen}) == 4
+
+    async def test_an_empty_feed_reads_once_and_stops(self) -> None:
+        feed = RecordingFeed(InMemoryEventStore(event_registry=_REGISTRY))
+
+        report = await replay(feed, [Collecting()])
+
+        assert len(feed.calls) == 1
+        assert report.applied == 0
+        assert report.last_position is None
+
+
 class TestScopingReachesTheAdaptersQuery:
     """Filtering in Python would give the same answers, so assert the ask."""
 
@@ -432,17 +486,24 @@ class TestScopingReachesTheAdaptersQuery:
         assert options is not None
         assert (options.tenant_id, options.aggregate_type) == (TENANT_A, "Order")
 
-    async def test_no_options_are_sent_when_nothing_is_named(self) -> None:
-        """A whole-feed rebuild must not start sending a filter object an
-        adapter might interpret -- `None` is what `read_all` documents as
-        unfiltered."""
+    async def test_no_filter_is_sent_when_nothing_is_named(self) -> None:
+        """A whole-feed rebuild must not send a filter an adapter could
+        interpret as narrowing the read.
+
+        The options object itself is always sent now, because every read
+        carries a batch `limit` -- but its filter fields stay `None`, which
+        all three adapters guard with `is not None` before adding a clause.
+        An unset filter and no options at all are the same read."""
         store = await _store_with(OrderPlaced(aggregate_id=uuid4()))
         feed = RecordingFeed(store)
 
         await replay(feed, [Collecting()])
 
         ((_, options),) = feed.calls
-        assert options is None
+        assert options is not None
+        assert options.tenant_id is None
+        assert options.aggregate_type is None
+        assert options.limit is not None
 
     async def test_from_position_is_forwarded_unchanged(self) -> None:
         store = await _store_with(*(OrderPlaced(aggregate_id=uuid4()) for _ in range(2)))
