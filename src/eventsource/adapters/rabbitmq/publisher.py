@@ -81,6 +81,13 @@ class RabbitMQPublisher:
 
         self._logger = logging.getLogger("eventsource.adapters.rabbitmq")
 
+        # One semaphore owned by this instance, constructed once, so
+        # config.max_concurrent_publishes is a true ceiling across every
+        # concurrent publish_many()/publish_batch() call on this publisher --
+        # never construct a new semaphore per chunk, which multiplies the
+        # effective ceiling under concurrent callers.
+        self._publish_semaphore = asyncio.Semaphore(config.max_concurrent_publishes)
+
     async def publish_one(
         self,
         event: DomainEvent,
@@ -280,10 +287,8 @@ class RabbitMQPublisher:
                 chunk_end = min(chunk_start + chunk_size, total_events)
                 chunk = events[chunk_start:chunk_end]
 
-                # Within each chunk, limit concurrency
-                chunk_published = await self._publish_chunk_concurrent(
-                    chunk, max_concurrent, errors
-                )
+                # Within each chunk, limit concurrency via the shared semaphore
+                chunk_published = await self._publish_chunk_concurrent(chunk, errors)
                 published_count += chunk_published
 
             # Update statistics
@@ -334,27 +339,27 @@ class RabbitMQPublisher:
     async def _publish_chunk_concurrent(
         self,
         events: list[DomainEvent],
-        max_concurrent: int,
         errors: list[Exception],
     ) -> int:
         """Publish a chunk of events concurrently with concurrency limit.
 
-        Uses asyncio.Semaphore to limit the number of concurrent publish
-        operations, preventing resource exhaustion.
+        Uses the publisher's shared ``self._publish_semaphore`` to limit the
+        number of concurrent publish operations, preventing resource
+        exhaustion. That semaphore is constructed once per publisher
+        instance (not per chunk/call), so ``max_concurrent_publishes`` is a
+        true ceiling even across two concurrent ``publish_many()`` calls.
 
         Args:
             events: Events in this chunk to publish
-            max_concurrent: Maximum concurrent publish operations
             errors: List to append any errors to
 
         Returns:
             Number of successfully published events in this chunk
         """
-        semaphore = asyncio.Semaphore(max_concurrent)
 
         async def publish_with_semaphore(event: DomainEvent) -> bool:
             """Publish a single event with semaphore control."""
-            async with semaphore:
+            async with self._publish_semaphore:
                 try:
                     await self._publish_single_no_stats(event)
                     return True
@@ -418,7 +423,7 @@ class RabbitMQPublisher:
             chunk = events[chunk_start:chunk_end]
             num_chunks += 1
 
-            chunk_published = await self._publish_chunk_concurrent(chunk, max_concurrent, errors)
+            chunk_published = await self._publish_chunk_concurrent(chunk, errors)
             published_count += chunk_published
 
             self._logger.debug(

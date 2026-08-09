@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest import mock
 from uuid import UUID, uuid4
 
@@ -165,3 +166,63 @@ class TestPublishBatch:
 
         assert result["published"] == 5
         assert call_order == list(range(5))
+
+
+class TestPublishConcurrencyBound:
+    async def test_max_concurrent_publishes_holds_across_two_concurrent_publish_many_calls(
+        self, stats: RabbitMQEventBusStats
+    ) -> None:
+        """config.max_concurrent_publishes must bound in-flight publishes for
+        the *publisher instance*, not per publish_many() call.
+
+        Regression test: _publish_chunk_concurrent used to build its own
+        `asyncio.Semaphore(max_concurrent)` on every call, so two concurrent
+        publish_many() calls (e.g. two overlapping publish_batch() callers)
+        each got their own ceiling and the true bound was
+        max_concurrent_publishes x number of concurrent callers. A single
+        publish_many() call alone cannot distinguish the two implementations
+        -- this test drives two overlapping calls and asserts the combined
+        peak never exceeds the configured ceiling.
+        """
+        max_concurrent = 3
+        config = RabbitMQEventBusConfig(
+            rabbitmq_url="amqp://guest:guest@localhost:5672/",
+            exchange_name="test-events",
+            consumer_group="test-group",
+            batch_size=100,
+            max_concurrent_publishes=max_concurrent,
+        )
+
+        in_flight = 0
+        peak_in_flight = 0
+        lock = asyncio.Lock()
+
+        async def _slow_publish(message: object, routing_key: str) -> None:
+            nonlocal in_flight, peak_in_flight
+            async with lock:
+                in_flight += 1
+                peak_in_flight = max(peak_in_flight, in_flight)
+            await asyncio.sleep(0.02)
+            async with lock:
+                in_flight -= 1
+
+        exchange = mock.AsyncMock()
+        exchange.publish = mock.AsyncMock(side_effect=_slow_publish)
+        publisher, _ = _publisher(config, stats, exchange)
+
+        events_a = [PublisherTestEvent(aggregate_id=uuid4()) for _ in range(10)]
+        events_b = [PublisherTestEvent(aggregate_id=uuid4()) for _ in range(10)]
+
+        await asyncio.gather(
+            publisher.publish_many(events_a),
+            publisher.publish_many(events_b),
+        )
+
+        assert peak_in_flight <= max_concurrent, (
+            f"peak concurrent publishes {peak_in_flight} exceeded "
+            f"max_concurrent_publishes={max_concurrent} across two concurrent "
+            "publish_many() calls"
+        )
+        # Sanity: the bound was actually exercised, not trivially satisfied
+        # by too little work ever overlapping.
+        assert peak_in_flight == max_concurrent
