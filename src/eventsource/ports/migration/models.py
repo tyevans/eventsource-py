@@ -369,7 +369,6 @@ class MigrationConfig:
     Attributes:
         batch_size: Events per batch during bulk copy (default 1000).
         max_bulk_copy_rate: Max events/second during bulk copy (default 10000).
-        dual_write_timeout_minutes: Max time in dual-write phase (default 30).
         cutover_max_lag_events: Max lag allowed before cutover (default 0 --
             strict). Any nonzero value permits cutover while that many
             source events are absent from the target; they are never
@@ -392,7 +391,6 @@ class MigrationConfig:
 
     batch_size: int = 1000
     max_bulk_copy_rate: int = 10000
-    dual_write_timeout_minutes: int = 30
     cutover_max_lag_events: int = 0
     cutover_timeout_ms: int = 500
     position_mapping_enabled: bool = True
@@ -406,11 +404,6 @@ class MigrationConfig:
 
         if self.max_bulk_copy_rate < 1:
             raise ValueError(f"max_bulk_copy_rate must be >= 1, got {self.max_bulk_copy_rate}")
-
-        if self.dual_write_timeout_minutes < 1:
-            raise ValueError(
-                f"dual_write_timeout_minutes must be >= 1, got {self.dual_write_timeout_minutes}"
-            )
 
         if self.cutover_max_lag_events < 0:
             raise ValueError(
@@ -430,7 +423,6 @@ class MigrationConfig:
         return {
             "batch_size": self.batch_size,
             "max_bulk_copy_rate": self.max_bulk_copy_rate,
-            "dual_write_timeout_minutes": self.dual_write_timeout_minutes,
             "cutover_max_lag_events": self.cutover_max_lag_events,
             "cutover_timeout_ms": self.cutover_timeout_ms,
             "position_mapping_enabled": self.position_mapping_enabled,
@@ -452,7 +444,6 @@ class MigrationConfig:
         return cls(
             batch_size=data.get("batch_size", 1000),
             max_bulk_copy_rate=data.get("max_bulk_copy_rate", 10000),
-            dual_write_timeout_minutes=data.get("dual_write_timeout_minutes", 30),
             cutover_max_lag_events=data.get("cutover_max_lag_events", 0),
             cutover_timeout_ms=data.get("cutover_timeout_ms", 500),
             position_mapping_enabled=data.get("position_mapping_enabled", True),

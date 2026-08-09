@@ -7,12 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+A backpressure release, in the sense that it establishes there is no
+backpressure to configure. `SubscriptionConfig.max_in_flight` and the semaphore
+behind it looked like a concurrency control and were not one: both subscription
+runners await each event to completion before starting the next, so the bound
+never engaged and the threshold could never trip. Rather than implement the
+concurrency the knob implied, the decision recorded in the new ordered-delivery
+ADR is that delivery is sequential *on purpose* -- a subscription's position is
+a single scalar advanced in lockstep with delivery, and concurrent completion
+would let progress outrun work and silently skip events on restart. The knob is
+deleted, the invariant is written down, and the sanctioned way to go faster --
+handing a subscriber a whole batch, which still settles before the position
+moves -- is now wired on the catch-up path.
+
+Pulling that thread found the same shape elsewhere. Several bounds were
+missing where it mattered: the live drain, and `replay()`, each read an entire
+feed into memory in one call, because every store adapter materializes a result
+set before yielding its first envelope. Several knobs were the reverse -- declared,
+documented, and read by nothing: a projection coordinator's polling interval
+with no polling loop, a reconnect delay with no backoff, a dual-write timeout
+nothing checked. And `batch_size` meant three unrelated things across three bus
+adapters, one of them in bytes.
+
+Two fixes have operational consequence beyond tidiness. Kafka DLQ clients were
+built through a second, independently-maintained security config that had
+drifted: it omitted `ssl_check_hostname`, so setting it was silently ignored on
+those connections. And a tenant-scoped subscription read every tenant's rows
+from the feed once it went live -- filtered correctly before delivery, so not a
+data leak, but every such subscription was over-fetching instead of using the
+indexed predicate.
+
+### Breaking
+
+- **`SubscriptionConfig.max_in_flight` and `backpressure_threshold` are deleted, and `FlowController` no longer limits concurrency.** Both subscription runners await each event's `handle()` to completion before starting the next, so at most one event was ever in flight per subscription and the semaphore these fields configured never blocked -- a real-runner reproduction measured `peak_in_flight == 1` with `max_in_flight=1000`. `FlowController` now only tracks in-flight count and gives graceful shutdown a drain latch (`wait_for_drain`, used by `SubscriptionManager` shutdown); its constructor takes no arguments. Also deleted: `FlowController.is_paused`, `is_backpressured`, `utilization`, `available_capacity`, `wait_for_capacity` (zero callers anywhere in the tree), and the `FlowControlStats` fields `peak_in_flight`, `pause_count`, `total_pause_time_seconds`. `HealthCheckConfig.backpressure_warning_duration_seconds` and `backpressure_critical_duration_seconds` are deleted along with `SubscriptionHealthChecker`'s `flow_controller` constructor parameter and its `_check_backpressure` indicator -- the duration thresholds were never measured against anything, so the warning/critical distinction could never fire. No shim, per the pre-1.0 no-shim policy.
+- **`batch_size` is renamed on all three broker bus configs, because it named three different quantities.** Kafka's was a producer send-buffer threshold in *bytes*; Redis's was a consumer read *count* in events; RabbitMQ's was a publish *chunk size* in events -- with Redis and RabbitMQ on opposite sides of the wire from each other. A user configuring one adapter from another's docs was wrong by roughly 160x with no error. Each field is renamed to say what it measures and which side of the wire it is on: `KafkaEventBusConfig.batch_size` -> `producer_max_batch_bytes`, `RedisEventBusConfig.batch_size` -> `stream_read_count` (and `RedisEventBus.recover_pending_messages()`'s `batch_size` parameter with it), `RabbitMQEventBusConfig.batch_size` -> `publish_chunk_size`. Wire behavior is unchanged; only the names are. `SubscriptionConfig.batch_size` is untouched -- it is a different, correctly-named field.
+- **`ProjectionCoordinator` loses `batch_size`, `poll_interval_seconds`, and a `start()` method that never existed.** The class docstring claimed it "sets up the event bus connection" and "polls event store", with a usage example calling `await coordinator.start()` -- verified against full history as never having existed. `batch_size` and `poll_interval_seconds` were stored and read only by `health_check()`, which echoed them back into a stats dict; there was no polling loop to configure. All four fields are deleted and the docstring now describes what the class is: a dispatch coordinator over `dispatch_events`, `rebuild_all`, `rebuild_projection`, `catchup`, and `health_check`, driven by a caller that already has the events.
+- **`RabbitMQEventBusConfig.max_reconnect_delay` is deleted.** It was documented as capping exponential reconnect backoff, and nothing read it -- `aio-pika`'s `connect_robust` owns reconnection, and this backend has never implemented a backoff of its own.
+- **`MigrationConfig.dual_write_timeout_minutes` is deleted.** It was validated (`must be >= 1`), serialized through `to_dict`/`from_dict`, and documented as "Max time in dual-write phase (default 30)" -- but nothing in the dual-write phase read it, checked it, or enforced any bound. Every sibling `MigrationConfig` field traces to a real read site; this was the only one that didn't. No shim, per the pre-1.0 no-shim policy.
+- **`SQLITE_AVAILABLE` is gone; use `AIOSQLITE_AVAILABLE`.** Two names guarded the identical `import aiosqlite` and were therefore always equal, both re-exported from `eventsource` with nothing distinguishing them. The redundant per-module `KAFKA_AVAILABLE` and `RABBITMQ_AVAILABLE` declarations are likewise collapsed to one apiece; the publicly re-exported names are unchanged for those two backends.
+- **`RoutingError` is deleted.** It was defined in the migration exception hierarchy and never raised, never caught, and never documented as catchable. `StoreNotFoundError` covers the one routing failure that is actually detected.
+
+### Added
+
+- **`eventsource.snapshot.miss`, a counter for snapshot reads that fell back to full event replay.** ADR 0017 recorded, as a known negative, that "silent failure means snapshot loss is only visible in logs/metrics" -- a snapshot is a cache, so every failure degrades to a correct-but-slower load and nothing surfaces. The counter closes that: it is keyed by `reason` (`missing`, `schema_mismatch`, `store_error`, `deserialization_error`, `state_restore_failed`) and `aggregate_type`, and the reasons separate on the axis an operator acts on -- **permanence**. A store outage is transient and hits every aggregate at once; a corrupt row is permanent for one aggregate and costs a full replay on every load of it, forever, until the row is rewritten. Both previously logged at `WARNING` and were indistinguishable. OpenTelemetry is optional as ever (ADR 0016); `snapshot_miss_counts()` exposes the same tally in-process for callers without an exporter.
+- **Migration metrics and the migration audit log are wired to real call sites.** `MigrationMetrics`' recorders and the `ATTR_MIGRATION_*` span attributes were defined and never emitted; `MigrationAuditLogRepository` was fully implemented, with an adapter, and had no application-ring consumer since the day it was written -- so an operator who injected an audit repository expecting phase transitions to be recorded got an empty table.
+- **`ProjectionRegistry` and `SubscriberRegistry` accept an optional `max_concurrency`.** Fan-out within a single event was unbounded; the cap is enforced by one semaphore owned by the registry instance rather than one per call.
+- **`replay()` accepts `batch_size`** (`REPLAY_BATCH_SIZE`, default 1000), the size of each feed read.
+
 ### Fixed
 
 - **The catch-up runner now dispatches through `handle_batch()` for subscribers that implement it.** `BatchSubscriber`/`BatchAwareSubscriber`/`FilteringSubscriber` and `supports_batch_handling()` were declared, implemented, and documented, but no runner ever called `handle_batch()` -- both runners delivered one event at a time regardless. `CatchUpRunner` now detects batch capability once at construction and, when present, delivers each read batch as one `handle_batch()` call, with the position advancing only after the whole batch settles (preserving the invariant recorded in `docs/adrs/DRAFT-ordered-subscription-delivery.md`). A `handle_batch()` that raises falls back to per-event delivery through `handle()`, per `BatchSubscriber`'s documented contract, reusing the existing retry/DLQ/`continue_on_error` machinery rather than inventing partial-batch semantics. The live runner does not dispatch through `handle_batch()` yet -- tracked separately, since its per-envelope stop/pause responsiveness was built on per-event delivery.
 
 ### Breaking
 
+- **`MigrationConfig.dual_write_timeout_minutes` is deleted.** It was validated (`must be >= 1`), serialized through `to_dict`/`from_dict`, and documented as "Max time in dual-write phase (default 30)" -- but nothing in the dual-write phase read it, checked it, or enforced any bound. Every sibling `MigrationConfig` field traces to a real read site; this was the only one that didn't. No shim, per the pre-1.0 no-shim policy.
 - **`SubscriptionConfig.max_in_flight` and `backpressure_threshold` are deleted, and `FlowController` no longer limits concurrency.** Both subscription runners await each event's `handle()` to completion before starting the next, so at most one event was ever in flight per subscription and the semaphore these fields configured never blocked -- a real-runner reproduction measured `peak_in_flight == 1` with `max_in_flight=1000`. `FlowController` now only tracks in-flight count and gives graceful shutdown a drain latch (`wait_for_drain`, used by `SubscriptionManager` shutdown); its constructor takes no arguments. Also deleted: `FlowController.is_paused`, `is_backpressured`, `utilization`, `available_capacity`, `wait_for_capacity` (zero callers anywhere in the tree), and the `FlowControlStats` fields `peak_in_flight`, `pause_count`, `total_pause_time_seconds`. `HealthCheckConfig.backpressure_warning_duration_seconds` and `backpressure_critical_duration_seconds` are deleted along with `SubscriptionHealthChecker`'s `flow_controller` constructor parameter and its `_check_backpressure` indicator -- the duration thresholds were never measured against anything, so the warning/critical distinction could never fire. No shim, per the pre-1.0 no-shim policy.
 
 ## [0.13.0] - 2026-08-09
