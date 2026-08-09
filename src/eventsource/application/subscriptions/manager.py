@@ -172,6 +172,8 @@ class SubscriptionManager:
             error_handlers=self._error_handlers,
             config=self._health_check_config,
             lock=self._registry.lock,
+            handler_circuit_breaker_lookup=self._lifecycle.get_handler_circuit_breaker,
+            infra_circuit_breaker_lookup=self._lifecycle.get_infra_circuit_breaker,
         )
         self._pause_resume = PauseResumeController(
             registry=self._registry,

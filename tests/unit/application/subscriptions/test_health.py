@@ -378,80 +378,142 @@ class TestSubscriptionHealthChecker:
         # STARTING state is UNKNOWN, which is worse than HEALTHY
         assert result.overall_status in (HealthStatus.UNKNOWN, HealthStatus.HEALTHY)
 
-    def test_check_with_circuit_breaker_closed(
+    def test_check_with_handler_circuit_breaker_closed(
         self,
         subscription: Subscription,
     ):
-        """Test health check with circuit breaker closed."""
-        from eventsource.application.subscriptions.retry import CircuitState
+        """Test health check with the handler circuit breaker closed."""
+        from eventsource.application.subscriptions.retry import CircuitBreaker, CircuitState
 
-        circuit_breaker = MagicMock()
+        circuit_breaker = MagicMock(spec=CircuitBreaker)
         circuit_breaker.state = CircuitState.CLOSED
         circuit_breaker.failure_count = 0
 
         checker = SubscriptionHealthChecker(
             subscription=subscription,
-            circuit_breaker=circuit_breaker,
+            handler_circuit_breaker_provider=lambda: circuit_breaker,
         )
 
         result = checker.check()
 
         cb_indicator = next(
-            (i for i in result.indicators if i.name == "circuit_breaker"),
+            (i for i in result.indicators if i.name == "handler_circuit_breaker"),
             None,
         )
         assert cb_indicator is not None
         assert cb_indicator.status == HealthStatus.HEALTHY
 
-    def test_check_with_circuit_breaker_open(
+    def test_check_with_handler_circuit_breaker_open(
         self,
         subscription: Subscription,
     ):
-        """Test health check with circuit breaker open."""
-        from eventsource.application.subscriptions.retry import CircuitState
+        """Test health check with the handler circuit breaker open."""
+        from eventsource.application.subscriptions.retry import CircuitBreaker, CircuitState
 
-        circuit_breaker = MagicMock()
+        circuit_breaker = MagicMock(spec=CircuitBreaker)
         circuit_breaker.state = CircuitState.OPEN
         circuit_breaker.failure_count = 10
 
         checker = SubscriptionHealthChecker(
             subscription=subscription,
-            circuit_breaker=circuit_breaker,
+            handler_circuit_breaker_provider=lambda: circuit_breaker,
         )
 
         result = checker.check()
 
         cb_indicator = next(
-            (i for i in result.indicators if i.name == "circuit_breaker"),
+            (i for i in result.indicators if i.name == "handler_circuit_breaker"),
             None,
         )
         assert cb_indicator is not None
         assert cb_indicator.status == HealthStatus.UNHEALTHY
 
-    def test_check_with_circuit_breaker_half_open(
+    def test_check_with_handler_circuit_breaker_half_open(
         self,
         subscription: Subscription,
     ):
-        """Test health check with circuit breaker half-open."""
-        from eventsource.application.subscriptions.retry import CircuitState
+        """Test health check with the handler circuit breaker half-open."""
+        from eventsource.application.subscriptions.retry import CircuitBreaker, CircuitState
 
-        circuit_breaker = MagicMock()
+        circuit_breaker = MagicMock(spec=CircuitBreaker)
         circuit_breaker.state = CircuitState.HALF_OPEN
         circuit_breaker.failure_count = 5
 
         checker = SubscriptionHealthChecker(
             subscription=subscription,
-            circuit_breaker=circuit_breaker,
+            handler_circuit_breaker_provider=lambda: circuit_breaker,
         )
 
         result = checker.check()
 
         cb_indicator = next(
-            (i for i in result.indicators if i.name == "circuit_breaker"),
+            (i for i in result.indicators if i.name == "handler_circuit_breaker"),
             None,
         )
         assert cb_indicator is not None
         assert cb_indicator.status == HealthStatus.DEGRADED
+
+    def test_check_with_infra_circuit_breaker_open(
+        self,
+        subscription: Subscription,
+    ):
+        """Test health check with the infra circuit breaker open.
+
+        Reported as a distinct indicator from the handler breaker -- an
+        operator needs to know an OPEN store/checkpoint breaker apart from
+        an OPEN handler breaker, since they call for different responses.
+        """
+        from eventsource.application.subscriptions.retry import CircuitBreaker, CircuitState
+
+        circuit_breaker = MagicMock(spec=CircuitBreaker)
+        circuit_breaker.state = CircuitState.OPEN
+        circuit_breaker.failure_count = 10
+
+        checker = SubscriptionHealthChecker(
+            subscription=subscription,
+            infra_circuit_breaker_provider=lambda: circuit_breaker,
+        )
+
+        result = checker.check()
+
+        indicator_names = {i.name for i in result.indicators}
+        assert "infra_circuit_breaker" in indicator_names
+        assert "handler_circuit_breaker" not in indicator_names
+
+        cb_indicator = next(
+            (i for i in result.indicators if i.name == "infra_circuit_breaker"),
+            None,
+        )
+        assert cb_indicator is not None
+        assert cb_indicator.status == HealthStatus.UNHEALTHY
+
+    def test_check_reports_both_breakers_independently(
+        self,
+        subscription: Subscription,
+    ):
+        """Both breakers are reported when both providers are set, and an
+        OPEN handler breaker does not make the infra indicator OPEN too."""
+        from eventsource.application.subscriptions.retry import CircuitBreaker, CircuitState
+
+        handler_breaker = MagicMock(spec=CircuitBreaker)
+        handler_breaker.state = CircuitState.OPEN
+        handler_breaker.failure_count = 5
+
+        infra_breaker = MagicMock(spec=CircuitBreaker)
+        infra_breaker.state = CircuitState.CLOSED
+        infra_breaker.failure_count = 0
+
+        checker = SubscriptionHealthChecker(
+            subscription=subscription,
+            handler_circuit_breaker_provider=lambda: handler_breaker,
+            infra_circuit_breaker_provider=lambda: infra_breaker,
+        )
+
+        result = checker.check()
+
+        by_name = {i.name: i for i in result.indicators}
+        assert by_name["handler_circuit_breaker"].status == HealthStatus.UNHEALTHY
+        assert by_name["infra_circuit_breaker"].status == HealthStatus.HEALTHY
 
 
 # =============================================================================

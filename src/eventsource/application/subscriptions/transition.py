@@ -33,6 +33,7 @@ from eventsource.ports.positions import Position
 
 if TYPE_CHECKING:
     from eventsource.application.subscriptions.flow_control import FlowController
+    from eventsource.application.subscriptions.retry import CircuitBreaker
     from eventsource.ports.bus import SubscribableEventBus
     from eventsource.ports.checkpoints import SubscriptionPositions
     from eventsource.ports.store import GlobalEventFeed
@@ -479,6 +480,51 @@ class TransitionCoordinator:
         """
         if self._live_runner is not None:
             return self._live_runner.flow_controller
+        return None
+
+    @property
+    def handler_circuit_breaker(self) -> "CircuitBreaker | None":
+        """
+        Get the handler circuit breaker of whichever runner is currently
+        active.
+
+        Guards the subscriber's `handle()`/`handle_batch()` calls. During
+        catch-up this is the catch-up runner's breaker; once the transition
+        to live delivery completes, the live runner's breaker takes over.
+        Distinct from `infra_circuit_breaker` -- the two guard unrelated
+        failure domains and never share state (see
+        `CatchUpRunner.handler_circuit_breaker`).
+
+        Returns:
+            The active runner's handler CircuitBreaker, or None if neither
+            runner has been created yet, or if `circuit_breaker_enabled=False`
+            left both runners without one.
+        """
+        if self._live_runner is not None:
+            return self._live_runner.handler_circuit_breaker
+        if self._catchup_runner is not None:
+            return self._catchup_runner.handler_circuit_breaker
+        return None
+
+    @property
+    def infra_circuit_breaker(self) -> "CircuitBreaker | None":
+        """
+        Get the infrastructure circuit breaker of whichever runner is
+        currently active.
+
+        Guards read-batch (catch-up only) and checkpoint-save. Distinct
+        from `handler_circuit_breaker` -- a broken handler cannot open this
+        one, and a flaky store cannot mask a broken handler.
+
+        Returns:
+            The active runner's infra CircuitBreaker, or None if neither
+            runner has been created yet, or if `circuit_breaker_enabled=False`
+            left both runners without one.
+        """
+        if self._live_runner is not None:
+            return self._live_runner.infra_circuit_breaker
+        if self._catchup_runner is not None:
+            return self._catchup_runner.infra_circuit_breaker
         return None
 
 

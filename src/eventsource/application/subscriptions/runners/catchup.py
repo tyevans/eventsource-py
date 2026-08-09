@@ -12,6 +12,7 @@ This module provides:
 
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
@@ -170,14 +171,26 @@ class CatchUpRunner:
         # In-flight tracking / drain latch for graceful shutdown
         self._flow_controller = FlowController()
 
-        # Retry mechanism with optional circuit breaker
-        self._circuit_breaker: CircuitBreaker | None = None
+        # Two independent circuit breakers, both built from the same
+        # CircuitBreakerConfig (there is one threshold/recovery_timeout
+        # knob, not two) -- one per failure domain, since a breaker guards
+        # one dependency and infra failures (store, checkpoint repo) and
+        # handler failures are unrelated dependencies. Sharing one breaker
+        # between them means a run of handler failures blocks checkpointing,
+        # which is a bug, not a feature.
+        self._infra_circuit_breaker: CircuitBreaker | None = None
+        self._handler_circuit_breaker: CircuitBreaker | None = None
         if self.config.circuit_breaker_enabled:
-            self._circuit_breaker = CircuitBreaker(self.config.get_circuit_breaker_config())
+            self._infra_circuit_breaker = CircuitBreaker(self.config.get_circuit_breaker_config())
+            self._handler_circuit_breaker = CircuitBreaker(self.config.get_circuit_breaker_config())
 
+        # Retry mechanism for infra ops (read-batch, checkpoint-save) only.
+        # Handler calls go through _call_guarded / _handler_circuit_breaker
+        # instead -- retrying a handler call would break the documented
+        # "nothing retries your handler" guarantee.
         self._retry = RetryableOperation(
             config=self.config.get_retry_config(),
-            circuit_breaker=self._circuit_breaker,
+            circuit_breaker=self._infra_circuit_breaker,
         )
 
         # Metrics instrumentation
@@ -583,6 +596,50 @@ class CatchUpRunner:
         elif self.config.checkpoint_strategy == CheckpointStrategy.PERIODIC:
             await self._maybe_save_periodic_checkpoint(envelope)
 
+    async def _call_guarded[T](
+        self,
+        operation: Callable[[], Awaitable[T]],
+        operation_name: str,
+    ) -> T:
+        """
+        Call `operation` through the handler circuit breaker, if configured.
+
+        Guards handler calls (`handle()`/`handle_batch()`) specifically --
+        `self._handler_circuit_breaker`, never `self._infra_circuit_breaker`
+        (which guards read-batch/checkpoint-save via `self._retry` instead).
+        The two are independent instances so a run of handler failures
+        cannot block checkpointing, and a flaky store cannot silence a
+        broken handler's signal.
+
+        The call is gated but never retried here: `CircuitBreaker.execute()`
+        calls `operation` at most once, raising `CircuitBreakerOpenError`
+        instead of calling it at all when the breaker is OPEN. This is
+        deliberately not routed through `self._retry`
+        (`RetryableOperation`'s exponential-backoff loop) -- "nothing
+        retries your handler" (docs/guides/subscriptions.md) stays true
+        whether or not a circuit breaker is configured. Both success and
+        failure feed the breaker's consecutive-failure count -- a single
+        failure sandwiched between successes resets it to zero on the next
+        success, so only a *run* of consecutive handler failures opens the
+        circuit, not the occasional bad event (see the `handler_circuit_breaker`
+        property docstring for why this means DLQ'd events need no special
+        case).
+
+        Args:
+            operation: Zero-argument async callable to run
+            operation_name: Name for logging/tracing
+
+        Returns:
+            The operation's result
+
+        Raises:
+            CircuitBreakerOpenError: If the breaker is open
+            Exception: Whatever `operation` itself raises
+        """
+        if self._handler_circuit_breaker is not None:
+            return await self._handler_circuit_breaker.execute(operation, operation_name)
+        return await operation()
+
     async def _deliver_batch(self, envelopes: list[EventEnvelope]) -> bool:
         """
         Deliver a batch of envelopes through `subscriber.handle_batch()`.
@@ -608,7 +665,7 @@ class CatchUpRunner:
             start_time = time.perf_counter()
             try:
                 subscriber = cast(BatchSubscriber, self.subscription.subscriber)
-                await subscriber.handle_batch(events)
+                await self._call_guarded(lambda: subscriber.handle_batch(events), "handle_batch")
             except Exception as e:
                 logger.warning(
                     "handle_batch failed, falling back to single-event delivery",
@@ -687,7 +744,8 @@ class CatchUpRunner:
         ):
             start_time = time.perf_counter()
             try:
-                await self.subscription.subscriber.handle(event)
+                subscriber = self.subscription.subscriber
+                await self._call_guarded(lambda: subscriber.handle(event), "handle_event")
                 # Record success metrics
                 duration_ms = (time.perf_counter() - start_time) * 1000
                 self._metrics.record_event_processed(
@@ -859,14 +917,50 @@ class CatchUpRunner:
         return self._flow_controller.stats
 
     @property
-    def circuit_breaker(self) -> CircuitBreaker | None:
+    def handler_circuit_breaker(self) -> CircuitBreaker | None:
         """
-        Get the circuit breaker for this runner.
+        Get the circuit breaker guarding the subscriber's `handle()`/
+        `handle_batch()` calls.
+
+        Every handler outcome -- success or failure -- feeds this breaker
+        uniformly, regardless of `continue_on_error` or whether the event
+        is later routed to the DLQ by the caller's own error handler (the
+        runner does not DLQ automatically; see
+        docs/guides/subscriptions.md#route-permanently-failed-events-to-the-dead-letter-queue).
+        A DLQ'd event needs no special case: `CircuitBreaker.record_success`
+        resets the consecutive-failure count to zero on the very next
+        success, so an isolated bad event sandwiched between good ones never
+        opens the circuit -- only a *run* of consecutive handler failures
+        does, which is the signal that the handler itself, not one poisoned
+        event, is broken.
+
+        Independent from `infra_circuit_breaker`: a broken handler cannot
+        block checkpointing, and a flaky store cannot mask a broken
+        handler's signal.
 
         Returns:
-            CircuitBreaker instance if enabled, None otherwise
+            CircuitBreaker instance if `circuit_breaker_enabled`, None
+            otherwise
         """
-        return self._circuit_breaker
+        return self._handler_circuit_breaker
+
+    @property
+    def infra_circuit_breaker(self) -> CircuitBreaker | None:
+        """
+        Get the circuit breaker guarding infrastructure operations
+        (read-batch, checkpoint-save) via `self._retry`.
+
+        Unchanged in behavior from before handler calls were gated:
+        transient store/checkpoint-repo failures feed this breaker, not
+        handler outcomes. Independent from `handler_circuit_breaker` for
+        the same reason a database connection pool and a broken handler are
+        different failures needing different signals.
+
+        Returns:
+            CircuitBreaker instance if `circuit_breaker_enabled`, None
+            otherwise
+        """
+        return self._infra_circuit_breaker
 
     @property
     def retry_operation(self) -> RetryableOperation:

@@ -12,6 +12,7 @@ This module provides:
 
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -137,7 +138,8 @@ class LiveRunner:
     _last_checkpoint_time: float = field(default=0.0, init=False, repr=False)
     _flow_controller: FlowController | None = field(default=None, init=False, repr=False)
     _filter: EventFilter | None = field(default=None, init=False, repr=False)
-    _circuit_breaker: CircuitBreaker | None = field(default=None, init=False, repr=False)
+    _infra_circuit_breaker: CircuitBreaker | None = field(default=None, init=False, repr=False)
+    _handler_circuit_breaker: CircuitBreaker | None = field(default=None, init=False, repr=False)
     _retry: RetryableOperation | None = field(default=None, init=False, repr=False)
     _metrics: SubscriptionMetrics | None = field(default=None, init=False, repr=False)
     _handlers: dict[type[DomainEvent], "_LiveEventHandler"] = field(
@@ -159,13 +161,19 @@ class LiveRunner:
             self.subscription.subscriber,
         )
 
-        # Initialize retry mechanism with optional circuit breaker
+        # Two independent circuit breakers, both built from the same
+        # CircuitBreakerConfig -- one per failure domain. See
+        # CatchUpRunner.__post_init__ for the full reasoning: a shared
+        # breaker means a run of handler failures blocks checkpointing.
         if self.config.circuit_breaker_enabled:
-            self._circuit_breaker = CircuitBreaker(self.config.get_circuit_breaker_config())
+            self._infra_circuit_breaker = CircuitBreaker(self.config.get_circuit_breaker_config())
+            self._handler_circuit_breaker = CircuitBreaker(self.config.get_circuit_breaker_config())
 
+        # Retry mechanism for infra ops (checkpoint-save) only. Handler
+        # calls go through _call_guarded / _handler_circuit_breaker instead.
         self._retry = RetryableOperation(
             config=self.config.get_retry_config(),
-            circuit_breaker=self._circuit_breaker,
+            circuit_breaker=self._infra_circuit_breaker,
         )
 
         # Metrics instrumentation
@@ -390,7 +398,8 @@ class LiveRunner:
                 # Deliver to subscriber
                 start_time = time.perf_counter()
                 try:
-                    await self.subscription.subscriber.handle(event)
+                    subscriber = self.subscription.subscriber
+                    await self._call_guarded(lambda: subscriber.handle(event), "handle_event")
                     self._stats.events_processed += 1
 
                     # Record success metrics
@@ -493,6 +502,50 @@ class LiveRunner:
                 "position": render_position(position),
             },
         )
+
+    async def _call_guarded[T](
+        self,
+        operation: Callable[[], Awaitable[T]],
+        operation_name: str,
+    ) -> T:
+        """
+        Call `operation` through the handler circuit breaker, if configured.
+
+        Guards the handler call (`handle()`) specifically --
+        `self._handler_circuit_breaker`, never `self._infra_circuit_breaker`
+        (which guards checkpoint-save via `self._retry` instead). The two
+        are independent instances so a run of handler failures cannot block
+        checkpointing, and a flaky checkpoint repo cannot silence a broken
+        handler's signal.
+
+        The call is gated but never retried here: `CircuitBreaker.execute()`
+        calls `operation` at most once, raising `CircuitBreakerOpenError`
+        instead of calling it at all when the breaker is OPEN. This is
+        deliberately not routed through `self._retry`
+        (`RetryableOperation`'s exponential-backoff loop) -- "nothing
+        retries your handler" (docs/guides/subscriptions.md) stays true
+        whether or not a circuit breaker is configured. Both success and
+        failure feed the breaker's consecutive-failure count -- a single
+        failure sandwiched between successes resets it to zero on the next
+        success, so only a *run* of consecutive handler failures opens the
+        circuit, not the occasional bad event (see the `handler_circuit_breaker`
+        property docstring for why this means DLQ'd events need no special
+        case).
+
+        Args:
+            operation: Zero-argument async callable to run
+            operation_name: Name for logging/tracing
+
+        Returns:
+            The operation's result
+
+        Raises:
+            CircuitBreakerOpenError: If the breaker is open
+            Exception: Whatever `operation` itself raises
+        """
+        if self._handler_circuit_breaker is not None:
+            return await self._handler_circuit_breaker.execute(operation, operation_name)
+        return await operation()
 
     async def _save_checkpoint_with_retry(
         self,
@@ -737,14 +790,43 @@ class LiveRunner:
         return self._flow_controller.stats
 
     @property
-    def circuit_breaker(self) -> CircuitBreaker | None:
+    def handler_circuit_breaker(self) -> CircuitBreaker | None:
         """
-        Get the circuit breaker for this runner.
+        Get the circuit breaker guarding the subscriber's `handle()` calls.
+
+        Every handler outcome -- success or failure -- feeds this breaker
+        uniformly, regardless of `continue_on_error` or whether the event
+        is later routed to the DLQ by the caller's own error handler.
+        `CircuitBreaker.record_success` resets the consecutive-failure
+        count to zero on the next success, so an isolated bad event never
+        opens the circuit -- only a *run* of consecutive handler failures
+        does. See `CatchUpRunner.handler_circuit_breaker` for the full
+        reasoning.
+
+        Independent from `infra_circuit_breaker`: a broken handler cannot
+        block checkpointing, and a flaky checkpoint repo cannot mask a
+        broken handler's signal.
 
         Returns:
-            CircuitBreaker instance if enabled, None otherwise
+            CircuitBreaker instance if `circuit_breaker_enabled`, None
+            otherwise
         """
-        return self._circuit_breaker
+        return self._handler_circuit_breaker
+
+    @property
+    def infra_circuit_breaker(self) -> CircuitBreaker | None:
+        """
+        Get the circuit breaker guarding checkpoint-save via `self._retry`.
+
+        Unchanged in behavior from before handler calls were gated:
+        transient checkpoint-repo failures feed this breaker, not handler
+        outcomes. Independent from `handler_circuit_breaker`.
+
+        Returns:
+            CircuitBreaker instance if `circuit_breaker_enabled`, None
+            otherwise
+        """
+        return self._infra_circuit_breaker
 
     @property
     def retry_operation(self) -> RetryableOperation | None:

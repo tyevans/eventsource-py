@@ -14,6 +14,7 @@ a unified view of subscription health.
 """
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
@@ -21,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from eventsource.application.subscriptions.error_handling import SubscriptionErrorHandler
-    from eventsource.application.subscriptions.retry import CircuitBreaker, RetryableOperation
+    from eventsource.application.subscriptions.retry import CircuitBreaker
     from eventsource.application.subscriptions.subscription import Subscription
 
 logger = logging.getLogger(__name__)
@@ -158,8 +159,8 @@ class SubscriptionHealthChecker:
         subscription: "Subscription",
         config: HealthCheckConfig | None = None,
         error_handler: "SubscriptionErrorHandler | None" = None,
-        circuit_breaker: "CircuitBreaker | None" = None,
-        retry_operation: "RetryableOperation | None" = None,
+        handler_circuit_breaker_provider: "Callable[[], CircuitBreaker | None] | None" = None,
+        infra_circuit_breaker_provider: "Callable[[], CircuitBreaker | None] | None" = None,
     ) -> None:
         """
         Initialize the health checker.
@@ -168,14 +169,30 @@ class SubscriptionHealthChecker:
             subscription: The subscription to check
             config: Health check thresholds
             error_handler: Error handler for error statistics
-            circuit_breaker: Circuit breaker for circuit state
-            retry_operation: Retry operation for retry statistics
+            handler_circuit_breaker_provider: Zero-argument callable
+                returning the subscription's current handler
+                `CircuitBreaker` (the one guarding
+                `handle()`/`handle_batch()`), or `None` if none exists yet.
+                A provider rather than a fixed instance because the
+                underlying breaker changes identity when a subscription
+                transitions from catch-up to live -- each runner constructs
+                its own. Called fresh on every `check()`, so a health check
+                always reports the breaker actually guarding delivery right
+                now. `SubscriptionLifecycleManager.get_handler_circuit_breaker`
+                is the production provider.
+            infra_circuit_breaker_provider: Same shape, for the breaker
+                guarding read-batch/checkpoint-save --
+                `SubscriptionLifecycleManager.get_infra_circuit_breaker`.
+                Reported as a distinct indicator from the handler breaker:
+                the two guard unrelated failure domains (a broken handler
+                vs. a flaky store), and collapsing them into one indicator
+                would hide which one actually opened.
         """
         self.subscription = subscription
         self.config = config or HealthCheckConfig()
         self._error_handler = error_handler
-        self._circuit_breaker = circuit_breaker
-        self._retry_operation = retry_operation
+        self._handler_circuit_breaker_provider = handler_circuit_breaker_provider
+        self._infra_circuit_breaker_provider = infra_circuit_breaker_provider
 
     def check(self) -> HealthCheckResult:
         """
@@ -197,9 +214,20 @@ class SubscriptionHealthChecker:
         # Check lag
         indicators.append(self._check_lag())
 
-        # Check circuit breaker
-        if self._circuit_breaker:
-            indicators.append(self._check_circuit_breaker())
+        # Check circuit breakers -- handler and infra are reported
+        # separately; see the constructor docstring for why.
+        if self._handler_circuit_breaker_provider is not None:
+            indicators.append(
+                self._check_circuit_breaker(
+                    "handler_circuit_breaker", self._handler_circuit_breaker_provider
+                )
+            )
+        if self._infra_circuit_breaker_provider is not None:
+            indicators.append(
+                self._check_circuit_breaker(
+                    "infra_circuit_breaker", self._infra_circuit_breaker_provider
+                )
+            )
 
         # Check DLQ
         if self._error_handler:
@@ -344,18 +372,31 @@ class SubscriptionHealthChecker:
                 details={"lag_events": lag},
             )
 
-    def _check_circuit_breaker(self) -> HealthIndicator:
-        """Check circuit breaker state indicator."""
-        if self._circuit_breaker is None:
+    def _check_circuit_breaker(
+        self,
+        indicator_name: str,
+        provider: "Callable[[], CircuitBreaker | None]",
+    ) -> HealthIndicator:
+        """
+        Check one circuit breaker's state indicator.
+
+        Shared by the handler and infra breaker checks -- `indicator_name`
+        ("handler_circuit_breaker" or "infra_circuit_breaker") keeps the two
+        distinguishable in `check()`'s indicator list, since they guard
+        unrelated failure domains and an operator needs to know which one
+        opened.
+        """
+        circuit_breaker = provider()
+        if circuit_breaker is None:
             return HealthIndicator(
-                name="circuit_breaker",
+                name=indicator_name,
                 status=HealthStatus.UNKNOWN,
                 message="Circuit breaker not available",
             )
 
         from eventsource.application.subscriptions.retry import CircuitState
 
-        state = self._circuit_breaker.state
+        state = circuit_breaker.state
 
         if state == CircuitState.OPEN:
             status = (
@@ -364,32 +405,32 @@ class SubscriptionHealthChecker:
                 else HealthStatus.DEGRADED
             )
             return HealthIndicator(
-                name="circuit_breaker",
+                name=indicator_name,
                 status=status,
                 message="Circuit breaker is OPEN - requests blocked",
                 details={
                     "state": state.value,
-                    "failure_count": self._circuit_breaker.failure_count,
+                    "failure_count": circuit_breaker.failure_count,
                 },
             )
         elif state == CircuitState.HALF_OPEN:
             return HealthIndicator(
-                name="circuit_breaker",
+                name=indicator_name,
                 status=HealthStatus.DEGRADED,
                 message="Circuit breaker is HALF_OPEN - testing recovery",
                 details={
                     "state": state.value,
-                    "failure_count": self._circuit_breaker.failure_count,
+                    "failure_count": circuit_breaker.failure_count,
                 },
             )
         else:  # CLOSED
             return HealthIndicator(
-                name="circuit_breaker",
+                name=indicator_name,
                 status=HealthStatus.HEALTHY,
                 message="Circuit breaker is CLOSED - normal operation",
                 details={
                     "state": state.value,
-                    "failure_count": self._circuit_breaker.failure_count,
+                    "failure_count": circuit_breaker.failure_count,
                 },
             )
 

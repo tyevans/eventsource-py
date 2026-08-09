@@ -586,9 +586,18 @@ runners.
 | `circuit_breaker_recovery_timeout` | `float` | `30.0` |
 
 `circuit_breaker_enabled` is the only one of the three the runners read
-directly: when true, they build a `CircuitBreaker` from
-`get_circuit_breaker_config()`; when false, no breaker is created and the other
-two fields have no effect (they are still validated).
+directly: when true, they build **two independent `CircuitBreaker`
+instances** from `get_circuit_breaker_config()`, one guarding the
+subscriber's `handle()`/`handle_batch()` calls (`handler_circuit_breaker`)
+and one guarding read-batch/checkpoint-save (`infra_circuit_breaker`). They
+share the same threshold and recovery timeout — there is one config knob,
+not two — but independent state: a run of handler failures cannot open the
+infra breaker and block checkpointing, and a flaky store cannot mask a
+broken handler. See [Handle events one at a
+time](../guides/subscriptions.md#handle-events-one-at-a-time) for what
+feeds the handler breaker and why a DLQ'd event alone never opens it. When
+`circuit_breaker_enabled` is false, neither breaker is created and the
+other two fields have no effect (they are still validated).
 
 #### Validation rules (`__post_init__`)
 
@@ -651,7 +660,10 @@ that `SubscriptionConfig` does not expose — it always takes the default. If yo
 need a different half-open allowance, construct the `CircuitBreaker` yourself
 rather than going through the subscription config.
 
-The runners only call this when `circuit_breaker_enabled` is true.
+The runners call this twice when `circuit_breaker_enabled` is true — once
+per breaker — so `handler_circuit_breaker` and `infra_circuit_breaker` are
+two separate `CircuitBreaker` objects built from equal config, not one
+object shared between both.
 
 ### `create_catch_up_config()`
 
