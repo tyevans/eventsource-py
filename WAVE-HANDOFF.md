@@ -169,13 +169,17 @@ In order, from the final cross-lane review:
 
 ## Before this merges
 
-1. **Full unit suite** (#31) — ruff, mypy (193 files), and `import eventsource`
-   (141 exports) are **clean at final HEAD**. The full unit run was still in
-   progress when this was written; integration subscriptions pass (34, no Docker
-   needed — in-memory fixtures). An earlier full run hit 6226 passed / 1 failed,
-   but that failure was **stale** (it exercised `_complete_migration`, deleted
-   mid-run); migration units are 837 passing now. Do not record that run as a pass —
-   it predates six commits.
+1. **Full unit suite — left to CI, deliberately.** Ruff, mypy (193 files), and
+   `import eventsource` (141 exports) are **clean at final HEAD**, and integration
+   subscriptions pass (34, no Docker needed — in-memory fixtures). Every lane's
+   scoped suite passed at its own HEAD. The full local run was stopped partway: it
+   takes many minutes, contends badly, and CI runs it anyway. An earlier full run
+   hit 6226 passed / 1 failed, and that failure was **stale** — it exercised
+   `_complete_migration`, deleted mid-run; migration units are 837 passing now.
+   **So: no known failure, and no clean full-suite pass on record. CI is the
+   gate.** If CI is red, start with the areas in "what a reviewer should look at
+   hardest" above — every lane verified its own subset correctly, so a failure is
+   most likely cross-lane.
 2. **Allocate the ADR number at merge**, after re-checking `docs/adrs/` on current
    `main`. Rename the `DRAFT-` file, fix its four referrers (one in shipped source),
    add reciprocal "Amended by" pointers to 0047 and 0054, and add it to `index.md`
