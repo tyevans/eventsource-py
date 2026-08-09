@@ -110,9 +110,9 @@ You also need a snapshot store. Pick one from `eventsource.adapters`:
 | `SQLiteSnapshotStore` | `from eventsource.adapters.sqlite import SQLiteSnapshotStore` | `pip install "eventsource-py[sqlite]"` (aiosqlite), plus a database path |
 
 The SQLite store is an optional import: if `aiosqlite` is missing,
-`eventsource.adapters.sqlite.SQLITE_AVAILABLE` is `False`, `SQLiteSnapshotStore` is
+`eventsource.adapters.sqlite.AIOSQLITE_AVAILABLE` is `False`, `SQLiteSnapshotStore` is
 `None`, and constructing it raises `SQLiteNotAvailableError`. Guard on
-`SQLITE_AVAILABLE` if your code must run in both configurations.
+`AIOSQLITE_AVAILABLE` if your code must run in both configurations.
 
 `PostgreSQLSnapshotStore` needs the `snapshots` table to exist before first
 use; `SQLiteSnapshotStore` applies its own schema (idempotently) when it opens
@@ -476,9 +476,9 @@ decoded on read, so the `Snapshot` you get back has a real `dict` and a real
 Four things to know before you rely on it:
 
 - **The import is optional.** If `aiosqlite` is not installed,
-  `eventsource.adapters.sqlite.SQLITE_AVAILABLE` is `False` and `SQLiteSnapshotStore`
+  `eventsource.adapters.sqlite.AIOSQLITE_AVAILABLE` is `False` and `SQLiteSnapshotStore`
   is bound to `None` -- so a missing dependency surfaces as a `TypeError` on
-  call, not a clean `ImportError`. Guard on `SQLITE_AVAILABLE` in code that must
+  call, not a clean `ImportError`. Guard on `AIOSQLITE_AVAILABLE` in code that must
   run in both configurations. When the class is importable but `aiosqlite` is
   not, the constructor raises `SQLiteNotAvailableError`.
 - **You must close it.** The store opens one `aiosqlite` connection on first
@@ -1447,3 +1447,65 @@ over failing the request that happened to hit it.
 
 `except SnapshotError` catches the whole family, which is the other reason the
 base class exists.
+
+### Count the degradation: `eventsource.snapshot.miss`
+
+Everything above is why snapshot failures are quiet. This is how you stop them
+being invisible.
+
+Every read that falls back to a full replay increments a counter,
+`eventsource.snapshot.miss`, with two attributes: `reason` and
+`aggregate_type`. It is an OpenTelemetry counter when
+`pip install "eventsource-py[telemetry]"` is present and a no-op otherwise, so
+it costs nothing if you are not collecting.
+
+| `reason` | What happened | Routine? | What to do |
+| --- | --- | --- | --- |
+| `missing` | No snapshot stored yet | **Yes** | Nothing. Every aggregate's first load counts here, and so does every aggregate below the threshold |
+| `schema_mismatch` | Stored `schema_version` differs from the aggregate's | **Yes** | Nothing, if you just bumped it. Reclaim the dead rows with `delete_snapshots_by_type(schema_version_below=N)` |
+| `store_error` | The snapshot store raised | **No** | Check the store. Usually transient |
+| `deserialization_error` | The store reported the stored state as unusable | **No** | Find and rewrite the row |
+| `state_restore_failed` | `_restore_from_snapshot()` raised | **No** | Find and rewrite the row, or fix the hook |
+
+**The axis that matters is permanence, not severity.** The last three all mean
+"something is wrong", but they call for opposite responses:
+
+- `store_error` is usually **transient and broad**. The store is unreachable, so
+  *every* aggregate misses at once and the rate collapses on its own when the
+  backend comes back. Alert on the rate; do not go looking for a bad row.
+- `deserialization_error` and `state_restore_failed` are **permanent and
+  narrow**. One aggregate's row is unusable, so that aggregate replays its
+  entire stream on *every single load*, forever, until someone rewrites the row.
+  The rate is low and steady rather than spiky, and it will never recover by
+  itself.
+
+Before this counter both logged at `WARNING` and were indistinguishable without
+reading individual lines — which is exactly the gap
+[ADR 0017](../adrs/0017-snapshot-strategy-pattern.md) recorded against itself:
+"silent failure means snapshot loss is only visible in logs/metrics."
+
+A practical alert: a *sustained non-zero* rate of the permanent reasons is
+always worth investigating, however small, because the cost per occurrence
+grows with the stream. A spike in `store_error` is an infrastructure page. A
+spike in `schema_mismatch` right after a deploy is expected and should subside
+once snapshots are rewritten — if it does *not* subside, the aggregate is being
+loaded but never re-snapshotted, which usually means the threshold is never
+reached or the mode is `"manual"`.
+
+Without an OpenTelemetry exporter you can still read the tally in-process,
+which is what the library's own tests do:
+
+```python
+from eventsource.application.aggregates import (
+    reset_snapshot_miss_counts,
+    snapshot_miss_counts,
+)
+
+reset_snapshot_miss_counts()
+await repo.load(aggregate_id)
+print(snapshot_miss_counts())   # {'schema_mismatch': 1}
+```
+
+An empty dict after a load means the snapshot was used. That is the positive
+signal the logs never gave you — "no errors" and "snapshots are working" finally
+mean the same thing.

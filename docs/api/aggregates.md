@@ -254,7 +254,12 @@ On load, `read_valid_snapshot()` compares the stored value against the
 aggregate class's current value; on mismatch it logs at INFO level, discards
 the snapshot, and falls back to a full event replay. **Nothing raises** —
 `SnapshotSchemaVersionError` exists in `eventsource.domain.exceptions` but
-is not raised by this comparison. See
+is not raised by this comparison; see [who raises the snapshot
+exceptions](../guides/snapshotting.md#who-raises-the-snapshot-exceptions-and-how-to-opt-into-strictness)
+for what that type is for. The fallback is counted as
+`eventsource.snapshot.miss{reason="schema_mismatch"}`, which is how a
+mismatch is observable without reading logs — see [count the
+degradation](../guides/snapshotting.md#count-the-degradation-eventsourcesnapshotmiss). See
 [ADR 0021](../adrs/0021-snapshot-policy-scheduler-composition.md) for the
 collaborators that replaced `AggregateSnapshotManager`.
 
