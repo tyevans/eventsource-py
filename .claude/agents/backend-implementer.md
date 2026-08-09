@@ -61,9 +61,13 @@ one port method with different semantics, each passing its own tests
 (`5d3692a`, `0c8d032`, `1cb21d1`, `97e2af0` — see
 `/home/ty/workspace/eventsource-py/.claude/rules/recurring-defects.md` §1).
 
-- Bind the shared suite: `src/eventsource/testing/conformance.py` (EventStore,
-  EventBus) or `src/eventsource/testing/conformance_ports/` (checkpoints, dlq,
-  outbox, readmodels, locks, snapshots, feed, stream_reader, category, appender).
+- Bind the shared suite for every port you bind. `src/eventsource/testing/conformance.py`
+  holds `EventBusConformanceSuite` only; there is no single "EventStore suite"
+  — store conformance is per-port in `src/eventsource/testing/conformance_ports/`
+  (appender, stream_reader, feed, event_lookup, category, checkpoints, dlq,
+  outbox, readmodels, locks, snapshots, coordination, lifecycle). The
+  port-to-suite table is in
+  `/home/ty/workspace/eventsource-py/.claude/rules/definition-of-done.md`.
 - Before writing each method, open the sibling adapters and compare the
   semantics of: empty collections, `None`/zero defaults, date and time
   truncation, "unset" vs "set to nothing", and partial-update field

@@ -90,10 +90,16 @@ Check every diff against them — most review value is here, not in style:
 When reviewing new implementations of EventStore, EventBus, or repository ports:
 
 - [ ] Implements all methods from the Protocol in `/home/ty/workspace/eventsource-py/src/eventsource/ports/`
-- [ ] **Runs the shared conformance suite** — `src/eventsource/testing/conformance.py`
-      (EventStore, EventBus) or `src/eventsource/testing/conformance_ports/`
-      (checkpoints, DLQ, outbox, read models, locks, snapshots, feed). Hand-written
-      per-backend tests alone are a silent-divergence bug waiting to happen.
+- [ ] **Runs the shared conformance suite for every port it binds** —
+      `src/eventsource/testing/conformance.py` holds `EventBusConformanceSuite`
+      only; store conformance is per-port in
+      `src/eventsource/testing/conformance_ports/` (appender, stream reader,
+      feed, event lookup, category, checkpoints, DLQ, outbox, read models,
+      locks, snapshots, coordination, lifecycle). There is no single
+      "EventStore suite" — see the table in
+      `/home/ty/workspace/eventsource-py/.claude/rules/definition-of-done.md`.
+      Hand-written per-backend tests alone are a silent-divergence bug waiting
+      to happen.
 - [ ] Async methods are truly async (not wrapping sync calls without executor)
 - [ ] Error handling uses exceptions from `ports/exceptions.py` (infrastructure)
       or `domain/exceptions.py` (domain) — the split is ADR 0041

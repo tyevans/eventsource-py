@@ -481,7 +481,7 @@ The adapters behind these ports (`adapters/memory/store.py`,
 durability and concurrency, not in contract; the per-port conformance suites in
 `eventsource.testing.conformance_ports` (`AppenderConformance`,
 `StreamReaderConformance`, `EventLookupConformance`, `GlobalFeedConformance`,
-`CategoryQueryConformance`, `TypeQueryConformance`) hold all three to the same
+`CategoryQueryConformance`) hold all three to the same
 behaviour, which is what makes the in-memory store usable as a real test double
 rather than an approximation.
 
