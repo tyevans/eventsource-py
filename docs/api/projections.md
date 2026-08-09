@@ -581,9 +581,9 @@ async def replay(
 
 Reads the global feed from `from_position` and folds every event into every projection,
 returning a report (ADR 0054). This is the answer to "how do I rebuild a projection from
-the log" — `ProjectionCoordinator` is the other job, live catch-up on a timer, and its
-`rebuild_projection()` takes the events as a materialized list you have already read and
-filtered yourself.
+the log" — a live subscription runner does the other job, catch-up on a timer via
+`ProjectionCoordinator`/`ProjectionRegistry`, and the coordinator's `rebuild_projection()`
+takes the events as a materialized list you have already read and filtered yourself.
 
 ```python
 from eventsource.application.projections import replay
