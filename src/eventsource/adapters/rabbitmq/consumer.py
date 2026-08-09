@@ -44,14 +44,14 @@ if TYPE_CHECKING:
     from eventsource.adapters.rabbitmq.models import RabbitMQEventBusStats
     from eventsource.adapters.rabbitmq.topology import RabbitMQTopology
 
-# Optional aio-pika import - fail gracefully if not installed.
+# Optional aio-pika import - fail gracefully if not installed. The canonical
+# RABBITMQ_AVAILABLE flag lives on bus.py (checked at construction,
+# re-exported from adapters/rabbitmq/__init__.py) -- this module only needs
+# the guard to import safely, not a second copy of the flag.
 try:
     from aio_pika import DeliveryMode, Message
     from aio_pika.abc import AbstractIncomingMessage
-
-    RABBITMQ_AVAILABLE = True
 except ImportError:
-    RABBITMQ_AVAILABLE = False
     Message = None  # type: ignore[assignment, misc]
     DeliveryMode = None  # type: ignore[assignment, misc]
     AbstractIncomingMessage = None  # type: ignore[assignment, misc]

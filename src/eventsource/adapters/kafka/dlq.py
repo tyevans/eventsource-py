@@ -31,13 +31,13 @@ if TYPE_CHECKING:
     from eventsource.adapters.kafka.models import KafkaEventBusStats
     from eventsource.adapters.kafka.serialization import EventSerializer
 
-# Optional aiokafka import - fail gracefully if not installed
+# Optional aiokafka import - fail gracefully if not installed. The canonical
+# KAFKA_AVAILABLE flag lives on bus.py (checked at construction, re-exported
+# from adapters/kafka/__init__.py) -- this module only needs the guard to
+# import safely, not a second copy of the flag.
 try:
     from aiokafka import AIOKafkaConsumer, TopicPartition
-
-    KAFKA_AVAILABLE = True
 except ImportError:
-    KAFKA_AVAILABLE = False
     AIOKafkaConsumer = None
     TopicPartition = None
 

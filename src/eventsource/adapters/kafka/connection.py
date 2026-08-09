@@ -18,15 +18,17 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-# Optional aiokafka import - fail gracefully if not installed
+# Optional aiokafka import - fail gracefully if not installed. The canonical
+# KAFKA_AVAILABLE flag lives on bus.py (checked at construction, re-exported
+# from adapters/kafka/__init__.py) -- this module only needs the guard to
+# import safely, not a second copy of the flag (recurring-defects §2/§3: a
+# flag set and never read here would just be one more copy that could
+# silently disagree with the canonical one under a partial install).
 try:
     from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, TopicPartition
     from aiokafka.abc import ConsumerRebalanceListener as _ConsumerRebalanceListener
     from aiokafka.errors import IllegalStateError
-
-    KAFKA_AVAILABLE = True
 except ImportError:
-    KAFKA_AVAILABLE = False
     AIOKafkaProducer = None
     AIOKafkaConsumer = None
     TopicPartition = None
