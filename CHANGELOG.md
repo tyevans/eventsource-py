@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-08-09
+
+A conformance release. Every item here is one fact that was stored in more than
+one place, with nothing that failed when the copies disagreed: three verbatim
+copies of the read-model operator dispatch that had drifted apart, an in-memory
+store that did not enforce what the SQL stores enforce, eight exception families
+that were not reachable from the base class the docs told you to catch, and two
+front-door pages describing a version three minors old. The common repair is the
+same in each case -- state the fact once, and pin it in a shared conformance
+suite that runs against every backend rather than in one adapter's own tests.
+
+Four breaking changes, none of which require code edits for a correct consumer:
+a protocol attribute nobody read is deleted, and the other three tighten
+in-memory behavior to match what SQLite and PostgreSQL always did. If your tests
+pass against a SQL backend today, they pass against 0.13.0's memory backend too
+-- and that is precisely the guarantee that did not hold before.
+
+### Breaking
+
+- **In-memory stores reject unregistered event types at append.** `InMemoryEventStore` accepted an `event_registry` and never read it, while the SQL backends require one. A `DomainEvent` subclass missing `@register_event` was therefore invisible in memory-backed tests and raised `EventTypeNotFoundError` on the first read against SQLite or PostgreSQL -- falsifying the library's headline promise that the code you test against is the code that runs. `InMemoryEventStore` and the partitioned in-memory store now validate at append time through a shared `check_registered`, and `InMemoryEventStore` falls back to `default_registry` exactly as the SQL adapters do. The check is pinned in the shared appender conformance suite and runs against memory, partitioned, SQLite, and PostgreSQL. Breaking only for a test suite that had unregistered events and had never run against a SQL backend -- in which case it was already failing there. The fix is `@register_event` on the class, or a module-local `EventRegistry` threaded into the store; a blanket sweep does not work, because `EventRegistry.register` rejects one name mapping to two classes and colliding class names across modules then break at import.
+- **`EventAppender.max_append_batch` is deleted.** It was declared on the protocol, set to `None` by all six implementers, and read by nothing. Because it is a data attribute rather than a method, every hand-rolled test double and `Mock(spec=...)` had to declare it to satisfy mypy -- a tax on custom-backend authors for a fact no code consumed. **No shim**, per the pre-1.0 no-shim policy. Custom backends should delete their declaration; nothing reads it either way.
+- **An unknown filter operator now raises on the memory backend.** It returned `False` per row, silently dropping every result, where the SQL backends raised. The three backends now share one operator table, so an operator outside it fails the same way everywhere.
+- **`ne` and `not_in` now match a field whose value is `None` on the SQL backends.** They previously did on memory (Python semantics) and did not on SQLite or PostgreSQL (SQL three-valued logic). `find()` is defined over read models -- objects whose optional fields are `None` -- not over table rows, so the port now states that a field with no value is distinct from every value, and the SQL renderers implement it. SQL's old answer was the invisible one: a smaller result set, never an error.
+
+### Fixed
+
+- **Every library exception is now reachable from `EventSourceError`** (ADR 0058). Eight families inherited bare `Exception` (`ShutdownError`, `BatchPublishError`, `StoreNotFoundError`, `WritePausedError`, `RetryError`, `CircuitBreakerOpenError`, `SnapshotError`, `ReadModelError`) and a ninth, `RabbitMQNotAvailableError`, inherited `ImportError`, so the documented catch-all `except EventSourceError` silently missed them -- including all four snapshot errors, which are exported from the top-level `__all__`. A package-walking guard test asserts the property from both directions and keeps an exact list of sanctioned holdouts, so a new orphan family fails CI rather than accruing quietly. Note that `except EventSourceError` now catches strictly more than it did; code that relied on a snapshot or migration error escaping it will now see it caught. `tests/unit/domain/test_exceptions_home.py` had asserted `not issubclass(SnapshotError, EventSourceError)` -- a test encoding the bug as the spec -- and is inverted.
+- **Read-model filter semantics are unified across all three backends.** The operator dispatch was three verbatim copies that disagreed, and is hoisted into `adapters/_common/readmodel_filters.py` behind a single operator table read by both a Python predicate and a dialect-parameterized SQL renderer. Beyond the two divergences listed under Breaking, an unknown field name was a silent no-match in memory and an error in SQL.
+- **`Query.offset` without a `limit` no longer fails on SQLite.** The adapter emitted a bare `OFFSET`, which is a syntax error in SQLite; the combination had never worked. Found by the expanded conformance suite, not by anyone using it.
+- **`test_event_registry.py` no longer empties the process-global registry.** It cleared `default_registry` in setup and teardown and never restored it, permanently emptying it for every test that ran afterward -- the reason three modules failed only in a full run, and the source of the full-suite "hang".
+- **The benchmark harness builds its in-memory store with a registry**, as its PostgreSQL and SQLite siblings two lines below always did.
+
+### Docs
+
+- **The README's decider quickstart runs.** It reused an `OrderState` whose `order_id` was required while `initial_state()` returned `OrderState()`, so `create_new()` raised `ValidationError` before any command executed -- fallout from ADR 0056 moving identity onto the command. The same block taught three practices this codebase forbids: hand-declared `event_type` (a 246-site sweep deleted these), `float` for money, and manual `aggregate_id`/`aggregate_version` instead of `create_event()`. `getting-started` was already correct on all three; this was drift between two front doors. Both now open with the smallest program that works rather than 14 concepts and 175 lines, the README's projection and `SubscriptionManager` material moves below the fold, and its `await asyncio.sleep(0.1)` is labelled a script-only shortcut. Every code block was extracted after editing and executed; the documented output is real output.
+- **`installation.md`, `faq.md`, and `tutorials/index.md` describe the current release rather than 0.5.0.** The pin advice (`>=0.5,<0.6`) was actively wrong, and the pages named pre-rings paths that no longer exist (`events/base.py`, `stores/postgresql.py`, `snapshots/postgresql.py`, `locks/postgresql.py`, `migration/repositories/`, `readmodels/`). Both also claimed the library depends only on pydantic and sqlalchemy: `orjson` has been a third core dependency and went unmentioned on every front-door page. `installation.md` and `tutorials/index.md` claimed `from eventsource import SQLiteEventStore` raises `ImportError`, contradicting `faq.md` -- executed in a core-only venv, the import always succeeds and only construction fails without `aiosqlite`; the FAQ was right. The tutorial index promised a 21-part series whose entry point was not among the eight pages that exist, and now describes what is written.
+- **ADR 0058 is in the nav**, and two anchors in `docs/api/exceptions.md` that still pointed at the pre-ADR-0050 name `OptimisticLockError` are repointed. A page missing from the nav is invisible to readers, and the strict build does not catch it.
+- **`eventsource.testing` is surfaced in both front doors** and re-exports the port conformance suites.
+- **Two findings from a downstream 0.12 upgrade are recorded in `BACKLOG.md`**: an unclosed connection-owning adapter raises `RuntimeError: Event loop is closed` naming no store, path, or construction site, and `_stamp` passes an explicitly-set `aggregate_id` through without checking it belongs to this aggregate -- the same check it already performs one field over on `aggregate_type`.
+
+### Tests
+
+- **`SupportsClose` and `LeaderElector` conformance suites.** `SupportsClose` mandates idempotence and non-destruction of caller-owned resources but was covered only per-adapter, for PostgreSQL, via mocks -- the shape that cannot catch the next backend. `LeaderElector` had no coverage at all. No adapter failed, so no adapter changed; the suites were instead proven to bite by temporarily mutating each contract property (dropping SQLite's `close()` guard, making PostgreSQL dispose an engine it does not own, making `renew()` always return `True`), all three caught, then reverted. Worth recording: the caller-owned-resource check first asked whether the caller's engine could still run a query, and the ownership mutant survived it -- a disposed `AsyncEngine` happily opens a new connection. The real observable is pool identity, which `dispose()` swaps.
+- **The read-model conformance suite grew from `Filter.eq` alone** to the full operator matrix, NULL handling, empty lists, unknown field, unknown operator, UUIDs, offset, and `include_deleted`. That is what surfaced the SQLite `OFFSET` bug.
+- **41 unregistered `DomainEvent` subclasses across 30 modules are registered.** Every one was already latently broken against a SQL backend; append-time validation is what made them visible. Nothing was skipped, xfailed, or weakened.
+- The reviewed claim that `InMemoryLeaderElector.renew()` is a no-op bug is **refuted**: in-memory leadership has no lease and cannot expire, so `return self._is_leader` faithfully implements the documented contract. Pinned rather than "fixed".
+
+### Chore
+
+- **`gitpython` is floored to clear five pip-audit advisories.** It reaches the tree only through `cosmic-ray`, a dev dependency, so nothing shipped to consumers was affected -- but `make audit` was red on `main` before this work started.
+
 ## [0.12.0] - 2026-08-06
 
 An upstreaming release. Most of it comes from one downstream consumer's list of
@@ -879,7 +930,8 @@ This release also finally lands the ADR 0038-0040 wave that was written for 0.8.
 - Automatic schema creation and migrations
 - GitHub Actions CI/CD pipeline
 
-[Unreleased]: https://github.com/tyevans/eventsource-py/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/tyevans/eventsource-py/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/tyevans/eventsource-py/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/tyevans/eventsource-py/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/tyevans/eventsource-py/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/tyevans/eventsource-py/compare/v0.9.1...v0.10.0
