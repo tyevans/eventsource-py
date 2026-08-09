@@ -14,9 +14,11 @@ from eventsource.application.aggregates.snapshotting import (
     EveryNEvents,
     ImmediateScheduler,
     Never,
+    SnapshotMissReason,
     SnapshotPolicy,
     SnapshotScheduler,
     read_valid_snapshot,
+    record_snapshot_miss,
     take_snapshot,
 )
 from eventsource.domain import StreamId
@@ -394,7 +396,14 @@ class AggregateRepository[TAggregate: AggregateRoot[Any]]:
                 try:
                     aggregate._restore_from_snapshot(snapshot.state, snapshot.version)
                 except Exception as e:
-                    # Deserialization failed - fall back to full replay
+                    # Deserialization failed - fall back to full replay.
+                    # Counted here rather than in read_valid_snapshot because
+                    # this is where a corrupt payload actually surfaces for
+                    # every in-tree adapter: they return the row intact and
+                    # the failure appears when the aggregate rebuilds state.
+                    record_snapshot_miss(
+                        SnapshotMissReason.STATE_RESTORE_FAILED, self._aggregate_type
+                    )
                     logger.warning(
                         "Failed to restore from snapshot for %s/%s: %s. "
                         "Falling back to full event replay.",
