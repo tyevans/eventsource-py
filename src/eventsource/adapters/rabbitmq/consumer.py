@@ -129,10 +129,21 @@ class RabbitMQConsumer:
         connection is lost.
 
         Raises:
-            RuntimeError: If the consumer queue is not initialized.
+            RuntimeError: If the consumer queue is not initialized. The
+                public ``RabbitMQEventBus.start_consuming()`` always
+                connects first, and ``connect()`` always declares topology
+                (including the consumer queue) before returning -- so this
+                should be unreachable through that path. Tripping it means
+                an internal invariant between the connection manager and
+                this consumer was violated (e.g. this ``start()`` was
+                called directly, bypassing the facade), not that the
+                caller forgot to connect.
         """
         if not self._topology.consumer_queue:
-            raise RuntimeError("Consumer queue not initialized")
+            raise RuntimeError(
+                "Consumer queue not initialized -- internal call-order bug: "
+                "start() was reached without topology having been declared first"
+            )
 
         self._consuming = True
         consumer_name = self._config.consumer_name

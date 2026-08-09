@@ -2588,7 +2588,7 @@ class TestRabbitMQDeclarationErrors:
 
         bus = RabbitMQEventBus(config=config)
 
-        with pytest.raises(RuntimeError, match="Queue or exchange not initialized"):
+        with pytest.raises(RuntimeError, match="internal call-order bug"):
             await bus._bind_queue()
 
     @pytest.mark.asyncio
