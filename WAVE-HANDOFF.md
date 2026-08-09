@@ -132,6 +132,7 @@ canonical ID went blind exactly at cutover. Emit both rather than break the sche
 | 17 | `shutdown_timeout` duplicate; `RetryPolicy` name clash | Two declaration sites (manager wins); `from eventsource import RetryPolicy` gives the bus dataclass, not the projections Protocol that `adapters/sql/projection.py:92` consumes. |
 | 24 | 12 remaining never-set telemetry attributes | 4 `ATTR_LOCK_*` need tracing introduced to lock adapters (real work); `ATTR_EVENTS_SKIPPED` is probably a delete. Deleting is a public-surface decision. |
 | 20 | Migration repo conformance (33 methods) | All 4 Protocols have exactly **one** implementation; conformance exists to stop 2+ diverging. Low priority — **reprioritize the moment a second migration backend is proposed.** |
+| 38 | `BatchSubscriber`-only subscriber breaks on the live path | **Real bug, found in final review.** The Protocol requires only `subscribed_to()` + `handle_batch()`, not `handle()`. Catch-up now dispatches `handle_batch()`; live still calls `handle()` unconditionally → `AttributeError` **per event** once it transitions, recorded as a handler failure and potentially filling the DLQ. Docs say "will not receive live events", which reads like a silent no-op. Resolves naturally with #34. |
 
 ---
 
@@ -150,12 +151,31 @@ canonical ID went blind exactly at cutover. Emit both rather than break the sche
   are guarded behind graceful early-returns — dead paths, not untyped raises.
   Correctly untouched; noted so the next audit doesn't re-flag them.
 
+## What a reviewer should look at hardest
+
+In order, from the final cross-lane review:
+
+1. **Catch-up batch dispatch and its per-event fallback** — largest behavior change,
+   touches the checkpoint invariant, and the one place a subtle bug would silently
+   double-apply events.
+2. `_drain_feed` — two independent changes to one loop (bounding, and stop/pause).
+3. The three-adapter `batch_size` rename — one field forwards to a
+   differently-named driver argument.
+4. The snapshot counter's fifth reason living in a different file *on purpose*
+   (`repository.py`, not `snapshotting.py`) — without it the reason is unreachable
+   with any shipped store.
+5. `docs/guides/subscriptions.md:294` — correct today, and the first thing to go
+   stale when #34 batches the live path.
+
 ## Before this merges
 
-1. **Full unit suite is UNVERIFIED** (#31) — never completed cleanly; concurrent
-   agent runs contended and stalled twice. Treat as unverified rather than inferred
-   from passing subsets. Run on a quiet machine, plus ruff, mypy, and
-   `python -c "import eventsource"` (large public-API deletions landed).
+1. **Full unit suite** (#31) — ruff, mypy (193 files), and `import eventsource`
+   (141 exports) are **clean at final HEAD**. The full unit run was still in
+   progress when this was written; integration subscriptions pass (34, no Docker
+   needed — in-memory fixtures). An earlier full run hit 6226 passed / 1 failed,
+   but that failure was **stale** (it exercised `_complete_migration`, deleted
+   mid-run); migration units are 837 passing now. Do not record that run as a pass —
+   it predates six commits.
 2. **Allocate the ADR number at merge**, after re-checking `docs/adrs/` on current
    `main`. Rename the `DRAFT-` file, fix its four referrers (one in shipped source),
    add reciprocal "Amended by" pointers to 0047 and 0054, and add it to `index.md`
