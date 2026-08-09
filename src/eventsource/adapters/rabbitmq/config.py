@@ -50,9 +50,10 @@ class RabbitMQEventBusConfig:
             Should be True for production to ensure message durability.
         auto_delete: Whether to delete queues when all consumers disconnect.
             Should be False for production to prevent message loss.
-        reconnect_delay: Initial delay in seconds between reconnection attempts.
-            Uses exponential backoff up to max_reconnect_delay.
-        max_reconnect_delay: Maximum delay in seconds between reconnection attempts.
+        reconnect_delay: Fixed delay in seconds between reconnection attempts.
+            Passed to aio-pika's ``connect_robust()`` as ``reconnect_interval``,
+            which retries at this constant interval -- aio-pika does not back
+            off, so there is no separate maximum-delay setting.
         heartbeat: Heartbeat interval in seconds. Used by RabbitMQ to detect
             dead connections and prevent firewall timeouts.
         enable_tracing: Enable OpenTelemetry tracing if available. When True,
@@ -127,7 +128,6 @@ class RabbitMQEventBusConfig:
     durable: bool = True
     auto_delete: bool = False
     reconnect_delay: float = 1.0
-    max_reconnect_delay: float = 60.0
     heartbeat: int = 60
     enable_tracing: bool = True
     ssl_options: dict[str, Any] | None = None

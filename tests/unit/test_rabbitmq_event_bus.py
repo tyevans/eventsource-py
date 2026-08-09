@@ -52,7 +52,6 @@ class TestRabbitMQEventBusConfig:
         assert config.durable is True
         assert config.auto_delete is False
         assert config.reconnect_delay == 1.0
-        assert config.max_reconnect_delay == 60.0
         assert config.heartbeat == 60
         assert config.enable_tracing is True
         assert config.ssl_options is None
@@ -194,11 +193,10 @@ class TestRabbitMQEventBusConfig:
         assert config.auto_delete is True
 
     def test_reconnect_delay_custom(self) -> None:
-        """Test custom reconnect delays."""
-        config = RabbitMQEventBusConfig(reconnect_delay=2.0, max_reconnect_delay=120.0)
+        """Test custom reconnect delay."""
+        config = RabbitMQEventBusConfig(reconnect_delay=2.0)
 
         assert config.reconnect_delay == 2.0
-        assert config.max_reconnect_delay == 120.0
 
     def test_heartbeat_custom(self) -> None:
         """Test custom heartbeat interval."""
@@ -267,7 +265,6 @@ class TestRabbitMQEventBusConfig:
             durable=True,
             auto_delete=False,
             reconnect_delay=2.0,
-            max_reconnect_delay=120.0,
             heartbeat=30,
             enable_tracing=True,
             ssl_options={"verify": True},
@@ -285,7 +282,6 @@ class TestRabbitMQEventBusConfig:
         assert config.durable is True
         assert config.auto_delete is False
         assert config.reconnect_delay == 2.0
-        assert config.max_reconnect_delay == 120.0
         assert config.heartbeat == 30
         assert config.enable_tracing is True
         assert config.ssl_options == {"verify": True}
@@ -382,10 +378,9 @@ class TestRabbitMQEventBusConfigEdgeCases:
 
     def test_negative_delays(self) -> None:
         """Test that negative delays are stored."""
-        config = RabbitMQEventBusConfig(reconnect_delay=-1.0, max_reconnect_delay=-1.0)
+        config = RabbitMQEventBusConfig(reconnect_delay=-1.0)
 
         assert config.reconnect_delay == -1.0
-        assert config.max_reconnect_delay == -1.0
 
 
 class TestRabbitMQEventBusStats:
@@ -6922,7 +6917,6 @@ class TestRabbitMQReconnectionCallbacks:
             exchange_name="test-events",
             consumer_group="test-group",
             reconnect_delay=1.0,
-            max_reconnect_delay=60.0,
         )
 
     @pytest.fixture
