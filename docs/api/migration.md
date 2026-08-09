@@ -146,7 +146,7 @@ from eventsource.application.migration import (
     # errors and classification
     MigrationError, MigrationNotFoundError, MigrationAlreadyExistsError,
     MigrationStateError, CutoverError, CutoverTimeoutError, ConsistencyError,
-    PositionMappingError, RoutingError,
+    PositionMappingError,
     ErrorSeverity, ErrorRecoverability, ErrorClassification, classify_exception,
     RetryConfig, TRANSIENT_RETRY_CONFIG, CONNECTIVITY_RETRY_CONFIG,
     CUTOVER_RETRY_CONFIG,
@@ -226,7 +226,7 @@ Notes on the individual values:
   the only one that is not simply "keep serving from the source". It is bounded
   by `MigrationConfig.cutover_timeout_ms`; a cutover that cannot finish inside
   that budget rolls back to `DUAL_WRITE` rather than sticking.
-- `COMPLETED` is set by `_complete_migration()` after `CutoverManager` has
+- `COMPLETED` is set by `_complete_cutover()` after `CutoverManager` has
   already moved the tenant's routing state to `MIGRATED`, so the phase update is
   the last step of a successful migration, not the trigger for the switch.
 - `ABORTED` and `FAILED` differ only in who caused them. Both clear the tenant's
@@ -345,8 +345,8 @@ thing `TenantStoreRouter` consults per operation.
 | `MIGRATED` | `"migrated"` | Reads and writes go to the target, which is now the tenant's `store_id`. |
 
 Reads never move on their own: `_get_read_store()` resolves `routing.store_id`
-in every state, and it is `_complete_migration()` writing the target
-`store_id` at completion that redirects them.
+in every state, and it is `CutoverManager.execute_cutover()` writing the target
+`store_id` during the pause that redirects them.
 
 #### State transitions and rollback
 
@@ -384,7 +384,7 @@ The coordinator drives both, in this order:
 | `BULK_COPY` | `BULK_COPY` | `start_migration()` sets the routing state, then the phase |
 | `DUAL_WRITE` | `DUAL_WRITE` | phase update followed by `set_migration_state()` |
 | `CUTOVER` | `CUTOVER_PAUSED` | phase set by `trigger_cutover()`; state set by `CutoverManager` during the pause |
-| `COMPLETED` | `MIGRATED` | `_complete_migration()`, which also repoints `store_id` |
+| `COMPLETED` | `MIGRATED` | `CutoverManager.execute_cutover()` repoints `store_id` and sets `MIGRATED`; `_complete_cutover()` then sets the phase |
 | `ABORTED` / `FAILED` | `NORMAL` | `clear_migration_state()` plus interceptor teardown |
 
 The two are updated in separate calls, so a status read can briefly observe a

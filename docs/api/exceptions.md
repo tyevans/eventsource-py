@@ -188,7 +188,6 @@ Exception
 │       ├── BulkCopyError
 │       ├── DualWriteError
 │       ├── PositionMappingError
-│       ├── RoutingError
 │       ├── CircuitBreakerOpenError
 │       └── SubscriptionMigrationError          eventsource.application.migration.subscription_migrator
 │
