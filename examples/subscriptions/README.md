@@ -392,10 +392,9 @@ for entry in failed:
 
 ### High event lag
 
-1. Increase `batch_size` for faster catch-up
+1. Increase `batch_size` for faster catch-up -- this only widens the store read, not the handler call: `SubscriptionManager` still delivers one event at a time through `handle()`
 2. Check for slow database queries in your projection
-3. Consider batch processing with `handle_batch()`
-4. Monitor for external service bottlenecks
+3. Monitor for external service bottlenecks
 
 ### Events going to DLQ
 
