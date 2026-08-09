@@ -518,6 +518,36 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         assert summary.results[0].error_message is not None
         assert "Database error" in summary.results[0].error_message
 
+    @pytest.mark.asyncio
+    async def test_migrate_subscriptions_raises_on_critical_checkpoint_repo_error(
+        self,
+        migrator: SubscriptionMigrator,
+        mock_checkpoint_repo: MagicMock,
+    ) -> None:
+        """A failure reading the checkpoint repository itself (unlike a
+        per-subscription translation or save failure, which is caught and
+        recorded as a failed result) is unexpected and critical -- it must
+        raise SubscriptionMigrationError, matching the method's documented
+        `Raises:` contract, not propagate the raw underlying exception."""
+        migration_id = uuid4()
+        tenant_id = uuid4()
+
+        mock_checkpoint_repo.get_position = AsyncMock(
+            side_effect=ConnectionError("checkpoint store unreachable")
+        )
+
+        with pytest.raises(SubscriptionMigrationError) as exc_info:
+            await migrator.migrate_subscriptions(
+                migration_id=migration_id,
+                tenant_id=tenant_id,
+                subscription_names=["OrderProjection"],
+                dry_run=False,
+            )
+
+        assert exc_info.value.subscription_name == "OrderProjection"
+        assert exc_info.value.migration_id == migration_id
+        assert "checkpoint store unreachable" in str(exc_info.value)
+
 
 class TestSubscriptionMigratorMigrateTenantSubscriptions:
     """Tests for SubscriptionMigrator.migrate_tenant_subscriptions method."""

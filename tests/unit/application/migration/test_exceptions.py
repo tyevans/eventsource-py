@@ -31,7 +31,6 @@ from eventsource.application.migration.exceptions import (
     MigrationNotFoundError,
     MigrationStateError,
     PositionMappingError,
-    RoutingError,
 )
 from eventsource.ports.migration.models import MigrationPhase
 from eventsource.ports.positions import Position
@@ -408,44 +407,6 @@ class TestPositionMappingError:
         assert isinstance(error, MigrationError)
 
 
-class TestRoutingError:
-    """Tests for RoutingError."""
-
-    def test_creation_basic(self) -> None:
-        """Test creating a basic RoutingError."""
-        tenant_id = uuid4()
-        error = RoutingError(
-            "No routing configured for tenant",
-            tenant_id=tenant_id,
-        )
-
-        assert error.message == "No routing configured for tenant"
-        assert error.tenant_id == tenant_id
-        assert error.recoverable is False
-
-    def test_creation_with_reason(self) -> None:
-        """Test creating RoutingError with reason."""
-        tenant_id = uuid4()
-        error = RoutingError(
-            "Routing lookup failed",
-            tenant_id=tenant_id,
-            reason="Database connection error",
-        )
-
-        assert error.reason == "Database connection error"
-
-    def test_is_subclass_of_migration_error(self) -> None:
-        """Test that RoutingError is a MigrationError."""
-        error = RoutingError("error", tenant_id=uuid4())
-        assert isinstance(error, MigrationError)
-
-    def test_migration_id_is_none(self) -> None:
-        """Test that RoutingError has None migration_id."""
-        error = RoutingError("error", tenant_id=uuid4())
-        # RoutingError does not set migration_id
-        assert error.migration_id is None
-
-
 class TestExceptionHierarchy:
     """Tests for exception hierarchy and catching."""
 
@@ -463,7 +424,6 @@ class TestExceptionHierarchy:
             BulkCopyError(uuid4(), None, "error"),
             DualWriteError(uuid4(), "error"),
             PositionMappingError("msg", uuid4()),
-            RoutingError("msg", uuid4()),
         ]
 
         for error in errors:
@@ -591,13 +551,6 @@ class TestExceptionClassification:
         assert error.severity == ErrorSeverity.ERROR
         assert error.recoverability_type == ErrorRecoverability.RECOVERABLE
         assert error.error_code == "POSITION_MAPPING_ERROR"
-
-    def test_routing_error_classification(self) -> None:
-        """Test RoutingError classification."""
-        error = RoutingError("No route", tenant_id=uuid4())
-        assert error.severity == ErrorSeverity.ERROR
-        assert error.recoverability_type == ErrorRecoverability.FATAL
-        assert error.error_code == "ROUTING_ERROR"
 
     def test_error_to_dict(self) -> None:
         """Test exception to_dict includes classification."""

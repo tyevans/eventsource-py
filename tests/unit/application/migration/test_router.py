@@ -1127,6 +1127,35 @@ class TestTenantStoreResolution:
         assert mock_default_store in stores
         assert mock_dedicated_store in stores
 
+    async def test_get_write_stores_for_tenant_raises_if_target_not_registered(
+        self,
+        mock_default_store: MagicMock,
+        mock_routing_repo: AsyncMock,
+    ) -> None:
+        """DUAL_WRITE with a target_store_id that was never registered must
+        raise StoreNotFoundError, not silently drop the target and return
+        only the source store."""
+        tenant_id = uuid4()
+
+        routing = TenantRouting(
+            tenant_id=tenant_id,
+            store_id="default",
+            migration_state=TenantMigrationState.DUAL_WRITE,
+            target_store_id="never-registered",
+        )
+        mock_routing_repo.get_routing.return_value = routing
+
+        router = TenantStoreRouter(
+            default_store=mock_default_store,
+            routing_repo=mock_routing_repo,
+            enable_tracing=False,
+        )
+
+        with pytest.raises(StoreNotFoundError) as exc_info:
+            await router.get_write_stores_for_tenant(tenant_id)
+
+        assert exc_info.value.store_id == "never-registered"
+
 
 # =============================================================================
 # Test Helper Methods

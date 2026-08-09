@@ -617,45 +617,6 @@ class PositionMappingError(MigrationError):
         )
 
 
-class RoutingError(MigrationError):
-    """
-    Raised when tenant routing operations fail.
-
-    The TenantStoreRouter determines which store handles operations for
-    each tenant. This error indicates routing configuration or lookup
-    failures that prevent proper operation dispatching.
-
-    Attributes:
-        tenant_id: The tenant ID that caused the routing error.
-        reason: Detailed reason for the routing failure.
-    """
-
-    _default_classification = ErrorClassification(
-        severity=ErrorSeverity.ERROR,
-        recoverability=ErrorRecoverability.FATAL,
-        error_code="ROUTING_ERROR",
-        category="routing",
-        suggested_action=(
-            "Tenant routing configuration is invalid or missing. "
-            "Ensure the tenant has proper routing configuration and "
-            "all required stores are registered with the router."
-        ),
-    )
-
-    def __init__(
-        self,
-        message: str,
-        tenant_id: UUID,
-        reason: str | None = None,
-    ) -> None:
-        self.reason = reason
-        super().__init__(
-            message=message,
-            tenant_id=tenant_id,
-            recoverable=False,
-        )
-
-
 # =============================================================================
 # Circuit Breaker
 # =============================================================================
