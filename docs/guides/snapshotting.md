@@ -71,9 +71,11 @@ Two properties shape how you should think about the feature:
   degrades into a correct-but-slower full replay, a misconfigured or
   permanently-invalid snapshot shows up as a latency regression and a log line,
   never as an exception at the call site. `SnapshotDeserializationError` and
-  `SnapshotSchemaVersionError` are caught internally, not raised to you. Budget
-  for the verification step in [Step 4](#step-4-verify-snapshots-are-being-used-on-load)
-  -- "no errors" is not evidence that snapshots are working.
+  `SnapshotSchemaVersionError` are caught internally, not raised to you -- see
+  [Who raises the snapshot
+  exceptions](#who-raises-the-snapshot-exceptions-and-how-to-opt-into-strictness)
+  for what they are for. Budget for the verification step in [Verify it is
+  on](#verify-it-is-on) -- "no errors" is not evidence that snapshots are working.
 
 If you are unsure, the cheapest experiment is `InMemorySnapshotStore` with a
 threshold in a test that loads a representative aggregate, comparing load time
@@ -1390,3 +1392,58 @@ and a broken one raises the underlying error instead of hiding it behind a
 If you are calling it somewhere best-effort -- a pre-warming loop, a maintenance
 script -- wrap it yourself, as shown in [Create snapshots manually at business
 milestones](#create-snapshots-manually-at-business-milestones-with-create_snapshot).
+
+### Who raises the snapshot exceptions, and how to opt into strictness
+
+`SnapshotError` and its three subclasses -- `SnapshotDeserializationError`,
+`SnapshotSchemaVersionError`, `SnapshotNotFoundError` -- are exported from
+`eventsource`, and **the library's load path raises none of them.** That is not
+an oversight, and the types are not dead. They exist for two audiences the
+sections above have referred to as "your own code":
+
+**`SnapshotStore` implementors.** A store that validates state or versions
+itself raises the matching type instead of letting a bare `ValidationError`
+escape, so the reason a snapshot was unusable is named rather than inferred.
+`read_valid_snapshot()` still catches it and degrades -- but the `WARNING` line
+now says what actually went wrong.
+
+**Callers who want stricter behavior than degradation.** The extension point is
+the store, not a configuration flag. Wrap whatever store you use, decide there
+what is fatal, and let it propagate:
+
+```python
+class StrictSnapshotStore:
+    """Refuses to silently ignore a corrupt snapshot."""
+
+    def __init__(self, inner: SnapshotStore) -> None:
+        self._inner = inner
+
+    async def get_snapshot(self, aggregate_id, aggregate_type):
+        snapshot = await self._inner.get_snapshot(aggregate_id, aggregate_type)
+        if snapshot is not None and not self._looks_valid(snapshot):
+            raise SnapshotDeserializationError(
+                aggregate_id=aggregate_id,
+                aggregate_type=aggregate_type,
+            )
+        return snapshot
+```
+
+Note what this does and does not buy you. `read_valid_snapshot()` catches
+everything, so raising from the store gets you a precise log line and a full
+replay -- not a failed load. If you want the load itself to fail, wrap
+`repository.load()` instead, and read the next paragraph first.
+
+**Think hard before making a snapshot failure fatal.** A snapshot is a memoized
+fold over a prefix of the event stream, and the stream is the system of record;
+deleting every snapshot in the database changes load latency and nothing else.
+Raising instead of replaying converts a *correct but slower* load into a failed
+one, on the hottest path in the library -- one corrupt row would take every load
+of that aggregate to an error, permanently, until someone deletes it. A model
+change that invalidates many rows at once would become an outage rather than a
+performance regression. What most operators want here is an alert, not an
+exception: prefer detecting the condition -- see [Verify it is
+on](#verify-it-is-on) and [Watch for the INFO line](#watch-for-the-info-line) --
+over failing the request that happened to hit it.
+
+`except SnapshotError` catches the whole family, which is the other reason the
+base class exists.
