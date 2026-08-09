@@ -439,8 +439,11 @@ registration log entry.
 ##### `batch_size`
 
 The maximum number of events the **catch-up runner** requests from the event
-store per read. It has no effect on the live runner, which is pushed one event
-at a time from the bus and never reads in batches.
+store per read. The live runner also reads from the global feed in
+`batch_size`-limited chunks (it does not read from the bus — see
+[ADR 0047](../adrs/0047-live-runner-feed-driven-checkpointing.md)), but delivers
+events from that chunk to the subscriber one at a time regardless of
+`batch_size`; it does not (yet) dispatch through `handle_batch()`.
 
 Each iteration of the catch-up loop computes:
 
@@ -466,10 +469,14 @@ that trade.
 Note that `batch_size` is the only per-read memory bound in this config — a
 batch is read into a list before its events are dispatched, so a very large
 `batch_size` holds a correspondingly large list of `EventEnvelope` objects.
-There is no separate concurrency knob: both runners deliver events one at a
-time, awaiting each `handle()` call to completion before starting the next,
-so at most one event is ever in flight per subscription regardless of
-`batch_size`.
+There is no separate concurrency knob: neither runner delivers concurrently.
+On the live runner, and on catch-up for a subscriber without `handle_batch()`,
+each `handle()` call is awaited to completion before the next event starts, so
+at most one event is ever in flight. On catch-up for a subscriber with
+`handle_batch()`, the whole read batch is handed to it as one call — still no
+concurrent delivery, but the unit of work is the batch rather than the event
+(see [Handle events in batches with handle_batch()](../guides/subscriptions.md#handle-events-in-batches-with-handle_batch)
+and [ordered delivery](../adrs/DRAFT-ordered-subscription-delivery.md)).
 
 Both the configured value (`config.batch_size`) and the actual per-batch count
 (`events_in_batch`) appear in catch-up log records under the key `batch_size`;

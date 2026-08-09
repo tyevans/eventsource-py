@@ -392,9 +392,10 @@ for entry in failed:
 
 ### High event lag
 
-1. Increase `batch_size` for faster catch-up -- this only widens the store read, not the handler call: `SubscriptionManager` still delivers one event at a time through `handle()`
-2. Check for slow database queries in your projection
-3. Monitor for external service bottlenecks
+1. Increase `batch_size` for faster catch-up -- it widens the store read, and during catch-up it is also the unit handed to `handle_batch()` if your subscriber implements one (see `handle_batch()` in the [subscriptions guide](../../docs/guides/subscriptions.md#handle-events-in-batches-with-handle_batch))
+2. If lag is on the live path, `batch_size` only widens the store read: the live runner still delivers one event at a time through `handle()`
+3. Check for slow database queries in your projection
+4. Monitor for external service bottlenecks
 
 ### Events going to DLQ
 

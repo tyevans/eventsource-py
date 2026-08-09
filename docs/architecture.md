@@ -323,19 +323,21 @@ a missing driver surfaces at connect time, not import time. The buses guard
 their own imports and set a module-level flag: `bus/redis.py` sets
 `REDIS_AVAILABLE` and its constructor raises `RedisNotAvailableError`
 immediately if it is `False`, with `RABBITMQ_AVAILABLE` and `KAFKA_AVAILABLE`
-following the same pattern. SQLite guards each of its two adapter modules
-independently, and each sets its own flag: `adapters/sqlite/snapshots.py`
-guards its own `aiosqlite` import and exports `SQLITE_AVAILABLE`;
-`adapters/sqlite/store.py` guards its own `aiosqlite` import separately and
-exports `AIOSQLITE_AVAILABLE`. The `adapters/sqlite/__init__.py` package barrel
-re-exports both flags as-is, and the top-level `eventsource` package re-exports
-them again unchanged -- there is no `try/except ImportError` reconciling the
-two into one flag; `SQLITE_AVAILABLE` derives from `adapters/sqlite/snapshots.py`
-independently of whatever `adapters/sqlite/store.py` decides about
-`AIOSQLITE_AVAILABLE`. The invariant that holds across all of it is the one
-that matters: `import eventsource` succeeds on a machine with no drivers
-installed, and you learn about a missing extra when you reach for the backend
-you did not install.
+following the same pattern -- and, per-backend, only the module the
+constructor actually checks (and the backend's `__init__.py` re-exports) is
+the canonical flag; sibling modules that guard the same driver import for
+their own runtime names (e.g. Kafka's `connection.py`/`dlq.py`, RabbitMQ's
+`consumer.py`/`serialization.py`) keep the `try/except` but no longer bind a
+second, never-read copy of the flag. SQLite guards each of its two adapter
+modules independently -- `adapters/sqlite/snapshots.py` and
+`adapters/sqlite/store.py` each guard their own `aiosqlite` import -- but
+only `store.py`'s `AIOSQLITE_AVAILABLE` is re-exported from
+`adapters/sqlite/__init__.py` and the top-level `eventsource` package; the
+two module-local copies are guaranteed equal (both guard the identical
+import), so re-exporting one instead of two avoids two names for one fact.
+The invariant that holds across all of it is the one that matters: `import
+eventsource` succeeds on a machine with no drivers installed, and you learn
+about a missing extra when you reach for the backend you did not install.
 
 A backend is also not free to be interesting. It inherits a contract it did not
 write -- the `ExpectedVersion` semantics of `append`, the ordering
@@ -850,11 +852,13 @@ through the *stream*, not a count of work done. Skipping the position update
 for filtered events would mean a subscription with a narrow filter never
 appearing to move, and re-reading the same span forever after a restart.
 Delivery itself happens inside `async with await self._flow_controller.acquire()`,
-but events are delivered one at a time -- each `handle()` call is awaited to
-completion before the next iteration -- so at most one event is ever in
-flight per subscription; `FlowController` tracks that and lets graceful
-shutdown wait for drain, it does not bound concurrency. The position update
-happens inside that same block, before the slot is released. Handler failure
+and no delivery is ever concurrent with another: each unit of work -- one
+`handle()` call, or on catch-up one `handle_batch()` call when the subscriber
+supports batching -- is awaited to completion before the next iteration
+starts. `FlowController` tracks in-flight work and lets graceful shutdown wait
+for drain; it does not bound concurrency. The position update happens inside
+that same block (for a batch, after the whole batch settles), before the slot
+is released. Handler failure
 is routed by `continue_on_error` (default `True`):
 either way `record_event_failed()` is called and failure metrics are recorded,
 but only with `continue_on_error=False` does the exception escape and end the

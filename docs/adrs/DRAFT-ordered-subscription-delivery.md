@@ -122,11 +122,15 @@ recorded position, which is the same at-least-once behavior a single event
 already has, at a coarser grain. The events within a batch are still applied in
 order.
 
-The interface for this already exists and is already documented, including an
-explicit statement that the runners do not currently call it. The gap is
-dispatch, not design, and it is tracked separately. Note the shape of the
-finding: the capability was under-wired, not mis-documented — the guide told the
-truth about a feature the runner never reached.
+The interface for this already existed and was already documented before the
+runners called it. The catch-up runner now dispatches through `handle_batch()`
+when the subscriber supports it, detected once via `supports_batch_handling()`;
+the live runner does not yet, tracked separately, because its per-envelope
+stop/pause checks were made responsive on the assumption of per-event delivery
+and batching it needs its own pass to preserve that. Note the shape of the
+finding that motivated closing the catch-up half: the capability was
+under-wired, not mis-documented — the guide told the truth about a feature the
+runner did not yet reach.
 
 **Partitioned lanes — a future option, not a commitment.** Events could be
 distributed across several lanes by aggregate identity, each lane delivering
