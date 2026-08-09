@@ -1058,48 +1058,6 @@ class TestCalculateDuration:
         assert duration == 0.0
 
 
-class TestCompleteMigration:
-    """Tests for MigrationCoordinator._complete_migration() method."""
-
-    @pytest.mark.asyncio
-    async def test_complete_migration_updates_phase_and_routing(self) -> None:
-        """Test _complete_migration updates phase and routing."""
-        migration_id = uuid4()
-        tenant_id = uuid4()
-        target_store_id = "dedicated-target"
-
-        migration = Migration(
-            id=migration_id,
-            tenant_id=tenant_id,
-            source_store_id="default",
-            target_store_id=target_store_id,
-            phase=MigrationPhase.BULK_COPY,
-        )
-
-        migration_repo = AsyncMock()
-        migration_repo.update_phase = AsyncMock()
-
-        routing_repo = AsyncMock()
-        routing_repo.set_migration_state = AsyncMock()
-        routing_repo.set_routing = AsyncMock()
-
-        coordinator = MigrationCoordinator(
-            source_store=MagicMock(),
-            migration_repo=migration_repo,
-            routing_repo=routing_repo,
-            router=MagicMock(),
-            enable_tracing=False,
-        )
-
-        await coordinator._complete_migration(migration)
-
-        migration_repo.update_phase.assert_called_once_with(migration_id, MigrationPhase.COMPLETED)
-        routing_repo.set_migration_state.assert_called_once_with(
-            tenant_id, TenantMigrationState.MIGRATED, migration_id
-        )
-        routing_repo.set_routing.assert_called_once_with(tenant_id, target_store_id)
-
-
 class TestFailMigration:
     """Tests for MigrationCoordinator._fail_migration() method."""
 

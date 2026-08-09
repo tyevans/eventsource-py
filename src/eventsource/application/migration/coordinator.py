@@ -1470,6 +1470,7 @@ class MigrationCoordinator:
         self._lag_trackers.pop(migration.id, None)
         self._target_stores.pop(migration.id, None)
         self._cleanup_status_queues(migration.id)
+        release_migration_metrics(str(migration.id))
 
     async def _rollback_cutover(
         self,
@@ -1660,46 +1661,6 @@ class MigrationCoordinator:
                 f"Sync lag too high: {lag_events} events "
                 f"(max: {migration.config.cutover_max_lag_events})",
             )
-
-    async def _complete_migration(self, migration: Migration) -> None:
-        """
-        Mark migration as completed and update routing.
-
-        Updates the migration phase to COMPLETED and updates tenant
-        routing to point to the target store.
-
-        Args:
-            migration: Migration instance to complete
-        """
-        # Update migration phase to COMPLETED
-        await self._migration_repo.update_phase(
-            migration.id,
-            MigrationPhase.COMPLETED,
-        )
-
-        # Update routing state to MIGRATED
-        await self._routing_repo.set_migration_state(
-            migration.tenant_id,
-            TenantMigrationState.MIGRATED,
-            migration.id,
-        )
-
-        # Update routing to point to target store
-        await self._routing_repo.set_routing(
-            migration.tenant_id,
-            migration.target_store_id,
-        )
-
-        logger.info(
-            "Completed migration %s: tenant %s now routes to %s",
-            migration.id,
-            migration.tenant_id,
-            migration.target_store_id,
-        )
-
-        # Clean up status queues
-        self._cleanup_status_queues(migration.id)
-        release_migration_metrics(str(migration.id))
 
     async def _fail_migration(self, migration: Migration, error: str) -> None:
         """
