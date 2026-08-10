@@ -1,8 +1,10 @@
 # 8. Mutation Testing Tool Selection: mutmut Plus cosmic-ray, Not One Tool
 
 This project runs mutation testing against a small, curated set of modules
-(`src/eventsource/engine.py` (now `src/eventsource/adapters/_sql/engine.py`), `src/eventsource/repositories/_dialect.py`,
-`src/eventsource/serialization/json.py`) using **two** tools rather than one:
+(named in `scripts/_mutmut_configure.py`'s `MODULES` table and `cosmic-ray/*.toml`,
+which are the authoritative lists — this record deliberately does not restate them,
+having already gone stale once when the rings campaign moved every path it used to
+name) using **two** tools rather than one:
 [mutmut](https://mutmut.readthedocs.io/) 3.x as the default, and
 [cosmic-ray](https://cosmic-ray.readthedocs.io/) scoped specifically to modules
 containing decorator-registered callbacks. This record explains why a single tool
@@ -11,7 +13,11 @@ the way.
 
 ## Status
 
-Accepted. `pyproject.toml`'s `[dependency-groups] dev` lists both `mutmut>=3.0` and
+Accepted; amended 2026-08-10 (see "Amendment" at the end of this record — the
+`@handles` premise this decision was argued from no longer describes the source
+tree, though the decision itself stands on a different footing).
+
+`pyproject.toml`'s `[dependency-groups] dev` lists both `mutmut>=3.0` and
 `cosmic-ray>=8.4`. `scripts/mutation.sh` drives mutmut; `scripts/mutation-cosmic-ray.sh`
 plus `cosmic-ray/*.toml` per-module configs drive cosmic-ray. The full rationale,
 baselines, and per-mutant triage for both tools live in
@@ -146,3 +152,33 @@ implemented.
   across the whole curated set the way mutmut's combined run is; this is accepted
   as the cost of reaching decorated code at all, not treated as a problem to
   engineer away by widening the scope discipline established for both tools.
+
+## Amendment (2026-08-10)
+
+**The `@handles` argument above no longer describes the source tree.** This record
+argues for cosmic-ray substantially on the grounds that mutmut is blind to the
+library's `@handles`-decorated aggregate and projection handlers. Those handler
+*applications* are not in `src/` — the decorator is defined and exported there, and
+every application of it lives in user code, `tests/`, and `examples/`. Whether that
+was already true when this was written or became true during the rings campaign is
+not recorded; either way, an argument resting on handlers the library itself
+declares cannot be checked against the tree today, and should not be repeated
+without checking.
+
+**The decision stands, on the narrower ground that was always the stronger one.**
+mutmut's exclusion of decorated functions is unconditional and applies to every
+decorated definition, not just `@handles` — `@asynccontextmanager`,
+`@contextmanager`, and `@event.listens_for` definitions in `src/` are all invisible
+to it. The `RemoveDecorator` self-check against a known-vacuous test (recorded in
+`docs/development/mutation-testing.md`) is unaffected by any of this, and remains
+the empirical basis for keeping both tools.
+
+**Consequence for the scoping discipline.** "Add a decorated module by writing a
+`cosmic-ray/<module>.toml`" turned out to be the half of this decision that rots:
+`cosmic-ray/checkpoint.toml` was written for an `@asynccontextmanager`-decorated
+method, that method's contract later moved into a shared helper, and the config kept
+pointing at a deleted path with nothing failing. Both configs' paths are now asserted
+by `tests/unit/test_mutmut_configure.py`, which previously guarded only the mutmut
+table. A per-module config in a second tool's format is another copy of "where does
+this module live" — recurring defect shape #1 — and needs a check that fails when the
+copies disagree, not just a documented convention.

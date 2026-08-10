@@ -1,0 +1,30 @@
+# cosmic-ray config for the decorated-function slice of the SQL adapters'
+# shared connection helper.
+#
+# Replaces cosmic-ray/checkpoint.toml, which pointed at
+# src/eventsource/repositories/checkpoint.py and three test modules, all
+# deleted in the rings campaign. That config existed for
+# SQLCheckpointRepository._connect -- an @asynccontextmanager-decorated method
+# implementing the caller-owns-the-transaction contract, which mutmut 3.x
+# cannot generate a single mutant for. The refactor that dissolved
+# repositories/ moved that contract here: sql_connection is the one place the
+# rule now lives, it is still @asynccontextmanager-decorated, and it is still
+# invisible to mutmut for exactly the same reason. Same blind spot, same
+# contract, current path.
+#
+# See engine.toml and docs/development/mutation-testing.md ("Two tools, two
+# jobs") for the general rationale.
+#
+# Run with `scripts/mutation-cosmic-ray.sh connection`.
+#
+# Deliberately scoped to one file; do not widen module-path (see engine.toml
+# for the runtime-cost rationale).
+
+[cosmic-ray]
+module-path = "src/eventsource/adapters/_sql/connection.py"
+timeout = 10.0
+excluded-modules = []
+test-command = "python -m pytest tests/unit/adapters/test_sql_connection.py -x -q --no-cov -p no:randomly"
+
+[cosmic-ray.distributor]
+name = "local"

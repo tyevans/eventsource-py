@@ -142,7 +142,21 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras --locked
 
+      # HYPOTHESIS_PROFILE selects the "ci" profile registered in
+      # tests/conftest.py (500 examples, no deadline) instead of the
+      # 100-example local default. The profile was registered but never
+      # loaded until this env var existed -- see the conftest comment.
+      #
+      # Measured cost on a cold example database (which is what CI always
+      # has -- .hypothesis is gitignored): the 21 property modules go from
+      # 9.1s to 32.7s run serially, slowest single test 2.5s against the
+      # --timeout=60 per-test cap. Under `-n auto` that spreads across
+      # workers. If this ever does become the long pole, lower max_examples
+      # in the profile rather than unsetting the variable -- an unset var
+      # silently reverts to the local default and looks like it still runs.
       - name: Run tests
+        env:
+          HYPOTHESIS_PROFILE: ci
         run: |
           uv run pytest -n auto --dist worksteal \
             --cov=src/eventsource --cov-report=xml --cov-report=term-missing \

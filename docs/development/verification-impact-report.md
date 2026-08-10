@@ -251,36 +251,65 @@ not encountered**: every mutation command passes `--no-cov` and `-p no:randomly`
 made opt-in rather than living in `addopts` (`pyproject.toml:106-113`) so scoped
 runs cannot trip it at all. The floor has since ratcheted to `fail_under = 92`.
 
-**Known gaps, in priority order:**
+**Gaps this report found, and what was done about them.** Five of the six were
+closed in the same change that published this report; the sixth is a standing
+limitation with no fix available.
 
-1. **`cosmic-ray/checkpoint.toml` cannot run.** Its `module-path` is
-   `src/eventsource/repositories/checkpoint.py`, deleted in the rings campaign, and
-   all three paths in its `test-command` are likewise gone. `tests/unit/test_mutmut_configure.py`
-   guards `scripts/_mutmut_configure.py`'s `MODULES` table and `mutation.sh`'s
-   `VALID` array — it never inspects `cosmic-ray/*.toml`, which is precisely why
-   this rotted silently. A live instance of this repo's defect shape #1: one fact
-   in two places, with nothing failing when the copies disagree.
-2. **`adapters/serialization/json.py` still has no baseline.** Deferred mid-rewrite
-   in the original pass; the deferral notice is still there, and only a ring-move
-   commit has touched the file since.
-3. **Documentation paths have rotted around the tooling.** ADR 0008's opening names
-   three pre-rings module paths, two of them dead; the "151 mutants / ~110s"
-   scope-justification figure is measured against `repositories/_dialect.py`, which
-   no longer exists; `mutation-testing.md`'s "~18k source lines" is off by roughly
-   4× against the current 72k.
-4. **ADR 0008's central premise no longer matches the source tree.** Its
-   justification for adopting cosmic-ray is 56 `@handles`-decorated handlers in the
-   library. Today `src/` contains **zero** real `@handles` applications — every
-   occurrence there is a docstring example or a log-format string; the 182 real
-   applications live in `tests/` and `examples/`. The decorator is still the
-   library's central routing abstraction and mutmut is still blind to decorated
-   code (`src/` has 5 `@asynccontextmanager`, 4 `@contextmanager`, 4
-   `@contextlib.contextmanager` definitions among others), but the specific target
-   the ADR was written to reach is not where it said it was.
-5. **Neither tool has a statement-deletion operator** — the exact shape of the
-   original `engine.py` bug. A custom cosmic-ray operator was evaluated and left as
-   a documented open option. Manual break/restore discipline remains necessary
-   there.
+1. **`cosmic-ray/checkpoint.toml` could not run — CLOSED.** Its `module-path` was
+   `src/eventsource/repositories/checkpoint.py`, deleted in the rings campaign,
+   along with all three paths in its `test-command`. It existed for an
+   `@asynccontextmanager`-decorated `_connect` implementing the
+   caller-owns-the-transaction contract; that contract now lives in
+   `adapters/_sql/connection.py`'s `sql_connection`, still decorated and still
+   mutmut-blind. Replaced by `cosmic-ray/connection.toml` — **25 mutants, 24
+   killed, 1 equivalent survivor**, with the `RemoveDecorator` mutant killed,
+   confirming the config reaches the blind spot it exists for.
+2. **The guard test did not cover cosmic-ray — CLOSED.**
+   `tests/unit/test_mutmut_configure.py` guarded the mutmut table and
+   `mutation.sh`'s `VALID` array but never inspected `cosmic-ray/*.toml`, which is
+   precisely why #1 rotted silently — this repo's defect shape #1, one directory
+   over. It now asserts each config's `module-path` exists, every `tests/`-rooted
+   token in its `test-command` exists, and the command carries `--no-cov` and
+   `-p no:randomly`. Verified by restoring the rotted config and watching it fail.
+3. **`adapters/serialization/json.py` had no baseline — CLOSED.** First baseline
+   taken: **18 mutants, 15 killed, 3 survived**. One real gap fixed
+   (`test_encode_unsupported_type_raises` asserted only the exception *class*, so
+   `super().default(None)` survived — a public encoder whose docstring promises it
+   names the offending type). Final: 16 killed, 2 equivalent survivors, both
+   provably unobservable because orjson discards exceptions raised inside a
+   `default=` callback.
+4. **The `ci` Hypothesis profile had never run — CLOSED.** Registered at 500
+   examples and never loaded; `load_profile("default")` was unconditional. Now
+   selected by `HYPOTHESIS_PROFILE`, set to `ci` in the workflow. Measured on a
+   cold example database (what CI always has): the property modules go from 9.1s
+   to 32.7s serially, slowest single test 2.5s against the 60s per-test cap. The
+   wider search surfaced **no new failures** — it buys future protection, not a
+   present defect, which is worth knowing before anyone reads a green CI run as
+   evidence the 5× search earned its keep. One incidental benefit: `ci` sets
+   `deadline=None` where `default` leaves Hypothesis's 200ms per-example deadline
+   in place, so property tests on a loaded runner no longer fail on timing alone.
+   (Observed while preparing this change — a property test and the perf-regression
+   test both failed on a machine busy running mutation testing, and both passed on
+   an idle one.)
+5. **Documentation had rotted around the tooling — CLOSED.** ADR 0008's opening
+   named three pre-rings paths (two dead) and is now pointed at the authoritative
+   config files instead; its `@handles` premise is amended (below);
+   `mutation-testing.md`'s stale source-line and test counts are gone rather than
+   re-stated, and the dialect-module spike figure now says which path it was
+   measured against.
+6. **Neither tool has a statement-deletion operator — STANDING.** The exact shape
+   of the original `engine.py` bug. A custom cosmic-ray operator was evaluated and
+   left as a documented open option; manual break/restore discipline remains
+   necessary. No action taken, and none proposed.
+
+**On ADR 0008's premise.** Its justification for adopting cosmic-ray is
+`@handles`-decorated handlers in the library. `src/` contains no real `@handles`
+applications — every occurrence there is a docstring example or a log-format
+string; the applications live in user code, `tests/`, and `examples/`. The ADR is
+amended accordingly: the decision stands on the broader and always-stronger ground
+that mutmut's exclusion covers *every* decorated definition (`src/` has
+`@asynccontextmanager`, `@contextmanager`, and `@event.listens_for` definitions it
+cannot see), and the `RemoveDecorator` self-check is unaffected either way.
 
 ---
 
@@ -288,11 +317,12 @@ runs cannot trip it at all. The floor has since ratcheted to `fail_under = 92`.
 
 **Hypothesis.** Adoption is real and reasonably broad, and its two best finds — the
 tenant-token LIFO footgun and the aiosqlite thread leak — are lifecycle and
-concurrency issues that only high-example-count generation surfaces. But it is not
-institutionalized: it is absent from the definition of done and from 792 lines of
-testing guide, and the wider `ci` profile configured for CI has never actually
-loaded. The gap between how much it is used and how little it is written down is
-the main risk to it surviving a change of contributor.
+concurrency issues that only high-example-count generation surfaces. Its weakness
+was never usage; it was that the practice lived entirely in contributor habit. It
+was absent from the definition of done and from the whole testing guide, and the
+wider profile configured for CI had never loaded. Both are now fixed, which is the
+difference between a habit and a convention — but a written convention still decays
+if nobody applies it, so this is a claim to re-check, not a solved problem.
 
 **Mutation testing.** It found two classes of defect, and the report should not
 flatten them: ordinary logic bugs in shipped adapters (`_drain_background`,
@@ -304,20 +334,20 @@ reproducible self-check proving the harness detects it. Against that: a 72%
 recurring-noise rate on the largest run, one instance of production source
 restructured to satisfy a tool, and no recorded triage cost.
 
-**Recommendations, in order:**
+**What remains open.** The gaps above are closed; these are not:
 
-1. **Repair or delete `cosmic-ray/checkpoint.toml`,** and extend
-   `tests/unit/test_mutmut_configure.py` to validate the cosmic-ray configs' paths
-   the way it already validates mutmut's. Until then, "2 cosmic-ray configs"
-   overstates the tooling by one.
-2. **Decide what cosmic-ray is actually for now that ADR 0008's premise has
-   moved.** Either point it at decorated code that genuinely exists in `src/`, or
-   amend the ADR to say the `@handles` justification no longer applies. Do this
-   before re-running anything, since it determines what is worth running.
-3. **Then re-run the curated set**, including a first baseline for `json.py`, and
-   record triage time. The existing baselines all predate the rings campaign and
-   the selectors have already gone stale once (BACKLOG entry, closed 2026-08-04) —
-   verify the config before trusting any new numbers.
-4. **Write the Hypothesis practice down** in `definition-of-done.md` and
-   `testing.md`, or accept that it will decay. Separately, either wire the `ci`
-   profile up or delete it.
+1. **The pre-rings baselines are still pre-rings.** `engine.py`, `dialect.py`, and
+   the three bus modules have not been re-measured. `json.py` and `connection.py`
+   now have current numbers, taken with the config verified first — which is the
+   order the rest should follow, since the selectors have gone stale twice now
+   (once in the mutmut table, once in the cosmic-ray configs).
+2. **Triage cost is still unrecorded.** Both runs in this change were small enough
+   that the question did not arise. Re-running the bus modules means meeting the 56
+   accepted log-message survivors again, and that is the run worth timing.
+3. **`checkpoint` and `dlq` are in the curated set with no recorded triage.** They
+   have selectors and pinned test subsets, so they run; no baseline table exists
+   for either.
+
+Deliberately not proposed: a CI gate on mutation score (the three documented
+reasons still hold), a custom statement-deletion operator (evaluated, correctly
+deferred), and widening either tool's scope beyond one module at a time.

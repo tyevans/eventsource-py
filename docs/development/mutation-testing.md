@@ -14,9 +14,11 @@ does.
 
 ## What's in the curated set, and why
 
-Mutation testing is `O(mutants × suite runtime)`. This repo is roughly 18k source
-lines with ~6,000 tests; running it against everything would take hours and would
-simply go unused. Instead it targets a small, curated set of modules chosen for being
+Mutation testing is `O(mutants × suite runtime)`. This repo is tens of thousands of
+source lines with thousands of tests, and both keep growing; running mutation
+testing against everything would take hours and would simply go unused. (An earlier
+version of this sentence carried exact figures. They were roughly 4x stale within a
+year — the point survives without them.) Instead it targets a small, curated set of modules chosen for being
 small, pure(ish), and high-consequence — code where a silent behavior change would be
 expensive and hard to notice by other means:
 
@@ -39,9 +41,10 @@ directory; that reintroduces the whole-repo runtime problem this design exists t
 avoid.
 
 **Two tools, not one.** mutmut 3.x cannot generate a mutant inside — or removing —
-a decorated function, which blinds it to every `@event.listens_for` listener and,
-going forward, every `@handles`-decorated aggregate/projection handler. cosmic-ray
-covers exactly that gap via its `RemoveDecorator` operator. Which tool to reach for,
+a decorated function, which blinds it to every `@event.listens_for` listener, every
+`@asynccontextmanager`/`@contextmanager` helper, and every `@handles`-decorated
+handler in user code. cosmic-ray covers exactly that gap via its `RemoveDecorator`
+operator. Which tool to reach for,
 and why two rather than a version pin or a full switch, is its own section below:
 ["Two tools, two jobs"](#two-tools-two-jobs-mutmut-and-cosmic-ray).
 
@@ -55,8 +58,13 @@ scripts/mutation.sh json         # mutmut: just adapters/serialization/json.py
 scripts/mutation.sh checkpoint   # mutmut: just adapters/sql/checkpoints.py
 scripts/mutation.sh dlq          # mutmut: just adapters/sql/dlq.py
 
-scripts/mutation-cosmic-ray.sh engine   # cosmic-ray: decorated-function slice
+scripts/mutation-cosmic-ray.sh engine       # cosmic-ray: decorated-function slice
+scripts/mutation-cosmic-ray.sh connection   # cosmic-ray: adapters/_sql/connection.py
 ```
+
+`scripts/mutation-cosmic-ray.sh` with no argument lists whatever
+`cosmic-ray/*.toml` files exist, so that listing — not this block — is the
+authoritative set.
 
 Each `mutation.sh` invocation prints a per-mutant summary (killed/survived/etc.,
 mutmut's emoji legend) and, at the end, the list of surviving mutant names. `mutmut
@@ -282,13 +290,65 @@ alongside `RetryPolicy` already exercises the module's full behavior.
 After triage: 192/248 killed (78 → 56 net survivors, all in the accepted
 log-message and one equivalent-mutant category above), 0 timeouts on a clean rerun.
 
-## Deferred: `adapters/serialization/json.py`
+## Baseline and triage: `adapters/serialization/json.py`
 
-Left out of this pass — `impl-t2b-2` was mid-round rewriting the encoder (promoting
-`orjson` to a hard dependency, deleting the stdlib fallback, folding an integer-range
-guard into the existing validation walk) while this task was running, and mutating a
-module mid-rewrite produces a baseline that's stale before it's committed. Run
-`scripts/mutation.sh json` once that work has landed and stabilized.
+Deferred from the original pass — `impl-t2b-2` was mid-round rewriting the encoder
+(promoting `orjson` to a hard dependency, deleting the stdlib fallback, folding an
+integer-range guard into the existing validation walk), and mutating a module
+mid-rewrite produces a baseline that's stale before it's committed. That rewrite has
+long since landed; the baseline below was taken 2026-08-10 against the settled
+module.
+
+**Baseline:** 18 mutants, 15 killed, 3 survived, ~25s wall time.
+
+**Triage:**
+
+| Mutant | Classification | Reason |
+| --- | --- | --- |
+| `EventSourceJSONEncoder.default` — `super().default(obj)` → `super().default(None)` | **Real gap → fixed** | The mutant still raises `TypeError`, just naming `NoneType` instead of the object it was handed, so `test_encode_unsupported_type_raises`'s bare `pytest.raises(TypeError)` could not tell the difference. `EventSourceJSONEncoder` is public (exported from `eventsource`, used as `json.dumps(..., cls=...)`) and its docstring promises the unsupported type is named. Closed by asserting on the message: `pytest.raises(TypeError, match="CustomClass")`. |
+| `_orjson_default` — `raise TypeError(None)` (message blanked) | Equivalent | **Unobservable through any public path**, for a reason this module already documents at length: `orjson.dumps` swallows *any* exception raised inside a `default=` callback and replaces it with its own generic `TypeError: Type is not JSON serializable: <ClassName>`. The caller never sees this message, so no assertion written from the public contract can discriminate. (A test calling `_orjson_default` directly could pin the string, but that pins a private implementation detail no caller can observe — the "do not contort a test to kill an equivalent mutant" rule applies squarely.) |
+| `_orjson_default` — `type(obj).__name__` → `type(None).__name__` | Equivalent | Same reason as the row above: a different wrong message on the same unreachable string. |
+
+After the fix: 18 mutants, 16 killed, 2 survived — both survivors verified
+equivalent, none out of scope. Notable as a third independent confirmation of the
+orjson callback-swallowing behavior: it was first found by direct execution, then
+recorded in the module docstring, and mutation testing has now demonstrated it from
+the outside by generating two mutants that provably cannot be killed.
+
+## Baseline and triage: `adapters/_sql/connection.py` (cosmic-ray)
+
+Run with `scripts/mutation-cosmic-ray.sh connection` (config:
+`cosmic-ray/connection.toml`). Replaces `cosmic-ray/checkpoint.toml`, which pointed
+at `src/eventsource/repositories/checkpoint.py` and three test modules, all deleted
+in the rings campaign — see the note on config rot below.
+
+**Baseline (2026-08-10):** 25 mutants, 24 killed, 1 survived, ~30s wall time.
+
+The `core/RemoveDecorator` mutant on `@asynccontextmanager` is **killed**, which is
+the whole reason this config exists: strip the decorator and `sql_connection` stops
+being a context manager at all, so every caller's `async with` fails. mutmut cannot
+generate that mutant under any configuration.
+
+**Triage:**
+
+| Mutant | Classification | Reason |
+| --- | --- | --- |
+| `core/ReplaceBinaryOperator_Mul_Div` on the `*` keyword-only marker in `sql_connection(conn, *, write: bool)` → `/` | Equivalent | Identical to the `engine.py` occurrence documented above: cosmic-ray's binary-operator provider matches the bare `*`/`/` parameter-list separators as though they were arithmetic. Every call site passes `write=` by keyword and `conn` positionally, which both signatures accept. |
+
+### A config in a second tool's format is a second copy of "where does this module live"
+
+`cosmic-ray/checkpoint.toml` existed for `SQLCheckpointRepository._connect`, an
+`@asynccontextmanager`-decorated method implementing the caller-owns-the-transaction
+contract. The refactor that dissolved `repositories/` moved that contract into
+`adapters/_sql/connection.py`'s `sql_connection`. The config was not updated, its
+`module-path` and all three `test-command` paths pointed at deleted files, and
+nothing failed — `scripts/mutation-cosmic-ray.sh` is not in `make check`, and
+`tests/unit/test_mutmut_configure.py` guarded only the mutmut table.
+
+That guard test now also asserts, for every `cosmic-ray/*.toml`: the `module-path`
+exists, every `tests/`-rooted token in the `test-command` exists, and the command
+carries `--no-cov` and `-p no:randomly`. Adding a config without those flags is now
+a test failure rather than a silently false 100% score.
 
 ## Two tools, two jobs: mutmut and cosmic-ray
 
@@ -349,8 +409,10 @@ This is not "cosmic-ray is the better tool, use it for everything": its default
 operator set is *narrower* than mutmut's in other respects (no string-literal
 mutation at all, so it cannot express the `"journal_mode"` → `"XXjournal_modeXX"`
 class of mutant mutmut generates routinely), and its subprocess-per-mutant execution
-model is markedly slower — see `mutation-framework-spike.md` for the `_dialect.py`
-comparison (151 cosmic-ray mutants took ~110s there against mutmut's 27 in ~2s).
+model is markedly slower — see `mutation-framework-spike.md` for the dialect-module
+comparison (151 cosmic-ray mutants took ~110s there against mutmut's 27 in ~2s; the
+spike ran against `repositories/_dialect.py`, whose logic now lives at
+`adapters/_sql/dialect.py`).
 Running both tools against `engine.py` surfaced a real gap that *neither alone,
 run in isolation, would have been trusted to have found completely* — see the
 `SQLITE_PRAGMAS["busy_timeout"]` row in the `engine.py` cosmic-ray triage above:

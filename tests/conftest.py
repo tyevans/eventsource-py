@@ -16,6 +16,7 @@ All fixtures are properly scoped and documented for easy reuse.
 
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncGenerator, Callable
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
@@ -103,6 +104,13 @@ def pytest_configure(config: pytest.Config) -> None:
 # exercise real database transactions (deferred to M2's delivery-guarantee
 # work) -- fewer examples because each one costs a real transaction, and
 # function-scoped fixture reuse across examples is expected there.
+#
+# Which profile loads is `HYPOTHESIS_PROFILE`, defaulting to "default";
+# .github/workflows/ci.yml sets it to "ci". Before that env var existed, "ci"
+# was registered and never loaded -- `load_profile("default")` was
+# unconditional and nothing anywhere set a different one, so the 5x-wider
+# search configured for CI had never run a single example. Registering a
+# profile is not wiring it up: the read site is what makes it real.
 
 settings.register_profile("default", max_examples=100)
 settings.register_profile("ci", max_examples=500, deadline=None)
@@ -112,7 +120,15 @@ settings.register_profile(
     deadline=None,
     suppress_health_check=[HealthCheck.function_scoped_fixture],
 )
-settings.load_profile("default")
+
+HYPOTHESIS_PROFILE = os.environ.get("HYPOTHESIS_PROFILE", "default")
+try:
+    settings.load_profile(HYPOTHESIS_PROFILE)
+except KeyError as exc:  # pragma: no cover - guards a typo'd env var
+    raise RuntimeError(
+        f"HYPOTHESIS_PROFILE={HYPOTHESIS_PROFILE!r} is not a registered profile. "
+        "Known profiles: default, ci, db."
+    ) from exc
 
 
 # ============================================================================

@@ -790,3 +790,61 @@ Work down this list and stop at the first match:
 
 A new model that more than one test needs belongs in `tests/fixtures/`, and a new fixture
 that more than one directory needs belongs in `tests/conftest.py`.
+
+## Property-based tests (Hypothesis)
+
+Hypothesis is a dev dependency and roughly a fifth of the unit modules use it. The
+convention, by file: a module named `test_<thing>_properties.py` alongside the
+example-based `test_<thing>.py`. Keep them separate — property tests fail with a
+generated counterexample rather than a named scenario, and mixing the two makes a
+failure harder to read.
+
+**When to reach for a property instead of another example.** Write one when the
+thing under test has an invariant that should hold for *every* input, not just the
+ones you thought of:
+
+- **Round-trips** — `from_dict(to_dict(x)) == x`, encode/decode, memento save/load.
+  The highest-value shape, and the one that has actually caught defects here.
+- **Ordering and comparison** — a total order within a store, LIFO nesting,
+  monotonic positions.
+- **Idempotency and resumption** — replaying from a checkpoint reaches the same
+  state; a resumed bulk copy equals an uninterrupted one.
+- **Isolation** — concurrent tasks never observe each other's tenant.
+
+Do *not* convert an example test into a property because it feels more rigorous. A
+property whose strategy is broader than the contract generates inputs the code never
+promised to handle, and the resulting "failure" is a bug in the test — one such fix
+(`0665c7c`) ended in a docstring clarification, not a code change. **A property is a
+specification: if you cannot state the invariant in one sentence, write an example
+instead.**
+
+### Ports and new backends
+
+`StoreStateMachine` (`eventsource.testing.conformance_ports.stateful`) is a
+Hypothesis `RuleBasedStateMachine` that drives a store through generated
+append/read sequences and checks its invariants after each step. It is available
+to any store backend and is **not** a substitute for the per-port conformance
+suites — see `.claude/rules/definition-of-done.md`, which lists the suites a new
+backend must bind. Bind the suites first; add the state machine when you want the
+sequencing coverage on top.
+
+### Profiles
+
+`tests/conftest.py` registers three, selected by the `HYPOTHESIS_PROFILE`
+environment variable (default: `default`):
+
+| Profile | Examples | Use |
+| --- | --- | --- |
+| `default` | 100 | local runs |
+| `ci` | 500, no deadline | set by `.github/workflows/ci.yml` |
+| `db` | 25, function-scoped fixtures allowed | property tests that hit a real database |
+
+Run the wider search locally before pushing something invariant-heavy:
+
+```bash
+HYPOTHESIS_PROFILE=ci uv run pytest tests/unit/domain/test_tenant_context_properties.py
+```
+
+`.hypothesis/` (the example database and any shrunk counterexamples) is gitignored.
+It is a local cache, not a fixture — a failing example reproduces from the seed
+printed in the failure output, so nothing needs committing to share a repro.

@@ -70,7 +70,13 @@ two that gate most often:
 ## New Feature
 
 1. Implementation in `src/eventsource/` with type annotations (mypy strict passes)
-2. Unit tests in `tests/unit/` covering happy path and edge cases
+2. Unit tests in `tests/unit/` covering happy path and edge cases.
+   **If the feature has an invariant that should hold for every input — a
+   round-trip, an ordering, an idempotent replay, an isolation guarantee —
+   a property test in `test_<thing>_properties.py` states it.** One sentence
+   you can write the invariant in is the bar; if you cannot, examples are the
+   right tool and this does not apply. See
+   `docs/development/testing.md#property-based-tests-hypothesis`.
 3. **If the library — not the user — is obligated to invoke it, a test that
    runs the real caller and asserts the mechanism was reached.** Ask who is
    contractually obligated to call this. `EventStore.append` has no internal
@@ -137,7 +143,9 @@ two that gate most often:
 
    A `FullEventStore` binds the first five store suites. `StoreStateMachine`
    (hypothesis-driven) is available for stores and is not a substitute for the
-   per-port suites. `SnapshotStoreConformance` composes `SnapshotConformance`
+   per-port suites — bind the suites, then add the state machine for generated
+   append/read sequencing coverage on top (see
+   `docs/development/testing.md#ports-and-new-backends`). `SnapshotStoreConformance` composes `SnapshotConformance`
    and `SnapshotTypeInvalidationConformance`; `CheckpointRepositoryConformance`
    composes `ProjectionCheckpointsConformance` and
    `SubscriptionPositionsConformance` — bind the composed suite unless the

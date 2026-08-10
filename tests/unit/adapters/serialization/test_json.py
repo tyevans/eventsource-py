@@ -77,15 +77,24 @@ class TestEventSourceJSONEncoder:
 
         assert parsed["event"]["id"] == str(test_uuid)
 
-    def test_encode_unsupported_type_raises(self):
-        """Test that unsupported types raise TypeError."""
+    def test_encode_unsupported_type_raises_naming_the_offending_type(self):
+        """An unsupported type raises TypeError that names the type.
+
+        The assertion is on the message, not just the exception class. A bare
+        `pytest.raises(TypeError)` passes against `super().default(None)` --
+        stdlib's encoder still raises, it just reports `NoneType` instead of
+        the object it was actually handed. Mutation testing surfaced exactly
+        that mutant as a survivor here (see
+        docs/development/mutation-testing.md's json.py triage), and the
+        encoder's own docstring promises the type is named.
+        """
 
         class CustomClass:
             pass
 
         data = {"custom": CustomClass()}
 
-        with pytest.raises(TypeError):
+        with pytest.raises(TypeError, match="CustomClass"):
             json.dumps(data, cls=EventSourceJSONEncoder)
 
 
