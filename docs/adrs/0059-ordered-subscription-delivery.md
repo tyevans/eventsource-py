@@ -14,7 +14,12 @@ be increased without breaking it, and what lifting it would actually cost.
 
 ## Status
 
-**Accepted.**
+**Accepted.** **Amended by
+[ADR 0063](0063-live-batch-delivery-is-a-page-not-a-window.md)**, scoped to the
+live half of the batch-delivery sanction below: 0063 supplies the pass this ADR
+asked for and records the constraint that made it safe — the live batch is a
+page the feed already returned, never an accumulator. Every constraint stated
+here holds unchanged.
 
 **ADR Impact**
 
@@ -132,7 +137,9 @@ runners called it. The catch-up runner now dispatches through `handle_batch()`
 when the subscriber supports it, detected once via `supports_batch_handling()`;
 the live runner does not yet, tracked separately, because its per-envelope
 stop/pause checks were made responsive on the assumption of per-event delivery
-and batching it needs its own pass to preserve that. Note the shape of the
+and batching it needs its own pass to preserve that. *(That pass was
+subsequently done — see [ADR 0063](0063-live-batch-delivery-is-a-page-not-a-window.md);
+both runners now dispatch through `handle_batch()`.)* Note the shape of the
 finding that motivated closing the catch-up half: the capability was
 under-wired, not mis-documented — the guide told the truth about a feature the
 runner did not yet reach.

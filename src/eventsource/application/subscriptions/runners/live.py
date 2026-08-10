@@ -180,15 +180,18 @@ class LiveRunner:
         # under `continue_on_error`, potentially filling the DLQ with events
         # whose handler was never reached.
         #
-        # `handle()` still wins whenever it exists, so this is invisible to
-        # subscribers that already worked. Batching the live path is a
-        # separate open decision; delivering a one-event batch here is not
-        # that -- it calls the only handler such a subscriber has, and leaves
-        # per-envelope stop/pause granularity exactly as it was.
+        # A batch-capable subscriber is delivered to through `handle_batch()`
+        # on both runners now (ADR 0063): `_drain_feed` groups the envelopes a
+        # single bounded feed read already returned and dispatches them as one
+        # unit. `_batch_only` is the narrower fact -- no `handle()` at all --
+        # and is what the per-event path consults when it has to deliver one
+        # envelope on its own (batch-handler fallback, or a non-batch-capable
+        # subscriber, in which case it is False and `handle()` is called).
         subscriber = self.subscription.subscriber
         self._has_handle = callable(getattr(subscriber, "handle", None))
-        self._batch_only = not self._has_handle and supports_batch_handling(subscriber)
-        if not self._has_handle and not self._batch_only:
+        self._batch_capable = supports_batch_handling(subscriber)
+        self._batch_only = not self._has_handle and self._batch_capable
+        if not self._has_handle and not self._batch_capable:
             raise TypeError(
                 f"Subscriber {type(subscriber).__name__!r} for subscription "
                 f"{self.subscription.name!r} implements neither handle() nor "
@@ -350,11 +353,19 @@ class LiveRunner:
         `stop()` and `pause()` take effect mid-drain instead of only at the
         next wake-up.
 
+        When the subscriber is batch-capable, dispatch is grouped: the
+        envelopes one bounded read already returned are handed to
+        `handle_batch()` as a unit. See `_drain_page_grouped` for why that
+        costs nothing in latency or stop/pause responsiveness (ADR 0063).
+
         Returns:
             Number of envelopes processed (including filtered ones)
         """
         processed = 0
         options = FeedReadOptions(tenant_id=self.config.tenant_id, limit=self.config.batch_size)
+
+        if self._batch_capable:
+            return await self._drain_feed_grouped(options)
 
         while not self._stop_requested:
             from_position = self.subscription.last_processed_position
@@ -388,6 +399,180 @@ class LiveRunner:
                 break
 
         return processed
+
+    async def _drain_feed_grouped(self, options: FeedReadOptions) -> int:
+        """
+        Drain the feed delivering each read's envelopes through `handle_batch()`.
+
+        **The batch is a page the feed already returned, never an accumulator.**
+        Nothing is ever held back waiting for more events to arrive: the runner
+        reads exactly what is available past the checkpoint (bounded by
+        `config.batch_size`, the same read `_drain_feed` already issued) and
+        dispatches that. A time-window accumulator was rejected -- it would buy
+        throughput with the one thing the live path exists to provide (ADR 0063).
+        Materializing the page adds no latency of its own either, because feed
+        adapters build the whole result set before yielding its first envelope.
+
+        Stop and pause are still checked **per envelope** during the scan, so a
+        `stop()` or `pause()` that lands before dispatch takes effect at exactly
+        the granularity it did before batching. What coarsens is only the window
+        *inside one handler call* -- and that window is `processing_timeout`,
+        which bounds one `handle_batch()` exactly as it bounds one `handle()`
+        (`CatchUpRunner._call_guarded` documents the same budget for the same
+        reason). Subscribers with no `handle_batch()` never reach this method.
+
+        If `handle_batch()` raises, delivery falls back to the per-event path --
+        `_process_live_event` per envelope, position recorded immediately after
+        each -- exactly as `CatchUpRunner._process_batch_grouped` does, per
+        `BatchSubscriber.handle_batch`'s documented contract.
+
+        Returns:
+            Number of envelopes processed (including filtered ones)
+        """
+        processed = 0
+
+        while not self._stop_requested:
+            from_position = self.subscription.last_processed_position
+            page = [
+                envelope
+                async for envelope in self.event_feed.read_all(
+                    from_position=from_position, options=options
+                )
+            ]
+            if not page:
+                break
+
+            # Scan first -- same per-envelope stop/pause checks the
+            # single-event path makes, just decoupled from dispatch since the
+            # page is delivered as a whole.
+            included: list[tuple[EventEnvelope, bool]] = []
+            for envelope in page:
+                if self._stop_requested:
+                    break
+                await self.subscription.wait_if_paused(self._stop_event)
+                if self._stop_requested:
+                    break
+
+                self._stats.events_received += 1
+                await self.subscription.record_events_seen(1)
+                included.append((envelope, self._passes_filter(envelope)))
+
+            await self._deliver_page(included)
+            processed += len(included)
+
+            if len(included) < len(page):
+                # Abandoned tail: stop or pause-interrupt landed mid-scan.
+                break
+            if len(page) < self.config.batch_size:
+                break
+
+        return processed
+
+    def _passes_filter(self, envelope: EventEnvelope) -> bool:
+        """Whether the envelope's event passes the configured event filter."""
+        return self._filter is None or self._filter.matches(envelope.event)
+
+    async def _deliver_page(self, included: list[tuple[EventEnvelope, bool]]) -> None:
+        """
+        Deliver one scanned page as a batch, then record every envelope.
+
+        Args:
+            included: `(envelope, passes_filter)` pairs, in feed order
+        """
+        deliverable = [envelope.event for envelope, passes in included if passes]
+
+        batch_succeeded = True
+        if deliverable:
+            subscriber = cast(BatchSubscriber, self.subscription.subscriber)
+            assert self._flow_controller is not None
+            start_time = time.perf_counter()
+            async with await self._flow_controller.acquire():
+                try:
+                    await self._call_guarded(
+                        lambda: settle_handler_result(subscriber.handle_batch(deliverable)),
+                        "handle_batch",
+                    )
+                except Exception as e:
+                    batch_succeeded = False
+                    logger.warning(
+                        "Live batch handler failed, falling back to per-event delivery",
+                        extra={
+                            "subscription": self.subscription.name,
+                            "batch_size": len(deliverable),
+                            "error": str(e),
+                        },
+                    )
+                else:
+                    duration_ms = (time.perf_counter() - start_time) * 1000
+                    if self._metrics:
+                        for event in deliverable:
+                            self._metrics.record_event_processed(
+                                event_type=event.event_type,
+                                duration_ms=duration_ms / len(deliverable),
+                            )
+
+        if not batch_succeeded:
+            # Per-event delivery, with the ordinary per-event error handling
+            # (`continue_on_error`, DLQ, circuit breaker) applying to each --
+            # rather than inventing partial-batch semantics the runner has no
+            # way to determine. Filtered envelopes are re-checked and skipped
+            # by `_process_live_event` itself.
+            for envelope, _passes in included:
+                await self._process_live_event(envelope)
+            return
+
+        last_envelope: EventEnvelope | None = None
+        for envelope, passes in included:
+            if not passes:
+                self._stats.events_skipped_filtered += 1
+                await self._record_filtered(envelope)
+                continue
+
+            self._stats.events_processed += 1
+            last_envelope = envelope
+            if self._metrics:
+                self._metrics.record_lag(self.subscription.lag)
+            await self.subscription.record_event_processed(
+                position=envelope.position
+                if envelope.position is not None
+                else self.subscription.last_processed_position,
+                event_id=envelope.event.event_id,
+                event_type=envelope.event.event_type,
+            )
+            if envelope.position is not None:
+                await self._maybe_checkpoint_in_batch(envelope.position, envelope.event)
+
+        # EVERY_BATCH now has a batch to attach to on the live path.
+        if (
+            last_envelope is not None
+            and last_envelope.position is not None
+            and self.config.checkpoint_strategy == CheckpointStrategy.EVERY_BATCH
+        ):
+            await self._save_checkpoint_with_retry(last_envelope.position, last_envelope.event)
+
+    async def _record_filtered(self, envelope: EventEnvelope) -> None:
+        """Record progress for an envelope the filter rejected."""
+        if envelope.position is not None:
+            await self.subscription.record_event_processed(
+                position=envelope.position,
+                event_id=envelope.event.event_id,
+                event_type=envelope.event.event_type,
+            )
+        else:
+            await self.subscription.record_events_unseen(1)
+
+    async def _maybe_checkpoint_in_batch(self, position: Position, event: DomainEvent) -> None:
+        """
+        Per-event checkpointing inside a grouped delivery.
+
+        `EVERY_BATCH` is deliberately absent here -- unlike `_maybe_checkpoint`,
+        which treats it as `EVERY_EVENT` because the per-event path has no batch
+        boundary to attach to. `_deliver_page` checkpoints once after the page.
+        """
+        if self.config.checkpoint_strategy == CheckpointStrategy.EVERY_EVENT:
+            await self._save_checkpoint_with_retry(position, event)
+        elif self.config.checkpoint_strategy == CheckpointStrategy.PERIODIC:
+            await self._maybe_save_periodic_checkpoint(position, event)
 
     async def _process_live_event(self, envelope: EventEnvelope) -> None:
         """
@@ -441,8 +626,9 @@ class LiveRunner:
                 try:
                     subscriber = self.subscription.subscriber
                     if self._batch_only:
-                        # The subscriber's only handler. A one-event batch,
-                        # not live batching (#34) -- see __post_init__.
+                        # The subscriber's only handler. This path is reached
+                        # for a single envelope -- the fallback after a
+                        # `handle_batch()` that raised (ADR 0063).
                         batch_subscriber = cast(BatchSubscriber, subscriber)
                         await self._call_guarded(
                             lambda: settle_handler_result(batch_subscriber.handle_batch([event])),
