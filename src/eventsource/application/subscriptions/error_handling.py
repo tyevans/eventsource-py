@@ -15,6 +15,7 @@ The error handling system integrates with:
 
 import asyncio
 import logging
+import time
 import traceback
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -32,6 +33,9 @@ if TYPE_CHECKING:
     from eventsource.ports.envelopes import EventEnvelope
 
 logger = logging.getLogger(__name__)
+
+_RATE_WINDOW_SECONDS = 60
+"""Width of the rolling window behind `ErrorStats.error_rate_per_minute`."""
 
 
 # =============================================================================
@@ -355,7 +359,60 @@ class ErrorStats:
     errors_by_category: dict[str, int] = field(default_factory=dict)
     first_error_at: datetime | None = None
     last_error_at: datetime | None = None
-    error_rate_per_minute: float = 0.0
+
+    # Rolling 60-second window backing `error_rate_per_minute`, as one counter
+    # per second of the window. `_rate_bucket_stamps[i]` is the second that
+    # `_rate_buckets[i]` counts; a bucket whose stamp is outside the window is
+    # simply not summed, so it needs no eviction pass.
+    #
+    # Buckets rather than a list of timestamps because this is fed by the error
+    # path: an error storm is exactly when it is busiest, and a timestamp list
+    # would grow with the storm. This is 60 ints regardless of error volume,
+    # O(1) to record and O(60) to read.
+    _rate_buckets: list[int] = field(
+        default_factory=lambda: [0] * _RATE_WINDOW_SECONDS, init=False, repr=False
+    )
+    _rate_bucket_stamps: list[int] = field(
+        default_factory=lambda: [-_RATE_WINDOW_SECONDS] * _RATE_WINDOW_SECONDS,
+        init=False,
+        repr=False,
+    )
+
+    @property
+    def error_rate_per_minute(self) -> float:
+        """Errors recorded in the last 60 seconds.
+
+        Was a plain field defaulting to `0.0` that **nothing ever wrote**,
+        while four sites read it to gate health -- so
+        `error_rate > config.max_error_rate_per_minute` was `0.0 > 10.0` on
+        every call and a subscription failing every event reported healthy on
+        the rate axis. The count-based half of the same indicator did work,
+        which is what kept this invisible.
+
+        A rolling window rather than `total_errors / uptime`: the health gate
+        asks "is this subscription erroring *now*", and a lifetime average
+        answers a different question -- it would keep a recovered subscription
+        DEGRADED for hours after an incident, and would barely move for a
+        long-lived subscription that has just started failing every event.
+        """
+        now = int(time.monotonic())
+        return float(
+            sum(
+                count
+                for count, stamp in zip(self._rate_buckets, self._rate_bucket_stamps, strict=True)
+                if now - stamp < _RATE_WINDOW_SECONDS
+            )
+        )
+
+    def _record_rate_sample(self) -> None:
+        """Count one error into the current second's bucket."""
+        now = int(time.monotonic())
+        index = now % _RATE_WINDOW_SECONDS
+        if self._rate_bucket_stamps[index] != now:
+            # This slot last held a second a full window ago (or never used).
+            self._rate_bucket_stamps[index] = now
+            self._rate_buckets[index] = 0
+        self._rate_buckets[index] += 1
 
     def record_error(self, error_info: ErrorInfo) -> None:
         """
@@ -389,6 +446,9 @@ class ErrorStats:
         if self.first_error_at is None:
             self.first_error_at = now
         self.last_error_at = now
+
+        # Feed the rolling rate window backing `error_rate_per_minute`.
+        self._record_rate_sample()
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
