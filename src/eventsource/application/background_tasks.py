@@ -65,9 +65,28 @@ class BackgroundTaskManager:
         >>> print(f"Completed {completed} tasks")
     """
 
-    def __init__(self) -> None:
-        """Initialize the task manager with an empty task set."""
+    def __init__(self, max_pending: int | None = None) -> None:
+        """Initialize the task manager with an empty task set.
+
+        Args:
+            max_pending: Ceiling on in-flight tasks, or None for no ceiling.
+                This manager only *reports* capacity via `at_capacity`; it
+                never blocks or refuses a `submit()`. Deciding what to do at
+                the ceiling belongs to the caller, because the right answer
+                differs: `BaseEventBus` runs the work inline (so no event is
+                lost and a re-entrant publish cannot deadlock), which is not
+                a policy this class could impose on every user.
+        """
         self.tasks: set[asyncio.Task[Any]] = set()
+        self.max_pending = max_pending
+
+    @property
+    def at_capacity(self) -> bool:
+        """Whether the in-flight set has reached `max_pending`.
+
+        Always False when `max_pending` is None.
+        """
+        return self.max_pending is not None and len(self.tasks) >= self.max_pending
 
     def submit(
         self,

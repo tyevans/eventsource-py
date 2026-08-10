@@ -10,7 +10,7 @@ For distributed deployments, use RedisEventBus instead.
 import asyncio
 import logging
 
-from eventsource.adapters._bus.base import BaseEventBus
+from eventsource.adapters._bus.base import DEFAULT_MAX_BACKGROUND_TASKS, BaseEventBus
 from eventsource.adapters._bus.handler_adapter import HandlerAdapter
 from eventsource.domain.event import DomainEvent
 from eventsource.domain.event_registry import EventRegistry
@@ -58,6 +58,7 @@ class InMemoryEventBus(BaseEventBus):
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
         event_registry: EventRegistry | None = None,
+        max_background_tasks: int | None = DEFAULT_MAX_BACKGROUND_TASKS,
     ) -> None:
         """
         Initialize the event bus with empty subscriber registry.
@@ -69,7 +70,10 @@ class InMemoryEventBus(BaseEventBus):
                           Ignored if tracer is explicitly provided.
             event_registry: Optional registry for resolving event classes.
         """
-        super().__init__(event_registry=event_registry)
+        super().__init__(
+            event_registry=event_registry,
+            max_background_tasks=max_background_tasks,
+        )
 
         self._stats = {
             "events_published": 0,
@@ -105,7 +109,7 @@ class InMemoryEventBus(BaseEventBus):
             return
 
         if background:
-            self._track_background(self._publish_all(events))
+            await self._track_background(self._publish_all(events))
             self._stats["background_tasks_created"] += 1
             logger.debug(
                 f"Scheduled background publishing of {len(events)} event(s)",

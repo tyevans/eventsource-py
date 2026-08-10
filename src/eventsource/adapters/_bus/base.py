@@ -23,6 +23,15 @@ from eventsource.ports.handlers import FlexibleEventHandler, FlexibleEventSubscr
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_MAX_BACKGROUND_TASKS = 1000
+"""Default ceiling on in-flight ``publish(background=True)`` tasks.
+
+High enough that ordinary bursty publishing never reaches it, low enough that
+a producer outrunning its handlers is bounded rather than accumulating tasks
+until the process dies. A real default rather than an opt-in knob: a bound
+nobody sets is not a bound.
+"""
+
 
 class BaseEventBus(EventBus):
     """Base class providing subscription management and background tasks.
@@ -35,16 +44,30 @@ class BaseEventBus(EventBus):
         Publishing must be called from an async context.
     """
 
-    def __init__(self, *, event_registry: EventRegistry | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        event_registry: EventRegistry | None = None,
+        max_background_tasks: int | None = DEFAULT_MAX_BACKGROUND_TASKS,
+    ) -> None:
         """Initialize shared bus state.
 
         Args:
             event_registry: Registry used to resolve event classes by name
                 when consuming. Falls back to the global default registry.
+            max_background_tasks: Ceiling on in-flight `publish(background=True)`
+                tasks. At the ceiling, publishing runs inline instead of
+                spawning another task -- see `_track_background`. Pass None
+                for the old unbounded fire-and-forget behavior.
         """
         self._registry = SubscriptionRegistry()
         self._event_registry = event_registry
-        self._tasks = BackgroundTaskManager()
+        self._tasks = BackgroundTaskManager(max_pending=max_background_tasks)
+
+    @property
+    def max_background_tasks(self) -> int | None:
+        """Ceiling on in-flight background publish tasks, or None if unbounded."""
+        return self._tasks.max_pending
 
     # =========================================================================
     # Subscription management
@@ -139,18 +162,49 @@ class BaseEventBus(EventBus):
     # Background task management
     # =========================================================================
 
-    def _track_background(self, coro: Coroutine[Any, Any, None]) -> asyncio.Task[None]:
+    async def _track_background(self, coro: Coroutine[Any, Any, None]) -> asyncio.Task[None] | None:
         """Schedule a coroutine as a tracked fire-and-forget task.
 
         Tracking prevents orphaned coroutines and lets ``_drain_background``
         wait for in-flight work during shutdown.
 
+        **At capacity this awaits `coro` inline and returns None** rather than
+        spawning task number `max_background_tasks + 1`. Without a ceiling, a
+        producer faster than its handlers grew the in-flight set without
+        limit -- the memory hazard ADR 0021 and ADR 0017 record for background
+        snapshot scheduling, in a second place -- and `_drain_background` then
+        had to wait for or cancel all of it at shutdown.
+
+        Degrading to inline rather than blocking on a slot is deliberate:
+
+        - **It cannot deadlock.** A handler running inside a background
+          publish task may itself publish. If that inner call waited for a
+          slot, it would wait for one held by the task it is running inside.
+          Running inline completes instead of waiting, so this needs no
+          re-entrancy guard.
+        - **It loses nothing.** Dropping at capacity would silently discard
+          events, which is not a tradeoff an event bus gets to make.
+        - **It is the backpressure the bound exists for**: a producer
+          outrunning its handlers is slowed to the rate they can absorb.
+
+        The cost is that `publish(background=True)` stops returning promptly
+        once the bus is saturated. That is the intended signal, not a
+        regression -- but it does mean the call is only non-blocking while
+        there is headroom.
+
         Args:
             coro: The coroutine to run.
 
         Returns:
-            The created task.
+            The created task, or None if the coroutine ran inline.
         """
+        if self._tasks.at_capacity:
+            logger.debug(
+                "Background publish at capacity (%s); running inline",
+                self._tasks.max_pending,
+            )
+            await coro
+            return None
         return self._tasks.submit(coro, on_done=self._on_background_task_done)
 
     def _on_background_task_done(self, task: asyncio.Task[None]) -> None:

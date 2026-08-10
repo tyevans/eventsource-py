@@ -7,6 +7,14 @@ Accepted (2026-07-29). Implemented by `src/eventsource/bus/base.py`
 and the four backends -- `memory.py`, `redis.py`, `rabbitmq.py`, `kafka.py` --
 which now all subclass `BaseEventBus` instead of `EventBus` directly.
 
+**Amended by [ADR 0060](0060-bounded-background-publishing.md)** -- for the
+call shape of `_track_background` only. It is now a coroutine that must be
+awaited, and bounds in-flight background publishes rather than spawning
+without limit. This ADR's guidance below to "hand the operation to
+`self._track_background(...)` rather than awaiting it" is superseded by that;
+the decision that background tracking and draining live once on
+`BaseEventBus` stands unchanged.
+
 **Amended by [ADR 0031](0031-bus-ring-split.md)** -- for module locations
 only: `BaseEventBus` and `SubscriptionRegistry` live under
 `eventsource.adapters._bus` now, not `eventsource.bus`. This ADR's
@@ -130,8 +138,10 @@ before.
 Subclass `BaseEventBus`, not `EventBus`, unless the new adapter genuinely needs
 to reimplement subscription management (it should not). Call
 `super().__init__()`. Implement `publish` to honor `background` per this ADR:
-hand the operation to `self._track_background(...)` rather than awaiting it
-when `background=True`, and drain via `self._drain_background(timeout)` from
+hand the operation to `await self._track_background(...)` when
+`background=True` (see the amendment above — awaiting schedules the work and
+returns immediately while there is headroom, and runs it inline at the
+capacity bound), and drain via `self._drain_background(timeout)` from
 `shutdown()`.
 
 ### For 0007's D4 (thread-safety)
