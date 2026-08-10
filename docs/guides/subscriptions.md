@@ -254,7 +254,9 @@ config = SubscriptionConfig(continue_on_error=False)  # halt instead of skipping
 
 **Handlers must be idempotent.** Checkpoints are written per batch by default (`CheckpointStrategy.EVERY_BATCH`), so a crash redelivers every event processed since the last checkpoint write. Use upserts keyed by `event.aggregate_id`, or a processed-event-id table, rather than blind inserts. `CheckpointStrategy.EVERY_EVENT` narrows the redelivery window at the cost of a checkpoint write per event.
 
-Note that `SubscriptionConfig.processing_timeout` is validated but not enforced by the runners — a `handle()` that hangs blocks the subscription. Apply your own `asyncio.timeout()` around slow external calls.
+**`SubscriptionConfig.processing_timeout` (default 30s) bounds one handler call.** Both runners wrap the subscriber call in `asyncio.timeout()`, so a `handle()` that hangs no longer blocks its subscription indefinitely — it is abandoned at the deadline and raises `TimeoutError`, which is an ordinary handler failure from that point on: `continue_on_error` decides whether the subscription proceeds, the event takes the same DLQ path as any raising handler, and a consecutive run of them opens the handler circuit breaker.
+
+Note that a `handle_batch()` call is *one* call, so a whole batch shares a single budget. If you deliver large batches and do slow per-event work, raise `processing_timeout` to match the batch, rather than assuming it is per event.
 
 To route failures to the dead-letter queue, call the subscription's error handler yourself — see [Route permanently failed events to the DLQ](#route-permanently-failed-events-to-the-dlq).
 

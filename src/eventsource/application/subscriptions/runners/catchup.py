@@ -10,6 +10,7 @@ This module provides:
 - CatchUpRunner: Runner for historical event processing
 """
 
+import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -602,7 +603,22 @@ class CatchUpRunner:
         operation_name: str,
     ) -> T:
         """
-        Call `operation` through the handler circuit breaker, if configured.
+        Call `operation` under `processing_timeout`, through the handler
+        circuit breaker if one is configured.
+
+        `config.processing_timeout` bounds **one handler call**: a
+        `handle_batch()` of 500 events gets the same budget as a single
+        `handle()`, because it is one call. Exceeding it raises `TimeoutError`,
+        which is an ordinary handler failure from here on -- `continue_on_error`
+        decides whether the subscription proceeds, and the event takes the same
+        DLQ path any raising handler would. Before this was enforced the field
+        was validated at construction and read nowhere, so a handler that hung
+        blocked its subscription forever with no error, metric, or log line.
+
+        The timeout is applied **inside** the breaker rather than around it, so
+        a run of hanging handlers opens the circuit exactly as a run of raising
+        ones does. Wrapping the breaker instead would cancel it mid-`execute()`
+        and the hang would never be counted.
 
         Guards handler calls (`handle()`/`handle_batch()`) specifically --
         `self._handler_circuit_breaker`, never `self._infra_circuit_breaker`
@@ -634,11 +650,17 @@ class CatchUpRunner:
 
         Raises:
             CircuitBreakerOpenError: If the breaker is open
+            TimeoutError: If the call exceeds `config.processing_timeout`
             Exception: Whatever `operation` itself raises
         """
+
+        async def bounded() -> T:
+            async with asyncio.timeout(self.config.processing_timeout):
+                return await operation()
+
         if self._handler_circuit_breaker is not None:
-            return await self._handler_circuit_breaker.execute(operation, operation_name)
-        return await operation()
+            return await self._handler_circuit_breaker.execute(bounded, operation_name)
+        return await bounded()
 
     async def _deliver_batch(self, envelopes: list[EventEnvelope]) -> bool:
         """

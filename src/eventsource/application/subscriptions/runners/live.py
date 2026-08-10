@@ -10,6 +10,7 @@ This module provides:
 - LiveRunner: Runner for real-time event processing
 """
 
+import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -509,7 +510,19 @@ class LiveRunner:
         operation_name: str,
     ) -> T:
         """
-        Call `operation` through the handler circuit breaker, if configured.
+        Call `operation` under `processing_timeout`, through the handler
+        circuit breaker if one is configured.
+
+        `config.processing_timeout` bounds one handler call. Exceeding it
+        raises `TimeoutError`, an ordinary handler failure from here on:
+        `continue_on_error` decides whether the subscription proceeds. Before
+        this was enforced the field was read nowhere, so a hung live handler
+        wedged the subscription silently and indefinitely.
+
+        The timeout is applied **inside** the breaker rather than around it, so
+        a run of hanging handlers opens the circuit exactly as a run of raising
+        ones does. See `CatchUpRunner._call_guarded` -- both runners enforce
+        the same budget at the same point, and the pair should stay in step.
 
         Guards the handler call (`handle()`) specifically --
         `self._handler_circuit_breaker`, never `self._infra_circuit_breaker`
@@ -541,11 +554,17 @@ class LiveRunner:
 
         Raises:
             CircuitBreakerOpenError: If the breaker is open
+            TimeoutError: If the call exceeds `config.processing_timeout`
             Exception: Whatever `operation` itself raises
         """
+
+        async def bounded() -> T:
+            async with asyncio.timeout(self.config.processing_timeout):
+                return await operation()
+
         if self._handler_circuit_breaker is not None:
-            return await self._handler_circuit_breaker.execute(operation, operation_name)
-        return await operation()
+            return await self._handler_circuit_breaker.execute(bounded, operation_name)
+        return await bounded()
 
     async def _save_checkpoint_with_retry(
         self,

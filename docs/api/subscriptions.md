@@ -510,14 +510,23 @@ strategies the field is inert (but still validated).
 | `processing_timeout` | `float` | `30.0` |
 | `shutdown_timeout` | `float` | `30.0` |
 
-Both are validated as positive, and both are currently declarative rather than
-enforced by the subscription runners. `processing_timeout` is not read anywhere
-in `eventsource.application.subscriptions` outside `config.py`. `shutdown_timeout` on the
-config is likewise not read by the runners: `SubscriptionManager` takes its own
-`shutdown_timeout` constructor argument (also defaulting to `30.0`) and passes
-that to its shutdown coordinator, and `stop_all()` accepts a per-call override.
-Set the manager's argument when you want shutdown behavior to change; treat the
-config fields as intent you may read back from the config object.
+Both are validated as positive. `processing_timeout` is enforced: both runners
+call the subscriber inside `asyncio.timeout(config.processing_timeout)`, at the
+same chokepoint that applies the handler circuit breaker. It bounds **one
+handler call** — a `handle_batch()` of 500 events gets the same budget as a
+single `handle()`, because it is one call. On expiry the call raises
+`TimeoutError` and is treated as an ordinary handler failure: `continue_on_error`
+governs whether the subscription continues, the event follows the normal DLQ
+path, and the timeout counts toward the handler breaker's consecutive-failure
+run (the timeout is applied inside the breaker, not around it, so hangs open the
+circuit just as raises do).
+
+`shutdown_timeout` on the config remains declarative — it is not read by the
+runners. `SubscriptionManager` takes its own `shutdown_timeout` constructor
+argument (also defaulting to `30.0`) and passes that to its shutdown
+coordinator, and `stop_all()` accepts a per-call override. Set the manager's
+argument when you want shutdown behavior to change; treat the config field as
+intent you may read back from the config object.
 
 #### Fields: filtering (`event_types`, `aggregate_types`, `tenant_id`)
 
