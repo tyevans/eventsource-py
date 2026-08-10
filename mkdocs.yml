@@ -195,5 +195,6 @@ nav:
       - Code Structure: development/code-structure.md
       - Testing: development/testing.md
       - Mutation Testing: development/mutation-testing.md
+      - Verification Impact Report: development/verification-impact-report.md
       - Dependency Floors: development/dependency-floors.md
   - FAQ: faq.md
