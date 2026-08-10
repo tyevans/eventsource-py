@@ -185,6 +185,7 @@ nav:
       - "ADR-0058: EventSourceError Is the Universal Exception Base": adrs/0058-eventsource-error-as-universal-base.md
       - "ADR-0059: Subscription Delivery Is Ordered Per Subscription": adrs/0059-ordered-subscription-delivery.md
       - "ADR-0060: Background Publishing Is Bounded, and Degrades to Inline": adrs/0060-bounded-background-publishing.md
+      - "ADR-0061: The Lease Half of Leader Election Is Not Ours to Declare": adrs/0061-leader-lease-protocol-deleted.md
   - Development:
       - development/index.md
       - Contributing: development/contributing.md

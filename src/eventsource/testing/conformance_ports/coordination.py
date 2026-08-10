@@ -16,8 +16,10 @@ cases most likely to rot into an always-succeeds no-op:
   and `remove_leader_change_callback` actually stops delivery.
 
 **Deliberately not pinned here:** lease expiry, fencing tokens, crash
-detection, and cross-process exclusion -- none are in `LeaderElector`;
-`LeaderElectorWithLease` owns the lease surface and has no suite yet.
+detection, and cross-process exclusion -- none are in `LeaderElector`. The
+`LeaderElectorWithLease` Protocol that once declared a lease surface was
+deleted (it had no implementation, and the library drives none of that
+lifecycle); a backend offering leases defines its own contract.
 """
 
 from abc import ABC, abstractmethod

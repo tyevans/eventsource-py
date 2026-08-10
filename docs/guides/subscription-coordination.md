@@ -19,7 +19,6 @@ from eventsource.adapters.memory import InMemoryLeaderElector, SharedLeaderState
 from eventsource.application.subscriptions import (
     HeartbeatMessage,
     LeaderElector,
-    LeaderElectorWithLease,
     PeerInfo,
     ShutdownIntent,
     ShutdownNotification,
@@ -30,7 +29,7 @@ from eventsource.application.subscriptions import (
 
 Two pieces do the work:
 
-- `LeaderElector` (and `LeaderElectorWithLease`) — a protocol you implement
+- `LeaderElector` — a protocol you implement
   against whatever your cluster already agrees on (Kubernetes Leases, Redis,
   Consul, a Postgres advisory lock). `InMemoryLeaderElector` plus
   `SharedLeaderState` are provided for tests and single-process runs.
@@ -100,10 +99,11 @@ infrastructure starts.
 - **A leader election contract, not an election algorithm.** `LeaderElector` is
   a `Protocol` with `identity`, `is_leader`, `current_leader`, `try_acquire()`,
   `release()`, `renew()`, `on_leader_change()`, and
-  `remove_leader_change_callback()`. `LeaderElectorWithLease` extends it with
-  `lease_duration_seconds`, `lease_remaining_seconds`, and
-  `wait_for_leadership()`. The only shipped implementation is
-  `InMemoryLeaderElector`.
+  `remove_leader_change_callback()`. The only shipped implementation is
+  `InMemoryLeaderElector`. A `LeaderElectorWithLease` Protocol used to declare
+  a lease surface on top of this; it was deleted, because nothing implemented
+  it and the library drives none of that lifecycle. A backend with leases
+  defines its own lease API.
 - **Three serializable message types.** `HeartbeatMessage`,
   `ShutdownNotification`, and `WorkAssignment` are dataclasses with `to_dict()`
   / `from_dict()` and a few derived helpers (`is_stale()`,
@@ -129,8 +129,8 @@ infrastructure starts.
   work. `InMemoryLeaderElector` is for tests and single-process runs: with no
   `shared_state` it grants leadership to *every* caller unconditionally, with a
   shared `SharedLeaderState` it only coordinates electors inside one process,
-  and its `renew()` is a no-op that just returns `is_leader`. It has no lease,
-  so it does not satisfy `LeaderElectorWithLease`.
+  and its `renew()` is a no-op that just returns `is_leader` — it has no
+  lease to renew.
 - **No transport.** The coordinator never publishes or subscribes. It hands you
   message objects from `create_heartbeat()` and
   `create_shutdown_notification()`; publishing them on the coordination topics
@@ -323,7 +323,8 @@ Three contract points worth honouring:
 - **`try_acquire()` does not block.** It makes a single attempt and returns
   `False` if someone else holds leadership. Its `timeout` argument bounds the
   *backend call*, not the wait for leadership to free up. If you need to wait,
-  implement `LeaderElectorWithLease.wait_for_leadership()`.
+  poll `try_acquire()` yourself, or expose a blocking method on your own
+  elector — the library defines no such method.
 - **All methods must be safe from concurrent tasks.** `InMemoryLeaderElector`
   guards `try_acquire()` and `release()` with an `asyncio.Lock`; do the same.
   Leadership state must stay consistent under concurrent access.
@@ -483,42 +484,6 @@ elector.on_leader_change(toggle_singleton_work)
 assert elector.remove_leader_change_callback(toggle_singleton_work) is True
 assert elector.remove_leader_change_callback(toggle_singleton_work) is False
 ```
-
-### Wait for leadership with `LeaderElectorWithLease`
-
-`LeaderElectorWithLease` extends `LeaderElector` for backends with time-based
-leases (Kubernetes `Lease`, Redis locks with TTL, Consul sessions). It adds:
-
-- `lease_duration_seconds` → `float` — how long a granted lease lasts.
-- `lease_remaining_seconds` → `float | None` — time left, or `None` when this
-  instance is not the leader.
-- `wait_for_leadership(timeout: float | None = None)` → `bool` — block until
-  leadership is acquired, returning `False` when the timeout expires and `True`
-  when it is acquired. `None` waits indefinitely.
-
-This is the blocking counterpart to `try_acquire()`. Use it in a worker whose
-whole job is the singleton workload:
-
-```python
-if await elector.wait_for_leadership(timeout=30.0):
-    remaining = elector.lease_remaining_seconds
-    logger.info("Became leader", extra={"lease_remaining": remaining})
-    await run_leader_work()
-else:
-    logger.info("Another instance is leading; standing by")
-```
-
-`lease_remaining_seconds` is the value to gate long leader-only operations on:
-if less time remains than the operation needs, renew first rather than starting
-work you may lose the right to finish. The library does not fence anything for
-you — see [Split-brain and lease expiry](#split-brain-and-lease-expiry).
-
-Both protocols are `runtime_checkable`, and the extended one is strictly
-narrower: an object satisfying only `LeaderElector` fails
-`isinstance(obj, LeaderElectorWithLease)`. In particular
-`InMemoryLeaderElector` has no lease, so it satisfies `LeaderElector` but **not**
-`LeaderElectorWithLease`. If your code calls `wait_for_leadership()`, type it
-against `LeaderElectorWithLease` and pick a different test double.
 
 ### Test locally with `InMemoryLeaderElector` and `SharedLeaderState`
 

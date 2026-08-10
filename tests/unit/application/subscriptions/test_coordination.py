@@ -30,7 +30,6 @@ from eventsource.application.subscriptions.coordination import (
 from eventsource.ports.coordination import (
     LeaderChangeCallback,
     LeaderElector,
-    LeaderElectorWithLease,
 )
 
 
@@ -117,156 +116,12 @@ class TestLeaderElectorProtocol:
         assert not isinstance(incomplete, LeaderElector)
 
 
-class TestLeaderElectorWithLeaseProtocol:
-    """Tests for LeaderElectorWithLease extended protocol."""
-
-    def test_protocol_is_runtime_checkable(self) -> None:
-        """Test that extended protocol can be used with isinstance."""
-        # Protocol should be marked as runtime checkable. See the identical
-        # note in TestLeaderElectorProtocol.test_protocol_is_runtime_checkable.
-        assert getattr(LeaderElectorWithLease, "_is_runtime_protocol", False)
-
-    def test_protocol_extends_leader_elector(self) -> None:
-        """Test that LeaderElectorWithLease extends LeaderElector."""
-        # Check that extended protocol has all base protocol members
-        base_members = {
-            "identity",
-            "is_leader",
-            "current_leader",
-            "try_acquire",
-            "release",
-            "renew",
-            "on_leader_change",
-            "remove_leader_change_callback",
-        }
-        for member in base_members:
-            assert hasattr(LeaderElectorWithLease, member), f"Missing base member: {member}"
-
-        # Plus the new lease-specific members
-        lease_members = {"lease_duration_seconds", "lease_remaining_seconds", "wait_for_leadership"}
-        for member in lease_members:
-            assert hasattr(LeaderElectorWithLease, member), f"Missing lease member: {member}"
-
-    def test_mock_lease_implementation_satisfies_protocol(self) -> None:
-        """Test that mock with lease methods passes extended protocol check."""
-
-        class MockLeaderElectorWithLease:
-            """Mock implementation for lease-based protocol."""
-
-            @property
-            def identity(self) -> str:
-                return "test-instance"
-
-            @property
-            def is_leader(self) -> bool:
-                return True
-
-            @property
-            def current_leader(self) -> str | None:
-                return "test-instance"
-
-            async def try_acquire(self, timeout: float = 10.0) -> bool:
-                return True
-
-            async def release(self) -> None:
-                pass
-
-            async def renew(self) -> bool:
-                return True
-
-            def on_leader_change(self, callback: LeaderChangeCallback) -> None:
-                pass
-
-            def remove_leader_change_callback(self, callback: LeaderChangeCallback) -> bool:
-                return True
-
-            @property
-            def lease_duration_seconds(self) -> float:
-                return 15.0
-
-            @property
-            def lease_remaining_seconds(self) -> float | None:
-                return 10.0
-
-            async def wait_for_leadership(self, timeout: float | None = None) -> bool:
-                return True
-
-        mock = MockLeaderElectorWithLease()
-        assert isinstance(mock, LeaderElectorWithLease)
-        assert isinstance(mock, LeaderElector)  # Also satisfies base protocol
-
-    def test_base_implementation_does_not_satisfy_extended(self) -> None:
-        """Test that base implementation doesn't satisfy extended protocol."""
-
-        class MockLeaderElector:
-            """Only implements base protocol."""
-
-            @property
-            def identity(self) -> str:
-                return "test"
-
-            @property
-            def is_leader(self) -> bool:
-                return False
-
-            @property
-            def current_leader(self) -> str | None:
-                return None
-
-            async def try_acquire(self, timeout: float = 10.0) -> bool:
-                return True
-
-            async def release(self) -> None:
-                pass
-
-            async def renew(self) -> bool:
-                return True
-
-            def on_leader_change(self, callback: LeaderChangeCallback) -> None:
-                pass
-
-            def remove_leader_change_callback(self, callback: LeaderChangeCallback) -> bool:
-                return True
-
-        mock = MockLeaderElector()
-        assert isinstance(mock, LeaderElector)
-        # Should NOT satisfy extended protocol (missing lease methods)
-        assert not isinstance(mock, LeaderElectorWithLease)
-
-
-class TestLeaderChangeCallback:
-    """Tests for LeaderChangeCallback type alias."""
-
-    def test_callback_type_accepts_valid_callback(self) -> None:
-        """Test LeaderChangeCallback type works with valid async functions."""
-
-        async def valid_callback(is_leader: bool) -> None:
-            pass
-
-        # Should be assignable to the type (type checker will verify)
-        callback: LeaderChangeCallback = valid_callback
-        assert callable(callback)
-
-    def test_callback_type_accepts_async_method(self) -> None:
-        """Test LeaderChangeCallback works with async methods."""
-
-        class Handler:
-            async def on_leader_change(self, is_leader: bool) -> None:
-                self.is_leader = is_leader
-
-        handler = Handler()
-        callback: LeaderChangeCallback = handler.on_leader_change
-        assert callable(callback)
-
-
 class TestModuleExports:
     """Tests for module exports."""
 
     def test_all_exports_are_defined(self) -> None:
         """Test that __all__ contains all public symbols.
 
-        LeaderElectorWithLease is not re-exported from this module (ADR
-        0032): its canonical home is eventsource.ports.coordination only.
         InMemoryLeaderElector/SharedLeaderState's canonical home is
         eventsource.adapters.memory.coordination -- see
         test_all_exports_include_inmemory below.
@@ -286,12 +141,10 @@ class TestModuleExports:
         from eventsource.application.subscriptions import (
             LeaderChangeCallback,
             LeaderElector,
-            LeaderElectorWithLease,
         )
 
         # Just verify imports work
         assert LeaderElector is not None
-        assert LeaderElectorWithLease is not None
         assert LeaderChangeCallback is not None
 
 

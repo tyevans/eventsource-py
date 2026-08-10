@@ -236,73 +236,7 @@ class LeaderElector(Protocol):
         ...
 
 
-@runtime_checkable
-class LeaderElectorWithLease(LeaderElector, Protocol):
-    """
-    Extended protocol for lease-based leader election.
-
-    Adds lease management capabilities for implementations that
-    use time-based leases (e.g., Kubernetes Leases, Redis locks).
-
-    This protocol extends LeaderElector with additional methods
-    for managing lease duration and waiting for leadership.
-
-    Example:
-        >>> elector = KubernetesLeaderElector(
-        ...     identity="pod-1",
-        ...     lease_duration=15.0,
-        ... )
-        >>>
-        >>> # Wait for leadership with timeout
-        >>> if await elector.wait_for_leadership(timeout=30.0):
-        ...     # We are the leader
-        ...     remaining = elector.lease_remaining_seconds
-        ...     print(f"Leader with {remaining}s remaining on lease")
-    """
-
-    @property
-    @abstractmethod
-    def lease_duration_seconds(self) -> float:
-        """
-        Get the lease duration in seconds.
-
-        Returns:
-            Duration of leadership lease
-        """
-        ...
-
-    @property
-    @abstractmethod
-    def lease_remaining_seconds(self) -> float | None:
-        """
-        Get remaining time on current lease.
-
-        Returns:
-            Seconds remaining on lease, or None if not leader
-        """
-        ...
-
-    @abstractmethod
-    async def wait_for_leadership(
-        self,
-        timeout: float | None = None,
-    ) -> bool:
-        """
-        Wait until this instance becomes leader.
-
-        Blocks until leadership is acquired or timeout expires.
-
-        Args:
-            timeout: Maximum time to wait, None for indefinite
-
-        Returns:
-            True if became leader, False if timeout expired
-        """
-        ...
-
-
 __all__ = [
     "LeaderElector",
-    "LeaderElectorWithLease",
     "LeaderChangeCallback",
 ]
