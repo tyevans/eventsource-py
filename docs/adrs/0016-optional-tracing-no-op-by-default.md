@@ -40,6 +40,15 @@ retired, if metrics (currently guarded separately in
 legacy stores; the ports adapters that replaced them carry no spans of their
 own, and a ports-level tracing decorator is backlogged rather than promised.
 
+**Amended by [ADR 0064](0064-telemetry-attribute-catalogue-is-not-a-wishlist.md).**
+Item 9's naming rule stands. Its claim that the constant list in
+`attributes.py` "doubles as the catalogue of what this library will put on a
+span" was aspirational rather than descriptive: several constants named below,
+`ATTR_DB_NAME` among them, had no emitting site anywhere in the tree. 0062
+deletes the never-emitted constants and makes the catalogue descriptive, and
+replaces the hand-written literal lock attribute keys in the PostgreSQL lock
+manager with the declared `eventsource.lock.*` constants.
+
 ## Context
 
 ### OpenTelemetry is a heavy dependency for a library with a two-package core

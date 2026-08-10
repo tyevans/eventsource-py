@@ -31,6 +31,12 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from eventsource.observability import Tracer, create_tracer
+from eventsource.observability.attributes import (
+    ATTR_LOCK_ACQUIRED,
+    ATTR_LOCK_ID,
+    ATTR_LOCK_KEY,
+    ATTR_LOCK_TIMEOUT,
+)
 from eventsource.ports.exceptions import LockAcquisitionError, LockNotHeldError
 from eventsource.ports.locks import LockInfo
 
@@ -156,12 +162,20 @@ class PostgreSQLLockManager:
         with self._tracer.span(
             "eventsource.lock.acquire",
             {
-                "lock.key": key,
-                "lock.id": lock_id,
-                "lock.timeout": timeout if timeout is not None else -1,
+                ATTR_LOCK_KEY: key,
+                ATTR_LOCK_ID: lock_id,
+                ATTR_LOCK_TIMEOUT: timeout if timeout is not None else -1,
             },
-        ):
-            session = await self._acquire_lock(key, lock_id, timeout, retry_interval)
+        ) as span:
+            try:
+                session = await self._acquire_lock(key, lock_id, timeout, retry_interval)
+            except BaseException:
+                if span is not None:
+                    span.set_attribute(ATTR_LOCK_ACQUIRED, False)
+                raise
+
+            if span is not None:
+                span.set_attribute(ATTR_LOCK_ACQUIRED, True)
 
             lock_info = LockInfo(
                 key=key,
@@ -268,8 +282,8 @@ class PostgreSQLLockManager:
         with self._tracer.span(
             "eventsource.lock.release",
             {
-                "lock.key": key,
-                "lock.id": lock_id,
+                ATTR_LOCK_KEY: key,
+                ATTR_LOCK_ID: lock_id,
             },
         ):
             try:

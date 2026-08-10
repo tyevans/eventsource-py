@@ -54,18 +54,12 @@ ATTR_VERSION = "eventsource.version"
 ATTR_EXPECTED_VERSION = "eventsource.expected_version"
 """Expected version for optimistic concurrency (integer)."""
 
-ATTR_FROM_VERSION = "eventsource.from_version"
-"""Starting version for event retrieval (integer)."""
-
 # =============================================================================
-# Tenant and Actor Attributes
+# Tenant Attributes
 # =============================================================================
 
 ATTR_TENANT_ID = "eventsource.tenant.id"
 """Tenant identifier for multi-tenant systems (string)."""
-
-ATTR_ACTOR_ID = "eventsource.actor.id"
-"""Actor/user identifier who initiated the action (string)."""
 
 # =============================================================================
 # Component-Specific Attributes
@@ -83,9 +77,6 @@ ATTR_HANDLER_COUNT = "eventsource.handler.count"
 ATTR_HANDLER_SUCCESS = "eventsource.handler.success"
 """Whether the handler executed successfully (boolean)."""
 
-ATTR_STREAM_ID = "eventsource.stream.id"
-"""Identifier for an event stream (string)."""
-
 ATTR_POSITION = "eventsource.position"
 """Position in the event stream (integer)."""
 
@@ -95,9 +86,6 @@ ATTR_POSITION = "eventsource.position"
 
 ATTR_DB_SYSTEM = "db.system"
 """Database system identifier (e.g., 'sqlite', 'postgresql')."""
-
-ATTR_DB_NAME = "db.name"
-"""Database name being accessed."""
 
 ATTR_DB_OPERATION = "db.operation"
 """Database operation type (e.g., 'INSERT', 'SELECT')."""
@@ -122,9 +110,6 @@ ATTR_MESSAGING_OPERATION = "messaging.operation"
 ATTR_SUBSCRIPTION_NAME = "eventsource.subscription.name"
 """Name of the subscription being processed (string)."""
 
-ATTR_SUBSCRIPTION_STATE = "eventsource.subscription.state"
-"""Current state of the subscription (e.g., 'catching_up', 'live')."""
-
 ATTR_SUBSCRIPTION_PHASE = "eventsource.subscription.phase"
 """Current phase of subscription transition (e.g., 'initial_catchup', 'live')."""
 
@@ -142,9 +127,6 @@ ATTR_BUFFER_SIZE = "eventsource.buffer.size"
 
 ATTR_EVENTS_PROCESSED = "eventsource.events.processed"
 """Number of events processed (integer)."""
-
-ATTR_EVENTS_SKIPPED = "eventsource.events.skipped"
-"""Number of events skipped (integer)."""
 
 ATTR_WATERMARK = "eventsource.watermark"
 """Watermark position for catch-up to live transition (integer)."""
@@ -168,9 +150,6 @@ ATTR_READMODEL_TYPE = "eventsource.readmodel.type"
 
 ATTR_READMODEL_ID = "eventsource.readmodel.id"
 """Unique identifier for the read model instance (UUID string)."""
-
-ATTR_READMODEL_OPERATION = "eventsource.readmodel.operation"
-"""Read model operation type (e.g., 'get', 'save', 'find', 'delete')."""
 
 ATTR_QUERY_FILTER_COUNT = "eventsource.query.filter_count"
 """Number of filters in a query (integer)."""
@@ -197,20 +176,8 @@ ATTR_MIGRATION_SOURCE_STORE = "eventsource.migration.source_store"
 ATTR_MIGRATION_TARGET_STORE = "eventsource.migration.target_store"
 """Target event store identifier."""
 
-ATTR_MIGRATION_EVENTS_COPIED = "eventsource.migration.events_copied"
-"""Number of events copied during migration (integer)."""
-
-ATTR_MIGRATION_EVENTS_TOTAL = "eventsource.migration.events_total"
-"""Total events to migrate (integer)."""
-
-ATTR_MIGRATION_PROGRESS_PERCENT = "eventsource.migration.progress_percent"
-"""Migration progress percentage (0-100, float)."""
-
 ATTR_MIGRATION_SYNC_LAG_EVENTS = "eventsource.migration.sync_lag_events"
 """Current sync lag in number of events (integer)."""
-
-ATTR_MIGRATION_SYNC_LAG_MS = "eventsource.migration.sync_lag_ms"
-"""Current sync lag in milliseconds (float)."""
 
 # =============================================================================
 # Lock Attributes
@@ -220,10 +187,10 @@ ATTR_LOCK_KEY = "eventsource.lock.key"
 """Lock key identifier (string)."""
 
 ATTR_LOCK_ID = "eventsource.lock.id"
-"""Unique lock identifier (string)."""
+"""Numeric lock identifier derived from the lock key (integer)."""
 
 ATTR_LOCK_TIMEOUT = "eventsource.lock.timeout"
-"""Lock timeout in milliseconds (integer)."""
+"""Lock acquisition timeout in seconds, or -1 when unbounded (float)."""
 
 ATTR_LOCK_ACQUIRED = "eventsource.lock.acquired"
 """Whether lock was acquired (boolean)."""
@@ -243,20 +210,16 @@ __all__ = [
     # Version
     "ATTR_VERSION",
     "ATTR_EXPECTED_VERSION",
-    "ATTR_FROM_VERSION",
     # Tenant/Actor
     "ATTR_TENANT_ID",
-    "ATTR_ACTOR_ID",
     # Component-specific
     "ATTR_PROJECTION_NAME",
     "ATTR_HANDLER_NAME",
     "ATTR_HANDLER_COUNT",
     "ATTR_HANDLER_SUCCESS",
-    "ATTR_STREAM_ID",
     "ATTR_POSITION",
     # Database (OTEL semantic)
     "ATTR_DB_SYSTEM",
-    "ATTR_DB_NAME",
     "ATTR_DB_OPERATION",
     # Messaging (OTEL semantic)
     "ATTR_MESSAGING_SYSTEM",
@@ -264,14 +227,12 @@ __all__ = [
     "ATTR_MESSAGING_OPERATION",
     # Subscription
     "ATTR_SUBSCRIPTION_NAME",
-    "ATTR_SUBSCRIPTION_STATE",
     "ATTR_SUBSCRIPTION_PHASE",
     "ATTR_FROM_POSITION",
     "ATTR_TO_POSITION",
     "ATTR_BATCH_SIZE",
     "ATTR_BUFFER_SIZE",
     "ATTR_EVENTS_PROCESSED",
-    "ATTR_EVENTS_SKIPPED",
     "ATTR_WATERMARK",
     # Error/Retry
     "ATTR_RETRY_COUNT",
@@ -279,7 +240,6 @@ __all__ = [
     # ReadModel
     "ATTR_READMODEL_TYPE",
     "ATTR_READMODEL_ID",
-    "ATTR_READMODEL_OPERATION",
     "ATTR_QUERY_FILTER_COUNT",
     "ATTR_QUERY_LIMIT",
     # Migration
@@ -288,11 +248,7 @@ __all__ = [
     "ATTR_MIGRATION_TENANT_ID",
     "ATTR_MIGRATION_SOURCE_STORE",
     "ATTR_MIGRATION_TARGET_STORE",
-    "ATTR_MIGRATION_EVENTS_COPIED",
-    "ATTR_MIGRATION_EVENTS_TOTAL",
-    "ATTR_MIGRATION_PROGRESS_PERCENT",
     "ATTR_MIGRATION_SYNC_LAG_EVENTS",
-    "ATTR_MIGRATION_SYNC_LAG_MS",
     # Lock
     "ATTR_LOCK_KEY",
     "ATTR_LOCK_ID",
