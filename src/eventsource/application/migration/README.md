@@ -123,9 +123,6 @@ config = MigrationConfig(
     batch_size=1000,              # Events per batch
     max_bulk_copy_rate=10000,     # Max events/second
 
-    # Dual-write settings
-    dual_write_timeout_minutes=30,  # Max time in dual-write
-
     # Cutover settings
     cutover_max_lag_events=0,     # strict (the default): no cutover over missing events
     cutover_timeout_ms=500,       # Hard timeout for cutover

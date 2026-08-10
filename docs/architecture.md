@@ -323,19 +323,21 @@ a missing driver surfaces at connect time, not import time. The buses guard
 their own imports and set a module-level flag: `bus/redis.py` sets
 `REDIS_AVAILABLE` and its constructor raises `RedisNotAvailableError`
 immediately if it is `False`, with `RABBITMQ_AVAILABLE` and `KAFKA_AVAILABLE`
-following the same pattern. SQLite guards each of its two adapter modules
-independently, and each sets its own flag: `adapters/sqlite/snapshots.py`
-guards its own `aiosqlite` import and exports `SQLITE_AVAILABLE`;
-`adapters/sqlite/store.py` guards its own `aiosqlite` import separately and
-exports `AIOSQLITE_AVAILABLE`. The `adapters/sqlite/__init__.py` package barrel
-re-exports both flags as-is, and the top-level `eventsource` package re-exports
-them again unchanged -- there is no `try/except ImportError` reconciling the
-two into one flag; `SQLITE_AVAILABLE` derives from `adapters/sqlite/snapshots.py`
-independently of whatever `adapters/sqlite/store.py` decides about
-`AIOSQLITE_AVAILABLE`. The invariant that holds across all of it is the one
-that matters: `import eventsource` succeeds on a machine with no drivers
-installed, and you learn about a missing extra when you reach for the backend
-you did not install.
+following the same pattern -- and, per-backend, only the module the
+constructor actually checks (and the backend's `__init__.py` re-exports) is
+the canonical flag; sibling modules that guard the same driver import for
+their own runtime names (e.g. Kafka's `connection.py`/`dlq.py`, RabbitMQ's
+`consumer.py`/`serialization.py`) keep the `try/except` but no longer bind a
+second, never-read copy of the flag. SQLite guards each of its two adapter
+modules independently -- `adapters/sqlite/snapshots.py` and
+`adapters/sqlite/store.py` each guard their own `aiosqlite` import -- but
+only `store.py`'s `AIOSQLITE_AVAILABLE` is re-exported from
+`adapters/sqlite/__init__.py` and the top-level `eventsource` package; the
+two module-local copies are guaranteed equal (both guard the identical
+import), so re-exporting one instead of two avoids two names for one fact.
+The invariant that holds across all of it is the one that matters: `import
+eventsource` succeeds on a machine with no drivers installed, and you learn
+about a missing extra when you reach for the backend you did not install.
 
 A backend is also not free to be interesting. It inherits a contract it did not
 write -- the `ExpectedVersion` semantics of `append`, the ordering
@@ -380,7 +382,7 @@ answers "how is an event written down"; Tier 2 answers "what happens on the
 hundredth restart, when one consumer is slow, another is crash-looping, and a
 deploy is rolling underneath both". Its concerns -- resumption from a
 checkpoint, duplicate suppression across the catch-up-to-live seam,
-backpressure, poison-event quarantine, signal handling and phased drain -- only
+poison-event quarantine, signal handling and phased drain -- only
 exist because delivery is at-least-once and processes are mortal. None of them
 are visible in a single pass through the loop, which is exactly why they are
 separated from the projections they drive: a projection stays a fold over
@@ -481,7 +483,7 @@ The adapters behind these ports (`adapters/memory/store.py`,
 durability and concurrency, not in contract; the per-port conformance suites in
 `eventsource.testing.conformance_ports` (`AppenderConformance`,
 `StreamReaderConformance`, `EventLookupConformance`, `GlobalFeedConformance`,
-`CategoryQueryConformance`, `TypeQueryConformance`) hold all three to the same
+`CategoryQueryConformance`) hold all three to the same
 behaviour, which is what makes the in-memory store usable as a real test double
 rather than an approximation.
 
@@ -566,7 +568,7 @@ Fusing them is how projections end up with bespoke, half-correct catch-up loops.
 registration, health and error aggregation -- and it delegates almost
 everything. Registration lives in `registry.py`, start/stop in `lifecycle.py`,
 draining in `shutdown.py`, retry and circuit breaking in `retry.py`,
-backpressure in `flow_control.py`, pausing in `pause_resume.py`, and the
+in-flight counting in `flow_control.py`, pausing in `pause_resume.py`, and the
 catch-up-to-live handoff in `transition.py` and `runners/`. The manager is a
 facade over collaborators, not a god object, because each of those concerns has
 its own lifecycle and its own tests.
@@ -723,8 +725,8 @@ so there is no `direction` field to set -- walks the
 returned `EventEnvelope`s, and stops when it reaches the target or a batch comes
 back empty. It owns its clock, so it can be paused mid-batch
 (`wait_if_paused()` is checked both between batches and between events within a
-batch), stopped at a safe point (`_stop_requested`), and slowed by
-backpressure. `LiveRunner` inverts the trigger but not the read: it registers
+batch), and stopped at a safe point (`_stop_requested`).
+`LiveRunner` inverts the trigger but not the read: it registers
 `_LiveEventHandler` instances via `event_bus.subscribe(...)` for each type in
 `subscriber.subscribed_to()`, and is *woken* by the bus rather than polling
 it. But once woken, it pulls, the same way `CatchUpRunner` does -- it calls
@@ -842,7 +844,7 @@ it and returns `CatchUpResult(completed=False, error=e)` rather than raising.
 Catch-up reports its failures as data, because the coordinator above it needs
 to decide what to do about them.
 
-**Per event, the sequence is filter, then flow-control slot, then deliver, then
+**Per event, the sequence is filter, then acquire, then deliver, then
 record.** The filter is checked first, before delivery, and a filtered-out
 event still calls `record_event_processed()` -- position advances even for
 events this subscriber does not care about, because position is progress
@@ -850,9 +852,14 @@ through the *stream*, not a count of work done. Skipping the position update
 for filtered events would mean a subscription with a narrow filter never
 appearing to move, and re-reading the same span forever after a restart.
 Delivery itself happens inside `async with await self._flow_controller.acquire()`,
-so the number of in-flight events is bounded by `max_in_flight` (default 1000);
-the position update happens inside that same block, before the slot is
-released. Handler failure is routed by `continue_on_error` (default `True`):
+and no delivery is ever concurrent with another: each unit of work -- one
+`handle()` call, or on catch-up one `handle_batch()` call when the subscriber
+supports batching -- is awaited to completion before the next iteration
+starts. `FlowController` tracks in-flight work and lets graceful shutdown wait
+for drain; it does not bound concurrency. The position update happens inside
+that same block (for a batch, after the whole batch settles), before the slot
+is released. Handler failure
+is routed by `continue_on_error` (default `True`):
 either way `record_event_failed()` is called and failure metrics are recorded,
 but only with `continue_on_error=False` does the exception escape and end the
 run.
@@ -1395,8 +1402,12 @@ cannot stall its siblings, and equally cannot tell the caller it is broken.
 implementations, routing by `subscribed_to()` so a subscriber is only invoked
 for event types it declared. `ProjectionCoordinator` sits above a registry and
 adds the batch-shaped operations -- `dispatch_events`, `rebuild_all`,
-`rebuild_projection`, `catchup`, `health_check` -- with `batch_size` and
-`poll_interval_seconds` as its knobs. Note the ordering asymmetry that runs
+`rebuild_projection`, `catchup`, `health_check`. It does not poll or hold an
+event bus connection itself; something else -- a subscription runner or
+`replay()` -- drives it with events already in hand. Fan-out concurrency
+within `ProjectionRegistry`/`SubscriberRegistry` is capped by an optional
+`max_concurrency`, enforced with one semaphore owned by the registry
+instance rather than one per call. Note the ordering asymmetry that runs
 through all three: fan-out *within* one event is concurrent, but
 `dispatch_many` walks the list sequentially, because event order is the one
 thing the read side must not reorder.

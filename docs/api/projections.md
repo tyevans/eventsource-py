@@ -126,8 +126,10 @@ subscription runner, or the `ProjectionCoordinator`/`ProjectionRegistry` pair in
 registered projections that subscribe to its type.
 
 To *rebuild* a projection from the log rather than follow it live, use
-[`replay()`](#rebuilding-a-projection-replay) — the coordinator polls forever and stops
-on a failure, which is the wrong shape for a foreground rebuild.
+[`replay()`](#rebuilding-a-projection-replay). `ProjectionCoordinator.rebuild_projection`
+takes the events as a list the caller has already read; a live subscription runner polls
+forever and stops on a failure, which is the wrong shape for a foreground rebuild —
+`replay()` owns the read loop itself and records a failure without stopping instead.
 
 ## Import Surface (`eventsource.application.projections`)
 
@@ -579,9 +581,9 @@ async def replay(
 
 Reads the global feed from `from_position` and folds every event into every projection,
 returning a report (ADR 0054). This is the answer to "how do I rebuild a projection from
-the log" — `ProjectionCoordinator` is the other job, live catch-up on a timer, and its
-`rebuild_projection()` takes the events as a materialized list you have already read and
-filtered yourself.
+the log" — a live subscription runner does the other job, catch-up on a timer via
+`ProjectionCoordinator`/`ProjectionRegistry`, and the coordinator's `rebuild_projection()`
+takes the events as a materialized list you have already read and filtered yourself.
 
 ```python
 from eventsource.application.projections import replay

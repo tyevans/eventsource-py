@@ -8,7 +8,7 @@ Catch-up subscriptions with seamless transition to live event streaming. This pa
 - `SubscriptionManager` -- Main API for registering and managing subscriptions
 - `Subscriber` / `SyncSubscriber` / `BatchSubscriber` -- Protocols for event subscribers
 - `EventFilter` -- Filter events by type, pattern, or custom predicates
-- `FlowController` -- Backpressure and flow control
+- `FlowController` -- In-flight tracking and the shutdown drain latch
 - `RetryConfig` / `CircuitBreaker` -- Retry policies and circuit breaker for transient failures
 - `HealthCheckProvider` -- Health monitoring for readiness and liveness probes
 
@@ -21,10 +21,12 @@ Catch-up subscriptions with seamless transition to live event streaming. This pa
 - `config.py` -- `SubscriptionConfig`, `StartPosition`, `CheckpointStrategy`
 - `subscriber.py` -- `Subscriber` protocols and base classes
 - `filtering.py` -- `EventFilter` for event type/pattern matching
-- `flow_control.py` -- `FlowController` for backpressure and rate limiting
+- `flow_control.py` -- `FlowController`, which counts in-flight events so
+  shutdown can wait for the drain. It does not limit concurrency: delivery is
+  sequential, so at most one event is ever in flight
 - `retry.py` -- `RetryConfig`, `CircuitBreaker`, exponential backoff
 - `transition.py` -- `TransitionCoordinator` for catch-up → live transition
-- `pause_resume.py` -- `PauseResumeController` for manual and backpressure pausing
+- `pause_resume.py` -- `PauseResumeController` for caller-initiated pausing
 - `shutdown.py` -- `ShutdownCoordinator` for graceful shutdown
 - `health.py` / `health_provider.py` -- Health checks (readiness, liveness)
 - `coordination.py` -- Leader election and work redistribution (multi-instance)

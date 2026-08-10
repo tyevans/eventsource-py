@@ -10,7 +10,12 @@ forward from its checkpoint and delivers what the feed returns.
 
 ## Status
 
-**Accepted.**
+**Accepted.** **Amended by
+[ADR 0059](0059-ordered-subscription-delivery.md)**, scoped to the
+checkpoint-lockstep dependency: the deletion of duplicate suppression below rests
+on a checkpointed position never being re-read, which holds only while delivery and
+position advance stay in lockstep. 0059 states that dependency and pins it. The
+Decision here is unchanged.
 
 **ADR Impact**
 

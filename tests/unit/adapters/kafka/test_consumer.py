@@ -31,6 +31,7 @@ from eventsource.adapters.kafka.serialization import EventSerializer  # noqa: E4
 from eventsource.domain.event import DomainEvent  # noqa: E402
 from eventsource.domain.exceptions import HandlerDispatchError  # noqa: E402
 from eventsource.observability import create_tracer  # noqa: E402
+from eventsource.ports.exceptions import EventBusConnectionError  # noqa: E402
 
 
 class SampleConsumerEvent(DomainEvent):
@@ -309,7 +310,7 @@ class TestLifecycle:
         loop._connection._connected = False
         loop._connection._consumer = None
 
-        with pytest.raises(RuntimeError, match="Not connected"):
+        with pytest.raises(EventBusConnectionError, match="Not connected"):
             await loop.start()
 
     @pytest.mark.asyncio

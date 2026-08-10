@@ -83,10 +83,40 @@ two that gate most often:
 2. Lives under `src/eventsource/adapters/<backend>/` (`infrastructure/` was
    deleted; backends are colocated with their ring homes)
 3. Optional dependency guard with try/except ImportError
-4. **Runs the shared conformance suite for every port it binds** —
-   `src/eventsource/testing/conformance.py` (EventStore, EventBus) and
-   `src/eventsource/testing/conformance_ports/` (checkpoints, DLQ, outbox,
-   read models). A new backend that only has hand-written tests will diverge
-   silently from its siblings; this has happened four times.
+4. **Runs the shared conformance suite for every port it binds.** There is no
+   single "EventStore suite" — ports are small and composed, so store
+   conformance is per-port. Bind every suite matching a port the backend
+   implements:
+
+   | Port bound | Suite | Module |
+   |---|---|---|
+   | `EventBus` | `EventBusConformanceSuite` | `testing/conformance.py` |
+   | `EventAppender` | `AppenderConformance` | `testing/conformance_ports/` |
+   | `StreamReader` | `StreamReaderConformance` | `testing/conformance_ports/` |
+   | `GlobalEventFeed` | `GlobalFeedConformance` | `testing/conformance_ports/` |
+   | `EventLookup` | `EventLookupConformance` | `testing/conformance_ports/` |
+   | `CategoryQuery` | `CategoryQueryConformance` | `testing/conformance_ports/` |
+   | `SnapshotStore` | `SnapshotStoreConformance` | `testing/conformance_ports/` |
+   | checkpoints | `CheckpointRepositoryConformance` | `testing/conformance_ports/` |
+   | read models | `ReadModelRepositoryConformance` | `testing/conformance_ports/` |
+   | outbox | `OutboxRepositoryConformance` | `testing/conformance_ports/` |
+   | DLQ | `DLQRepositoryConformance` | `testing/conformance_ports/` |
+   | locks | `DistributedLockConformance` | `testing/conformance_ports/` |
+   | `LeaderElector` | `LeaderElectorConformance` | `testing/conformance_ports/` |
+   | `SupportsClose` | `SupportsCloseConformance` | `testing/conformance_ports/` |
+
+   A `FullEventStore` binds the first five store suites. `StoreStateMachine`
+   (hypothesis-driven) is available for stores and is not a substitute for the
+   per-port suites. `SnapshotStoreConformance` composes `SnapshotConformance`
+   and `SnapshotTypeInvalidationConformance`; `CheckpointRepositoryConformance`
+   composes `ProjectionCheckpointsConformance` and
+   `SubscriptionPositionsConformance` — bind the composed suite unless the
+   backend implements only one half.
+
+   If a port the backend binds has **no suite in this table**, that is a gap in
+   the suite, not permission to skip: say so explicitly in the PR rather than
+   substituting hand-written per-backend tests. A new backend that only has
+   hand-written tests will diverge silently from its siblings; this has
+   happened four times.
 5. Integration tests with appropriate pytest marker
 6. Docker service added to `docker-compose.test.yml` if needed

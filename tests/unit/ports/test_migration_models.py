@@ -221,7 +221,6 @@ class TestMigrationConfig:
         config = MigrationConfig()
         assert config.batch_size == 1000
         assert config.max_bulk_copy_rate == 10000
-        assert config.dual_write_timeout_minutes == 30
         assert config.cutover_max_lag_events == 0
         assert config.cutover_timeout_ms == 500
         assert config.position_mapping_enabled is True
@@ -233,7 +232,6 @@ class TestMigrationConfig:
         config = MigrationConfig(
             batch_size=500,
             max_bulk_copy_rate=5000,
-            dual_write_timeout_minutes=60,
             cutover_max_lag_events=50,
             cutover_timeout_ms=200,
             position_mapping_enabled=False,
@@ -242,7 +240,6 @@ class TestMigrationConfig:
         )
         assert config.batch_size == 500
         assert config.max_bulk_copy_rate == 5000
-        assert config.dual_write_timeout_minutes == 60
         assert config.cutover_max_lag_events == 50
         assert config.cutover_timeout_ms == 200
         assert config.position_mapping_enabled is False
@@ -266,11 +263,6 @@ class TestMigrationConfig:
         """Test max_bulk_copy_rate validation."""
         with pytest.raises(ValueError, match="max_bulk_copy_rate must be >= 1"):
             MigrationConfig(max_bulk_copy_rate=0)
-
-    def test_validation_dual_write_timeout_minutes(self) -> None:
-        """Test dual_write_timeout_minutes validation."""
-        with pytest.raises(ValueError, match="dual_write_timeout_minutes must be >= 1"):
-            MigrationConfig(dual_write_timeout_minutes=0)
 
     def test_validation_cutover_max_lag_events(self) -> None:
         """Test cutover_max_lag_events validation."""
@@ -325,7 +317,6 @@ class TestMigrationConfig:
         original = MigrationConfig(
             batch_size=500,
             max_bulk_copy_rate=8000,
-            dual_write_timeout_minutes=45,
         )
         data = original.to_dict()
         restored = MigrationConfig.from_dict(data)

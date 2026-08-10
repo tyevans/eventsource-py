@@ -584,10 +584,25 @@ class SubscriptionMigrator:
             skipped_count = 0
 
             for name in subscription_names:
-                result = await self._migrate_single_subscription(
-                    migration_id=migration_id,
-                    subscription_name=name,
-                )
+                try:
+                    result = await self._migrate_single_subscription(
+                        migration_id=migration_id,
+                        subscription_name=name,
+                    )
+                except Exception as e:
+                    # Position translation and checkpoint-save failures are
+                    # already caught inside _migrate_single_subscription and
+                    # turned into a failed SubscriptionMigrationResult, so
+                    # they never reach here -- what does is something
+                    # unexpected (a broken checkpoint repository, for
+                    # instance), which is exactly the "critical error" this
+                    # method's docstring documents raising for.
+                    raise SubscriptionMigrationError(
+                        f"Critical error migrating subscription {name}: {e}",
+                        migration_id=migration_id,
+                        subscription_name=name,
+                        reason=str(e),
+                    ) from e
 
                 if result is None:
                     skipped_count += 1

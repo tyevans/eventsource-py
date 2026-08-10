@@ -87,7 +87,6 @@ from eventsource.application.migration.exceptions import (
     MigrationNotFoundError,
     MigrationStateError,
     PositionMappingError,
-    RoutingError,
 )
 from eventsource.application.migration.metrics import (
     ActiveMigrationsTracker,
@@ -158,7 +157,6 @@ __all__ = [
     "CutoverTimeoutError",
     "ConsistencyError",
     "PositionMappingError",
-    "RoutingError",
     # Error Classification (P4-004)
     "ErrorSeverity",
     "ErrorRecoverability",

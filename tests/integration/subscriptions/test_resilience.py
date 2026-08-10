@@ -2,7 +2,7 @@
 Integration tests for resilience and chaos testing.
 
 Tests cover all Phase 2 resilience features:
-- Backpressure behavior tests (flow control, slow subscribers, burst events)
+- Sequential delivery tests (flow-control counters, slow subscribers, bursts)
 - Graceful shutdown tests (in-flight events, checkpointing, timeout)
 - Connection failure and recovery tests (retry, exponential backoff)
 - Circuit breaker behavior tests (failure thresholds, recovery)
@@ -16,7 +16,6 @@ import contextlib
 import random
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
-from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -292,40 +291,28 @@ async def subscription_manager_with_dlq(
 
 
 # =============================================================================
-# Backpressure Tests
+# Sequential Delivery Tests
 # =============================================================================
 
 
-class TestBackpressure:
-    """Tests for backpressure and flow control behavior."""
+class TestSequentialDelivery:
+    """Delivery is ordered per subscription, and `FlowController` counts it.
 
-    async def test_flow_controller_respects_max_in_flight(self):
-        """Test that FlowController limits concurrent operations."""
-        controller = FlowController(max_in_flight=5)
-        concurrent = 0
-        max_concurrent = 0
-        results: list[int] = []
+    The four cases that used to live here exercised a concurrency limit,
+    a paused state, and a backpressure threshold. None of those exist:
+    both runners await each event to completion before starting the next,
+    so the semaphore never blocked and the threshold could never trip. The
+    machinery and its configuration were deleted rather than repaired.
 
-        async def process(i: int) -> None:
-            nonlocal concurrent, max_concurrent
-            async with await controller.acquire():
-                concurrent += 1
-                max_concurrent = max(max_concurrent, concurrent)
-                await asyncio.sleep(0.05)
-                results.append(i)
-                concurrent -= 1
+    What survives is worth testing, and what replaced it is worth testing
+    harder: these cases now pin the invariant the deleted knob obscured,
+    end to end through a real subscription rather than against the
+    controller in isolation.
+    """
 
-        # Run 20 concurrent tasks
-        tasks = [asyncio.create_task(process(i)) for i in range(20)]
-        await asyncio.gather(*tasks)
-
-        assert max_concurrent <= 5
-        assert len(results) == 20
-        assert controller.stats.peak_in_flight <= 5
-
-    async def test_flow_controller_tracks_statistics(self):
-        """Test that FlowController tracks statistics correctly."""
-        controller = FlowController(max_in_flight=10, backpressure_threshold=0.8)
+    async def test_flow_controller_tracks_acquisitions_and_releases(self):
+        """The counters `wait_for_drain` depends on stay balanced."""
+        controller = FlowController()
 
         async def process() -> None:
             async with await controller.acquire():
@@ -339,92 +326,55 @@ class TestBackpressure:
         assert stats.total_releases == 25
         assert stats.events_in_flight == 0
 
-    async def test_flow_controller_pause_at_capacity(self):
-        """Test that FlowController enters paused state at capacity."""
-        controller = FlowController(max_in_flight=3)
-        pause_detected = False
-        slots: list[Any] = []
-
-        # Acquire all slots
-        for _ in range(3):
-            slot = await controller.acquire()
-            slots.append(slot)
-
-        # Should be paused now
-        pause_detected = controller.is_paused
-
-        # Release all slots
-        for slot in slots:
-            await slot.__aexit__(None, None, None)
-
-        assert pause_detected is True
-        assert not controller.is_paused
-
-    async def test_flow_controller_backpressure_detection(self):
-        """Test that backpressure is detected at configured threshold."""
-        controller = FlowController(max_in_flight=10, backpressure_threshold=0.8)
-        slots: list[Any] = []
-
-        # Acquire 7 slots (70% - below threshold)
-        for _ in range(7):
-            slots.append(await controller.acquire())
-        assert not controller.is_backpressured
-
-        # Acquire 1 more (80% - at threshold)
-        slots.append(await controller.acquire())
-        assert controller.is_backpressured
-
-        # Release all
-        for slot in slots:
-            await slot.__aexit__(None, None, None)
-
-    async def test_slow_subscriber_respects_max_in_flight(
+    async def test_a_slow_subscriber_is_delivered_one_event_at_a_time(
         self,
         in_memory_event_store,
         in_memory_event_bus,
         in_memory_checkpoint_repo,
         subscription_manager,
     ):
-        """Test that slow subscriber respects max_in_flight limit."""
-        # Populate with 50 events
+        """A slow handler does not cause the runner to overlap deliveries.
+
+        This is the ordered-delivery invariant observed from outside: the
+        position advances in lockstep with delivery, which is only sound
+        while exactly one event is in flight.
+        """
         await populate_event_store(in_memory_event_store, 50)
 
-        # Create slow projection
         projection = ConcurrencyTrackingProjection(process_delay=0.05)
 
-        # Subscribe with low max_in_flight
-        config = SubscriptionConfig(
-            start_from="beginning",
-            max_in_flight=5,
-        )
+        config = SubscriptionConfig(start_from="beginning")
         await subscription_manager.subscribe(projection, config)
         await subscription_manager.start()
 
-        # Wait for completion
         success = await projection.wait_for_events(50, timeout=30.0)
         await subscription_manager.stop()
 
         assert success, f"Expected 50 events, got {projection.event_count}"
-        assert projection.max_concurrent <= 5, (
-            f"Max concurrent {projection.max_concurrent} exceeded limit 5"
+        assert projection.max_concurrent == 1, (
+            f"Deliveries overlapped: peak concurrency was "
+            f"{projection.max_concurrent}, expected exactly 1"
         )
 
-    async def test_burst_events_with_backpressure(
+    async def test_a_burst_does_not_widen_delivery_concurrency(
         self,
         in_memory_event_store,
         in_memory_event_bus,
         in_memory_checkpoint_repo,
         subscription_manager,
     ):
-        """Test handling burst of events with backpressure."""
-        # Populate with 100 events (burst)
+        """A large backlog read in batches is still delivered one at a time.
+
+        `batch_size` sizes the *read*, not the delivery. This is the pair
+        of facts most easily confused, so it is asserted together: 100
+        events arrive through 25-event reads, and never overlap.
+        """
         await populate_event_store(in_memory_event_store, 100)
 
         projection = ConcurrencyTrackingProjection(process_delay=0.02)
 
         config = SubscriptionConfig(
             start_from="beginning",
-            max_in_flight=10,
             batch_size=25,
         )
         await subscription_manager.subscribe(projection, config)
@@ -435,8 +385,10 @@ class TestBackpressure:
 
         assert success
         assert projection.event_count == 100
-        # Should have maintained concurrency limit
-        assert projection.max_concurrent <= 10
+        assert projection.max_concurrent == 1, (
+            f"Deliveries overlapped under burst: peak concurrency was "
+            f"{projection.max_concurrent}, expected exactly 1"
+        )
 
 
 # =============================================================================
@@ -1186,14 +1138,15 @@ class TestCombinedResilience:
         assert result == "success"
         assert breaker.is_closed  # Should not have opened
 
-    async def test_backpressure_with_error_handling(
+    async def test_slow_failing_subscriber_still_drains(
         self,
         in_memory_event_store,
         in_memory_event_bus,
         in_memory_checkpoint_repo,
         subscription_manager,
     ):
-        """Test backpressure combined with error handling."""
+        """A slow subscriber that intermittently fails still processes the
+        backlog, with `continue_on_error` absorbing the failures."""
         await populate_event_store(in_memory_event_store, 100)
 
         # 5% failure rate with slow processing
@@ -1239,7 +1192,6 @@ class TestCombinedResilience:
 
         config = SubscriptionConfig(
             start_from="beginning",
-            max_in_flight=10,
             continue_on_error=True,
         )
         await subscription_manager.subscribe(projection, config)

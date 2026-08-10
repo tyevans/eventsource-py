@@ -20,12 +20,13 @@ if TYPE_CHECKING:
 # Optional aio-pika import - fail gracefully if not installed. Mirrors the
 # guard-safe import pattern in bus.py; this module legitimately needs the
 # runtime names (not just typing) because it constructs Message objects.
+# The canonical RABBITMQ_AVAILABLE flag lives on bus.py (checked at
+# construction, re-exported from adapters/rabbitmq/__init__.py) -- this
+# module only needs the guard to import safely, not a second copy of the
+# flag.
 try:
     from aio_pika import DeliveryMode, Message
-
-    RABBITMQ_AVAILABLE = True
 except ImportError:
-    RABBITMQ_AVAILABLE = False
     Message = None  # type: ignore[assignment, misc]
     DeliveryMode = None  # type: ignore[assignment, misc]
 

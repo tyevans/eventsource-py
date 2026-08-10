@@ -10,6 +10,7 @@ import pytest
 from eventsource.adapters.rabbitmq.config import RabbitMQEventBusConfig
 from eventsource.adapters.rabbitmq.topology import RabbitMQTopology
 from eventsource.domain.event import DomainEvent
+from eventsource.ports.exceptions import EventBusConnectionError
 
 
 class OrderCreated(DomainEvent):
@@ -148,7 +149,9 @@ async def test_bind_event_type_without_topology_raises(config: RabbitMQEventBusC
     channel = _fake_channel()
     topology = RabbitMQTopology(config=config, connection=_fake_connection(channel))
 
-    with pytest.raises(RuntimeError, match="Not connected or queue/exchange not initialized"):
+    with pytest.raises(
+        EventBusConnectionError, match="Not connected or queue/exchange not initialized"
+    ):
         await topology.bind_event_type(OrderCreated)
 
 

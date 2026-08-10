@@ -65,16 +65,22 @@ themselves:
 
 - `AIOSQLITE_AVAILABLE` (`eventsource.adapters.sqlite.store`, re-exported from
   `eventsource.adapters.sqlite`) -- whether `aiosqlite` is importable; gates
-  `SQLiteEventStore`.
-- `SQLITE_AVAILABLE` (`eventsource.adapters.sqlite.snapshots`, re-exported from
-  `eventsource.adapters.sqlite`) -- whether `aiosqlite` is importable, checked from the
-  snapshot module; gates `SQLiteSnapshotStore`. `SQLiteSnapshotStore` itself still
-  guards `aiosqlite` internally and raises `SQLiteNotAvailableError` (an `ImportError`
-  subclass) from its constructor if the driver is missing, rather than failing at import
-  time.
+  `SQLiteEventStore`. `eventsource.adapters.sqlite.snapshots` guards the identical
+  `import aiosqlite` for its own runtime use and has a module-local
+  `AIOSQLITE_AVAILABLE` of its own (checked by `SQLiteSnapshotStore`'s constructor,
+  which raises `SQLiteNotAvailableError` -- an `ImportError` subclass -- if the driver
+  is missing), but that copy is not re-exported from the package: the two flags guard
+  the same import and are always equal, so re-exporting only one avoids two public
+  names for one fact.
 - `ASYNCPG_AVAILABLE` (`eventsource.adapters.postgresql.store`, re-exported from
   `eventsource.adapters.postgresql`) -- whether `asyncpg` is importable; gates
   `PostgreSQLEventStore`. `PostgreSQLSnapshotStore` has no separate flag of its own.
+- `KAFKA_AVAILABLE` / `RABBITMQ_AVAILABLE` -- each backend has one canonical flag,
+  declared and checked in that backend's `bus.py` and re-exported from the backend's
+  `__init__.py`. Sibling modules that guard the same driver import for their own
+  runtime names (Kafka's `connection.py`/`dlq.py`, RabbitMQ's
+  `consumer.py`/`serialization.py`) keep the `try/except` guard but do not bind a
+  second copy of the flag -- the canonical one is the only one anything reads.
 
 `InMemoryEventStore` and `InMemorySnapshotStore` have no availability flag -- they are
 always importable, since they depend only on the standard library.

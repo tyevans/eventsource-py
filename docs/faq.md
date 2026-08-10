@@ -237,7 +237,7 @@ itself, not for consuming it.
 
 Importing `eventsource` always succeeds. Every optional client is imported
 inside a `try`/`except ImportError` that sets a module-level flag —
-`SQLITE_AVAILABLE`, `REDIS_AVAILABLE`, `RABBITMQ_AVAILABLE`, `KAFKA_AVAILABLE` —
+`AIOSQLITE_AVAILABLE`, `REDIS_AVAILABLE`, `RABBITMQ_AVAILABLE`, `KAFKA_AVAILABLE` —
 rather than letting the failure escape. You can therefore write code that
 branches on availability, and the library's own `__init__` uses those flags to
 decide what to export.
@@ -254,12 +254,12 @@ worth knowing apart:
   tells you what to do.
 - **`SQLiteEventStore` follows the same pattern.** It is always exported from
   `eventsource` (`from eventsource import SQLiteEventStore` succeeds either
-  way), and `SQLITE_AVAILABLE` (backed by `AIOSQLITE_AVAILABLE` internally)
+  way), and `AIOSQLITE_AVAILABLE`
   tells you whether `aiosqlite` is actually installed. Constructing the store
   without it raises a plain `ImportError` — "aiosqlite is required for
   SQLiteEventStore. Install with: pip install eventsource[sqlite]" — at
   `__init__` time, not at import time. The `SQLiteOutboxRepository` is exported
-  conditionally, appended to `__all__` only when `SQLITE_AVAILABLE` is `True`,
+  conditionally, appended to `__all__` only when `AIOSQLITE_AVAILABLE` is `True`,
   which is the one place the older "absent from the namespace" behavior still
   applies.
 

@@ -112,6 +112,7 @@ from eventsource.adapters.kafka.publisher import KafkaPublisher
 from eventsource.adapters.kafka.serialization import EventSerializer
 from eventsource.domain.event import DomainEvent
 from eventsource.observability import OTEL_AVAILABLE, Tracer, create_tracer
+from eventsource.ports.exceptions import EventBusConnectionError
 
 if TYPE_CHECKING:
     from eventsource.domain.event_registry import EventRegistry
@@ -551,10 +552,10 @@ class KafkaEventBus(BaseEventBus):
             Dictionary with topic metadata.
 
         Raises:
-            RuntimeError: If not connected.
+            EventBusConnectionError: If not connected.
         """
         if not self._connected or not self._consumer:
-            raise RuntimeError("Not connected to Kafka")
+            raise EventBusConnectionError("Not connected to Kafka")
 
         partitions = self._consumer.partitions_for_topic(self._config.topic_name)
 
@@ -697,7 +698,7 @@ class KafkaEventBus(BaseEventBus):
                 (or even send) is confirmed. See "Raises" below.
 
         Raises:
-            RuntimeError: If not connected to Kafka.
+            EventBusConnectionError: If not connected to Kafka.
             KafkaError: If publishing fails and background=False. When
                 background=True, send/serialization/ack failures do NOT
                 propagate to the caller -- they are only logged and recorded
@@ -705,7 +706,7 @@ class KafkaEventBus(BaseEventBus):
                 (see KafkaPublisher._track_background_publish).
         """
         if not self._connected or not self._producer:
-            raise RuntimeError("Not connected to Kafka. Call connect() first.")
+            raise EventBusConnectionError("Not connected to Kafka. Call connect() first.")
 
         if not events:
             return
@@ -767,7 +768,7 @@ class KafkaEventBus(BaseEventBus):
                     "messaging.destination": self._config.topic_name,
                 },
             )
-            self._metrics.batch_size.record(len(events))
+            self._metrics.batch_publish_size.record(len(events))
 
         logger.debug(
             "Events published successfully",

@@ -433,6 +433,54 @@ class TestBulkCopierRun:
         assert final.events_copied == 5
 
     @pytest.mark.asyncio
+    async def test_run_records_events_copied_metric(
+        self,
+        migration: Migration,
+        source_store: AsyncMock,
+        target_store: AsyncMock,
+        migration_repo: AsyncMock,
+    ) -> None:
+        """run() reports events copied through the real MigrationMetrics
+        instance for this migration -- not a standalone metrics object the
+        test constructs and calls directly."""
+        from eventsource.application.migration.metrics import (
+            clear_metrics_registry,
+            get_migration_metrics,
+        )
+
+        clear_metrics_registry()
+        events = self._create_events(5, migration.tenant_id)
+
+        async def event_generator(from_position, options):
+            for event in events:
+                yield event
+
+        source_store.read_all = event_generator
+        target_store.get_stream_version = AsyncMock(return_value=0)
+        target_store.append = AsyncMock(
+            return_value=AppendResult(
+                stream=events[0].stream_id, new_version=5, position=_pos("target", 5)
+            )
+        )
+        migration_repo.set_events_total = AsyncMock()
+        migration_repo.update_progress = AsyncMock()
+
+        copier = BulkCopier(
+            source_store=source_store,
+            target_store=target_store,
+            migration_repo=migration_repo,
+            enable_tracing=False,
+        )
+
+        async for _ in copier.run(migration):
+            pass
+
+        snapshot = get_migration_metrics(str(migration.id), str(migration.tenant_id)).get_snapshot()
+        assert snapshot.events_copied == 5
+
+        clear_metrics_registry()
+
+    @pytest.mark.asyncio
     async def test_run_with_events_multiple_batches(
         self,
         migration: Migration,

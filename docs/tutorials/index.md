@@ -95,7 +95,7 @@ swap `InMemoryEventStore` for `PostgreSQLEventStore`, apply the SQL schema, and 
 PostgreSQL advisory locks to serialize work across processes. You do the same with
 `SQLiteEventStore` and `SQLiteSnapshotStore` for local development and tests. You stand
 up a `SubscriptionManager` that owns the lifecycle of your projections -- runners, retry
-policy, health reporting, flow control -- so consumers keep up without you babysitting
+policy, health reporting, checkpointing -- so consumers keep up without you babysitting
 them. You add snapshots so an order with thousands of events still loads in constant
 time. And you close the gap between "committed to the database" and "published to the
 bus" with the outbox pattern, using `PostgreSQLOutboxRepository`, plus the operational
@@ -283,7 +283,7 @@ What happens if you skip an extra depends on which one:
   named error, not a traceback from somewhere inside the library.
 - **SQLite fails at construction, not import.** `SQLiteEventStore` is always
   re-exported from `eventsource`, so `from eventsource import SQLiteEventStore`
-  succeeds either way; `SQLITE_AVAILABLE` (backed by `AIOSQLITE_AVAILABLE`) records
+  succeeds either way; `AIOSQLITE_AVAILABLE` records
   whether `aiosqlite` actually imported. Without the extra, *constructing* the
   store raises a plain `ImportError` at `__init__` time -- so if a Tutorial 12
   example fails when you instantiate the store, that is why. (`SQLiteOutboxRepository`

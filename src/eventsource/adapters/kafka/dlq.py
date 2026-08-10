@@ -7,8 +7,10 @@ dead letter queue.
 The facade still owns the public ``get_dlq_messages`` / ``replay_dlq_message``
 / ``get_dlq_message_count`` signatures and delegates to this collaborator,
 which builds throwaway ``AIOKafkaConsumer`` instances via
-:meth:`KafkaConnectionManager.get_security_config` and publishes replays via
-:meth:`KafkaConnectionManager.require_producer`.
+:meth:`~eventsource.adapters.kafka.config.KafkaEventBusConfig.get_consumer_config`
+-- the same construction path the long-lived main consumer uses, so a field
+added there (security, fetch bounds, ...) reaches DLQ consumers too -- and
+publishes replays via :meth:`KafkaConnectionManager.require_producer`.
 """
 
 from __future__ import annotations
@@ -21,19 +23,21 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
+from eventsource.ports.exceptions import EventBusConnectionError
+
 if TYPE_CHECKING:
     from eventsource.adapters.kafka.config import KafkaEventBusConfig
     from eventsource.adapters.kafka.connection import KafkaConnectionManager
     from eventsource.adapters.kafka.models import KafkaEventBusStats
     from eventsource.adapters.kafka.serialization import EventSerializer
 
-# Optional aiokafka import - fail gracefully if not installed
+# Optional aiokafka import - fail gracefully if not installed. The canonical
+# KAFKA_AVAILABLE flag lives on bus.py (checked at construction, re-exported
+# from adapters/kafka/__init__.py) -- this module only needs the guard to
+# import safely, not a second copy of the flag.
 try:
     from aiokafka import AIOKafkaConsumer, TopicPartition
-
-    KAFKA_AVAILABLE = True
 except ImportError:
-    KAFKA_AVAILABLE = False
     AIOKafkaConsumer = None
     TopicPartition = None
 
@@ -101,21 +105,24 @@ class KafkaDLQAdmin:
         build/start/stop boilerplate and guarantees ``stop()`` runs even if
         the caller's body raises.
 
+        Construction goes through
+        :meth:`~eventsource.adapters.kafka.config.KafkaEventBusConfig.get_consumer_config`
+        -- the same builder the long-lived main consumer uses -- so DLQ
+        consumers never silently miss a field (security settings, fetch
+        bounds, ...) that the main consumer gets.
+
         Args:
             *topics: Topics to subscribe to at construction time. Omit to
                 build an unsubscribed consumer (e.g. for manual ``assign``).
-            **kwargs: Additional keyword arguments forwarded to
-                ``AIOKafkaConsumer``, merged over the shared bootstrap
-                servers and security config.
+            **kwargs: Overrides forwarded to
+                :meth:`KafkaEventBusConfig.get_consumer_config`, merged over
+                the shared defaults (e.g. ``group_id=None`` for an unmanaged
+                consumer, ``consumer_timeout_ms=...`` for a bounded poll).
 
         Yields:
             The started ``AIOKafkaConsumer``.
         """
-        consumer_kwargs: dict[str, Any] = {
-            "bootstrap_servers": self._config.bootstrap_servers,
-            **self._connection.get_security_config(),
-            **kwargs,
-        }
+        consumer_kwargs = self._config.get_consumer_config(**kwargs)
         dlq_consumer = AIOKafkaConsumer(*topics, **consumer_kwargs)
         try:
             await dlq_consumer.start()
@@ -154,11 +161,11 @@ class KafkaDLQAdmin:
             - replay_count: Number of times this message has been replayed
 
         Raises:
-            RuntimeError: If not connected to Kafka.
+            EventBusConnectionError: If not connected to Kafka.
             ValueError: If use_consumer_group=True but dlq_consumer_group not set.
         """
         if not self._connection.is_connected:
-            raise RuntimeError("Not connected to Kafka")
+            raise EventBusConnectionError("Not connected to Kafka")
 
         group_id = None
         if use_consumer_group:
@@ -259,11 +266,11 @@ class KafkaDLQAdmin:
             True if message was successfully republished.
 
         Raises:
-            RuntimeError: If not connected to Kafka.
+            EventBusConnectionError: If not connected to Kafka.
             ValueError: If message not found at specified location or max replays exceeded.
         """
         if not self._connection.is_connected:
-            raise RuntimeError("Not connected to Kafka")
+            raise EventBusConnectionError("Not connected to Kafka")
         producer = self._connection.require_producer()
 
         async with self._dlq_consumer(
@@ -366,10 +373,10 @@ class KafkaDLQAdmin:
             Approximate count of DLQ messages across all partitions.
 
         Raises:
-            RuntimeError: If not connected to Kafka.
+            EventBusConnectionError: If not connected to Kafka.
         """
         if not self._connection.is_connected:
-            raise RuntimeError("Not connected to Kafka")
+            raise EventBusConnectionError("Not connected to Kafka")
 
         total_count = 0
 

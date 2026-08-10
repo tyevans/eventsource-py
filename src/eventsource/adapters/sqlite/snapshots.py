@@ -22,6 +22,7 @@ from datetime import datetime
 from uuid import UUID
 
 from eventsource.adapters.sql.schemas import get_schema
+from eventsource.domain.exceptions import SnapshotDeserializationError
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_AGGREGATE_ID,
@@ -30,13 +31,20 @@ from eventsource.observability.attributes import (
 )
 from eventsource.ports.snapshots import Snapshot
 
-# Optional dependency handling
+# Optional dependency handling. Named AIOSQLITE_AVAILABLE (not
+# SQLITE_AVAILABLE) because it is the aiosqlite driver being guarded here,
+# not Python's always-available sqlite3 stdlib module -- and to match
+# store.py's identically-guarded import of the same package, so the two
+# don't spell the same fact two different ways (recurring-defects §2). This
+# module's own copy is intentional (each guarded import needs its own
+# try/except), but only store.py's copy is re-exported from
+# adapters/sqlite/__init__.py -- see that module's docstring.
 try:
     import aiosqlite
 
-    SQLITE_AVAILABLE = True
+    AIOSQLITE_AVAILABLE = True
 except ImportError:
-    SQLITE_AVAILABLE = False
+    AIOSQLITE_AVAILABLE = False
     aiosqlite = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
@@ -126,7 +134,7 @@ class SQLiteSnapshotStore:
         Raises:
             SQLiteNotAvailableError: If aiosqlite is not installed.
         """
-        if not SQLITE_AVAILABLE:
+        if not AIOSQLITE_AVAILABLE:
             raise SQLiteNotAvailableError()
 
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
@@ -235,6 +243,17 @@ class SQLiteSnapshotStore:
 
         Returns:
             The snapshot if found, None otherwise
+
+        Raises:
+            SnapshotDeserializationError: If the stored ``state`` column is
+                not valid JSON. SQLite stores it as plain ``TEXT`` (no
+                server-side JSON validation on write, unlike PostgreSQL's
+                ``JSONB`` column), so on-disk corruption or a hand-edited
+                database can genuinely produce this. Per ADR 0017, callers
+                should generally go through ``read_valid_snapshot()``, which
+                catches this and falls back to full event replay -- raising
+                here is what lets it do that instead of letting a bare
+                ``json.JSONDecodeError`` escape.
         """
         with self._tracer.span(
             "eventsource.snapshot.get",
@@ -270,12 +289,21 @@ class SQLiteSnapshotStore:
                 )
                 return None
 
+            try:
+                state = json.loads(row["state"])
+            except (json.JSONDecodeError, TypeError) as e:
+                raise SnapshotDeserializationError(
+                    aggregate_id=UUID(row["aggregate_id"]),
+                    aggregate_type=row["aggregate_type"],
+                    original_error=e,
+                ) from e
+
             snapshot = Snapshot(
                 aggregate_id=UUID(row["aggregate_id"]),
                 aggregate_type=row["aggregate_type"],
                 version=row["version"],
                 schema_version=row["schema_version"],
-                state=json.loads(row["state"]),
+                state=state,
                 created_at=datetime.fromisoformat(row["created_at"]),
             )
 

@@ -218,8 +218,6 @@ combinations (for example `max_retry_delay < initial_retry_delay`) raise
 |--------|---------|-------------|
 | `start_from` | `"checkpoint"` | Where to start: `"beginning"`, `"end"`, `"checkpoint"`, or an opaque `Position` token |
 | `batch_size` | `100` | Events per batch during catch-up (must be >= 1) |
-| `max_in_flight` | `1000` | Maximum events being processed concurrently (must be >= 1) |
-| `backpressure_threshold` | `0.8` | Fraction of `max_in_flight` (0.0-1.0) at which backpressure is signalled |
 | `checkpoint_strategy` | `CheckpointStrategy.EVERY_BATCH` | When to persist checkpoints: `EVERY_EVENT`, `EVERY_BATCH`, `PERIODIC` |
 | `checkpoint_interval_seconds` | `5.0` | Checkpoint interval used by the `PERIODIC` strategy |
 | `processing_timeout` | `30.0` | Max seconds to wait for a single event to be processed |
@@ -286,8 +284,6 @@ straight to `manager.subscribe(projection, config=...)`.
 | `max_errors_critical` | `100` | Critical if total errors exceed this |
 | `max_lag_events_warning` | `1000` | Warn if lag exceeds this many events |
 | `max_lag_events_critical` | `10000` | Critical if lag exceeds this many events |
-| `backpressure_warning_duration_seconds` | `60.0` | Warn if backpressured for this long |
-| `backpressure_critical_duration_seconds` | `300.0` | Critical if backpressured for this long |
 | `circuit_open_is_unhealthy` | `True` | Treat an open circuit breaker as unhealthy |
 | `max_dlq_events_warning` | `10` | Warn if the DLQ holds this many events |
 | `max_dlq_events_critical` | `100` | Critical if the DLQ holds this many events |
@@ -396,9 +392,9 @@ for entry in failed:
 
 ### High event lag
 
-1. Increase `batch_size` for faster catch-up
-2. Check for slow database queries in your projection
-3. Consider batch processing with `handle_batch()`
+1. Increase `batch_size` for faster catch-up -- it widens the store read, and during catch-up it is also the unit handed to `handle_batch()` if your subscriber implements one (see `handle_batch()` in the [subscriptions guide](../../docs/guides/subscriptions.md#handle-events-in-batches-with-handle_batch))
+2. If lag is on the live path, `batch_size` only widens the store read: the live runner still delivers one event at a time through `handle()`
+3. Check for slow database queries in your projection
 4. Monitor for external service bottlenecks
 
 ### Events going to DLQ

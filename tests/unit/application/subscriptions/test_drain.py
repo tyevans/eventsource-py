@@ -28,7 +28,7 @@ class TestFlowControllerWaitForDrain:
     @pytest.mark.asyncio
     async def test_wait_for_drain_returns_immediately_when_empty(self):
         """Test that wait_for_drain returns 0 immediately when no events in flight."""
-        controller = FlowController(max_in_flight=10)
+        controller = FlowController()
 
         remaining = await controller.wait_for_drain(timeout=1.0)
 
@@ -37,7 +37,7 @@ class TestFlowControllerWaitForDrain:
     @pytest.mark.asyncio
     async def test_wait_for_drain_waits_for_single_event(self):
         """Test that wait_for_drain waits for a single in-flight event."""
-        controller = FlowController(max_in_flight=10)
+        controller = FlowController()
 
         # Acquire slot and start drain wait
         context = await controller.acquire()
@@ -56,7 +56,7 @@ class TestFlowControllerWaitForDrain:
     @pytest.mark.asyncio
     async def test_wait_for_drain_waits_for_multiple_events(self):
         """Test that wait_for_drain waits for multiple in-flight events."""
-        controller = FlowController(max_in_flight=10)
+        controller = FlowController()
 
         # Acquire multiple slots
         contexts = [await controller.acquire() for _ in range(5)]
@@ -76,7 +76,7 @@ class TestFlowControllerWaitForDrain:
     @pytest.mark.asyncio
     async def test_wait_for_drain_times_out_with_pending_events(self):
         """Test that wait_for_drain returns remaining count on timeout."""
-        controller = FlowController(max_in_flight=10)
+        controller = FlowController()
 
         # Acquire slots but don't release
         contexts = [await controller.acquire() for _ in range(3)]
@@ -94,7 +94,7 @@ class TestFlowControllerWaitForDrain:
     @pytest.mark.asyncio
     async def test_wait_for_drain_partial_completion(self):
         """Test wait_for_drain when some events complete before timeout."""
-        controller = FlowController(max_in_flight=10)
+        controller = FlowController()
 
         # Acquire 5 slots
         contexts = [await controller.acquire() for _ in range(5)]
@@ -121,7 +121,7 @@ class TestFlowControllerWaitForDrain:
     @pytest.mark.asyncio
     async def test_wait_for_drain_concurrent_acquire_release(self):
         """Test wait_for_drain with concurrent acquire/release operations."""
-        controller = FlowController(max_in_flight=100)
+        controller = FlowController()
 
         async def worker(worker_id: int):
             for _ in range(10):
@@ -144,7 +144,7 @@ class TestFlowControllerWaitForDrain:
     @pytest.mark.asyncio
     async def test_drain_event_state_transitions(self):
         """Test that drain event is properly set/cleared."""
-        controller = FlowController(max_in_flight=10)
+        controller = FlowController()
 
         # Initially drain event should be set (no events)
         assert controller._drain_event.is_set()
@@ -160,7 +160,7 @@ class TestFlowControllerWaitForDrain:
     @pytest.mark.asyncio
     async def test_wait_for_drain_with_zero_timeout(self):
         """Test wait_for_drain with zero timeout returns immediately."""
-        controller = FlowController(max_in_flight=10)
+        controller = FlowController()
 
         # Acquire a slot
         ctx = await controller.acquire()
@@ -176,7 +176,7 @@ class TestFlowControllerWaitForDrain:
     @pytest.mark.asyncio
     async def test_wait_for_drain_with_very_short_timeout(self):
         """Test wait_for_drain with very short timeout."""
-        controller = FlowController(max_in_flight=10)
+        controller = FlowController()
 
         # Acquire slots
         contexts = [await controller.acquire() for _ in range(2)]
@@ -192,7 +192,7 @@ class TestFlowControllerWaitForDrain:
     @pytest.mark.asyncio
     async def test_wait_for_drain_multiple_calls(self):
         """Test multiple sequential wait_for_drain calls."""
-        controller = FlowController(max_in_flight=10)
+        controller = FlowController()
 
         # First call with no events
         remaining1 = await controller.wait_for_drain(timeout=1.0)
@@ -222,7 +222,7 @@ class TestFlowControllerWaitForDrain:
     @pytest.mark.asyncio
     async def test_wait_for_drain_interleaved_acquire_release(self):
         """Test wait_for_drain with interleaved acquire/release operations."""
-        controller = FlowController(max_in_flight=10)
+        controller = FlowController()
 
         # Track events during test
         events_started = 0
@@ -497,7 +497,7 @@ class TestFlowControllerDrainEdgeCases:
     @pytest.mark.asyncio
     async def test_drain_event_cleared_on_first_acquire(self):
         """Test drain event is cleared on first acquire."""
-        controller = FlowController(max_in_flight=10)
+        controller = FlowController()
         assert controller._drain_event.is_set()
 
         ctx = await controller.acquire()
@@ -509,7 +509,7 @@ class TestFlowControllerDrainEdgeCases:
     @pytest.mark.asyncio
     async def test_drain_event_stays_cleared_with_multiple_in_flight(self):
         """Test drain event stays cleared with multiple in-flight events."""
-        controller = FlowController(max_in_flight=10)
+        controller = FlowController()
 
         ctx1 = await controller.acquire()
         ctx2 = await controller.acquire()
@@ -526,7 +526,7 @@ class TestFlowControllerDrainEdgeCases:
     @pytest.mark.asyncio
     async def test_drain_with_max_capacity_acquired(self):
         """Test drain when at max capacity."""
-        controller = FlowController(max_in_flight=3)
+        controller = FlowController()
 
         # Acquire all slots
         contexts = [await controller.acquire() for _ in range(3)]
@@ -546,7 +546,7 @@ class TestFlowControllerDrainEdgeCases:
     @pytest.mark.asyncio
     async def test_drain_concurrent_wait_calls(self):
         """Test multiple concurrent wait_for_drain calls."""
-        controller = FlowController(max_in_flight=10)
+        controller = FlowController()
 
         # Acquire some slots
         contexts = [await controller.acquire() for _ in range(5)]
@@ -572,7 +572,7 @@ class TestFlowControllerDrainEdgeCases:
     @pytest.mark.asyncio
     async def test_drain_with_negative_timeout_treated_as_zero(self):
         """Test wait_for_drain with negative timeout is treated as immediate timeout."""
-        controller = FlowController(max_in_flight=10)
+        controller = FlowController()
 
         ctx = await controller.acquire()
         assert controller.in_flight == 1
@@ -587,7 +587,7 @@ class TestFlowControllerDrainEdgeCases:
     @pytest.mark.asyncio
     async def test_stats_updated_during_drain(self):
         """Test stats are properly updated during drain operations."""
-        controller = FlowController(max_in_flight=10)
+        controller = FlowController()
 
         # Initial stats
         assert controller.stats.events_in_flight == 0
@@ -683,7 +683,7 @@ class TestGracefulShutdownWithDrain:
     @pytest.mark.asyncio
     async def test_drain_with_real_flow_controller_in_shutdown(self):
         """Test drain using real FlowController during shutdown sequence."""
-        controller = FlowController(max_in_flight=10)
+        controller = FlowController()
         coordinator = ShutdownCoordinator(drain_timeout=5.0)
 
         # Acquire some slots

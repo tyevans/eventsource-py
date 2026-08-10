@@ -31,7 +31,17 @@ __all__ = [
 
 
 class CheckpointError(EventSourceError):
-    """Raised when there's an error with checkpoint operations."""
+    """Base class for checkpoint operation failures.
+
+    Nothing raises `CheckpointError` itself, and that is correct: it is the
+    family root, meant to be caught rather than raised. `except CheckpointError`
+    handles any checkpoint failure without naming each subclass. Adapters raise
+    a specific subclass; a bare `CheckpointError` would say only that something
+    checkpoint-shaped went wrong.
+
+    Distinct from `CheckpointNotFoundError`, which is a `SubscriptionError`
+    under a different root with a different meaning.
+    """
 
     pass
 
@@ -106,7 +116,20 @@ class SubscriptionAlreadyExistsError(SubscriptionError):
 
 
 class CheckpointNotFoundError(SubscriptionError):
-    """Raised when checkpoint is required but not found."""
+    """Signals that a checkpoint was required but not found.
+
+    Who raises this:
+        Not the library. A subscription's first ever start has no checkpoint
+        row, so `StartFromResolver` logs and resolves to `None`, replaying from
+        the beginning -- usually what a projection wants.
+
+        This type is published for code that wants the opposite: a caller who
+        treats a missing checkpoint as fatal rather than replaying a whole
+        store, or a `CheckpointRepository` implementor signalling the condition
+        precisely. Note the trade-off it guards against -- a mistyped
+        subscription name silently starts a full replay under a new checkpoint
+        key instead of resuming the old one.
+    """
 
     def __init__(self, projection_name: str) -> None:
         self.projection_name = projection_name

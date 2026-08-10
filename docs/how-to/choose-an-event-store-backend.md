@@ -90,7 +90,7 @@ Use this table to confirm a choice you have already narrowed down.
 |---|---|---|---|
 | **Persistence** | None — state lives in the instance and dies with it | Durable file, or `:memory:` (per connection, non-durable) | Durable, managed by the PostgreSQL server |
 | **Install extra** | None; part of the base install | `pip install eventsource-py[sqlite]` (aiosqlite) | `pip install eventsource-py[postgresql]` (asyncpg) |
-| **Import** | `eventsource.adapters.memory` (also top-level `eventsource`) | `eventsource.adapters.sqlite`, guarded by `AIOSQLITE_AVAILABLE`/`SQLITE_AVAILABLE` — importable but raises `ImportError` on construction when aiosqlite is missing | `eventsource.adapters.postgresql`, guarded by `ASYNCPG_AVAILABLE` |
+| **Import** | `eventsource.adapters.memory` (also top-level `eventsource`) | `eventsource.adapters.sqlite`, guarded by `AIOSQLITE_AVAILABLE` — importable but raises `ImportError` on construction when aiosqlite is missing | `eventsource.adapters.postgresql`, guarded by `ASYNCPG_AVAILABLE` |
 | **Construction** | `InMemoryEventStore(store_id="memory", event_registry=None)` | `SQLiteEventStore(database, event_registry=None, store_id=None, wal_mode=True, busy_timeout=5000)` | `PostgreSQLEventStore(engine, event_registry=None, store_id=None, create_schema=False, outbox_enabled=False)` |
 | **Lifecycle** | None — construct and use | None — construct and use; the connection and schema are created lazily on first call | You own the `AsyncEngine`; dispose it on shutdown. Pass `create_schema=True` to have the adapter provision its own schema, or provision it yourself via the SQL under `migrations/schemas/` |
 | **Schema** | N/A | Created lazily on first use (idempotent) | Provisioned externally via migrations, unless `create_schema=True` |
@@ -240,7 +240,7 @@ Import it from `eventsource.adapters.sqlite` (or the top-level package, where
 it is re-exported when `aiosqlite` is installed):
 
 ```python
-from eventsource.adapters.sqlite import AIOSQLITE_AVAILABLE, SQLITE_AVAILABLE, SQLiteEventStore
+from eventsource.adapters.sqlite import AIOSQLITE_AVAILABLE, SQLiteEventStore
 ```
 
 Construct it directly against a database path — there is no `initialize()`

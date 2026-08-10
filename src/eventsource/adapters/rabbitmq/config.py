@@ -50,9 +50,10 @@ class RabbitMQEventBusConfig:
             Should be True for production to ensure message durability.
         auto_delete: Whether to delete queues when all consumers disconnect.
             Should be False for production to prevent message loss.
-        reconnect_delay: Initial delay in seconds between reconnection attempts.
-            Uses exponential backoff up to max_reconnect_delay.
-        max_reconnect_delay: Maximum delay in seconds between reconnection attempts.
+        reconnect_delay: Fixed delay in seconds between reconnection attempts.
+            Passed to aio-pika's ``connect_robust()`` as ``reconnect_interval``,
+            which retries at this constant interval -- aio-pika does not back
+            off, so there is no separate maximum-delay setting.
         heartbeat: Heartbeat interval in seconds. Used by RabbitMQ to detect
             dead connections and prevent firewall timeouts.
         enable_tracing: Enable OpenTelemetry tracing if available. When True,
@@ -92,9 +93,13 @@ class RabbitMQEventBusConfig:
             - headers: Ignored (routing uses header matching).
             When None (default), the binding pattern is automatically chosen
             based on exchange type. Set explicitly to override.
-        batch_size: Maximum number of events to publish concurrently in a single
-            batch operation. Large batches are automatically chunked to prevent
-            overwhelming the broker. Default is 100.
+        publish_chunk_size: Maximum number of events per chunk when publishing a
+            batch. Large batches are split into chunks of this size to prevent
+            overwhelming the broker; `max_concurrent_publishes` then bounds how
+            many publishes within a chunk run concurrently. Default is 100.
+            Unrelated to Kafka's `producer_max_batch_bytes` (a byte threshold)
+            or Redis's `stream_read_count` (a consume-side read count) --
+            this one counts events on the publish side.
         max_concurrent_publishes: Maximum number of concurrent publish operations
             within a batch chunk. Controls the level of parallelism when publishing
             batches. Default is 10.
@@ -127,7 +132,6 @@ class RabbitMQEventBusConfig:
     durable: bool = True
     auto_delete: bool = False
     reconnect_delay: float = 1.0
-    max_reconnect_delay: float = 60.0
     heartbeat: int = 60
     enable_tracing: bool = True
     ssl_options: dict[str, Any] | None = None
@@ -141,7 +145,7 @@ class RabbitMQEventBusConfig:
     retry_jitter: float = 0.1
     shutdown_timeout: float = 30.0
     routing_key_pattern: str | None = None
-    batch_size: int = 100
+    publish_chunk_size: int = 100
     max_concurrent_publishes: int = 10
 
     def __post_init__(self) -> None:

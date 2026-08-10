@@ -39,6 +39,7 @@ from eventsource.observability.attributes import (
 from eventsource.ports.exceptions import SubscriptionError
 
 if TYPE_CHECKING:
+    from eventsource.application.subscriptions.retry import CircuitBreaker
     from eventsource.ports.bus import SubscribableEventBus
     from eventsource.ports.checkpoints import SubscriptionPositions
     from eventsource.ports.store import GlobalEventFeed
@@ -350,6 +351,52 @@ class SubscriptionLifecycleManager:
             TransitionCoordinator or None if not found
         """
         return self._coordinators.get(name)
+
+    def get_handler_circuit_breaker(self, name: str) -> "CircuitBreaker | None":
+        """
+        Get the handler circuit breaker of whichever runner is currently
+        active for a subscription.
+
+        Guards the subscriber's `handle()`/`handle_batch()` calls -- see
+        `CatchUpRunner.handler_circuit_breaker` for the full reasoning
+        behind keeping it distinct from `get_infra_circuit_breaker`. A thin
+        lookup over `get_coordinator()` -- passed to `HealthCheckProvider`
+        as a live accessor rather than a value captured once, because the
+        underlying `CircuitBreaker` instance changes when a subscription
+        transitions from catch-up to live (each runner constructs its own).
+        Looking it up fresh on every health check means the health checker
+        always reports the breaker actually guarding delivery right now,
+        not a stale one from a runner that no longer exists.
+
+        Args:
+            name: Subscription name
+
+        Returns:
+            The active runner's handler CircuitBreaker, or None if no
+            coordinator exists for this subscription yet, or if
+            `circuit_breaker_enabled=False` left both runners without one.
+        """
+        coordinator = self.get_coordinator(name)
+        return coordinator.handler_circuit_breaker if coordinator else None
+
+    def get_infra_circuit_breaker(self, name: str) -> "CircuitBreaker | None":
+        """
+        Get the infrastructure circuit breaker of whichever runner is
+        currently active for a subscription.
+
+        Guards read-batch/checkpoint-save. See `get_handler_circuit_breaker`
+        for why this is a separate lookup rather than one shared breaker.
+
+        Args:
+            name: Subscription name
+
+        Returns:
+            The active runner's infra CircuitBreaker, or None if no
+            coordinator exists for this subscription yet, or if
+            `circuit_breaker_enabled=False` left both runners without one.
+        """
+        coordinator = self.get_coordinator(name)
+        return coordinator.infra_circuit_breaker if coordinator else None
 
     def remove_coordinator(self, name: str) -> TransitionCoordinator | None:
         """

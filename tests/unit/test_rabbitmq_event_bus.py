@@ -32,6 +32,7 @@ from eventsource.adapters.rabbitmq import (
 )
 from eventsource.domain.event import DomainEvent
 from eventsource.domain.event_registry import EventRegistry
+from eventsource.ports.exceptions import EventBusConnectionError
 
 
 class TestRabbitMQEventBusConfig:
@@ -52,7 +53,6 @@ class TestRabbitMQEventBusConfig:
         assert config.durable is True
         assert config.auto_delete is False
         assert config.reconnect_delay == 1.0
-        assert config.max_reconnect_delay == 60.0
         assert config.heartbeat == 60
         assert config.enable_tracing is True
         assert config.ssl_options is None
@@ -194,11 +194,10 @@ class TestRabbitMQEventBusConfig:
         assert config.auto_delete is True
 
     def test_reconnect_delay_custom(self) -> None:
-        """Test custom reconnect delays."""
-        config = RabbitMQEventBusConfig(reconnect_delay=2.0, max_reconnect_delay=120.0)
+        """Test custom reconnect delay."""
+        config = RabbitMQEventBusConfig(reconnect_delay=2.0)
 
         assert config.reconnect_delay == 2.0
-        assert config.max_reconnect_delay == 120.0
 
     def test_heartbeat_custom(self) -> None:
         """Test custom heartbeat interval."""
@@ -267,7 +266,6 @@ class TestRabbitMQEventBusConfig:
             durable=True,
             auto_delete=False,
             reconnect_delay=2.0,
-            max_reconnect_delay=120.0,
             heartbeat=30,
             enable_tracing=True,
             ssl_options={"verify": True},
@@ -285,7 +283,6 @@ class TestRabbitMQEventBusConfig:
         assert config.durable is True
         assert config.auto_delete is False
         assert config.reconnect_delay == 2.0
-        assert config.max_reconnect_delay == 120.0
         assert config.heartbeat == 30
         assert config.enable_tracing is True
         assert config.ssl_options == {"verify": True}
@@ -382,10 +379,9 @@ class TestRabbitMQEventBusConfigEdgeCases:
 
     def test_negative_delays(self) -> None:
         """Test that negative delays are stored."""
-        config = RabbitMQEventBusConfig(reconnect_delay=-1.0, max_reconnect_delay=-1.0)
+        config = RabbitMQEventBusConfig(reconnect_delay=-1.0)
 
         assert config.reconnect_delay == -1.0
-        assert config.max_reconnect_delay == -1.0
 
 
 class TestRabbitMQEventBusStats:
@@ -2592,7 +2588,7 @@ class TestRabbitMQDeclarationErrors:
 
         bus = RabbitMQEventBus(config=config)
 
-        with pytest.raises(RuntimeError, match="Queue or exchange not initialized"):
+        with pytest.raises(RuntimeError, match="internal call-order bug"):
             await bus._bind_queue()
 
     @pytest.mark.asyncio
@@ -6922,7 +6918,6 @@ class TestRabbitMQReconnectionCallbacks:
             exchange_name="test-events",
             consumer_group="test-group",
             reconnect_delay=1.0,
-            max_reconnect_delay=60.0,
         )
 
     @pytest.fixture
@@ -9996,7 +9991,7 @@ class TestBindEventType:
 
         bus = RabbitMQEventBus(config=config)
 
-        with pytest.raises(RuntimeError, match="Not connected"):
+        with pytest.raises(EventBusConnectionError, match="Not connected"):
             await bus.bind_event_type(TestEvent)
 
 
@@ -10089,7 +10084,7 @@ class TestBindRoutingKey:
         config = RabbitMQEventBusConfig()
         bus = RabbitMQEventBus(config=config)
 
-        with pytest.raises(RuntimeError, match="Not connected"):
+        with pytest.raises(EventBusConnectionError, match="Not connected"):
             await bus.bind_routing_key("some.key")
 
 
@@ -11173,14 +11168,14 @@ class TestBatchPublishingConfig:
     """Tests for batch publishing configuration options."""
 
     def test_default_batch_size(self) -> None:
-        """Test default batch_size is 100."""
+        """Test default publish_chunk_size is 100."""
         config = RabbitMQEventBusConfig()
-        assert config.batch_size == 100
+        assert config.publish_chunk_size == 100
 
     def test_custom_batch_size(self) -> None:
-        """Test custom batch_size configuration."""
-        config = RabbitMQEventBusConfig(batch_size=50)
-        assert config.batch_size == 50
+        """Test custom publish_chunk_size configuration."""
+        config = RabbitMQEventBusConfig(publish_chunk_size=50)
+        assert config.publish_chunk_size == 50
 
     def test_default_max_concurrent_publishes(self) -> None:
         """Test default max_concurrent_publishes is 10."""
@@ -11264,7 +11259,7 @@ class TestPublishBatchMethod:
             rabbitmq_url="amqp://test:test@localhost/",
             exchange_name="test-events",
             consumer_group="test-group",
-            batch_size=10,
+            publish_chunk_size=10,
             max_concurrent_publishes=5,
         )
 
@@ -11321,7 +11316,7 @@ class TestPublishBatchMethod:
 
         config = RabbitMQEventBusConfig(
             rabbitmq_url="amqp://test:test@localhost/",
-            batch_size=5,  # Small batch size to force chunking
+            publish_chunk_size=5,  # Small chunk size to force chunking
             max_concurrent_publishes=3,
         )
 
@@ -11344,7 +11339,7 @@ class TestPublishBatchMethod:
 
         assert result["total"] == 12
         assert result["published"] == 12
-        assert result["chunks"] == 3  # 12 events / 5 batch_size = 3 chunks
+        assert result["chunks"] == 3  # 12 events / 5 publish_chunk_size = 3 chunks
 
     @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
@@ -11454,7 +11449,7 @@ class TestPublishMethodBatchOptimization:
             rabbitmq_url="amqp://test:test@localhost/",
             exchange_name="test-events",
             consumer_group="test-group",
-            batch_size=10,
+            publish_chunk_size=10,
             max_concurrent_publishes=5,
         )
 

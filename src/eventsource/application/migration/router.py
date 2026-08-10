@@ -566,6 +566,14 @@ class TenantStoreRouter:
 
         Returns:
             List of FullEventStore instances for writing
+
+        Raises:
+            StoreNotFoundError: If the routing record names a
+                target_store_id that has not been registered. Unlike the
+                other store lookups in this class, there is no sensible
+                default to fall back to here -- a dual-write phase that
+                silently dropped its target would make writes disappear
+                without any signal.
         """
         routing = await self._routing_repo.get_routing(tenant_id)
 
@@ -582,8 +590,9 @@ class TenantStoreRouter:
 
             if routing.target_store_id:
                 target_store = self._stores.get(routing.target_store_id)
-                if target_store:
-                    stores.append(target_store)
+                if target_store is None:
+                    raise StoreNotFoundError(routing.target_store_id)
+                stores.append(target_store)
 
             return stores
 

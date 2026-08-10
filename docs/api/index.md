@@ -49,7 +49,7 @@ shape the public methods take.
 ### Public Import Surface (`from eventsource import ...`)
 
 `eventsource.__all__` is the supported public surface. It contains 130 names when the
-SQLite extra is absent and 133 when it is present (`SQLITE_AVAILABLE`, `SQLiteEventStore`,
+SQLite extra is absent and 133 when it is present (`AIOSQLITE_AVAILABLE`, `SQLiteEventStore`,
 and `SQLiteOutboxRepository` are the only names conditionally appended). The barrel is
 deliberately flat —
 `from eventsource import DomainEvent, AggregateRoot, InMemoryEventStore` is the idiomatic
@@ -76,7 +76,7 @@ The exported names fall into these groups:
 | Sync adapters | `SyncEventStoreAdapter` |
 | Serialization | `EventSourceJSONEncoder` |
 | Exceptions | `EventSourceError` and its subclasses |
-| Availability flags | `REDIS_AVAILABLE`, `KAFKA_AVAILABLE`, `RABBITMQ_AVAILABLE`, and `SQLITE_AVAILABLE` when the extra is installed |
+| Availability flags | `REDIS_AVAILABLE`, `KAFKA_AVAILABLE`, `RABBITMQ_AVAILABLE`, and `AIOSQLITE_AVAILABLE` when the extra is installed |
 
 Several public subsystems ship in the package but are **not** re-exported at the top
 level. They are imported from their own modules: `eventsource.testing`,
@@ -92,7 +92,7 @@ A few names are also narrower at the barrel than in their defining adapter packa
 Snapshots are the clearest case: `PostgreSQLSnapshotStore` (`eventsource.adapters.postgresql`)
 and `SQLiteSnapshotStore` plus its own `SQLiteNotAvailableError`
 (`eventsource.adapters.sqlite`) are not re-exported at the top level, though the
-top-level `SQLITE_AVAILABLE` flag does cover the SQLite snapshot store along with the
+top-level `AIOSQLITE_AVAILABLE` flag does cover the SQLite snapshot store along with the
 SQLite event store. Persistent snapshot stores are therefore imported path-only, e.g.
 `from eventsource.adapters.postgresql import PostgreSQLSnapshotStore`.
 
@@ -142,15 +142,15 @@ if REDIS_AVAILABLE:
 follow the other pattern: `SQLiteEventStore`, `SQLiteCheckpointRepository`,
 `SQLiteDLQRepository`, and `SQLiteOutboxRepository` are imported by the barrel inside a
 `try/except ImportError`. When `aiosqlite` is not installed they are not bound at all,
-and `from eventsource import SQLiteEventStore` raises `ImportError`. `SQLITE_AVAILABLE`
+and `from eventsource import SQLiteEventStore` raises `ImportError`. `AIOSQLITE_AVAILABLE`
 is always defined as a module attribute, but it is appended to `__all__` — along with the
 four SQLite names — only when the import succeeded. That conditional extension accounts
 for the 102-versus-107 difference in the export count.
 
 ```python
-from eventsource import SQLITE_AVAILABLE
+from eventsource import AIOSQLITE_AVAILABLE
 
-if SQLITE_AVAILABLE:
+if AIOSQLITE_AVAILABLE:
     from eventsource import SQLiteEventStore
 ```
 
@@ -360,7 +360,7 @@ top-level package re-exports `Snapshot`, `SnapshotStore`, `InMemorySnapshotStore
 the four `Snapshot*Error` types. `PostgreSQLSnapshotStore` (from
 `eventsource.adapters.postgresql`), `SQLiteSnapshotStore` and its own
 `SQLiteNotAvailableError` (from `eventsource.adapters.sqlite`) are not re-exported at
-the top level, though top-level `SQLITE_AVAILABLE` does cover SQLite snapshot support;
+the top level, though top-level `AIOSQLITE_AVAILABLE` does cover SQLite snapshot support;
 `SnapshotPolicy`, `SnapshotScheduler`, and their implementations are a further
 module-level import from `eventsource.application.aggregates.snapshotting`. Persistent
 snapshot storage is therefore always written path-only, e.g.
@@ -593,7 +593,7 @@ core dependencies installed — `pydantic` and `sqlalchemy`. No extra, no driver
 running service is required to import them.
 
 With every extra installed, `eventsource.__all__` holds 107 names. Without the SQLite
-extra it holds 102: the five SQLite names (`SQLITE_AVAILABLE`, `SQLiteEventStore`,
+extra it holds 102: the five SQLite names (`AIOSQLITE_AVAILABLE`, `SQLiteEventStore`,
 `SQLiteCheckpointRepository`, `SQLiteOutboxRepository`, `SQLiteDLQRepository`) are the
 only entries that are appended conditionally. Everything else in `__all__` is bound
 unconditionally by `src/eventsource/__init__.py` and is therefore always available in
@@ -773,13 +773,13 @@ without the extra and fails only when constructed. See
 ### The SQLite exception
 
 SQLite is the one group whose barrel exports are conditional. `__init__.py` attempts the
-imports inside a `try`/`except ImportError`, sets `SQLITE_AVAILABLE` accordingly, and
+imports inside a `try`/`except ImportError`, sets `AIOSQLITE_AVAILABLE` accordingly, and
 extends `__all__` only when the import succeeded:
 
 ```python
-if SQLITE_AVAILABLE:
+if AIOSQLITE_AVAILABLE:
     __all__.extend([
-        "SQLITE_AVAILABLE",
+        "AIOSQLITE_AVAILABLE",
         "SQLiteEventStore",
         "SQLiteCheckpointRepository",
         "SQLiteOutboxRepository",
@@ -789,7 +789,7 @@ if SQLITE_AVAILABLE:
 
 Consequences worth knowing:
 
-- `from eventsource import SQLITE_AVAILABLE` always works — the name is bound as a module
+- `from eventsource import AIOSQLITE_AVAILABLE` always works — the name is bound as a module
   attribute in both branches. Only its presence in `__all__` (and therefore in
   `from eventsource import *`) is conditional.
 - `from eventsource import SQLiteEventStore` raises `ImportError` when `aiosqlite` is
@@ -797,17 +797,19 @@ Consequences worth knowing:
   code must run in both configurations:
 
   ```python
-  from eventsource import SQLITE_AVAILABLE
+  from eventsource import AIOSQLITE_AVAILABLE
 
-  if SQLITE_AVAILABLE:
+  if AIOSQLITE_AVAILABLE:
       from eventsource import SQLiteEventStore
   ```
 
 - `SQLiteSnapshotStore` (`eventsource.adapters.sqlite`) is not imported at the top
-  level at all, so it is not gated by the top-level `SQLITE_AVAILABLE` flag. The
-  `eventsource.adapters.sqlite` package exposes its own `SQLITE_AVAILABLE` (plus
-  `AIOSQLITE_AVAILABLE` for the event store) -- import path-only and check that
-  flag, or catch `SQLiteNotAvailableError` from the constructor.
+  level at all, so it is not gated by the top-level `AIOSQLITE_AVAILABLE` flag. The
+  `eventsource.adapters.sqlite` package exposes the same `AIOSQLITE_AVAILABLE`
+  flag (re-exported from `store.py`; `snapshots.py`'s identically-guarded copy
+  is module-internal, not re-exported, since the two always agree) -- import
+  path-only and check that flag, or catch `SQLiteNotAvailableError` from the
+  constructor.
 
 ### Names imported from submodules
 
@@ -1101,7 +1103,7 @@ classmethods rather than passed as a raw int:
 | --- | --- | --- | --- |
 | `InMemoryEventStore` | barrel, `eventsource.adapters.memory` | core only | `InMemoryEventStore(store_id: str = "memory", *, event_registry: EventRegistry \| None = None)` |
 | `PostgreSQLEventStore` | barrel, `eventsource.adapters.postgresql` | `asyncpg` at runtime | `PostgreSQLEventStore(engine: AsyncEngine, event_registry=None, *, store_id=None, create_schema=False, outbox_enabled=False)` |
-| `SQLiteEventStore` | barrel when `SQLITE_AVAILABLE`, `eventsource.adapters.sqlite` | `aiosqlite` | `SQLiteEventStore(database: str, event_registry=None, *, store_id=None, wal_mode=True, busy_timeout=5000)` |
+| `SQLiteEventStore` | barrel when `AIOSQLITE_AVAILABLE`, `eventsource.adapters.sqlite` | `aiosqlite` | `SQLiteEventStore(database: str, event_registry=None, *, store_id=None, wal_mode=True, busy_timeout=5000)` |
 
 All three implement `FullEventStore` structurally — no inheritance from the port
 Protocols. All three also resolve every appended event's `event_type` through their

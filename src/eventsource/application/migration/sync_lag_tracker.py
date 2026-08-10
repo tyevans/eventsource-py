@@ -48,11 +48,13 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+from eventsource.application.migration.metrics import get_migration_metrics
 from eventsource.observability import (
     ATTR_TENANT_ID,
     Tracer,
     create_tracer,
 )
+from eventsource.observability.attributes import ATTR_MIGRATION_SYNC_LAG_EVENTS
 from eventsource.ports import FeedReadOptions, FullEventStore, Position
 from eventsource.ports.migration.models import MigrationConfig, SyncLag
 
@@ -165,6 +167,7 @@ class SyncLagTracker:
         config: MigrationConfig | None = None,
         tenant_id: UUID | None = None,
         *,
+        migration_id: UUID | None = None,
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
         max_sample_history: int = 100,
@@ -177,6 +180,12 @@ class SyncLagTracker:
             target_store: The target event store being migrated to.
             config: Migration configuration (defaults to MigrationConfig()).
             tenant_id: Optional tenant ID for logging and tracing.
+            migration_id: Optional migration ID. When set, each
+                `calculate_lag()` call reports its result to that
+                migration's `MigrationMetrics` (the `migration.sync.lag`
+                gauge). Omitted by tests and any caller not tracking a
+                specific migration -- lag is still computed and returned
+                either way, only the metric emission is skipped.
             tracer: Optional custom Tracer instance.
             enable_tracing: Whether to enable OpenTelemetry tracing.
             max_sample_history: Maximum number of lag samples to retain
@@ -189,6 +198,7 @@ class SyncLagTracker:
         self._target = target_store
         self._config = config or MigrationConfig()
         self._tenant_id = tenant_id
+        self._migration_id = migration_id
         self._max_sample_history = max_sample_history
 
         # Lag tracking state
@@ -272,7 +282,7 @@ class SyncLagTracker:
                 ATTR_TENANT_ID: str(self._tenant_id) if self._tenant_id else None,
                 ATTR_SYNC_THRESHOLD: self._config.cutover_max_lag_events,
             },
-        ):
+        ) as span:
             threshold = self._config.cutover_max_lag_events
 
             # Read one past the bound so "at the bound" and "over the
@@ -283,6 +293,9 @@ class SyncLagTracker:
                 FeedReadOptions(tenant_id=self._tenant_id, limit=threshold + 1),
             ):
                 lag_events += 1
+
+            if span is not None:
+                span.set_attribute(ATTR_MIGRATION_SYNC_LAG_EVENTS, lag_events)
 
             count_is_bounded = lag_events > threshold
 
@@ -301,6 +314,12 @@ class SyncLagTracker:
             # Store and sample
             self._current_lag = lag
             self._add_sample(lag)
+
+            if self._migration_id is not None:
+                get_migration_metrics(
+                    str(self._migration_id),
+                    str(self._tenant_id) if self._tenant_id else "unknown",
+                ).record_sync_lag(lag_events)
 
             # Log the measurement
             logger.debug(

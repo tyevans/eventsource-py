@@ -69,11 +69,23 @@ if TYPE_CHECKING:
 __all__ = [
     "MAX_EVENTS_PER_REPLAY",
     "MAX_FAILURES_PER_REPLAY",
+    "REPLAY_BATCH_SIZE",
     "ReplayFailedError",
     "ReplayFailure",
     "ReplayReport",
     "replay",
 ]
+
+#: Envelopes one feed read will pull into memory at a time.
+#:
+#: A rebuild wants the whole log, but not resident at once: the in-tree
+#: adapters materialize a feed read fully before yielding the first envelope,
+#: so the bound has to be on the *read*, not on how the events are consumed.
+#: This is the peak allocation of a replay, so it trades memory against the
+#: number of round trips rather than against correctness -- every batch is
+#: folded before the next is read, and `from_position` is exclusive, so no
+#: event is seen twice and none is skipped.
+REPLAY_BATCH_SIZE = 1000
 
 #: Events one `replay` call will read before giving up.
 #:
@@ -192,6 +204,7 @@ async def replay(
     tenant_id: UUID | None = None,
     aggregate_type: str | None = None,
     strict: bool = False,
+    batch_size: int = REPLAY_BATCH_SIZE,
     max_events: int = MAX_EVENTS_PER_REPLAY,
     max_failures: int = MAX_FAILURES_PER_REPLAY,
     on_failure: Callable[[ReplayFailure], None] | None = None,
@@ -234,50 +247,71 @@ async def replay(
     applied = seen = truncated = 0
     failures: list[ReplayFailure] = []
     last_position: Position | None = None
-    options = (
-        FeedReadOptions(tenant_id=tenant_id, aggregate_type=aggregate_type)
-        if tenant_id is not None or aggregate_type is not None
-        else None
-    )
+    cursor = from_position
 
-    async for envelope in feed.read_all(from_position, options):
-        seen += 1
-        if seen > max_events:
-            raise RuntimeError(
-                f"replay read more than {max_events} events without the feed "
-                f"ending; the adapter's cursor is probably not advancing "
-                f"(last position: {last_position})"
-            )
-        last_position = envelope.position
+    # Read in bounded batches rather than one open-ended pass. A rebuild does
+    # want every event, but not all of them resident at once: the in-tree
+    # adapters materialize a feed read fully before yielding the first
+    # envelope, so an unbounded read is an unbounded allocation regardless of
+    # how the events are consumed. `max_events` cannot protect against that --
+    # it is downstream of the materialization and only fires once envelopes
+    # are already in hand.
+    while True:
+        options = FeedReadOptions(
+            tenant_id=tenant_id,
+            aggregate_type=aggregate_type,
+            limit=batch_size,
+        )
+        batch_count = 0
 
-        rejected = False
-        for projection in projections:
-            try:
-                await projection.handle(envelope.event)
-            except Exception as exc:
-                # Re-raising here is what would wedge the rebuild, so the
-                # exception is deliberately not narrowed: a projection may
-                # raise anything, and "this event did not apply" is the only
-                # distinction a rebuild can act on. It is *recorded* rather
-                # than swallowed -- see `ReplayFailure`.
-                failure = ReplayFailure(
-                    position=envelope.position,
-                    event_id=envelope.event.event_id,
-                    event_type=envelope.event.event_type,
-                    projection=type(projection).__name__,
-                    error=exc,
+        async for envelope in feed.read_all(cursor, options):
+            batch_count += 1
+            seen += 1
+            if seen > max_events:
+                raise RuntimeError(
+                    f"replay read more than {max_events} events without the feed "
+                    f"ending; the adapter's cursor is probably not advancing "
+                    f"(last position: {last_position})"
                 )
-                if on_failure is not None:
-                    on_failure(failure)
-                if strict:
-                    raise ReplayFailedError(failure=failure) from exc
-                if len(failures) < max_failures:
-                    failures.append(failure)
-                else:
-                    truncated += 1
-                rejected = True
-        if not rejected:
-            applied += 1
+            if envelope.position is not None:
+                last_position = envelope.position
+                cursor = envelope.position
+
+            rejected = False
+            for projection in projections:
+                try:
+                    await projection.handle(envelope.event)
+                except Exception as exc:
+                    # Re-raising here is what would wedge the rebuild, so the
+                    # exception is deliberately not narrowed: a projection may
+                    # raise anything, and "this event did not apply" is the only
+                    # distinction a rebuild can act on. It is *recorded* rather
+                    # than swallowed -- see `ReplayFailure`.
+                    failure = ReplayFailure(
+                        position=envelope.position,
+                        event_id=envelope.event.event_id,
+                        event_type=envelope.event.event_type,
+                        projection=type(projection).__name__,
+                        error=exc,
+                    )
+                    if on_failure is not None:
+                        on_failure(failure)
+                    if strict:
+                        raise ReplayFailedError(failure=failure) from exc
+                    if len(failures) < max_failures:
+                        failures.append(failure)
+                    else:
+                        truncated += 1
+                    rejected = True
+            if not rejected:
+                applied += 1
+
+        # A short batch means the feed is exhausted. A full batch that
+        # advanced no position would loop forever, so it is treated as
+        # exhausted too -- the same non-advancing-cursor condition
+        # `max_events` guards, caught one batch earlier.
+        if batch_count < batch_size or (batch_count > 0 and cursor is None):
+            break
 
     return ReplayReport(
         applied=applied,

@@ -183,6 +183,7 @@ nav:
       - "ADR-0056: Decider initial_state() Is Nullary": adrs/0056-decider-initial-state-is-nullary.md
       - "ADR-0057: Tenant Load Enforcement Is a Precondition": adrs/0057-tenant-load-enforcement.md
       - "ADR-0058: EventSourceError Is the Universal Exception Base": adrs/0058-eventsource-error-as-universal-base.md
+      - "ADR-0059: Subscription Delivery Is Ordered Per Subscription": adrs/0059-ordered-subscription-delivery.md
   - Development:
       - development/index.md
       - Contributing: development/contributing.md

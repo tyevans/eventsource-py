@@ -10,7 +10,8 @@ contract. Suites are sqlalchemy-free: they import only from
 Suites: `AppenderConformance`, `StreamReaderConformance`,
 `EventLookupConformance`, `GlobalFeedConformance`, `CategoryQueryConformance`,
 `SnapshotConformance`, `SnapshotTypeInvalidationConformance`,
-`SnapshotStoreConformance`, `ProjectionCheckpointsConformance`,
+`SnapshotStoreConformance`, `SnapshotDeserializationConformance`,
+`ProjectionCheckpointsConformance`,
 `SubscriptionPositionsConformance`, `CheckpointRepositoryConformance`,
 `DLQRepositoryConformance`, `DistributedLockConformance`, `OutboxRepositoryConformance`,
 `ReadModelRepositoryConformance`, `SupportsCloseConformance`,
@@ -40,6 +41,7 @@ from eventsource.testing.conformance_ports.outbox import OutboxRepositoryConform
 from eventsource.testing.conformance_ports.readmodels import ReadModelRepositoryConformance
 from eventsource.testing.conformance_ports.snapshots import (
     SnapshotConformance,
+    SnapshotDeserializationConformance,
     SnapshotStoreConformance,
     SnapshotTypeInvalidationConformance,
 )
@@ -54,6 +56,7 @@ __all__ = [
     "SnapshotConformance",
     "SnapshotTypeInvalidationConformance",
     "SnapshotStoreConformance",
+    "SnapshotDeserializationConformance",
     "ProjectionCheckpointsConformance",
     "SubscriptionPositionsConformance",
     "CheckpointRepositoryConformance",

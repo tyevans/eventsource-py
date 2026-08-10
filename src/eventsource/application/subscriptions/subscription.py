@@ -70,7 +70,7 @@ class SubscriptionState(Enum):
     """Receiving real-time events from the event bus."""
 
     PAUSED = "paused"
-    """Temporarily paused (backpressure or manual)."""
+    """Temporarily paused. See `PauseReason` for who asked."""
 
     STOPPED = "stopped"
     """Cleanly shut down."""
@@ -91,7 +91,12 @@ class PauseReason(Enum):
     """User-initiated pause via API call."""
 
     BACKPRESSURE = "backpressure"
-    """Automatic pause due to flow control backpressure."""
+    """Paused because a caller reported downstream pressure.
+
+    The library never pauses for this reason on its own -- delivery is
+    sequential, so there is no in-library backpressure to detect. This is
+    vocabulary for an application that pauses a subscription because *its*
+    downstream is struggling, so the reason is legible in health output."""
 
     MAINTENANCE = "maintenance"
     """Pause for maintenance operations."""

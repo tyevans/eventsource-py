@@ -198,7 +198,7 @@ except ImportError:
     REDIS_AVAILABLE = False
 ```
 
-`REDIS_AVAILABLE`, `RABBITMQ_AVAILABLE`, `KAFKA_AVAILABLE`, and (when the module loads) `SQLITE_AVAILABLE` are exported from the top-level package so you can branch on them, and the corresponding `*NotAvailableError` is raised only when you try to construct the backend. This is what keeps `import eventsource` working -- and the unit test suite runnable -- on a two-dependency install.
+`REDIS_AVAILABLE`, `RABBITMQ_AVAILABLE`, `KAFKA_AVAILABLE`, and (when the module loads) `AIOSQLITE_AVAILABLE` are exported from the top-level package so you can branch on them, and the corresponding `*NotAvailableError` is raised only when you try to construct the backend. This is what keeps `import eventsource` working -- and the unit test suite runnable -- on a two-dependency install.
 
 ## Optional Dependencies (Extras)
 
@@ -260,7 +260,7 @@ except ImportError:
 
 `SQLCheckpointRepository` and `SQLDLQRepository` (`eventsource.adapters.sql`) are not behind this guard: they are dialect-parameterized over the same SQLAlchemy async API PostgreSQL and SQLite both already require through the core `sqlalchemy` dependency, so they're unconditional exports regardless of which optional driver extra is installed.
 
-The practical consequence: `from eventsource import SQLiteEventStore` succeeds even without the `sqlite` extra installed -- the class is always exported. Check `SQLITE_AVAILABLE` (or `AIOSQLITE_AVAILABLE`) if you need to branch; constructing the store without `aiosqlite` installed raises a plain `ImportError` at `__init__` time, not at import time. `SQLiteSnapshotStore` behaves the same way but raises the more specific `SQLiteNotAvailableError` (a subclass of `ImportError`) from its constructor. `SQLiteOutboxRepository` is the one exception -- it is appended to `__all__` only when `SQLITE_AVAILABLE` is `True`, so it really is absent from the namespace without the extra.
+The practical consequence: `from eventsource import SQLiteEventStore` succeeds even without the `sqlite` extra installed -- the class is always exported. Check `AIOSQLITE_AVAILABLE` if you need to branch; constructing the store without `aiosqlite` installed raises a plain `ImportError` at `__init__` time, not at import time. `SQLiteSnapshotStore` behaves the same way but raises the more specific `SQLiteNotAvailableError` (a subclass of `ImportError`) from its constructor. `SQLiteOutboxRepository` is the one exception -- it is appended to `__all__` only when `AIOSQLITE_AVAILABLE` is `True`, so it really is absent from the namespace without the extra.
 
 The two backends are not interchangeable in storage representation. PostgreSQL uses `JSONB` columns and the `uuid-ossp` extension; SQLite has no `JSONB` type, so payloads are stored as `TEXT`. Choose PostgreSQL for production, SQLite for embedded deployments and fast local integration tests without Docker.
 

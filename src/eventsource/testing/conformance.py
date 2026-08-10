@@ -7,9 +7,9 @@ suite to validate correctness.
 
 Store implementers should use `eventsource.testing.conformance_ports` instead:
 the per-port suites there (`AppenderConformance`, `StreamReaderConformance`,
-`EventLookupConformance`, `GlobalFeedConformance`, `CategoryQueryConformance`,
-`TypeQueryConformance`) are the store conformance surface -- richer and more
-granular than the retired `EventStoreConformanceSuite` that used to live here.
+`EventLookupConformance`, `GlobalFeedConformance`, `CategoryQueryConformance`)
+are the store conformance surface -- richer and more granular than the retired
+`EventStoreConformanceSuite` that used to live here.
 
 Example:
     >>> class MyEventBusConformanceTests(EventBusConformanceSuite):

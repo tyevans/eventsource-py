@@ -26,6 +26,7 @@ from eventsource.adapters.kafka import (
 from eventsource.domain.event import DomainEvent
 from eventsource.domain.event_registry import EventRegistry
 from eventsource.domain.exceptions import HandlerDispatchError
+from eventsource.ports.exceptions import EventBusConnectionError
 
 # --- Test Events ---
 # Prefixed with Sample to avoid pytest collection warnings
@@ -212,7 +213,7 @@ class TestKafkaEventBusConfig:
         assert config.consumer_name is not None  # Auto-generated
         assert config.acks == "all"
         assert config.compression_type == "gzip"
-        assert config.batch_size == 16384
+        assert config.producer_max_batch_bytes == 16384
         assert config.linger_ms == 5
         assert config.auto_offset_reset == "earliest"
         assert config.security_protocol == "PLAINTEXT"
@@ -578,7 +579,7 @@ class TestKafkaEventBusConfigProducerConsumer:
             bootstrap_servers="kafka:9092",
             acks="all",
             compression_type="gzip",
-            batch_size=32768,
+            producer_max_batch_bytes=32768,
             linger_ms=10,
             security_protocol="PLAINTEXT",
         )
@@ -628,6 +629,54 @@ class TestKafkaEventBusConfigProducerConsumer:
         assert consumer_config["client_id"] == "worker-1"
         assert consumer_config["auto_offset_reset"] == "earliest"
         assert consumer_config["enable_auto_commit"] is False
+        assert consumer_config["fetch_max_bytes"] == 52428800
+        assert consumer_config["max_partition_fetch_bytes"] == 1048576
+
+    def test_get_consumer_config_fetch_bounds_configurable(self) -> None:
+        """fetch_max_bytes/max_partition_fetch_bytes reach the consumer kwargs."""
+        config = KafkaEventBusConfig(
+            fetch_max_bytes=1024,
+            max_partition_fetch_bytes=512,
+            security_protocol="PLAINTEXT",
+        )
+
+        consumer_config = config.get_consumer_config()
+
+        assert consumer_config["fetch_max_bytes"] == 1024
+        assert consumer_config["max_partition_fetch_bytes"] == 512
+
+    def test_get_consumer_config_overrides(self) -> None:
+        """Keyword overrides win over the derived defaults (used by DLQ consumers)."""
+        config = KafkaEventBusConfig(
+            consumer_group="main-group",
+            security_protocol="PLAINTEXT",
+        )
+
+        consumer_config = config.get_consumer_config(group_id=None, consumer_timeout_ms=5000)
+
+        assert consumer_config["group_id"] is None
+        assert consumer_config["consumer_timeout_ms"] == 5000
+        # Unrelated defaults are still present.
+        assert consumer_config["fetch_max_bytes"] == 52428800
+
+    def test_get_security_config_matches_producer_and_consumer(self) -> None:
+        """get_security_config() is the same derivation used everywhere else."""
+        config = KafkaEventBusConfig(
+            security_protocol="SASL_SSL",
+            sasl_mechanism="PLAIN",
+            sasl_username="user",
+            sasl_password="pass",
+            ssl_check_hostname=False,
+        )
+
+        security_config = config.get_security_config()
+        consumer_config = config.get_consumer_config()
+        producer_config = config.get_producer_config()
+
+        assert security_config["ssl_check_hostname"] is False
+        for key in security_config:
+            assert consumer_config[key] == security_config[key]
+            assert producer_config[key] == security_config[key]
 
     def test_get_consumer_config_with_security(self) -> None:
         """Test consumer configuration with security settings."""
@@ -836,7 +885,7 @@ class TestKafkaEventBus:
         """Test publishing without connection raises error."""
         bus = KafkaEventBus(event_registry=event_registry)
 
-        with pytest.raises(RuntimeError, match="Not connected"):
+        with pytest.raises(EventBusConnectionError, match="Not connected"):
             await bus.publish([sample_event])
 
     @pytest.mark.asyncio
@@ -1127,7 +1176,7 @@ class TestKafkaEventBusMetricsInfrastructure:
         assert hasattr(metrics, "publish_duration")
         assert hasattr(metrics, "consume_duration")
         assert hasattr(metrics, "handler_duration")
-        assert hasattr(metrics, "batch_size")
+        assert hasattr(metrics, "batch_publish_size")
 
 
 @pytest.mark.skipif(not KAFKA_AVAILABLE, reason="aiokafka not installed")

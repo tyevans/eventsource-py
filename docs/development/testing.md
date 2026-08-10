@@ -406,7 +406,7 @@ The package subdirectories mirror source packages one-for-one: `aggregates/`, `b
 `adapters/`, `ports/`, `application/subscriptions/`, `sync/`, and `testing/`. These hold the deeper,
 feature-specific coverage — `migration/` alone has 25 modules covering dual-write,
 cutover, position mapping, and chaos scenarios, and `application/subscriptions/` has 15 covering
-backpressure, drain, retry, health, and pause/resume.
+sequential delivery, drain, retry, health, and pause/resume.
 
 The rule of thumb when adding a module: if it exercises one source package in depth, put
 it in the matching subdirectory; if it exercises a public contract that spans packages,

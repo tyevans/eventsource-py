@@ -2,7 +2,8 @@
 
 import time
 from collections.abc import AsyncIterator
-from uuid import uuid4
+from datetime import UTC, datetime
+from uuid import UUID, uuid4
 
 import aiosqlite
 import pytest
@@ -29,6 +30,7 @@ from eventsource.testing.conformance_ports import (  # noqa: E402
     EventLookupConformance,
     GlobalFeedConformance,
     OutboxRepositoryConformance,
+    SnapshotDeserializationConformance,
     SnapshotStoreConformance,
     StreamReaderConformance,
 )
@@ -81,7 +83,7 @@ class TestSQLiteCategoryQuery(CategoryQueryConformance):
         await store.close()
 
 
-class TestSQLiteSnapshotStore(SnapshotStoreConformance):
+class TestSQLiteSnapshotStore(SnapshotStoreConformance, SnapshotDeserializationConformance):
     @pytest.fixture
     async def store(self) -> AsyncIterator[SQLiteSnapshotStore]:
         # ":memory:" works because the store keeps one connection open for
@@ -90,6 +92,37 @@ class TestSQLiteSnapshotStore(SnapshotStoreConformance):
         store = SQLiteSnapshotStore(":memory:")
         yield store
         await store.close()
+
+    async def _write_raw_state(
+        self,
+        store: SQLiteSnapshotStore,  # type: ignore[override]
+        *,
+        aggregate_id: UUID,
+        aggregate_type: str,
+        raw_state: str,
+    ) -> None:
+        # Writes the same columns save_snapshot() does, except `state` is
+        # the literal `raw_state` string instead of `json.dumps(...)` --
+        # exercising get_snapshot()'s deserialization on genuinely
+        # malformed content, which save_snapshot() itself can never produce.
+        conn = await store._conn()
+        async with store._lock:
+            await conn.execute(
+                """
+                INSERT INTO snapshots
+                    (aggregate_id, aggregate_type, version, schema_version, state, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(aggregate_id),
+                    aggregate_type,
+                    1,
+                    1,
+                    raw_state,
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+            await conn.commit()
 
 
 class TestSQLiteCheckpointRepository(CheckpointRepositoryConformance):

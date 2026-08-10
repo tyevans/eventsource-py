@@ -12,8 +12,9 @@ This module provides:
 
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from eventsource.application.subscriptions.config import CheckpointStrategy
 from eventsource.application.subscriptions.filtering import EventFilter, FilterStats
@@ -42,6 +43,7 @@ from eventsource.observability.attributes import (
 )
 from eventsource.ports.envelopes import EventEnvelope, FeedReadOptions
 from eventsource.ports.positions import Position
+from eventsource.ports.subscribers import BatchSubscriber, supports_batch_handling
 
 if TYPE_CHECKING:
     from eventsource.ports.checkpoints import SubscriptionPositions
@@ -161,20 +163,34 @@ class CatchUpRunner:
                 subscription.subscriber,
             )
 
-        # Flow control for backpressure
-        self._flow_controller = FlowController(
-            max_in_flight=self.config.max_in_flight,
-            backpressure_threshold=self.config.backpressure_threshold,
-        )
+        # Detected once at construction time, not re-checked per batch --
+        # a subscriber's batch capability is a property of its class, not
+        # something that changes mid-run.
+        self._batch_capable = supports_batch_handling(subscription.subscriber)
 
-        # Retry mechanism with optional circuit breaker
-        self._circuit_breaker: CircuitBreaker | None = None
+        # In-flight tracking / drain latch for graceful shutdown
+        self._flow_controller = FlowController()
+
+        # Two independent circuit breakers, both built from the same
+        # CircuitBreakerConfig (there is one threshold/recovery_timeout
+        # knob, not two) -- one per failure domain, since a breaker guards
+        # one dependency and infra failures (store, checkpoint repo) and
+        # handler failures are unrelated dependencies. Sharing one breaker
+        # between them means a run of handler failures blocks checkpointing,
+        # which is a bug, not a feature.
+        self._infra_circuit_breaker: CircuitBreaker | None = None
+        self._handler_circuit_breaker: CircuitBreaker | None = None
         if self.config.circuit_breaker_enabled:
-            self._circuit_breaker = CircuitBreaker(self.config.get_circuit_breaker_config())
+            self._infra_circuit_breaker = CircuitBreaker(self.config.get_circuit_breaker_config())
+            self._handler_circuit_breaker = CircuitBreaker(self.config.get_circuit_breaker_config())
 
+        # Retry mechanism for infra ops (read-batch, checkpoint-save) only.
+        # Handler calls go through _call_guarded / _handler_circuit_breaker
+        # instead -- retrying a handler call would break the documented
+        # "nothing retries your handler" guarantee.
         self._retry = RetryableOperation(
             config=self.config.get_retry_config(),
-            circuit_breaker=self._circuit_breaker,
+            circuit_breaker=self._infra_circuit_breaker,
         )
 
         # Metrics instrumentation
@@ -308,6 +324,30 @@ class CatchUpRunner:
         """
         Process a single batch of events.
 
+        Dispatches to `_process_batch_grouped` when the subscriber supports
+        batch handling (`supports_batch_handling()`, checked once at
+        construction), otherwise to `_process_batch_single`. Capability
+        detection only -- non-batch subscribers see no behavior change.
+
+        Args:
+            target_position: Position to stop at
+
+        Returns:
+            A `_BatchOutcome` with the number of envelopes read (whether or
+            not the filter passed them) and the number of events delivered
+            to the subscriber.
+
+        Raises:
+            RetryError: If event store read fails after all retries
+        """
+        if self._batch_capable:
+            return await self._process_batch_grouped(target_position)
+        return await self._process_batch_single(target_position)
+
+    async def _process_batch_single(self, target_position: Position) -> _BatchOutcome:
+        """
+        Process a single batch of events, delivering one event at a time.
+
         Args:
             target_position: Position to stop at
 
@@ -417,6 +457,236 @@ class CatchUpRunner:
 
         return _BatchOutcome(envelopes_read=len(envelopes), events_delivered=events_in_batch)
 
+    async def _process_batch_grouped(self, target_position: Position) -> _BatchOutcome:
+        """
+        Process a batch of events through the subscriber's `handle_batch()`.
+
+        Used only when the subscriber supports batch handling
+        (`supports_batch_handling()`, checked once at construction). The
+        whole batch is delivered as one unit and no position is recorded
+        until it settles -- the invariant batch delivery depends on to stay
+        a sanctioned exception to per-event sequential delivery (see
+        docs/adrs/0059-ordered-subscription-delivery.md, "Sanctioned ways
+        to increase throughput"). If `handle_batch()` raises, delivery falls
+        back to the same per-event path `_process_batch_single` uses --
+        one envelope at a time, position recorded immediately after each --
+        per `BatchSubscriber.handle_batch`'s documented contract
+        (`ports/subscribers.py`): "the subscription manager may retry
+        individual events using single-event handling." That fallback
+        preserves exactly as much progress as the non-batch runner would
+        have made on the same failure, rather than inventing new
+        partial-batch semantics.
+
+        Args:
+            target_position: Position to stop at
+
+        Returns:
+            A `_BatchOutcome` with the number of envelopes read (whether or
+            not the filter passed them) and the number of events delivered
+            to the subscriber.
+
+        Raises:
+            RetryError: If event store read fails after all retries
+        """
+        current_position = self.subscription.last_processed_position
+
+        envelopes = await self._read_batch_with_retry(current_position, self.config.batch_size)
+        if not envelopes:
+            self._reached_target = True
+            return _BatchOutcome(envelopes_read=0, events_delivered=0)
+        await self.subscription.record_events_seen(len(envelopes))
+
+        # Scan first: decide which envelopes belong to this unit of work and
+        # which of those pass the filter, without delivering anything yet --
+        # mirrors _process_batch_single's per-envelope stop/target/pause
+        # checks, just decoupled from dispatch since the batch is delivered
+        # as a whole.
+        included: list[tuple[EventEnvelope, bool]] = []  # (envelope, passes_filter)
+        for envelope in envelopes:
+            if self._stop_requested:
+                break
+
+            if envelope.position is None or envelope.position > target_position:
+                self._reached_target = True
+                break
+
+            await self.subscription.wait_if_paused()
+            if self._stop_requested:
+                break
+
+            included.append((envelope, self._filter.matches(envelope.event)))
+
+        deliverable = [envelope for envelope, passes in included if passes]
+
+        events_in_batch = 0
+        events_filtered = 0
+        delivered_this_batch = 0
+        last_envelope: EventEnvelope | None = None
+
+        try:
+            batch_succeeded = True
+            if deliverable:
+                async with await self._flow_controller.acquire():
+                    batch_succeeded = await self._deliver_batch(deliverable)
+
+            for envelope, passes in included:
+                if passes and not batch_succeeded:
+                    # Fall back to single-event delivery for this envelope.
+                    async with await self._flow_controller.acquire():
+                        await self._deliver_event(envelope)
+                        await self._record_and_checkpoint(envelope, passes)
+                else:
+                    # Either the batch already delivered it, or it was
+                    # filtered out and never needed delivery.
+                    await self._record_and_checkpoint(envelope, passes)
+
+                delivered_this_batch += 1
+                last_envelope = envelope
+                if passes:
+                    events_in_batch += 1
+                else:
+                    events_filtered += 1
+        finally:
+            # Same reconciliation as _process_batch_single: an abandoned
+            # tail (stop, exception, or target reached mid-scan) must not
+            # inflate the seen-counter permanently.
+            undelivered = len(envelopes) - delivered_this_batch
+            if undelivered > 0:
+                await self.subscription.record_events_unseen(undelivered)
+
+        # Checkpoint after batch if configured
+        if (
+            (events_in_batch > 0 or events_filtered > 0)
+            and last_envelope is not None
+            and self.config.checkpoint_strategy == CheckpointStrategy.EVERY_BATCH
+        ):
+            await self._save_checkpoint_with_retry(last_envelope)
+
+        logger.debug(
+            "Batch processed via handle_batch",
+            extra={
+                "subscription": self.subscription.name,
+                "batch_size": events_in_batch,
+                "events_filtered": events_filtered,
+                "position": render_position(self.subscription.last_processed_position),
+            },
+        )
+
+        return _BatchOutcome(envelopes_read=len(envelopes), events_delivered=events_in_batch)
+
+    async def _record_and_checkpoint(self, envelope: EventEnvelope, passes_filter: bool) -> None:
+        """
+        Record one envelope's position and, if it passed the filter and the
+        checkpoint strategy calls for it, checkpoint immediately.
+
+        Delivery is not this method's job -- by the time it is called the
+        envelope has already been delivered (via `handle_batch()` or the
+        single-event fallback) or was filtered out and never needed
+        delivery. Shared by both branches of `_process_batch_grouped`.
+        """
+        await self.subscription.record_event_processed(
+            position=envelope.position,
+            event_id=envelope.event.event_id,
+            event_type=envelope.event.event_type,
+        )
+        if not passes_filter:
+            return
+        if self.config.checkpoint_strategy == CheckpointStrategy.EVERY_EVENT:
+            await self._save_checkpoint_with_retry(envelope)
+        elif self.config.checkpoint_strategy == CheckpointStrategy.PERIODIC:
+            await self._maybe_save_periodic_checkpoint(envelope)
+
+    async def _call_guarded[T](
+        self,
+        operation: Callable[[], Awaitable[T]],
+        operation_name: str,
+    ) -> T:
+        """
+        Call `operation` through the handler circuit breaker, if configured.
+
+        Guards handler calls (`handle()`/`handle_batch()`) specifically --
+        `self._handler_circuit_breaker`, never `self._infra_circuit_breaker`
+        (which guards read-batch/checkpoint-save via `self._retry` instead).
+        The two are independent instances so a run of handler failures
+        cannot block checkpointing, and a flaky store cannot silence a
+        broken handler's signal.
+
+        The call is gated but never retried here: `CircuitBreaker.execute()`
+        calls `operation` at most once, raising `CircuitBreakerOpenError`
+        instead of calling it at all when the breaker is OPEN. This is
+        deliberately not routed through `self._retry`
+        (`RetryableOperation`'s exponential-backoff loop) -- "nothing
+        retries your handler" (docs/guides/subscriptions.md) stays true
+        whether or not a circuit breaker is configured. Both success and
+        failure feed the breaker's consecutive-failure count -- a single
+        failure sandwiched between successes resets it to zero on the next
+        success, so only a *run* of consecutive handler failures opens the
+        circuit, not the occasional bad event (see the `handler_circuit_breaker`
+        property docstring for why this means DLQ'd events need no special
+        case).
+
+        Args:
+            operation: Zero-argument async callable to run
+            operation_name: Name for logging/tracing
+
+        Returns:
+            The operation's result
+
+        Raises:
+            CircuitBreakerOpenError: If the breaker is open
+            Exception: Whatever `operation` itself raises
+        """
+        if self._handler_circuit_breaker is not None:
+            return await self._handler_circuit_breaker.execute(operation, operation_name)
+        return await operation()
+
+    async def _deliver_batch(self, envelopes: list[EventEnvelope]) -> bool:
+        """
+        Deliver a batch of envelopes through `subscriber.handle_batch()`.
+
+        Returns:
+            True if the batch call succeeded. False if it raised, in which
+            case the caller falls back to per-event delivery -- per
+            `BatchSubscriber.handle_batch`'s documented contract
+            (`ports/subscribers.py`).
+
+        Metrics are recorded per event using the batch's total duration
+        divided evenly across it; this is an approximation, since
+        `handle_batch()` reports no per-event timing.
+        """
+        events = [envelope.event for envelope in envelopes]
+        with self._tracer.span(
+            "eventsource.catchup_runner.deliver_batch",
+            {
+                ATTR_SUBSCRIPTION_NAME: self.subscription.name,
+                ATTR_BATCH_SIZE: len(events),
+            },
+        ):
+            start_time = time.perf_counter()
+            try:
+                subscriber = cast(BatchSubscriber, self.subscription.subscriber)
+                await self._call_guarded(lambda: subscriber.handle_batch(events), "handle_batch")
+            except Exception as e:
+                logger.warning(
+                    "handle_batch failed, falling back to single-event delivery",
+                    extra={
+                        "subscription": self.subscription.name,
+                        "batch_size": len(events),
+                        "error": str(e),
+                    },
+                )
+                return False
+
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            per_event_duration_ms = duration_ms / len(events) if events else 0.0
+            for envelope in envelopes:
+                self._metrics.record_event_processed(
+                    event_type=envelope.event.event_type,
+                    duration_ms=per_event_duration_ms,
+                )
+            self._metrics.record_lag(self.subscription.lag)
+            return True
+
     async def _read_batch_with_retry(
         self,
         from_position: Position | None,
@@ -474,7 +744,8 @@ class CatchUpRunner:
         ):
             start_time = time.perf_counter()
             try:
-                await self.subscription.subscriber.handle(event)
+                subscriber = self.subscription.subscriber
+                await self._call_guarded(lambda: subscriber.handle(event), "handle_event")
                 # Record success metrics
                 duration_ms = (time.perf_counter() - start_time) * 1000
                 self._metrics.record_event_processed(
@@ -646,24 +917,50 @@ class CatchUpRunner:
         return self._flow_controller.stats
 
     @property
-    def is_backpressured(self) -> bool:
+    def handler_circuit_breaker(self) -> CircuitBreaker | None:
         """
-        Check if runner is experiencing backpressure.
+        Get the circuit breaker guarding the subscriber's `handle()`/
+        `handle_batch()` calls.
+
+        Every handler outcome -- success or failure -- feeds this breaker
+        uniformly, regardless of `continue_on_error` or whether the event
+        is later routed to the DLQ by the caller's own error handler (the
+        runner does not DLQ automatically; see
+        docs/guides/subscriptions.md#route-permanently-failed-events-to-the-dead-letter-queue).
+        A DLQ'd event needs no special case: `CircuitBreaker.record_success`
+        resets the consecutive-failure count to zero on the very next
+        success, so an isolated bad event sandwiched between good ones never
+        opens the circuit -- only a *run* of consecutive handler failures
+        does, which is the signal that the handler itself, not one poisoned
+        event, is broken.
+
+        Independent from `infra_circuit_breaker`: a broken handler cannot
+        block checkpointing, and a flaky store cannot mask a broken
+        handler's signal.
 
         Returns:
-            True if at or above backpressure threshold
+            CircuitBreaker instance if `circuit_breaker_enabled`, None
+            otherwise
         """
-        return self._flow_controller.is_backpressured
+        return self._handler_circuit_breaker
 
     @property
-    def circuit_breaker(self) -> CircuitBreaker | None:
+    def infra_circuit_breaker(self) -> CircuitBreaker | None:
         """
-        Get the circuit breaker for this runner.
+        Get the circuit breaker guarding infrastructure operations
+        (read-batch, checkpoint-save) via `self._retry`.
+
+        Unchanged in behavior from before handler calls were gated:
+        transient store/checkpoint-repo failures feed this breaker, not
+        handler outcomes. Independent from `handler_circuit_breaker` for
+        the same reason a database connection pool and a broken handler are
+        different failures needing different signals.
 
         Returns:
-            CircuitBreaker instance if enabled, None otherwise
+            CircuitBreaker instance if `circuit_breaker_enabled`, None
+            otherwise
         """
-        return self._circuit_breaker
+        return self._infra_circuit_breaker
 
     @property
     def retry_operation(self) -> RetryableOperation:

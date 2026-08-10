@@ -58,18 +58,17 @@ alongside the rest of the coordination surface.
 
 `SubscriptionConfig` is a `@dataclass(frozen=True)` with defaults for every
 field, so `SubscriptionConfig()` is valid and describes a subscription that
-resumes from its last checkpoint, reads 100 events per batch, allows 1000 events
-in flight, checkpoints once per batch, retries failures up to five times with
-exponential backoff, and trips a circuit breaker after five consecutive
-failures. Overriding a field means overriding one decision, not restating the
-rest.
+resumes from its last checkpoint, reads 100 events per batch, checkpoints once
+per batch, retries failures up to five times with exponential backoff, and
+trips a circuit breaker after five consecutive failures. Overriding a field
+means overriding one decision, not restating the rest.
 
-The fields fall into six groups, each documented in its own subsection below:
+The fields fall into five groups, each documented in its own subsection below:
 
 | Group | Fields |
 | --- | --- |
-| Starting position and batching | `start_from`, `batch_size`, `max_in_flight` |
-| Backpressure and checkpointing | `backpressure_threshold`, `checkpoint_strategy`, `checkpoint_interval_seconds` |
+| Starting position and batching | `start_from`, `batch_size` |
+| Checkpointing | `checkpoint_strategy`, `checkpoint_interval_seconds` |
 | Timeouts | `processing_timeout`, `shutdown_timeout` |
 | Filtering | `event_types`, `aggregate_types`, `tenant_id` |
 | Error handling and retry | `continue_on_error`, `max_retries`, `initial_retry_delay`, `max_retry_delay`, `retry_exponential_base`, `retry_jitter` |
@@ -343,7 +342,7 @@ class SubscriptionConfig: ...
 ```
 
 A standard-library `dataclasses` dataclass — not a pydantic model — with a
-default for every one of its 20 fields, so `SubscriptionConfig()` is a complete,
+default for every one of its 18 fields, so `SubscriptionConfig()` is a complete,
 valid configuration. Frozen means assignment after construction raises
 `FrozenInstanceError`, and because `eq=True` is also in effect the class gets a
 value-based `__hash__`; the collection-shaped fields are typed as `tuple`
@@ -357,7 +356,7 @@ faster = replace(config, batch_size=500)
 ```
 
 Every constructor argument is keyword-usable and independent — overriding one
-field leaves the other 19 at their defaults. There is no partial-config or
+field leaves the others at their defaults. There is no partial-config or
 merge mechanism; a `SubscriptionConfig` is always the complete set of decisions
 for one subscription.
 
@@ -365,8 +364,6 @@ for one subscription.
 config = SubscriptionConfig(
     start_from="beginning",
     batch_size=500,
-    max_in_flight=2000,
-    backpressure_threshold=0.8,
 )
 ```
 
@@ -377,12 +374,12 @@ this gives a useful guarantee: a `SubscriptionConfig` you hold is a config that
 passed validation, and it cannot drift afterwards. Misconfiguration fails at
 construction, not halfway through a replay.
 
-The 20 fields fall into six groups, documented in the subsections that follow:
+The fields fall into five groups, documented in the subsections that follow:
 
 | Group | Fields |
 | --- | --- |
-| [Starting position and batching](#fields-starting-position-and-batching) | `start_from`, `batch_size`, `max_in_flight` |
-| [Backpressure and checkpointing](#fields-backpressure-and-checkpointing) | `backpressure_threshold`, `checkpoint_strategy`, `checkpoint_interval_seconds` |
+| [Starting position and batching](#fields-starting-position-and-batching) | `start_from`, `batch_size` |
+| [Checkpointing](#fields-checkpointing) | `checkpoint_strategy`, `checkpoint_interval_seconds` |
 | [Timeouts](#fields-timeouts) | `processing_timeout`, `shutdown_timeout` |
 | [Filtering](#fields-filtering-event_types-aggregate_types-tenant_id) | `event_types`, `aggregate_types`, `tenant_id` |
 | [Error handling and retry](#fields-error-handling-and-retry) | `continue_on_error`, `max_retries`, `initial_retry_delay`, `max_retry_delay`, `retry_exponential_base`, `retry_jitter` |
@@ -397,11 +394,10 @@ Those two methods are the only behavior on the class beyond validation —
 `eventsource.application.subscriptions.runners` are what interpret it.
 
 Defaults, in full, describe a subscription that resumes from its last
-checkpoint, reads 100 events per batch, allows 1000 in flight, signals
-backpressure at 80% of that, checkpoints once per batch, retries a failing
-event up to five times with exponential backoff, dead-letters it and continues,
-and trips a circuit breaker after five consecutive failures. If that
-description already matches what you want, pass no arguments at all.
+checkpoint, reads 100 events per batch, checkpoints once per batch, retries a
+failing event up to five times with exponential backoff, dead-letters it and
+continues, and trips a circuit breaker after five consecutive failures. If
+that description already matches what you want, pass no arguments at all.
 
 #### Fields: starting position and batching
 
@@ -409,12 +405,10 @@ description already matches what you want, pass no arguments at all.
 | --- | --- | --- |
 | `start_from` | `StartPosition` | `"checkpoint"` |
 | `batch_size` | `int` | `100` |
-| `max_in_flight` | `int` | `1000` |
 
-These three fields decide where a subscription begins reading and how much of
+These two fields decide where a subscription begins reading and how much of
 the stream it pulls in at a time. They are independent: `start_from` is read
-once at startup, `batch_size` shapes each catch-up read, and `max_in_flight`
-bounds concurrency for the lifetime of the runner.
+once at startup and `batch_size` shapes each catch-up read.
 
 ##### `start_from`
 
@@ -445,8 +439,11 @@ registration log entry.
 ##### `batch_size`
 
 The maximum number of events the **catch-up runner** requests from the event
-store per read. It has no effect on the live runner, which is pushed one event
-at a time from the bus and never reads in batches.
+store per read. The live runner also reads from the global feed in
+`batch_size`-limited chunks (it does not read from the bus — see
+[ADR 0047](../adrs/0047-live-runner-feed-driven-checkpointing.md)), but delivers
+events from that chunk to the subscriber one at a time regardless of
+`batch_size`; it does not (yet) dispatch through `handle_batch()`.
 
 Each iteration of the catch-up loop computes:
 
@@ -469,62 +466,37 @@ store round-trips and fewer checkpoint writes, and more replay on restart.
 `create_catch_up_config()` raises the default tenfold, to `1000`, for exactly
 that trade.
 
-Note that `batch_size` does not bound memory the way `max_in_flight` does — a
+Note that `batch_size` is the only per-read memory bound in this config — a
 batch is read into a list before its events are dispatched, so a very large
 `batch_size` holds a correspondingly large list of `EventEnvelope` objects.
+There is no separate concurrency knob: neither runner delivers concurrently.
+On the live runner, and on catch-up for a subscriber without `handle_batch()`,
+each `handle()` call is awaited to completion before the next event starts, so
+at most one event is ever in flight. On catch-up for a subscriber with
+`handle_batch()`, the whole read batch is handed to it as one call — still no
+concurrent delivery, but the unit of work is the batch rather than the event
+(see [Handle events in batches with handle_batch()](../guides/subscriptions.md#handle-events-in-batches-with-handle_batch)
+and [ordered delivery](../adrs/0059-ordered-subscription-delivery.md)).
 
 Both the configured value (`config.batch_size`) and the actual per-batch count
 (`events_in_batch`) appear in catch-up log records under the key `batch_size`;
 the configured value is also set as a span attribute on the catch-up span.
 
-##### `max_in_flight`
-
-The concurrency ceiling. Both runners construct a `FlowController` in their
-initialization with `max_in_flight=self.config.max_in_flight` and
-`backpressure_threshold=self.config.backpressure_threshold`, and the controller
-builds an `asyncio.Semaphore(max_in_flight)` from it. Every event acquires a
-slot before processing and releases it after, so at most `max_in_flight` events
-are in flight at once; `acquire()` blocks when the semaphore is exhausted.
-
-Two related behaviors come out of the same number:
-
-- **Pause/resume.** When `_in_flight` reaches `max_in_flight` the controller
-  enters its paused state (incrementing `pause_count` and logging
-  `"Backpressure: pausing"`); it leaves that state on the first release that
-  drops `_in_flight` below the ceiling.
-- **Backpressure signalling.** The soft trigger is
-  `int(max_in_flight * backpressure_threshold)` — with the defaults, 800 — so
-  `max_in_flight` is the denominator for
-  [`backpressure_threshold`](#fields-backpressure-and-checkpointing) and for the
-  controller's `utilization` property (`in_flight / max_in_flight`).
-
-`max_in_flight` must be `>= 1`; the same rule is enforced twice, once by
-`SubscriptionConfig.__post_init__` and again by `FlowController.__init__`.
-
 ##### Choosing values
 
-| Situation | `start_from` | `batch_size` | `max_in_flight` |
-| --- | --- | --- | --- |
-| Rebuild a projection from scratch | `"beginning"` | `1000` (or `create_catch_up_config()`) | default `1000` |
-| Resume a long-running projection | `"checkpoint"` (default) | default `100` | default `1000` |
-| Tail-follow new events only | `"end"` (or `create_live_only_config()`) | irrelevant — live runner | tune to handler cost |
-| Reprocess from a known incident position | that `int` | as for catch-up | default |
+| Situation | `start_from` | `batch_size` |
+| --- | --- | --- |
+| Rebuild a projection from scratch | `"beginning"` | `1000` (or `create_catch_up_config()`) |
+| Resume a long-running projection | `"checkpoint"` (default) | default `100` |
+| Tail-follow new events only | `"end"` (or `create_live_only_config()`) | irrelevant — live runner |
+| Reprocess from a known incident position | that `int` | as for catch-up |
 
-When handlers are slow or call out to a rate-limited dependency, lower
-`max_in_flight` rather than `batch_size` — `batch_size` controls read volume,
-`max_in_flight` controls how hard your handlers are driven.
-
-#### Fields: backpressure and checkpointing
+#### Fields: checkpointing
 
 | Field | Type | Default |
 | --- | --- | --- |
-| `backpressure_threshold` | `float` | `0.8` |
 | `checkpoint_strategy` | `CheckpointStrategy` | `CheckpointStrategy.EVERY_BATCH` |
 | `checkpoint_interval_seconds` | `float` | `5.0` |
-
-`backpressure_threshold` is a *fraction* of `max_in_flight`, not a count. The
-flow controller computes its trigger as `int(max_in_flight * backpressure_threshold)`
-— with the defaults, backpressure is signalled at 800 in-flight events.
 
 `checkpoint_interval_seconds` is consulted only under
 `CheckpointStrategy.PERIODIC`: both runners compare elapsed time against it and
@@ -614,9 +586,18 @@ runners.
 | `circuit_breaker_recovery_timeout` | `float` | `30.0` |
 
 `circuit_breaker_enabled` is the only one of the three the runners read
-directly: when true, they build a `CircuitBreaker` from
-`get_circuit_breaker_config()`; when false, no breaker is created and the other
-two fields have no effect (they are still validated).
+directly: when true, they build **two independent `CircuitBreaker`
+instances** from `get_circuit_breaker_config()`, one guarding the
+subscriber's `handle()`/`handle_batch()` calls (`handler_circuit_breaker`)
+and one guarding read-batch/checkpoint-save (`infra_circuit_breaker`). They
+share the same threshold and recovery timeout — there is one config knob,
+not two — but independent state: a run of handler failures cannot open the
+infra breaker and block checkpointing, and a flaky store cannot mask a
+broken handler. See [Handle events one at a
+time](../guides/subscriptions.md#handle-events-one-at-a-time) for what
+feeds the handler breaker and why a DLQ'd event alone never opens it. When
+`circuit_breaker_enabled` is false, neither breaker is created and the
+other two fields have no effect (they are still validated).
 
 #### Validation rules (`__post_init__`)
 
@@ -626,11 +607,9 @@ offending value, and most suggest a workable default.
 | Rule | Raised when |
 | --- | --- |
 | `batch_size` must be positive | `batch_size < 1` |
-| `max_in_flight` must be positive | `max_in_flight < 1` |
 | `processing_timeout` must be positive | `<= 0` |
 | `shutdown_timeout` must be positive | `<= 0` |
 | `checkpoint_interval_seconds` must be positive | `<= 0` |
-| `backpressure_threshold` must be between 0.0 and 1.0 | outside the inclusive range |
 | `max_retries` must be `>= 0` | negative (`0` is legal — it means no retries) |
 | `initial_retry_delay` must be positive | `<= 0` |
 | `max_retry_delay` must be positive | `<= 0` |
@@ -640,8 +619,8 @@ offending value, and most suggest a workable default.
 | `circuit_breaker_failure_threshold` must be `>= 1` | `< 1` |
 | `circuit_breaker_recovery_timeout` must be positive | `<= 0` |
 
-Note the boundaries: `backpressure_threshold` and `retry_jitter` accept both
-`0.0` and `1.0`; `retry_exponential_base` is strictly greater than `1.0`;
+Note the boundaries: `retry_jitter` accepts both `0.0` and `1.0`;
+`retry_exponential_base` is strictly greater than `1.0`;
 `start_from` has no numeric range to validate here at all now that the `int`
 member is gone — an unrecognized string value is only caught later by
 `StartFromResolver.resolve()`.
@@ -681,7 +660,10 @@ that `SubscriptionConfig` does not expose — it always takes the default. If yo
 need a different half-open allowance, construct the `CircuitBreaker` yourself
 rather than going through the subscription config.
 
-The runners only call this when `circuit_breaker_enabled` is true.
+The runners call this twice when `circuit_breaker_enabled` is true — once
+per breaker — so `handler_circuit_breaker` and `infra_circuit_breaker` are
+two separate `CircuitBreaker` objects built from equal config, not one
+object shared between both.
 
 ### `create_catch_up_config()`
 
@@ -696,8 +678,8 @@ Returns a `SubscriptionConfig` tuned for bulk catch-up: `start_from="checkpoint"
 `batch_size` as given (default `1000`, ten times the dataclass default), and
 `checkpoint_strategy` set to `CheckpointStrategy.EVERY_BATCH` when
 `checkpoint_every_batch` is true, `CheckpointStrategy.PERIODIC` when false.
-Every other field keeps its dataclass default — `max_in_flight` stays at
-`1000`, retry and circuit breaker settings are untouched.
+Every other field keeps its dataclass default — retry and circuit breaker
+settings are untouched.
 
 The `checkpoint_every_batch=False` branch selects `PERIODIC`, which then uses
 the default `checkpoint_interval_seconds=5.0`; it does not disable

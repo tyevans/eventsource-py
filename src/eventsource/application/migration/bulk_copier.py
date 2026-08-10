@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from eventsource.application.migration.exceptions import BulkCopyError
+from eventsource.application.migration.metrics import get_migration_metrics
 from eventsource.domain import StreamId
 from eventsource.domain.exceptions import DuplicateEventError, OptimisticLockError
 from eventsource.observability import Tracer, create_tracer
@@ -290,6 +291,7 @@ class BulkCopier:
         ):
             self._is_cancelled = False
             start_time = time.monotonic()
+            metrics = get_migration_metrics(str(migration.id), str(tenant_id))
 
             # Determine starting position (resume from checkpoint)
             from_position = migration.last_source_position
@@ -360,6 +362,7 @@ class BulkCopier:
                         # Report progress
                         elapsed = time.monotonic() - start_time
                         rate = events_copied / elapsed if elapsed > 0 else 0
+                        metrics.record_events_copied(len(batch), rate)
 
                         progress = BulkCopyProgress(
                             migration_id=migration.id,
@@ -397,6 +400,9 @@ class BulkCopier:
                         last_source_position,
                         last_target_position,
                     )
+                    elapsed = time.monotonic() - start_time
+                    rate = events_copied / elapsed if elapsed > 0 else 0
+                    metrics.record_events_copied(len(batch), rate)
 
                 # Final progress
                 elapsed = time.monotonic() - start_time

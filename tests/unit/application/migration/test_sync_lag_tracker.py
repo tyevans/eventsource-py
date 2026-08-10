@@ -371,6 +371,63 @@ class TestCalculateLag:
         assert len(tracker._lag_samples) == 1
 
     @pytest.mark.asyncio
+    async def test_calculate_lag_records_metric_when_migration_id_set(
+        self,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
+        config: MigrationConfig,
+    ) -> None:
+        """calculate_lag() reports through the real MigrationMetrics
+        instance for this migration when migration_id is set -- not a
+        standalone metrics object the test constructs and calls directly."""
+        from uuid import uuid4
+
+        from eventsource.application.migration.metrics import (
+            clear_metrics_registry,
+            get_migration_metrics,
+        )
+
+        clear_metrics_registry()
+        migration_id = uuid4()
+        # No tenant_id: seed_events() doesn't tag events with a tenant, and
+        # calculate_lag() would filter them out by a tenant that never
+        # matches. Exercises the "unknown" tenant fallback in the metrics
+        # key at the same time.
+        tracker = SyncLagTracker(
+            source_store=source_store,
+            target_store=target_store,
+            config=config,
+            migration_id=migration_id,
+            enable_tracing=False,
+        )
+        await seed_events(source_store, 7)
+
+        await tracker.calculate_lag()
+
+        snapshot = get_migration_metrics(str(migration_id), "unknown").get_snapshot()
+        assert snapshot.sync_lag_events == 7
+
+        clear_metrics_registry()
+
+    @pytest.mark.asyncio
+    async def test_calculate_lag_skips_metric_without_migration_id(
+        self,
+        tracker: SyncLagTracker,
+        source_store: InMemoryEventStore,
+    ) -> None:
+        """Without migration_id, calculate_lag() still works but records no
+        metric -- confirms the metric emission, not the lag calculation
+        itself, is what's gated."""
+        from eventsource.application.migration.metrics import clear_metrics_registry
+
+        clear_metrics_registry()
+        await seed_events(source_store, 3)
+
+        lag = await tracker.calculate_lag()
+
+        assert lag.events == 3
+
+    @pytest.mark.asyncio
     async def test_calculate_lag_zero_when_since_is_head(
         self,
         source_store: InMemoryEventStore,

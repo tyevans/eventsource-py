@@ -8,6 +8,23 @@ additional event-type/routing-key bindings exposed on the facade.
 The facade still owns the "is connected" concept; this collaborator only
 needs a live channel, obtained via
 :meth:`RabbitMQConnectionManager.require_channel`.
+
+Declaration-ordering invariant: ``declare_all()``/``redeclare()`` are the
+only callers reachable from the public API (via
+``RabbitMQConnectionManager.connect()``'s reconnect-callback run, before
+``_connected`` is set), and they always run after the channel exists and in
+dependency order (DLQ, then exchange, then queue, then binding). The
+``RuntimeError``s raised by ``_declare_exchange``/``_declare_queue``/
+``_declare_dlq`` (no channel) and ``_bind_queue`` (no queue/exchange yet)
+are therefore unreachable through that path -- they exist only because
+these are also invoked directly by tests/monkeypatched callers (see the
+``_declare_*`` delegation methods on ``RabbitMQEventBus``, kept for
+backward compatibility). They are deliberately plain ``RuntimeError``, not
+``EventBusConnectionError``: nothing a well-behaved caller of the *public*
+API can trigger raises them, so there is no user-facing contract to type --
+tripping one means this module's own call-order invariant was violated,
+which is a bug in the caller (test, monkeypatch, or a future internal
+change), not a "you forgot to call connect()" situation.
 """
 
 from __future__ import annotations
@@ -19,6 +36,7 @@ from eventsource.adapters.rabbitmq import serialization
 from eventsource.adapters.rabbitmq.config import RabbitMQEventBusConfig
 from eventsource.adapters.rabbitmq.models import QueueInfo
 from eventsource.domain.event import DomainEvent
+from eventsource.ports.exceptions import EventBusConnectionError
 
 if TYPE_CHECKING:
     from aio_pika.abc import AbstractExchange, AbstractQueue
@@ -174,7 +192,9 @@ class RabbitMQTopology:
         - headers: Route based on message header attributes
 
         Raises:
-            RuntimeError: If not connected to RabbitMQ.
+            RuntimeError: If called with no channel available -- an
+                internal call-order bug (see module docstring), not a
+                condition reachable by a caller of the public API.
         """
         channel = self._connection.require_channel()
 
@@ -215,7 +235,9 @@ class RabbitMQTopology:
         rejected messages are automatically routed to the DLQ.
 
         Raises:
-            RuntimeError: If not connected to RabbitMQ.
+            RuntimeError: If called with no channel available -- an
+                internal call-order bug (see module docstring), not a
+                condition reachable by a caller of the public API.
         """
         channel = self._connection.require_channel()
 
@@ -259,10 +281,16 @@ class RabbitMQTopology:
         If not set, an appropriate default is chosen based on exchange type.
 
         Raises:
-            RuntimeError: If queue or exchange not initialized
+            RuntimeError: If called before ``_declare_exchange()``/
+                ``_declare_queue()`` in the same ``declare_all()`` pass --
+                an internal call-order bug (see module docstring), not a
+                condition reachable by a caller of the public API.
         """
         if not self._consumer_queue or not self._exchange:
-            raise RuntimeError("Queue or exchange not initialized")
+            raise RuntimeError(
+                "_bind_queue() called before exchange/queue were declared -- "
+                "internal call-order bug, not a public-API condition"
+            )
 
         # Get effective routing key based on exchange type and config
         routing_key = self._config.get_effective_routing_key()
@@ -321,10 +349,10 @@ class RabbitMQTopology:
             event_type: The DomainEvent subclass to bind for.
 
         Raises:
-            RuntimeError: If queue/exchange not initialized.
+            EventBusConnectionError: If queue/exchange not initialized.
         """
         if not self._consumer_queue or not self._exchange:
-            raise RuntimeError("Not connected or queue/exchange not initialized")
+            raise EventBusConnectionError("Not connected or queue/exchange not initialized")
 
         # Generate routing key for this event type
         # Use the same pattern as publish: {aggregate_type}.{event_type}
@@ -365,10 +393,10 @@ class RabbitMQTopology:
                 For direct exchanges, this must be an exact match.
 
         Raises:
-            RuntimeError: If queue/exchange not initialized.
+            EventBusConnectionError: If queue/exchange not initialized.
         """
         if not self._consumer_queue or not self._exchange:
-            raise RuntimeError("Not connected or queue/exchange not initialized")
+            raise EventBusConnectionError("Not connected or queue/exchange not initialized")
 
         await self._consumer_queue.bind(
             exchange=self._exchange,
@@ -396,7 +424,9 @@ class RabbitMQTopology:
         after fixing the underlying issue.
 
         Raises:
-            RuntimeError: If not connected to RabbitMQ.
+            RuntimeError: If called with no channel available -- an
+                internal call-order bug (see module docstring), not a
+                condition reachable by a caller of the public API.
         """
         channel = self._connection.require_channel()
 

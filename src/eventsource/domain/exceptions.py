@@ -347,7 +347,7 @@ class SnapshotError(EventSourceError):
 
 class SnapshotDeserializationError(SnapshotError):
     """
-    Raised when a snapshot cannot be deserialized.
+    Signals that a snapshot cannot be deserialized.
 
     This typically occurs when:
     - The state JSON is malformed
@@ -356,6 +356,32 @@ class SnapshotDeserializationError(SnapshotError):
 
     The system handles this gracefully by falling back to full event
     replay, which will recreate the snapshot with valid data.
+
+    Who raises this:
+        `SQLiteSnapshotStore` and `PostgreSQLSnapshotStore` raise it from
+        `get_snapshot()` when the stored `state` column fails to deserialize
+        as JSON (SQLite's `TEXT` column has no server-side validation, so
+        this is a real corruption path there; PostgreSQL's `JSONB` column
+        rejects malformed JSON at write time, so the check there is
+        defense-in-depth against state written outside `save_snapshot()`).
+        `InMemorySnapshotStore` never deserializes at all -- it holds the
+        actual `Snapshot` object -- so it has no equivalent failure mode and
+        never raises this.
+
+        Regardless of source, callers never see it through the normal load
+        path: `read_valid_snapshot()` catches every failure from the store
+        and returns `None` so the aggregate replays in full -- a snapshot is
+        a read optimization, so the worst outcome of any snapshot failure is
+        a slower load, never a failed one (ADR 0017).
+
+        This type is also published for third-party `SnapshotStore`
+        implementors, who should raise it the same way to say precisely why
+        a snapshot was unusable rather than letting a bare `ValidationError`
+        or driver-specific exception escape, and for callers who wrap a
+        store to get stricter behavior than the default degradation. Catch
+        `SnapshotError` to handle the whole family at once.
+
+        The example below is written from inside such a store.
 
     Attributes:
         aggregate_id: ID of the aggregate whose snapshot failed
@@ -404,7 +430,7 @@ class SnapshotDeserializationError(SnapshotError):
 
 class SnapshotSchemaVersionError(SnapshotError):
     """
-    Raised when snapshot schema version doesn't match aggregate schema version.
+    Signals that a snapshot's schema version does not match the aggregate's.
 
     This is a normal occurrence during schema evolution. When an aggregate's
     state model changes and its schema_version is incremented, existing
@@ -414,6 +440,19 @@ class SnapshotSchemaVersionError(SnapshotError):
     1. Logging the version mismatch
     2. Falling back to full event replay
     3. Optionally creating a new snapshot with the updated schema
+
+    Who raises this:
+        Not the library, and here that is by design rather than by tolerance.
+        Bumping `schema_version` is the documented way to invalidate stale
+        snapshots, so a mismatch is an *expected* condition on a deliberate
+        migration -- `read_valid_snapshot()` logs it at INFO and replays. An
+        exception would turn a routine schema rollout into an outage. Use
+        `SnapshotStore.delete_snapshots_by_type(schema_version_below=N)` to
+        clear the dead snapshots afterwards.
+
+        This type is published for `SnapshotStore` implementors that validate
+        versions themselves and for callers wanting stricter behavior than the
+        default degradation. Catch `SnapshotError` to handle the whole family.
 
     Attributes:
         aggregate_id: ID of the aggregate
@@ -463,11 +502,22 @@ class SnapshotSchemaVersionError(SnapshotError):
 
 class SnapshotNotFoundError(SnapshotError):
     """
-    Raised when a snapshot is expected but not found.
+    Signals that a snapshot was required but not found.
 
     Note: This exception is rarely raised in practice because missing
     snapshots are a normal condition (graceful fallback to event replay).
     It's provided for cases where a snapshot is explicitly required.
+
+    Who raises this:
+        Not the library. A missing snapshot is not an error -- every
+        aggregate's first load has none -- so `get_snapshot()` returns `None`
+        and the aggregate replays in full, silently.
+
+        This type is published for callers who genuinely require a snapshot to
+        exist (a tool that reports snapshot coverage, or a load path that
+        refuses to replay a very long stream) and for `SnapshotStore`
+        implementors with the same requirement. Catch `SnapshotError` to
+        handle the whole family.
 
     Attributes:
         aggregate_id: ID of the aggregate

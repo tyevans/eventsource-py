@@ -12,6 +12,7 @@ This module provides:
 
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -39,7 +40,7 @@ from eventsource.observability.attributes import (
     ATTR_POSITION,
     ATTR_SUBSCRIPTION_NAME,
 )
-from eventsource.ports.envelopes import EventEnvelope
+from eventsource.ports.envelopes import EventEnvelope, FeedReadOptions
 from eventsource.ports.positions import Position
 
 if TYPE_CHECKING:
@@ -116,6 +117,12 @@ class LiveRunner:
 
     # Internal state - not part of init
     _running: bool = field(default=False, init=False, repr=False)
+    # Mirrors `CatchUpRunner._stop_requested`: a distinct signal from
+    # `_running` so `stop()` can interrupt a drain already in flight
+    # (checked per envelope in `_drain_feed`) without depending on `start()`
+    # having been called first -- `_running` alone stays False in that case
+    # and would otherwise prevent the drain from doing anything.
+    _stop_requested: bool = field(default=False, init=False, repr=False)
     _subscribed: bool = field(default=False, init=False, repr=False)
     # Counts of wake signals, not events. The feed is the source of truth for
     # what to process, so buffering only needs to remember *that* wakes
@@ -131,7 +138,8 @@ class LiveRunner:
     _last_checkpoint_time: float = field(default=0.0, init=False, repr=False)
     _flow_controller: FlowController | None = field(default=None, init=False, repr=False)
     _filter: EventFilter | None = field(default=None, init=False, repr=False)
-    _circuit_breaker: CircuitBreaker | None = field(default=None, init=False, repr=False)
+    _infra_circuit_breaker: CircuitBreaker | None = field(default=None, init=False, repr=False)
+    _handler_circuit_breaker: CircuitBreaker | None = field(default=None, init=False, repr=False)
     _retry: RetryableOperation | None = field(default=None, init=False, repr=False)
     _metrics: SubscriptionMetrics | None = field(default=None, init=False, repr=False)
     _handlers: dict[type[DomainEvent], "_LiveEventHandler"] = field(
@@ -145,10 +153,7 @@ class LiveRunner:
         self._enable_tracing = self._tracer.enabled
 
         self.config = self.subscription.config
-        self._flow_controller = FlowController(
-            max_in_flight=self.config.max_in_flight,
-            backpressure_threshold=self.config.backpressure_threshold,
-        )
+        self._flow_controller = FlowController()
 
         # Event filtering - create from config/subscriber
         self._filter = EventFilter.from_config_and_subscriber(
@@ -156,13 +161,19 @@ class LiveRunner:
             self.subscription.subscriber,
         )
 
-        # Initialize retry mechanism with optional circuit breaker
+        # Two independent circuit breakers, both built from the same
+        # CircuitBreakerConfig -- one per failure domain. See
+        # CatchUpRunner.__post_init__ for the full reasoning: a shared
+        # breaker means a run of handler failures blocks checkpointing.
         if self.config.circuit_breaker_enabled:
-            self._circuit_breaker = CircuitBreaker(self.config.get_circuit_breaker_config())
+            self._infra_circuit_breaker = CircuitBreaker(self.config.get_circuit_breaker_config())
+            self._handler_circuit_breaker = CircuitBreaker(self.config.get_circuit_breaker_config())
 
+        # Retry mechanism for infra ops (checkpoint-save) only. Handler
+        # calls go through _call_guarded / _handler_circuit_breaker instead.
         self._retry = RetryableOperation(
             config=self.config.get_retry_config(),
-            circuit_breaker=self._circuit_breaker,
+            circuit_breaker=self._infra_circuit_breaker,
         )
 
         # Metrics instrumentation
@@ -187,6 +198,7 @@ class LiveRunner:
                 return
 
             self._running = True
+            self._stop_requested = False
             self._buffer_enabled = buffer_events
             self._last_checkpoint_time = time.monotonic()
 
@@ -280,21 +292,60 @@ class LiveRunner:
         Read and process every envelope on the global feed past our checkpoint.
 
         This is the single ordered source of live events: the subscription's
-        `last_processed_position` is re-read before each envelope is
+        `last_processed_position` is re-read before each bounded read is
         requested from `event_feed`, so a drain always starts exactly where
         the last one (or catch-up) left off. No duplicate suppression is
         needed -- a position is read from the feed at most once.
+
+        Each read is bounded by `config.batch_size` (`FeedReadOptions.limit`,
+        the same knob catch-up uses) rather than draining the feed in one
+        unbounded call -- adapters materialize the full result set before
+        yielding the first envelope, so an unbounded live read is a memory
+        hazard on a busy feed. The loop re-reads bounded batches until one
+        comes back short of the limit (the feed has nothing more right now).
+
+        `_stop_requested` and `subscription.wait_if_paused()` are checked
+        before every envelope, mirroring `CatchUpRunner._process_batch`, so
+        `stop()` and `pause()` take effect mid-drain instead of only at the
+        next wake-up.
 
         Returns:
             Number of envelopes processed (including filtered ones)
         """
         processed = 0
-        from_position = self.subscription.last_processed_position
-        async for envelope in self.event_feed.read_all(from_position=from_position):
-            self._stats.events_received += 1
-            await self.subscription.record_events_seen(1)
-            await self._process_live_event(envelope)
-            processed += 1
+        options = FeedReadOptions(tenant_id=self.config.tenant_id, limit=self.config.batch_size)
+
+        while not self._stop_requested:
+            from_position = self.subscription.last_processed_position
+            envelopes_in_batch = 0
+            stopped = False
+
+            async for envelope in self.event_feed.read_all(
+                from_position=from_position, options=options
+            ):
+                if self._stop_requested:
+                    stopped = True
+                    break
+
+                await self.subscription.wait_if_paused()
+                if self._stop_requested:
+                    stopped = True
+                    break
+
+                self._stats.events_received += 1
+                await self.subscription.record_events_seen(1)
+                await self._process_live_event(envelope)
+                processed += 1
+                envelopes_in_batch += 1
+
+            if stopped:
+                break
+
+            # A batch shorter than the requested limit means the feed has
+            # nothing more right now -- stop polling until the next wake-up.
+            if envelopes_in_batch < self.config.batch_size:
+                break
+
         return processed
 
     async def _process_live_event(self, envelope: EventEnvelope) -> None:
@@ -347,7 +398,8 @@ class LiveRunner:
                 # Deliver to subscriber
                 start_time = time.perf_counter()
                 try:
-                    await self.subscription.subscriber.handle(event)
+                    subscriber = self.subscription.subscriber
+                    await self._call_guarded(lambda: subscriber.handle(event), "handle_event")
                     self._stats.events_processed += 1
 
                     # Record success metrics
@@ -450,6 +502,50 @@ class LiveRunner:
                 "position": render_position(position),
             },
         )
+
+    async def _call_guarded[T](
+        self,
+        operation: Callable[[], Awaitable[T]],
+        operation_name: str,
+    ) -> T:
+        """
+        Call `operation` through the handler circuit breaker, if configured.
+
+        Guards the handler call (`handle()`) specifically --
+        `self._handler_circuit_breaker`, never `self._infra_circuit_breaker`
+        (which guards checkpoint-save via `self._retry` instead). The two
+        are independent instances so a run of handler failures cannot block
+        checkpointing, and a flaky checkpoint repo cannot silence a broken
+        handler's signal.
+
+        The call is gated but never retried here: `CircuitBreaker.execute()`
+        calls `operation` at most once, raising `CircuitBreakerOpenError`
+        instead of calling it at all when the breaker is OPEN. This is
+        deliberately not routed through `self._retry`
+        (`RetryableOperation`'s exponential-backoff loop) -- "nothing
+        retries your handler" (docs/guides/subscriptions.md) stays true
+        whether or not a circuit breaker is configured. Both success and
+        failure feed the breaker's consecutive-failure count -- a single
+        failure sandwiched between successes resets it to zero on the next
+        success, so only a *run* of consecutive handler failures opens the
+        circuit, not the occasional bad event (see the `handler_circuit_breaker`
+        property docstring for why this means DLQ'd events need no special
+        case).
+
+        Args:
+            operation: Zero-argument async callable to run
+            operation_name: Name for logging/tracing
+
+        Returns:
+            The operation's result
+
+        Raises:
+            CircuitBreakerOpenError: If the breaker is open
+            Exception: Whatever `operation` itself raises
+        """
+        if self._handler_circuit_breaker is not None:
+            return await self._handler_circuit_breaker.execute(operation, operation_name)
+        return await operation()
 
     async def _save_checkpoint_with_retry(
         self,
@@ -624,6 +720,7 @@ class LiveRunner:
                 return
 
             self._running = False
+            self._stop_requested = True
 
             # Unsubscribe from bus using stored handler references
             if self._subscribed:
@@ -693,25 +790,43 @@ class LiveRunner:
         return self._flow_controller.stats
 
     @property
-    def is_backpressured(self) -> bool:
+    def handler_circuit_breaker(self) -> CircuitBreaker | None:
         """
-        Check if runner is experiencing backpressure.
+        Get the circuit breaker guarding the subscriber's `handle()` calls.
+
+        Every handler outcome -- success or failure -- feeds this breaker
+        uniformly, regardless of `continue_on_error` or whether the event
+        is later routed to the DLQ by the caller's own error handler.
+        `CircuitBreaker.record_success` resets the consecutive-failure
+        count to zero on the next success, so an isolated bad event never
+        opens the circuit -- only a *run* of consecutive handler failures
+        does. See `CatchUpRunner.handler_circuit_breaker` for the full
+        reasoning.
+
+        Independent from `infra_circuit_breaker`: a broken handler cannot
+        block checkpointing, and a flaky checkpoint repo cannot mask a
+        broken handler's signal.
 
         Returns:
-            True if at or above backpressure threshold
+            CircuitBreaker instance if `circuit_breaker_enabled`, None
+            otherwise
         """
-        assert self._flow_controller is not None
-        return self._flow_controller.is_backpressured
+        return self._handler_circuit_breaker
 
     @property
-    def circuit_breaker(self) -> CircuitBreaker | None:
+    def infra_circuit_breaker(self) -> CircuitBreaker | None:
         """
-        Get the circuit breaker for this runner.
+        Get the circuit breaker guarding checkpoint-save via `self._retry`.
+
+        Unchanged in behavior from before handler calls were gated:
+        transient checkpoint-repo failures feed this breaker, not handler
+        outcomes. Independent from `handler_circuit_breaker`.
 
         Returns:
-            CircuitBreaker instance if enabled, None otherwise
+            CircuitBreaker instance if `circuit_breaker_enabled`, None
+            otherwise
         """
-        return self._circuit_breaker
+        return self._infra_circuit_breaker
 
     @property
     def retry_operation(self) -> RetryableOperation | None:

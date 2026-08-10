@@ -63,7 +63,14 @@ class KafkaEventBusMetrics:
             Attributes: messaging.destination
         handler_duration: Histogram for handler execution time in ms.
             Attributes: handler.name, event.type
-        batch_size: Histogram for publish batch sizes. No attributes.
+        batch_publish_size: Histogram for publish batch sizes (message
+            count per ``publish()`` call). No attributes. Named distinctly
+            from ``KafkaEventBusConfig.producer_max_batch_bytes`` (a
+            producer-buffering byte threshold, unrelated) even though they
+            live on the same adapter -- the OTel instrument name itself,
+            ``kafka.eventbus.batch.size``, is unchanged (stable public
+            telemetry schema, ADR/architecture.md); only this Python
+            attribute name changed.
 
     Note:
         Observable gauges (connections.active, consumer.lag) are registered
@@ -148,7 +155,7 @@ class KafkaEventBusMetrics:
             description="Handler execution time",
             unit="ms",
         )
-        self.batch_size = meter.create_histogram(
+        self.batch_publish_size = meter.create_histogram(
             name="kafka.eventbus.batch.size",
             description="Publish batch size",
             unit="messages",

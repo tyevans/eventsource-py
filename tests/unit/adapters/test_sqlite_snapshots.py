@@ -12,7 +12,10 @@ import pytest
 from tests.conftest import AIOSQLITE_AVAILABLE, skip_if_no_aiosqlite
 
 if AIOSQLITE_AVAILABLE:
-    from eventsource.adapters.sqlite.snapshots import SQLITE_AVAILABLE, SQLiteSnapshotStore
+    from eventsource.adapters.sqlite.snapshots import (
+        AIOSQLITE_AVAILABLE as SNAPSHOTS_AIOSQLITE_AVAILABLE,
+    )
+    from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
     from eventsource.ports.lifecycle import SupportsClose
     from eventsource.ports.snapshots import Snapshot
 
@@ -24,8 +27,8 @@ class TestSQLiteSnapshotStoreConfiguration:
     """Tests for SQLiteSnapshotStore configuration."""
 
     def test_sqlite_available_flag(self):
-        """Test that SQLITE_AVAILABLE is True when aiosqlite is installed."""
-        assert SQLITE_AVAILABLE is True
+        """Test that snapshots.AIOSQLITE_AVAILABLE is True when aiosqlite is installed."""
+        assert SNAPSHOTS_AIOSQLITE_AVAILABLE is True
 
     def test_init_with_path(self):
         """Test initialization with a database path."""

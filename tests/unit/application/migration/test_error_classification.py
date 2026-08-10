@@ -40,7 +40,6 @@ from eventsource.application.migration.exceptions import (
     MigrationNotFoundError,
     MigrationStateError,
     PositionMappingError,
-    RoutingError,
 )
 from eventsource.ports.migration.models import MigrationPhase
 
@@ -316,7 +315,6 @@ class TestErrorIntegration:
             BulkCopyError(uuid4(), None, "error"),
             DualWriteError(uuid4(), "error"),
             PositionMappingError("test", uuid4()),
-            RoutingError("test", uuid4()),
             CircuitBreakerOpenError("op", 10.0),
         ]
 

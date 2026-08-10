@@ -933,6 +933,54 @@ class TestCompleteCutover:
         assert migration_id not in coordinator._lag_trackers
         assert migration_id not in coordinator._target_stores
 
+    @pytest.mark.asyncio
+    async def test_complete_cutover_releases_migration_metrics(self) -> None:
+        """_complete_cutover() -- the real successful-completion path fired
+        by trigger_cutover() -- releases this migration's MigrationMetrics
+        and drops it from ActiveMigrationsTracker. Guards against the
+        release call living on the dead _complete_migration() method
+        instead, where it would never run."""
+        from eventsource.application.migration.metrics import (
+            ActiveMigrationsTracker,
+            clear_metrics_registry,
+            get_migration_metrics,
+        )
+
+        clear_metrics_registry()
+        migration_id = uuid4()
+        tenant_id = uuid4()
+
+        migration = Migration(
+            id=migration_id,
+            tenant_id=tenant_id,
+            source_store_id="default",
+            target_store_id="dedicated",
+            phase=MigrationPhase.CUTOVER,
+        )
+
+        migration_repo = AsyncMock()
+        migration_repo.update_phase = AsyncMock()
+
+        coordinator = MigrationCoordinator(
+            source_store=MagicMock(),
+            migration_repo=migration_repo,
+            routing_repo=MagicMock(),
+            router=MagicMock(),
+            enable_tracing=False,
+        )
+
+        # Register metrics for this migration, as the bulk-copy/dual-write
+        # phases would have by the time cutover completes.
+        get_migration_metrics(str(migration_id), str(tenant_id))
+        tracker = ActiveMigrationsTracker.get_instance()
+        assert str(migration_id) in tracker.active_migrations
+
+        await coordinator._complete_cutover(migration)
+
+        assert str(migration_id) not in tracker.active_migrations
+
+        clear_metrics_registry()
+
 
 class TestStartMigrationStoresTargetStore:
     """Tests for start_migration storing target store reference."""

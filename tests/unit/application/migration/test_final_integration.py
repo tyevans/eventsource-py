@@ -61,6 +61,7 @@ from eventsource.application.migration.exceptions import (
     MigrationNotFoundError,
 )
 from eventsource.application.migration.metrics import (
+    ActiveMigrationsTracker,
     clear_metrics_registry,
     get_migration_metrics,
     release_migration_metrics,
@@ -2244,9 +2245,14 @@ class TestIntegrationOfAllPhase4Components:
         )
 
         # 8. Validate all components worked correctly
-        # Metrics snapshot
+        # Metrics snapshot. `start_migration` above already kicked off the
+        # real background bulk-copy pass, which (now that BulkCopier
+        # reports through get_migration_metrics()) records against this
+        # same migration_id/tenant_id -- so this test's manual simulation
+        # and the real pass both contribute, and the count is a lower
+        # bound rather than an exact 5.
         snapshot = metrics.get_snapshot()
-        assert snapshot.events_copied == 5
+        assert snapshot.events_copied >= 5
         assert "bulk_copy" in snapshot.phase_durations
         assert "dual_write" in snapshot.phase_durations
 
@@ -2322,3 +2328,51 @@ class TestIntegrationOfAllPhase4Components:
         # Verify clean state
         routing = await routing_repo.get_routing(tenant_id)
         assert routing.migration_state == TenantMigrationState.NORMAL
+
+    @pytest.mark.asyncio
+    async def test_bulk_copy_phase_reports_metrics_through_real_run(
+        self,
+        source_store: InMemoryEventStore,
+        target_store: InMemoryEventStore,
+        migration_repo: InMemoryMigrationRepository,
+        routing_repo: InMemoryRoutingRepository,
+        router: TenantStoreRouter,
+        lock_manager: MockLockManager,
+        tenant_id: UUID,
+    ) -> None:
+        """A migration driven end-to-end through the coordinator (not a
+        standalone MigrationMetrics the test constructs and calls
+        directly) reports bulk_copy phase duration and events copied, and
+        release_migration_metrics() at completion drops it from the
+        active-migrations gauge."""
+        await create_test_events(source_store, tenant_id, count=5)
+
+        coordinator = MigrationCoordinator(
+            source_store=source_store,
+            migration_repo=migration_repo,
+            routing_repo=routing_repo,
+            router=router,
+            lock_manager=lock_manager,
+            source_store_id="default",
+            enable_tracing=False,
+        )
+        router.register_store("dedicated", target_store)
+
+        migration = await coordinator.start_migration(
+            tenant_id=tenant_id,
+            target_store=target_store,
+            target_store_id="dedicated",
+        )
+
+        await coordinator.wait_for_phase(migration.id, MigrationPhase.DUAL_WRITE, timeout=5.0)
+
+        tracker = ActiveMigrationsTracker.get_instance()
+        assert str(migration.id) in tracker.active_migrations
+
+        snapshot = get_migration_metrics(str(migration.id), str(tenant_id)).get_snapshot()
+        assert snapshot.events_copied == 5
+        assert snapshot.phase_durations.get("bulk_copy", 0.0) > 0.0
+
+        await coordinator.abort_migration(migration.id, reason="test cleanup")
+
+        assert str(migration.id) not in tracker.active_migrations

@@ -19,6 +19,7 @@ Example:
 
 import asyncio
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -38,6 +39,7 @@ from eventsource.application.subscriptions.subscription import Subscription, Sub
 
 if TYPE_CHECKING:
     from eventsource.application.subscriptions.registry import SubscriptionRegistry
+    from eventsource.application.subscriptions.retry import CircuitBreaker
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +68,8 @@ class HealthCheckProvider:
         error_handlers: dict[str, SubscriptionErrorHandler],
         config: HealthCheckConfig | None = None,
         lock: asyncio.Lock | None = None,
+        handler_circuit_breaker_lookup: "Callable[[str], CircuitBreaker | None] | None" = None,
+        infra_circuit_breaker_lookup: "Callable[[str], CircuitBreaker | None] | None" = None,
     ) -> None:
         """
         Initialize the health check provider.
@@ -75,11 +79,28 @@ class HealthCheckProvider:
             error_handlers: Error handlers for subscriptions
             config: Health check configuration
             lock: Optional shared lock for thread safety
+            handler_circuit_breaker_lookup: Callable from subscription name
+                to that subscription's currently active handler
+                `CircuitBreaker` (guards `handle()`/`handle_batch()`), or
+                `None` if none exists yet. Looked up fresh per subscription,
+                not captured at registration time, because no runner (and so
+                no `CircuitBreaker`) exists yet when `register_subscription()`
+                runs -- runners are created later, during `start()`.
+                `SubscriptionLifecycleManager.get_handler_circuit_breaker`
+                is the production lookup; `manager.py` wires it through.
+            infra_circuit_breaker_lookup: Same shape, for the infra breaker
+                (guards read-batch/checkpoint-save) --
+                `SubscriptionLifecycleManager.get_infra_circuit_breaker`.
+                Reported as a separate health indicator from the handler
+                breaker: the two guard unrelated failure domains and an
+                operator needs to know which one opened.
         """
         self._registry = registry
         self._error_handlers = error_handlers
         self._config = config or HealthCheckConfig()
         self._lock = lock or asyncio.Lock()
+        self._handler_circuit_breaker_lookup = handler_circuit_breaker_lookup
+        self._infra_circuit_breaker_lookup = infra_circuit_breaker_lookup
         self._health_checkers: dict[str, SubscriptionHealthChecker] = {}
         self._started_at: datetime | None = None
 
@@ -98,10 +119,28 @@ class HealthCheckProvider:
         Returns:
             The created SubscriptionHealthChecker
         """
+        name = subscription.name
+
+        handler_circuit_breaker_provider = None
+        if self._handler_circuit_breaker_lookup is not None:
+            handler_lookup = self._handler_circuit_breaker_lookup
+
+            def handler_circuit_breaker_provider() -> "CircuitBreaker | None":
+                return handler_lookup(name)
+
+        infra_circuit_breaker_provider = None
+        if self._infra_circuit_breaker_lookup is not None:
+            infra_lookup = self._infra_circuit_breaker_lookup
+
+            def infra_circuit_breaker_provider() -> "CircuitBreaker | None":
+                return infra_lookup(name)
+
         checker = SubscriptionHealthChecker(
             subscription=subscription,
             config=self._config,
             error_handler=error_handler,
+            handler_circuit_breaker_provider=handler_circuit_breaker_provider,
+            infra_circuit_breaker_provider=infra_circuit_breaker_provider,
         )
         self._health_checkers[subscription.name] = checker
         return checker
