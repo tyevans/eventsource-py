@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 from eventsource.application.projections.base import DeclarativeProjection, TenantFilter
 from eventsource.application.projections.checkpoints import record_checkpoint
 from eventsource.application.projections.dlq import send_to_dlq
-from eventsource.application.projections.retry import RetryPolicy
+from eventsource.application.projections.retry import ProjectionRetryPolicy
 from eventsource.domain.event import DomainEvent
 from eventsource.observability import Tracer
 from eventsource.observability.attributes import (
@@ -89,7 +89,7 @@ class DatabaseProjection(DeclarativeProjection):
         dlq_repo: DLQRepository | None = None,
         enable_tracing: bool = False,
         *,
-        retry_policy: RetryPolicy | None = None,
+        retry_policy: ProjectionRetryPolicy | None = None,
         tracer: Tracer | None = None,
         tenant_filter: TenantFilter = None,
     ) -> None:

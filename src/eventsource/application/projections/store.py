@@ -25,7 +25,7 @@ from eventsource.application.projections.base import (
     DeclarativeProjection,
     TenantFilter,
 )
-from eventsource.application.projections.retry import RetryPolicy
+from eventsource.application.projections.retry import ProjectionRetryPolicy
 from eventsource.observability import Tracer
 from eventsource.ports.checkpoints import ProjectionCheckpoints
 from eventsource.ports.dlq import DLQRepository
@@ -43,7 +43,7 @@ class ProjectionOptions(TypedDict, total=False):
     checkpoint_repo: ProjectionCheckpoints | None
     dlq_repo: DLQRepository | None
     enable_tracing: bool
-    retry_policy: RetryPolicy | None
+    retry_policy: ProjectionRetryPolicy | None
     tracer: Tracer | None
     tenant_filter: TenantFilter
 

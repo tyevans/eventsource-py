@@ -34,7 +34,7 @@ from eventsource.application.projections.dlq import send_to_dlq
 from eventsource.application.projections.handlers import HandlerRegistry
 from eventsource.application.projections.retry import (
     ExponentialBackoffRetryPolicy,
-    RetryPolicy,
+    ProjectionRetryPolicy,
 )
 from eventsource.domain.event import DomainEvent
 from eventsource.observability import Tracer, create_tracer
@@ -179,7 +179,7 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
     Provides:
     - Automatic checkpoint management after each event
     - Idempotent event processing
-    - Retry logic with exponential backoff (configurable via RetryPolicy)
+    - Retry logic with exponential backoff (configurable via ProjectionRetryPolicy)
     - Dead letter queue for permanent failures
     - Lag monitoring support
     - Optional OpenTelemetry tracing support (disabled by default)
@@ -190,7 +190,7 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
     - _truncate_read_models(): Table truncation for reset
 
     Configuration:
-    - retry_policy: RetryPolicy instance for configurable retry behavior
+    - retry_policy: ProjectionRetryPolicy instance for configurable retry behavior
 
     Tracing:
     - Tracing is disabled by default for projections (high-frequency processing)
@@ -220,7 +220,7 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
         self,
         checkpoint_repo: ProjectionCheckpoints | None = None,
         dlq_repo: DLQRepository | None = None,
-        retry_policy: RetryPolicy | None = None,
+        retry_policy: ProjectionRetryPolicy | None = None,
         tracer: Tracer | None = None,
         enable_tracing: bool = False,
     ) -> None:
@@ -293,7 +293,7 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
         """
         Internal method that implements retry logic for event handling.
 
-        Uses the configured RetryPolicy for backoff and retry decisions.
+        Uses the configured ProjectionRetryPolicy for backoff and retry decisions.
 
         Args:
             event: The domain event to process
@@ -597,7 +597,7 @@ class DeclarativeProjection(CheckpointTrackingProjection):
         dlq_repo: DLQRepository | None = None,
         enable_tracing: bool = False,
         *,
-        retry_policy: RetryPolicy | None = None,
+        retry_policy: ProjectionRetryPolicy | None = None,
         tracer: Tracer | None = None,
         tenant_filter: TenantFilter = None,
     ) -> None:

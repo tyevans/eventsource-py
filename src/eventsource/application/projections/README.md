@@ -20,7 +20,7 @@ adapter, not a use case, and lives in `eventsource.adapters.sql.projection`.
 - `coordinator.py` -- `ProjectionCoordinator`, `ProjectionRegistry`, `SubscriberRegistry`
 - `checkpoints.py` -- `record_checkpoint`, `read_checkpoint`, `lag_metrics_dict`, `reset_checkpoint`
 - `dlq.py` -- `send_to_dlq`, `read_failed_events`
-- `retry.py` -- `RetryPolicy`, `ExponentialBackoffRetryPolicy`
+- `retry.py` -- `ProjectionRetryPolicy`, `ExponentialBackoffRetryPolicy`
 
 `checkpoints.py` and `dlq.py` replace the former `ProjectionCheckpointManager` and
 `ProjectionDLQManager` classes (ADR 0024). Those managers were stateless wrappers

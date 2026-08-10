@@ -10,7 +10,7 @@ for consistency across the codebase.
 
 Example:
     >>> from eventsource.application.projections.retry import (
-    ...     RetryPolicy,
+    ...     ProjectionRetryPolicy,
     ...     ExponentialBackoffRetryPolicy,
     ... )
     >>>
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
-class RetryPolicy(Protocol):
+class ProjectionRetryPolicy(Protocol):
     """
     Protocol for retry policies in projections.
 
@@ -233,7 +233,7 @@ class FilteredRetryPolicy:
 
     def __init__(
         self,
-        base_policy: RetryPolicy,
+        base_policy: ProjectionRetryPolicy,
         retryable_exceptions: tuple[type[Exception], ...],
     ) -> None:
         """
@@ -280,7 +280,7 @@ DEFAULT_RETRY_POLICY = ExponentialBackoffRetryPolicy()
 
 
 __all__ = [
-    "RetryPolicy",
+    "ProjectionRetryPolicy",
     "ExponentialBackoffRetryPolicy",
     "NoRetryPolicy",
     "FilteredRetryPolicy",

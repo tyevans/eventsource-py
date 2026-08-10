@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 from eventsource.adapters.sql.projection import DatabaseProjection
 from eventsource.application.projections.base import TenantFilter
-from eventsource.application.projections.retry import RetryPolicy
+from eventsource.application.projections.retry import ProjectionRetryPolicy
 from eventsource.domain.event import DomainEvent
 from eventsource.observability import Tracer
 from eventsource.observability.attributes import (
@@ -133,7 +133,7 @@ class ReadModelProjection[TModel: ReadModel](DatabaseProjection):
         dlq_repo: DLQRepository | None = None,
         enable_tracing: bool = False,
         *,
-        retry_policy: RetryPolicy | None = None,
+        retry_policy: ProjectionRetryPolicy | None = None,
         tracer: Tracer | None = None,
         tenant_filter: TenantFilter = None,
     ) -> None:
