@@ -890,12 +890,25 @@ awaited once per batch iteration and again before each event within a batch.
 Checking only between batches would mean a pause request during a 100-event
 batch waits for up to 100 handler invocations to drain; checking only within
 batches would leave a paused subscription spinning through the outer loop.
-Both call sites are followed by a `_stop_requested` re-check, because a
-subscription paused for an operator and then stopped must not resume into
-another batch on the way out. `stop()` itself only sets a flag -- the runner
-finishes the event in hand and stops at the next of those checks, which is what
-"graceful" means here: no torn event, and a checkpoint whose position is a
-position that was really processed.
+Both call sites are followed by a stop re-check, because a subscription paused
+for an operator and then stopped must not resume into another batch on the way
+out.
+
+**The wait itself wakes on stop, which is what makes that re-check
+reachable.** Each runner's stop signal is an `asyncio.Event`, and
+`wait_if_paused(stop_signal)` waits for whichever of resume-or-stop arrives
+first. Without this the re-check was dead code in the case it was written for:
+a runner parked in `wait_if_paused()` never returned from it, so `stop()` set
+its flag and returned having stopped nothing, and the subscription stayed
+parked until somebody resumed it — `stop()` was unreliable in precisely the
+state an operator chooses deliberately, and the state a shutdown is most likely
+to find. Waking on stop is not an implicit resume: the pause event is untouched,
+so a subscription stopped while paused still reports as paused.
+
+`stop()` itself only sets that event -- the runner finishes the event in hand
+and stops at the next of those checks, which is what "graceful" means here: no
+torn event, and a checkpoint whose position is a position that was really
+processed.
 
 **What the runner deliberately does not do** is as informative as what it does.
 It never touches the event bus -- its constructor takes a `GlobalEventFeed`, a

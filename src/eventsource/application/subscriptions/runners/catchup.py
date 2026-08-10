@@ -148,7 +148,13 @@ class CatchUpRunner:
         self.config = subscription.config
 
         self._running = False
-        self._stop_requested = False
+        # "Stop was requested" has exactly one declaration site: this event.
+        # `_stop_requested` below is a property derived from it, not a second
+        # copy -- a bool and an event tracking the same fact is precisely the
+        # shape that lets the two disagree (see .claude/rules/recurring-defects.md
+        # §2). It must be an event because `wait_if_paused()` has to be able to
+        # wake on it; a bool cannot be awaited.
+        self._stop_event = asyncio.Event()
         self._last_checkpoint_time: float = 0.0
         # Set once the feed is exhausted or an envelope past the target is
         # seen -- the loop's stop condition, since positions are opaque and
@@ -230,7 +236,7 @@ class CatchUpRunner:
             },
         ) as span:
             self._running = True
-            self._stop_requested = False
+            self._stop_event.clear()
             self._reached_target = False
             self._last_checkpoint_time = time.monotonic()
             total_processed = 0
@@ -264,7 +270,7 @@ class CatchUpRunner:
                 # only no-progress pathology into `_reached_target`.
                 while self._running and not self._stop_requested and not self._reached_target:
                     # Check for pause and wait if paused
-                    was_paused = await self.subscription.wait_if_paused()
+                    was_paused = await self.subscription.wait_if_paused(self._stop_event)
                     if was_paused:
                         # After resume, check if we should stop
                         if self._stop_requested or not self._running:
@@ -390,7 +396,7 @@ class CatchUpRunner:
                     break
 
                 # Check for pause within batch processing
-                await self.subscription.wait_if_paused()
+                await self.subscription.wait_if_paused(self._stop_event)
                 if self._stop_requested:
                     break
 
@@ -511,7 +517,7 @@ class CatchUpRunner:
                 self._reached_target = True
                 break
 
-            await self.subscription.wait_if_paused()
+            await self.subscription.wait_if_paused(self._stop_event)
             if self._stop_requested:
                 break
 
@@ -892,7 +898,7 @@ class CatchUpRunner:
         The runner will finish the current event and stop at the next
         safe point. This is an async method to allow for any cleanup.
         """
-        self._stop_requested = True
+        self._stop_event.set()
         logger.info(
             "Catch-up stop requested",
             extra={"subscription": self.subscription.name},
@@ -909,6 +915,14 @@ class CatchUpRunner:
         return self._running
 
     @property
+    def _stop_requested(self) -> bool:
+        """Whether `stop()` has been called, derived from `_stop_event`.
+
+        A read-only view, so the event stays the single writable site.
+        """
+        return self._stop_event.is_set()
+
+    @property
     def stop_requested(self) -> bool:
         """
         Check if a stop has been requested.
@@ -916,7 +930,7 @@ class CatchUpRunner:
         Returns:
             True if stop() has been called
         """
-        return self._stop_requested
+        return self._stop_event.is_set()
 
     @property
     def flow_controller(self) -> FlowController:

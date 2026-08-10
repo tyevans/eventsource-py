@@ -118,12 +118,17 @@ class LiveRunner:
 
     # Internal state - not part of init
     _running: bool = field(default=False, init=False, repr=False)
-    # Mirrors `CatchUpRunner._stop_requested`: a distinct signal from
-    # `_running` so `stop()` can interrupt a drain already in flight
-    # (checked per envelope in `_drain_feed`) without depending on `start()`
-    # having been called first -- `_running` alone stays False in that case
-    # and would otherwise prevent the drain from doing anything.
-    _stop_requested: bool = field(default=False, init=False, repr=False)
+    # Mirrors `CatchUpRunner._stop_event`: a distinct signal from `_running`
+    # so `stop()` can interrupt a drain already in flight (checked per
+    # envelope in `_drain_feed`) without depending on `start()` having been
+    # called first -- `_running` alone stays False in that case and would
+    # otherwise prevent the drain from doing anything.
+    #
+    # An `asyncio.Event` rather than a bool because `wait_if_paused()` must be
+    # able to wake on it: a drain parked waiting for a resume that may never
+    # come has to be interruptible. `_stop_requested` below reads this event
+    # rather than shadowing it, so there is one writable site for the fact.
+    _stop_event: asyncio.Event = field(default_factory=asyncio.Event, init=False, repr=False)
     _subscribed: bool = field(default=False, init=False, repr=False)
     # Counts of wake signals, not events. The feed is the source of truth for
     # what to process, so buffering only needs to remember *that* wakes
@@ -199,7 +204,7 @@ class LiveRunner:
                 return
 
             self._running = True
-            self._stop_requested = False
+            self._stop_event.clear()
             self._buffer_enabled = buffer_events
             self._last_checkpoint_time = time.monotonic()
 
@@ -328,7 +333,7 @@ class LiveRunner:
                     stopped = True
                     break
 
-                await self.subscription.wait_if_paused()
+                await self.subscription.wait_if_paused(self._stop_event)
                 if self._stop_requested:
                     stopped = True
                     break
@@ -739,7 +744,7 @@ class LiveRunner:
                 return
 
             self._running = False
-            self._stop_requested = True
+            self._stop_event.set()
 
             # Unsubscribe from bus using stored handler references
             if self._subscribed:
@@ -765,6 +770,14 @@ class LiveRunner:
     def is_running(self) -> bool:
         """Check if the runner is active."""
         return self._running
+
+    @property
+    def _stop_requested(self) -> bool:
+        """Whether `stop()` has been called, derived from `_stop_event`.
+
+        A read-only view, so the event stays the single writable site.
+        """
+        return self._stop_event.is_set()
 
     @property
     def buffer_size(self) -> int:
