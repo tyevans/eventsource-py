@@ -129,11 +129,11 @@ from eventsource.observability import (
 )
 ```
 
-Attribute constants are re-exported **selectively**. Five read-model and query
+Attribute constants are re-exported **selectively**. The read-model and query
 constants defined in `attributes.py` are exported from that module's `__all__`
 but are not re-exported from the package: `ATTR_READMODEL_TYPE`,
-`ATTR_READMODEL_ID`, `ATTR_READMODEL_OPERATION`, `ATTR_QUERY_FILTER_COUNT`, and
-`ATTR_QUERY_LIMIT`. Import those from the submodule directly:
+`ATTR_READMODEL_ID`, `ATTR_QUERY_FILTER_COUNT`, and `ATTR_QUERY_LIMIT`. Import
+those from the submodule directly:
 
 ```python
 from eventsource.observability.attributes import ATTR_READMODEL_TYPE

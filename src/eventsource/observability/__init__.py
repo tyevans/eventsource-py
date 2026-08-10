@@ -35,13 +35,11 @@ Note:
 """
 
 from eventsource.observability.attributes import (
-    ATTR_ACTOR_ID,
     # Aggregate
     ATTR_AGGREGATE_ID,
     ATTR_AGGREGATE_TYPE,
     ATTR_BATCH_SIZE,
     ATTR_BUFFER_SIZE,
-    ATTR_DB_NAME,
     ATTR_DB_OPERATION,
     # Database (OTEL semantic)
     ATTR_DB_SYSTEM,
@@ -51,10 +49,8 @@ from eventsource.observability.attributes import (
     ATTR_EVENT_ID,
     ATTR_EVENT_TYPE,
     ATTR_EVENTS_PROCESSED,
-    ATTR_EVENTS_SKIPPED,
     ATTR_EXPECTED_VERSION,
     ATTR_FROM_POSITION,
-    ATTR_FROM_VERSION,
     ATTR_HANDLER_COUNT,
     ATTR_HANDLER_NAME,
     ATTR_HANDLER_SUCCESS,
@@ -68,14 +64,10 @@ from eventsource.observability.attributes import (
     # Messaging (OTEL semantic)
     ATTR_MESSAGING_SYSTEM,
     # Migration
-    ATTR_MIGRATION_EVENTS_COPIED,
-    ATTR_MIGRATION_EVENTS_TOTAL,
     ATTR_MIGRATION_ID,
     ATTR_MIGRATION_PHASE,
-    ATTR_MIGRATION_PROGRESS_PERCENT,
     ATTR_MIGRATION_SOURCE_STORE,
     ATTR_MIGRATION_SYNC_LAG_EVENTS,
-    ATTR_MIGRATION_SYNC_LAG_MS,
     ATTR_MIGRATION_TARGET_STORE,
     ATTR_MIGRATION_TENANT_ID,
     ATTR_POSITION,
@@ -83,11 +75,9 @@ from eventsource.observability.attributes import (
     ATTR_PROJECTION_NAME,
     # Error/Retry
     ATTR_RETRY_COUNT,
-    ATTR_STREAM_ID,
     # Subscription
     ATTR_SUBSCRIPTION_NAME,
     ATTR_SUBSCRIPTION_PHASE,
-    ATTR_SUBSCRIPTION_STATE,
     # Tenant/Actor
     ATTR_TENANT_ID,
     ATTR_TO_POSITION,
@@ -133,20 +123,16 @@ __all__ = [
     # Attributes - Version
     "ATTR_VERSION",
     "ATTR_EXPECTED_VERSION",
-    "ATTR_FROM_VERSION",
     # Attributes - Tenant/Actor
     "ATTR_TENANT_ID",
-    "ATTR_ACTOR_ID",
     # Attributes - Component-specific
     "ATTR_PROJECTION_NAME",
     "ATTR_HANDLER_NAME",
     "ATTR_HANDLER_COUNT",
     "ATTR_HANDLER_SUCCESS",
-    "ATTR_STREAM_ID",
     "ATTR_POSITION",
     # Attributes - Database
     "ATTR_DB_SYSTEM",
-    "ATTR_DB_NAME",
     "ATTR_DB_OPERATION",
     # Attributes - Messaging
     "ATTR_MESSAGING_SYSTEM",
@@ -154,14 +140,12 @@ __all__ = [
     "ATTR_MESSAGING_OPERATION",
     # Attributes - Subscription
     "ATTR_SUBSCRIPTION_NAME",
-    "ATTR_SUBSCRIPTION_STATE",
     "ATTR_SUBSCRIPTION_PHASE",
     "ATTR_FROM_POSITION",
     "ATTR_TO_POSITION",
     "ATTR_BATCH_SIZE",
     "ATTR_BUFFER_SIZE",
     "ATTR_EVENTS_PROCESSED",
-    "ATTR_EVENTS_SKIPPED",
     "ATTR_WATERMARK",
     # Attributes - Error/Retry
     "ATTR_RETRY_COUNT",
@@ -172,11 +156,7 @@ __all__ = [
     "ATTR_MIGRATION_TENANT_ID",
     "ATTR_MIGRATION_SOURCE_STORE",
     "ATTR_MIGRATION_TARGET_STORE",
-    "ATTR_MIGRATION_EVENTS_COPIED",
-    "ATTR_MIGRATION_EVENTS_TOTAL",
-    "ATTR_MIGRATION_PROGRESS_PERCENT",
     "ATTR_MIGRATION_SYNC_LAG_EVENTS",
-    "ATTR_MIGRATION_SYNC_LAG_MS",
     # Attributes - Lock
     "ATTR_LOCK_KEY",
     "ATTR_LOCK_ID",

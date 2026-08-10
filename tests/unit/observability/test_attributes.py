@@ -2,10 +2,8 @@
 
 from eventsource.observability import attributes
 from eventsource.observability.attributes import (
-    ATTR_ACTOR_ID,
     ATTR_AGGREGATE_ID,
     ATTR_AGGREGATE_TYPE,
-    ATTR_DB_NAME,
     ATTR_DB_OPERATION,
     ATTR_DB_SYSTEM,
     ATTR_ERROR_TYPE,
@@ -13,7 +11,6 @@ from eventsource.observability.attributes import (
     ATTR_EVENT_ID,
     ATTR_EVENT_TYPE,
     ATTR_EXPECTED_VERSION,
-    ATTR_FROM_VERSION,
     ATTR_HANDLER_COUNT,
     ATTR_HANDLER_NAME,
     ATTR_MESSAGING_DESTINATION,
@@ -22,7 +19,6 @@ from eventsource.observability.attributes import (
     ATTR_POSITION,
     ATTR_PROJECTION_NAME,
     ATTR_RETRY_COUNT,
-    ATTR_STREAM_ID,
     ATTR_TENANT_ID,
     ATTR_VERSION,
 )
@@ -46,19 +42,16 @@ class TestAttributeConstants:
         """Version attributes should use eventsource prefix."""
         assert ATTR_VERSION.startswith("eventsource.")
         assert ATTR_EXPECTED_VERSION.startswith("eventsource.")
-        assert ATTR_FROM_VERSION.startswith("eventsource.")
 
-    def test_tenant_actor_attributes_have_eventsource_prefix(self):
-        """Tenant and actor attributes should use eventsource prefix."""
+    def test_tenant_attributes_have_eventsource_prefix(self):
+        """Tenant attributes should use eventsource prefix."""
         assert ATTR_TENANT_ID.startswith("eventsource.")
-        assert ATTR_ACTOR_ID.startswith("eventsource.")
 
     def test_component_attributes_have_eventsource_prefix(self):
         """Component-specific attributes should use eventsource prefix."""
         assert ATTR_PROJECTION_NAME.startswith("eventsource.")
         assert ATTR_HANDLER_NAME.startswith("eventsource.")
         assert ATTR_HANDLER_COUNT.startswith("eventsource.")
-        assert ATTR_STREAM_ID.startswith("eventsource.")
         assert ATTR_POSITION.startswith("eventsource.")
 
     def test_error_retry_attributes_have_eventsource_prefix(self):
@@ -69,7 +62,6 @@ class TestAttributeConstants:
     def test_db_attributes_follow_otel_conventions(self):
         """Database attributes should follow OTEL semantic conventions."""
         assert ATTR_DB_SYSTEM == "db.system"
-        assert ATTR_DB_NAME == "db.name"
         assert ATTR_DB_OPERATION == "db.operation"
 
     def test_messaging_attributes_follow_otel_conventions(self):
@@ -110,17 +102,9 @@ class TestAttributeValues:
         """ATTR_EXPECTED_VERSION has correct value."""
         assert ATTR_EXPECTED_VERSION == "eventsource.expected_version"
 
-    def test_from_version_value(self):
-        """ATTR_FROM_VERSION has correct value."""
-        assert ATTR_FROM_VERSION == "eventsource.from_version"
-
     def test_tenant_id_value(self):
         """ATTR_TENANT_ID has correct value."""
         assert ATTR_TENANT_ID == "eventsource.tenant.id"
-
-    def test_actor_id_value(self):
-        """ATTR_ACTOR_ID has correct value."""
-        assert ATTR_ACTOR_ID == "eventsource.actor.id"
 
     def test_projection_name_value(self):
         """ATTR_PROJECTION_NAME has correct value."""
@@ -133,10 +117,6 @@ class TestAttributeValues:
     def test_handler_count_value(self):
         """ATTR_HANDLER_COUNT has correct value."""
         assert ATTR_HANDLER_COUNT == "eventsource.handler.count"
-
-    def test_stream_id_value(self):
-        """ATTR_STREAM_ID has correct value."""
-        assert ATTR_STREAM_ID == "eventsource.stream.id"
 
     def test_position_value(self):
         """ATTR_POSITION has correct value."""
@@ -191,16 +171,12 @@ class TestAttributeExports:
             "ATTR_EVENT_COUNT",
             "ATTR_VERSION",
             "ATTR_EXPECTED_VERSION",
-            "ATTR_FROM_VERSION",
             "ATTR_TENANT_ID",
-            "ATTR_ACTOR_ID",
             "ATTR_PROJECTION_NAME",
             "ATTR_HANDLER_NAME",
             "ATTR_HANDLER_COUNT",
-            "ATTR_STREAM_ID",
             "ATTR_POSITION",
             "ATTR_DB_SYSTEM",
-            "ATTR_DB_NAME",
             "ATTR_DB_OPERATION",
             "ATTR_MESSAGING_SYSTEM",
             "ATTR_MESSAGING_DESTINATION",
@@ -241,20 +217,16 @@ class TestPackageLevelImports:
         """All version attributes are importable from package."""
         from eventsource.observability import (
             ATTR_EXPECTED_VERSION,
-            ATTR_FROM_VERSION,
             ATTR_VERSION,
         )
 
         assert ATTR_VERSION is not None
         assert ATTR_EXPECTED_VERSION is not None
-        assert ATTR_FROM_VERSION is not None
 
     def test_all_tenant_actor_attributes_importable(self):
         """All tenant/actor attributes are importable from package."""
-        from eventsource.observability import ATTR_ACTOR_ID, ATTR_TENANT_ID
 
         assert ATTR_TENANT_ID is not None
-        assert ATTR_ACTOR_ID is not None
 
     def test_all_component_attributes_importable(self):
         """All component attributes are importable from package."""
@@ -263,25 +235,21 @@ class TestPackageLevelImports:
             ATTR_HANDLER_NAME,
             ATTR_POSITION,
             ATTR_PROJECTION_NAME,
-            ATTR_STREAM_ID,
         )
 
         assert ATTR_PROJECTION_NAME is not None
         assert ATTR_HANDLER_NAME is not None
         assert ATTR_HANDLER_COUNT is not None
-        assert ATTR_STREAM_ID is not None
         assert ATTR_POSITION is not None
 
     def test_all_db_attributes_importable(self):
         """All database attributes are importable from package."""
         from eventsource.observability import (
-            ATTR_DB_NAME,
             ATTR_DB_OPERATION,
             ATTR_DB_SYSTEM,
         )
 
         assert ATTR_DB_SYSTEM is not None
-        assert ATTR_DB_NAME is not None
         assert ATTR_DB_OPERATION is not None
 
     def test_all_messaging_attributes_importable(self):
