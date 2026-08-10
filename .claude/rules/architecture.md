@@ -125,7 +125,8 @@ The rings, innermost first:
    `readmodels/` no longer exist — there is no shim at either path (ADR 0030).
    `adapters/memory/coordination.py` (`InMemoryLeaderElector`, `SharedLeaderState`)
    is settled, not transitional — the only concrete implementation of the
-   `ports/coordination.py` Protocol pair (ADR 0032). `adapters/_bus/handler_adapter.py`
+   `ports/coordination.py` `LeaderElector` Protocol (ADR 0032; the
+   `LeaderElectorWithLease` half of that pair was deleted, ADR 0061). `adapters/_bus/handler_adapter.py`
    (`HandlerAdapter`, `get_handler_name`) is settled, not transitional — every
    importer is a bus adapter, so it joins `adapters/_bus/base.py` and
    `adapters/_bus/registry.py` as adapters-internal shared code; top-level

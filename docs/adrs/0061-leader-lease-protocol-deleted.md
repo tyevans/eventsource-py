@@ -61,12 +61,26 @@ to its own type. No behavior changes: nothing called these members.
 member on it is either implemented by `InMemoryLeaderElector` or called by the
 coordinator.
 
-**A known negative, tracked rather than merely recorded:** the coordinator
-trusts `is_leader` as a cached flag. With a lease-based elector that flag can be
-stale — the lease lapsed, another instance took over, and this one still
-believes it leads and will redistribute work it no longer owns. Deleting the
-lease Protocol neither causes nor fixes this; the hazard lives in the *read*,
-not in the type. It is filed as its own task rather than left as a paragraph
-here, because this project has a documented habit of recording negatives that
-stay open for a year (ADR 0021's unbounded-pending-tasks note, restated as open
-by ADRs 0059 and 0060).
+**Correction (2026-08-10).** This section originally claimed, as a known
+negative, that the coordinator "trusts `is_leader` as a cached flag" and on a
+lapsed lease "will redistribute work it no longer owns." **That is wrong**, and
+it was wrong when written — the claim was made from the shape of the problem
+rather than from the call sites, which is the failure mode this project's own
+rules warn about. It is corrected here rather than quietly deleted, because a
+false consequence in a permanent record is worse than an admitted one.
+
+What is actually true: leadership is read at exactly two sites. One populates
+the `is_leader` field of a `HeartbeatMessage`. The other gates
+`initiate_leadership_handoff()`, which calls `release()` — and `LeaderElector`
+documents `release()` as *"Safe to call even if not currently the leader"*, so a
+stale flag there is handled by the implementation, by contract. **No work
+redistribution is gated on leadership anywhere in the library**, and nothing in
+the library consumes `HeartbeatMessage.is_leader` at all; per ADR 0009,
+redistribution is advisory orphan reporting that a caller acts on.
+
+So there is no split-brain hazard for the library to guard. What remains is a
+documentation obligation, not a code one: a heartbeat reports whatever the
+elector's `is_leader` returns at the moment it is built, so a lease-based
+elector must flip `is_leader` on expiry for that field to mean anything. That
+is stated in the coordination guide. The task filed against the original claim
+was closed as not-a-defect.
