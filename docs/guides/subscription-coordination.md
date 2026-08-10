@@ -8,7 +8,7 @@ shutdown.
 
 Most of this lives in `eventsource.application.subscriptions.coordination` and
 is re-exported from `eventsource.application.subscriptions`. The `LeaderElector`
-Protocol pair lives in `eventsource.ports.coordination` (also re-exported from
+Protocol lives in `eventsource.ports.coordination` (also re-exported from
 `application.subscriptions`), and the in-memory implementation,
 `InMemoryLeaderElector` / `SharedLeaderState`, lives in
 `eventsource.adapters.memory` — it is an adapter, not part of the
@@ -193,6 +193,17 @@ liveness signal, and it doubles as the cluster's shared view of who owns what �
 because its last heartbeat listed them. Publish it even when idle; silence is
 interpreted as failure.
 
+**`is_leader` on a heartbeat is your elector's cached view, not a probe.**
+`create_heartbeat()` copies whatever `elector.is_leader` returns at the moment
+it builds the message; the library never round-trips to your backend to confirm
+it, and never calls `renew()`. If your elector is lease-based, **flip
+`is_leader` to `False` when the lease expires** — otherwise an instance that
+quietly lost its lease keeps advertising itself as leader to every peer. The
+library does not act on this field itself (nothing in it reads
+`HeartbeatMessage.is_leader`; per [ADR 0009](../adrs/0009-multi-instance-subscription-coordination.md)
+redistribution is advisory reporting that *you* act on), so the consequence
+lands wherever your code trusts it.
+
 **`SHUTDOWN_NOTIFICATIONS_TOPIC`** carries `ShutdownNotification`:
 `instance_id`, `intent`, `initiated_at`, `expected_completion_at`,
 `subscriptions`, `in_flight_count`, and free-form `metadata`. It is the
@@ -236,7 +247,7 @@ and five methods:
 | Member | Kind | Contract |
 |---|---|---|
 | `identity` | property → `str` | Unique id of this instance within the election |
-| `is_leader` | property → `bool` | Cached leadership state; no backend round-trip |
+| `is_leader` | property → `bool` | Cached leadership state; no backend round-trip. Flip it to `False` on lease expiry if you lease |
 | `current_leader` | property → `str \| None` | Identity of the current leader, `None` if none |
 | `try_acquire(timeout=10.0)` | async → `bool` | One attempt; returns `False` immediately if taken |
 | `release()` | async → `None` | Give up leadership; safe when not leader |
