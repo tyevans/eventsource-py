@@ -186,7 +186,6 @@ from eventsource.application.subscriptions.transition import (
 from eventsource.ports.coordination import (
     LeaderChangeCallback,
     LeaderElector,
-    LeaderElectorWithLease,
 )
 from eventsource.ports.exceptions import (
     CheckpointNotFoundError,
@@ -321,12 +320,11 @@ __all__ = [
     "get_metrics",
     "clear_metrics_registry",
     "reset_meter",
-    # Coordination (P3) -- LeaderElector/LeaderElectorWithLease/LeaderChangeCallback
+    # Coordination (P3) -- LeaderElector/LeaderChangeCallback
     # are the eventsource.ports.coordination port; InMemoryLeaderElector and
     # SharedLeaderState now live in eventsource.adapters.memory (not re-exported
     # here -- application may not import adapters.memory).
     "LeaderElector",
-    "LeaderElectorWithLease",
     "LeaderChangeCallback",
     # Work Redistribution Signals (P3-003)
     "COORDINATION_TOPIC_PREFIX",

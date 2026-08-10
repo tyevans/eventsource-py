@@ -60,8 +60,8 @@ The rings, innermost first:
    flow control, filtering, and the coordination message types plus
    `WorkRedistributionCoordinator`) is settled, not transitional; top-level
    `subscriptions/` no longer exists (ADR 0032). `Subscriber`/`SyncSubscriber`/
-   `BatchSubscriber` (in `ports/subscribers.py`) and `LeaderElector`/
-   `LeaderElectorWithLease` (in `ports/coordination.py`) are Protocols, not
+   `BatchSubscriber` (in `ports/subscribers.py`) and `LeaderElector`
+   (in `ports/coordination.py`) are Protocols, not
    part of this ring — see the ports entry below. `application/projections/handlers.py`
    (`HandlerRegistry`, `HandlerInfo` — the ADR-0013 collaborator extracted out of
    `DeclarativeProjection`) and `application/background_tasks.py`
@@ -166,7 +166,7 @@ inverted at every boundary crossing (the D in SOLID).
   type-hints for its bus dependency (narrowest-port rule). `ports/subscribers.py`
   (`Subscriber`, `SyncSubscriber`, `BatchSubscriber`, `supports_batch_handling()`,
   `get_subscribed_event_types()`) and `ports/coordination.py` (`LeaderElector`,
-  `LeaderElectorWithLease`, `LeaderChangeCallback`) are settled, not transitional;
+  `LeaderChangeCallback`) are settled, not transitional;
   top-level `subscriptions/` is no longer a transitional location for any of
   these (ADR 0032). `ports/migration/` (`models.py` — `Migration`,
   `MigrationConfig`, `MigrationPhase`, `MigrationStatus`, `MigrationResult`,

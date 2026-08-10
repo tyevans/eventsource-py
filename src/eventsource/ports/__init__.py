@@ -16,7 +16,6 @@ from eventsource.ports.checkpoints import (
 from eventsource.ports.coordination import (
     LeaderChangeCallback,
     LeaderElector,
-    LeaderElectorWithLease,
 )
 from eventsource.ports.dlq import (
     DLQEntry,
@@ -156,7 +155,6 @@ __all__ = [
     "get_subscribed_event_types",
     # Leader election port
     "LeaderElector",
-    "LeaderElectorWithLease",
     "LeaderChangeCallback",
     # Infrastructure exception taxonomy (ADR 0041)
     "CheckpointError",

@@ -8,6 +8,12 @@
 
 ---
 
+**Amended by [ADR 0061](0061-leader-lease-protocol-deleted.md)** -- the
+lease half only. `LeaderElectorWithLease` is deleted: nothing implemented
+it, nothing consumed its members, and the library never calls `try_acquire()`
+or `renew()`, so renewal was never ours to honor. Leader election as a
+protocol-not-an-implementation, and every other decision here, stands.
+
 ## Context
 
 Running a single subscription process is easy: it owns every subscription, its

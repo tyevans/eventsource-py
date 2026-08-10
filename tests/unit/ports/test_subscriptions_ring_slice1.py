@@ -21,7 +21,6 @@ from eventsource.ports.bus import EventHandlerFunc, SubscribableEventBus
 from eventsource.ports.coordination import (
     LeaderChangeCallback,
     LeaderElector,
-    LeaderElectorWithLease,
 )
 from eventsource.ports.exceptions import SubscriptionError
 from eventsource.ports.subscribers import (
@@ -76,7 +75,7 @@ class TestSubscriberProtocolIdentity:
 
 
 class TestLeaderElectorIdentity:
-    """LeaderElector / LeaderElectorWithLease / LeaderChangeCallback are a single object each."""
+    """LeaderElector / LeaderChangeCallback are a single object each."""
 
     def test_leader_elector_is_the_same_object(self) -> None:
         from eventsource.application.subscriptions.coordination import LeaderElector as ReExported
@@ -90,25 +89,11 @@ class TestLeaderElectorIdentity:
 
         assert ReExported is LeaderChangeCallback
 
-    def test_leader_elector_with_lease_not_reexported_from_subscriptions_coordination(
-        self,
-    ) -> None:
-        """LeaderElectorWithLease's canonical home is ports.coordination only."""
-        import eventsource.application.subscriptions.coordination as coordination_module
-
-        assert not hasattr(coordination_module, "LeaderElectorWithLease")
-
     def test_leader_elector_reexported_from_ports_package(self) -> None:
         from eventsource import ports
 
         assert ports.LeaderElector is LeaderElector
-        assert ports.LeaderElectorWithLease is LeaderElectorWithLease
         assert ports.LeaderChangeCallback is LeaderChangeCallback
-
-    def test_leader_elector_with_lease_reexported_from_subscriptions_package(self) -> None:
-        from eventsource.application.subscriptions import LeaderElectorWithLease as ReExported
-
-        assert ReExported is LeaderElectorWithLease
 
 
 class TestInMemoryLeaderElectorRelocated:

@@ -101,7 +101,7 @@ Coordination splits into four layers:
   for shutdown, heartbeat, and work-assignment traffic.
 - **Messages** — `ShutdownIntent`, `ShutdownNotification`, `HeartbeatMessage`,
   and `WorkAssignment`: the payloads instances exchange.
-- **Leader election** — `LeaderElector` and `LeaderElectorWithLease`
+- **Leader election** — `LeaderElector`
   (`eventsource.ports.coordination`) are Protocols describing what a
   leader-election backend must provide. `InMemoryLeaderElector`, backed by
   `SharedLeaderState` (`eventsource.adapters.memory.coordination`), is the
@@ -164,7 +164,7 @@ Importing `eventsource.application.subscriptions.config` directly pulls in only
 Defined in `src/eventsource/application/subscriptions/coordination.py`, which
 does declare its own `__all__` — the message types, callback aliases, and
 work-redistribution names below are re-exported unchanged by the package.
-`LeaderElector`/`LeaderElectorWithLease` and `InMemoryLeaderElector`/
+`LeaderElector` and `InMemoryLeaderElector`/
 `SharedLeaderState` are re-exported from `eventsource.ports.coordination` and
 `eventsource.adapters.memory.coordination` respectively (see the previous
 section) and are **not** re-exported by `application.subscriptions`.
@@ -175,11 +175,11 @@ section) and are **not** re-exported by `application.subscriptions`.
 | Enum | `ShutdownIntent` |
 | Message types | `ShutdownNotification`, `HeartbeatMessage`, `WorkAssignment` |
 | Callback aliases | `LeaderChangeCallback`, `PeerShutdownCallback`, `HeartbeatCallback`, `WorkAssignmentCallback`, `PeerTimeoutCallback` |
-| Leader election (`eventsource.ports.coordination`) | `LeaderElector`, `LeaderElectorWithLease` |
+| Leader election (`eventsource.ports.coordination`) | `LeaderElector` |
 | Leader election, in-memory (`eventsource.adapters.memory`) | `InMemoryLeaderElector`, `SharedLeaderState` |
 | Work redistribution | `PeerInfo`, `WorkRedistributionCoordinator` |
 
-`LeaderElector` and `LeaderElectorWithLease` are `Protocol` classes: import them
+`LeaderElector` is a `Protocol` class: import it
 for type annotations and structural conformance, not to subclass. The only
 concrete elector shipped is `InMemoryLeaderElector`.
 
