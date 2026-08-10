@@ -9,6 +9,12 @@ The facade still owns the public ``get_dlq_messages`` / ``get_dlq_message_count`
 collaborator, which reads the live channel via
 :meth:`RabbitMQConnectionManager.require_channel` and the main exchange via
 :attr:`RabbitMQTopology.exchange`.
+
+**Note for auditors:** the four ``require_channel()`` calls in this module
+resemble the untyped-raise sites corrected elsewhere in the RabbitMQ adapter,
+but they are not the same finding. Each is preceded by a connection check that
+returns a graceful empty result, so the raising path is unreachable from a
+disconnected bus. They were reviewed and deliberately left alone.
 """
 
 from __future__ import annotations
