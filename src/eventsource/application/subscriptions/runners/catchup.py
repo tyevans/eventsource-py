@@ -466,7 +466,7 @@ class CatchUpRunner:
         whole batch is delivered as one unit and no position is recorded
         until it settles -- the invariant batch delivery depends on to stay
         a sanctioned exception to per-event sequential delivery (see
-        docs/adrs/DRAFT-ordered-subscription-delivery.md, "Sanctioned ways
+        docs/adrs/0059-ordered-subscription-delivery.md, "Sanctioned ways
         to increase throughput"). If `handle_batch()` raises, delivery falls
         back to the same per-event path `_process_batch_single` uses --
         one envelope at a time, position recorded immediately after each --

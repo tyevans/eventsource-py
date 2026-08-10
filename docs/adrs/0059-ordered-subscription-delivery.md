@@ -1,10 +1,4 @@
-# DRAFT. Subscription Delivery Is Ordered Per Subscription
-
-> **Provisional draft — no number allocated.** Per
-> `.claude/rules/definition-of-done.md` §5, ADR numbers are allocated at merge
-> after re-checking `docs/adrs/` on current `main`. Rename this file and fill in
-> the number then, and add the reciprocal "Amended by" pointers listed under ADR
-> Impact.
+# ADR-0059. Subscription Delivery Is Ordered Per Subscription
 
 A subscription delivers its events one at a time, in feed order, and does not
 begin the next event until the current one has been handled and its position
@@ -35,9 +29,9 @@ be increased without breaking it, and what lifting it would actually cost.
 | [0032](0032-subscriptions-ring-migration.md) | Stands. A ring-location record; it takes no position on delivery semantics. |
 | [0013](0013-handler-registry-composition.md) | Stands. Handler discovery and registry composition are orthogonal to delivery order. |
 
-ADR 0047's and ADR 0054's Status sections each take an "Amended by" pointer to
-this ADR when its number is allocated — 0047 scoped to the checkpoint-lockstep
-dependency, 0054 scoped to the Context prose.
+ADR 0047's and ADR 0054's Status sections each carry the reciprocal "Amended by"
+pointer to this ADR — 0047 scoped to the checkpoint-lockstep dependency, 0054
+scoped to the Context prose.
 
 ## Context
 

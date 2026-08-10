@@ -476,7 +476,7 @@ at most one event is ever in flight. On catch-up for a subscriber with
 `handle_batch()`, the whole read batch is handed to it as one call — still no
 concurrent delivery, but the unit of work is the batch rather than the event
 (see [Handle events in batches with handle_batch()](../guides/subscriptions.md#handle-events-in-batches-with-handle_batch)
-and [ordered delivery](../adrs/DRAFT-ordered-subscription-delivery.md)).
+and [ordered delivery](../adrs/0059-ordered-subscription-delivery.md)).
 
 Both the configured value (`config.batch_size`) and the actual per-batch count
 (`events_in_batch`) appear in catch-up log records under the key `batch_size`;

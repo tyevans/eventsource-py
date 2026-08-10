@@ -72,10 +72,11 @@ collapsed into `AIOSQLITE_AVAILABLE`; redundant `*_AVAILABLE` copies removed.
 *decomposed* into 14 per-port suites and the rule's pointer was never updated);
 exception docstrings now name their audience.
 
-**ADR** — `docs/adrs/DRAFT-ordered-subscription-delivery.md`. **Provisional filename,
-no number allocated** (highest on main is 0058; number-at-drafting has collided
-three times here). Records ordered-per-subscription delivery as deliberate, and the
-sanctioned ways to scale past it.
+**ADR** — `docs/adrs/0059-ordered-subscription-delivery.md`. Number allocated
+(0058 was the highest on main; the ADR Check workflow rejects a non-`NNNN-` filename,
+so the draft convention cannot survive to CI). Records ordered-per-subscription
+delivery as deliberate, and the sanctioned ways to scale past it. Reciprocal
+"Amended by" pointers are in place on 0047 and 0054.
 
 ---
 

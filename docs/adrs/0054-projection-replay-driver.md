@@ -6,7 +6,12 @@ went" without the caller writing the loop.
 
 ## Status
 
-**Accepted.**
+**Accepted.** **Amended by
+[ADR 0059](0059-ordered-subscription-delivery.md)**, scoped to the Context prose
+only: the Context below attributes timer-based polling to `ProjectionCoordinator`,
+which does not poll and holds no timer — that role belongs to a live subscription
+runner. The contrast the Context draws is correct and the Decision, Consequences,
+and every other section stand untouched.
 
 **ADR Impact**
 
