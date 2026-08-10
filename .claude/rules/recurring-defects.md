@@ -102,13 +102,17 @@ not assert on them.
 
 **The sharper form: a capability the library declares, documents, and is
 supposed to dispatch to — and never does.** The 2026-08-09 backpressure wave
-found this shape ten times in one sweep. `SubscriptionConfig.max_in_flight`
+found this shape nine times in one sweep — `max_in_flight`, `handle_batch()`,
+`processing_timeout`, `error_rate_per_minute`, `release_migration_metrics()`,
+`ProjectionCoordinator.start()`, `max_reconnect_delay`,
+`dual_write_timeout_minutes`, `RoutingError`. `SubscriptionConfig.max_in_flight`
 (default 1000) was inert: both runners awaited `handle()` *inside* the
 flow-control slot in a sequential loop, so the semaphore never blocked. A real
 `LiveRunner` with 5 events, a 200ms handler and `max_in_flight=1000` peaked at
-`in_flight == 1`. Same wave: `handle_batch()` declared on the subscriber
-Protocol and never dispatched, `processing_timeout` with zero read sites,
-`release_migration_metrics()` wired to a method with no caller.
+`in_flight == 1`. The others are the same shape at different depths:
+`handle_batch()` was declared on the subscriber Protocol and never dispatched,
+`processing_timeout` had zero read sites, `release_migration_metrics()` was
+wired to a method with no caller.
 
 **The criterion — without it every public API looks like a false positive.**
 `EventStore.append` has no internal caller *because users call it*; that is not
@@ -126,7 +130,19 @@ and exercises it in isolation proves the mechanism works; it says nothing about
 whether anything reaches it. **The assertion that catches this runs the real
 caller and then inspects the mechanism.**
 
-**This is the class conformance suites will not catch.** Guard it directly:
+**This is the class conformance suites will not catch.** Guard it directly.
+
+**The gate: for any capability the library is obligated to invoke, ship a test
+that runs the real caller and then asserts the mechanism was reached.** Not a
+test that constructs the mechanism — a test that starts the runner, publishes
+through the bus, executes the migration, and *then* inspects the counter, the
+flag, the recorded call. If you cannot name the caller the test drives, you
+have not established that one exists. This one requirement would have caught
+all nine instances above; every one of them had passing isolation tests. It is
+the load-bearing half of `.claude/rules/definition-of-done.md`'s new-feature
+list for library-invoked capabilities.
+
+The rest, which the gate does not subsume:
 
 - When you add a counter or stat field, add a test that asserts it is
   **non-zero** under the condition it counts. "Asserted zero in the happy
@@ -174,6 +190,25 @@ When a sweep *does* have to touch prose, grep for the symbol across
 `docs/`, `README.md`, docstrings, and `examples/` — not a curated list of
 files. The repeated failure is a sweep that fixes the pages it thought of.
 
+**Treat an incomplete sweep as the default outcome, not the exception.** The
+corpus survey of 823 commits found five sweeps that needed a second sweep:
+`8e5c8c8` ("second stale ProjectionCoordinator polling claim"), `c3f6388`
+("finish the backpressure sweep across the whole tree"), `4519c42` ("two
+defects in my own snapshot and ordered-delivery docs"), `e33d4df` (RabbitMQ's
+"5 remaining topology RuntimeErrors", after 10 other sites were already fixed),
+`de63b54` (ADR 0058 nav plus two stale anchors). A sweep is not done when the
+files look right; it is done when a whole-tree grep for the symbol comes back
+clean **and that grep command is in the PR description**, so a reviewer can
+re-run it rather than trust the sweeper's file list.
+
+**Known instance, unfixed: `docs/adrs/index.md`.** It is a hand-maintained
+second copy of the `docs/adrs/` directory listing, and it appears in five
+`fix:` commits (`cb7fa1e`, `4609ba8`, `e40c026`, `b84b31e`, `95b684f`) — the
+repo's own §2 defect sitting in its decision log. Until it is generated, every
+ADR added, renumbered, or superseded requires an explicit edit there; the
+mkdocs nav is a *third* copy and a strict build will not catch an omission in
+either.
+
 **Rule, second half — grep the whole tree, not just prose.** Renaming or
 deleting a public symbol is not done until `grep -rn '<symbol>' .` comes back
 clean. Prose is the *easy* half; the half that turns CI red is test code the
@@ -204,7 +239,9 @@ was taken. See `.claude/rules/definition-of-done.md` §5 for the renumber steps.
 
 - [ ] Changed an adapter method? Compared the sibling adapters; case lives in the conformance suite.
 - [ ] Added a parameter or attribute? It is not derivable from something already supplied.
+- [ ] Added a capability *we* are obligated to invoke? Named the caller, and a test drives that caller and asserts the mechanism was reached.
 - [ ] Added a counter or stat? A test asserts it non-zero.
+- [ ] Swept a symbol? The whole-tree grep is clean and the command is in the PR body.
 - [ ] Read an attribute the type checker cannot follow? Grepped for the write site.
 - [ ] Wrote a regression test? Proved red against `HEAD~1` first.
 - [ ] Touched an ADR? No counts, no file tables; number re-checked against `main`.

@@ -42,6 +42,15 @@ documented and amended:
    was claimed, `git mv` to the next free one and update every referrer
    (`grep -rn '<old-number>' docs/ src/ mkdocs.yml`), `index.md`, and the
    mkdocs nav — a strict build will not catch a nav omission.
+6. **A recorded negative gets an owner in the same commit that records it, or
+   it does not get recorded.** ADR 0021's unbounded-pending-snapshot-tasks
+   negative was written down honestly, then restated as *still open* by ADR
+   0059 and again by ADR 0060 — which closed the same shape for the event bus
+   and explicitly left the snapshot half open. Roughly a year, three ADRs, no
+   ticket. A "Known negative" or "Consequences (negative)" bullet is a
+   confession, not a plan, unless it is paired with a tracked item; file one
+   and cite it inline. If the gap is not worth tracking, it is not worth
+   writing — say the decision accepts it and stop calling it open.
 
 ## Recurring Defect Check (applies to ALL work)
 
@@ -55,15 +64,27 @@ two that gate most often:
   satisfy this: it cannot catch the next backend.
 - **New counter, stat, or metric field** — a test asserts it non-zero under
   the condition it counts.
+- **New capability the library itself must invoke** — see the New Feature
+  list, item 3.
 
 ## New Feature
 
 1. Implementation in `src/eventsource/` with type annotations (mypy strict passes)
 2. Unit tests in `tests/unit/` covering happy path and edge cases
-3. Integration tests if feature touches a backend (postgres, sqlite, redis, kafka, rabbitmq)
-4. Public API re-exported from `src/eventsource/__init__.py` with `__all__` entry
-5. `uv run ruff check` and `uv run ruff format` pass
-6. `uv run mypy src/eventsource/` passes
+3. **If the library — not the user — is obligated to invoke it, a test that
+   runs the real caller and asserts the mechanism was reached.** Ask who is
+   contractually obligated to call this. `EventStore.append` has no internal
+   caller because users call it; that is fine. A config field we are supposed
+   to honor, a Protocol method we are supposed to dispatch to, a metric we are
+   supposed to emit — those need a test that starts the runner / publishes
+   through the bus / runs the migration and *then* inspects the mechanism. A
+   test that constructs the mechanism directly does not satisfy this and never
+   has: the 2026-08-09 backpressure wave found nine inert capabilities, all
+   with passing isolation tests. See `.claude/rules/recurring-defects.md` §3.
+4. Integration tests if feature touches a backend (postgres, sqlite, redis, kafka, rabbitmq)
+5. Public API re-exported from `src/eventsource/__init__.py` with `__all__` entry
+6. `uv run ruff check` and `uv run ruff format` pass
+7. `uv run mypy src/eventsource/` passes
 
 ## Bug Fix
 
