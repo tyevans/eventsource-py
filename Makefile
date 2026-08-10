@@ -32,7 +32,7 @@ BENCH_COMPOSE := docker compose -f docker-compose.bench.yml
 .DEFAULT_GOAL := help
 .PHONY: help install check lint format types arch sec audit test test-changed cov \
         integration integration-up integration-down mutation mutation-cosmic \
-        floors docs docs-examples precommit fix clean \
+        floors docs docs-examples adr precommit fix clean \
         bench-up bench-down bench bench-quick bench-report
 
 ## ---------------------------------------------------------------------------
@@ -156,8 +156,14 @@ mutation-cosmic:  ## cosmic-ray for one module: make mutation-cosmic MODULE=engi
 		exit 2; }
 	scripts/mutation-cosmic-ray.sh $(MODULE)
 
-docs: docs-examples  ## Strict docs build + runnable-example validation
+docs: adr docs-examples  ## Strict docs build + runnable-example validation
 	$(UV_RUN) mkdocs build --strict
+
+# `mkdocs build --strict` does NOT catch a nav that omits a page, nor an
+# index.md that forgot a record, which is exactly how docs/adrs/index.md
+# drifted five times. Mirrors the ADR Check workflow.
+adr:  ## ADR index + mkdocs nav agree with docs/adrs/
+	python3 scripts/check_adr_index.py
 
 docs-examples:  ## Syntax-check and execute everything in examples/
 	$(UV_RUN) python scripts/validate_examples.py --syntax
