@@ -15,7 +15,7 @@ The package is organized into five source modules:
 | `eventsource.application.projections.base` | `Projection`, `SyncProjection`, `EventHandlerBase`, `CheckpointTrackingProjection`, `DeclarativeProjection`, `TenantFilter` |
 | `eventsource.application.projections.store` | `StoreProjection`, `ProjectionOptions` |
 | `eventsource.application.projections.coordinator` | `ProjectionRegistry`, `ProjectionCoordinator`, `SubscriberRegistry` |
-| `eventsource.application.projections.retry` | `RetryPolicy`, `ExponentialBackoffRetryPolicy`, `NoRetryPolicy`, `FilteredRetryPolicy`, `DEFAULT_RETRY_POLICY` |
+| `eventsource.application.projections.retry` | `ProjectionRetryPolicy`, `ExponentialBackoffRetryPolicy`, `NoRetryPolicy`, `FilteredRetryPolicy`, `DEFAULT_RETRY_POLICY` |
 | `eventsource.application.projections.checkpoints` | `record_checkpoint`, `read_checkpoint`, `lag_metrics_dict`, `reset_checkpoint` |
 | `eventsource.application.projections.dlq` | `send_to_dlq`, `read_failed_events` |
 | `eventsource.application.projections.replay` | `replay`, `ReplayReport`, `ReplayFailure`, `ReplayFailedError` |
@@ -175,7 +175,7 @@ from eventsource.application.projections.retry import (
     ExponentialBackoffRetryPolicy,
     FilteredRetryPolicy,
     NoRetryPolicy,
-    RetryPolicy,
+    ProjectionRetryPolicy,
 )
 ```
 
@@ -377,7 +377,7 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
         self,
         checkpoint_repo: CheckpointRepository | None = None,
         dlq_repo: DLQRepository | None = None,
-        retry_policy: RetryPolicy | None = None,
+        retry_policy: ProjectionRetryPolicy | None = None,
         tracer: Tracer | None = None,
         enable_tracing: bool = False,
     ) -> None: ...
@@ -500,7 +500,7 @@ it remains fine for tests, and remains wrong for production.
 CheckpointTrackingProjection(
     checkpoint_repo: ProjectionCheckpoints | None = None,
     dlq_repo: DLQRepository | None = None,
-    retry_policy: RetryPolicy | None = None,
+    retry_policy: ProjectionRetryPolicy | None = None,
     tracer: Tracer | None = None,
     enable_tracing: bool = False,
 ) -> None
@@ -515,7 +515,7 @@ tracking and DLQ capture both disabled. Subclasses accept all five as well, thou
 | --- | --- | --- | --- |
 | `checkpoint_repo` | `ProjectionCheckpoints \| None` | `None` | Backing store for the projection's checkpoint. `None` → checkpoint tracking disabled. |
 | `dlq_repo` | `DLQRepository \| None` | `None` | Backing store for dead-lettered events. `None` → DLQ capture disabled. |
-| `retry_policy` | `RetryPolicy \| None` | `None` | Governs attempt count and backoff. `None` → the inline `ExponentialBackoffRetryPolicy` described in the next section (**not** `DEFAULT_RETRY_POLICY`). |
+| `retry_policy` | `ProjectionRetryPolicy \| None` | `None` | Governs attempt count and backoff. `None` → the inline `ExponentialBackoffRetryPolicy` described in the next section (**not** `DEFAULT_RETRY_POLICY`). |
 | `tracer` | `Tracer \| None` | `None` | Custom tracer, shared by the projection's own spans and the checkpoint/DLQ spans. When given, `enable_tracing` is ignored. |
 | `enable_tracing` | `bool` | `False` | When `True` and OpenTelemetry is installed, builds a live tracer via `create_tracer(__name__, enable_tracing)`. |
 

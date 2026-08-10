@@ -52,11 +52,6 @@ class TestSubscriptionConfigDefaults:
         config = SubscriptionConfig()
         assert config.processing_timeout == 30.0
 
-    def test_default_shutdown_timeout(self):
-        """Test default shutdown_timeout is 30.0."""
-        config = SubscriptionConfig()
-        assert config.shutdown_timeout == 30.0
-
     def test_default_event_types(self):
         """Test default event_types is None."""
         config = SubscriptionConfig()
@@ -131,11 +126,6 @@ class TestSubscriptionConfigCustomValues:
         config = SubscriptionConfig(processing_timeout=60.0)
         assert config.processing_timeout == 60.0
 
-    def test_custom_shutdown_timeout(self):
-        """Test custom shutdown_timeout."""
-        config = SubscriptionConfig(shutdown_timeout=45.0)
-        assert config.shutdown_timeout == 45.0
-
     def test_custom_aggregate_types(self):
         """Test custom aggregate_types."""
         config = SubscriptionConfig(aggregate_types=("Order", "User"))
@@ -178,19 +168,16 @@ class TestSubscriptionConfigValidation:
         assert "processing_timeout must be positive" in str(exc_info.value)
         assert "got -1.0" in str(exc_info.value)
 
-    def test_invalid_shutdown_timeout_zero(self):
-        """Test shutdown_timeout=0 raises ValueError."""
-        with pytest.raises(ValueError) as exc_info:
-            SubscriptionConfig(shutdown_timeout=0)
-        assert "shutdown_timeout must be positive" in str(exc_info.value)
-        assert "got 0" in str(exc_info.value)
+    def test_shutdown_timeout_is_not_a_subscription_config_field(self):
+        """Shutdown timeout has exactly one declaration site: SubscriptionManager.
 
-    def test_invalid_shutdown_timeout_negative(self):
-        """Test negative shutdown_timeout raises ValueError."""
-        with pytest.raises(ValueError) as exc_info:
-            SubscriptionConfig(shutdown_timeout=-5.0)
-        assert "shutdown_timeout must be positive" in str(exc_info.value)
-        assert "got -5.0" in str(exc_info.value)
+        The config previously declared a `shutdown_timeout` that nothing read --
+        the manager's constructor argument is what reaches the shutdown
+        coordinator. Re-adding it here must fail loudly (ADR 0062).
+        """
+        assert not hasattr(SubscriptionConfig(), "shutdown_timeout")
+        with pytest.raises(TypeError):
+            SubscriptionConfig(shutdown_timeout=45.0)  # type: ignore[call-arg]
 
     def test_invalid_checkpoint_interval_zero(self):
         """Test checkpoint_interval_seconds=0 raises ValueError."""

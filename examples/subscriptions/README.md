@@ -221,7 +221,6 @@ combinations (for example `max_retry_delay < initial_retry_delay`) raise
 | `checkpoint_strategy` | `CheckpointStrategy.EVERY_BATCH` | When to persist checkpoints: `EVERY_EVENT`, `EVERY_BATCH`, `PERIODIC` |
 | `checkpoint_interval_seconds` | `5.0` | Checkpoint interval used by the `PERIODIC` strategy |
 | `processing_timeout` | `30.0` | Max seconds for one handler call (a `handle_batch()` of N events is one call, not N) |
-| `shutdown_timeout` | `30.0` | Max seconds to wait during graceful shutdown |
 | `event_types` | `None` | Tuple of `DomainEvent` subclasses to filter on (`None` = all types) |
 | `aggregate_types` | `None` | Tuple of aggregate type names to filter on (`None` = all types) |
 | `tenant_id` | `None` | `UUID` to scope the subscription to a single tenant (`None` = all tenants) |
@@ -334,6 +333,8 @@ When deploying to production:
 5. **Use health checks**: Expose `/health/ready` and `/health/live` endpoints
 6. **Handle signals**: Call `manager.register_signals()` for graceful shutdown
 7. **Configure timeouts**: Set appropriate `shutdown_timeout` and `drain_timeout`
+   on the `SubscriptionManager` constructor (they are manager-wide, not
+   per-subscription)
 
 ## Common Patterns
 

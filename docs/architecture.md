@@ -374,7 +374,7 @@ live store-to-store migration through the phases `PENDING`, `BULK_COPY`,
 projection-side collaborators `CheckpointTrackingProjection` calls into:
 the `record_checkpoint()` / `read_checkpoint()` / `lag_metrics_dict()` /
 `reset_checkpoint()` functions and the `send_to_dlq()` / `read_failed_events()`
-functions, the `RetryPolicy` protocol, `ProjectionCoordinator`, and the `replay()` rebuild
+functions, the `ProjectionRetryPolicy` protocol, `ProjectionCoordinator`, and the `replay()` rebuild
 driver.
 
 What separates this tier from Tier 1 is not infrastructure but *time*. Tier 1
@@ -966,7 +966,7 @@ says nothing about whether the event should have happened. It says only that
 *this attempt* did not work. That difference is what forces the read side to
 answer questions the write side never asks:
 
-- **Should this be tried again, and when?** A `RetryPolicy` decides, and
+- **Should this be tried again, and when?** A `ProjectionRetryPolicy` decides, and
   `_handle_with_retry` runs the attempt loop for `max_retries + 1` tries,
   sleeping `get_backoff(attempt)` between them.
 - **What happens when trying again stops helping?** `send_to_dlq()` parks the
@@ -1347,7 +1347,7 @@ sleep `get_backoff(attempt)` and go round again; if no, write to the DLQ, log
 critical, and `raise`. Every collaborator below is reached from exactly one
 line of that loop.
 
-**`RetryPolicy` (`retry.py`)** answers *should we try again, and after how
+**`ProjectionRetryPolicy` (`retry.py`)** answers *should we try again, and after how
 long?* It is a `runtime_checkable` Protocol with three members --
 `max_retries`, `get_backoff(attempt)`, `should_retry(attempt, error)` -- and
 three implementations ship with it. `ExponentialBackoffRetryPolicy` delegates
@@ -1647,18 +1647,18 @@ replays history into non-empty tables. Idempotent handlers make that
 survivable; that is not a coincidence but the same requirement showing up in a
 second place.
 
-### RetryPolicy (retry.py) — when to try again and how long to wait
+### ProjectionRetryPolicy (retry.py) — when to try again and how long to wait
 
 `_handle_with_retry` asks two questions on every failure and answers neither
 itself: *should there be another attempt?* and *how long should we wait first?*
-Both are delegated to a `RetryPolicy`. The loop's job is to obey; the policy's
+Both are delegated to a `ProjectionRetryPolicy`. The loop's job is to obey; the policy's
 job is to decide. That separation is the whole reason `retry.py` exists — its
 module docstring says as much, naming the Single Responsibility violation it
 was extracted to undo.
 
 #### The contract is three members wide
 
-`RetryPolicy` is a `runtime_checkable` `Protocol`, not an ABC, so anything with
+`ProjectionRetryPolicy` is a `runtime_checkable` `Protocol`, not an ABC, so anything with
 the right shape qualifies without importing the library's base class:
 
 - `max_retries: int` — retries *excluding* the initial attempt. The loop runs
@@ -1770,7 +1770,7 @@ the first.
 
 A checkpoint is the read side's answer to "if this process dies now, where does
 the next one start?" Four module-level functions own that answer — like
-`RetryPolicy`, they were extracted from `CheckpointTrackingProjection` for the
+`ProjectionRetryPolicy`, they were extracted from `CheckpointTrackingProjection` for the
 reason the module docstring names outright: the projection was doing too many
 jobs. Each function is small on purpose: it takes a `ProjectionCheckpoints`
 repository, a projection name, and a `Tracer` as explicit parameters, wraps one

@@ -69,7 +69,7 @@ The fields fall into five groups, each documented in its own subsection below:
 | --- | --- |
 | Starting position and batching | `start_from`, `batch_size` |
 | Checkpointing | `checkpoint_strategy`, `checkpoint_interval_seconds` |
-| Timeouts | `processing_timeout`, `shutdown_timeout` |
+| Timeouts | `processing_timeout` |
 | Filtering | `event_types`, `aggregate_types`, `tenant_id` |
 | Error handling and retry | `continue_on_error`, `max_retries`, `initial_retry_delay`, `max_retry_delay`, `retry_exponential_base`, `retry_jitter` |
 | Circuit breaker | `circuit_breaker_enabled`, `circuit_breaker_failure_threshold`, `circuit_breaker_recovery_timeout` |
@@ -380,7 +380,7 @@ The fields fall into five groups, documented in the subsections that follow:
 | --- | --- |
 | [Starting position and batching](#fields-starting-position-and-batching) | `start_from`, `batch_size` |
 | [Checkpointing](#fields-checkpointing) | `checkpoint_strategy`, `checkpoint_interval_seconds` |
-| [Timeouts](#fields-timeouts) | `processing_timeout`, `shutdown_timeout` |
+| [Timeouts](#fields-timeouts) | `processing_timeout` |
 | [Filtering](#fields-filtering-event_types-aggregate_types-tenant_id) | `event_types`, `aggregate_types`, `tenant_id` |
 | [Error handling and retry](#fields-error-handling-and-retry) | `continue_on_error`, `max_retries`, `initial_retry_delay`, `max_retry_delay`, `retry_exponential_base`, `retry_jitter` |
 | [Circuit breaker](#fields-circuit-breaker) | `circuit_breaker_enabled`, `circuit_breaker_failure_threshold`, `circuit_breaker_recovery_timeout` |
@@ -508,9 +508,8 @@ strategies the field is inert (but still validated).
 | Field | Type | Default |
 | --- | --- | --- |
 | `processing_timeout` | `float` | `30.0` |
-| `shutdown_timeout` | `float` | `30.0` |
 
-Both are validated as positive. `processing_timeout` is enforced: both runners
+It is validated as positive. `processing_timeout` is enforced: both runners
 call the subscriber inside `asyncio.timeout(config.processing_timeout)`, at the
 same chokepoint that applies the handler circuit breaker. It bounds **one
 handler call** — a `handle_batch()` of 500 events gets the same budget as a
@@ -521,12 +520,11 @@ path, and the timeout counts toward the handler breaker's consecutive-failure
 run (the timeout is applied inside the breaker, not around it, so hangs open the
 circuit just as raises do).
 
-`shutdown_timeout` on the config remains declarative — it is not read by the
-runners. `SubscriptionManager` takes its own `shutdown_timeout` constructor
-argument (also defaulting to `30.0`) and passes that to its shutdown
-coordinator, and `stop_all()` accepts a per-call override. Set the manager's
-argument when you want shutdown behavior to change; treat the config field as
-intent you may read back from the config object.
+`shutdown_timeout` is **not** a `SubscriptionConfig` field. It is declared once,
+on the `SubscriptionManager` constructor (default `30.0`), which passes it to the
+shutdown coordinator; `stop_all()` and `run_until_shutdown()` accept a per-call
+override. The config used to carry a second, inert copy that nothing read — it
+was removed in [ADR 0062](../adrs/0062-single-declaration-sites-for-shutdown-timeout-and-retry-policy.md).
 
 #### Fields: filtering (`event_types`, `aggregate_types`, `tenant_id`)
 
@@ -617,7 +615,6 @@ offending value, and most suggest a workable default.
 | --- | --- |
 | `batch_size` must be positive | `batch_size < 1` |
 | `processing_timeout` must be positive | `<= 0` |
-| `shutdown_timeout` must be positive | `<= 0` |
 | `checkpoint_interval_seconds` must be positive | `<= 0` |
 | `max_retries` must be `>= 0` | negative (`0` is legal — it means no retries) |
 | `initial_retry_delay` must be positive | `<= 0` |

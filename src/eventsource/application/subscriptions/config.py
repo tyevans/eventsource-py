@@ -62,7 +62,6 @@ class SubscriptionConfig:
             both runners via `asyncio.timeout()`. A `handle_batch()` call is
             one call, so a whole batch shares one budget. On expiry the call
             raises `TimeoutError` and is handled as any other handler failure.
-        shutdown_timeout: Max seconds to wait during graceful shutdown
         event_types: Event types to filter (None = all types)
         aggregate_types: Aggregate types to filter (None = all types)
         tenant_id: Tenant ID to filter events by (None = all tenants).
@@ -97,7 +96,6 @@ class SubscriptionConfig:
 
     # Timeouts
     processing_timeout: float = 30.0
-    shutdown_timeout: float = 30.0
 
     # Filtering (optional)
     event_types: tuple[type[DomainEvent], ...] | None = None
@@ -132,12 +130,6 @@ class SubscriptionConfig:
         if self.processing_timeout <= 0:
             raise ValueError(
                 f"processing_timeout must be positive, got {self.processing_timeout}. "
-                "Use a value like 30.0 (default) seconds."
-            )
-
-        if self.shutdown_timeout <= 0:
-            raise ValueError(
-                f"shutdown_timeout must be positive, got {self.shutdown_timeout}. "
                 "Use a value like 30.0 (default) seconds."
             )
 
