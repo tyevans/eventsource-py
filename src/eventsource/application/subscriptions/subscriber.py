@@ -23,6 +23,7 @@ Example:
     ...             await self._handle_created(event)
 """
 
+import inspect
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
@@ -52,7 +53,48 @@ __all__ = [
     "BaseSubscriber",
     "BatchAwareSubscriber",
     "FilteringSubscriber",
+    # Dispatch
+    "settle_handler_result",
 ]
+
+
+async def settle_handler_result(result: object) -> None:
+    """Await a subscriber handler's return value when it is awaitable.
+
+    `SyncSubscriber` is a published Protocol whose `handle()` is declared
+    **not** async, and both runners used to `await` the result of every handler
+    call unconditionally. A sync handler returns `None`, and `await None`
+    raises `TypeError: object NoneType can't be used in 'await' expression`.
+
+    That `TypeError` landed inside the runners' generic `except Exception`
+    around handler dispatch, so it was recorded as a handler failure and
+    attributed to user code -- while the handler body had in fact already run
+    successfully. Every event "failed" forever, and the reported cause pointed
+    at the wrong place.
+
+    Awaiting conditionally covers both Protocols with no capability detection:
+    an async `handle()` returns a coroutine and is awaited, a sync one returns
+    `None` and is not. There is deliberately no `iscoroutinefunction()` check,
+    because that inspects the *declaration* and gets a handler that returns an
+    awaitable from a non-async def wrong.
+
+    This lives in the application ring rather than reusing
+    `adapters/_bus/handler_adapter.py`'s equivalent normalization: `adapters`
+    layers **above** `application`, so a runner importing it would break the
+    ring-layering contract in `pyproject.toml`. (An earlier note proposed
+    exactly that; it does not typecheck against the architecture.) The bus
+    adapter's version may later delegate here -- inward is the legal direction.
+
+    Note for sync handlers: a slow one blocks the event loop, so
+    `SubscriptionConfig.processing_timeout` cannot interrupt it. `asyncio`
+    timeouts only fire at an await point, and a sync handler has none. Use an
+    async handler for anything that can block.
+
+    Args:
+        result: Whatever the handler call returned.
+    """
+    if inspect.isawaitable(result):
+        await result
 
 
 class BaseSubscriber(ABC):

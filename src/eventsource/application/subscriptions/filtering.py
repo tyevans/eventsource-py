@@ -34,6 +34,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from eventsource.ports.subscribers import get_subscribed_event_types
+
 if TYPE_CHECKING:
     from eventsource.application.subscriptions.config import SubscriptionConfig
     from eventsource.domain.event import DomainEvent
@@ -200,7 +202,7 @@ class EventFilter:
         Returns:
             EventFilter instance
         """
-        event_types = subscriber.subscribed_to()
+        event_types = get_subscribed_event_types(subscriber)
         if event_types:
             return cls(event_types=tuple(event_types))
         return cls()  # No filtering
@@ -228,7 +230,7 @@ class EventFilter:
 
         if event_types is None:
             # Fall back to subscriber's declared types
-            subscribed = subscriber.subscribed_to()
+            subscribed = get_subscribed_event_types(subscriber)
             if subscribed:
                 event_types = tuple(subscribed)
 

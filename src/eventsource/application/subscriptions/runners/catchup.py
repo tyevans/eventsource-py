@@ -26,6 +26,7 @@ from eventsource.application.subscriptions.retry import (
     CircuitBreaker,
     RetryableOperation,
 )
+from eventsource.application.subscriptions.subscriber import settle_handler_result
 from eventsource.application.subscriptions.subscription import (
     Subscription,
     SubscriptionState,
@@ -693,7 +694,10 @@ class CatchUpRunner:
             start_time = time.perf_counter()
             try:
                 subscriber = cast(BatchSubscriber, self.subscription.subscriber)
-                await self._call_guarded(lambda: subscriber.handle_batch(events), "handle_batch")
+                await self._call_guarded(
+                    lambda: settle_handler_result(subscriber.handle_batch(events)),
+                    "handle_batch",
+                )
             except Exception as e:
                 logger.warning(
                     "handle_batch failed, falling back to single-event delivery",
@@ -773,7 +777,9 @@ class CatchUpRunner:
             start_time = time.perf_counter()
             try:
                 subscriber = self.subscription.subscriber
-                await self._call_guarded(lambda: subscriber.handle(event), "handle_event")
+                await self._call_guarded(
+                    lambda: settle_handler_result(subscriber.handle(event)), "handle_event"
+                )
                 # Record success metrics
                 duration_ms = (time.perf_counter() - start_time) * 1000
                 self._metrics.record_event_processed(
