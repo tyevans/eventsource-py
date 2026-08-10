@@ -15,7 +15,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from eventsource.application.subscriptions.config import CheckpointStrategy
 from eventsource.application.subscriptions.filtering import EventFilter, FilterStats
@@ -43,6 +43,7 @@ from eventsource.observability.attributes import (
 )
 from eventsource.ports.envelopes import EventEnvelope, FeedReadOptions
 from eventsource.ports.positions import Position
+from eventsource.ports.subscribers import BatchSubscriber, supports_batch_handling
 
 if TYPE_CHECKING:
     from eventsource.ports.bus import SubscribableEventBus
@@ -160,6 +161,35 @@ class LiveRunner:
 
         self.config = self.subscription.config
         self._flow_controller = FlowController()
+
+        # Which handler to call, decided once at construction -- a
+        # subscriber's capabilities are a property of its class, not
+        # something that changes mid-run (same rule as
+        # `CatchUpRunner._batch_capable`).
+        #
+        # `BatchSubscriber` requires only `subscribed_to()` and
+        # `handle_batch()`. This runner used to call `handle()`
+        # unconditionally, so a subscriber implementing exactly that
+        # published Protocol raised `AttributeError` per event once its
+        # subscription went live -- recorded as a handler failure and,
+        # under `continue_on_error`, potentially filling the DLQ with events
+        # whose handler was never reached.
+        #
+        # `handle()` still wins whenever it exists, so this is invisible to
+        # subscribers that already worked. Batching the live path is a
+        # separate open decision; delivering a one-event batch here is not
+        # that -- it calls the only handler such a subscriber has, and leaves
+        # per-envelope stop/pause granularity exactly as it was.
+        subscriber = self.subscription.subscriber
+        self._has_handle = callable(getattr(subscriber, "handle", None))
+        self._batch_only = not self._has_handle and supports_batch_handling(subscriber)
+        if not self._has_handle and not self._batch_only:
+            raise TypeError(
+                f"Subscriber {type(subscriber).__name__!r} for subscription "
+                f"{self.subscription.name!r} implements neither handle() nor "
+                "handle_batch(); it satisfies no subscriber Protocol and has "
+                "no way to receive events."
+            )
 
         # Event filtering - create from config/subscriber
         self._filter = EventFilter.from_config_and_subscriber(
@@ -405,7 +435,15 @@ class LiveRunner:
                 start_time = time.perf_counter()
                 try:
                     subscriber = self.subscription.subscriber
-                    await self._call_guarded(lambda: subscriber.handle(event), "handle_event")
+                    if self._batch_only:
+                        # The subscriber's only handler. A one-event batch,
+                        # not live batching (#34) -- see __post_init__.
+                        batch_subscriber = cast(BatchSubscriber, subscriber)
+                        await self._call_guarded(
+                            lambda: batch_subscriber.handle_batch([event]), "handle_batch"
+                        )
+                    else:
+                        await self._call_guarded(lambda: subscriber.handle(event), "handle_event")
                     self._stats.events_processed += 1
 
                     # Record success metrics
