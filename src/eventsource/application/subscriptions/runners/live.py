@@ -26,6 +26,7 @@ from eventsource.application.subscriptions.retry import (
     CircuitBreaker,
     RetryableOperation,
 )
+from eventsource.application.subscriptions.subscriber import settle_handler_result
 from eventsource.application.subscriptions.subscription import (
     Subscription,
     SubscriptionState,
@@ -43,7 +44,11 @@ from eventsource.observability.attributes import (
 )
 from eventsource.ports.envelopes import EventEnvelope, FeedReadOptions
 from eventsource.ports.positions import Position
-from eventsource.ports.subscribers import BatchSubscriber, supports_batch_handling
+from eventsource.ports.subscribers import (
+    BatchSubscriber,
+    get_subscribed_event_types,
+    supports_batch_handling,
+)
 
 if TYPE_CHECKING:
     from eventsource.ports.bus import SubscribableEventBus
@@ -257,7 +262,7 @@ class LiveRunner:
     def _subscribe_to_bus(self) -> None:
         """Subscribe to the event bus with our internal handler."""
         # Get event types from subscriber
-        event_types = self.subscription.subscriber.subscribed_to()
+        event_types = get_subscribed_event_types(self.subscription.subscriber)
 
         for event_type in event_types:
             handler = self._create_event_handler()
@@ -440,10 +445,14 @@ class LiveRunner:
                         # not live batching (#34) -- see __post_init__.
                         batch_subscriber = cast(BatchSubscriber, subscriber)
                         await self._call_guarded(
-                            lambda: batch_subscriber.handle_batch([event]), "handle_batch"
+                            lambda: settle_handler_result(batch_subscriber.handle_batch([event])),
+                            "handle_batch",
                         )
                     else:
-                        await self._call_guarded(lambda: subscriber.handle(event), "handle_event")
+                        await self._call_guarded(
+                            lambda: settle_handler_result(subscriber.handle(event)),
+                            "handle_event",
+                        )
                     self._stats.events_processed += 1
 
                     # Record success metrics

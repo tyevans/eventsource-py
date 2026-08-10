@@ -610,10 +610,28 @@ class TestLiveRunnerCheckpointStrategies:
         event_store: InMemoryEventStore,
         subscriber: MockLiveSubscriber,
     ):
-        """Test PERIODIC strategy only saves when interval has elapsed."""
+        """Test PERIODIC strategy only saves when interval has elapsed.
+
+        The interval is advanced by rewinding the runner's last-checkpoint
+        stamp rather than by sleeping. This test used to configure a 100ms
+        interval, process an event ~10ms later, and assert no checkpoint had
+        been written -- which is only true if fewer than 100ms of wall clock
+        pass between `start()` and the event being processed. That holds on an
+        idle machine and fails on a loaded one: the event loop is session-
+        scoped and shared by the whole suite, so any scheduling stall longer
+        than the interval makes the runner checkpoint on the *first* event and
+        the assertion reads as a logic error. It failed exactly that way in CI
+        on 2026-08-10 while passing locally.
+
+        Rewinding `_last_checkpoint_time` tests the same contract -- PERIODIC
+        checkpoints only once `checkpoint_interval_seconds` has elapsed since
+        the last write -- without a race, and with an interval large enough
+        that no plausible stall can satisfy it accidentally.
+        """
+        interval = 30.0
         config = SubscriptionConfig(
             checkpoint_strategy=CheckpointStrategy.PERIODIC,
-            checkpoint_interval_seconds=0.1,  # 100ms interval
+            checkpoint_interval_seconds=interval,
         )
         subscription = Subscription(
             name="PeriodicLive",
@@ -628,22 +646,20 @@ class TestLiveRunnerCheckpointStrategies:
         )
         await runner.start()
 
-        # First event - should not checkpoint (interval not elapsed)
+        # First event - must not checkpoint, the interval has not elapsed.
         event1 = LiveTestEvent(aggregate_id=uuid4(), data="first")
         await append_event(event_store, event1)
         await wake(event_bus)
-        await asyncio.sleep(0.01)
 
         assert await checkpoint_repo.get_position("PeriodicLive") is None
 
-        # Wait for interval to elapse
-        await asyncio.sleep(0.15)
+        # Advance past the interval without waiting for it.
+        runner._last_checkpoint_time -= interval * 2
 
-        # Second event - should checkpoint now
+        # Second event - the interval has now elapsed, so this one checkpoints.
         event2 = LiveTestEvent(aggregate_id=uuid4(), data="second")
         position2 = await append_event(event_store, event2)
         await wake(event_bus)
-        await asyncio.sleep(0.01)
 
         saved = await checkpoint_repo.get_position("PeriodicLive")
         assert saved == position2

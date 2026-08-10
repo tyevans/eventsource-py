@@ -5,6 +5,15 @@ paths:
 
 # Testing Conventions
 
+## What a test has to reach
+
+Nearly every test here is an isolation test: construct the mechanism, exercise
+it, assert on it. That proves the mechanism works and says nothing about
+whether anything reaches it — which is why nine inert capabilities shipped
+green in the 2026-08-09 backpressure wave. When the *library* is obligated to
+invoke what you are testing, drive the real caller and then inspect the
+mechanism. Rule and criterion: `.claude/rules/recurring-defects.md` §3.
+
 ## Structure
 
 - `tests/unit/` -- No external dependencies, fast, always run
