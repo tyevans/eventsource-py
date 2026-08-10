@@ -187,6 +187,7 @@ nav:
       - "ADR-0060: Background Publishing Is Bounded, and Degrades to Inline": adrs/0060-bounded-background-publishing.md
       - "ADR-0061: The Lease Half of Leader Election Is Not Ours to Declare": adrs/0061-leader-lease-protocol-deleted.md
       - "ADR-0062: Single Declaration Sites for Shutdown Timeout and Retry Policy": adrs/0062-single-declaration-sites-for-shutdown-timeout-and-retry-policy.md
+      - "ADR-0063: Live Batch Delivery Is A Page, Not A Window": adrs/0063-live-batch-delivery-is-a-page-not-a-window.md
   - Development:
       - development/index.md
       - Contributing: development/contributing.md

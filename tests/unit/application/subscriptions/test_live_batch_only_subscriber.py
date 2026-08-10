@@ -11,12 +11,10 @@ could fill the DLQ with events whose handler was never actually reached. The
 docs said such a subscriber "will not receive live events", which reads like a
 silent no-op rather than a per-event exception.
 
-The fix delivers a one-event batch rather than batching the live path (task
-#34, still open): `handle_batch([event])` is the subscriber's only handler, so
-it is the honest call, and per-envelope stop/pause granularity is untouched.
-
-`handle()` is still preferred whenever it exists, so nothing changes for a
-subscriber that implements both.
+The original fix delivered a one-event batch. Task #34 (ADR 0063) then made the
+live path group the envelopes a single bounded feed read already returned, so
+these subscribers now receive real batches -- and `handle_batch()` takes
+precedence over `handle()` on the live path, matching `CatchUpRunner`.
 """
 
 import asyncio
@@ -191,9 +189,10 @@ class TestBatchOnlySubscriberOnLivePath:
         event_store: InMemoryEventStore,
         checkpoint_repo: InMemoryCheckpointRepository,
     ) -> None:
-        """`handle()` still wins on the live path when present, so this fix is
-        invisible to every subscriber that already worked. Live batching is a
-        separate, still-open decision (#34)."""
+        """A batch-capable subscriber is delivered to through `handle_batch()`
+        even when it also implements `handle()` -- the same precedence
+        `CatchUpRunner` has always used (`supports_batch_handling()`). Before
+        ADR 0063 the two runners disagreed about the same subscriber."""
         subscriber = BothSubscriber()
         subscription = Subscription(name="both-live", config=make_config(), subscriber=subscriber)
         runner = LiveRunner(
@@ -210,5 +209,6 @@ class TestBatchOnlySubscriberOnLivePath:
         finally:
             await runner.stop()
 
-        assert len(subscriber.single_calls) == 1
-        assert subscriber.batch_calls == []
+        assert subscriber.single_calls == []
+        assert len(subscriber.batch_calls) == 1
+        assert [e.data for e in subscriber.batch_calls[0]] == ["e0"]
