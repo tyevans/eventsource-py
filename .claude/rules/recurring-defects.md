@@ -201,13 +201,24 @@ files look right; it is done when a whole-tree grep for the symbol comes back
 clean **and that grep command is in the PR description**, so a reviewer can
 re-run it rather than trust the sweeper's file list.
 
-**Known instance, unfixed: `docs/adrs/index.md`.** It is a hand-maintained
+**Known instance, now guarded: `docs/adrs/index.md`.** It is a hand-maintained
 second copy of the `docs/adrs/` directory listing, and it appears in five
 `fix:` commits (`cb7fa1e`, `4609ba8`, `e40c026`, `b84b31e`, `95b684f`) — the
-repo's own §2 defect sitting in its decision log. Until it is generated, every
-ADR added, renumbered, or superseded requires an explicit edit there; the
-mkdocs nav is a *third* copy and a strict build will not catch an omission in
-either.
+repo's own §2 defect sitting in its decision log. The mkdocs nav is a *third*
+copy, and a strict build does not catch an omission in either: it logs the
+un-nav'd page at INFO and exits 0.
+
+Neither copy is *generated* — both carry hand-written prose (a paragraph per
+record in `index.md`, curated short titles in the nav) that a generator would
+destroy, and the ADR H1s are too inconsistently formatted to be titles anyway.
+What is now enforced is the mechanical part: `scripts/check_adr_index.py`
+(`make adr`, and a step in `.github/workflows/adr-check.yml`) fails when either
+copy omits a file, names a file that does not exist, lists one twice, orders
+the nav wrong, or carries an ADR number that disagrees with the file it points
+at. Adding an ADR still means writing two entries by hand — you just cannot
+forget to. **When the disagreement is between a listing and the tree, the
+mechanism is a check that derives the tree's version and diffs it, not a
+sweep.**
 
 **Rule, second half — grep the whole tree, not just prose.** Renaming or
 deleting a public symbol is not done until `grep -rn '<symbol>' .` comes back

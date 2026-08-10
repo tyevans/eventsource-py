@@ -69,3 +69,13 @@ repos:
         language: system
         pass_filenames: false
         files: ^(src/eventsource/|pyproject\.toml)
+
+      # Stdlib-only, so it runs on `python3` directly rather than through
+      # `uv run`. CI is the gate (.github/workflows/adr-check.yml); this is
+      # the same check, earlier.
+      - id: adr-index
+        name: adr-index
+        entry: python3 scripts/check_adr_index.py
+        language: system
+        pass_filenames: false
+        files: ^(docs/adrs/|mkdocs\.yml|scripts/check_adr_index\.py)

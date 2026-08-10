@@ -2,6 +2,12 @@
 # Validates ADR numbering in docs/adrs/: every ADR file must follow the
 # NNNN-slug.md naming pattern and no two ADRs may share a number.
 #
+# It also validates the two hand-maintained *copies* of that directory
+# listing -- docs/adrs/index.md and the ADRs section of mkdocs.yml -- against
+# the directory itself, via scripts/check_adr_index.py. Neither copy had
+# anything failing when it disagreed, and both drifted repeatedly; a strict
+# mkdocs build does not catch a nav omission.
+#
 # This check is informational for now -- it is intentionally NOT in the
 # branch-protection required checks, so a failure does not block merges.
 # Promote it to required once the existing duplicate numbering is resolved.
@@ -13,10 +19,14 @@ on:
     branches: [main]
     paths:
       - "docs/adrs/**"
+      - "mkdocs.yml"
+      - "scripts/check_adr_index.py"
       - ".github/workflows/adr-check.yml"
   pull_request:
     paths:
       - "docs/adrs/**"
+      - "mkdocs.yml"
+      - "scripts/check_adr_index.py"
       - ".github/workflows/adr-check.yml"
   workflow_dispatch:
 
@@ -54,3 +64,7 @@ jobs:
             echo "All ADR numbers are unique and well-formed."
           fi
           exit $status
+
+      # Stdlib-only, so it needs no `uv sync` step.
+      - name: Check ADR index and mkdocs nav coverage
+        run: python3 scripts/check_adr_index.py
