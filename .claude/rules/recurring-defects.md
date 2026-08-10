@@ -100,6 +100,32 @@ not assert on them.
 - `d1e9267`, `a181fb8`, `0a37222` — dead typevars, dead OTel imports, a patch
   target that no longer existed.
 
+**The sharper form: a capability the library declares, documents, and is
+supposed to dispatch to — and never does.** The 2026-08-09 backpressure wave
+found this shape ten times in one sweep. `SubscriptionConfig.max_in_flight`
+(default 1000) was inert: both runners awaited `handle()` *inside* the
+flow-control slot in a sequential loop, so the semaphore never blocked. A real
+`LiveRunner` with 5 events, a 200ms handler and `max_in_flight=1000` peaked at
+`in_flight == 1`. Same wave: `handle_batch()` declared on the subscriber
+Protocol and never dispatched, `processing_timeout` with zero read sites,
+`release_migration_metrics()` wired to a method with no caller.
+
+**The criterion — without it every public API looks like a false positive.**
+`EventStore.append` has no internal caller *because users call it*; that is not
+a defect. The defect is when **the library itself** is supposed to detect,
+dispatch to, or honor the thing and doesn't. Ask: who is contractually
+obligated to call this — the user, or us? If the answer is us, grep for our
+call site before believing the feature exists.
+
+**Why isolation tests never catch it.** Every instance had tests, and they all
+passed. ~60 `SubscriptionMetrics` tests existed and *not one* asserted
+`runner.metrics` after running a runner — you could delete every `record_*`
+call from both runners and the suite stayed green. `test_health.py` assigned
+`stats.peak_in_flight = 50` directly. A unit test that constructs the mechanism
+and exercises it in isolation proves the mechanism works; it says nothing about
+whether anything reaches it. **The assertion that catches this runs the real
+caller and then inspects the mechanism.**
+
 **This is the class conformance suites will not catch.** Guard it directly:
 
 - When you add a counter or stat field, add a test that asserts it is
@@ -148,16 +174,29 @@ When a sweep *does* have to touch prose, grep for the symbol across
 `docs/`, `README.md`, docstrings, and `examples/` — not a curated list of
 files. The repeated failure is a sweep that fixes the pages it thought of.
 
+**Rule, second half — grep the whole tree, not just prose.** Renaming or
+deleting a public symbol is not done until `grep -rn '<symbol>' .` comes back
+clean. Prose is the *easy* half; the half that turns CI red is test code the
+sweeping lane never opened, and the directory that has actually done this is
+**`tests/integration/`** — a lane deleted a public symbol, swept its own
+`src/` and `tests/unit/` directories thoroughly, and never looked at
+`tests/integration/`, whose fixtures still constructed the old name. Nothing
+in a scoped local run touches those files (they need Docker markers), so the
+first signal is CI. Integration fixtures, `conftest.py` files, and
+`src/eventsource/testing/` are as much call sites as `src/` is.
+
 ## 6. ADR number collisions
 
 `ce48fff` (0031 → 0032), `0750dfe` (0019 collision), `4f71b85` (0021 claimed
 by in-flight work). Three times, always the same cause: parallel branches each
 take the next free number from `main`.
 
-**Rule:** this is structural to parallel work, not carelessness. Draft the ADR
-under a provisional name (branch name or date suffix), and allocate the number
-at merge time after checking `docs/adrs/` on current `main`. Before merging any
-branch that adds an ADR, re-check the number.
+**Rule:** this is structural to parallel work, not carelessness. Take the next
+free number at drafting — the filename must be `NNNN-slug.md` from the first
+push, because `.github/workflows/adr-check.yml` fails any other name — but
+treat that number as a *claim*, not a reservation. Before merging any branch
+that adds an ADR, re-check `docs/adrs/` on current `main` and renumber if it
+was taken. See `.claude/rules/definition-of-done.md` §5 for the renumber steps.
 
 ---
 

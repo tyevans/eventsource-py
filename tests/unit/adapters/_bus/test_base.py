@@ -97,7 +97,7 @@ async def test_track_background_runs_and_is_drained() -> None:
     async def work() -> None:
         ran.set()
 
-    bus._track_background(work())
+    await bus._track_background(work())
     assert bus.get_background_task_count() == 1
 
     await bus._drain_background(timeout=5.0)
@@ -120,7 +120,7 @@ async def test_background_task_failure_does_not_propagate() -> None:
     async def boom() -> None:
         raise ValueError("background failure")
 
-    bus._track_background(boom())
+    await bus._track_background(boom())
     await bus._drain_background(timeout=5.0)
 
     assert bus.get_background_task_count() == 0
@@ -132,7 +132,7 @@ async def test_drain_cancels_tasks_that_exceed_the_timeout(caplog) -> None:  # t
     async def slow() -> None:
         await asyncio.sleep(30)
 
-    task = bus._track_background(slow())
+    task = await bus._track_background(slow())
     with caplog.at_level("INFO", logger="eventsource.adapters._bus.base"):
         await bus._drain_background(timeout=0.05)
 
@@ -170,7 +170,7 @@ async def test_drain_background_default_timeout_lets_a_20s_task_finish(
     async def instant() -> None:
         return None
 
-    bus._track_background(instant())
+    await bus._track_background(instant())
     await bus._drain_background()
 
     assert captured_timeout == [30.0]
@@ -185,7 +185,7 @@ async def test_drain_background_logs_and_suppresses_wait_errors(
     async def never_finishes() -> None:
         await asyncio.sleep(30)
 
-    bus._track_background(never_finishes())
+    await bus._track_background(never_finishes())
 
     async def boom(*args: object, **kwargs: object) -> None:
         raise RuntimeError("distinctive wait failure")
@@ -228,7 +228,7 @@ async def test_on_background_task_done_logs_the_actual_task_exception(caplog) ->
         raise ValueError("distinctive background failure")
 
     with caplog.at_level("ERROR", logger="eventsource.adapters._bus.base"):
-        bus._track_background(boom())
+        await bus._track_background(boom())
         await bus._drain_background(timeout=5.0)
 
     own_records = [r for r in caplog.records if r.name == "eventsource.adapters._bus.base"]
@@ -249,8 +249,8 @@ async def test_drain_background_waits_for_every_pending_task_not_just_the_first(
         await asyncio.sleep(0.1)
         slow_done.set()
 
-    bus._track_background(fast())
-    bus._track_background(slow())
+    await bus._track_background(fast())
+    await bus._track_background(slow())
 
     await bus._drain_background(timeout=5.0)
 

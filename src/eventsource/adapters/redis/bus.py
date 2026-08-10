@@ -39,7 +39,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
-from eventsource.adapters._bus.base import BaseEventBus
+from eventsource.adapters._bus.base import DEFAULT_MAX_BACKGROUND_TASKS, BaseEventBus
 from eventsource.adapters._bus.handler_adapter import HandlerAdapter
 from eventsource.domain.event import DomainEvent
 from eventsource.domain.exceptions import HandlerDispatchError
@@ -225,6 +225,7 @@ class RedisEventBus(BaseEventBus):
         event_registry: EventRegistry | None = None,
         *,
         tracer: Tracer | None = None,
+        max_background_tasks: int | None = DEFAULT_MAX_BACKGROUND_TASKS,
     ) -> None:
         """
         Initialize the Redis event bus.
@@ -243,7 +244,10 @@ class RedisEventBus(BaseEventBus):
         if not REDIS_AVAILABLE:
             raise RedisNotAvailableError()
 
-        super().__init__(event_registry=event_registry)
+        super().__init__(
+            event_registry=event_registry,
+            max_background_tasks=max_background_tasks,
+        )
 
         self._config = config or RedisEventBusConfig()
         self._redis: Redis | None = None
@@ -412,7 +416,7 @@ class RedisEventBus(BaseEventBus):
         ) as span:
             try:
                 if background:
-                    self._track_background(self._publish_all(events))
+                    await self._track_background(self._publish_all(events))
                 elif len(events) > 1:
                     await self._publish_batch(events)
                 else:

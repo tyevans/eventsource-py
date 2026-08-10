@@ -1470,6 +1470,12 @@ class MigrationCoordinator:
         self._lag_trackers.pop(migration.id, None)
         self._target_stores.pop(migration.id, None)
         self._cleanup_status_queues(migration.id)
+        # This is the success path's only release site. It previously hung off
+        # `_complete_migration`, which had no caller, so the gauge was never
+        # released on success (dead since 798ae2e). The test that covers this
+        # asserts the call *happens*, not *where in the call graph* -- so
+        # moving it back onto a helper that nothing invokes would reintroduce
+        # that bug silently. Keep it on a method reached by the live path.
         release_migration_metrics(str(migration.id))
 
     async def _rollback_cutover(

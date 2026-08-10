@@ -88,7 +88,7 @@ from datetime import UTC, datetime
 from types import TracebackType
 from typing import TYPE_CHECKING, Any
 
-from eventsource.adapters._bus.base import BaseEventBus
+from eventsource.adapters._bus.base import DEFAULT_MAX_BACKGROUND_TASKS, BaseEventBus
 from eventsource.adapters._bus.handler_adapter import HandlerAdapter
 from eventsource.adapters._bus.retry import RetryPolicy
 from eventsource.adapters.kafka.config import KafkaEventBusConfig
@@ -198,6 +198,7 @@ class KafkaEventBus(BaseEventBus):
         serializer: EventSerializer | None = None,
         *,
         tracer: Tracer | None = None,
+        max_background_tasks: int | None = DEFAULT_MAX_BACKGROUND_TASKS,
     ) -> None:
         """Initialize the Kafka event bus.
 
@@ -217,7 +218,10 @@ class KafkaEventBus(BaseEventBus):
         if not KAFKA_AVAILABLE:
             raise KafkaNotAvailableError()
 
-        super().__init__(event_registry=event_registry)
+        super().__init__(
+            event_registry=event_registry,
+            max_background_tasks=max_background_tasks,
+        )
 
         self._config = config or KafkaEventBusConfig()
         self._serializer = serializer or EventSerializer()
@@ -728,7 +732,7 @@ class KafkaEventBus(BaseEventBus):
             # tracked background task (mirrors MemoryEventBus/RedisEventBus)
             # so shutdown()'s _drain_background() can wait for outstanding
             # background publishes instead of losing track of them.
-            self._track_background(self._publish_and_record(events, background, start_time))
+            await self._track_background(self._publish_and_record(events, background, start_time))
         else:
             await self._publish_and_record(events, background, start_time)
 

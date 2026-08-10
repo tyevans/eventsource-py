@@ -708,7 +708,7 @@ class Subscription:
             },
         )
 
-    async def wait_if_paused(self) -> bool:
+    async def wait_if_paused(self, stop_signal: asyncio.Event | None = None) -> bool:
         """
         Wait if the subscription is paused.
 
@@ -716,21 +716,53 @@ class Subscription:
         for resume if paused. It blocks until the subscription
         is resumed or returns immediately if not paused.
 
+        Pass `stop_signal` to make the wait interruptible. Without it this
+        blocks until `resume()` and nothing else, which made `stop()`
+        unreliable in exactly the state an operator chooses deliberately: a
+        runner parked here never reached its own stop check, so `stop()` set
+        its flag and returned having stopped nothing, and the runner stayed
+        parked until somebody resumed it. Both runners pass their stop event.
+
+        Waking on `stop_signal` does **not** resume the subscription -- it
+        only unblocks the caller, which is expected to notice the stop and
+        leave its loop. A subscription stopped while paused stays paused.
+
+        Args:
+            stop_signal: Optional event that also ends the wait when set.
+
         Returns:
-            True if was paused and resumed, False if not paused
+            True if the wait actually blocked (whether it ended in a resume
+            or a stop), False if the subscription was not paused.
 
         Example:
             >>> # In runner processing loop
-            >>> was_paused = await subscription.wait_if_paused()
+            >>> was_paused = await subscription.wait_if_paused(self._stop_event)
             >>> if was_paused:
-            ...     # Re-check state after resume
+            ...     # Re-check state -- this may be a stop, not a resume
             ...     pass
         """
         if self._pause_event.is_set():
             return False
 
-        # Wait for resume
-        await self._pause_event.wait()
+        if stop_signal is None:
+            await self._pause_event.wait()
+            return True
+
+        if stop_signal.is_set():
+            return True
+
+        # Wait for whichever comes first, then cancel the loser so it does
+        # not linger as a pending task for the life of the subscription.
+        waiters = [
+            asyncio.create_task(self._pause_event.wait()),
+            asyncio.create_task(stop_signal.wait()),
+        ]
+        try:
+            await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for task in waiters:
+                task.cancel()
+            await asyncio.gather(*waiters, return_exceptions=True)
         return True
 
     @property

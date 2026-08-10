@@ -10,11 +10,12 @@ This module provides:
 - LiveRunner: Runner for real-time event processing
 """
 
+import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from eventsource.application.subscriptions.config import CheckpointStrategy
 from eventsource.application.subscriptions.filtering import EventFilter, FilterStats
@@ -42,6 +43,7 @@ from eventsource.observability.attributes import (
 )
 from eventsource.ports.envelopes import EventEnvelope, FeedReadOptions
 from eventsource.ports.positions import Position
+from eventsource.ports.subscribers import BatchSubscriber, supports_batch_handling
 
 if TYPE_CHECKING:
     from eventsource.ports.bus import SubscribableEventBus
@@ -117,12 +119,17 @@ class LiveRunner:
 
     # Internal state - not part of init
     _running: bool = field(default=False, init=False, repr=False)
-    # Mirrors `CatchUpRunner._stop_requested`: a distinct signal from
-    # `_running` so `stop()` can interrupt a drain already in flight
-    # (checked per envelope in `_drain_feed`) without depending on `start()`
-    # having been called first -- `_running` alone stays False in that case
-    # and would otherwise prevent the drain from doing anything.
-    _stop_requested: bool = field(default=False, init=False, repr=False)
+    # Mirrors `CatchUpRunner._stop_event`: a distinct signal from `_running`
+    # so `stop()` can interrupt a drain already in flight (checked per
+    # envelope in `_drain_feed`) without depending on `start()` having been
+    # called first -- `_running` alone stays False in that case and would
+    # otherwise prevent the drain from doing anything.
+    #
+    # An `asyncio.Event` rather than a bool because `wait_if_paused()` must be
+    # able to wake on it: a drain parked waiting for a resume that may never
+    # come has to be interruptible. `_stop_requested` below reads this event
+    # rather than shadowing it, so there is one writable site for the fact.
+    _stop_event: asyncio.Event = field(default_factory=asyncio.Event, init=False, repr=False)
     _subscribed: bool = field(default=False, init=False, repr=False)
     # Counts of wake signals, not events. The feed is the source of truth for
     # what to process, so buffering only needs to remember *that* wakes
@@ -154,6 +161,35 @@ class LiveRunner:
 
         self.config = self.subscription.config
         self._flow_controller = FlowController()
+
+        # Which handler to call, decided once at construction -- a
+        # subscriber's capabilities are a property of its class, not
+        # something that changes mid-run (same rule as
+        # `CatchUpRunner._batch_capable`).
+        #
+        # `BatchSubscriber` requires only `subscribed_to()` and
+        # `handle_batch()`. This runner used to call `handle()`
+        # unconditionally, so a subscriber implementing exactly that
+        # published Protocol raised `AttributeError` per event once its
+        # subscription went live -- recorded as a handler failure and,
+        # under `continue_on_error`, potentially filling the DLQ with events
+        # whose handler was never reached.
+        #
+        # `handle()` still wins whenever it exists, so this is invisible to
+        # subscribers that already worked. Batching the live path is a
+        # separate open decision; delivering a one-event batch here is not
+        # that -- it calls the only handler such a subscriber has, and leaves
+        # per-envelope stop/pause granularity exactly as it was.
+        subscriber = self.subscription.subscriber
+        self._has_handle = callable(getattr(subscriber, "handle", None))
+        self._batch_only = not self._has_handle and supports_batch_handling(subscriber)
+        if not self._has_handle and not self._batch_only:
+            raise TypeError(
+                f"Subscriber {type(subscriber).__name__!r} for subscription "
+                f"{self.subscription.name!r} implements neither handle() nor "
+                "handle_batch(); it satisfies no subscriber Protocol and has "
+                "no way to receive events."
+            )
 
         # Event filtering - create from config/subscriber
         self._filter = EventFilter.from_config_and_subscriber(
@@ -198,7 +234,7 @@ class LiveRunner:
                 return
 
             self._running = True
-            self._stop_requested = False
+            self._stop_event.clear()
             self._buffer_enabled = buffer_events
             self._last_checkpoint_time = time.monotonic()
 
@@ -327,7 +363,7 @@ class LiveRunner:
                     stopped = True
                     break
 
-                await self.subscription.wait_if_paused()
+                await self.subscription.wait_if_paused(self._stop_event)
                 if self._stop_requested:
                     stopped = True
                     break
@@ -399,7 +435,15 @@ class LiveRunner:
                 start_time = time.perf_counter()
                 try:
                     subscriber = self.subscription.subscriber
-                    await self._call_guarded(lambda: subscriber.handle(event), "handle_event")
+                    if self._batch_only:
+                        # The subscriber's only handler. A one-event batch,
+                        # not live batching (#34) -- see __post_init__.
+                        batch_subscriber = cast(BatchSubscriber, subscriber)
+                        await self._call_guarded(
+                            lambda: batch_subscriber.handle_batch([event]), "handle_batch"
+                        )
+                    else:
+                        await self._call_guarded(lambda: subscriber.handle(event), "handle_event")
                     self._stats.events_processed += 1
 
                     # Record success metrics
@@ -509,7 +553,19 @@ class LiveRunner:
         operation_name: str,
     ) -> T:
         """
-        Call `operation` through the handler circuit breaker, if configured.
+        Call `operation` under `processing_timeout`, through the handler
+        circuit breaker if one is configured.
+
+        `config.processing_timeout` bounds one handler call. Exceeding it
+        raises `TimeoutError`, an ordinary handler failure from here on:
+        `continue_on_error` decides whether the subscription proceeds. Before
+        this was enforced the field was read nowhere, so a hung live handler
+        wedged the subscription silently and indefinitely.
+
+        The timeout is applied **inside** the breaker rather than around it, so
+        a run of hanging handlers opens the circuit exactly as a run of raising
+        ones does. See `CatchUpRunner._call_guarded` -- both runners enforce
+        the same budget at the same point, and the pair should stay in step.
 
         Guards the handler call (`handle()`) specifically --
         `self._handler_circuit_breaker`, never `self._infra_circuit_breaker`
@@ -541,11 +597,17 @@ class LiveRunner:
 
         Raises:
             CircuitBreakerOpenError: If the breaker is open
+            TimeoutError: If the call exceeds `config.processing_timeout`
             Exception: Whatever `operation` itself raises
         """
+
+        async def bounded() -> T:
+            async with asyncio.timeout(self.config.processing_timeout):
+                return await operation()
+
         if self._handler_circuit_breaker is not None:
-            return await self._handler_circuit_breaker.execute(operation, operation_name)
-        return await operation()
+            return await self._handler_circuit_breaker.execute(bounded, operation_name)
+        return await bounded()
 
     async def _save_checkpoint_with_retry(
         self,
@@ -720,7 +782,7 @@ class LiveRunner:
                 return
 
             self._running = False
-            self._stop_requested = True
+            self._stop_event.set()
 
             # Unsubscribe from bus using stored handler references
             if self._subscribed:
@@ -746,6 +808,14 @@ class LiveRunner:
     def is_running(self) -> bool:
         """Check if the runner is active."""
         return self._running
+
+    @property
+    def _stop_requested(self) -> bool:
+        """Whether `stop()` has been called, derived from `_stop_event`.
+
+        A read-only view, so the event stays the single writable site.
+        """
+        return self._stop_event.is_set()
 
     @property
     def buffer_size(self) -> int:

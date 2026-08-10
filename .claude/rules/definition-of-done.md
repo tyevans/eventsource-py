@@ -29,10 +29,19 @@ documented and amended:
    which is immutable and scoped to a moment. An ADR states decision, forces,
    and consequences; those stay true, numbers decay. See
    `.claude/rules/recurring-defects.md` §5.
-5. **ADR numbers are allocated at merge, not at drafting.** Parallel branches
-   each grabbing "the next free number" has collided three times
-   (`ce48fff`, `0750dfe`, `4f71b85`). Draft under a provisional name; re-check
-   `docs/adrs/` on current `main` before merging.
+5. **ADR numbers are provisional until merge — but the filename is always
+   `NNNN-slug.md`.** Parallel branches each grabbing "the next free number"
+   has collided three times (`ce48fff`, `0750dfe`, `4f71b85`), so the number
+   you take at drafting is a claim, not a reservation. Do **not** draft under
+   a `DRAFT-` or branch-suffixed name: `.github/workflows/adr-check.yml`
+   rejects any `docs/adrs/*.md` that is not `NNNN-slug.md`, so a provisional
+   filename is a guaranteed red PR from its first push.
+
+   The merge-time step is therefore *re-check and renumber*, not *allocate*:
+   before merging, diff `docs/adrs/` against current `main`; if your number
+   was claimed, `git mv` to the next free one and update every referrer
+   (`grep -rn '<old-number>' docs/ src/ mkdocs.yml`), `index.md`, and the
+   mkdocs nav — a strict build will not catch a nav omission.
 
 ## Recurring Defect Check (applies to ALL work)
 

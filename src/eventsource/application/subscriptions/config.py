@@ -58,7 +58,10 @@ class SubscriptionConfig:
         batch_size: Number of events to read in each batch during catch-up
         checkpoint_strategy: When to persist checkpoint updates
         checkpoint_interval_seconds: Interval for PERIODIC strategy
-        processing_timeout: Max seconds to wait for event processing
+        processing_timeout: Max seconds for a single handler call. Enforced by
+            both runners via `asyncio.timeout()`. A `handle_batch()` call is
+            one call, so a whole batch shares one budget. On expiry the call
+            raises `TimeoutError` and is handled as any other handler failure.
         shutdown_timeout: Max seconds to wait during graceful shutdown
         event_types: Event types to filter (None = all types)
         aggregate_types: Aggregate types to filter (None = all types)
