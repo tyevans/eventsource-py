@@ -139,6 +139,7 @@ if TYPE_CHECKING:
         register_event,
     )
     from eventsource.domain.exceptions import (
+        AggregateIdMismatchError,
         AggregateNotCreatedError,
         AggregateNotFoundError,
         AggregateTypeMismatchError,
@@ -343,6 +344,7 @@ __all__ = [
     "ReadModel",
     "AggregateTypeNotSetError",
     "AggregateTypeMismatchError",
+    "AggregateIdMismatchError",
     # Snapshots
     "Snapshot",
     "SnapshotStore",
@@ -530,6 +532,7 @@ _LAZY: dict[str, str] = {
     "ReadModel": "eventsource.ports.readmodels",
     "AggregateTypeNotSetError": "eventsource.domain.exceptions",
     "AggregateTypeMismatchError": "eventsource.domain.exceptions",
+    "AggregateIdMismatchError": "eventsource.domain.exceptions",
     "Snapshot": "eventsource.ports.snapshots",
     "SnapshotStore": "eventsource.ports.snapshots",
     "InMemorySnapshotStore": "eventsource.adapters.memory.snapshots",

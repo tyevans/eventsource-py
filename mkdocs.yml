@@ -189,6 +189,7 @@ nav:
       - "ADR-0062: Single Declaration Sites for Shutdown Timeout and Retry Policy": adrs/0062-single-declaration-sites-for-shutdown-timeout-and-retry-policy.md
       - "ADR-0063: Live Batch Delivery Is A Page, Not A Window": adrs/0063-live-batch-delivery-is-a-page-not-a-window.md
       - "ADR-0064: The Telemetry Attribute Catalogue Is Not a Wishlist": adrs/0064-telemetry-attribute-catalogue-is-not-a-wishlist.md
+      - "ADR-0065: An Event Cannot Name Another Aggregate": adrs/0065-an-event-cannot-name-another-aggregate.md
       - "ADR-0066: Read-Model Schema Reconciliation Is Additive and Opt-In": adrs/0066-read-model-schema-reconciliation-is-additive-and-opt-in.md
   - Development:
       - development/index.md

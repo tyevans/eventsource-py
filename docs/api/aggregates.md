@@ -429,6 +429,22 @@ the value `create_event()` stamps onto every event's `aggregate_id` field, the
 value `EventVersionError` carries on a version mismatch, and the value `__eq__`
 and `__hash__` are computed from.
 
+It is also the one auto-populated field a caller cannot override. An event
+whose `aggregate_id` names a different aggregate raises
+`AggregateIdMismatchError` — from `create_event()`, from
+`DeciderAggregate._stamp()` (which names the command in the message), and from
+`apply_event(event, is_new=True)`, which catches hand-constructed events too.
+Replay (`is_new=False`) is not checked: rehydration reads a stream that already
+agrees by construction.
+
+The guard exists because `aggregate_id` is the stream key. An event emitted
+from one aggregate while naming another is appended to a stream that disowns
+it — the emitting aggregate never reads that stream, the named one never
+receives the event, and a save/load round-trip of either shows nothing wrong.
+When a command names a target (`ShipOrder(order_id=...)`), that id is routing
+information for choosing which aggregate to load, not a value to copy onto the
+event; load the named aggregate and emit from it.
+
 #### `version`
 
 ```python
@@ -602,6 +618,9 @@ aggregate.apply_event(order_created, is_new=True)
 # Replayed event: applied only
 aggregate.apply_event(historic_event, is_new=False)
 ```
+
+With `is_new=True` the event must also name this aggregate; see
+[`aggregate_id`](#aggregate_id) for `AggregateIdMismatchError`.
 
 Application code rarely calls `apply_event()` directly for new events —
 `create_event()` and `_raise_event()` both funnel into
