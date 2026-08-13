@@ -125,4 +125,49 @@ class ReadModelNotFoundError(ReadModelError):
         super().__init__(f"Read model {model_id} not found")
 
 
-__all__ = ["ReadModelError", "ReadModelNotFoundError", "ReadModelVersionConflictError"]
+class ReadModelSchemaMismatchError(ReadModelError):
+    """
+    Raised when a read model's table cannot be reconciled with the model.
+
+    Schema reconciliation is additive: it adds columns a model declares and
+    the table lacks. Two situations it cannot resolve by adding a column,
+    and so refuses rather than emitting SQL the database will reject:
+
+    - The added field is required with no default, and the table may already
+      have rows to fill in for.
+    - The table has no primary key column, so it is not this model's table
+      (or does not exist and wants creating rather than reconciling).
+
+    Attributes:
+        table_name: Table that could not be reconciled
+        column: Column the reconciliation stopped on
+        reason: What cannot be done, and what to do instead
+
+    Example:
+        >>> try:
+        ...     await reconcile_read_model_schema(conn, OrderSummary)
+        ... except ReadModelSchemaMismatchError as e:
+        ...     print(f"{e.table_name}.{e.column} needs a real migration")
+    """
+
+    def __init__(self, table_name: str, column: str, reason: str) -> None:
+        """
+        Initialize ReadModelSchemaMismatchError.
+
+        Args:
+            table_name: Table that could not be reconciled
+            column: Column the reconciliation stopped on
+            reason: What cannot be done, and what to do instead
+        """
+        self.table_name = table_name
+        self.column = column
+        self.reason = reason
+        super().__init__(f"Cannot reconcile {table_name}: {reason}")
+
+
+__all__ = [
+    "ReadModelError",
+    "ReadModelNotFoundError",
+    "ReadModelSchemaMismatchError",
+    "ReadModelVersionConflictError",
+]

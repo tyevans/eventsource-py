@@ -35,6 +35,7 @@ Example:
 """
 
 import types
+from collections.abc import Collection
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal, Union, get_args, get_origin
@@ -42,6 +43,7 @@ from uuid import UUID
 
 from pydantic.fields import FieldInfo
 
+from eventsource.ports.readmodels.exceptions import ReadModelSchemaMismatchError
 from eventsource.ports.readmodels.model import ReadModel
 
 # Type mappings for PostgreSQL
@@ -255,6 +257,97 @@ def generate_full_schema(
     return "\n\n".join(parts)
 
 
+def generate_additive_migration(
+    model_class: type[ReadModel],
+    existing_columns: Collection[str],
+    dialect: Literal["postgresql", "sqlite"] = "postgresql",
+) -> list[str]:
+    """
+    Generate ALTER TABLE statements adding the model's missing columns.
+
+    `generate_schema` emits `CREATE TABLE IF NOT EXISTS`, which does nothing
+    to a table that already exists. A field added to a `ReadModel` therefore
+    never reaches a database created before that field existed, and no test
+    catches it: tests build their tables from nothing, where the CREATE is
+    always complete. This closes that gap for the additive case, which is
+    the one that happens.
+
+    Pure: it performs no I/O and executes nothing. Pass the columns the table
+    currently has and execute the statements yourself, or use
+    `reconcile_read_model_schema` to do both against a live connection.
+
+    Additive only, and deliberately so. A column present in the table but
+    absent from the model is left alone, and no column is ever dropped,
+    retyped, renamed, or reordered. Anything beyond adding a column is a
+    migration with a data question attached, which belongs to Alembic or to
+    whatever the consumer already uses.
+
+    Args:
+        model_class: The ReadModel subclass the table should match
+        existing_columns: Column names the table currently has, in any case
+        dialect: Database dialect ('postgresql' or 'sqlite')
+
+    Returns:
+        `ALTER TABLE ... ADD COLUMN ...` statements, one per missing column,
+        in model field order. Empty when the table already matches.
+
+    Raises:
+        ReadModelSchemaMismatchError: If a missing column would be NOT NULL
+            with no default (it cannot be added to a table that already has
+            rows), or if `existing_columns` does not contain the primary key
+            -- an absent `id` means this is not the model's table, or the
+            table does not exist and wants creating rather than reconciling.
+
+    Example:
+        >>> from eventsource.ports.readmodels import ReadModel
+        >>>
+        >>> class OrderSummary(ReadModel):
+        ...     order_number: str
+        ...     status: str = "pending"
+        ...
+        >>> existing = ["id", "created_at", "updated_at", "version",
+        ...             "deleted_at", "order_number"]
+        >>> for statement in generate_additive_migration(OrderSummary, existing):
+        ...     print(statement)
+        ALTER TABLE order_summaries ADD COLUMN status VARCHAR(255) NOT NULL DEFAULT 'pending';
+    """
+    type_map = POSTGRESQL_TYPE_MAP if dialect == "postgresql" else SQLITE_TYPE_MAP
+    table_name = model_class.table_name()
+    present = {column.lower() for column in existing_columns}
+
+    if "id" not in present:
+        raise ReadModelSchemaMismatchError(
+            table_name,
+            "id",
+            "the table has no primary key column, so it is not this model's "
+            "table -- create it with generate_full_schema() rather than "
+            "reconciling it",
+        )
+
+    statements = []
+    for field_name, field_info in model_class.model_fields.items():
+        if field_name.lower() in present:
+            continue
+
+        column_sql = _generate_column(field_name, field_info, type_map, dialect)
+
+        # Both halves come from _generate_column rather than being re-derived
+        # here, so nullability and defaults cannot disagree with what a
+        # CREATE TABLE for the same model would have produced.
+        if "NOT NULL" in column_sql and "DEFAULT" not in column_sql:
+            raise ReadModelSchemaMismatchError(
+                table_name,
+                field_name,
+                f"{field_name} is required and has no default, so it cannot "
+                f"be added to a table that may already have rows -- give the "
+                f"field a default or make it optional",
+            )
+
+        statements.append(f"ALTER TABLE {table_name} ADD COLUMN {column_sql};")
+
+    return statements
+
+
 def _generate_column(
     field_name: str,
     field_info: FieldInfo,
@@ -461,6 +554,7 @@ __all__ = [
     "generate_schema",
     "generate_indexes",
     "generate_full_schema",
+    "generate_additive_migration",
     "POSTGRESQL_TYPE_MAP",
     "SQLITE_TYPE_MAP",
 ]

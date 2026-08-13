@@ -316,6 +316,58 @@ the default read paths append a `deleted_at IS NULL` predicate, a partial index
 with `{"where": "deleted_at IS NULL"}` on PostgreSQL is usually the better shape
 for hot query columns than a plain index over the whole table.
 
+### Add a column to a table that already exists
+
+`generate_schema()` emits `CREATE TABLE IF NOT EXISTS`, and against a database
+that already has the table, that statement does nothing whatsoever. So adding a
+field to a `ReadModel` does **not** add a column to any database created before
+the field existed — and nothing tells you, because your tests build their
+tables from nothing, where the `CREATE` is always complete. The failure shows
+up the first time production writes the new field.
+
+`reconcile_read_model_schema()` closes the additive half of that gap:
+
+```python
+from eventsource.adapters.sql.readmodel_reconcile import reconcile_read_model_schema
+
+applied = await reconcile_read_model_schema(engine, OrderSummary)
+for statement in applied:
+    logger.info("read model schema: %s", statement)
+```
+
+It reads the columns the table currently has, adds the ones the model declares
+and the table lacks, and returns the statements it ran — empty when nothing was
+needed, so it is safe to call on every startup. If the table does not exist it
+creates it with its indexes. The dialect comes from the connection; there is no
+dialect argument to get wrong. Pass an `AsyncConnection` to keep the DDL in
+your own transaction, or an `AsyncEngine` to have one opened and committed.
+
+Nothing in the library calls it for you. It is a function you call, at a point
+you choose, and it is deliberately not a replacement for Alembic — it handles
+the one schema change that is safe to make unattended and refuses everything
+else:
+
+- **Additive only.** No column is dropped, retyped, renamed, or reordered, and
+  a column the model no longer declares is left in place.
+- **A required field with no default is refused**, with
+  `ReadModelSchemaMismatchError`, because it cannot be added to a table that
+  may already have rows. Give the field a default or make it optional — or
+  write the real migration, which is what the refusal is telling you the change
+  needs. The check runs before any statement executes, so a refusal leaves the
+  table untouched.
+- **Indexes on an existing table are not reconciled.** Only `CREATE TABLE`
+  brings the generated index DDL with it.
+
+To inspect before executing, or to feed the statements into a migration tool
+instead, use the pure function underneath — it does no I/O and takes the
+current columns as an argument:
+
+```python
+from eventsource.adapters.sql.readmodel_schema import generate_additive_migration
+
+statements = generate_additive_migration(OrderSummary, existing_columns, dialect="postgresql")
+```
+
 ## Choose a repository backend
 
 Three implementations ship with the library, all satisfying the same
