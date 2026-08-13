@@ -19,6 +19,7 @@ from eventsource.domain.command import DomainCommand
 from eventsource.domain.decorators import discover_handlers
 from eventsource.domain.event import DomainEvent
 from eventsource.domain.exceptions import (
+    AggregateIdMismatchError,
     AggregateNotCreatedError,
     AggregateTypeMismatchError,
     AggregateTypeNotSetError,
@@ -208,6 +209,9 @@ class AggregateRoot[TState: BaseModel](ABC):
             is_new: Whether this is a new event (True) or replayed from history (False)
 
         Raises:
+            AggregateIdMismatchError: If is_new=True and the event names a different
+                              aggregate_id -- it would be appended to a stream this
+                              aggregate never reads back
             EventVersionError: If version validation is enabled (validate_versions=True),
                               is_new=True, and the event version doesn't match expected
                               (current version + 1)
@@ -225,6 +229,7 @@ class AggregateRoot[TState: BaseModel](ABC):
         """
         # Validate version for new events (not historical replay)
         if is_new:
+            self._reject_foreign_aggregate_id(event, None)
             expected_version = self._version + 1
             if event.aggregate_version != expected_version:
                 if self.validate_versions:
@@ -454,9 +459,34 @@ class AggregateRoot[TState: BaseModel](ABC):
 
         # Create and apply the event
         event = event_class(**event_kwargs)
+        self._reject_foreign_aggregate_id(event, command)
         self.apply_event(event, is_new=True)
 
         return event
+
+    def _reject_foreign_aggregate_id(self, event: DomainEvent, command: object) -> None:
+        """Raise if the event names an aggregate other than this one.
+
+        Unlike `aggregate_type`, `aggregate_id` is not restamped -- an
+        explicitly-supplied id survives to the store, where it decides the
+        stream the event lands in. An event emitted here that names another
+        aggregate is appended to a stream that disowns it, and no save/load
+        round-trip can see it: the emitting aggregate never reads that
+        stream, and the named one never receives the event.
+
+        Reading `event.aggregate_id` rather than a per-aggregate declaration
+        of what may be targeted is what makes this work for every aggregate
+        without opt-in.
+        """
+        if event.aggregate_id == self.aggregate_id:
+            return
+        raise AggregateIdMismatchError(
+            type(event).__name__,
+            event.aggregate_id,
+            type(self).__name__,
+            self.aggregate_id,
+            type(command).__name__ if command is not None else None,
+        )
 
     def _reject_divergent_aggregate_type(self, event_class: type[DomainEvent]) -> None:
         """Raise if the event class declares a different aggregate_type.

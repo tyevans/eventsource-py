@@ -14,6 +14,7 @@ from eventsource.domain.event_registry import (
     register_event,
 )
 from eventsource.domain.exceptions import (
+    AggregateIdMismatchError,
     AggregateNotCreatedError,
     AggregateNotFoundError,
     AggregateTypeMismatchError,
@@ -54,6 +55,7 @@ from eventsource.domain.types import (
 __all__ = [
     "CATEGORY_PATTERN",
     "AggregateId",
+    "AggregateIdMismatchError",
     "AggregateNotCreatedError",
     "AggregateNotFoundError",
     "AggregateRoot",

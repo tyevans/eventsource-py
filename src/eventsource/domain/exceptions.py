@@ -254,6 +254,53 @@ class AggregateTypeMismatchError(EventSourceError):
         )
 
 
+class AggregateIdMismatchError(EventSourceError):
+    """An event names a different aggregate_id than the aggregate emitting it.
+
+    `aggregate_id` is the stream key. An event emitted from one aggregate
+    while naming another is appended to a stream that disowns it: the
+    aggregate it claims never loads it, and the one that emitted it carries
+    an event about someone else. Neither side sees the disagreement on a
+    save/load round-trip, so it surfaces only as state that silently went
+    missing.
+
+    A command that names a target is the usual source -- the target is
+    routing information for choosing *which* aggregate to load, not a value
+    to copy onto the event. Load the named aggregate and emit from it.
+
+    Attributes:
+        event_class: Name of the event class carrying the foreign id
+        event_aggregate_id: The id the event names
+        aggregate_class: Name of the aggregate emitting it
+        aggregate_id: The id of the aggregate emitting it
+        command_class: Name of the command being executed, when known
+    """
+
+    def __init__(
+        self,
+        event_class: str,
+        event_aggregate_id: UUID,
+        aggregate_class: str,
+        aggregate_id: UUID,
+        command_class: str | None = None,
+    ) -> None:
+        self.event_class = event_class
+        self.event_aggregate_id = event_aggregate_id
+        self.aggregate_class = aggregate_class
+        self.aggregate_id = aggregate_id
+        self.command_class = command_class
+
+        origin = f" while handling {command_class}" if command_class else ""
+        super().__init__(
+            f"{event_class} names aggregate_id={event_aggregate_id} but is "
+            f"emitted from {aggregate_class}({aggregate_id}){origin}. An "
+            f"event's aggregate_id is its stream key, so an event emitted "
+            f"here cannot belong to another aggregate. Drop the aggregate_id "
+            f"(the aggregate stamps it) or load {event_aggregate_id} and emit "
+            f"from that aggregate."
+        )
+
+
 class AggregateTypeNotSetError(EventSourceError):
     """
     Raised when a concrete aggregate class is constructed without declaring
