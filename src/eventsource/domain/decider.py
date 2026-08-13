@@ -105,6 +105,7 @@ class DeciderAggregate[TState: BaseModel, TCommand = object](AggregateRoot[TStat
         return applied
 
     def _stamp(self, event: DomainEvent, command: object) -> DomainEvent:
+        self._reject_foreign_aggregate_id(event, command)
         fields_set = event.model_fields_set
         updates: dict[str, Any] = {}
         if "aggregate_version" not in fields_set:

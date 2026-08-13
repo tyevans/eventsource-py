@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from eventsource.domain.aggregate import AggregateRoot, DeclarativeAggregate
 from eventsource.domain.decorators import handles
 from eventsource.domain.event import DomainEvent
+from eventsource.domain.exceptions import AggregateIdMismatchError
 
 # =============================================================================
 # Test fixtures: State models and Events
@@ -242,17 +243,21 @@ class TestCreateEventOverrides:
     def order(self) -> OrderAggregate:
         return OrderAggregate(uuid4())
 
-    def test_explicit_override_aggregate_id(self, order: OrderAggregate) -> None:
-        """Explicit aggregate_id overrides auto-population."""
-        custom_id = uuid4()
-        event = order.create_event(
-            OrderCreated,
-            aggregate_id=custom_id,
-            customer_id=uuid4(),
-        )
-        assert event.aggregate_id == custom_id
-        # Note: the aggregate still tracks the event
-        assert event in order.uncommitted_events
+    def test_explicit_foreign_aggregate_id_is_rejected(self, order: OrderAggregate) -> None:
+        """aggregate_id is the one auto-populated field that cannot be overridden.
+
+        It used to override, and the aggregate went on tracking the event --
+        so the event was appended to a stream neither aggregate reads back.
+        See `test_aggregate_id_targeting.py`.
+        """
+        with pytest.raises(AggregateIdMismatchError):
+            order.create_event(
+                OrderCreated,
+                aggregate_id=uuid4(),
+                customer_id=uuid4(),
+            )
+
+        assert order.uncommitted_events == []
 
     def test_explicit_override_aggregate_type(self, order: OrderAggregate) -> None:
         """Explicit aggregate_type overrides auto-population."""
