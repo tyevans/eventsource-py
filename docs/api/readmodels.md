@@ -26,8 +26,9 @@ modules):
 | `PostgreSQLReadModelRepository` | class | Production repository over an asyncpg/SQLAlchemy async connection |
 | `SQLiteReadModelRepository` | class | Embedded repository over an `aiosqlite` connection |
 | `generate_schema` / `generate_indexes` / `generate_full_schema` | functions | DDL generation from a `ReadModel` subclass |
+| `generate_additive_migration` / `reconcile_read_model_schema` | functions | Adding columns a model gained to a table that already exists |
 | `POSTGRESQL_TYPE_MAP` / `SQLITE_TYPE_MAP` | dicts | Python-to-SQL column type mappings used by schema generation |
-| `ReadModelError` / `OptimisticLockError` / `ReadModelNotFoundError` | exceptions | Error hierarchy for read model operations |
+| `ReadModelError` / `OptimisticLockError` / `ReadModelNotFoundError` / `ReadModelSchemaMismatchError` | exceptions | Error hierarchy for read model operations |
 
 The pure ones import from the port; the backends from their adapter modules:
 
@@ -66,6 +67,14 @@ The package divides into five concerns:
 - **Schema tooling.** `generate_schema`, `generate_indexes`, and
   `generate_full_schema` emit `CREATE TABLE` / `CREATE INDEX` DDL from a
   `ReadModel` subclass using `POSTGRESQL_TYPE_MAP` or `SQLITE_TYPE_MAP`.
+- **Schema reconciliation.** `generate_schema` emits `CREATE TABLE IF NOT
+  EXISTS`, which does nothing to a table that already exists — so a field added
+  to a model never becomes a column in a database created before it.
+  `generate_additive_migration` diffs a model against the columns a table has
+  and returns the `ALTER TABLE ... ADD COLUMN` statements that close the gap;
+  `reconcile_read_model_schema` does the same against a live connection and
+  executes them. Additive only, opt-in, and never called by the library
+  itself.
 
 A few behaviors are worth internalizing before reading the per-symbol sections:
 
@@ -121,7 +130,8 @@ __all__ = [
 | `InMemoryReadModelRepository` | `eventsource.adapters.memory.readmodels` | `class InMemoryReadModelRepository[TModel: ReadModel]` |
 | `PostgreSQLReadModelRepository` | `eventsource.adapters.postgresql.readmodels` | `class PostgreSQLReadModelRepository[TModel: ReadModel]` |
 | `SQLiteReadModelRepository` | `eventsource.adapters.sqlite.readmodels` | `class SQLiteReadModelRepository[TModel: _BaseReadModel]` |
-| `generate_schema`, `generate_indexes`, `generate_full_schema` | `eventsource.adapters.sql.readmodel_schema` | functions |
+| `generate_schema`, `generate_indexes`, `generate_full_schema`, `generate_additive_migration` | `eventsource.adapters.sql.readmodel_schema` | functions |
+| `reconcile_read_model_schema`, `read_table_columns` | `eventsource.adapters.sql.readmodel_reconcile` | async functions |
 | `POSTGRESQL_TYPE_MAP`, `SQLITE_TYPE_MAP` | `eventsource.adapters.sql.readmodel_schema` | `dict` constants |
 
 Import the pure names from the port package root — its submodule layout is an

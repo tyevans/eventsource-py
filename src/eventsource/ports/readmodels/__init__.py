@@ -20,6 +20,7 @@ constructor, that never caught it and was never caught by it.
 from eventsource.ports.readmodels.exceptions import (
     ReadModelError,
     ReadModelNotFoundError,
+    ReadModelSchemaMismatchError,
     ReadModelVersionConflictError,
 )
 from eventsource.ports.readmodels.model import ReadModel
@@ -35,6 +36,7 @@ __all__ = [
     "Query",
     "ReadModel",
     "ReadModelError",
+    "ReadModelSchemaMismatchError",
     "ReadModelNotFoundError",
     "ReadModelRepository",
     "ReadModelRepositoryProtocol",
