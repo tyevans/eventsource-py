@@ -44,7 +44,7 @@ own, and a ports-level tracing decorator is backlogged rather than promised.
 Item 9's naming rule stands. Its claim that the constant list in
 `attributes.py` "doubles as the catalogue of what this library will put on a
 span" was aspirational rather than descriptive: several constants named below,
-`ATTR_DB_NAME` among them, had no emitting site anywhere in the tree. 0062
+`ATTR_DB_NAME` among them, had no emitting site anywhere in the tree. 0064
 deletes the never-emitted constants and makes the catalogue descriptive, and
 replaces the hand-written literal lock attribute keys in the PostgreSQL lock
 manager with the declared `eventsource.lock.*` constants.
