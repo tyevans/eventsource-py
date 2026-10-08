@@ -120,3 +120,11 @@ bench/results/*
 
 # local review scratch
 /.fractal/
+.worktrees/
+*.pyc
+.mutmut-cache/
+.task-prompt.md
+HANDOVER.md
+.specops/*
+!.specops/grandfathered_debt.json
+!.specops/lockfile_attestations.jsonl

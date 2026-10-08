@@ -291,7 +291,7 @@ if KAFKA_AVAILABLE:
 
 and this is what you get otherwise:
 
-```python
+```pycon
 >>> KafkaEventBus(bootstrap_servers="localhost:9092")
 KafkaNotAvailableError: ...
 ```

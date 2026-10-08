@@ -228,8 +228,9 @@ the regex. `then_rejected` is not limited to `CommandRejectedError` -- if your
 explicitly and it is checked the same way:
 
 ```python
-     .when(ShipOrder(order_id=order_id, tracking_number="TRACK123"))
-     .then_rejected(ValueError, match="Cannot ship unpaid"))
+(scenario
+ .when(ShipOrder(order_id=order_id, tracking_number="TRACK123"))
+ .then_rejected(ValueError, match="Cannot ship unpaid"))
 ```
 
 ### Accessing the produced events

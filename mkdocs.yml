@@ -43,6 +43,7 @@ exclude_docs: |
   tasks/
   futures/
   superpowers/
+  project/
 
 markdown_extensions:
   - pymdownx.highlight:

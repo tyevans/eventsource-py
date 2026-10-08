@@ -96,7 +96,7 @@ def decide(command: InvoiceCommand, state: InvoiceState) -> list[DomainEvent]:
             status="draft", customer_id=None
         ):
             return [InvoiceDrafted(aggregate_id=iid, customer_id=cid, amount=amt)]
-        case Send(invoice_id=iid), InvoiceState(status="draft", customer_id=not None):
+        case Send(invoice_id=iid), InvoiceState(status="draft", customer_id=cid) if cid is not None:
             return [InvoiceSent(aggregate_id=iid)]
         case Pay(invoice_id=iid, amount=amt), InvoiceState(status="sent"):
             if amt != state.amount:

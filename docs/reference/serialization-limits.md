@@ -46,7 +46,7 @@ easy to get wrong if you only skim.** `json_dumps` itself does not check for
 `inf`, `-inf`, or `nan` at all. Passed directly, they silently become JSON
 `null`:
 
-```python
+```pycon
 >>> json_dumps({"v": float("inf")})
 '{"v":null}'
 ```
@@ -63,7 +63,7 @@ dependency in the first place. The scan was deleted.
 rejects a non-finite float with `ValidationError` at **event construction
 time** -- before serialization is ever reached:
 
-```python
+```pycon
 >>> class OrderPlaced(DomainEvent):
 ...     amount: float
 ...
@@ -110,7 +110,7 @@ base type -- fully traversed, nothing skipped.
 A `tuple` **subclass**, however, is not serializable at all, regardless of
 its contents:
 
-```python
+```pycon
 >>> class MyTuple(tuple): pass
 >>> json_dumps({"a": MyTuple([1, 2, 3])})
 TypeError: Object of type MyTuple is not JSON serializable
