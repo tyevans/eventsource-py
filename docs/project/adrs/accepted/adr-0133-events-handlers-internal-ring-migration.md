@@ -7,6 +7,7 @@ governing_prds:
 - PRD-0001
 governing_stories:
 - US-0001
+- US-0012
 legacy_id: '0033'
 ---
 

@@ -15,3 +15,7 @@
 | US-0011 | Coordinate Distributed Advisory Locks and Resilient Connection Lifecycle | Accepted | Chris | FEAT-DISTRIBUTED-COORDINATION | PRD-0003 |
 | US-0012 | Enforce Hexagonal Ring Layering and Strict Blackbox Frontdoor Verification | Accepted | Morgan | FEAT-ARCHITECTURE-INVARIANTS | PRD-0001 |
 | US-0013 | Guard Tier-0 Core Packaging, PEP 562 Lazy Front Door, and Zero-Drift Documentation | Accepted | Riley | FEAT-CORE-PACKAGING-GOVERNANCE | PRD-0001 |
+| US-0014 | Stage and Publish Events via Transactional Outbox | Accepted | Jordan | FEAT-TRANSACTIONAL-OUTBOX | PRD-0003 |
+| US-0015 | Propagate Distributed Tracing Spans Across Message Buses and Aggregates | Accepted | Chris | FEAT-DISTRIBUTED-TRACING | PRD-0004 |
+| US-0016 | Test Aggregate Invariants Fluently via Scenario Testing Harness | Accepted | Morgan | FEAT-TESTING-HARNESS | PRD-0004 |
+| US-0017 | Reconcile Read Model Schema Variations and Serialize Polymorphic Events | Accepted | Alex | FEAT-SCHEMA-RECONCILIATION | PRD-0001 |

@@ -112,6 +112,7 @@ jobs:
             --accept 200,204,206
             --exclude-path './site'
             --exclude 'tyevans.github.io'
+            --exclude 'opensource.org'
             --exclude 'localhost'
             --exclude '127.0.0.1'
             'docs/**/*.md'
