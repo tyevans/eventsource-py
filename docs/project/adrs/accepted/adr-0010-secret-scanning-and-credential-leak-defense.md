@@ -1,3 +1,14 @@
+---
+id: '0010'
+title: Real-Time Secret Scanning and Credential Leak Defense
+status: Accepted
+target_bc: core
+governing_prds:
+- PRD-0001
+governing_stories:
+- US-0013
+---
+
 # ADR-0010: Real-Time Secret Scanning and Credential Leak Defense
 
 ## Status

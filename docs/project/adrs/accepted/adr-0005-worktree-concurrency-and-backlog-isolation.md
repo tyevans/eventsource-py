@@ -1,3 +1,14 @@
+---
+id: '0005'
+title: Git Worktree Concurrency and Strict Backlog Isolation
+status: Accepted
+target_bc: core
+governing_prds:
+- PRD-0001
+governing_stories:
+- US-0012
+---
+
 # ADR-0005: Git Worktree Concurrency and Strict Backlog Isolation
 
 ## Status

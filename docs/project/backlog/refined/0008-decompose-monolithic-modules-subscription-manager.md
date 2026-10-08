@@ -1,15 +1,16 @@
 ---
-id: '0008'
+id: 0008
 title: Decompose Monolithic Modules SubscriptionManager and Shutdown
 status: Refined
 created: 2026-10-07
 governing_adrs:
-  - ADR-0002
-  - ADR-0007
+- ADR-0002
+- ADR-0007
+- ADR-0132
 governing_prds:
-  - PRD-0001
+- PRD-0001
 governing_stories:
-  - US-0004
+- US-0004
 target_bc: application
 ---
 

@@ -1,5 +1,5 @@
 ---
-id: REFACTOR-tests-integration-e2e-test_full_flow
+id: REFACTOR-tests-integration-end-to-end-test_full_flow
 title: Refactor and Decompose Legacy File test_full_flow.py
 status: Proposed
 created: 2026-09-29

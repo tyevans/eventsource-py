@@ -4,12 +4,14 @@ title: Atomic Routing Switch in Migration Cutover
 status: Refined
 created: 2026-10-07
 governing_adrs:
-  - ADR-0002
-  - ADR-0004
+- ADR-0007
+- ADR-0114
+- ADR-0128
+- ADR-0134
 governing_prds:
-  - PRD-0001
+- PRD-0001
 governing_stories:
-  - US-0006
+- US-0006
 target_bc: application
 ---
 

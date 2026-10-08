@@ -1,3 +1,14 @@
+---
+id: '0001'
+title: Specification as Code and Opinionated SDLC Guardrails
+status: Accepted
+target_bc: core
+governing_prds:
+- PRD-0001
+governing_stories:
+- US-0013
+---
+
 # ADR-0001: Specification as Code and Opinionated SDLC Guardrails
 
 ## Status

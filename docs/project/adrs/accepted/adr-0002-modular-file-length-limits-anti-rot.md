@@ -1,3 +1,14 @@
+---
+id: '0002'
+title: Modular Source File Length Limit (<500 Lines Anti-Rot Rule)
+status: Accepted
+target_bc: core
+governing_prds:
+- PRD-0001
+governing_stories:
+- US-0012
+---
+
 # ADR-0002: Modular Source File Length Limit (<500 Lines Anti-Rot Rule)
 
 ## Status

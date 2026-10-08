@@ -1,3 +1,14 @@
+---
+id: '0004'
+title: Continuous Pre-flight Verification and Self-Healing CI Loops
+status: Accepted
+target_bc: core
+governing_prds:
+- PRD-0001
+governing_stories:
+- US-0012
+---
+
 # ADR-0004: Continuous Pre-flight Verification and Self-Healing CI Loops
 
 ## Status

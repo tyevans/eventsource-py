@@ -1,15 +1,17 @@
 ---
-id: '0009'
+id: 0009
 title: Non-Blocking Backoff for Kafka and RabbitMQ Retries
 status: Refined
 created: 2026-10-07
 governing_adrs:
-  - ADR-0002
-  - ADR-0003
+- ADR-0007
+- ADR-0110
+- ADR-0120
+- ADR-0162
 governing_prds:
-  - PRD-0001
+- PRD-0001
 governing_stories:
-  - US-0003
+- US-0003
 target_bc: adapters
 ---
 

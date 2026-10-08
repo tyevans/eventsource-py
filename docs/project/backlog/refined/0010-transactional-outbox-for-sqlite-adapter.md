@@ -4,12 +4,13 @@ title: Transactional Outbox for SQLite Adapter
 status: Refined
 created: 2026-10-07
 governing_adrs:
-  - ADR-0002
-  - ADR-0003
+- ADR-0007
+- ADR-0126
+- ADR-0153
 governing_prds:
-  - PRD-0001
+- PRD-0001
 governing_stories:
-  - US-0002
+- US-0002
 target_bc: adapters
 ---
 

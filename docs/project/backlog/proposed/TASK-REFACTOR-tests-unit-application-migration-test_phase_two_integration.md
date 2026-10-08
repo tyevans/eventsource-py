@@ -1,5 +1,5 @@
 ---
-id: REFACTOR-tests-unit-application-migration-test_phase2_integration
+id: REFACTOR-tests-unit-application-migration-test_phase_two_integration
 title: Refactor and Decompose Legacy File test_phase2_integration.py
 status: Proposed
 created: 2026-09-29

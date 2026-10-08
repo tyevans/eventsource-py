@@ -4,12 +4,13 @@ title: Re-Benchmark PostgreSQL Catch-Up Horizon Predicate at Scale
 status: Refined
 created: 2026-10-07
 governing_adrs:
-  - ADR-0002
-  - ADR-0003
+- ADR-0007
+- ADR-0119
+- ADR-0147
 governing_prds:
-  - PRD-0001
+- PRD-0001
 governing_stories:
-  - US-0002
+- US-0002
 target_bc: adapters
 ---
 

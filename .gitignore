@@ -127,3 +127,4 @@ bench/results/*
 HANDOVER.md
 .specops/*
 !.specops/grandfathered_debt.json
+!.specops/lockfile_attestations.jsonl

@@ -1,3 +1,14 @@
+---
+id: '0003'
+title: Blackbox Frontdoor Verification and Zero Backdoor Testing
+status: Accepted
+target_bc: core
+governing_prds:
+- PRD-0001
+governing_stories:
+- US-0012
+---
+
 # ADR-0003: Blackbox Frontdoor Verification and Zero Backdoor Testing
 
 ## Status

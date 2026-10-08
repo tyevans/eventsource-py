@@ -4,12 +4,13 @@ title: Verify Leadership Lease Renewal Before Acting
 status: Refined
 created: 2026-10-07
 governing_adrs:
-  - ADR-0001
-  - ADR-0003
+- ADR-0007
+- ADR-0109
+- ADR-0161
 governing_prds:
-  - PRD-0001
+- PRD-0001
 governing_stories:
-  - US-0004
+- US-0004
 target_bc: application
 ---
 

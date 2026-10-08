@@ -4,12 +4,14 @@ title: Multi-Aggregate Support in Scenario Testing Harness
 status: Refined
 created: 2026-10-07
 governing_adrs:
-  - ADR-0003
-  - ADR-0006
+- ADR-0003
+- ADR-0007
+- ADR-0122
+- ADR-0143
 governing_prds:
-  - PRD-0001
+- PRD-0001
 governing_stories:
-  - US-0001
+- US-0001
 target_bc: testing
 ---
 

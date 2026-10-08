@@ -1,3 +1,14 @@
+---
+id: '0009'
+title: Immutable Supply-Chain Lockfile Enforcement
+status: Accepted
+target_bc: core
+governing_prds:
+- PRD-0001
+governing_stories:
+- US-0013
+---
+
 # ADR-0009: Immutable Supply-Chain Lockfile Enforcement
 
 ## Status

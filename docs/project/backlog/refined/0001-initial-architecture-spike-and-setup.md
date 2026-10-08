@@ -4,12 +4,16 @@ title: Initial SpecOps Architecture Baseline and Living Specification Engine
 status: Refined
 created: 2026-10-07
 governing_adrs:
-  - ADR-0001
-  - ADR-0002
+- ADR-0001
+- ADR-0002
+- ADR-0003
+- ADR-0007
+- ADR-0134
+- ADR-0140
 governing_prds:
-  - PRD-0001
+- PRD-0001
 governing_stories:
-  - US-0001
+- US-0001
 target_bc: core
 ---
 

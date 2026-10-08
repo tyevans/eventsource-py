@@ -1,3 +1,25 @@
+---
+id: '0007'
+title: Domain-Driven Design (DDD) Layering and Explicit Bounded Contexts
+status: Accepted
+target_bc: core
+governing_prds:
+- PRD-0001
+governing_stories:
+- US-0001
+- US-0002
+- US-0003
+- US-0004
+- US-0005
+- US-0006
+- US-0007
+- US-0008
+- US-0009
+- US-0010
+- US-0011
+- US-0012
+---
+
 # ADR-0007: Domain-Driven Design (DDD) Layering and Explicit Bounded Contexts
 
 ## Status
