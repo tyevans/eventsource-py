@@ -20,7 +20,7 @@ Target decomposition destination: `tests/integration/e2e/test_full_flow/` with s
 - `test_full_flow_order.py`: OrderSummary
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/integration/e2e/test_full_flow.py (540 lines):
+Decomposition Blueprint for tests/integration/e2e/test_full_flow.py (540 lines):
   Submodule 'test_full_flow_projection.py' (~453 lines):
     - [class] TestOrderProjection (lines 69-111)
     - [class] TestCommandToProjectionFlow (lines 119-241)

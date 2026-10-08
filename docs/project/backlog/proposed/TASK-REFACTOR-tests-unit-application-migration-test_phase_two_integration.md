@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/migration/test_phase2_
 - `test_phase2_integration_migration.py`: InMemoryMigrationRepository, migration_repo, TestFullMigrationLifecycle, TestPauseResumeDuringMigration
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/migration/test_phase2_integration.py (2579 lines):
+Decomposition Blueprint for tests/unit/application/migration/test_phase2_integration.py (2579 lines):
   Submodule 'test_phase2_integration_write.py' (~2025 lines):
     - [function] write_pause_manager (lines 461-463)
     - [class] TestDualWriteBehavior (lines 676-829)

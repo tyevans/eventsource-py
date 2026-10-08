@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/subscriptions/test_sub
 - `test_subscriber_order.py`: OrderCreated, OrderShipped, OrderCancelled
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/subscriptions/test_subscriber.py (829 lines):
+Decomposition Blueprint for tests/unit/application/subscriptions/test_subscriber.py (829 lines):
   Submodule 'test_subscriber_protocol.py' (~755 lines):
     - [class] TestSubscriberProtocol (lines 55-136)
     - [class] TestSyncSubscriberProtocol (lines 139-185)

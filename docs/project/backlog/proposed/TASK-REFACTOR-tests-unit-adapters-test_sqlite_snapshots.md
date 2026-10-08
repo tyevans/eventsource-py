@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/adapters/test_sqlite_snapshots/` w
 - `test_sqlite_snapshots_operations.py`: TestSQLiteSnapshotStoreOperations
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/adapters/test_sqlite_snapshots.py (509 lines):
+Decomposition Blueprint for tests/unit/adapters/test_sqlite_snapshots.py (509 lines):
   Submodule 'test_sqlite_snapshots_configuration.py' (~177 lines):
     - [class] TestSQLiteSnapshotStoreConfiguration (lines 26-41)
     - [class] TestSQLiteSnapshotStoreFilePersistence (lines 345-377)

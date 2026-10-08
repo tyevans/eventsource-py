@@ -20,7 +20,7 @@ Target decomposition destination: `src/eventsource/application/subscriptions/err
 - `error_handling_handler.py`: ErrorHandlerRegistry, SubscriptionErrorHandler
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/application/subscriptions/error_handling.py (1105 lines):
+Decomposition Blueprint for src/eventsource/application/subscriptions/error_handling.py (1105 lines):
   Submodule 'error_handling_classifier.py' (~442 lines):
     - [class] ErrorClassifier (lines 103-286)
     - [function] get_default_classifier (lines 293-295)

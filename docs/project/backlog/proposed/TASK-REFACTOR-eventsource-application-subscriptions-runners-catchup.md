@@ -20,7 +20,7 @@ Target decomposition destination: `src/eventsource/application/subscriptions/run
 - `catchup_result.py`: CatchUpResult
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/application/subscriptions/runners/catchup.py (1051 lines):
+Decomposition Blueprint for src/eventsource/application/subscriptions/runners/catchup.py (1051 lines):
   Submodule 'catchup_outcome.py' (~960 lines):
     - [class] _BatchOutcome (lines 58-68)
     - [class] CatchUpRunner (lines 97-1045)

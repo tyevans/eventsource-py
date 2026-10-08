@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/subscriptions/test_dra
 - `test_drain_mock.py`: MockCoordinator
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/subscriptions/test_drain.py (744 lines):
+Decomposition Blueprint for tests/unit/application/subscriptions/test_drain.py (744 lines):
   Submodule 'test_drain_controller.py' (~674 lines):
     - [class] TestFlowControllerWaitForDrain (lines 25-251)
     - [class] MockFlowController (lines 259-275)

@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/testing/test_harness/` with submod
 - `test_harness_event.py`: HarnessSampleEvent, HarnessOtherEvent
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/testing/test_harness.py (604 lines):
+Decomposition Blueprint for tests/unit/testing/test_harness.py (604 lines):
   Submodule 'test_harness_events.py' (~549 lines):
     - [class] TestHarnessPublishedEvents (lines 99-180)
     - [class] TestHarnessClearPublishedEvents (lines 183-266)

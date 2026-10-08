@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/projections/test_repla
 - `test_replay_feed.py`: RecordingFeed, NonAdvancingFeed, PositionlessFeed
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/projections/test_replay.py (592 lines):
+Decomposition Blueprint for tests/unit/application/projections/test_replay.py (592 lines):
   Submodule 'test_replay_the.py' (~448 lines):
     - [class] TestAPoisonEventDoesNotStopTheRebuild (lines 181-226)
     - [class] TestStrictRaisesOnTheFirstRejection (lines 294-334)

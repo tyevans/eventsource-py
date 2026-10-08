@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/migration/test_final_i
 - `test_final_integration_repository.py`: InMemoryRoutingRepository, InMemoryAuditLogRepository, InMemoryPositionMappingRepository, InMemoryCheckpointRepository
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/migration/test_final_integration.py (2378 lines):
+Decomposition Blueprint for tests/unit/application/migration/test_final_integration.py (2378 lines):
   Submodule 'test_final_integration_migration.py' (~1823 lines):
     - [class] InMemoryMigrationRepository (lines 141-285)
     - [function] migration_repo (lines 699-701)

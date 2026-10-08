@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/observability/test_projection_trac
 - `test_projection_tracing_checkpoint.py`: TestCheckpointTrackingProjectionTracing
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/observability/test_projection_tracing.py (591 lines):
+Decomposition Blueprint for tests/unit/observability/test_projection_tracing.py (591 lines):
   Submodule 'test_projection_tracing_order.py' (~341 lines):
     - [class] OrderCreated (lines 30-34)
     - [class] OrderShipped (lines 37-41)

@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/migration/test_sync_la
 - `test_sync_lag_tracker_config.py`: config, strict_config
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/migration/test_sync_lag_tracker.py (1230 lines):
+Decomposition Blueprint for tests/unit/application/migration/test_sync_lag_tracker.py (1230 lines):
   Submodule 'test_sync_lag_tracker_store.py' (~1083 lines):
     - [function] source_store (lines 74-76)
     - [function] target_store (lines 80-82)

@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/readmodels/test_projection/` with 
 - `test_projection_model.py`: CustomTableModel, TestReadModelProjectionConstruction, TestReadModelProjectionHandlerRouting
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/readmodels/test_projection.py (868 lines):
+Decomposition Blueprint for tests/unit/readmodels/test_projection.py (868 lines):
   Submodule 'test_projection_order.py' (~524 lines):
     - [class] OrderCreated (lines 33-37)
     - [class] OrderShipped (lines 40-44)

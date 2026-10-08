@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/subscriptions/test_hea
 - `test_health_check.py`: TestHealthCheckResult, TestHealthCheckConfig
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/subscriptions/test_health.py (988 lines):
+Decomposition Blueprint for tests/unit/application/subscriptions/test_health.py (988 lines):
   Submodule 'test_health_status.py' (~837 lines):
     - [class] TestHealthStatus (lines 33-42)
     - [class] TestReadinessStatus (lines 840-885)

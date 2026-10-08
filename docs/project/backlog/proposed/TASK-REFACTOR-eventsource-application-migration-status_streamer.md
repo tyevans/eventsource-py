@@ -20,7 +20,7 @@ Target decomposition destination: `src/eventsource/application/migration/status_
 - `status_streamer_core.py`: StatusStreamer
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/application/migration/status_streamer.py (533 lines):
+Decomposition Blueprint for src/eventsource/application/migration/status_streamer.py (533 lines):
   Submodule 'status_streamer_manager.py' (~161 lines):
     - [class] StatusStreamManager (lines 367-527)
   Submodule 'status_streamer_core.py' (~306 lines):

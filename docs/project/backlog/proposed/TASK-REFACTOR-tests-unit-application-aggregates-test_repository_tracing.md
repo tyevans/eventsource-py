@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/aggregates/test_reposi
 - `test_repository_tracing_state.py`: TracingTestState
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/aggregates/test_repository_tracing.py (683 lines):
+Decomposition Blueprint for tests/unit/application/aggregates/test_repository_tracing.py (683 lines):
   Submodule 'test_repository_tracing_aggregate.py' (~581 lines):
     - [class] TracingTestAggregate (lines 66-94)
     - [class] TestAggregateRepositoryTracingComposition (lines 102-161)

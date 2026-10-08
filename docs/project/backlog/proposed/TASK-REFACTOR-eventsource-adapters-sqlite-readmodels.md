@@ -19,7 +19,7 @@ Target decomposition destination: `src/eventsource/adapters/sqlite/readmodels/` 
 - `readmodels_core.py`: SQLiteReadModelRepository
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/adapters/sqlite/readmodels.py (844 lines):
+Decomposition Blueprint for src/eventsource/adapters/sqlite/readmodels.py (844 lines):
   Submodule 'readmodels_core.py' (~799 lines):
     - [class] SQLiteReadModelRepository (lines 46-844)
   Suggested barrel exports:

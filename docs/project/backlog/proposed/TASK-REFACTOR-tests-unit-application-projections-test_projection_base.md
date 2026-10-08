@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/projections/test_proje
 - `test_projection_base_event.py`: TestEventHandlerBase, TestProjectionUnregisteredEventHandling, TestDatabaseProjectionUnregisteredEventHandling
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/projections/test_projection_base.py (1537 lines):
+Decomposition Blueprint for tests/unit/application/projections/test_projection_base.py (1537 lines):
   Submodule 'test_projection_base_order.py' (~1122 lines):
     - [class] OrderCreated (lines 33-37)
     - [class] OrderShipped (lines 40-44)

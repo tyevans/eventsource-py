@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/adapters/test_snapshots_tracing/` 
 - `test_snapshots_tracing_tracer.py`: mock_tracer
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/adapters/test_snapshots_tracing.py (515 lines):
+Decomposition Blueprint for tests/unit/adapters/test_snapshots_tracing.py (515 lines):
   Submodule 'test_snapshots_tracing_store.py' (~433 lines):
     - [class] TestInMemorySnapshotStoreTracingComposition (lines 63-102)
     - [class] TestInMemorySnapshotStoreSpanCreation (lines 110-272)

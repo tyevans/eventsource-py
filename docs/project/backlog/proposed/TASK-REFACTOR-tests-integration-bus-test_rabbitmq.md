@@ -20,7 +20,7 @@ Target decomposition destination: `tests/integration/bus/test_rabbitmq/` with su
 - `test_rabbitmq_reliability.py`: TestRabbitMQReliabilityDLQ, TestRabbitMQReliabilityRetry, TestRabbitMQReliabilityShutdown, TestRabbitMQReliabilityStats, TestRabbitMQReliabilityQueueInfo
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/integration/bus/test_rabbitmq.py (3114 lines):
+Decomposition Blueprint for tests/integration/bus/test_rabbitmq.py (3114 lines):
   Submodule 'test_rabbitmq_event.py' (~2138 lines):
     - [function] rabbitmq_event_bus_factory (lines 120-154)
     - [function] rabbitmq_event_bus (lines 158-181)

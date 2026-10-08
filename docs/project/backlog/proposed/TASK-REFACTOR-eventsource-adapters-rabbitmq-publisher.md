@@ -19,7 +19,7 @@ Target decomposition destination: `src/eventsource/adapters/rabbitmq/publisher/`
 - `publisher_core.py`: RabbitMQPublisher
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/adapters/rabbitmq/publisher.py (584 lines):
+Decomposition Blueprint for src/eventsource/adapters/rabbitmq/publisher.py (584 lines):
   Submodule 'publisher_core.py' (~524 lines):
     - [class] RabbitMQPublisher (lines 58-581)
   Suggested barrel exports:

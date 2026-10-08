@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/projections/test_tenan
 - `test_tenant_filter_order.py`: OrderCreated, OrderShipped, order_created_tenant_1, order_created_tenant_2, order_created_no_tenant
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/projections/test_tenant_filter.py (603 lines):
+Decomposition Blueprint for tests/unit/application/projections/test_tenant_filter.py (603 lines):
   Submodule 'test_tenant_filter_event.py' (~476 lines):
     - [class] TenantEvent (lines 26-30)
     - [class] NonTenantEvent (lines 33-36)

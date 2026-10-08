@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/migration/test_chaos/`
 - `test_chaos_store.py`: source_store, target_store, TestTargetStoreFailures
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/migration/test_chaos.py (1788 lines):
+Decomposition Blueprint for tests/unit/application/migration/test_chaos.py (1788 lines):
   Submodule 'test_chaos_failure.py' (~1421 lines):
     - [class] FailureMode (lines 88-99)
     - [class] FailureConfig (lines 103-115)

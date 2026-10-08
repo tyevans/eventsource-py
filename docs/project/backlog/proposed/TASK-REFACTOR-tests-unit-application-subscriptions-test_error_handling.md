@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/subscriptions/test_err
 - `test_error_handling_handler.py`: TestErrorHandlerRegistry, TestSubscriptionErrorHandler
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/subscriptions/test_error_handling.py (857 lines):
+Decomposition Blueprint for tests/unit/application/subscriptions/test_error_handling.py (857 lines):
   Submodule 'test_error_handling_classifier.py' (~396 lines):
     - [class] TestErrorClassifier (lines 95-224)
     - [class] TestGetDefaultClassifier (lines 227-239)

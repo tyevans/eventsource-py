@@ -20,7 +20,7 @@ Target decomposition destination: `src/eventsource/application/subscriptions/run
 - `live_event.py`: _LiveEventHandler
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/application/subscriptions/runners/live.py (1172 lines):
+Decomposition Blueprint for src/eventsource/application/subscriptions/runners/live.py (1172 lines):
   Submodule 'live_runner.py' (~1073 lines):
     - [class] LiveRunnerStats (lines 62-76)
     - [class] LiveRunner (lines 80-1137)

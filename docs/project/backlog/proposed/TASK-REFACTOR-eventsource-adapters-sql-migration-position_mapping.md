@@ -19,7 +19,7 @@ Target decomposition destination: `src/eventsource/adapters/sql/migration/positi
 - `position_mapping_core.py`: PostgreSQLPositionMappingRepository
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/adapters/sql/migration/position_mapping.py (815 lines):
+Decomposition Blueprint for src/eventsource/adapters/sql/migration/position_mapping.py (815 lines):
   Submodule 'position_mapping_core.py' (~743 lines):
     - [class] PostgreSQLPositionMappingRepository (lines 73-815)
   Suggested barrel exports:

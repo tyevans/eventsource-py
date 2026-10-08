@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/subscriptions/test_sub
 - `test_subscription_state_subscriber.py`: MockSubscriber, mock_subscriber
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/subscriptions/test_subscription_state.py (1119 lines):
+Decomposition Blueprint for tests/unit/application/subscriptions/test_subscription_state.py (1119 lines):
   Submodule 'test_subscription_state_transitions.py' (~992 lines):
     - [class] TestValidTransitions (lines 115-165)
     - [class] TestSubscriptionStateTransitions (lines 395-486)

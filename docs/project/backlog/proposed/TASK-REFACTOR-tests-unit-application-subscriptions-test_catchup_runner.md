@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/subscriptions/test_cat
 - `test_catchup_runner_subscriber.py`: MockSubscriber, subscriber
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/subscriptions/test_catchup_runner.py (927 lines):
+Decomposition Blueprint for tests/unit/application/subscriptions/test_catchup_runner.py (927 lines):
   Submodule 'test_catchup_runner_event.py' (~790 lines):
     - [class] SampleTestEvent (lines 41-45)
     - [class] SampleFailingEvent (lines 49-53)

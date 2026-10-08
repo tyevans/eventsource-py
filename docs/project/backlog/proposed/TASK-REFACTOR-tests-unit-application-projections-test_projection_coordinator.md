@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/projections/test_proje
 - `test_projection_coordinator_registry.py`: TestProjectionRegistry, TestSubscriberRegistry
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/projections/test_projection_coordinator.py (729 lines):
+Decomposition Blueprint for tests/unit/application/projections/test_projection_coordinator.py (729 lines):
   Submodule 'test_projection_coordinator_order.py' (~300 lines):
     - [class] OrderCreated (lines 29-33)
     - [class] OrderShipped (lines 36-40)

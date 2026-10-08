@@ -20,7 +20,7 @@ Target decomposition destination: `src/eventsource/application/migration/sync_la
 - `sync_lag_tracker_stats.py`: LagStats
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/application/migration/sync_lag_tracker.py (591 lines):
+Decomposition Blueprint for src/eventsource/application/migration/sync_lag_tracker.py (591 lines):
   Submodule 'sync_lag_tracker_sample.py' (~470 lines):
     - [class] LagSample (lines 72-82)
     - [class] SyncLagTracker (lines 126-584)

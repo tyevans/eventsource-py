@@ -20,7 +20,7 @@ Target decomposition destination: `src/eventsource/application/projections/coord
 - `coordinator_projection.py`: ProjectionCoordinator
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/application/projections/coordinator.py (636 lines):
+Decomposition Blueprint for src/eventsource/application/projections/coordinator.py (636 lines):
   Submodule 'coordinator_registry.py' (~388 lines):
     - [class] ProjectionRegistry (lines 33-279)
     - [class] SubscriberRegistry (lines 496-636)

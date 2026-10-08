@@ -20,7 +20,7 @@ Target decomposition destination: `src/eventsource/application/migration/excepti
 - `exceptions_cutover.py`: CutoverError, CutoverTimeoutError, CutoverLagError
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/application/migration/exceptions.py (671 lines):
+Decomposition Blueprint for src/eventsource/application/migration/exceptions.py (671 lines):
   Submodule 'exceptions_migration.py' (~479 lines):
     - [class] MigrationError (lines 34-166)
     - [class] MigrationNotFoundError (lines 169-195)

@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/subscriptions/test_coo
 - `test_coordination_elector.py`: TestMockElectorBehavior
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/subscriptions/test_coordination.py (1499 lines):
+Decomposition Blueprint for tests/unit/application/subscriptions/test_coordination.py (1499 lines):
   Submodule 'test_coordination_leader.py' (~1348 lines):
     - [class] TestLeaderElectorProtocol (lines 36-116)
     - [class] TestInMemoryLeaderElector (lines 237-520)

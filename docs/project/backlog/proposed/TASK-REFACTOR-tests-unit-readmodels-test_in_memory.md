@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/readmodels/test_in_memory/` with s
 - `test_in_memory_repo.py`: repo
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/readmodels/test_in_memory.py (778 lines):
+Decomposition Blueprint for tests/unit/readmodels/test_in_memory.py (778 lines):
   Submodule 'test_in_memory_order.py' (~758 lines):
     - [class] OrderSummary (lines 13-18)
     - [class] TestInMemoryReadModelRepository (lines 27-778)

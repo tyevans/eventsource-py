@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/migration/test_coordin
 - `test_coordinator_dual_write_migration.py`: TestCleanupMigrationResources, TestAbortMigrationCleansUpP2Resources, TestFailMigrationCleansUpP2Resources, TestStartMigrationStoresTargetStore
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/migration/test_coordinator_dual_write.py (1034 lines):
+Decomposition Blueprint for tests/unit/application/migration/test_coordinator_dual_write.py (1034 lines):
   Submodule 'test_coordinator_dual_write_cutover.py' (~797 lines):
     - [class] TestTriggerCutover (lines 156-353)
     - [class] TestIsCutoverReady (lines 449-561)

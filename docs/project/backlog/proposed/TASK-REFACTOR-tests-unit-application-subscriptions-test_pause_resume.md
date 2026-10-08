@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/subscriptions/test_pau
 - `test_pause_resume_subscriber.py`: MockSubscriber, mock_subscriber
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/subscriptions/test_pause_resume.py (563 lines):
+Decomposition Blueprint for tests/unit/application/subscriptions/test_pause_resume.py (563 lines):
   Submodule 'test_pause_resume_subscription.py' (~457 lines):
     - [function] subscription (lines 63-69)
     - [class] TestSubscriptionPause (lines 102-190)

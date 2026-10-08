@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/domain/test_create_event/` with su
 - `test_create_event_aggregate.py`: TestCreateEventWithDeclarativeAggregate
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/domain/test_create_event.py (587 lines):
+Decomposition Blueprint for tests/unit/domain/test_create_event.py (587 lines):
   Submodule 'test_create_event_order.py' (~463 lines):
     - [class] OrderState (lines 31-37)
     - [class] OrderCreated (lines 40-44)

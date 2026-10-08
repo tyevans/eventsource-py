@@ -20,7 +20,7 @@ Target decomposition destination: `src/eventsource/ports/migration/repositories/
 - `repositories_tenant.py`: TenantRoutingRepository
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/ports/migration/repositories.py (611 lines):
+Decomposition Blueprint for src/eventsource/ports/migration/repositories.py (611 lines):
   Submodule 'repositories_migration.py' (~442 lines):
     - [class] MigrationRepository (lines 32-168)
     - [class] MigrationAuditLogRepository (lines 511-603)

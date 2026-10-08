@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/test_event_bus/` with submodules:
 - `test_event_bus_handler.py`: RecordingHandler, SyncRecordingHandler, FailingHandler, SlowHandler, SampleAsyncEventHandler, TestEventHandlerProtocol, TestAsyncEventHandlerABC, TestInvalidHandlerTypes
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/test_event_bus.py (988 lines):
+Decomposition Blueprint for tests/unit/test_event_bus.py (988 lines):
   Submodule 'test_event_bus_in.py' (~693 lines):
     - [class] TestInMemoryEventBusBasicPublishing (lines 264-314)
     - [class] TestInMemoryEventBusMultipleHandlers (lines 322-363)

@@ -20,7 +20,7 @@ Target decomposition destination: `src/eventsource/adapters/sql/migration/migrat
 - `migration_position.py`: _position
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/adapters/sql/migration/migration.py (705 lines):
+Decomposition Blueprint for src/eventsource/adapters/sql/migration/migration.py (705 lines):
   Submodule 'migration_token.py' (~602 lines):
     - [function] _token (lines 70-72)
     - [class] PostgreSQLMigrationRepository (lines 107-705)

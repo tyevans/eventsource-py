@@ -20,7 +20,7 @@ Target decomposition destination: `src/eventsource/ports/migration/models/` with
 - `models_audit.py`: AuditEventType
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/ports/migration/models.py (1175 lines):
+Decomposition Blueprint for src/eventsource/ports/migration/models.py (1175 lines):
   Submodule 'models_migration.py' (~1016 lines):
     - [class] MigrationPhase (lines 43-179)
     - [class] TenantMigrationState (lines 254-357)

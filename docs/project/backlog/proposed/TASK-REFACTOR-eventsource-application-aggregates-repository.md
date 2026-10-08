@@ -19,7 +19,7 @@ Target decomposition destination: `src/eventsource/application/aggregates/reposi
 - `repository_core.py`: AggregateRepository
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/application/aggregates/repository.py (724 lines):
+Decomposition Blueprint for src/eventsource/application/aggregates/repository.py (724 lines):
   Submodule 'repository_core.py' (~675 lines):
     - [class] AggregateRepository (lines 45-719)
   Suggested barrel exports:

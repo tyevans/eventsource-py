@@ -19,7 +19,7 @@ Target decomposition destination: `src/eventsource/adapters/sql/migration/routin
 - `routing_core.py`: PostgreSQLTenantRoutingRepository
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/adapters/sql/migration/routing.py (559 lines):
+Decomposition Blueprint for src/eventsource/adapters/sql/migration/routing.py (559 lines):
   Submodule 'routing_core.py' (~485 lines):
     - [class] PostgreSQLTenantRoutingRepository (lines 75-559)
   Suggested barrel exports:

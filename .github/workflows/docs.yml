@@ -63,11 +63,6 @@ jobs:
       - name: Build documentation
         run: mkdocs build --strict
 
-      - name: Upload artifact for GitHub Pages
-        uses: actions/upload-pages-artifact@v5
-        with:
-          path: site/
-
       - name: Upload artifact for PR review
         if: github.event_name == 'pull_request'
         uses: actions/upload-artifact@v7
@@ -122,23 +117,3 @@ jobs:
             'docs/**/*.md'
             'README.md'
           fail: true
-
-  # Deploy to GitHub Pages (only on push to main)
-  deploy:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [build, link-check, validate-examples]
-    runs-on: ubuntu-latest
-
-    # Grant permissions for GitHub Pages deployment
-    permissions:
-      pages: write
-      id-token: write
-
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v5

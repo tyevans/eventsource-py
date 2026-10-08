@@ -20,7 +20,7 @@ Target decomposition destination: `src/eventsource/adapters/kafka/bus/` with sub
 - `bus_kafka.py`: KafkaEventBus
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/adapters/kafka/bus.py (1023 lines):
+Decomposition Blueprint for src/eventsource/adapters/kafka/bus.py (1023 lines):
   Submodule 'bus_meter.py' (~15 lines):
     - [function] _get_meter (lines 151-165)
   Submodule 'bus_kafka.py' (~843 lines):

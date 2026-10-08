@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/subscriptions/test_met
 - `test_metrics_subscription.py`: TestSubscriptionMetrics
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/subscriptions/test_metrics.py (689 lines):
+Decomposition Blueprint for tests/unit/application/subscriptions/test_metrics.py (689 lines):
   Submodule 'test_metrics_no.py' (~477 lines):
     - [class] TestNoOpInstruments (lines 66-93)
     - [class] TestSubscriptionMetricsNoOTel (lines 325-373)

@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/adapters/sql/migration/test_positi
 - `test_position_mapping_repository_protocol.py`: TestPositionMappingRepositoryProtocol
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/adapters/sql/migration/test_position_mapping_repository.py (1217 lines):
+Decomposition Blueprint for tests/unit/adapters/sql/migration/test_position_mapping_repository.py (1217 lines):
   Submodule 'test_position_mapping_repository_postgre.py' (~1130 lines):
     - [class] TestPostgreSQLPositionMappingRepositoryInit (lines 63-82)
     - [class] TestPostgreSQLPositionMappingRepositoryCreate (lines 85-159)

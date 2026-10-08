@@ -20,7 +20,7 @@ Target decomposition destination: `tests/integration/repositories/test_dlq/` wit
 - `test_dlq_retrieval.py`: TestSQLDLQRepositoryRetrieval
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/integration/repositories/test_dlq.py (547 lines):
+Decomposition Blueprint for tests/integration/repositories/test_dlq.py (547 lines):
   Submodule 'test_dlq_basics.py' (~392 lines):
     - [class] TestSQLDLQRepositoryBasics (lines 35-129)
     - [class] TestSQLDLQRepositoryStatusTransitions (lines 245-303)

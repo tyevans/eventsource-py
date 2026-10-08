@@ -20,7 +20,7 @@ Target decomposition destination: `tests/integration/subscriptions/test_advanced
 - `test_advanced_features_projection.py`: FilteredProjection, PausableProjection
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/integration/subscriptions/test_advanced_features.py (1510 lines):
+Decomposition Blueprint for tests/integration/subscriptions/test_advanced_features.py (1510 lines):
   Submodule 'test_advanced_features_user.py' (~1309 lines):
     - [class] AdvTestUserRegistered (lines 72-76)
     - [class] AdvTestUserUpdated (lines 80-84)

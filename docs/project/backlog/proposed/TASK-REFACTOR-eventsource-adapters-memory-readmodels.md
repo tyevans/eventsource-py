@@ -19,7 +19,7 @@ Target decomposition destination: `src/eventsource/adapters/memory/readmodels/` 
 - `readmodels_core.py`: InMemoryReadModelRepository
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/adapters/memory/readmodels.py (547 lines):
+Decomposition Blueprint for src/eventsource/adapters/memory/readmodels.py (547 lines):
   Submodule 'readmodels_core.py' (~518 lines):
     - [class] InMemoryReadModelRepository (lines 30-547)
   Suggested barrel exports:

@@ -20,7 +20,7 @@ Target decomposition destination: `src/eventsource/application/subscriptions/met
 - `metrics_meter.py`: _get_meter, reset_meter
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/application/subscriptions/metrics.py (571 lines):
+Decomposition Blueprint for src/eventsource/application/subscriptions/metrics.py (571 lines):
   Submodule 'metrics_op.py' (~442 lines):
     - [class] NoOpCounter (lines 102-116)
     - [class] NoOpHistogram (lines 119-133)

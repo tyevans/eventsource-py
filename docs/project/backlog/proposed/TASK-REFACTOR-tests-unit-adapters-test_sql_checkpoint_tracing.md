@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/adapters/test_sql_checkpoint_traci
 - `test_sql_checkpoint_tracing_engine.py`: _sqlite_checkpoint_engine
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/adapters/test_sql_checkpoint_tracing.py (562 lines):
+Decomposition Blueprint for tests/unit/adapters/test_sql_checkpoint_tracing.py (562 lines):
   Submodule 'test_sql_checkpoint_tracing_repository.py' (~472 lines):
     - [class] TestInMemoryCheckpointRepositoryTracerIntegration (lines 30-66)
     - [class] TestInMemoryCheckpointRepositorySpanCreation (lines 74-199)

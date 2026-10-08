@@ -20,7 +20,7 @@ Target decomposition destination: `src/eventsource/application/migration/router/
 - `router_tenant.py`: TenantStoreRouter
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/application/migration/router.py (734 lines):
+Decomposition Blueprint for src/eventsource/application/migration/router.py (734 lines):
   Submodule 'router_not.py' (~14 lines):
     - [class] StoreNotFoundError (lines 81-94)
   Submodule 'router_tenant.py' (~629 lines):

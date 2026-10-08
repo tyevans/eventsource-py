@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/subscriptions/test_man
 - `test_manager_pause_resume_projection.py`: OrderProjection, CustomerProjection
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/subscriptions/test_manager_pause_resume.py (683 lines):
+Decomposition Blueprint for tests/unit/application/subscriptions/test_manager_pause_resume.py (683 lines):
   Submodule 'test_manager_pause_resume_event.py' (~577 lines):
     - [class] PauseTestEvent (lines 38-42)
     - [function] event_store (lines 78-80)

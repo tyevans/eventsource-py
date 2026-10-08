@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/aggregates/test_reposi
 - `test_repository_order.py`: OrderState, OrderCreated, OrderItemAdded, OrderShipped, OrderAggregate, order_repository
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/aggregates/test_repository.py (988 lines):
+Decomposition Blueprint for tests/unit/application/aggregates/test_repository.py (988 lines):
   Submodule 'test_repository_counter.py' (~781 lines):
     - [class] CounterState (lines 35-40)
     - [class] CounterIncremented (lines 53-57)

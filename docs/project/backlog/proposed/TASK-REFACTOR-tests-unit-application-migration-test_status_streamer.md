@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/migration/test_status_
 - `test_status_streamer_init.py`: TestStatusStreamerInit
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/migration/test_status_streamer.py (963 lines):
+Decomposition Blueprint for tests/unit/application/migration/test_status_streamer.py (963 lines):
   Submodule 'test_status_streamer_manager.py' (~852 lines):
     - [class] TestStatusStreamManagerInit (lines 672-694)
     - [class] TestStatusStreamManagerGetStreamer (lines 697-728)

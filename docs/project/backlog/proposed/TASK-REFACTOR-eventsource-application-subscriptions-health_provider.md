@@ -19,7 +19,7 @@ Target decomposition destination: `src/eventsource/application/subscriptions/hea
 - `health_provider_core.py`: HealthCheckProvider
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/application/subscriptions/health_provider.py (590 lines):
+Decomposition Blueprint for src/eventsource/application/subscriptions/health_provider.py (590 lines):
   Submodule 'health_provider_core.py' (~541 lines):
     - [class] HealthCheckProvider (lines 47-587)
   Suggested barrel exports:

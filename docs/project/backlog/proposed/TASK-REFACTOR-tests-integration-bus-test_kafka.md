@@ -20,7 +20,7 @@ Target decomposition destination: `tests/integration/bus/test_kafka/` with submo
 - `test_kafka_metrics.py`: metrics_provider, metrics_setup, TestKafkaMetricsIntegration, TestKafkaMetricsPerformance, TestKafkaMetricsCardinality
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/integration/bus/test_kafka.py (2435 lines):
+Decomposition Blueprint for tests/integration/bus/test_kafka.py (2435 lines):
   Submodule 'test_kafka_event.py' (~1704 lines):
     - [function] kafka_event_bus_factory (lines 131-168)
     - [function] kafka_event_bus (lines 172-190)

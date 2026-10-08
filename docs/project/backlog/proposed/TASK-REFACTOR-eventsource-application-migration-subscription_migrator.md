@@ -20,7 +20,7 @@ Target decomposition destination: `src/eventsource/application/migration/subscri
 - `subscription_migrator_core.py`: SubscriptionMigrator
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/application/migration/subscription_migrator.py (905 lines):
+Decomposition Blueprint for src/eventsource/application/migration/subscription_migrator.py (905 lines):
   Submodule 'subscription_migrator_migration.py' (~188 lines):
     - [class] SubscriptionMigrationError (lines 74-100)
     - [class] SubscriptionMigrationResult (lines 104-144)

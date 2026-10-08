@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/migration/test_router/
 - `test_router_mock.py`: mock_routing_repo, AsyncIteratorMock, async_generator_mock
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/migration/test_router.py (1398 lines):
+Decomposition Blueprint for tests/unit/application/migration/test_router.py (1398 lines):
   Submodule 'test_router_store.py' (~1197 lines):
     - [function] create_mock_store (lines 62-89)
     - [function] mock_default_store (lines 93-95)

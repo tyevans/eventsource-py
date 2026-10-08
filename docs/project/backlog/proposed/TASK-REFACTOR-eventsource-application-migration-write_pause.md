@@ -20,7 +20,7 @@ Target decomposition destination: `src/eventsource/application/migration/write_p
 - `write_pause_state.py`: PauseState
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/application/migration/write_pause.py (535 lines):
+Decomposition Blueprint for src/eventsource/application/migration/write_pause.py (535 lines):
   Submodule 'write_pause_paused.py' (~439 lines):
     - [class] WritePausedError (lines 63-98)
     - [class] PauseMetrics (lines 123-166)

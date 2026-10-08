@@ -20,7 +20,7 @@ Target decomposition destination: `tests/integration/bus/test_redis/` with submo
 - `test_redis_publishing.py`: TestRedisEventBusPublishing
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/integration/bus/test_redis.py (701 lines):
+Decomposition Blueprint for tests/integration/bus/test_redis.py (701 lines):
   Submodule 'test_redis_connection.py' (~533 lines):
     - [class] TestRedisEventBusConnection (lines 58-103)
     - [class] TestRedisEventBusSubscription (lines 205-367)

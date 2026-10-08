@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/test_redis_event_bus_tracing/` wit
 - `test_redis_event_bus_tracing_handler.py`: TracingTestHandler, FailingTracingHandler
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/test_redis_event_bus_tracing.py (701 lines):
+Decomposition Blueprint for tests/unit/test_redis_event_bus_tracing.py (701 lines):
   Submodule 'test_redis_event_bus_tracing_span.py' (~562 lines):
     - [class] TestRedisEventBusPublishSpanCreation (lines 230-291)
     - [class] TestRedisEventBusProcessMessageSpanCreation (lines 299-366)

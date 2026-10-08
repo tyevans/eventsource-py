@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/adapters/test_memory_checkpoints/`
 - `test_memory_checkpoints_sql.py`: TestSQLCheckpointRepository
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/adapters/test_memory_checkpoints.py (936 lines):
+Decomposition Blueprint for tests/unit/adapters/test_memory_checkpoints.py (936 lines):
   Submodule 'test_memory_checkpoints_protocol.py' (~328 lines):
     - [class] TestCheckpointRepositoryProtocol (lines 214-221)
     - [class] TestSQLCheckpointRepositoryProtocol (lines 921-936)

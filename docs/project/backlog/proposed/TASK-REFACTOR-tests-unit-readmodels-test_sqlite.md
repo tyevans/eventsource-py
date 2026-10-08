@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/readmodels/test_sqlite/` with subm
 - `test_sqlite_to.py`: TestFilterToSQL
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/readmodels/test_sqlite.py (675 lines):
+Decomposition Blueprint for tests/unit/readmodels/test_sqlite.py (675 lines):
   Submodule 'test_sqlite_model.py' (~563 lines):
     - [class] CustomTableModel (lines 28-32)
     - [class] TestSQLiteReadModelRepositoryConstruction (lines 35-94)

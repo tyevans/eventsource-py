@@ -20,7 +20,7 @@ Target decomposition destination: `tests/integration/subscriptions/test_full_flo
 - `test_full_flow_and.py`: TestErrorHandlingAndRecovery, TestHealthAndStatus
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/integration/subscriptions/test_full_flow.py (673 lines):
+Decomposition Blueprint for tests/integration/subscriptions/test_full_flow.py (673 lines):
   Submodule 'test_full_flow_after.py' (~459 lines):
     - [function] position_after (lines 39-44)
     - [class] TestResumeAfterRestart (lines 167-257)

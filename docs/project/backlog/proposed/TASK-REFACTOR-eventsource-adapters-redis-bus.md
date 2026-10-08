@@ -20,7 +20,7 @@ Target decomposition destination: `src/eventsource/adapters/redis/bus/` with sub
 - `bus_available.py`: RedisNotAvailableError
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/adapters/redis/bus.py (1389 lines):
+Decomposition Blueprint for src/eventsource/adapters/redis/bus.py (1389 lines):
   Submodule 'bus_event.py' (~1275 lines):
     - [class] RedisEventBusConfig (lines 101-165)
     - [class] RedisEventBusStats (lines 169-190)

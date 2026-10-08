@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/migration/test_phase3_
 - `test_phase3_integration_migration.py`: InMemoryMigrationRepository, migration_repo, migration_id, TestSubscriptionCheckpointMigration, TestDryRunSubscriptionMigration, TestFullMigrationWithVerificationAndSubscriptions, TestMigrationSummary
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/migration/test_phase3_integration.py (2196 lines):
+Decomposition Blueprint for tests/unit/application/migration/test_phase3_integration.py (2196 lines):
   Submodule 'test_phase3_integration_position.py' (~1273 lines):
     - [class] InMemoryPositionMappingRepository (lines 105-227)
     - [function] position_mapping_repo (lines 641-643)

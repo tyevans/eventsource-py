@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/readmodels/test_schema/` with subm
 - `test_schema_type.py`: TestTypeMaps, TestExtractType, TestGetCustomSqlType
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/readmodels/test_schema.py (631 lines):
+Decomposition Blueprint for tests/unit/readmodels/test_schema.py (631 lines):
   Submodule 'test_schema_model.py' (~472 lines):
     - [class] SimpleModel (lines 25-29)
     - [class] ComplexModel (lines 32-40)

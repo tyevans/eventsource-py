@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/readmodels/test_soft_delete/` with
 - `test_soft_delete_model.py`: TestModel
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/readmodels/test_soft_delete.py (525 lines):
+Decomposition Blueprint for tests/unit/readmodels/test_soft_delete.py (525 lines):
   Submodule 'test_soft_delete_deleted.py' (~476 lines):
     - [class] TestGetDeleted (lines 153-212)
     - [class] TestFindDeleted (lines 215-311)

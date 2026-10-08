@@ -20,7 +20,7 @@ Target decomposition destination: `src/eventsource/application/subscriptions/tra
 - `transition_result.py`: TransitionResult
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/application/subscriptions/transition.py (613 lines):
+Decomposition Blueprint for src/eventsource/application/subscriptions/transition.py (613 lines):
   Submodule 'transition_phase.py' (~531 lines):
     - [class] TransitionPhase (lines 44-64)
     - [class] TransitionCoordinator (lines 94-528)

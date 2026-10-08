@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/migration/test_coordin
 - `test_coordinator_status.py`: TestGetStatus, TestBuildStatus, TestStatusQueueManagement
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/migration/test_coordinator.py (1097 lines):
+Decomposition Blueprint for tests/unit/application/migration/test_coordinator.py (1097 lines):
   Submodule 'test_coordinator_migration.py' (~836 lines):
     - [class] TestMigrationCoordinatorInit (lines 51-101)
     - [class] TestStartMigration (lines 104-277)

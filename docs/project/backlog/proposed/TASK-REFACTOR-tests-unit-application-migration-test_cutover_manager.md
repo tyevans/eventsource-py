@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/migration/test_cutover
 - `test_cutover_manager_mock.py`: mock_router, mock_routing_repo, mock_lag_tracker
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/migration/test_cutover_manager.py (1487 lines):
+Decomposition Blueprint for tests/unit/application/migration/test_cutover_manager.py (1487 lines):
   Submodule 'test_cutover_manager_lock.py' (~1285 lines):
     - [function] mock_lock_manager (lines 59-74)
     - [function] create_lock_context_manager (lines 149-164)

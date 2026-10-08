@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/testing/test_assertions/` with sub
 - `test_assertions_sample.py`: SampleCreated, SampleUpdated, SampleDeleted
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/testing/test_assertions.py (625 lines):
+Decomposition Blueprint for tests/unit/testing/test_assertions.py (625 lines):
   Submodule 'test_assertions_event.py' (~501 lines):
     - [class] OtherEvent (lines 41-45)
     - [function] single_event_assertions (lines 60-68)

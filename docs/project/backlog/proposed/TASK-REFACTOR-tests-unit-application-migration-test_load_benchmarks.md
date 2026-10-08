@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/migration/test_load_be
 - `test_load_benchmarks_result.py`: BenchmarkResult, LatencyResult
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/migration/test_load_benchmarks.py (1608 lines):
+Decomposition Blueprint for tests/unit/application/migration/test_load_benchmarks.py (1608 lines):
   Submodule 'test_load_benchmarks_memory.py' (~1367 lines):
     - [class] MemoryResult (lines 174-181)
     - [class] InMemoryMigrationRepository (lines 233-315)

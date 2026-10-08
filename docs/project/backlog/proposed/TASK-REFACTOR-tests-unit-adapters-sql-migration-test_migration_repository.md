@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/adapters/sql/migration/test_migrat
 - `test_migration_repository_phase.py`: TestPhaseTransitionValidation
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/adapters/sql/migration/test_migration_repository.py (1027 lines):
+Decomposition Blueprint for tests/unit/adapters/sql/migration/test_migration_repository.py (1027 lines):
   Submodule 'test_migration_repository_postgre.py' (~881 lines):
     - [class] TestPostgreSQLMigrationRepositoryInit (lines 109-128)
     - [class] TestPostgreSQLMigrationRepositoryCreate (lines 131-197)

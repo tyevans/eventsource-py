@@ -20,7 +20,7 @@ Target decomposition destination: `src/eventsource/application/migration/positio
 - `position_mapper_core.py`: PositionMapper
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/application/migration/position_mapper.py (603 lines):
+Decomposition Blueprint for src/eventsource/application/migration/position_mapper.py (603 lines):
   Submodule 'position_mapper_translation.py' (~38 lines):
     - [class] TranslationResult (lines 69-88)
     - [class] ReverseTranslationResult (lines 92-109)

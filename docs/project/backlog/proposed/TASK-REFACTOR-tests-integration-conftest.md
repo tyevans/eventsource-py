@@ -20,7 +20,7 @@ Target decomposition destination: `tests/integration/conftest/` with submodules:
 - `conftest_order.py`: TestOrderCreated, TestOrderItemAdded, TestOrderCompleted, TestOrderState, TestOrderAggregate, sample_order_event
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/integration/conftest.py (761 lines):
+Decomposition Blueprint for tests/integration/conftest.py (761 lines):
   Submodule 'conftest_postgres.py' (~357 lines):
     - [function] postgres_container (lines 346-361)
     - [function] postgres_connection_url (lines 365-369)

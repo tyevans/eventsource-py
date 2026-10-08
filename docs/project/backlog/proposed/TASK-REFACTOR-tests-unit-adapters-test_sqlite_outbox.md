@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/adapters/test_sqlite_outbox/` with
 - `test_sqlite_outbox_event.py`: TestSampleEvent, SampleEvent
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/adapters/test_sqlite_outbox.py (712 lines):
+Decomposition Blueprint for tests/unit/adapters/test_sqlite_outbox.py (712 lines):
   Submodule 'test_sqlite_outbox_repository.py' (~638 lines):
     - [class] TestSQLiteOutboxRepositoryProtocol (lines 41-46)
     - [class] TestSQLiteOutboxRepositoryAddEvent (lines 49-94)

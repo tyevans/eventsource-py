@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/migration/test_excepti
 - `test_exceptions_hierarchy.py`: TestExceptionHierarchy
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/migration/test_exceptions.py (582 lines):
+Decomposition Blueprint for tests/unit/application/migration/test_exceptions.py (582 lines):
   Submodule 'test_exceptions_error.py' (~475 lines):
     - [class] TestMigrationError (lines 39-95)
     - [class] TestMigrationNotFoundError (lines 98-113)

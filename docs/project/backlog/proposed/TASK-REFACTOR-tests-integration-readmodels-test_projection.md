@@ -20,7 +20,7 @@ Target decomposition destination: `tests/integration/readmodels/test_projection/
 - `test_projection_sq.py`: TestSQLiteMixedHandlerProjection
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/integration/readmodels/test_projection.py (1236 lines):
+Decomposition Blueprint for tests/integration/readmodels/test_projection.py (1236 lines):
   Submodule 'test_projection_model.py' (~986 lines):
     - [class] TestSQLiteReadModelProjectionCRUD (lines 371-458)
     - [class] TestSQLiteReadModelProjectionCheckpoint (lines 466-513)

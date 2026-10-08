@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/aggregates/test_reposi
 - `test_repository_snapshot_aggregate.py`: TestAggregate, TestAggregateV2
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/aggregates/test_repository_snapshot.py (1233 lines):
+Decomposition Blueprint for tests/unit/application/aggregates/test_repository_snapshot.py (1233 lines):
   Submodule 'test_repository_snapshot_event.py' (~1063 lines):
     - [class] TestEvent (lines 53-57)
     - [class] CountEvent (lines 61-64)

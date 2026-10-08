@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/testing/test_builder/` with submod
 - `test_builder_sample.py`: SampleEvent
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/testing/test_builder.py (722 lines):
+Decomposition Blueprint for tests/unit/testing/test_builder.py (722 lines):
   Submodule 'test_builder_with.py' (~662 lines):
     - [class] TestEventBuilderWithAggregateId (lines 73-96)
     - [class] TestEventBuilderWithEventId (lines 99-113)

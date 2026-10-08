@@ -20,7 +20,7 @@ Target decomposition destination: `tests/integration/readmodels/test_enhanced_fe
 - `test_enhanced_features_model.py`: EnhancedTestModel, enhanced_model_factory
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/integration/readmodels/test_enhanced_features.py (851 lines):
+Decomposition Blueprint for tests/integration/readmodels/test_enhanced_features.py (851 lines):
   Submodule 'test_enhanced_features_repo.py' (~715 lines):
     - [function] enhanced_inmemory_repo (lines 63-69)
     - [function] enhanced_sqlite_repo (lines 73-93)

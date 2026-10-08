@@ -19,7 +19,7 @@ Target decomposition destination: `src/eventsource/adapters/postgresql/readmodel
 - `readmodels_core.py`: PostgreSQLReadModelRepository
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/adapters/postgresql/readmodels.py (779 lines):
+Decomposition Blueprint for src/eventsource/adapters/postgresql/readmodels.py (779 lines):
   Submodule 'readmodels_core.py' (~744 lines):
     - [class] PostgreSQLReadModelRepository (lines 36-779)
   Suggested barrel exports:

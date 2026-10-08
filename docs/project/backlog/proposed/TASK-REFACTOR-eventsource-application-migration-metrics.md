@@ -20,7 +20,7 @@ Target decomposition destination: `src/eventsource/application/migration/metrics
 - `metrics_op.py`: NoOpCounter, NoOpHistogram, NoOpGauge
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/application/migration/metrics.py (818 lines):
+Decomposition Blueprint for src/eventsource/application/migration/metrics.py (818 lines):
   Submodule 'metrics_migration.py' (~668 lines):
     - [class] MigrationMetricSnapshot (lines 132-167)
     - [class] MigrationMetrics (lines 171-542)

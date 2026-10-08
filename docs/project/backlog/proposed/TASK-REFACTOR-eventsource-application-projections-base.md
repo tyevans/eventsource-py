@@ -20,7 +20,7 @@ Target decomposition destination: `src/eventsource/application/projections/base/
 - `base_event.py`: EventHandlerBase
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/application/projections/base.py (759 lines):
+Decomposition Blueprint for src/eventsource/application/projections/base.py (759 lines):
   Submodule 'base_projection.py' (~647 lines):
     - [class] Projection (lines 64-103)
     - [class] SyncProjection (lines 106-129)

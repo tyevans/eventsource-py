@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/aggregates/test_tenant
 - `test_tenant_repository_order.py`: OrderCreated, NonTenantOrderCreated, TenantOrderState, TenantOrderAggregate
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/aggregates/test_tenant_repository.py (758 lines):
+Decomposition Blueprint for tests/unit/application/aggregates/test_tenant_repository.py (758 lines):
   Submodule 'test_tenant_repository_aware.py' (~661 lines):
     - [class] TestTenantAwareRepositorySave (lines 67-320)
     - [class] TestTenantAwareRepositoryLoad (lines 323-389)

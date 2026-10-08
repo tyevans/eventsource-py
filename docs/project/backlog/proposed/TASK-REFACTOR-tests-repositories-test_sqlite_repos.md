@@ -20,7 +20,7 @@ Target decomposition destination: `tests/repositories/test_sqlite_repos/` with s
 - `test_sqlite_repos_event.py`: TestSampleEvent
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/repositories/test_sqlite_repos.py (679 lines):
+Decomposition Blueprint for tests/repositories/test_sqlite_repos.py (679 lines):
   Submodule 'test_sqlite_repos_repository.py' (~585 lines):
     - [class] TestSQLCheckpointRepositoryProtocol (lines 59-64)
     - [class] TestSQLCheckpointRepositoryGetCheckpoint (lines 67-93)

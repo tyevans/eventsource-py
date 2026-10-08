@@ -20,7 +20,7 @@ Target decomposition destination: `tests/integration/observability/test_tracing_
 - `test_tracing_integration_event.py`: TestEventBusTracing
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/integration/observability/test_tracing_integration.py (525 lines):
+Decomposition Blueprint for tests/integration/observability/test_tracing_integration.py (525 lines):
   Submodule 'test_tracing_integration_aggregate.py' (~336 lines):
     - [class] TracingTestAggregateState (lines 45-50)
     - [class] TracingTestAggregate (lines 53-115)

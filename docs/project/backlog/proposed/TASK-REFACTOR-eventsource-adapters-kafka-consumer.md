@@ -19,7 +19,7 @@ Target decomposition destination: `src/eventsource/adapters/kafka/consumer/` wit
 - `consumer_core.py`: KafkaConsumerLoop
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/adapters/kafka/consumer.py (1136 lines):
+Decomposition Blueprint for src/eventsource/adapters/kafka/consumer.py (1136 lines):
   Submodule 'consumer_core.py' (~1062 lines):
     - [class] KafkaConsumerLoop (lines 75-1136)
   Suggested barrel exports:

@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/migration/test_coordin
 - `test_coordinator_subscriptions_make.py`: make_verification_report, make_migration_summary
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/migration/test_coordinator_subscriptions.py (1081 lines):
+Decomposition Blueprint for tests/unit/application/migration/test_coordinator_subscriptions.py (1081 lines):
   Submodule 'test_coordinator_subscriptions_pos.py' (~971 lines):
     - [function] source_pos (lines 44-46)
     - [function] target_pos (lines 49-51)

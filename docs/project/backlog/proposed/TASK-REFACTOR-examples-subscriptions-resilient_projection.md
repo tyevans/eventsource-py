@@ -20,7 +20,7 @@ Target decomposition destination: `examples/subscriptions/resilient_projection/`
 - `resilient_projection_error.py`: on_any_error, on_transient_error, on_critical_error
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/examples/subscriptions/resilient_projection.py (535 lines):
+Decomposition Blueprint for examples/subscriptions/resilient_projection.py (535 lines):
   Submodule 'resilient_projection_payment.py' (~412 lines):
     - [class] PaymentReceived (lines 64-71)
     - [class] PaymentFailed (lines 75-81)

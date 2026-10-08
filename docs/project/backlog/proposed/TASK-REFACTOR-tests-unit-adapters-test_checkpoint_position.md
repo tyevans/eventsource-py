@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/adapters/test_checkpoint_position/
 - `test_checkpoint_position_core.py`: pos
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/adapters/test_checkpoint_position.py (538 lines):
+Decomposition Blueprint for tests/unit/adapters/test_checkpoint_position.py (538 lines):
   Submodule 'test_checkpoint_position_repository.py' (~483 lines):
     - [class] TestInMemoryCheckpointRepositoryPosition (lines 34-214)
     - [class] TestInMemoryCheckpointRepositoryPositionConcurrency (lines 217-270)

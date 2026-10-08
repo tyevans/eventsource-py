@@ -20,7 +20,7 @@ Target decomposition destination: `src/eventsource/domain/exceptions/` with subm
 - `exceptions_not.py`: AggregateNotFoundError, AggregateNotCreatedError, AggregateTypeNotSetError, SnapshotNotFoundError, TenantContextNotSetError
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/domain/exceptions.py (834 lines):
+Decomposition Blueprint for src/eventsource/domain/exceptions.py (834 lines):
   Submodule 'exceptions_event.py' (~632 lines):
     - [class] EventSourceError (lines 12-15)
     - [class] EventNotFoundError (lines 49-54)

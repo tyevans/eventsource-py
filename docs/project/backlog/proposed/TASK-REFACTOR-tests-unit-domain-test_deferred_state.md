@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/domain/test_deferred_state/` with 
 - `test_deferred_state_extraction.py`: ExtractionState, ExtractionRequested, ExtractionCompleted, ExtractionProcess
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/domain/test_deferred_state.py (623 lines):
+Decomposition Blueprint for tests/unit/domain/test_deferred_state.py (623 lines):
   Submodule 'test_deferred_state_aggregate.py' (~481 lines):
     - [class] TestDeferredStateAggregate (lines 145-235)
     - [class] TestDeferredStateAggregateWithReplay (lines 238-269)

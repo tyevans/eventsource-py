@@ -20,7 +20,7 @@ Target decomposition destination: `tests/integration/observability/test_distribu
 - `test_distributed_tracing_kafka.py`: TestKafkaDistributedTracing
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/integration/observability/test_distributed_tracing.py (634 lines):
+Decomposition Blueprint for tests/integration/observability/test_distributed_tracing.py (634 lines):
   Submodule 'test_distributed_tracing_mq.py' (~341 lines):
     - [class] TestRabbitMQDistributedTracing (lines 74-271)
     - [class] TestCrossProcessTraceContext (lines 483-545)

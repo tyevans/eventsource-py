@@ -20,7 +20,7 @@ Target decomposition destination: `src/eventsource/observability/tracer/` with s
 - `tracer_null.py`: NullTracer
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/observability/tracer.py (507 lines):
+Decomposition Blueprint for src/eventsource/observability/tracer.py (507 lines):
   Submodule 'tracer_enum.py' (~390 lines):
     - [class] SpanKindEnum (lines 47-66)
     - [class] Tracer (lines 70-204)

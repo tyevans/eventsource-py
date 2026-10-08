@@ -19,7 +19,7 @@ Target decomposition destination: `src/eventsource/adapters/postgresql/store/` w
 - `store_core.py`: PostgreSQLEventStore
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/adapters/postgresql/store.py (639 lines):
+Decomposition Blueprint for src/eventsource/adapters/postgresql/store.py (639 lines):
   Submodule 'store_core.py' (~520 lines):
     - [class] PostgreSQLEventStore (lines 117-636)
   Suggested barrel exports:

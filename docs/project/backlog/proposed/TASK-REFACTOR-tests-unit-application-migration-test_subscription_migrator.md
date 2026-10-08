@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/migration/test_subscri
 - `test_subscription_migrator_pos.py`: source_pos, target_pos
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/migration/test_subscription_migrator.py (1166 lines):
+Decomposition Blueprint for tests/unit/application/migration/test_subscription_migrator.py (1166 lines):
   Submodule 'test_subscription_migrator_migration.py' (~1097 lines):
     - [class] TestSubscriptionMigratorPlanMigration (lines 93-275)
     - [class] TestSubscriptionMigratorVerifyMigration (lines 666-732)

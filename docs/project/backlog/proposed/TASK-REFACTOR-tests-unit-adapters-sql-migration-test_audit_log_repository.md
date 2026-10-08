@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/adapters/sql/migration/test_audit_
 - `test_audit_log_repository_event.py`: TestAuditEventTypeEnum
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/adapters/sql/migration/test_audit_log_repository.py (853 lines):
+Decomposition Blueprint for tests/unit/adapters/sql/migration/test_audit_log_repository.py (853 lines):
   Submodule 'test_audit_log_repository_migration.py' (~759 lines):
     - [class] TestMigrationAuditLogRepositoryProtocol (lines 32-49)
     - [class] TestPostgreSQLMigrationAuditLogRepositoryInit (lines 52-71)

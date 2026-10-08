@@ -20,7 +20,7 @@ Target decomposition destination: `tests/integration/projections/test_database_p
 - `test_database_projection_table.py`: orders_table
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/integration/projections/test_database_projection.py (583 lines):
+Decomposition Blueprint for tests/integration/projections/test_database_projection.py (583 lines):
   Submodule 'test_database_projection_order.py' (~512 lines):
     - [class] OrderCreated (lines 35-40)
     - [class] OrderShipped (lines 43-47)

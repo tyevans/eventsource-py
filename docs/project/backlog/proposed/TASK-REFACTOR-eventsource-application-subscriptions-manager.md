@@ -19,7 +19,7 @@ Target decomposition destination: `src/eventsource/application/subscriptions/man
 - `manager_core.py`: SubscriptionManager
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/application/subscriptions/manager.py (1260 lines):
+Decomposition Blueprint for src/eventsource/application/subscriptions/manager.py (1260 lines):
   Submodule 'manager_core.py' (~1172 lines):
     - [class] SubscriptionManager (lines 84-1255)
   Suggested barrel exports:

@@ -20,7 +20,7 @@ Target decomposition destination: `src/eventsource/application/migration/bulk_co
 - `bulk_copier_rate.py`: RateLimiter
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/application/migration/bulk_copier.py (727 lines):
+Decomposition Blueprint for src/eventsource/application/migration/bulk_copier.py (727 lines):
   Submodule 'bulk_copier_copy.py' (~598 lines):
     - [class] BulkCopyProgress (lines 66-103)
     - [class] BulkCopyResult (lines 107-125)

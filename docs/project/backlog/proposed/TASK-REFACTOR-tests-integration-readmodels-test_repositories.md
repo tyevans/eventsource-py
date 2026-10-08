@@ -20,7 +20,7 @@ Target decomposition destination: `tests/integration/readmodels/test_repositorie
 - `test_repositories_basic.py`: TestReadModelRepositoryBasicOperations
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/integration/readmodels/test_repositories.py (914 lines):
+Decomposition Blueprint for tests/integration/readmodels/test_repositories.py (914 lines):
   Submodule 'test_repositories_delete.py' (~684 lines):
     - [class] TestReadModelRepositoryDelete (lines 160-259)
     - [class] TestReadModelRepositorySoftDeleteVisibility (lines 563-630)

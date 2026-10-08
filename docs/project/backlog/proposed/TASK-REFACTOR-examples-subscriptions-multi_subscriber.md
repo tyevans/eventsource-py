@@ -20,7 +20,7 @@ Target decomposition destination: `examples/subscriptions/multi_subscriber/` wit
 - `multi_subscriber_inventory.py`: InventoryAdded, InventoryReserved, InventorySold, InventoryDashboardProjection
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/examples/subscriptions/multi_subscriber.py (760 lines):
+Decomposition Blueprint for examples/subscriptions/multi_subscriber.py (760 lines):
   Submodule 'multi_subscriber_product.py' (~545 lines):
     - [class] ProductCreated (lines 58-65)
     - [class] ProductPriceChanged (lines 69-75)

@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/domain/test_aggregate_root/` with 
 - `test_aggregate_root_event.py`: TestEventApplication, TestUncommittedEventManagement, TestRaiseEventMethod, TestIntegrationWithDomainEvent, TestEventVersionValidation, TestEventVersionErrorException, TestUnregisteredEventHandling, TestUnhandledEventErrorException
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/domain/test_aggregate_root.py (1745 lines):
+Decomposition Blueprint for tests/unit/domain/test_aggregate_root.py (1745 lines):
   Submodule 'test_aggregate_root_counter.py' (~788 lines):
     - [class] CounterState (lines 38-43)
     - [class] CounterIncremented (lines 56-60)

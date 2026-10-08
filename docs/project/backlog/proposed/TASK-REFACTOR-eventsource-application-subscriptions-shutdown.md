@@ -20,7 +20,7 @@ Target decomposition destination: `src/eventsource/application/subscriptions/shu
 - `shutdown_metrics.py`: _init_shutdown_metrics, reset_shutdown_metrics, ShutdownMetricsSnapshot
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/application/subscriptions/shutdown.py (1537 lines):
+Decomposition Blueprint for src/eventsource/application/subscriptions/shutdown.py (1537 lines):
   Submodule 'shutdown_record.py' (~1326 lines):
     - [function] record_shutdown_initiated (lines 126-134)
     - [function] record_shutdown_completed (lines 137-153)

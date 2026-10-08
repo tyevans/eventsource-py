@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/subscriptions/test_liv
 - `test_live_runner_subscriber.py`: MockLiveSubscriber, subscriber
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/subscriptions/test_live_runner.py (1144 lines):
+Decomposition Blueprint for tests/unit/application/subscriptions/test_live_runner.py (1144 lines):
   Submodule 'test_live_runner_event.py' (~963 lines):
     - [class] LiveTestEvent (lines 49-53)
     - [class] AnotherTestEvent (lines 57-61)

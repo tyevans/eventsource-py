@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/test_edge_cases/` with submodules:
 - `test_edge_cases_repository.py`: TestCheckpointRepositoryEdgeCases, TestDLQRepositoryEdgeCases, TestOutboxRepositoryEdgeCases
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/test_edge_cases.py (556 lines):
+Decomposition Blueprint for tests/unit/test_edge_cases.py (556 lines):
   Submodule 'test_edge_cases_event.py' (~380 lines):
     - [class] EdgeTestEvent (lines 41-45)
     - [class] SampleOrderEvent (lines 49-53)

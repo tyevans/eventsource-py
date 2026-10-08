@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/adapters/test_postgresql_snapshots
 - `test_postgresql_snapshots_create.py`: create_scalar_result, create_snapshot_row
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/adapters/test_postgresql_snapshots.py (762 lines):
+Decomposition Blueprint for tests/unit/adapters/test_postgresql_snapshots.py (762 lines):
   Submodule 'test_postgresql_snapshots_mock.py' (~660 lines):
     - [function] mock_session (lines 32-35)
     - [function] mock_session_factory (lines 39-55)

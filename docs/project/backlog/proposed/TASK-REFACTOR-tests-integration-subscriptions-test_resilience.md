@@ -20,7 +20,7 @@ Target decomposition destination: `tests/integration/subscriptions/test_resilien
 - `test_resilience_chaos.py`: TestChaos
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/integration/subscriptions/test_resilience.py (1420 lines):
+Decomposition Blueprint for tests/integration/subscriptions/test_resilience.py (1420 lines):
   Submodule 'test_resilience_projection.py' (~1169 lines):
     - [class] ConcurrencyTrackingProjection (lines 80-117)
     - [class] PositionalFailingProjection (lines 120-152)

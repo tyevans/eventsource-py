@@ -20,7 +20,7 @@ Target decomposition destination: `tests/conftest/` with submodules:
 - `conftest_aggregate.py`: aggregate_id, counter_aggregate, declarative_counter_aggregate, populated_counter_aggregate, order_aggregate, populated_order_aggregate
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/conftest.py (726 lines):
+Decomposition Blueprint for tests/conftest.py (726 lines):
   Submodule 'conftest_event.py' (~368 lines):
     - [function] event_factory (lines 173-188)
     - [function] sample_event (lines 192-206)

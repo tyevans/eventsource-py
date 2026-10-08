@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/migration/test_bulk_co
 - `test_bulk_copier_progress.py`: TestBulkCopierRunProgress
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/migration/test_bulk_copier.py (1393 lines):
+Decomposition Blueprint for tests/unit/application/migration/test_bulk_copier.py (1393 lines):
   Submodule 'test_bulk_copier_copy.py' (~1264 lines):
     - [class] TestBulkCopyProgress (lines 55-113)
     - [class] TestBulkCopyResult (lines 116-143)

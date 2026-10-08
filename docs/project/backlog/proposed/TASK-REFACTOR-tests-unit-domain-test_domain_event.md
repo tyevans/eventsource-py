@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/domain/test_domain_event/` with su
 - `test_domain_event_aggregate.py`: TestDomainEventAggregateVersion, TestAggregateTypePattern
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/domain/test_domain_event.py (908 lines):
+Decomposition Blueprint for tests/unit/domain/test_domain_event.py (908 lines):
   Submodule 'test_domain_event_order.py' (~801 lines):
     - [class] OrderCreated (lines 25-33)
     - [class] OrderShipped (lines 36-42)

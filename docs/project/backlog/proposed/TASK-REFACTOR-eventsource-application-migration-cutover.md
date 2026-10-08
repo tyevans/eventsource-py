@@ -19,7 +19,7 @@ Target decomposition destination: `src/eventsource/application/migration/cutover
 - `cutover_core.py`: CutoverManager
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/application/migration/cutover.py (675 lines):
+Decomposition Blueprint for src/eventsource/application/migration/cutover.py (675 lines):
   Submodule 'cutover_core.py' (~563 lines):
     - [class] CutoverManager (lines 108-670)
   Suggested barrel exports:

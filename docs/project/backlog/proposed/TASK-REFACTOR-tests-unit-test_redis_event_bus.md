@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/test_redis_event_bus/` with submod
 - `test_redis_event_bus_order.py`: OrderHandler
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/test_redis_event_bus.py (1248 lines):
+Decomposition Blueprint for tests/unit/test_redis_event_bus.py (1248 lines):
   Submodule 'test_redis_event_bus_sample.py' (~1105 lines):
     - [class] SampleOrderCreated (lines 34-39)
     - [class] SampleOrderShipped (lines 42-46)

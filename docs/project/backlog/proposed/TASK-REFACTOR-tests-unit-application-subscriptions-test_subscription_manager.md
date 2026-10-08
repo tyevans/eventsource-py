@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/subscriptions/test_sub
 - `test_subscription_manager_multiple.py`: TestMultipleSubscriptionsConcurrent, TestMultipleSubscriptionsHealth, TestMultipleSubscriptionsLifecycle
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/subscriptions/test_subscription_manager.py (1500 lines):
+Decomposition Blueprint for tests/unit/application/subscriptions/test_subscription_manager.py (1500 lines):
   Submodule 'test_subscription_manager_event.py' (~1091 lines):
     - [class] ManagerTestEvent (lines 44-48)
     - [class] AnotherManagerEvent (lines 52-56)

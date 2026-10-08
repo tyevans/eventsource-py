@@ -20,7 +20,7 @@ Target decomposition destination: `src/eventsource/application/migration/consist
 - `consistency_stream.py`: StreamConsistency
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/application/migration/consistency.py (859 lines):
+Decomposition Blueprint for src/eventsource/application/migration/consistency.py (859 lines):
   Submodule 'consistency_verification.py' (~739 lines):
     - [class] VerificationLevel (lines 64-91)
     - [class] VerificationReport (lines 173-237)

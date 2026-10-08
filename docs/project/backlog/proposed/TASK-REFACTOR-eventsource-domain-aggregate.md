@@ -20,7 +20,7 @@ Target decomposition destination: `src/eventsource/domain/aggregate/` with submo
 - `aggregate_declarative.py`: DeclarativeAggregate
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/domain/aggregate.py (951 lines):
+Decomposition Blueprint for src/eventsource/domain/aggregate.py (951 lines):
   Submodule 'aggregate_root.py' (~636 lines):
     - [class] AggregateRoot (lines 44-679)
   Submodule 'aggregate_declarative.py' (~262 lines):

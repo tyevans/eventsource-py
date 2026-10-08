@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/subscriptions/test_sub
 - `test_subscription_config_values.py`: TestSubscriptionConfigCustomValues
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/subscriptions/test_subscription_config.py (513 lines):
+Decomposition Blueprint for tests/unit/application/subscriptions/test_subscription_config.py (513 lines):
   Submodule 'test_subscription_config_defaults.py' (~404 lines):
     - [class] TestSubscriptionConfigDefaults (lines 27-68)
     - [class] TestSubscriptionConfigValidation (lines 140-194)

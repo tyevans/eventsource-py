@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/migration/test_dual_wr
 - `test_dual_write_store.py`: create_mock_store, source_store, target_store
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/migration/test_dual_write.py (951 lines):
+Decomposition Blueprint for tests/unit/application/migration/test_dual_write.py (951 lines):
   Submodule 'test_dual_write_failure.py' (~781 lines):
     - [class] TestFailureStats (lines 173-212)
     - [class] TestAppendSourceFailure (lines 367-387)

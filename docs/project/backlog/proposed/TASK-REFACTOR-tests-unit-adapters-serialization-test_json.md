@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/adapters/serialization/test_json/`
 - `test_json_event.py`: TestEventSourceJSONEncoder, TestDomainEventRejectsNonFiniteFloats
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/adapters/serialization/test_json.py (707 lines):
+Decomposition Blueprint for tests/unit/adapters/serialization/test_json.py (707 lines):
   Submodule 'test_json_dumps.py' (~506 lines):
     - [class] TestJsonDumps (lines 92-126)
     - [class] TestJsonDumpsUnsupportedTypes (lines 176-186)

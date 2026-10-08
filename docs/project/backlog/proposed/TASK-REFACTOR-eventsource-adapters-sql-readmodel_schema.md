@@ -20,7 +20,7 @@ Target decomposition destination: `src/eventsource/adapters/sql/readmodel_schema
 - `readmodel_schema_type.py`: _extract_type, _get_custom_sql_type
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/adapters/sql/readmodel_schema.py (560 lines):
+Decomposition Blueprint for src/eventsource/adapters/sql/readmodel_schema.py (560 lines):
   Submodule 'readmodel_schema_generate.py' (~373 lines):
     - [function] generate_schema (lines 80-144)
     - [function] generate_indexes (lines 147-216)

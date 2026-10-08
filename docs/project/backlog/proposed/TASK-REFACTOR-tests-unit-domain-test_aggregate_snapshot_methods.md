@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/domain/test_aggregate_snapshot_met
 - `test_aggregate_snapshot_methods_state.py`: SimpleState, TestSerializeState, TestGetStateType
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/domain/test_aggregate_snapshot_methods.py (854 lines):
+Decomposition Blueprint for tests/unit/domain/test_aggregate_snapshot_methods.py (854 lines):
   Submodule 'test_aggregate_snapshot_methods_order.py' (~553 lines):
     - [class] OrderItem (lines 30-35)
     - [class] OrderState (lines 38-47)

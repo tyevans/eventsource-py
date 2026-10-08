@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/domain/test_event_type_auto/` with
 - `test_event_type_auto_behavior.py`: TestInheritanceBehavior, TestModelValidatorBehavior
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/domain/test_event_type_auto.py (656 lines):
+Decomposition Blueprint for tests/unit/domain/test_event_type_auto.py (656 lines):
   Submodule 'test_event_type_auto_warning.py' (~491 lines):
     - [class] TestEventTypeMismatchWarning (lines 217-260)
     - [class] TestSuppressEventTypeWarningAttribute (lines 463-512)

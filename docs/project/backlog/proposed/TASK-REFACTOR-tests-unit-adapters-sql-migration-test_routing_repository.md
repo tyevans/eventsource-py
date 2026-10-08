@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/adapters/sql/migration/test_routin
 - `test_routing_repository_state.py`: TestMigrationStateTransitionWorkflow
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/adapters/sql/migration/test_routing_repository.py (977 lines):
+Decomposition Blueprint for tests/unit/adapters/sql/migration/test_routing_repository.py (977 lines):
   Submodule 'test_routing_repository_tenant.py' (~827 lines):
     - [class] TestTenantRoutingRepositoryProtocol (lines 29-50)
     - [class] TestPostgreSQLTenantRoutingRepositoryInit (lines 53-91)

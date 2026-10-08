@@ -20,7 +20,7 @@ Target decomposition destination: `src/eventsource/application/migration/dual_wr
 - `dual_write_stats.py`: FailureStats
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/application/migration/dual_write.py (747 lines):
+Decomposition Blueprint for src/eventsource/application/migration/dual_write.py (747 lines):
   Submodule 'dual_write_failed.py' (~622 lines):
     - [class] FailedWrite (lines 83-106)
     - [class] DualWriteInterceptor (lines 143-740)

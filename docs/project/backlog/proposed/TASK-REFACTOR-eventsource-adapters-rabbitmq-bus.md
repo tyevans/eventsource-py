@@ -19,7 +19,7 @@ Target decomposition destination: `src/eventsource/adapters/rabbitmq/bus/` with 
 - `bus_core.py`: RabbitMQEventBus
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/adapters/rabbitmq/bus.py (1570 lines):
+Decomposition Blueprint for src/eventsource/adapters/rabbitmq/bus.py (1570 lines):
   Submodule 'bus_core.py' (~1457 lines):
     - [class] RabbitMQEventBus (lines 99-1555)
   Suggested barrel exports:

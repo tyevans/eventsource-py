@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/subscriptions/test_ret
 - `test_retry_creation.py`: TestRetryConfigCreation
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/subscriptions/test_retry.py (889 lines):
+Decomposition Blueprint for tests/unit/application/subscriptions/test_retry.py (889 lines):
   Submodule 'test_retry_breaker.py' (~694 lines):
     - [class] TestCircuitBreakerConfigCreation (lines 415-452)
     - [class] TestCircuitBreakerCreation (lines 458-471)

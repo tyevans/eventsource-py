@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/migration/test_positio
 - `test_position_mapper_record.py`: TestPositionMapperRecordMapping, TestPositionMapperRecordMappingsBatch
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/migration/test_position_mapper.py (925 lines):
+Decomposition Blueprint for tests/unit/application/migration/test_position_mapper.py (925 lines):
   Submodule 'test_position_mapper_translate.py' (~713 lines):
     - [class] TestPositionMapperTranslatePosition (lines 222-333)
     - [class] TestPositionMapperTranslatePositionReverse (lines 336-392)

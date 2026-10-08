@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/domain/test_tenant_context_propert
 - `test_tenant_context_properties_scope.py`: test_clear_inside_scope_makes_scope_exit_raise, test_clear_inside_nested_scope_makes_inner_scope_exit_raise, test_clear_inside_async_scope_makes_scope_exit_raise, test_get_required_tenant_raises_after_scope_exit
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/domain/test_tenant_context_properties.py (519 lines):
+Decomposition Blueprint for tests/unit/domain/test_tenant_context_properties.py (519 lines):
   Submodule 'test_tenant_context_properties_restores.py' (~333 lines):
     - [function] test_sync_nesting_restores_exactly (lines 70-86)
     - [function] test_async_nesting_restores_exactly (lines 91-106)

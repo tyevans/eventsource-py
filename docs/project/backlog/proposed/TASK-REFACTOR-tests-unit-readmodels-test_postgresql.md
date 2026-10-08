@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/readmodels/test_postgresql/` with 
 - `test_postgresql_query.py`: TestBuildSelectQuery, TestBuildCountQuery, TestQueryBuilderIntegration
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/readmodels/test_postgresql.py (508 lines):
+Decomposition Blueprint for tests/unit/readmodels/test_postgresql.py (508 lines):
   Submodule 'test_postgresql_model.py' (~246 lines):
     - [class] CustomTableModel (lines 26-30)
     - [class] TestPostgreSQLReadModelRepositoryConstruction (lines 33-92)

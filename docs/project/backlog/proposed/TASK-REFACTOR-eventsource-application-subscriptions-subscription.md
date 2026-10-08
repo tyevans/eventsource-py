@@ -20,7 +20,7 @@ Target decomposition destination: `src/eventsource/application/subscriptions/sub
 - `subscription_state.py`: SubscriptionState
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/application/subscriptions/subscription.py (839 lines):
+Decomposition Blueprint for src/eventsource/application/subscriptions/subscription.py (839 lines):
   Submodule 'subscription_position.py' (~699 lines):
     - [function] render_position (lines 41-47)
     - [class] PauseReason (lines 82-102)

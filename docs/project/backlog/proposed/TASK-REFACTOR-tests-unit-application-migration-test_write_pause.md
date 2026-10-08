@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/migration/test_write_p
 - `test_write_pause_state.py`: TestPauseState, TestGetPauseState
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/migration/test_write_pause.py (876 lines):
+Decomposition Blueprint for tests/unit/application/migration/test_write_pause.py (876 lines):
   Submodule 'test_write_pause_paused.py' (~698 lines):
     - [class] TestWritePausedError (lines 33-69)
     - [class] TestWaitIfPaused (lines 301-402)

@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/migration/test_migrati
 - `test_migration_metrics_tel.py`: TestMetricsWithMockedOTel
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/migration/test_migration_metrics.py (964 lines):
+Decomposition Blueprint for tests/unit/application/migration/test_migration_metrics.py (964 lines):
   Submodule 'test_migration_metrics_no.py' (~791 lines):
     - [class] TestNoOpInstruments (lines 40-67)
     - [class] TestMigrationMetricsNoOTel (lines 399-453)

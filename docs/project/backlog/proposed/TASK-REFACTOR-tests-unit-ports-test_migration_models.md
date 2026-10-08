@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/ports/test_migration_models/` with
 - `test_migration_models_result.py`: TestCutoverResult, TestMigrationResult
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/ports/test_migration_models.py (1085 lines):
+Decomposition Blueprint for tests/unit/ports/test_migration_models.py (1085 lines):
   Submodule 'test_migration_models_tenant.py' (~882 lines):
     - [class] TestTenantMigrationState (lines 140-213)
     - [class] TestTenantRouting (lines 518-581)

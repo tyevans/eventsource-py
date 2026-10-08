@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/subscriptions/test_fil
 - `test_filtering_order.py`: OrderCreated, OrderShipped, OrderCancelled, MockOrderSubscriber, order_created, order_shipped, order_cancelled
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/subscriptions/test_filtering.py (721 lines):
+Decomposition Blueprint for tests/unit/application/subscriptions/test_filtering.py (721 lines):
   Submodule 'test_filtering_event.py' (~565 lines):
     - [class] UserUpdatedEvent (lines 65-69)
     - [class] TestEventFilterCreation (lines 194-267)

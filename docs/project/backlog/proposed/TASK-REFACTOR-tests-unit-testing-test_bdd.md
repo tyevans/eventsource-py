@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/testing/test_bdd/` with submodules
 - `test_bdd_aggregate.py`: OtherAggregateCreated, aggregate_id
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/testing/test_bdd.py (841 lines):
+Decomposition Blueprint for tests/unit/testing/test_bdd.py (841 lines):
   Submodule 'test_bdd_sample.py' (~718 lines):
     - [class] SampleCreated (lines 35-39)
     - [class] SampleUpdated (lines 43-47)

@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/subscriptions/test_shu
 - `test_shutdown_metrics.py`: TestShutdownMetricsSnapshot, TestShutdownMetricsFunctions, TestShutdownCoordinatorMetrics
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/subscriptions/test_shutdown.py (2720 lines):
+Decomposition Blueprint for tests/unit/application/subscriptions/test_shutdown.py (2720 lines):
   Submodule 'test_shutdown_imports.py' (~2258 lines):
     - [class] TestModuleImports (lines 1035-1068)
     - [class] TestMetricsModuleImports (lines 1633-1665)

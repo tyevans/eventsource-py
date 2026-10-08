@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/domain/test_event_registry/` with 
 - `test_event_registry_default.py`: EventWithoutTypeDefault, TestDefaultRegistry
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/domain/test_event_registry.py (755 lines):
+Decomposition Blueprint for tests/unit/domain/test_event_registry.py (755 lines):
   Submodule 'test_event_registry_order.py' (~617 lines):
     - [class] OrderCreated (lines 37-43)
     - [class] OrderShipped (lines 46-51)

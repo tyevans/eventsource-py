@@ -20,7 +20,7 @@ Target decomposition destination: `src/eventsource/application/subscriptions/ret
 - `retry_config.py`: RetryConfig
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/application/subscriptions/retry.py (643 lines):
+Decomposition Blueprint for src/eventsource/application/subscriptions/retry.py (643 lines):
   Submodule 'retry_circuit.py' (~507 lines):
     - [class] CircuitState (lines 41-53)
     - [class] CircuitBreakerConfig (lines 147-170)

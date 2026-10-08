@@ -19,7 +19,7 @@ Target decomposition destination: `src/eventsource/adapters/rabbitmq/dlq/` with 
 - `dlq_core.py`: RabbitMQDLQAdmin
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/adapters/rabbitmq/dlq.py (505 lines):
+Decomposition Blueprint for src/eventsource/adapters/rabbitmq/dlq.py (505 lines):
   Submodule 'dlq_core.py' (~460 lines):
     - [class] RabbitMQDLQAdmin (lines 46-505)
   Suggested barrel exports:

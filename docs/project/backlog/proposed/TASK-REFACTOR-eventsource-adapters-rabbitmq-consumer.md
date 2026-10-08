@@ -19,7 +19,7 @@ Target decomposition destination: `src/eventsource/adapters/rabbitmq/consumer/` 
 - `consumer_core.py`: RabbitMQConsumer
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/adapters/rabbitmq/consumer.py (883 lines):
+Decomposition Blueprint for src/eventsource/adapters/rabbitmq/consumer.py (883 lines):
   Submodule 'consumer_core.py' (~808 lines):
     - [class] RabbitMQConsumer (lines 76-883)
   Suggested barrel exports:

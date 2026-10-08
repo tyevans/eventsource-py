@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/test_kafka_event_bus/` with submod
 - `test_kafka_event_bus_config.py`: TestKafkaEventBusConfig, TestKafkaEventBusConfigSecurity, TestKafkaEventBusConfigSSLContext, TestKafkaEventBusConfigSanitization, TestKafkaEventBusConfigProducerConsumer, TestKafkaEventBusMetricsConfig
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/test_kafka_event_bus.py (1858 lines):
+Decomposition Blueprint for tests/unit/test_kafka_event_bus.py (1858 lines):
   Submodule 'test_kafka_event_bus_sample.py' (~1135 lines):
     - [class] SampleOrderCreated (lines 35-40)
     - [class] SampleOrderShipped (lines 43-47)

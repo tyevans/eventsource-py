@@ -20,7 +20,7 @@ Target decomposition destination: `tests/integration/migrations/test_migration_s
 - `test_migration_schema_postgresql_engine.py`: migration_schema_engine
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/integration/migrations/test_migration_schema_postgresql.py (830 lines):
+Decomposition Blueprint for tests/integration/migrations/test_migration_schema_postgresql.py (830 lines):
   Submodule 'test_migration_schema_postgresql_table.py' (~763 lines):
     - [class] TestTenantMigrationsTable (lines 121-313)
     - [class] TestTenantRoutingTable (lines 316-464)

@@ -19,7 +19,7 @@ Target decomposition destination: `src/eventsource/application/migration/coordin
 - `coordinator_core.py`: MigrationCoordinator
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/application/migration/coordinator.py (2132 lines):
+Decomposition Blueprint for src/eventsource/application/migration/coordinator.py (2132 lines):
   Submodule 'coordinator_core.py' (~1996 lines):
     - [class] MigrationCoordinator (lines 131-2126)
   Suggested barrel exports:

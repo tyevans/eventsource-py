@@ -20,7 +20,7 @@ Target decomposition destination: `src/eventsource/application/subscriptions/coo
 - `coordination_work.py`: WorkAssignment, WorkRedistributionCoordinator
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/application/subscriptions/coordination.py (990 lines):
+Decomposition Blueprint for src/eventsource/application/subscriptions/coordination.py (990 lines):
   Submodule 'coordination_shutdown.py' (~247 lines):
     - [class] ShutdownIntent (lines 97-118)
     - [class] ShutdownNotification (lines 127-227)

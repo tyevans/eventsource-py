@@ -20,7 +20,7 @@ Target decomposition destination: `src/eventsource/__init__/` with submodules:
 - `__init___getattr.py`: __getattr__
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/__init__.py (600 lines):
+Decomposition Blueprint for src/eventsource/__init__.py (600 lines):
   Submodule '__init___module.py' (~9 lines):
     - [function] _module_installed (lines 423-429)
     - [function] __dir__ (lines 599-600)

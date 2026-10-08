@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/application/migration/test_consist
 - `test_consistency_verifier_event.py`: TestEvent
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/application/migration/test_consistency_verifier.py (1085 lines):
+Decomposition Blueprint for tests/unit/application/migration/test_consistency_verifier.py (1085 lines):
   Submodule 'test_consistency_verifier_verification.py' (~1017 lines):
     - [class] TestVerificationLevel (lines 45-61)
     - [class] TestVerificationReport (lines 160-251)

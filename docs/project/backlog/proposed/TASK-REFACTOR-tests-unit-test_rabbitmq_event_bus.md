@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/test_rabbitmq_event_bus/` with sub
 - `test_rabbitmq_event_bus_message.py`: TestRabbitMQCreateMessage, TestRabbitMQProcessMessage, TestRabbitMQProcessMessageWithDLQTracking, TestHandleFailedMessage, TestProcessMessageWithRetry, TestDLQMessageDataclass, TestGetDLQMessageCount, TestReplayDLQMessage, TestReplayMessage, TestDLQMessageExport
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/test_rabbitmq_event_bus.py (11571 lines):
+Decomposition Blueprint for tests/unit/test_rabbitmq_event_bus.py (11571 lines):
   Submodule 'test_rabbitmq_event_bus_exchange.py' (~10117 lines):
     - [class] TestRabbitMQExchangeDeclaration (lines 1723-2003)
     - [class] TestDirectExchangeConfig (lines 9731-9801)

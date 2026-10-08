@@ -20,7 +20,7 @@ Target decomposition destination: `src/eventsource/application/subscriptions/hea
 - `health_check.py`: HealthCheckResult, HealthCheckConfig
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/application/subscriptions/health.py (860 lines):
+Decomposition Blueprint for src/eventsource/application/subscriptions/health.py (860 lines):
   Submodule 'health_status.py' (~721 lines):
     - [class] HealthStatus (lines 31-51)
     - [class] ReadinessStatus (lines 760-797)

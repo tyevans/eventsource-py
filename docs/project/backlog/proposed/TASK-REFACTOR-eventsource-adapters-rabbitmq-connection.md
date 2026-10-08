@@ -19,7 +19,7 @@ Target decomposition destination: `src/eventsource/adapters/rabbitmq/connection/
 - `connection_core.py`: RabbitMQConnectionManager
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/src/eventsource/adapters/rabbitmq/connection.py (537 lines):
+Decomposition Blueprint for src/eventsource/adapters/rabbitmq/connection.py (537 lines):
   Submodule 'connection_core.py' (~499 lines):
     - [class] RabbitMQConnectionManager (lines 39-537)
   Suggested barrel exports:

@@ -20,7 +20,7 @@ Target decomposition destination: `examples/projection_example/` with submodules
 - `projection_example_stats.py`: CustomerStatsProjection
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/examples/projection_example.py (595 lines):
+Decomposition Blueprint for examples/projection_example.py (595 lines):
   Submodule 'projection_example_order.py' (~441 lines):
     - [class] OrderPlaced (lines 51-59)
     - [class] OrderShipped (lines 63-69)

@@ -20,7 +20,7 @@ Target decomposition destination: `tests/unit/adapters/test_memory_dlq/` with su
 - `test_memory_dlq_entry.py`: TestDLQEntryTypedReturns
 
 ## AST Decomposition Blueprint
-Decomposition Blueprint for /home/ty/workspace/eventsource-py/tests/unit/adapters/test_memory_dlq.py (1208 lines):
+Decomposition Blueprint for tests/unit/adapters/test_memory_dlq.py (1208 lines):
   Submodule 'test_memory_dlq_repository.py' (~1088 lines):
     - [class] TestInMemoryDLQRepository (lines 21-397)
     - [class] TestDLQRepositoryProtocol (lines 400-406)
