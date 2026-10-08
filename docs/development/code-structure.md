@@ -102,7 +102,7 @@ When a class starts answering two unrelated questions — "how do I persist this
 "when should I snapshot it?" — the second question moves out, into a module named for the answer.
 That is the literal history of snapshotting in this codebase, in two stages. First
 `AggregateSnapshotManager` was carved out of `AggregateRepository`. Then, in the ring migration
-(see [ADR 0021](../adrs/0021-snapshot-policy-scheduler-composition.md)), the manager itself was
+(see [ADR 0021](../adrs/0006-snapshot-policies-scheduling-and-boundary-crossing-rehydration.md)), the manager itself was
 dissolved: it had accumulated four responsibilities behind one object (read validation, write
 delegation, manual write, background-task reporting), and each moved to the collaborator that
 actually owns it — `SnapshotPolicy` decides *when*, `SnapshotScheduler` decides *how*,
@@ -156,7 +156,7 @@ contract and no inheritance. `SnapshotPolicy` and `SnapshotScheduler`
 Protocols, and all are `@runtime_checkable` so an `isinstance` guard remains possible where one is
 genuinely needed — though `SnapshotScheduler`'s uniform `pending_count`/`await_pending()` surface
 is specifically designed so the repository never needs that guard for scheduler capability
-detection (see [ADR 0021](../adrs/0021-snapshot-policy-scheduler-composition.md) on the isinstance
+detection (see [ADR 0021](../adrs/0006-snapshot-policies-scheduling-and-boundary-crossing-rehydration.md) on the isinstance
 sniffing it replaces).
 
 ABCs are used where the contract also wants to *supply* behavior or enforce a base
@@ -312,7 +312,7 @@ every method is a short story about events.
 ### `application/aggregates/snapshotting.py` — the collaborators that replaced the manager
 
 The manager object this section used to describe — `AggregateSnapshotManager` — is gone (see
-[ADR 0021](../adrs/0021-snapshot-policy-scheduler-composition.md)). Its four responsibilities
+[ADR 0021](../adrs/0006-snapshot-policies-scheduling-and-boundary-crossing-rehydration.md)). Its four responsibilities
 (read validation, automatic write delegation, manual write, background-work reporting) now belong
 to four separate things in `snapshotting.py`, none of which hold a reference to the others; the
 repository composes them directly.
@@ -476,7 +476,7 @@ Each collaborator names its own spans, which means the trace tree mirrors the mo
   `read_valid_snapshot()` and `take_snapshot()` are plain functions and open no spans of their
   own — the observable change from the ring migration is that the
   `eventsource.snapshot_manager.*` spans this used to name no longer exist (see
-  [ADR 0021](../adrs/0021-snapshot-policy-scheduler-composition.md)'s Consequences).
+  [ADR 0021](../adrs/0006-snapshot-policies-scheduling-and-boundary-crossing-rehydration.md)'s Consequences).
 
 Attributes come from the shared constants in `observability/attributes.py`
 (`ATTR_AGGREGATE_ID`, `ATTR_AGGREGATE_TYPE`, `ATTR_EVENT_COUNT`, `ATTR_VERSION`), plus
@@ -536,7 +536,7 @@ prefer a new collaborator or a new policy/scheduler implementation over a new br
 ## Related documents
 
 - `docs/core-surface.md` — the Tier 0 dependency boundary.
-- `docs/adrs/0021-snapshot-policy-scheduler-composition.md` — why the snapshot manager was
+- `docs/adrs/0006-snapshot-policies-scheduling-and-boundary-crossing-rehydration.md` — why the snapshot manager was
   dissolved into `SnapshotPolicy`/`SnapshotScheduler`.
 - `src/eventsource/application/aggregates/README.md` — per-directory interface and invariant
   summary.

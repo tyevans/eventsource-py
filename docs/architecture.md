@@ -262,12 +262,12 @@ SQLAlchemy, and that single decision propagated: `projections/base.py`,
 `projections/checkpoint_manager.py`, `projections/dlq_manager.py`,
 `testing/harness.py`, `testing/bdd.py`, and `readmodels/projection.py` were
 all outside Tier 0 for no reason of their own.
-[ADR 0024](adrs/0024-projection-persistence-ports.md) closed the checkpoint
+[ADR 0024](adrs/0005-clean-storage-ports-composed-protocols-and-connection-lifecycle.md) closed the checkpoint
 and DLQ half of that gap the same way ADR 0019 closed it for the event store:
 the Protocols and dataclasses moved to `ports/checkpoints.py` and
 `ports/dlq.py` (stdlib and typing only), the SQL implementations moved to
 `adapters/sql/`, and the in-memory ones to `adapters/memory/`.
-[ADR 0026](adrs/0026-outbox-ring-migration.md) closed the outbox half the
+[ADR 0026](adrs/0005-clean-storage-ports-composed-protocols-and-connection-lifecycle.md) closed the outbox half the
 same way, completing the set: the Protocol, dataclasses, and payload helper
 moved to `ports/outbox.py`, and the three backends moved to
 `adapters/memory/outbox.py`, `adapters/postgresql/outbox.py`, and
@@ -1384,7 +1384,7 @@ operational window: last processed id, latest relevant id in the store, lag in
 seconds, count processed. `reset_checkpoint` deletes the checkpoint so the
 projection replays from the beginning -- the rebuild primitive. These four
 functions replace `ProjectionCheckpointManager`, which held no state beyond a
-repository reference and a tracer (see [ADR 0024](adrs/0024-projection-persistence-ports.md)); span names still read
+repository reference and a tracer (see [ADR 0024](adrs/0005-clean-storage-ports-composed-protocols-and-connection-lifecycle.md)); span names still read
 `eventsource.checkpoint_manager.*` deliberately, so existing dashboards keep
 working.
 
@@ -1542,7 +1542,7 @@ enable_tracing)` returns (a no-op unless you opt in), and `retry_policy`
 defaults to a locally constructed `ExponentialBackoffRetryPolicy`.
 `checkpoint_repo` and `dlq_repo` default to `None`, and `None` means the
 concern is disabled, not "construct an in-memory repository for me" ([ADR
-0024](adrs/0024-projection-persistence-ports.md)): with `checkpoint_repo=None`
+0024](adrs/0005-clean-storage-ports-composed-protocols-and-connection-lifecycle.md)): with `checkpoint_repo=None`
 no checkpoint is written and `get_checkpoint()` / `get_lag_metrics()` return
 `None`; with `dlq_repo=None` a permanently failed event is logged at
 `critical` and re-raised, with no DLQ write attempted. Both are stored as
@@ -1776,7 +1776,7 @@ jobs. Each function is small on purpose: it takes a `ProjectionCheckpoints`
 repository, a projection name, and a `Tracer` as explicit parameters, wraps one
 call in a tracing span and a log line, and forwards. None of the four hold
 state of their own, and none contain policy — that is what replaces
-`ProjectionCheckpointManager` (see [ADR 0024](adrs/0024-projection-persistence-ports.md)), which held the same
+`ProjectionCheckpointManager` (see [ADR 0024](adrs/0005-clean-storage-ports-composed-protocols-and-connection-lifecycle.md)), which held the same
 repository reference and tracer as instance state but decided nothing either.
 
 #### Four operations, one key

@@ -5,7 +5,7 @@ port and its PostgreSQL, SQLite, and in-memory adapters.
 
 > **Checkpoint and DLQ repositories moved.** They used to live in this file
 > too, back when it documented the whole `eventsource.repositories`
-> package. [ADR 0024](../adrs/0024-projection-persistence-ports.md) split
+> package. [ADR 0024](../adrs/0005-clean-storage-ports-composed-protocols-and-connection-lifecycle.md) split
 > them out: the checkpoint contract (`ProjectionCheckpoints`,
 > `SubscriptionPositions`, and the composed `CheckpointRepository`) and the
 > DLQ contract (`DLQRepository`) live in `eventsource.ports.checkpoints`
@@ -20,7 +20,7 @@ port and its PostgreSQL, SQLite, and in-memory adapters.
 > [Projections](projections.md).
 >
 > **The `eventsource.repositories` package is gone.** [ADR
-> 0026](../adrs/0026-outbox-ring-migration.md) completed the same split for
+> 0026](../adrs/0005-clean-storage-ports-composed-protocols-and-connection-lifecycle.md) completed the same split for
 > the outbox — the third and last module that used to mix a Protocol
 > definition with sqlalchemy-backed implementations in one file. The
 > contract now lives in `eventsource.ports.outbox`, a Tier 0 module with no
@@ -44,7 +44,7 @@ function, all in `eventsource.ports.outbox`:
 | `outbox_event_data(event)` | function | The single authority for the JSON-safe payload dict stored in `event_outbox.event_data` |
 
 The three backend implementations live one per technology, per [ADR
-0026](../adrs/0026-outbox-ring-migration.md)'s per-backend-not-dialect-
+0026](../adrs/0005-clean-storage-ports-composed-protocols-and-connection-lifecycle.md)'s per-backend-not-dialect-
 parameterized rule (SQLite takes a raw `aiosqlite.Connection`, not a
 sqlalchemy engine or session, so it cannot share code with the PostgreSQL
 implementation the way checkpoints and DLQ do):
@@ -130,7 +130,7 @@ pattern: `increment_retry()` and `cleanup_published()`. `cleanup_published`
 returns an `int` count of rows removed rather than `None`.
 
 `list_pending_events()`, a second name that used to delegate to
-`get_pending_events()`, is gone — [ADR 0026](../adrs/0026-outbox-ring-migration.md)
+`get_pending_events()`, is gone — [ADR 0026](../adrs/0005-clean-storage-ports-composed-protocols-and-connection-lifecycle.md)
 retired it along with the `OutboxRepositoryProtocol` alias: one name per
 thing, no compatibility pair.
 
@@ -341,7 +341,7 @@ one — the SQLite class passes the same `isinstance()` check against
 > generates a `uuid4()` and inserts `str(outbox_id)` into `event_outbox.id`,
 > but `migrations/templates/sqlite/outbox.sql` declares that column as
 > `id INTEGER PRIMARY KEY AUTOINCREMENT`, which rejects a non-integer value.
-> [ADR 0026](../adrs/0026-outbox-ring-migration.md)'s conformance suite
+> [ADR 0026](../adrs/0005-clean-storage-ports-composed-protocols-and-connection-lifecycle.md)'s conformance suite
 > surfaced this against the real schema; the real-schema conformance
 > binding runs `xfail(strict=False)` until the fix lands. See `BACKLOG.md`.
 
@@ -369,7 +369,7 @@ teardown where you hold the concrete type.
 
 Its `event_data` field is serialized with stdlib `json.dumps` rather than
 the orjson-backed helper used elsewhere in the library — [ADR
-0026](../adrs/0026-outbox-ring-migration.md) made this swap to keep
+0026](../adrs/0005-clean-storage-ports-composed-protocols-and-connection-lifecycle.md) made this swap to keep
 `eventsource.adapters.memory` free of a non-stdlib import. The only
 observable effect is JSON spacing (`", "` instead of `","`); anything that
 parses the field back into a dict sees no difference.
@@ -398,6 +398,6 @@ each call site. Pass `enable_tracing=False` to force the null tracer even where
 OpenTelemetry is available, or pass an explicit `tracer` to share one instance
 across repositories (in which case `enable_tracing` is ignored, and the
 repository's own `_enable_tracing` reflects the tracer you supplied). Per [ADR
-0026](../adrs/0026-outbox-ring-migration.md), all three outbox adapters keep
+0026](../adrs/0005-clean-storage-ports-composed-protocols-and-connection-lifecycle.md), all three outbox adapters keep
 their per-operation tracing spans — this is one of the rings ADR 0025 did
 not amend ADR 0016 for.

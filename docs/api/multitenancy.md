@@ -6,7 +6,7 @@ requires a `tenant_id`, the `TenantAwareRepository` wrapper that validates tenan
 ownership around an `AggregateRepository`, and the three tenant exceptions.
 
 There is no single package for this feature — it was dissolved into the ring
-architecture under [ADR 0038](../adrs/0038-multitenancy-dissolution.md). The
+architecture under [ADR 0038](../adrs/0010-ambient-multi-tenant-saas-isolation-model.md). The
 pieces live across four modules:
 
 | Module | Contains |

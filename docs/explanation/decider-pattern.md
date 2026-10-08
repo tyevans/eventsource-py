@@ -252,7 +252,7 @@ Commands are never persisted — a command rejected by raising (conventionally
 `CommandRejectedError`, though any exception works) leaves no trace in the event
 store, and `execute()` runs `decide()` to completion before applying anything, so a
 rejection leaves the aggregate untouched. See
-[ADR-0022](../adrs/0022-command-objects-and-decider-style.md) for the full rationale,
+[ADR-0022](../adrs/0003-pure-functional-decider-pattern-and-immutable-state-folding.md) for the full rationale,
 including why commands have no registry, no serialization, and no command bus.
 
 ## How the shell works underneath

@@ -200,7 +200,7 @@ it, and never calls `renew()`. If your elector is lease-based, **flip
 `is_leader` to `False` when the lease expires** — otherwise an instance that
 quietly lost its lease keeps advertising itself as leader to every peer. The
 library does not act on this field itself (nothing in it reads
-`HeartbeatMessage.is_leader`; per [ADR 0009](../adrs/0009-multi-instance-subscription-coordination.md)
+`HeartbeatMessage.is_leader`; per [ADR 0009](../adrs/0008-subscription-engine-feed-driven-checkpointing-and-ordered-delivery.md)
 redistribution is advisory reporting that *you* act on), so the consequence
 lands wherever your code trusts it.
 
