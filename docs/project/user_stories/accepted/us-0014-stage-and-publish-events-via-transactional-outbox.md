@@ -8,8 +8,8 @@ governing_prd: PRD-0003
 governing_adrs:
 - ADR-0001
 - ADR-0003
-- ADR-0007
-- ADR-0126
+- ADR-0105
+- ADR-0107
 scenarios:
 - Atomically staging events in outbox repository
 - Bounded polling and sequential publication to message bus

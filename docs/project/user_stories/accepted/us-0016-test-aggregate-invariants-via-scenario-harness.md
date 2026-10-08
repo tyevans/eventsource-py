@@ -7,10 +7,9 @@ target_bc: testing
 governing_prd: PRD-0004
 governing_adrs:
 - ADR-0001
-- ADR-0002
 - ADR-0003
 - ADR-0006
-- ADR-0108
+- ADR-0103
 scenarios:
 - Given prior events, when executing command, then assert expected events emitted
 - When invalid command is dispatched, then assert expected domain error raised

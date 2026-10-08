@@ -1,5 +1,5 @@
 ---
-id: '0009'
+id: 0009
 title: Coordinate Subscriptions with Delivery Guarantees and DLQ Error Isolation
 status: Accepted
 created: 2026-10-08
@@ -15,16 +15,10 @@ scenarios:
 - SubscriptionManager coordinates graceful shutdown using single declaration timeout
 - Multi-instance subscription coordination elects leader over reserved bus topic
 governing_adrs:
-- ADR-0007
+- ADR-0001
+- ADR-0003
 - ADR-0107
-- ADR-0109
-- ADR-0124
-- ADR-0132
-- ADR-0147
-- ADR-0159
-- ADR-0161
-- ADR-0162
-- ADR-0163
+- ADR-0108
 ---
 
 # US-0009 — Coordinate Subscriptions with Delivery Guarantees and DLQ Error Isolation

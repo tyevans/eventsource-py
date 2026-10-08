@@ -629,7 +629,7 @@ when you call `create_snapshot()` yourself.
 `snapshot_mode` -- `"sync"` (default), `"background"`, or `"manual"`; how an
 automatic snapshot is executed once the threshold triggers. `AggregateRepository.__init__`
 maps the mode/threshold combination directly to a `SnapshotPolicy` and
-`SnapshotScheduler` (see [ADR 0021](../adrs/0021-snapshot-policy-scheduler-composition.md)):
+`SnapshotScheduler` (see [ADR 0021](../adrs/0006-snapshot-policies-scheduling-and-boundary-crossing-rehydration.md)):
 `snapshot_mode="background"` selects `BackgroundScheduler`, everything else
 selects `ImmediateScheduler`; a non-`None` threshold outside `"manual"` mode
 selects `EveryNEvents(threshold)`, everything else selects `Never()`. The
@@ -1512,7 +1512,7 @@ it costs nothing if you are not collecting.
 
 Before this counter both logged at `WARNING` and were indistinguishable without
 reading individual lines — which is exactly the gap
-[ADR 0017](../adrs/0017-snapshot-strategy-pattern.md) recorded against itself:
+[ADR 0017](../adrs/0006-snapshot-policies-scheduling-and-boundary-crossing-rehydration.md) recorded against itself:
 "silent failure means snapshot loss is only visible in logs/metrics."
 
 A practical alert: a *sustained non-zero* rate of the permanent reasons is

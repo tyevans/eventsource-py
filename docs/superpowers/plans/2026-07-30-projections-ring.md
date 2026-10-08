@@ -1717,7 +1717,7 @@ git add -A && git commit -m "test: conformance suites and property coverage for 
 
 - [ ] **Step 2: Amend ADR-0015**
 
-`docs/adrs/0015-optional-dependency-extras.md` — ADR bodies are immutable records; touch only two sections. Status gains `Amended by [ADR 0024](0024-projection-persistence-ports.md).` Consequences gains one line: the checkpoint and DLQ repositories now go through `adapters/_sql/connection.py`, while the outbox, read-model, and migration repositories keep `repositories/_connection.py`; the rationale at line 53 named `repositories/_connection.py` as the single shared layer, and the file name no longer holds — but the shared-abstraction argument does, so the conclusion (sqlalchemy stays a core dependency) is unchanged. Do **not** rewrite the Decision.
+`docs/adrs/0015-optional-dependency-extras.md` — ADR bodies are immutable records; touch only two sections. Status gains `Amended by [ADR 0024](../../adrs/0005-clean-storage-ports-composed-protocols-and-connection-lifecycle.md).` Consequences gains one line: the checkpoint and DLQ repositories now go through `adapters/_sql/connection.py`, while the outbox, read-model, and migration repositories keep `repositories/_connection.py`; the rationale at line 53 named `repositories/_connection.py` as the single shared layer, and the file name no longer holds — but the shared-abstraction argument does, so the conclusion (sqlalchemy stays a core dependency) is unchanged. Do **not** rewrite the Decision.
 
 - [ ] **Step 3: Update the ADR index**
 

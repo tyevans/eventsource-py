@@ -39,7 +39,7 @@ Snapshots are usually not driven by hand: `AggregateRepository` accepts a
 `SnapshotScheduler` from them, and restores from the stored state on load. The
 manual API documented below is what that machinery is built on, and what you
 use when you want snapshots taken at business milestones instead of on an
-event count. See [ADR 0021](../adrs/0021-snapshot-policy-scheduler-composition.md)
+event count. See [ADR 0021](../adrs/0006-snapshot-policies-scheduling-and-boundary-crossing-rehydration.md)
 for why the design is split this way and what it replaced.
 
 ## Overview
@@ -254,7 +254,7 @@ later one, so with `snapshot_threshold=100` (mapped internally to
 version past 100, then past 200, and so on. The version it lands on need not be
 a multiple: an aggregate emitting several events per command advances in
 strides, and a stride need never coincide with a multiple at all. See
-[ADR 0049](../adrs/0049-snapshot-boundary-crossing.md).
+[ADR 0049](../adrs/0006-snapshot-policies-scheduling-and-boundary-crossing-rehydration.md).
 
 The field is not a store-level ordering key. Because each
 `(aggregate_id, aggregate_type)` pair holds at most one row, `save_snapshot`

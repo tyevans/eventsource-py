@@ -57,7 +57,7 @@ These security and supply-chain guardrails are non-negotiable across all autonom
    - Ring layering: `adapters` over `application` over `ports` over `domain`.
    - `domain` and `ports` must not import `observability`.
    - Inner rings must not import the `testing` toolkit.
-   - Governed by ADR-0007, ADR-0134 (legacy 0034), and ADR-0140 (legacy 0040).
+   - Governed by ADR-0102 (ADR-0002: Hexagonal Ring Layering and Dependency Isolation).
 
 ### Landing the Plane (Session Completion)
 

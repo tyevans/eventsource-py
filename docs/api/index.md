@@ -353,7 +353,7 @@ Covers the `Snapshot` value object, the `SnapshotStore` interface (both in
 hierarchy (`eventsource.domain.exceptions`), and the `SnapshotPolicy` / `SnapshotScheduler`
 collaborators in `eventsource.application.aggregates.snapshotting` — the composable
 replacement for ADR 0017's `SnapshotStrategy` — that decide when and how a snapshot is
-written (see [ADR 0021](../adrs/0021-snapshot-policy-scheduler-composition.md)).
+written (see [ADR 0021](../adrs/0006-snapshot-policies-scheduling-and-boundary-crossing-rehydration.md)).
 
 This is the clearest case of a page documenting more than the barrel exports. The
 top-level package re-exports `Snapshot`, `SnapshotStore`, `InMemorySnapshotStore`, and

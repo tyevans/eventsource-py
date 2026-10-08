@@ -111,6 +111,7 @@ jobs:
             --no-progress
             --accept 200,204,206
             --exclude-path './site'
+            --exclude-path 'docs/superpowers'
             --exclude 'tyevans.github.io'
             --exclude 'opensource.org'
             --exclude 'localhost'

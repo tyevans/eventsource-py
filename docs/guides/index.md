@@ -105,10 +105,10 @@ disagree, the reference and the source are correct.
 
 **Guides versus explanation.** Guides state trade-offs but do not argue them. The
 [snapshotting guide](snapshotting.md) tells you how to configure a snapshot policy;
-[ADR 0017](../adrs/0017-snapshot-strategy-pattern.md) explains why the strategy
+[ADR 0017](../adrs/0006-snapshot-policies-scheduling-and-boundary-crossing-rehydration.md) explains why the strategy
 pattern was chosen. The [multi-tenancy guide](multi-tenant.md) shows how to scope
 events to a tenant;
-[the tenant isolation ADR](../adrs/0018-tenant-isolation-model.md) explains the
+[the tenant isolation ADR](../adrs/0010-ambient-multi-tenant-saas-isolation-model.md) explains the
 isolation model behind it. Likewise,
 [aggregate styles](../explanation/aggregate-styles.md),
 [schema design](../explanation/schema-design.md), and
@@ -179,7 +179,7 @@ Still choosing? See
 | [Snapshotting](snapshotting.md) | Stop replaying full streams on load: pick a snapshot store, choose a policy, and keep snapshots valid as your aggregate changes |
 
 The strategy-pattern design is argued in
-[ADR 0017: snapshot strategy pattern](../adrs/0017-snapshot-strategy-pattern.md).
+[ADR 0017: snapshot strategy pattern](../adrs/0006-snapshot-policies-scheduling-and-boundary-crossing-rehydration.md).
 
 ### Event bus and messaging backends
 
@@ -188,7 +188,7 @@ The strategy-pattern design is argued in
 | [Event bus](event-bus.md) | Publish events and route them to subscribers; swap `InMemoryEventBus` for Redis, RabbitMQ, or Kafka without touching your aggregates |
 
 Delivery guarantees differ per backend -- read
-[ADR 0007: event bus delivery semantics](../adrs/0007-event-bus-delivery-semantics.md)
+[ADR 0007: event bus delivery semantics](../adrs/0007-uniform-message-bus-contract-and-at-least-once-delivery-semantics.md)
 before you assume exactly-once.
 
 ### Projections and read models
@@ -208,8 +208,8 @@ the subscription guides below.
 | [Coordinate multiple subscription instances](subscription-coordination.md) | Run the same subscription workload on several instances without double-processing |
 | [Coordinate work with distributed locks](distributed-locks.md) | Serialize an operation across instances using PostgreSQL advisory locks |
 
-Background: [ADR 0009: multi-instance subscription coordination](../adrs/0009-multi-instance-subscription-coordination.md)
-and [ADR 0023: PostgreSQL advisory locks](../adrs/0023-postgresql-advisory-locks.md).
+Background: [ADR 0009: multi-instance subscription coordination](../adrs/0008-subscription-engine-feed-driven-checkpointing-and-ordered-delivery.md)
+and [ADR 0023: PostgreSQL advisory locks](../adrs/0011-zero-downtime-5-state-live-store-migration-and-distributed-locking.md).
 
 ### Multi-tenancy
 
@@ -218,7 +218,7 @@ and [ADR 0023: PostgreSQL advisory locks](../adrs/0023-postgresql-advisory-locks
 | [Multi-tenancy](multi-tenant.md) | Bind a tenant to the current context, scope events and queries to it, and keep tenant data isolated |
 
 The isolation model is explained in
-[ADR 0018: tenant isolation model](../adrs/0018-tenant-isolation-model.md).
+[ADR 0018: tenant isolation model](../adrs/0010-ambient-multi-tenant-saas-isolation-model.md).
 
 ### Observability
 
@@ -227,7 +227,7 @@ The isolation model is explained in
 | [Wiring OpenTelemetry tracing](observability.md) | Add spans to stores, buses, snapshot stores, and subscriptions -- and understand what is emitted when the optional dependency is absent |
 
 Tracing is a no-op unless you opt in; see
-[ADR 0016: optional tracing, no-op by default](../adrs/0016-optional-tracing-no-op-by-default.md).
+[ADR 0016: optional tracing, no-op by default](../adrs/0012-tier-0-packaging-pep-562-lazy-front-door-and-zero-overhead-observability.md).
 
 ### Error handling, retries, and the DLQ
 
@@ -358,7 +358,7 @@ really a sign that the aggregate boundary is too wide -- resizing the aggregate 
 the fix there, and a snapshot only hides it.
 
 The strategy-pattern design behind the three modes is argued in
-[ADR 0017: snapshot strategy pattern](../adrs/0017-snapshot-strategy-pattern.md);
+[ADR 0017: snapshot strategy pattern](../adrs/0006-snapshot-policies-scheduling-and-boundary-crossing-rehydration.md);
 [tutorial 14](../tutorials/14-snapshotting.md) teaches the same feature on a toy
 domain if you would rather learn it than apply it.
 
@@ -412,7 +412,7 @@ Streams, exchange type and `prefetch_count` on RabbitMQ, `acks` and
 rest are documented on the config dataclasses themselves.
 
 Delivery guarantees differ per backend -- read
-[ADR 0007: event bus delivery semantics](../adrs/0007-event-bus-delivery-semantics.md)
+[ADR 0007: event bus delivery semantics](../adrs/0007-uniform-message-bus-contract-and-at-least-once-delivery-semantics.md)
 before you assume exactly-once. [Tutorial 7](../tutorials/07-event-bus.md)
 teaches the same API on a toy domain, and
 [observability](observability.md) covers the spans each bus emits.

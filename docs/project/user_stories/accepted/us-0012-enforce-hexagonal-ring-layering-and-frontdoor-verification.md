@@ -8,25 +8,20 @@ target_bc: core
 feature: FEAT-ARCHITECTURE-INVARIANTS
 governing_prd: PRD-0001
 scenarios:
-- Blackbox frontdoor verification exercises public contracts without private mock backdoors
+- Blackbox frontdoor verification exercises public contracts without private mock
+  backdoors
 - Modular file length ceiling strictly prevents source files exceeding 500 lines
-- Hexagonal ring layering contracts prohibit inward dependency violations and cross-ring leakage
+- Hexagonal ring layering contracts prohibit inward dependency violations and cross-ring
+  leakage
 - Native modern Python 3.13 typing contracts enforce compile-time bounds and defaults
 - Worktree concurrency and backlog isolation prevent multi-agent git merge contention
 - Universal base exception EventSourceError ensures uniform library error handling
 governing_adrs:
+- ADR-0001
 - ADR-0002
 - ADR-0003
-- ADR-0004
-- ADR-0005
 - ADR-0007
-- ADR-0130
-- ADR-0134
-- ADR-0140
-- ADR-0143
-- ADR-0145
-- ADR-0155
-- ADR-0158
+- ADR-0102
 ---
 
 # US-0012 — Enforce Hexagonal Ring Layering and Strict Blackbox Frontdoor Verification

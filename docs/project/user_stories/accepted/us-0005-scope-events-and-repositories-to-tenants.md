@@ -15,11 +15,9 @@ scenarios:
 - TenantAwareRepository enforces active tenant context precondition on load
 - Aggregate load without database RLS documents lack of stream event filtering
 governing_adrs:
-- ADR-0007
-- ADR-0118
-- ADR-0138
-- ADR-0142
-- ADR-0157
+- ADR-0001
+- ADR-0003
+- ADR-0110
 ---
 
 # US-0005 — Scope Events and Repositories to Tenants

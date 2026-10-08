@@ -238,7 +238,7 @@ The three snapshot parameters:
   (`EveryNEvents(threshold)` paired with `BackgroundScheduler`, a fire-and-forget task --
   use `repo.pending_snapshot_count` and `await repo.await_pending_snapshots()` to observe
   it), or `"manual"` (`Never()`, never automatic). See
-  [ADR 0021](../adrs/0021-snapshot-policy-scheduler-composition.md) for how these
+  [ADR 0021](../adrs/0006-snapshot-policies-scheduling-and-boundary-crossing-rehydration.md) for how these
   collaborators fit together.
 
 Mode and threshold are independent, and both must be set for anything to happen on its

@@ -11,9 +11,9 @@ governing_adrs:
 - ADR-0003
 - ADR-0006
 - ADR-0007
-- ADR-0108
-- ADR-0116
-- ADR-0164
+- ADR-0102
+- ADR-0103
+- ADR-0112
 ---
 
 # PRD-0004 — Developer Ergonomics, Scenario Testing Harness & Distributed Observability

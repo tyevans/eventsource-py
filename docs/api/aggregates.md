@@ -34,7 +34,7 @@ application code unless explicitly noted as a subclass hook.
 Two further modules back the repository's snapshot behaviour:
 `eventsource.application.aggregates.snapshotting` (`SnapshotPolicy`,
 `SnapshotScheduler`, and the `take_snapshot()` / `read_valid_snapshot()`
-functions — see [ADR 0021](../adrs/0021-snapshot-policy-scheduler-composition.md))
+functions — see [ADR 0021](../adrs/0006-snapshot-policies-scheduling-and-boundary-crossing-rehydration.md))
 and, for background scheduling, the
 `eventsource.application.background_tasks` module. Neither is re-exported from
 `eventsource.application.aggregates` except where noted, and both are
@@ -260,7 +260,7 @@ for what that type is for. The fallback is counted as
 `eventsource.snapshot.miss{reason="schema_mismatch"}`, which is how a
 mismatch is observable without reading logs — see [count the
 degradation](../guides/snapshotting.md#count-the-degradation-eventsourcesnapshotmiss). See
-[ADR 0021](../adrs/0021-snapshot-policy-scheduler-composition.md) for the
+[ADR 0021](../adrs/0006-snapshot-policies-scheduling-and-boundary-crossing-rehydration.md) for the
 collaborators that replaced `AggregateSnapshotManager`.
 
 Increment `schema_version` whenever a change to `TState` would make an existing

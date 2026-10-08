@@ -441,7 +441,7 @@ registration log entry.
 The maximum number of events the **catch-up runner** requests from the event
 store per read. The live runner also reads from the global feed in
 `batch_size`-limited chunks (it does not read from the bus — see
-[ADR 0047](../adrs/0047-live-runner-feed-driven-checkpointing.md)), but delivers
+[ADR 0047](../adrs/0008-subscription-engine-feed-driven-checkpointing-and-ordered-delivery.md)), but delivers
 events from that chunk to the subscriber one at a time regardless of
 `batch_size`; it does not (yet) dispatch through `handle_batch()`.
 
@@ -476,7 +476,7 @@ at most one event is ever in flight. On catch-up for a subscriber with
 `handle_batch()`, the whole read batch is handed to it as one call — still no
 concurrent delivery, but the unit of work is the batch rather than the event
 (see [Handle events in batches with handle_batch()](../guides/subscriptions.md#handle-events-in-batches-with-handle_batch)
-and [ordered delivery](../adrs/0059-ordered-subscription-delivery.md)).
+and [ordered delivery](../adrs/0008-subscription-engine-feed-driven-checkpointing-and-ordered-delivery.md)).
 
 Both the configured value (`config.batch_size`) and the actual per-batch count
 (`events_in_batch`) appear in catch-up log records under the key `batch_size`;
@@ -524,7 +524,7 @@ circuit just as raises do).
 on the `SubscriptionManager` constructor (default `30.0`), which passes it to the
 shutdown coordinator; `stop_all()` and `run_until_shutdown()` accept a per-call
 override. The config used to carry a second, inert copy that nothing read — it
-was removed in [ADR 0062](../adrs/0062-single-declaration-sites-for-shutdown-timeout-and-retry-policy.md).
+was removed in [ADR 0062](../adrs/0008-subscription-engine-feed-driven-checkpointing-and-ordered-delivery.md).
 
 #### Fields: filtering (`event_types`, `aggregate_types`, `tenant_id`)
 
