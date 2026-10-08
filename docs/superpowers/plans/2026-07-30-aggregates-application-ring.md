@@ -1013,7 +1013,7 @@ git add pyproject.toml && git commit -m "chore: extend mutmut and import-linter 
 
 - [ ] **Step 2: Mark ADR-0017 superseded and update the index**
 
-In ADR-0017, change only the Status section: keep the existing text and prepend `Superseded by [ADR 0021](0021-snapshot-policy-scheduler-composition.md). Historical record of the strategy-pattern design it replaced.` Add 0021 to `docs/adrs/index.md` following its format.
+In ADR-0017, change only the Status section: keep the existing text and prepend `Superseded by [ADR 0021](../../adrs/0006-snapshot-policies-scheduling-and-boundary-crossing-rehydration.md). Historical record of the strategy-pattern design it replaced.` Add 0021 to `docs/adrs/index.md` following its format.
 
 - [ ] **Step 3: Documentation sweep**
 
