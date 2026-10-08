@@ -13,10 +13,9 @@ scenarios:
 - DeclarativeProjection filters events dynamically using callable tenant filter
 - Subscription live and catchup runners isolate streams by tenant filter
 governing_adrs:
-- ADR-0007
-- ADR-0118
-- ADR-0152
-- ADR-0154
+- ADR-0001
+- ADR-0003
+- ADR-0110
 ---
 
 # US-0010 — Isolate Cross-Tenant Projections and Feed Filtering

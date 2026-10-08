@@ -8,8 +8,7 @@ governing_prd: PRD-0004
 governing_adrs:
 - ADR-0001
 - ADR-0003
-- ADR-0116
-- ADR-0164
+- ADR-0112
 scenarios:
 - Transparent no-op tracer when telemetry extra is omitted
 - Inject W3C trace headers into published event envelopes

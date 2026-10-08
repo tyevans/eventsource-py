@@ -10,12 +10,7 @@ governing_adrs:
 - ADR-0002
 - ADR-0003
 - ADR-0007
-- ADR-0118
-- ADR-0138
-- ADR-0142
-- ADR-0152
-- ADR-0154
-- ADR-0157
+- ADR-0110
 ---
 
 # PRD-0002 — Multi-Tenant SaaS Isolation Engine

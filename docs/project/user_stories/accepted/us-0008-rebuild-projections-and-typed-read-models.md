@@ -1,5 +1,5 @@
 ---
-id: '0008'
+id: 0008
 title: Rebuild Projections Deterministically with Typed Read Models
 status: Accepted
 created: 2026-10-08
@@ -13,10 +13,9 @@ scenarios:
 - StoreProjection forwards typed constructor options and mutates underlying store
 - Read model save with version conflict raises ReadModelVersionConflictError
 governing_adrs:
-- ADR-0007
-- ADR-0150
-- ADR-0154
-- ADR-0155
+- ADR-0001
+- ADR-0003
+- ADR-0109
 ---
 
 # US-0008 — Rebuild Projections Deterministically with Typed Read Models

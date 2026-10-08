@@ -8,24 +8,23 @@ target_bc: core
 feature: FEAT-CORE-PACKAGING-GOVERNANCE
 governing_prd: PRD-0001
 scenarios:
-- Bare import of eventsource remains lightweight and pure without loading heavy backend drivers
-- Base package installation requires only core dependencies with infrastructure isolated behind named extras
-- Breaking architectural migrations cleanly retire legacy surfaces without maintaining deprecated compatibility shims
-- Module export surface guarantees parity between runtime lazy loading and static type analysis
-- Automated verification enforces zero-drift synchronization between documentation AST and filesystem ADRs
-- Preflight security gates enforce byte-identical lockfile integrity and prevent secret commits
+- Bare import of eventsource remains lightweight and pure without loading heavy backend
+  drivers
+- Base package installation requires only core dependencies with infrastructure isolated
+  behind named extras
+- Breaking architectural migrations cleanly retire legacy surfaces without maintaining
+  deprecated compatibility shims
+- Module export surface guarantees parity between runtime lazy loading and static
+  type analysis
+- Automated verification enforces zero-drift synchronization between documentation
+  AST and filesystem ADRs
+- Preflight security gates enforce byte-identical lockfile integrity and prevent secret
+  commits
 governing_adrs:
 - ADR-0001
 - ADR-0009
 - ADR-0010
-- ADR-0115
-- ADR-0125
-- ADR-0130
-- ADR-0134
-- ADR-0135
-- ADR-0141
-- ADR-0145
-- ADR-0150
+- ADR-0112
 ---
 
 # US-0013 — Guard Tier-0 Core Packaging, PEP 562 Lazy Front Door, and Zero-Drift Documentation

@@ -10,19 +10,17 @@ governing_prd: PRD-0003
 scenarios:
 - PostgreSQL advisory lock manager provides mutually exclusive migration leases
 - Session-level advisory lock auto-releases upon connection failure or worker crash
-- SupportsClose protocol releases adapter-owned resources without disposing caller engine
+- SupportsClose protocol releases adapter-owned resources without disposing caller
+  engine
 - Store adapter with explicit engine ownership disposes connection pool upon close
-- EventStoreConnectionError honestly wraps database driver failures with original cause
+- EventStoreConnectionError honestly wraps database driver failures with original
+  cause
 - EventSourceError universal base catches all domain and infrastructure library errors
 governing_adrs:
-- ADR-0007
-- ADR-0123
-- ADR-0129
-- ADR-0137
-- ADR-0144
-- ADR-0148
-- ADR-0153
-- ADR-0158
+- ADR-0001
+- ADR-0003
+- ADR-0105
+- ADR-0111
 ---
 
 # US-0011 — Coordinate Distributed Advisory Locks and Resilient Connection Lifecycle

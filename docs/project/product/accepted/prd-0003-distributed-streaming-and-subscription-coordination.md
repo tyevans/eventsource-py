@@ -11,26 +11,8 @@ governing_adrs:
 - ADR-0003
 - ADR-0007
 - ADR-0107
-- ADR-0109
-- ADR-0110
+- ADR-0108
 - ADR-0111
-- ADR-0120
-- ADR-0123
-- ADR-0124
-- ADR-0129
-- ADR-0131
-- ADR-0132
-- ADR-0137
-- ADR-0144
-- ADR-0147
-- ADR-0148
-- ADR-0153
-- ADR-0158
-- ADR-0159
-- ADR-0160
-- ADR-0161
-- ADR-0162
-- ADR-0163
 ---
 
 # PRD-0003 — Distributed Streaming and Subscription Coordination

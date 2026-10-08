@@ -14,16 +14,10 @@ scenarios:
 - Filtered global feed query by aggregate type and tenant
 - Engine lifecycle ownership and clean connection pool disposal
 governing_adrs:
-- ADR-0007
+- ADR-0001
+- ADR-0003
 - ADR-0101
-- ADR-0119
-- ADR-0125
-- ADR-0136
-- ADR-0137
-- ADR-0149
-- ADR-0151
-- ADR-0152
-- ADR-0153
+- ADR-0105
 ---
 
 # US-0002 — Append and Replay Events Across Storage Adapters

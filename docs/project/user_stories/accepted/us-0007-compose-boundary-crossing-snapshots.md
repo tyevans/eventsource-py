@@ -10,13 +10,13 @@ governing_prd: PRD-0001
 scenarios:
 - EveryNEvents policy triggers snapshot when save crosses stride boundary
 - Aggregate state is rehydrated from valid snapshot and tail event stream
-- Automatic snapshot persistence failure degrades gracefully without aborting event save
+- Automatic snapshot persistence failure degrades gracefully without aborting event
+  save
 - Explicit create_snapshot strictly validates and persists aggregate memento
 governing_adrs:
-- ADR-0007
-- ADR-0121
-- ADR-0149
-- ADR-0153
+- ADR-0001
+- ADR-0003
+- ADR-0106
 ---
 
 # US-0007 — Compose Boundary-Crossing Snapshots for Efficient Aggregate Rehydration

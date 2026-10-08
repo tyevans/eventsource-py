@@ -11,15 +11,13 @@ governing_adrs:
 - ADR-0003
 - ADR-0007
 - ADR-0101
-- ADR-0107
+- ADR-0103
+- ADR-0104
+- ADR-0105
+- ADR-0106
+- ADR-0109
+- ADR-0111
 - ADR-0112
-- ADR-0114
-- ADR-0118
-- ADR-0119
-- ADR-0121
-- ADR-0122
-- ADR-0134
-- ADR-0140
 ---
 
 # PRD-0001 — Production-Ready Event Sourcing and Live Migration Framework

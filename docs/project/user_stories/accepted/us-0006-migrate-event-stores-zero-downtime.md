@@ -15,13 +15,9 @@ scenarios:
 - On-demand resync pass reconciles clamped lag anchors during dual-write
 - PositionMapper translates subscription checkpoints across heterogeneous stores
 governing_adrs:
-- ADR-0007
-- ADR-0114
-- ADR-0123
-- ADR-0127
-- ADR-0128
-- ADR-0134
-- ADR-0144
+- ADR-0001
+- ADR-0003
+- ADR-0111
 ---
 
 # US-0006 — Migrate Event Stores Zero-Downtime

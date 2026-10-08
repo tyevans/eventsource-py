@@ -9,18 +9,17 @@ feature: FEAT-BUS-ADAPTERS
 governing_prd: PRD-0003
 scenarios:
 - Publish domain event to bus and dispatch to subscriber
-- Aggregate multiple handler failures into HandlerDispatchError and withhold broker acknowledgment
+- Aggregate multiple handler failures into HandlerDispatchError and withhold broker
+  acknowledgment
 - Bounded background publishing degrades automatically to inline execution under backpressure
-- Graceful bus shutdown awaits in-flight background tasks before closing transport connections
+- Graceful bus shutdown awaits in-flight background tasks before closing transport
+  connections
 - Multi-topic event routing isolates handler failures across concurrent subscriptions
 governing_adrs:
-- ADR-0007
+- ADR-0001
+- ADR-0003
+- ADR-0101
 - ADR-0107
-- ADR-0110
-- ADR-0111
-- ADR-0120
-- ADR-0131
-- ADR-0160
 ---
 
 # US-0003 — Publish and Subscribe to Events via Message Buses

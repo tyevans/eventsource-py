@@ -11,20 +11,17 @@ scenarios:
 - Command execution on DeciderAggregate emits domain events
 - Concurrent command on stale aggregate version raises ExpectedVersionError
 - Nullary initial_state evolves state from command carrying aggregate identity
-- DeclarativeAggregate routes events via handles decorators and rejects unregistered events
+- DeclarativeAggregate routes events via handles decorators and rejects unregistered
+  events
 - Aggregate rejects event naming a different aggregate with AggregateIdMismatchError
-- Aggregate type is strictly defined on aggregate class ClassVar preventing repository miscategorization
+- Aggregate type is strictly defined on aggregate class ClassVar preventing repository
+  miscategorization
 governing_adrs:
-- ADR-0007
-- ADR-0112
-- ADR-0122
-- ADR-0142
-- ADR-0143
-- ADR-0145
-- ADR-0146
-- ADR-0148
-- ADR-0156
-- ADR-0165
+- ADR-0001
+- ADR-0003
+- ADR-0101
+- ADR-0103
+- ADR-0104
 ---
 
 # US-0001 — Define Aggregates and Record Committed Events

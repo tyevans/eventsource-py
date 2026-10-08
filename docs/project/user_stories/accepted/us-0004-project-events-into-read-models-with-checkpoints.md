@@ -11,16 +11,9 @@ scenarios:
 - Fold stream events through DeclarativeProjection handlers
 - Resume projection from persisted checkpoint after interruption
 governing_adrs:
-- ADR-0007
-- ADR-0121
-- ADR-0124
-- ADR-0126
-- ADR-0129
-- ADR-0147
-- ADR-0150
-- ADR-0154
-- ADR-0155
-- ADR-0166
+- ADR-0001
+- ADR-0003
+- ADR-0109
 ---
 
 # US-0004 — Project Events into Read Models with Checkpoints

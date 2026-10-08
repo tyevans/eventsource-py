@@ -7,10 +7,9 @@ target_bc: adapters
 governing_prd: PRD-0001
 governing_adrs:
 - ADR-0001
-- ADR-0112
-- ADR-0127
-- ADR-0139
-- ADR-0166
+- ADR-0003
+- ADR-0104
+- ADR-0109
 scenarios:
 - Additive column reconciliation executes on read models without data loss
 - Polymorphic JSON serializer derives wire names without type drift

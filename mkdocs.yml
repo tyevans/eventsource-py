@@ -130,68 +130,19 @@ nav:
   - Examples:
       - Projections: examples/projections.md
   - ADRs:
-      - adrs/index.md
-      - "ADR-0001: Async-First Design": adrs/0001-async-first-design.md
-      - "ADR-0007: Event Bus Delivery Semantics": adrs/0007-event-bus-delivery-semantics.md
-      - "ADR-0008: Mutation Testing Tool Selection": adrs/0008-mutation-testing-tool-selection.md
-      - "ADR-0009: Multi-Instance Subscription Coordination": adrs/0009-multi-instance-subscription-coordination.md
-      - "ADR-0010: Uniform Event Bus Contract": adrs/0010-uniform-event-bus-contract.md
-      - "ADR-0011: Handler Error Isolation with No-Ack": adrs/0011-handler-error-isolation-with-no-ack.md
-      - "ADR-0012: Event Type Auto-Derivation": adrs/0012-event-type-auto-derivation.md
-      - "ADR-0013: Handler Registry Composition": adrs/0013-handler-registry-composition.md
-      - "ADR-0014: Live Migration Cutover Semantics": adrs/0014-live-migration-cutover-semantics.md
-      - "ADR-0015: Optional Dependency Extras": adrs/0015-optional-dependency-extras.md
-      - "ADR-0016: Optional Tracing, No-Op by Default": adrs/0016-optional-tracing-no-op-by-default.md
-      - "ADR-0017: Snapshot Strategy Pattern": adrs/0017-snapshot-strategy-pattern.md
-      - "ADR-0018: Tenant Isolation Model": adrs/0018-tenant-isolation-model.md
-      - "ADR-0019: Clean-Architecture Store Ports": adrs/0019-clean-architecture-store-ports.md
-      - "ADR-0020: Broker Backend Collaborator Decomposition": adrs/0020-broker-backend-collaborator-decomposition.md
-      - "ADR-0021: Snapshot Policy/Scheduler Composition": adrs/0021-snapshot-policy-scheduler-composition.md
-      - "ADR-0022: Command Objects & Decider Style": adrs/0022-command-objects-and-decider-style.md
-      - "ADR-0023: PostgreSQL Advisory Locks": adrs/0023-postgresql-advisory-locks.md
-      - "ADR-0024: Projection Persistence Ports": adrs/0024-projection-persistence-ports.md
-      - "ADR-0025: Legacy Store Surface Retirement": adrs/0025-legacy-store-retirement.md
-      - "ADR-0026: Outbox Ring Migration": adrs/0026-outbox-ring-migration.md
-      - "ADR-0027: Schema Correctness Fixes": adrs/0027-schema-correctness-fixes.md
-      - "ADR-0028: Strict Cutover and In-Phase Resync": adrs/0028-strict-cutover-and-in-phase-resync.md
-      - "ADR-0029: Locks, Read Models, and Engine Rings": adrs/0029-locks-readmodels-and-engine-rings.md
-      - "ADR-0030: Top-Level Module Ring Consolidation": adrs/0030-top-level-module-ring-consolidation.md
-      - "ADR-0031: Bus Ring Split": adrs/0031-bus-ring-split.md
-      - "ADR-0032: Subscriptions Ring Migration": adrs/0032-subscriptions-ring-migration.md
-      - "ADR-0033: Events, Handlers, and Internal Ring Migration": adrs/0033-events-handlers-internal-ring-migration.md
-      - "ADR-0034: Migration Ring and Layers Contract": adrs/0034-migration-ring-and-layers-contract.md
-      - "ADR-0035: Lazy Front Door": adrs/0035-lazy-front-door.md
-      - "ADR-0036: Snapshot Port Composed Protocols": adrs/0036-snapshot-port-composed-protocols.md
-      - "ADR-0037: Store Lifecycle Port": adrs/0037-store-lifecycle-port.md
-      - "ADR-0038: Multi-Tenancy Ring Dissolution": adrs/0038-multitenancy-dissolution.md
-      - "ADR-0039: Schema DDL Package Relocated to Adapters": adrs/0039-schema-ddl-to-adapters.md
-      - "ADR-0040: Out-of-Ring Settlement": adrs/0040-out-of-ring-settlement.md
-      - "ADR-0041: Infrastructure Exceptions to Ports": adrs/0041-infrastructure-exceptions-to-ports.md
-      - "ADR-0042: Domain Event and Handler Strictness": adrs/0042-domain-event-strictness.md
-      - "ADR-0043: Domain Model Guards and Vocabulary": adrs/0043-domain-model-guards-and-vocabulary.md
-      - "ADR-0044: Migration Error Module Decomposition": adrs/0044-migration-error-module-decomposition.md
-      - "ADR-0045: PEP 695 Type-Parameter Syntax": adrs/0045-pep695-type-parameter-syntax.md
-      - "ADR-0046: aggregate_type Has One Source: the Aggregate Class": adrs/0046-aggregate-type-single-source.md
-      - "ADR-0047: Live Runner Feed-Driven Checkpointing": adrs/0047-live-runner-feed-driven-checkpointing.md
-      - "ADR-0048: Failure Paths Report and Retain": adrs/0048-failure-paths-report-and-retain.md
-      - "ADR-0049: Snapshots Fire on Crossing a Boundary": adrs/0049-snapshot-boundary-crossing.md
-      - "ADR-0050: Read-Model Version Conflict Error Name": adrs/0050-read-model-version-conflict-error-name.md
-      - "ADR-0051: adapters/_common Shared Port Semantics": adrs/0051-adapters-common-shared-port-semantics.md
-      - "ADR-0052: Feed Read Aggregate-Type Filter": adrs/0052-feed-read-aggregate-type-filter.md
-      - "ADR-0053: SQLite Snapshot Store Owns Its Connection": adrs/0053-sqlite-snapshot-store-owns-its-connection.md
-      - "ADR-0054: Projection Replay Driver": adrs/0054-projection-replay-driver.md
-      - "ADR-0055: Generic Store Projection Base": adrs/0055-generic-store-projection-base.md
-      - "ADR-0056: Decider initial_state() Is Nullary": adrs/0056-decider-initial-state-is-nullary.md
-      - "ADR-0057: Tenant Load Enforcement Is a Precondition": adrs/0057-tenant-load-enforcement.md
-      - "ADR-0058: EventSourceError Is the Universal Exception Base": adrs/0058-eventsource-error-as-universal-base.md
-      - "ADR-0059: Subscription Delivery Is Ordered Per Subscription": adrs/0059-ordered-subscription-delivery.md
-      - "ADR-0060: Background Publishing Is Bounded, and Degrades to Inline": adrs/0060-bounded-background-publishing.md
-      - "ADR-0061: The Lease Half of Leader Election Is Not Ours to Declare": adrs/0061-leader-lease-protocol-deleted.md
-      - "ADR-0062: Single Declaration Sites for Shutdown Timeout and Retry Policy": adrs/0062-single-declaration-sites-for-shutdown-timeout-and-retry-policy.md
-      - "ADR-0063: Live Batch Delivery Is A Page, Not A Window": adrs/0063-live-batch-delivery-is-a-page-not-a-window.md
-      - "ADR-0064: The Telemetry Attribute Catalogue Is Not a Wishlist": adrs/0064-telemetry-attribute-catalogue-is-not-a-wishlist.md
-      - "ADR-0065: An Event Cannot Name Another Aggregate": adrs/0065-an-event-cannot-name-another-aggregate.md
-      - "ADR-0066: Read-Model Schema Reconciliation Is Additive and Opt-In": adrs/0066-read-model-schema-reconciliation-is-additive-and-opt-in.md
+      - Overview: adrs/index.md
+      - "1. Async-First Concurrency Model": adrs/0001-async-first-concurrency-model.md
+      - "2. Hexagonal Ring Layering and Dependency Isolation": adrs/0002-hexagonal-ring-layering-and-dependency-isolation.md
+      - "3. Pure Functional Decider Pattern and Immutable State Folding": adrs/0003-pure-functional-decider-pattern-and-immutable-state-folding.md
+      - "4. Declarative Aggregate Root and Domain Event Strictness": adrs/0004-declarative-aggregate-root-and-domain-event-strictness.md
+      - "5. Clean Storage Ports, Composed Protocols, and Connection Lifecycle": adrs/0005-clean-storage-ports-composed-protocols-and-connection-lifecycle.md
+      - "6. Snapshot Policies, Scheduling, and Boundary-Crossing Rehydration": adrs/0006-snapshot-policies-scheduling-and-boundary-crossing-rehydration.md
+      - "7. Uniform Message Bus Contract and At-Least-Once Delivery Semantics": adrs/0007-uniform-message-bus-contract-and-at-least-once-delivery-semantics.md
+      - "8. Subscription Engine, Feed-Driven Checkpointing, and Ordered Sequential Delivery": adrs/0008-subscription-engine-feed-driven-checkpointing-and-ordered-delivery.md
+      - "9. Projection Engine, Deterministic Replay, and Additive Read-Model Reconciliation": adrs/0009-projection-engine-deterministic-replay-and-additive-read-model-reconciliation.md
+      - "10. Ambient Multi-Tenant SaaS Isolation Model": adrs/0010-ambient-multi-tenant-saas-isolation-model.md
+      - "11. Zero-Downtime 5-State Live Store Migration and Distributed Locking": adrs/0011-zero-downtime-5-state-live-store-migration-and-distributed-locking.md
+      - "12. Tier-0 Packaging, PEP 562 Lazy Front Door, and Zero-Overhead Observability": adrs/0012-tier-0-packaging-pep-562-lazy-front-door-and-zero-overhead-observability.md
   - Development:
       - development/index.md
       - Contributing: development/contributing.md
