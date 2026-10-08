@@ -1,0 +1,46 @@
+{
+  "project_name": "eventsource-py",
+  "profiles": [
+    "core",
+    "bdd",
+    "ddd"
+  ],
+  "profile_checksums": {
+    "core": "ce7d571970711574eb68b9a714a52a1e9cbc9249eab53bf63a3aec959eac2e4a",
+    "bdd": "1252436ae01dc966839bbc6c2711fbd91ff39e24d01895f694ff3ba9a6535f01",
+    "ddd": "4783941fcec98dc77099bc965a4147f0cd919521b0bdd936200565729180ec98"
+  },
+  "bounded_contexts": [],
+  "ci_provider": "github",
+  "created_paths": [
+    "specops.toml",
+    "docs/project/adrs/accepted/adr-0001-specification-as-code-architecture.md",
+    "docs/project/adrs/accepted/adr-0002-modular-file-length-limits-anti-rot.md",
+    "docs/project/adrs/accepted/adr-0003-blackbox-frontdoor-verification.md",
+    "docs/project/adrs/accepted/adr-0004-continuous-preflight-and-self-healing-ci.md",
+    "docs/project/adrs/accepted/adr-0005-worktree-concurrency-and-backlog-isolation.md",
+    "docs/project/adrs/accepted/adr-0006-bdd-gherkin-user-stories-and-playwright-e2e.md",
+    "docs/project/adrs/accepted/adr-0007-domain-driven-design-and-bounded-contexts.md",
+    "docs/project/adrs/REGISTRY.md",
+    "docs/project/user_stories/PERSONAS.md",
+    "docs/project/product/REGISTRY.md",
+    "docs/project/user_stories/REGISTRY.md",
+    "docs/project/backlog/README.md",
+    "docs/project/backlog/PRIORITY.md",
+    "docs/project/backlog/ROADMAP.md",
+    "docs/project/backlog/refined/0001-initial-architecture-spike-and-setup.md",
+    ".github/workflows/deploy-pages.yml",
+    "docs/tutorials/01-getting-started.md",
+    "docs/how-to/bootstrap-project.md",
+    "docs/reference/cli.md",
+    "docs/explanation/project-management-as-code.md",
+    "docs/contributing.md",
+    "docs/operating-manual.md",
+    ".agents/skills/spec-ops/SKILL.md",
+    ".agents/skills/spec-ops/references/cli_primer.md",
+    ".agents/skills/spec-ops/references/balancing_loop.md",
+    ".agents/skills/spec-ops/references/orchestration_protocol.md",
+    ".specops-scaffold.json"
+  ],
+  "timestamp": "2026-10-08T04:36:23.499514+00:00"
+}

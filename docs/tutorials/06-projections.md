@@ -309,7 +309,7 @@ event type to the function; `DeclarativeProjection.__init__` then scans the inst
 decorated methods and builds a routing table from them. There is no separate list of
 event types to keep in sync -- `subscribed_to()` is generated from what it found:
 
-```python
+```pycon
 >>> OrderProjection().subscribed_to()
 [<class 'order_events.OrderCreated'>, <class 'order_events.OrderShipped'>]
 ```
@@ -1268,7 +1268,7 @@ class OrderSummaryProjection(DatabaseProjection):
         )
 ```
 
-```python
+```pycon
 >>> sorted(e.__name__ for e in projection.subscribed_to())
 ['OrderCancelled', 'OrderCreated', 'OrderShipped']
 ```

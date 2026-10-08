@@ -1,0 +1,247 @@
+[project]
+name = "eventsource-py"
+repo = ""
+docs_dir = "docs/project"
+site_output = "dist/site"
+
+[documentation]
+allowed_directories = ["adrs", "api", "development", "examples", "guides", "superpowers"]
+allowed_root_files = [
+  "index.md",
+  "architecture.md",
+  "core-surface.md",
+  "faq.md",
+  "getting-started.md",
+  "installation.md",
+  "operating-manual.md",
+  "contributing.md",
+]
+
+[architecture]
+file_length_limit = 500
+buffer_target = 10
+buffer_warning_threshold = 6
+
+components = [
+  { id = "domain", name = "Domain Models & Business Invariants", path = "src/eventsource/domain" },
+  { id = "ports", name = "Ports & Pure Interfaces", path = "src/eventsource/ports" },
+  { id = "application", name = "Application Services & Orchestration", path = "src/eventsource/application" },
+  { id = "adapters", name = "Infrastructure & Technology Adapters", path = "src/eventsource/adapters" },
+  { id = "observability", name = "Telemetry & Tracing Toolkit", path = "src/eventsource/observability" },
+  { id = "testing", name = "Testing Harness & Fixtures", path = "src/eventsource/testing" }
+]
+
+[vertical_slices]
+slices = [
+  { type = "spike", name = "Architectural Spike", prefix = "SPIKE:", requires_adr = true },
+  { type = "domain", name = "Domain Model & State Handlers" },
+  { type = "api", name = "Public API Contracts" },
+  { type = "ui", name = "User Interface & Component Stories" },
+  { type = "test", name = "Blackbox Frontdoor Test Suite" }
+]
+
+[quality]
+testing_style = "blackbox-frontdoor"
+require_bdd = true
+preflight = [
+  "uv run pytest -m \"not integration and not postgres and not redis and not e2e and not benchmark\""
+]
+
+[execution]
+agent_command = "agy --dangerously-skip-permissions -p {prompt}"
+agent_max_attempts = 3
+git_branch_prefix = "feat/"
+backlog_isolation = true
+
+[security]
+secret_scanning = true
+lockfile_immutability = true
+enforce_lockfile = true
+sandbox_enabled = true
+allowed_commands = ["pytest", "git", "uv", "make", "ruff", "mypy"]
+reporting_contact = "security@example.com"
+
+[security.licenses]
+profile = "permissive"
+allowed = [
+  "MIT",
+  "Apache-2.0",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "0BSD",
+  "Unlicense",
+  "Python-2.0",
+  "CC0-1.0",
+  "PSF-2.0",
+  "MPL-2.0",
+  "CNRI-Python",
+  "LGPL-3.0",
+  "UNKNOWN",
+]
+
+[profiles]
+installed = ["core", "bdd", "ddd"]
+version = "0.1.0"
+
+[invariants.file_limits]
+grandfathered = [
+  "examples/projection_example.py",
+  "examples/subscriptions/multi_subscriber.py",
+  "examples/subscriptions/resilient_projection.py",
+  "src/eventsource/__init__.py",
+  "src/eventsource/adapters/kafka/bus.py",
+  "src/eventsource/adapters/kafka/consumer.py",
+  "src/eventsource/adapters/memory/readmodels.py",
+  "src/eventsource/adapters/postgresql/readmodels.py",
+  "src/eventsource/adapters/postgresql/store.py",
+  "src/eventsource/adapters/rabbitmq/bus.py",
+  "src/eventsource/adapters/rabbitmq/connection.py",
+  "src/eventsource/adapters/rabbitmq/consumer.py",
+  "src/eventsource/adapters/rabbitmq/dlq.py",
+  "src/eventsource/adapters/rabbitmq/publisher.py",
+  "src/eventsource/adapters/redis/bus.py",
+  "src/eventsource/adapters/sql/migration/migration.py",
+  "src/eventsource/adapters/sql/migration/position_mapping.py",
+  "src/eventsource/adapters/sql/migration/routing.py",
+  "src/eventsource/adapters/sql/readmodel_schema.py",
+  "src/eventsource/adapters/sqlite/readmodels.py",
+  "src/eventsource/application/aggregates/repository.py",
+  "src/eventsource/application/migration/bulk_copier.py",
+  "src/eventsource/application/migration/consistency.py",
+  "src/eventsource/application/migration/coordinator.py",
+  "src/eventsource/application/migration/cutover.py",
+  "src/eventsource/application/migration/dual_write.py",
+  "src/eventsource/application/migration/exceptions.py",
+  "src/eventsource/application/migration/metrics.py",
+  "src/eventsource/application/migration/position_mapper.py",
+  "src/eventsource/application/migration/router.py",
+  "src/eventsource/application/migration/status_streamer.py",
+  "src/eventsource/application/migration/subscription_migrator.py",
+  "src/eventsource/application/migration/sync_lag_tracker.py",
+  "src/eventsource/application/migration/write_pause.py",
+  "src/eventsource/application/projections/base.py",
+  "src/eventsource/application/projections/coordinator.py",
+  "src/eventsource/application/subscriptions/coordination.py",
+  "src/eventsource/application/subscriptions/error_handling.py",
+  "src/eventsource/application/subscriptions/health.py",
+  "src/eventsource/application/subscriptions/health_provider.py",
+  "src/eventsource/application/subscriptions/manager.py",
+  "src/eventsource/application/subscriptions/metrics.py",
+  "src/eventsource/application/subscriptions/retry.py",
+  "src/eventsource/application/subscriptions/runners/catchup.py",
+  "src/eventsource/application/subscriptions/runners/live.py",
+  "src/eventsource/application/subscriptions/shutdown.py",
+  "src/eventsource/application/subscriptions/subscription.py",
+  "src/eventsource/application/subscriptions/transition.py",
+  "src/eventsource/domain/aggregate.py",
+  "src/eventsource/domain/exceptions.py",
+  "src/eventsource/observability/tracer.py",
+  "src/eventsource/ports/migration/models.py",
+  "src/eventsource/ports/migration/repositories.py",
+  "tests/conftest.py",
+  "tests/integration/bus/test_kafka.py",
+  "tests/integration/bus/test_rabbitmq.py",
+  "tests/integration/bus/test_redis.py",
+  "tests/integration/conftest.py",
+  "tests/integration/e2e/test_full_flow.py",
+  "tests/integration/migrations/test_migration_schema_postgresql.py",
+  "tests/integration/observability/test_distributed_tracing.py",
+  "tests/integration/observability/test_tracing_integration.py",
+  "tests/integration/projections/test_database_projection.py",
+  "tests/integration/readmodels/test_enhanced_features.py",
+  "tests/integration/readmodels/test_projection.py",
+  "tests/integration/readmodels/test_repositories.py",
+  "tests/integration/repositories/test_dlq.py",
+  "tests/integration/subscriptions/test_advanced_features.py",
+  "tests/integration/subscriptions/test_full_flow.py",
+  "tests/integration/subscriptions/test_resilience.py",
+  "tests/repositories/test_sqlite_repos.py",
+  "tests/unit/adapters/serialization/test_json.py",
+  "tests/unit/adapters/sql/migration/test_audit_log_repository.py",
+  "tests/unit/adapters/sql/migration/test_migration_repository.py",
+  "tests/unit/adapters/sql/migration/test_position_mapping_repository.py",
+  "tests/unit/adapters/sql/migration/test_routing_repository.py",
+  "tests/unit/adapters/test_checkpoint_position.py",
+  "tests/unit/adapters/test_memory_checkpoints.py",
+  "tests/unit/adapters/test_memory_dlq.py",
+  "tests/unit/adapters/test_postgresql_snapshots.py",
+  "tests/unit/adapters/test_snapshots_tracing.py",
+  "tests/unit/adapters/test_sql_checkpoint_tracing.py",
+  "tests/unit/adapters/test_sqlite_outbox.py",
+  "tests/unit/adapters/test_sqlite_snapshots.py",
+  "tests/unit/application/aggregates/test_repository.py",
+  "tests/unit/application/aggregates/test_repository_snapshot.py",
+  "tests/unit/application/aggregates/test_repository_tracing.py",
+  "tests/unit/application/aggregates/test_tenant_repository.py",
+  "tests/unit/application/migration/test_bulk_copier.py",
+  "tests/unit/application/migration/test_chaos.py",
+  "tests/unit/application/migration/test_consistency_verifier.py",
+  "tests/unit/application/migration/test_coordinator.py",
+  "tests/unit/application/migration/test_coordinator_dual_write.py",
+  "tests/unit/application/migration/test_coordinator_subscriptions.py",
+  "tests/unit/application/migration/test_cutover_manager.py",
+  "tests/unit/application/migration/test_dual_write.py",
+  "tests/unit/application/migration/test_exceptions.py",
+  "tests/unit/application/migration/test_final_integration.py",
+  "tests/unit/application/migration/test_load_benchmarks.py",
+  "tests/unit/application/migration/test_migration_metrics.py",
+  "tests/unit/application/migration/test_phase2_integration.py",
+  "tests/unit/application/migration/test_phase3_integration.py",
+  "tests/unit/application/migration/test_position_mapper.py",
+  "tests/unit/application/migration/test_router.py",
+  "tests/unit/application/migration/test_status_streamer.py",
+  "tests/unit/application/migration/test_subscription_migrator.py",
+  "tests/unit/application/migration/test_sync_lag_tracker.py",
+  "tests/unit/application/migration/test_write_pause.py",
+  "tests/unit/application/projections/test_projection_base.py",
+  "tests/unit/application/projections/test_projection_coordinator.py",
+  "tests/unit/application/projections/test_replay.py",
+  "tests/unit/application/projections/test_tenant_filter.py",
+  "tests/unit/application/subscriptions/test_catchup_runner.py",
+  "tests/unit/application/subscriptions/test_coordination.py",
+  "tests/unit/application/subscriptions/test_drain.py",
+  "tests/unit/application/subscriptions/test_error_handling.py",
+  "tests/unit/application/subscriptions/test_filtering.py",
+  "tests/unit/application/subscriptions/test_health.py",
+  "tests/unit/application/subscriptions/test_live_runner.py",
+  "tests/unit/application/subscriptions/test_manager_pause_resume.py",
+  "tests/unit/application/subscriptions/test_metrics.py",
+  "tests/unit/application/subscriptions/test_pause_resume.py",
+  "tests/unit/application/subscriptions/test_retry.py",
+  "tests/unit/application/subscriptions/test_shutdown.py",
+  "tests/unit/application/subscriptions/test_subscriber.py",
+  "tests/unit/application/subscriptions/test_subscription_config.py",
+  "tests/unit/application/subscriptions/test_subscription_manager.py",
+  "tests/unit/application/subscriptions/test_subscription_state.py",
+  "tests/unit/application/subscriptions/test_transition.py",
+  "tests/unit/domain/test_aggregate_root.py",
+  "tests/unit/domain/test_aggregate_snapshot_methods.py",
+  "tests/unit/domain/test_create_event.py",
+  "tests/unit/domain/test_deferred_state.py",
+  "tests/unit/domain/test_domain_event.py",
+  "tests/unit/domain/test_event_registry.py",
+  "tests/unit/domain/test_event_type_auto.py",
+  "tests/unit/domain/test_tenant_context_properties.py",
+  "tests/unit/observability/test_projection_tracing.py",
+  "tests/unit/ports/test_migration_models.py",
+  "tests/unit/readmodels/test_in_memory.py",
+  "tests/unit/readmodels/test_postgresql.py",
+  "tests/unit/readmodels/test_projection.py",
+  "tests/unit/readmodels/test_schema.py",
+  "tests/unit/readmodels/test_soft_delete.py",
+  "tests/unit/readmodels/test_sqlite.py",
+  "tests/unit/test_edge_cases.py",
+  "tests/unit/test_event_bus.py",
+  "tests/unit/test_kafka_event_bus.py",
+  "tests/unit/test_rabbitmq_event_bus.py",
+  "tests/unit/test_redis_event_bus.py",
+  "tests/unit/test_redis_event_bus_tracing.py",
+  "tests/unit/testing/test_assertions.py",
+  "tests/unit/testing/test_bdd.py",
+  "tests/unit/testing/test_builder.py",
+  "tests/unit/testing/test_harness.py",
+]
+
+[audit.provenance]
+baseline_commit = "2876453af67cd4bcf80395cf2234c2adf5a01639"

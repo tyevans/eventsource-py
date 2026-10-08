@@ -31,7 +31,7 @@ on:
 
 # Allow only one concurrent deployment, skip in-progress for PRs
 concurrency:
-  group: pages-${{ github.ref }}
+  group: legacy-pages-${{ github.ref }}
   cancel-in-progress: true
 
 # Sets permissions of the GITHUB_TOKEN for Pages deployment

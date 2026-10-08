@@ -121,7 +121,7 @@ it in. `DomainEvent` already gives you the column:
 ```python
 tenant_id: UUID | None = Field(
     default=None,
-    ...
+    # ...
 )
 ```
 
