@@ -365,3 +365,241 @@ create_live_only_config()                # start_from="end", batch_size=100, EVE
 ```
 
 `create_catch_up_config(checkpoint_every_batch=False)` switches to `CheckpointStrategy.PERIODIC` instead.
+
+## Retry transient failures with exponential backoff
+
+Event handlers inevitably encounter temporary hiccups: transient database connection resets, downstream HTTP timeouts, or lock contention. `SubscriptionConfig` configures exponential backoff with jitter directly:
+
+```python
+from eventsource.application.subscriptions import SubscriptionConfig
+
+config = SubscriptionConfig(
+    max_retries=5,
+    initial_retry_delay=1.0,
+    max_retry_delay=30.0,
+    retry_exponential_base=2.0,
+    retry_jitter=0.1,
+)
+
+await manager.subscribe(OrderProjection(), config=config)
+```
+
+| Parameter | Default | Meaning |
+| --- | --- | --- |
+| `max_retries` | `5` | Maximum number of retry attempts before treating the failure as permanent. Set to `0` to disable retries. |
+| `initial_retry_delay` | `1.0` | Initial backoff duration in seconds before the first retry. |
+| `max_retry_delay` | `60.0` | Upper bound ceiling on exponential delay between retries. |
+| `retry_exponential_base` | `2.0` | Multiplier for subsequent attempts (`delay = initial * (base ** attempt)`). |
+| `retry_jitter` | `0.1` | Random jitter fraction applied to the calculated delay to avoid stampeding thundering herds. |
+
+Only transient errors (network errors, timeouts, connection resets) trigger retries. Deterministic application bugs or permanent validation errors bypass backoff and escalate immediately.
+
+## Guard external calls with a circuit breaker
+
+When a downstream system or database is completely unavailable, repeating failing attempts across every event exhausts connection pools and starves resources. `SubscriptionConfig` includes a built-in circuit breaker to fast-fail and isolate cascading disruptions:
+
+```python
+config = SubscriptionConfig(
+    circuit_breaker_enabled=True,
+    circuit_breaker_failure_threshold=5,
+    circuit_breaker_recovery_timeout=30.0,
+)
+```
+
+| Parameter | Default | Meaning |
+| --- | --- | --- |
+| `circuit_breaker_enabled` | `True` | Enable or disable the circuit breaker for this subscription. |
+| `circuit_breaker_failure_threshold` | `5` | Consecutive failures before opening the circuit from `CLOSED` to `OPEN`. |
+| `circuit_breaker_recovery_timeout` | `30.0` | Seconds to remain in `OPEN` state before transitioning to `HALF_OPEN` to test recovery. |
+
+When the breaker opens, event delivery fails fast without executing the handler. Once `recovery_timeout` elapses, a single probe event is attempted in `HALF_OPEN` state. Success closes the breaker; failure re-opens it.
+
+## Route permanently failed events to the DLQ
+
+When retries are exhausted or an error is classified as permanent, you can route the failing event to a Dead Letter Queue (DLQ) so that the stream is not blocked indefinitely:
+
+```python
+from eventsource import SQLDLQRepository
+from eventsource.application.subscriptions import SubscriptionConfig, SubscriptionManager
+
+dlq_repo = SQLDLQRepository(engine)
+
+manager = SubscriptionManager(
+    event_store=event_store,
+    event_bus=event_bus,
+    checkpoint_repo=checkpoint_repo,
+    dlq_repo=dlq_repo,
+)
+
+config = SubscriptionConfig(
+    continue_on_error=True,  # Send exhausted failure to DLQ and advance checkpoint
+)
+
+await manager.subscribe(OrderProjection(), config=config)
+```
+
+With `continue_on_error=True` and a configured `dlq_repo`, the poison event's payload, error stack trace, failure timestamp, and subscription metadata are recorded into the `dead_letter_queue` table. The subscription then advances its checkpoint and continues processing subsequent events. If `continue_on_error=False`, the subscription enters an `ERROR` state and halts to preserve strict in-order processing.
+
+## React to errors with callbacks
+
+Register async callbacks with `SubscriptionManager` to send metrics, trigger alerts, or notify on-call engineers when errors occur:
+
+```python
+from eventsource.application.subscriptions import (
+    ErrorCategory,
+    ErrorSeverity,
+    ErrorInfo,
+)
+
+async def alert_ops(info: ErrorInfo) -> None:
+    logger.error("Subscription error: %s on event %s", info.error_message, info.event_id)
+
+async def pager_critical(info: ErrorInfo) -> None:
+    await pagerduty.trigger(f"Critical error in {info.subscription_name}: {info.error_message}")
+
+# Register across all errors
+manager.on_error(alert_ops)
+
+# Filter by category (e.g. TRANSIENT, PERMANENT, INFRASTRUCTURE, APPLICATION)
+manager.on_error_category(ErrorCategory.INFRASTRUCTURE, alert_ops)
+
+# Filter by severity (e.g. LOW, MEDIUM, HIGH, CRITICAL)
+manager.on_error_severity(ErrorSeverity.CRITICAL, pager_critical)
+```
+
+Callbacks are executed asynchronously and errors in callback logic are safely caught and logged without disrupting subscription workers.
+
+## Run multiple projections from one manager
+
+A single `SubscriptionManager` coordinates multiple projections concurrently, each maintaining its own independent checkpoint, position, and configuration:
+
+```python
+# Fast live-only notification handler
+await manager.subscribe(
+    EmailNotifier(),
+    SubscriptionConfig(start_from="end"),
+    name="email-notifier",
+)
+
+# Resumable order query read model
+await manager.subscribe(
+    OrderSummaryProjection(),
+    SubscriptionConfig(start_from="checkpoint", batch_size=200),
+    name="order-summary",
+)
+
+# Full historical rebuild projection
+await manager.subscribe(
+    AuditLogProjection(),
+    SubscriptionConfig(start_from="beginning", batch_size=1000),
+    name="audit-log",
+)
+
+# Start all subscriptions concurrently
+results = await manager.start(concurrent=True)
+for name, exc in results.items():
+    if exc:
+        logger.error("Failed to start %s: %s", name, exc)
+```
+
+Individual subscriptions are fully isolated: if one projection fails or encounters an open circuit breaker, the remaining subscriptions continue processing normally.
+
+## Pause, resume, and drain subscriptions
+
+For schema migrations, operational maintenance, or external service outages, you can pause and resume subscriptions on the fly without stopping the manager process:
+
+```python
+from eventsource.application.subscriptions import PauseReason
+
+# Pause a single subscription with an explicit operational reason
+await manager.pause_subscription("order-summary", reason=PauseReason.MAINTENANCE)
+
+# Or pause all subscriptions across the manager
+await manager.pause_all(reason=PauseReason.DEPLOYMENT)
+
+# Inspect paused subscriptions
+paused_names = manager.paused_subscription_names
+print("Currently paused:", paused_names)
+
+# Resume processing when maintenance completes
+await manager.resume_subscription("order-summary")
+
+# Or resume all subscriptions
+await manager.resume_all()
+```
+
+When paused, a subscription holds its current checkpoint in place and safely buffers incoming live events. Once resumed, buffered events are processed first before continuing with live delivery.
+
+## Monitor subscription health
+
+`SubscriptionManager` provides detailed real-time health checks, error rates, and lag metrics:
+
+```python
+health = await manager.health_check()
+
+print(f"Overall status: {health.status}")        # "healthy", "degraded", "unhealthy", or "critical"
+print(f"Active subscriptions: {health.healthy_count}/{health.subscription_count}")
+print(f"Total lag events: {health.total_lag_events}")
+print(f"Uptime: {health.uptime_seconds:.1f}s")
+
+for sub in health.subscriptions:
+    print(f"- {sub.name}: state={sub.state}, lag={sub.lag_events}, errors={sub.events_failed}")
+```
+
+Use `manager.check_health("order-summary")` to inspect a single subscription, or query `manager.is_healthy` for a quick boolean status.
+
+## Expose Kubernetes readiness and liveness probes
+
+Integrate `SubscriptionManager` directly with FastAPI or Starlette endpoints to back Kubernetes pod probes:
+
+```python
+from fastapi import FastAPI, Response, status
+
+app = FastAPI()
+
+@app.get("/healthz/liveness")
+async def liveness_probe(response: Response) -> dict:
+    liveness = await manager.liveness_check()
+    if not liveness.alive:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    return liveness.to_dict()
+
+@app.get("/healthz/readiness")
+async def readiness_probe(response: Response) -> dict:
+    readiness = await manager.readiness_check()
+    if not readiness.ready:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    return readiness.to_dict()
+```
+
+- **Liveness probe (`liveness_check`)**: Verifies that the manager is running, internal async tasks have not deadlocked, and background workers are responsive. If unalive, Kubernetes restarts the pod.
+- **Readiness probe (`readiness_check`)**: Verifies that the manager is running, not currently shutting down, and has no subscriptions in a fatal `ERROR` state. If unready, Kubernetes removes the pod from service endpoints until it recovers.
+
+## Shut down gracefully
+
+In production environments, services receive `SIGTERM` or `SIGINT` when redeploying or scaling down. Use `run_until_shutdown()` for daemon-style processes:
+
+```python
+async def main() -> None:
+    manager = SubscriptionManager(event_store, event_bus, checkpoint_repo)
+    await manager.subscribe(OrderProjection())
+
+    # Registers SIGTERM and SIGINT handlers, starts all subscriptions,
+    # and blocks until a shutdown signal is trapped:
+    result = await manager.run_until_shutdown(shutdown_timeout=30.0)
+
+    if result.forced:
+        logger.warning("Shutdown timed out and was forced")
+    else:
+        logger.info("Graceful shutdown completed successfully")
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+During graceful shutdown, `SubscriptionManager`:
+1. Transitions to shutting down state and fails readiness probes immediately.
+2. Stops accepting new events from store and bus.
+3. Drains in-flight event handlers up to the configured drain timeout.
+4. Persists final checkpoints for all processed positions.
+5. Closes underlying resources cleanly.
