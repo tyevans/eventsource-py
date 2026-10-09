@@ -68,6 +68,7 @@ from eventsource.application.subscriptions.coordination import (
     WorkAssignment,
     WorkAssignmentCallback,
     WorkRedistributionCoordinator,
+    verify_leadership_lease,
 )
 from eventsource.application.subscriptions.error_handling import (
     ErrorCallback,
@@ -326,6 +327,7 @@ __all__ = [
     # here -- application may not import adapters.memory).
     "LeaderElector",
     "LeaderChangeCallback",
+    "verify_leadership_lease",
     # Work Redistribution Signals (P3-003)
     "COORDINATION_TOPIC_PREFIX",
     "SHUTDOWN_NOTIFICATIONS_TOPIC",
