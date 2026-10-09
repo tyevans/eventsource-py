@@ -14,6 +14,9 @@ scenarios:
 - TenantAwareRepository validates uncommitted events on save and rejects tenant mismatches
 - TenantAwareRepository enforces active tenant context precondition on load
 - Aggregate load without database RLS documents lack of stream event filtering
+- Strict LIFO token stack enforcement rejects out-of-order reset with TenantContextResetError
+- Synchronous execution scope via tenant_scope_sync isolates tenant context
+- DeciderAggregate and create_event automatically inherit ambient tenant context
 governing_adrs:
 - ADR-0001
 - ADR-0003
@@ -78,6 +81,29 @@ Scenario: Aggregate load without database RLS documents lack of stream event fil
   When the aggregate is loaded through "TenantAwareRepository" within an active "tenant_a" scope
   Then the aggregate is rehydrated from all stream events without partial filtering
   And read isolation is explicitly delegated to database row-level security or storage partitioning.
+```
+
+```gherkin
+Scenario: Strict LIFO token stack enforcement rejects out-of-order reset with TenantContextResetError
+  Given two tenant contexts established sequentially yielding "token_a" then "token_b"
+  When "reset_tenant_context(token_a)" is called while "token_b" is still active
+  Then a "TenantContextResetError" is raised
+  And attempting to reset an already-reset token raises "TenantContextResetError".
+```
+
+```gherkin
+Scenario: Synchronous execution scope via tenant_scope_sync isolates tenant context
+  Given a synchronous unit of work wrapped in "tenant_scope_sync(tenant_a)"
+  When domain operations query "get_current_tenant()"
+  Then "tenant_a" is returned
+  And exiting the scope cleanly restores the previous tenant context.
+```
+
+```gherkin
+Scenario: DeciderAggregate and create_event automatically inherit ambient tenant context
+  Given an active tenant scope for "tenant_a"
+  When a DeciderAggregate executes a command or an aggregate calls create_event without explicit tenant
+  Then all generated uncommitted events are automatically stamped with "tenant_a".
 ```
 
 ## Implementation Status & Verification

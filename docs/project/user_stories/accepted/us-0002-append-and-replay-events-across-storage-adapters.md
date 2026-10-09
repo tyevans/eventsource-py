@@ -13,6 +13,9 @@ scenarios:
 - Optimistic concurrency conflict detection on concurrent stream append
 - Filtered global feed query by aggregate type and tenant
 - Engine lifecycle ownership and clean connection pool disposal
+- SQLite WAL mode and busy timeout configuration under lock contention
+- PostgreSQL safe-horizon global feed visibility under concurrent transactions
+- Category reading with timestamp comparison and global position tie-breaking
 governing_adrs:
 - ADR-0001
 - ADR-0003
@@ -52,7 +55,7 @@ Scenario: Replay events from global position offset
 Scenario: Optimistic concurrency conflict detection on concurrent stream append
   Given an existing aggregate stream at version 3
   When a caller attempts to append new events specifying expected version 2
-  Then an "ExpectedVersionError" is raised
+  Then an "OptimisticLockError" is raised
   And no uncommitted events are appended to the event store.
 ```
 
@@ -69,7 +72,31 @@ Scenario: Engine lifecycle ownership and clean connection pool disposal
   Given an EventStore initialized with "owns_engine=True"
   When the caller invokes "close()" on the store adapter
   Then the underlying database engine and connection pool are cleanly disposed
-  And subsequent query attempts raise an EventStoreConnectionError.
+  And external engines created outside the adapter are preserved when "owns_engine=False".
+```
+
+```gherkin
+Scenario: SQLite WAL mode and busy timeout configuration under lock contention
+  Given an SQLiteEventStore configured with "wal_mode=True" and "busy_timeout=5000"
+  When the store initializes its database connection
+  Then PRAGMA journal_mode is set to WAL, foreign keys are enabled, and busy timeout is applied
+  And concurrent read queries execute in parallel with serialized write appends.
+```
+
+```gherkin
+Scenario: PostgreSQL safe-horizon global feed visibility under concurrent transactions
+  Given a PostgreSQL event store with active concurrent write transactions
+  When a consumer reads the global feed with safe-horizon enabled
+  Then the query applies "eventsource_feed_horizon()" bounds
+  And events from uncommitted in-flight transactions are not skipped during replay.
+```
+
+```gherkin
+Scenario: Category reading with timestamp comparison and global position tie-breaking
+  Given multiple aggregate streams committed within the "Order" category
+  When the caller reads category "Order" across streams
+  Then events are returned in chronological timestamp order
+  And simultaneous events resolve ordering ties deterministically via global position.
 ```
 
 ## Implementation Status & Verification

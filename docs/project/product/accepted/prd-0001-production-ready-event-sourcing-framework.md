@@ -76,14 +76,14 @@ governing_adrs:
 
 - [`US-0001`](../../user_stories/accepted/us-0001-define-aggregates-and-record-events.md): Define Aggregates and Record Committed Events
 - [`US-0002`](../../user_stories/accepted/us-0002-append-and-replay-events-across-storage-adapters.md): Append and Replay Events Across Storage Adapters
-- [`US-0003`](../../user_stories/accepted/us-0003-publish-and-subscribe-to-events-via-message-buses.md): Publish and Subscribe to Events via Message Buses
 - [`US-0004`](../../user_stories/accepted/us-0004-project-events-into-read-models-with-checkpoints.md): Project Events into Read Models with Checkpoints
-- [`US-0005`](../../user_stories/accepted/us-0005-scope-events-and-repositories-to-tenants.md): Scope Events and Repositories to Tenants
 - [`US-0006`](../../user_stories/accepted/us-0006-migrate-event-stores-zero-downtime.md): Migrate Event Stores Zero-Downtime
 - [`US-0007`](../../user_stories/accepted/us-0007-compose-boundary-crossing-snapshots.md): Compose Boundary-Crossing Snapshots for Efficient Aggregate Rehydration
 - [`US-0008`](../../user_stories/accepted/us-0008-rebuild-projections-and-typed-read-models.md): Rebuild Projections Deterministically with Typed Read Models
-- [`US-0009`](../../user_stories/accepted/us-0009-coordinate-subscriptions-and-delivery-guarantees.md): Coordinate Subscriptions with Delivery Guarantees and DLQ Error Isolation
-- [`US-0010`](../../user_stories/accepted/us-0010-isolate-cross-tenant-projections-and-feed-filtering.md): Isolate Cross-Tenant Projections and Feed Filtering
-- [`US-0011`](../../user_stories/accepted/us-0011-distributed-locking-resilient-lifecycle.md): Coordinate Distributed Advisory Locks and Resilient Connection Lifecycle
 - [`US-0012`](../../user_stories/accepted/us-0012-enforce-hexagonal-ring-layering-and-frontdoor-verification.md): Enforce Hexagonal Ring Layering and Strict Blackbox Frontdoor Verification
 - [`US-0013`](../../user_stories/accepted/us-0013-guard-tier-0-packaging-lazy-front-door-and-documentation.md): Guard Tier-0 Core Packaging, PEP 562 Lazy Front Door, and Zero-Drift Documentation
+- [`US-0017`](../../user_stories/accepted/us-0017-reconcile-read-model-schema-and-serialize-events.md): Reconcile Read Model Schema Variations and Serialize Polymorphic Events
+- [`US-0018`](../../user_stories/accepted/us-0018-register-domain-events-and-resolve-types-via-event-registry.md): Register Domain Events and Resolve Types via Thread-Safe Event Registry
+- [`US-0019`](../../user_stories/accepted/us-0019-query-and-soft-delete-read-models-with-typed-query-builders.md): Query and Soft-Delete Read Models with Typed Query Builders
+- [`US-0020`](../../user_stories/accepted/us-0020-verify-migration-consistency-enforce-circuit-breakers-and-log-audit-events.md): Verify Migration Consistency, Enforce Circuit Breakers, and Log Immutable Audit Events
+- [`US-0021`](../../user_stories/accepted/us-0021-manage-asynchronous-snapshots-bulk-invalidation-and-cache-miss-telemetry.md): Manage Asynchronous Snapshots, Bulk Invalidation, and Cache Miss Telemetry

@@ -9,13 +9,19 @@ feature: FEAT-CORE-AGGREGATE
 governing_prd: PRD-0001
 scenarios:
 - Command execution on DeciderAggregate emits domain events
-- Concurrent command on stale aggregate version raises ExpectedVersionError
+- Concurrent command on stale aggregate version raises OptimisticLockError
 - Nullary initial_state evolves state from command carrying aggregate identity
 - DeclarativeAggregate routes events via handles decorators and rejects unregistered
   events
 - Aggregate rejects event naming a different aggregate with AggregateIdMismatchError
 - Aggregate type is strictly defined on aggregate class ClassVar preventing repository
   miscategorization
+- Command provenance stamping and saga correlation via caused_by
+- Atomic command rejection leaves aggregate state and history untouched
+- DeclarativeAggregate enforces deferred creation invariants with AggregateNotCreatedError
+- DeclarativeAggregate rejects invalid handler signatures and duplicate event handlers
+- Stream category conforms to CATEGORY_PATTERN and rejects mismatched aggregate_type
+- Event version mismatch on new events raises EventVersionError
 governing_adrs:
 - ADR-0001
 - ADR-0003
@@ -46,10 +52,10 @@ Scenario: Command execution on DeciderAggregate emits domain events
 ```
 
 ```gherkin
-Scenario: Concurrent command on stale aggregate version raises ExpectedVersionError
+Scenario: Concurrent command on stale aggregate version raises OptimisticLockError
   Given an aggregate committed at version 5
   When another worker attempts to commit a change expecting version 4
-  Then an "ExpectedVersionError" is raised
+  Then an "OptimisticLockError" is raised
   And no uncommitted events are appended to the event store.
 ```
 
@@ -83,6 +89,56 @@ Scenario: Aggregate type is strictly defined on aggregate class ClassVar prevent
   When an AggregateRepository is constructed for that aggregate class
   Then the repository infers aggregate_type from the class attribute
   And stream keys and event categories are guaranteed to match without manual override drift.
+```
+
+```gherkin
+Scenario: Command provenance stamping and saga correlation via caused_by
+  Given a DeciderAggregate instance executing a DomainCommand "ShipOrder"
+  When the decider emits an "OrderShipped" event
+  Then the event causation_id matches the command's command_id
+  And the event correlation_id matches the command's correlation_id
+  And issuing a subsequent command via "command.caused_by(event)" continues the workflow correlation chain.
+```
+
+```gherkin
+Scenario: Atomic command rejection leaves aggregate state and history untouched
+  Given an Order aggregate in created state
+  When a command violating business invariants is executed and raises CommandRejectedError
+  Then aggregate state remains unmodified
+  And uncommitted events list remains empty
+  And aggregate version does not advance.
+```
+
+```gherkin
+Scenario: DeclarativeAggregate enforces deferred creation invariants with AggregateNotCreatedError
+  Given a DeclarativeAggregate subclass with "requires_creation_event = True"
+  When the aggregate is constructed before applying any domain events
+  Then accessing "state" raises "AggregateNotCreatedError"
+  And "is_created" evaluates to False
+  And "state_or_none" evaluates to None.
+```
+
+```gherkin
+Scenario: DeclarativeAggregate rejects invalid handler signatures and duplicate event handlers
+  Given a DeclarativeAggregate subclass
+  When an event handler is declared as an async coroutine
+  Then a "HandlerSignatureError" is raised at class initialization time
+  And declaring multiple handlers for the same event type raises "DuplicateHandlerError".
+```
+
+```gherkin
+Scenario: Stream category conforms to CATEGORY_PATTERN and rejects mismatched aggregate_type
+  Given an aggregate emitting events to a stream
+  When an event class declares an aggregate_type divergent from the aggregate's declared type
+  Then an "AggregateTypeMismatchError" is raised before appending
+  And stream category validation rejects invalid category characters.
+```
+
+```gherkin
+Scenario: Event version mismatch on new events raises EventVersionError
+  Given an aggregate with "validate_versions = True" at version 2
+  When an event is applied with aggregate_version 5
+  Then an "EventVersionError" is raised detailing expected and actual versions.
 ```
 
 ## Implementation Status & Verification

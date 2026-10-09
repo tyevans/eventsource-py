@@ -51,6 +51,5 @@ governing_adrs:
 
 - **Governing ADRs**: ADR-0001, ADR-0002, ADR-0003, ADR-0006, ADR-0007, ADR-0108, ADR-0116, ADR-0164
 - **Linked User Stories**:
-  - `US-0012`: Enforce Hexagonal Ring Layering and Strict Blackbox Frontdoor Verification
   - `US-0015`: Propagate Distributed Tracing Spans Across Message Buses and Aggregates
   - `US-0016`: Test Aggregate Invariants Fluently via Scenario Testing Harness
