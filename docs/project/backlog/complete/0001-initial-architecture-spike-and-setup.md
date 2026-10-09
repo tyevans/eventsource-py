@@ -1,8 +1,7 @@
 ---
 id: '0001'
 title: Initial SpecOps Architecture Baseline and Living Specification Engine
-status: Refined
-created: 2026-10-07
+status: Complete
 governing_adrs:
 - ADR-0001
 - ADR-0002

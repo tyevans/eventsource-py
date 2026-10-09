@@ -2,7 +2,7 @@
 
 Strict sequential order of execution for engineering tasks.
 
-- **TASK-0001 (Refined)**: [`0001-initial-architecture-spike-and-setup`](refined/0001-initial-architecture-spike-and-setup.md)
+- **TASK-0001 (Complete)**: [`0001-initial-architecture-spike-and-setup`](complete/0001-initial-architecture-spike-and-setup.md)
 - **TASK-0002 (Refined)**: [`0002-delta-compress-stored-event-payloads`](refined/0002-delta-compress-stored-event-payloads.md)
 - **TASK-0003 (Refined)**: [`0003-verify-leadership-lease-renewal-before-acting`](refined/0003-verify-leadership-lease-renewal-before-acting.md)
 - **TASK-0004 (Refined)**: [`0004-re-benchmark-postgresql-catch-up-horizon-predicate`](refined/0004-re-benchmark-postgresql-catch-up-horizon-predicate.md)
