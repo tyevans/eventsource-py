@@ -737,3 +737,212 @@ worth the trouble in the first place.
 
 Step 4 shows how to install these tables individually, in case you do not want
 all five.
+
+---
+
+## Step 4: Selective Schema Loading and Introspection
+
+In development and quick starts, `get_all_schemas()` is the fastest path. In production, you might want only the core `events` table, or you might manage DLQ and outbox tables in separate databases.
+
+You can inspect available backends and schemas programmatically:
+
+```python
+from eventsource.adapters.sql.schemas import (
+    get_schema,
+    list_backends,
+    list_schemas,
+)
+
+print("Available backends:", list_backends())
+# ['postgresql', 'sqlite']
+
+print("PostgreSQL schemas:", list_schemas("postgresql"))
+# ['checkpoints', 'dlq', 'events', 'events_partitioned', 'migration', 'outbox', 'snapshots']
+```
+
+To fetch DDL for a single table:
+
+```python
+events_ddl = get_schema("events")
+```
+
+For high-volume PostgreSQL deployments, `eventsource` also packages a partition-ready events schema:
+
+```python
+partitioned_ddl = get_schema("events_partitioned")
+```
+
+This generates a PostgreSQL partitioned table partitioned by `RANGE (created_at)` for automated monthly partition rollover.
+
+---
+
+## Step 5: Persisting Ordering Service Events with PostgreSQLEventStore
+
+Now that your PostgreSQL database has the EventSource schema, let's write and read events from our **Ordering Service** domain.
+
+Create a file named `order_postgres.py`:
+
+```python
+import asyncio
+from uuid import UUID, uuid4
+from sqlalchemy.ext.asyncio import create_async_engine
+
+from eventsource import DomainEvent, ExpectedVersion
+from eventsource.adapters.postgresql import PostgreSQLEventStore
+
+
+# --- Ordering Domain Events ---
+
+class OrderPlaced(DomainEvent):
+    aggregate_type: str = "Order"
+    customer_id: str
+    item_id: str
+    price_cents: int
+
+
+class OrderPaid(DomainEvent):
+    aggregate_type: str = "Order"
+    transaction_id: str
+
+
+DATABASE_URL = "postgresql+asyncpg://test:test@localhost:5433/eventsource_test"
+
+
+async def main() -> None:
+    engine = create_async_engine(DATABASE_URL, echo=False)
+    store = PostgreSQLEventStore(engine=engine)
+
+    order_id = uuid4()
+    stream_id = str(order_id)
+    print(f"Creating new order stream: {stream_id}")
+
+    # 1. Append OrderPlaced event
+    placed_event = OrderPlaced(
+        aggregate_id=order_id,
+        aggregate_version=1,
+        customer_id="cust_987",
+        item_id="item_mechanical_keyboard",
+        price_cents=14900,
+    )
+
+    result_1 = await store.append(
+        stream_id=stream_id,
+        events=[placed_event],
+        expected_version=ExpectedVersion.NO_STREAM,
+    )
+    print(f"Appended OrderPlaced at global position {result_1.position}")
+
+    # 2. Append OrderPaid event
+    paid_event = OrderPaid(
+        aggregate_id=order_id,
+        aggregate_version=2,
+        transaction_id="stripe_ch_3N8jYw",
+    )
+
+    result_2 = await store.append(
+        stream_id=stream_id,
+        events=[paid_event],
+        expected_version=ExpectedVersion.EXACT(1),
+    )
+    print(f"Appended OrderPaid at global position {result_2.position}")
+
+    # 3. Read back aggregate stream
+    print("\nReading aggregate stream:")
+    stream_events = await store.read_stream(stream_id)
+    for evt in stream_events:
+        print(f"  v{evt.aggregate_version}: {evt.event_type} - payload={evt.model_dump(mode='json')}")
+
+    await engine.dispose()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+Run the script:
+
+```bash
+uv run python order_postgres.py
+```
+
+Expected output:
+```text
+Creating new order stream: 68f3a388-72e4-411a-8219-5d470d04c457
+Appended OrderPlaced at global position 1
+Appended OrderPaid at global position 2
+
+Reading aggregate stream:
+  v1: OrderPlaced - payload={'event_id': '...', 'customer_id': 'cust_987', 'item_id': 'item_mechanical_keyboard', 'price_cents': 14900, ...}
+  v2: OrderPaid - payload={'event_id': '...', 'transaction_id': 'stripe_ch_3N8jYw', ...}
+```
+
+---
+
+## Step 6: Verifying Durability Across Restarts
+
+In Phase 1 and 2, when your script exited, in-memory events vanished. Let's prove that events written to PostgreSQL persist.
+
+Create `verify_durability.py` to read the global event feed without appending anything new:
+
+```python
+import asyncio
+from sqlalchemy.ext.asyncio import create_async_engine
+from eventsource.adapters.postgresql import PostgreSQLEventStore
+
+DATABASE_URL = "postgresql+asyncpg://test:test@localhost:5433/eventsource_test"
+
+async def main() -> None:
+    engine = create_async_engine(DATABASE_URL, echo=False)
+    store = PostgreSQLEventStore(engine=engine)
+
+    print("Fetching the 10 most recent global events across all streams:")
+    events = await store.read_all(limit=10, backwards=True)
+    for evt in events:
+        print(f"[{evt.aggregate_type} {evt.aggregate_id}] v{evt.aggregate_version}: {evt.event_type}")
+
+    await engine.dispose()
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+Run `uv run python verify_durability.py`. Your events are read directly from the PostgreSQL `events` table. Even if you restart the PostgreSQL container (`docker compose restart postgres`), your committed stream history remains durable.
+
+---
+
+## Step 7: Managing Schemas with Alembic
+
+In real production environments, running raw SQL scripts at startup is often discouraged in favor of versioned migrations using **Alembic**.
+
+EventSource includes pre-built Alembic migration templates:
+
+```python
+from eventsource.adapters.sql.schemas import (
+    get_alembic_template,
+    list_alembic_templates,
+)
+
+print(list_alembic_templates())
+# ['all_tables', 'checkpoints', 'dlq', 'events', 'outbox', 'snapshots']
+
+# Generate a migration containing all EventSource tables:
+template = get_alembic_template("all_tables")
+migration_code = template.replace("${revision_id}", "0001_create_eventsource_tables")
+
+with open("migrations/versions/0001_eventsource.py", "w") as f:
+    f.write(migration_code)
+```
+
+The resulting migration file executes clean `upgrade()` and `downgrade()` steps with proper indexes and foreign keys.
+
+---
+
+## Summary
+
+In this tutorial, you transitioned the Ordering Service from in-memory prototyping to durable production storage:
+- Applied the bundled PostgreSQL schema using `get_all_schemas()` or selective `get_schema(name)`.
+- Explored the core schema architecture: monotonic `global_position` `BIGSERIAL`, optimistic concurrency via `uq_events_aggregate_version`, and operational tables.
+- Wrote and verified durable events using `PostgreSQLEventStore`.
+- Explored Alembic integration for continuous delivery pipelines.
+
+Next, continue to [Tutorial 12: SQLite](12-sqlite.md) for local zero-dependency testing, and [Tutorial 13: Distributed Concurrency with PostgreSQL Advisory Locks](13-locking.md) to coordinate cross-process workers.

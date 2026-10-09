@@ -188,7 +188,7 @@ The framework makes that a first-class operation. Every projection has `reset()`
 clears the checkpoint and then calls your `_truncate_read_models()`:
 
 ```python
-from eventsource.application.projections import replay
+from eventsource import replay
 
 await projection.reset()   # checkpoint cleared, your tables truncated
 report = await replay(event_store, [projection])
@@ -453,7 +453,7 @@ behind it -- a repository, a graph store, a vector index. `StoreProjection[TStor
 `DeclarativeProjection` with that store held for you as `self._store`:
 
 ```python
-from eventsource.application.projections import StoreProjection, handles
+from eventsource import StoreProjection, handles
 
 
 class OrderProjection(StoreProjection[OrderStore]):
@@ -1433,11 +1433,13 @@ import asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from eventsource.adapters.memory.bus import InMemoryEventBus
-from eventsource import InMemoryCheckpointRepository
-from eventsource.adapters.memory import InMemoryEventStore
-from eventsource.domain import StreamId
-from eventsource.ports import ExpectedVersion
+from eventsource import (
+    ExpectedVersion,
+    InMemoryCheckpointRepository,
+    InMemoryEventBus,
+    InMemoryEventStore,
+    StreamId,
+)
 from eventsource.application.subscriptions import SubscriptionConfig, SubscriptionManager
 
 
