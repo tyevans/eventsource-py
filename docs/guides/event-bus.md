@@ -73,8 +73,7 @@ caught, logged with `exc_info=True`, counted in the `handler_errors` stat, and
 recorded on the tracing span — it never aborts the other handlers or the rest
 of the batch. This means `await publish(...)` returning successfully does *not*
 mean every handler succeeded. If a handler must not silently drop work, give it
-its own retry and dead-letter path (see [Retries and the dead letter
-queue](#retries-and-the-dead-letter-queue)) or run it under
+its own retry and dead-letter path (see [Retry transient failures with exponential backoff](subscriptions.md#retry-transient-failures-with-exponential-backoff)) or run it under
 `SubscriptionManager` rather than as a bare bus subscription.
 
 If no handler is registered for an event's type, the bus logs at debug level
@@ -91,8 +90,7 @@ The bus is a dispatch mechanism, not a store:
   redeliver on failure, so handlers must be idempotent.
 - **It does not track progress.** There is no per-handler checkpoint at this
   layer. Resumable, checkpointed consumption is what `SubscriptionManager`
-  adds on top (see [Wire the bus into
-  SubscriptionManager](#wire-the-bus-into-subscriptionmanager)).
+  adds on top (see [Wire up a SubscriptionManager](subscriptions.md#wire-up-a-subscriptionmanager)).
 - **It does not validate or transform events.** Events arrive as the pydantic
   models the producer published.
 
@@ -445,7 +443,7 @@ The consequences are worth stating plainly:
 If work must not be silently dropped, do not rely on `publish()` raising. Give
 the handler its own retry and dead-letter path, or run it under
 `SubscriptionManager` (see
-[Retries and the dead letter queue](#retries-and-the-dead-letter-queue)).
+[Retry transient failures with exponential backoff](subscriptions.md#retry-transient-failures-with-exponential-backoff)).
 
 ### Publishing after the aggregate is saved
 
@@ -821,3 +819,43 @@ every event on the bus and has to filter itself (see the next section).
 `subscribe_all` is part of the `EventBus` contract exercised by
 `EventBusConformanceSuite`, so any custom backend you write is checked for it
 too (see [Test against the EventBus conformance suite](#test-against-the-eventbus-conformance-suite)).
+
+## Test against the EventBus conformance suite
+
+Whenever you implement a custom `EventBus` adapter, you can verify that it adheres to the complete lifecycle and delivery semantics by subclassing `EventBusConformanceSuite` from `eventsource.testing`:
+
+```python
+import pytest
+from eventsource.ports.bus import EventBus
+from eventsource.testing import EventBusConformanceSuite
+
+class TestMyCustomBus(EventBusConformanceSuite):
+    @pytest.fixture
+    async def bus(self) -> EventBus:
+        custom_bus = MyCustomEventBus(...)
+        await custom_bus.connect()
+        yield custom_bus
+        await custom_bus.disconnect()
+```
+
+The conformance suite exercises single-event publication, batch delivery ordering, multiple subscribers per event type, wildcard handlers, error isolation across handlers, unsubscribe cleanup, and subscriber reflection via `subscribed_to()`.
+
+## Inspect bus health with get_stats and get_stats_dict
+
+Each bus implementation exposes runtime counters to monitor throughput, handler invocations, and error rates:
+
+```python
+# For InMemoryEventBus:
+stats = bus.get_stats()
+print("Published:", stats["events_published"])
+print("Delivered:", stats["events_delivered"])
+print("Handler errors:", stats["handler_errors"])
+
+# For distributed backends (RabbitMQ, Kafka, Redis):
+stats_dict = bus.get_stats_dict()
+print("Messages published:", stats_dict.get("messages_published"))
+print("Messages consumed:", stats_dict.get("messages_consumed"))
+print("Handler errors:", stats_dict.get("handler_errors"))
+```
+
+For Kafka-specific metrics, consumer rebalance tracking, partition lag gauges, and OpenTelemetry instrumentation, see the [Kafka Metrics Guide](kafka-metrics.md).

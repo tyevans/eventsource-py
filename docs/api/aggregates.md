@@ -12,6 +12,8 @@ The package exposes three public classes:
 | --- | --- | --- |
 | `AggregateRoot[TState: BaseModel]` | Abstract base class with an inline PEP 695 type parameter | `eventsource.domain.aggregate` |
 | `DeclarativeAggregate[TState: BaseModel]` | Abstract base class (subclass of `AggregateRoot`), same inline parameter | `eventsource.domain.aggregate` |
+| `DeciderAggregate[TState: BaseModel, TCommand = object]` | Abstract base class (subclass of `AggregateRoot`) implementing the functional Decider pattern | `eventsource.domain.decider` |
+| `DomainCommand` | Frozen Pydantic base model carrying causation/correlation identity | `eventsource.domain.command` |
 | `AggregateRepository[TAggregate: AggregateRoot[Any]]` | Concrete class with an inline PEP 695 type parameter | `eventsource.application.aggregates.repository` |
 
 `AggregateRoot` is declared `class AggregateRoot[TState: BaseModel](ABC)`:
@@ -20,7 +22,10 @@ class itself rather than a module-level `TypeVar`, and subclasses must
 implement the abstract methods `_apply()` and `_get_initial_state()`.
 `DeclarativeAggregate` replaces the
 hand-written `_apply()` dispatch with handlers registered via the `@handles`
-decorator from `eventsource.domain.decorators`. `AggregateRepository` is not generic over
+decorator from `eventsource.domain.decorators`. `DeciderAggregate` implements
+the functional decider pattern (`initial_state`, `decide`, `evolve`) with
+atomic command execution and automatic event provenance stamping when paired
+with `DomainCommand`. `AggregateRepository` is not generic over
 state — it is parameterized by the aggregate class itself and mediates between
 an aggregate and an `AggregateStore` (the `EventAppender` + `StreamReader`
 ports), an optional `EventPublisher`, and an optional `SnapshotStore`.
@@ -74,6 +79,8 @@ Their defining modules are:
 | --- | --- |
 | `AggregateRoot` | `eventsource.domain.aggregate` |
 | `DeclarativeAggregate` | `eventsource.domain.aggregate` |
+| `DeciderAggregate` | `eventsource.domain.decider` |
+| `DomainCommand` | `eventsource.domain.command` |
 | `AggregateRepository` | `eventsource.application.aggregates.repository` |
 
 `TState` is not an importable name anywhere in the library. It is declared
@@ -89,11 +96,17 @@ is scoped to that class and is not importable either.
 
 ### Preferred import path
 
-The three classes are also re-exported from the top-level package, and that is
+All aggregate styles and commands are re-exported from the top-level package, and that is
 the intended import path for application code:
 
 ```python
-from eventsource import AggregateRoot, AggregateRepository, DeclarativeAggregate
+from eventsource import (
+    AggregateRoot,
+    AggregateRepository,
+    DeclarativeAggregate,
+    DeciderAggregate,
+    DomainCommand,
+)
 ```
 
 Neither `TState` nor `TAggregate` is part of the public surface — both are
@@ -713,3 +726,93 @@ second.
 `create_event()` calls `get_next_version()` internally, so events built through
 it never need the field supplied. See
 [Event Creation: `create_event()`](#event-creation-create_event).
+
+## `DeciderAggregate[TState, TCommand]`
+
+`DeciderAggregate` implements the functional decider pattern (ADR-0022). It models the aggregate's domain logic as three pure functions — `initial_state`, `decide`, and `evolve` — while providing an imperative shell that inherits `AggregateRoot` replay, snapshotting, and repository persistence:
+
+```python
+from uuid import UUID
+from pydantic import BaseModel
+from eventsource import DeciderAggregate, DomainCommand, DomainEvent
+
+class OrderState(BaseModel):
+    items: list[str] = []
+    status: str = "pending"
+
+class CreateOrder(DomainCommand):
+    aggregate_id: UUID
+    items: list[str]
+
+class OrderCreated(DomainEvent):
+    items: list[str]
+
+class OrderDecider(DeciderAggregate[OrderState, CreateOrder]):
+    aggregate_type = "Order"
+
+    @staticmethod
+    def initial_state() -> OrderState:
+        return OrderState()
+
+    @staticmethod
+    def decide(command: CreateOrder, state: OrderState) -> list[DomainEvent]:
+        if state.status != "pending" or not command.items:
+            raise CommandRejectedError("Invalid order creation")
+        return [OrderCreated(aggregate_id=command.aggregate_id, items=command.items)]
+
+    @staticmethod
+    def evolve(state: OrderState, event: DomainEvent) -> OrderState:
+        match event:
+            case OrderCreated(items=items):
+                return state.model_copy(update={"items": items, "status": "created"})
+            case _:
+                return state
+```
+
+### Static contract methods
+
+Subclasses must implement three static methods:
+
+| Method | Signature | Description |
+|---|---|---|
+| `initial_state()` | `() -> TState` | Returns clean aggregate state prior to any events. Eagerly evaluated in `__init__()`. |
+| `decide(command, state)` | `(command: TCommand, state: TState) -> list[DomainEvent]` | Pure decision function. Evaluates business rules and returns events to append, or raises domain rejections. |
+| `evolve(state, event)` | `(state: TState, event: DomainEvent) -> TState` | Pure fold function. Returns a new state derived from current state and event. Must be total. |
+
+### `execute(command: TCommand) -> list[DomainEvent]`
+
+Executes a command against the aggregate:
+1. Calls `decide(command, self.state)`.
+2. Stamps each returned event with `aggregate_version`, `aggregate_type`, and provenance (from `DomainCommand` or ambient context).
+3. Applies each stamped event sequentially via `_apply()` which delegates to `evolve()`.
+4. Adds stamped events to `uncommitted_events` and returns them.
+
+If `decide()` raises an exception, the aggregate state and uncommitted events remain completely untouched.
+
+---
+
+## `DomainCommand`
+
+`DomainCommand` (`eventsource.domain.command`) is the frozen Pydantic base model for immutable command intents.
+
+```python
+from eventsource import DomainCommand
+
+class CancelOrder(DomainCommand):
+    order_id: UUID
+    reason: str
+```
+
+### Attributes
+
+| Attribute | Type | Description |
+|---|---|---|
+| `command_id` | `CausationId` (UUID) | Unique identifier for this command execution. Becomes the `causation_id` on produced events. |
+| `issued_at` | `datetime` | UTC timestamp when the command was instantiated. |
+| `correlation_id` | `CorrelationId` (UUID) | Workflow chain identifier tracking multi-step business transactions. |
+| `actor_id` | `str \| None` | Optional identifier of the user or service agent issuing the command. |
+| `tenant_id` | `TenantId \| None` | Optional multi-tenant partition key. Falls back to ambient tenant context when unset. |
+
+### `caused_by(event: DomainEvent) -> Self`
+
+Returns a copy of the command continuing an existing event's workflow by inheriting its `correlation_id`.

@@ -54,9 +54,6 @@ from eventsource import (
     TenantContextNotSetError,
     TenantDomainEvent,
     TenantMismatchError,
-)
-from eventsource import (
-    TenantAwareRepository,
     clear_tenant_context,
     get_current_tenant,
     get_required_tenant,
@@ -64,6 +61,9 @@ from eventsource import (
     tenant_context,
     tenant_scope,
     tenant_scope_sync,
+)
+from eventsource.application.aggregates.tenant_repository import (
+    TenantAwareRepository,
 )
 ```
 

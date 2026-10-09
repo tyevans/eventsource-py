@@ -13,12 +13,18 @@ domain meaning:
 | `EventNotFoundError` | `event_id` |
 | `ProjectionError` | `projection_name`, `event_id` |
 | `AggregateNotFoundError` | `aggregate_id`, `aggregate_type` |
+| `AggregateNotCreatedError` | `aggregate_class`, `suggestion` |
+| `CommandRejectedError` | `message`, `command` |
+| `AggregateTypeMismatchError` | `event_class`, `event_aggregate_type`, `aggregate_class`, `aggregate_type` |
+| `AggregateIdMismatchError` | `event_class`, `event_aggregate_id`, `aggregate_class`, `aggregate_id`, `command_class` |
+| `AggregateTypeNotSetError` | `class_name` |
+| `HandlerDispatchError` | `failures` |
 | `EventStoreError` | — |
 | `EventBusError` | — |
 | `SerializationError` | `event_type` |
 | `EventVersionError` | `expected_version`, `actual_version`, `event_id`, `aggregate_id` |
 | `UnhandledEventError` | `event_type`, `event_id`, `handler_class`, `available_handlers` |
-| `AggregateNotCreatedError` | `aggregate_class`, `suggestion` |
+| `DuplicateHandlerError` | `event_type`, `first_handler`, `second_handler` |
 
 Every one of these accepts its attributes as constructor arguments and builds a
 human-readable message from them, so the attributes are always populated when
@@ -40,10 +46,11 @@ checkpoints, subscriptions), not domain concepts, and were moved out of
 the other twelve) now raises `ImportError` — there is no shim; import from
 `eventsource.ports.exceptions` instead.
 
-Six of the domain errors are re-exported from the package root
-(`AggregateNotCreatedError`, `AggregateNotFoundError`, `EventNotFoundError`,
-`EventSourceError`, `EventVersionError`, `OptimisticLockError`,
-`ProjectionError`); the rest must be imported from
+Core domain errors (including `OptimisticLockError`, `AggregateNotFoundError`,
+`CommandRejectedError`, `AggregateTypeMismatchError`, `AggregateIdMismatchError`,
+`AggregateTypeNotSetError`, `HandlerDispatchError`, `ProjectionError`,
+`EventNotFoundError`, `EventVersionError`, and `EventSourceError`) are re-exported
+directly from the package root (`eventsource.*`). The rest can be imported from
 `eventsource.domain.exceptions` or `eventsource.ports.exceptions` as
 applicable. See
 [Import paths and public exports](#import-paths-and-public-exports).

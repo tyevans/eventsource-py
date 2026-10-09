@@ -2,8 +2,8 @@
 
 This is a hands-on, in-progress series that takes you from "I have heard of event
 sourcing" to a running, tested, production-shaped service built with `eventsource-py`.
-The roadmap below sketches a full 21-part arc across four phases; **8 tutorials are
-written so far** (2, 3, 6, 7, 8, 11, 14, and 16). Start with
+The roadmap below sketches a full 21-part arc across four phases; **10 tutorials are
+written so far** (2, 3, 6, 7, 8, 11, 12, 14, 15, and 16). Start with
 [Tutorial 2: First Event](02-first-event.md) -- it is the earliest one that exists and
 the real entry point today, even though it is not numbered 1.
 
@@ -56,9 +56,10 @@ lands against a model you already understand.
 | 8 | [Testing](08-testing.md) | written |
 | 9-10 | DLQ, checkpoints | planned |
 | 11 | [PostgreSQL](11-postgresql.md) | written |
-| 12-13 | SQLite, advisory locks | planned |
+| 12 | [SQLite](12-sqlite.md) | written |
+| 13 | Advisory locks | planned |
 | 14 | [Snapshotting](14-snapshotting.md) | written |
-| 15 | Outbox pattern | planned |
+| 15 | [Outbox pattern](15-outbox.md) | written |
 | 16 | [Multi-Tenancy](16-multi-tenancy.md) | written |
 | 17-21 | Distributed buses, observability, sagas, live migration | planned |
 
