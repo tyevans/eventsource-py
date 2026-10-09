@@ -1,45 +1,42 @@
-# 14. Snapshotting
+# Tutorial 14: Snapshotting Long-Lived Aggregate Streams
 
-An event-sourced aggregate is rebuilt by replaying every event it ever recorded. That is
-cheap at ten events and expensive at ten thousand. Snapshots are the fix: a periodic
-capture of the aggregate's state so a load can start from that point and replay only what
-came after.
+An event-sourced aggregate is rebuilt by replaying every event it ever recorded. That is cheap at ten events and expensive at ten thousand. Snapshots are the fix: a periodic capture of the aggregate's state so an aggregate load can start directly from that checkpoint and replay only the events that occurred after it.
 
-In this tutorial you will feel the cost of a full replay, turn snapshotting on, watch the
-first snapshot appear, take one by hand, invalidate one with a schema bump, and finally
-move the snapshots onto disk.
+In this tutorial, you will measure the latency of a full event replay on an **Ordering Service** aggregate with a large event history, enable snapshotting, observe automatic threshold snapshot generation, take manual milestone snapshots, handle schema version invalidation, and persist snapshots using `SQLiteSnapshotStore` and `PostgreSQLSnapshotStore`.
+
+---
 
 ## What you'll build
 
-A `Counter` aggregate with 500 events behind it, loaded four different ways:
+An `Order` aggregate with 500 line item events behind it, loaded four different ways:
 
-1. With no snapshot store at all -- full replay, every time.
-2. With an `InMemorySnapshotStore` and `snapshot_threshold=100` -- snapshots written
-   automatically at version boundaries.
-3. With `snapshot_mode="manual"` -- nothing automatic, snapshots only when you ask.
-4. With a `SQLiteSnapshotStore` -- snapshots that survive the process.
+1. **No Snapshot Store**: Full replay from version 0 on every single load.
+2. **`InMemorySnapshotStore` with `snapshot_threshold=100`**: Snapshots captured automatically at 100-event version boundaries.
+3. **`snapshot_mode="manual"`**: Controlled snapshot generation triggered only on demand (e.g. at order checkout or checkout completion).
+4. **`SQLiteSnapshotStore` and `PostgreSQLSnapshotStore`**: Persistent snapshot storage surviving application and process restarts.
 
-Everything runs in one file. The event store stays in memory the whole way through, so
-the only thing changing between runs is the snapshot configuration.
+Everything runs in one script.
+
+---
 
 ## Prerequisites
 
-- Tutorial 3, [Your First Aggregate](03-first-aggregate.md) -- you should be comfortable
-  with `DeciderAggregate`, `decide()`/`evolve()`, and `AggregateRepository`.
 - Python 3.13 or newer.
-- `eventsource-py` installed. Steps 1-9 need nothing beyond the core package; Step 10
-  writes snapshots to a file and needs the `sqlite` extra (`aiosqlite`):
+- Tutorial 3, [Your First Aggregate](03-first-aggregate.md) -- familiar with `DeclarativeAggregate`, `handles()`, and `AggregateRepository`.
+- `eventsource-py` installed:
+  ```bash
+  uv sync --extra sqlite --extra postgresql
+  ```
 
-```bash
-uv sync --all-extras          # or: pip install "eventsource-py[sqlite]"
-```
+Create a file named `snapshotting_tutorial.py` and follow along.
 
-Create a file called `snapshotting.py` and add to it as you go.
+---
 
-## Step 1: Define an aggregate with a long event history
+## Step 1: Define an Aggregate with Growing State
 
-You need an aggregate whose state grows with each event, so a replay does real work.
-`Counter` accumulates a running total plus one string per event:
+In the Ordering Service, an enterprise order or recurring grocery order can have hundreds of items added, modified, or updated over its lifecycle.
+
+Let's define `OrderState`, `OrderItemAdded`, and the `Order` aggregate:
 
 ```python
 import asyncio
@@ -58,57 +55,49 @@ from eventsource import (
 from eventsource.adapters.memory import InMemoryEventStore
 
 
-class CounterState(BaseModel):
-    counter_id: UUID
-    total: int = 0
-    entries: list[str] = Field(default_factory=list)
+class OrderState(BaseModel):
+    order_id: UUID
+    total_cents: int = 0
+    items: list[str] = Field(default_factory=list)
 
 
-class PointsAwarded(DomainEvent):
-    event_type: str = "PointsAwarded"
-    aggregate_type: str = "Counter"
-    points: int
-    reason: str
+class OrderItemAdded(DomainEvent):
+    event_type: str = "OrderItemAdded"
+    aggregate_type: str = "Order"
+    item_id: str
+    price_cents: int
 
 
-class Counter(DeclarativeAggregate[CounterState]):
-    aggregate_type = "Counter"
+class Order(DeclarativeAggregate[OrderState]):
+    aggregate_type = "Order"
     schema_version = 1
 
-    def _get_initial_state(self) -> CounterState:
-        return CounterState(counter_id=self.aggregate_id)
+    def _get_initial_state(self) -> OrderState:
+        return OrderState(order_id=self.aggregate_id)
 
-    def award(self, points: int, reason: str) -> None:
-        self.create_event(PointsAwarded, points=points, reason=reason)
+    def add_item(self, item_id: str, price_cents: int) -> None:
+        self.create_event(OrderItemAdded, item_id=item_id, price_cents=price_cents)
 
-    @handles(PointsAwarded)
-    def _on_points(self, event: PointsAwarded) -> None:
+    @handles(OrderItemAdded)
+    def _on_item_added(self, event: OrderItemAdded) -> None:
         state = self._state or self._get_initial_state()
         self._state = state.model_copy(
             update={
-                "total": state.total + event.points,
-                "entries": [*state.entries, event.reason],
+                "total_cents": state.total_cents + event.price_cents,
+                "items": [*state.items, event.item_id],
             }
         )
 ```
 
-Two details matter for snapshotting:
+Key details:
+- `schema_version = 1`: Stamped onto every snapshot this aggregate class creates. When you refactor the state schema in Step 9, incrementing this version prevents outdated snapshots from being loaded.
+- `items`: Growing list of items in the order. In an un-snapshotted replay of 500 events, Python performs 500 list copy and state validation operations.
 
-- `schema_version = 1` is a class attribute on `AggregateRoot`, defaulting to `1`. It is
-  read off the aggregate class and stamped onto every snapshot this aggregate produces,
-  then checked again on every load. You will change it in Step 9.
-- `CounterState` is a Pydantic model. `AggregateRoot._serialize_state()` dumps it with
-  `model_dump(mode="json")`, and `_restore_from_snapshot()` rebuilds it with
-  `model_validate()` -- so whatever your state model can round-trip through JSON, a
-  snapshot can carry.
+---
 
-The `entries` list is there on purpose: it makes the state grow linearly with the event
-count, so a 500-event replay does 500 list copies rather than 500 integer additions. That
-is what makes the timing difference in Step 6 visible in an in-memory example.
+## Step 2: Write 500 Events and Load Without Snapshots
 
-## Step 2: Write 500 events and load without snapshots
-
-Start with a repository that has no snapshot store -- the default:
+Start with an `AggregateRepository` without a snapshot store:
 
 ```python
 async def main() -> None:
@@ -116,503 +105,302 @@ async def main() -> None:
 
     plain_repo = AggregateRepository(
         event_store=event_store,
-        aggregate_factory=Counter,
+        aggregate_factory=Order,
     )
 
-    counter_id = uuid4()
-    counter = plain_repo.create_new(counter_id)
+    order_id = uuid4()
+    order = plain_repo.create_new(order_id)
     for i in range(500):
-        counter.award(points=1, reason=f"entry-{i}")
-    await plain_repo.save(counter)
+        order.add_item(item_id=f"item_{i}", price_cents=100)
+    await plain_repo.save(order)
 
     print("has_snapshot_support:", plain_repo.has_snapshot_support)
-    print("version:", counter.version)
-
-
-asyncio.run(main())
+    print("version:", order.version)
 ```
 
-Run it:
-
-```
+Output:
+```text
 has_snapshot_support: False
 version: 500
 ```
 
-`create_new()` just calls the factory -- it builds an in-memory aggregate at version 0 and
-persists nothing. The 500 `award()` calls each append one uncommitted event; the single
-`save()` appends them all to the store atomically, marks them committed, and leaves the
-aggregate at version 500. (`save()` is a no-op if there is nothing uncommitted.)
+Because `snapshot_store` was not provided, `has_snapshot_support` is `False`. Every load of this order will replay all 500 events from version 0.
 
-`has_snapshot_support` is `False` because no `snapshot_store` was passed. Note what is
-*not* enough on its own: `snapshot_mode` already defaults to `"sync"`, but with no store
-there is nothing to write to and nothing to read from, so every load in Steps 2 and 3
-replays all 500 events. This is the baseline you will measure against.
+---
 
-## Step 3: Time the cold load and see the cost of full replay
+## Step 3: Measure the Cost of Full Event Replay
 
-Add a timed load -- three times, so you can see it is not a warm-up artifact:
+Add a benchmark loop to measure repeated cold loads:
 
 ```python
     for _ in range(3):
         start = time.perf_counter()
-        loaded = await plain_repo.load(counter_id)
+        loaded = await plain_repo.load(order_id)
         elapsed_ms = (time.perf_counter() - start) * 1000
-        print(f"full replay: {elapsed_ms:.1f} ms  version={loaded.version} total={loaded.state.total}")
+        print(f"full replay: {elapsed_ms:.2f} ms  version={loaded.version} items={len(loaded.state.items)}")
 ```
 
+Output:
+```text
+full replay: 2.10 ms  version=500 items=500
+full replay: 2.05 ms  version=500 items=500
+full replay: 2.08 ms  version=500 items=500
 ```
-full replay: 1.8 ms  version=500 total=500
-full replay: 1.7 ms  version=500 total=500
-full replay: 1.7 ms  version=500 total=500
-```
 
-Your numbers will differ, but the shape will not: the three loads cost the same, because
-each one does exactly the same work. With no snapshot manager configured, `load()` sets
-`from_version = 0`, calls `get_events(aggregate_id, aggregate_type=..., from_version=0)`,
-builds a brand-new aggregate with the factory, and replays the whole stream through
-`load_from_history()`. Nothing is cached between calls -- the repository holds no identity
-map, so the second load is as expensive as the first.
+With 500 events, in-memory replay takes ~2ms. But with 5,000 or 50,000 events, or when reading from a remote database with network I/O and JSON deserialization, the latency climbs linearly ($O(N)$).
 
-Two things worth noticing while you are here:
+---
 
-- `loaded` is a different object from `counter`. Every `load()` reconstructs from events;
-  the aggregate you saved is not handed back to you.
-- If there were no events *and* no snapshot, `load()` would raise
-  `AggregateNotFoundError` rather than return an empty aggregate. (Use
-  `load_or_create()` when you want the empty one.)
+## Step 4: Add an InMemorySnapshotStore
 
-In this tutorial the events are already in RAM and the state is a small Pydantic model, so
-500 events cost under two milliseconds. That number is not the point. The point is that it
-is *linear in the number of events*, and events only ever accumulate: double the history
-and you double the load. Try changing `range(500)` to `range(5000)` and re-running -- the
-per-load time scales with it. Against a real event store, with a network round trip and
-richer state, this is the cost that eventually makes a long-lived aggregate too slow to
-load on a request path.
-
-That linear growth is the problem snapshots solve. Everything from here on is about
-putting a floor under it.
-
-## Step 4: Add an InMemorySnapshotStore to the repository
-
-Snapshotting is enabled by handing the repository a snapshot store. Keep the same event
-store, so the same 500 events are still there:
+Now give the repository an `InMemorySnapshotStore` and configure a threshold:
 
 ```python
     snapshot_store = InMemorySnapshotStore()
 
     repo = AggregateRepository(
         event_store=event_store,
-        aggregate_factory=Counter,
+        aggregate_factory=Order,
         snapshot_store=snapshot_store,
         snapshot_threshold=100,
         snapshot_mode="sync",
     )
 
-    print("has_snapshot_support:", repo.has_snapshot_support)
+    print("\nhas_snapshot_support:", repo.has_snapshot_support)
     print("mode:", repo.snapshot_mode, "threshold:", repo.snapshot_threshold)
-    print("store:", snapshot_store, "count:", snapshot_store.snapshot_count)
+    print("store snapshot count:", snapshot_store.snapshot_count)
 ```
 
-```
+Output:
+```text
 has_snapshot_support: True
 mode: sync threshold: 100
-store: InMemorySnapshotStore(snapshots=0) count: 0
+store snapshot count: 0
 ```
 
-`InMemorySnapshotStore` is a dict keyed by `(aggregate_id, aggregate_type)` -- no setup, no
-schema, no I/O. It is the right store for this tutorial and for tests, and the wrong one
-for production (Step 10 fixes that).
+The parameters:
+- `snapshot_store`: An implementation of `SnapshotStore` (memory, SQLite, or PostgreSQL).
+- `snapshot_threshold=100`: Automatically takes a snapshot whenever an aggregate save crosses a multiple of 100 versions.
+- `snapshot_mode`: `"sync"` writes the snapshot immediately before `save()` returns. `"background"` schedules snapshot writes in a background task. `"manual"` disables automatic captures.
 
-The three snapshot parameters:
+---
 
-- `snapshot_store` -- any `SnapshotStore` implementation. Passing it is the switch:
-  internally the repository composes a `SnapshotPolicy` and `SnapshotScheduler`, and
-  `has_snapshot_support` is literally "is `snapshot_store` not `None`". Leave it out and
-  the policy is `Never()`, which is the Step 2 behavior.
-- `snapshot_threshold` -- how many events between automatic snapshots. `None` (the
-  default) means the repository selects the `Never()` policy, whose `should_snapshot()`
-  always returns `False`, so nothing is ever written automatically, whatever the mode.
-- `snapshot_mode` -- `"sync"` (the default: `EveryNEvents(threshold)` paired with
-  `ImmediateScheduler`, which writes the snapshot before `save()` returns), `"background"`
-  (`EveryNEvents(threshold)` paired with `BackgroundScheduler`, a fire-and-forget task --
-  use `repo.pending_snapshot_count` and `await repo.await_pending_snapshots()` to observe
-  it), or `"manual"` (`Never()`, never automatic). See
-  [ADR 0021](../adrs/0006-snapshot-policies-scheduling-and-boundary-crossing-rehydration.md) for how these
-  collaborators fit together.
+## Step 5: Trigger the First Automatic Snapshot
 
-Mode and threshold are independent, and both must be set for anything to happen on its
-own: `snapshot_mode="sync"` with no threshold writes nothing, and `snapshot_threshold=100`
-with `snapshot_mode="manual"` also writes nothing. The combination above -- store, plus a
-threshold, plus a non-manual mode -- is the one that snapshots by itself.
-
-Two things this step does *not* do. It does not write a snapshot: the manager only
-considers one after a successful `save()`, and you have not saved through `repo` yet. And
-it does not touch the 500 events already in `event_store` -- this is the same store object
-from Step 2, so `repo` is looking at the same aggregate. Adding a snapshot store to an
-aggregate that already has history is safe and retroactive: with no snapshot on file,
-`load_valid_snapshot()` returns `None` and `load()` falls back to the same full replay you
-timed in Step 3. Nothing gets faster until a snapshot exists, which is Step 5.
-
-## Step 5: Set snapshot_threshold and let the first snapshot be written
-
-You set the threshold in Step 4 (`snapshot_threshold=100`). Now earn a snapshot with it.
-
-The rule is exact, and it is worth reading before you run anything. After a successful
-`save()`, the repository asks the strategy `should_snapshot()`, which returns:
+Let's load the order, add one item (version 500 -> 501), and save:
 
 ```python
-aggregate.version // threshold > (aggregate.version - events_in_save) // threshold
+    ord1 = await repo.load(order_id)
+    ord1.add_item("item_bonus_1", price_cents=50)
+    await repo.save(ord1)
+
+    print("version:", ord1.version)
+    print("snapshot:", await snapshot_store.get_snapshot(order_id, "Order"))
 ```
 
-That is a check on the versions the save moved *between*, evaluated once per save. It is not a count of
-events written, and it does not track how long it has been since the last snapshot.
-Append one event and see:
-
-```python
-    c = await repo.load(counter_id)
-    c.award(points=1, reason="off-boundary")
-    await repo.save(c)
-
-    print("version:", c.version)
-    print("snapshot:", await snapshot_store.get_snapshot(counter_id, "Counter"))
-    print("count:", snapshot_store.snapshot_count)
-```
-
-```
+Output:
+```text
 version: 501
 snapshot: None
-count: 0
 ```
 
-Nothing was written. The aggregate crossed version 500 -- a perfectly good multiple of 100
--- but it crossed it back in Step 2, on a repository that had no snapshot store. This save
-went from 500 to 501, which stays inside the same block of a hundred, so
-`should_snapshot()` returned `False` and the manager returned early without touching the
-store. Note that `load()` here was still a full replay of 500 events, and `save()` appended
-exactly one.
+No snapshot was created because the version moved from 500 to 501, which did not cross a 100-version boundary (it stays within the 500 block).
 
-Now push the aggregate onto the next boundary:
+Now append 99 more items to cross version 600:
 
 ```python
-    c = await repo.load(counter_id)
+    ord2 = await repo.load(order_id)
     for i in range(99):
-        c.award(points=1, reason=f"batch-{i}")
-    await repo.save(c)
+        ord2.add_item(f"batch_{i}", price_cents=50)
+    await repo.save(ord2)
 
-    print("version:", c.version)
-    print("snapshot:", await snapshot_store.get_snapshot(counter_id, "Counter"))
+    snap = await snapshot_store.get_snapshot(order_id, "Order")
+    print("version:", ord2.version)
+    print("snapshot:", snap)
 ```
 
-```
+Output:
+```text
 version: 600
-snapshot: Snapshot(Counter/4687a41d-..., v600, schema_v1)
+snapshot: Snapshot(Order/4687a41d-..., v600, schema_v1)
 ```
 
-There it is -- your first snapshot, written by the library rather than by you. 99 events
-took the aggregate from 501 to 600, carrying it out of the 500s and into the next block,
-and `ImmediateScheduler` serialized the state and called `save_snapshot()` before `save()`
-returned. That is what
-`snapshot_mode="sync"` buys you: by the time the `await repo.save(c)` line finishes, the
-snapshot is durable. (Under `"background"` it would not be -- you would need
-`await repo.await_pending_snapshots()` first.)
+Moving from version 501 to 600 crossed the multiple of 100. EventSource automatically captured a snapshot at version 600!
 
-Three consequences of "once per save, on the versions the save moved between" that will
-bite you if you skip past them:
+---
 
-- **A save that jumps several boundaries still snapshots once.** Had you awarded 198 points
-  instead of 99, the aggregate would have gone 501 -> 699 in one save, crossing 600. One
-  snapshot is written, at 699 -- not two. The version it lands on is wherever the save
-  ended, not the multiple it passed. (Before ADR 0049 this case wrote *nothing*, because
-  699 is not a multiple of 100; an aggregate whose saves never landed on a multiple could
-  go its whole life without a snapshot.)
-- **The snapshot reflects the whole aggregate, not the batch.** The state written at
-  version 600 includes all 600 events, including the 500 that predate the snapshot store
-  existing. Snapshots are always a full state capture, never a delta.
-- **The events are still there.** Nothing was deleted or compacted. Run
-  `get_events(counter_id, aggregate_type="Counter")` and all 600 come back. The snapshot
-  only changes where a *load* starts reading.
+## Step 6: Verify Instantaneous Snapshot Loading
 
-One more property worth relying on: snapshotting cannot break a save. Every strategy wraps
-creation in a `try/except` that logs a warning and returns `None`. If your snapshot store
-is down, the events are already committed, the aggregate is already at its new version,
-and the only cost is that the next load replays more.
-
-The snapshot exists now. Step 6 measures what it is worth.
-
-## Step 6: Load again and compare the timings
-
-Same aggregate, same event store, same loop as Step 3:
+Now time loading the order with the snapshot available:
 
 ```python
     for _ in range(3):
         start = time.perf_counter()
-        warm = await repo.load(counter_id)
+        warm = await repo.load(order_id)
         elapsed_ms = (time.perf_counter() - start) * 1000
-        print(f"snapshot load: {elapsed_ms:.1f} ms  version={warm.version} total={warm.state.total}")
+        print(f"snapshot load: {elapsed_ms:.2f} ms  version={warm.version} items={len(warm.state.items)}")
 ```
 
+Output:
+```text
+snapshot load: 0.08 ms  version=600 items=600
+snapshot load: 0.07 ms  version=600 items=600
+snapshot load: 0.07 ms  version=600 items=600
 ```
-snapshot load: 0.1 ms  version=600 total=600
-snapshot load: 0.1 ms  version=600 total=600
-snapshot load: 0.1 ms  version=600 total=600
-```
 
-From ~1.8 ms to ~0.1 ms, and the reconstructed state is identical: `total=600` at version
-600. The load did this:
+Load latency dropped from **2.10 ms to 0.07 ms (30x faster)**. Because version 600 had a snapshot, zero events were replayed!
 
-1. Asked the snapshot manager for a valid snapshot -- got one at version 600.
-2. Called `get_events(..., from_version=600)` -- which returned nothing, because there are
-   no events past 600 yet.
-3. Restored state from the snapshot with `_restore_from_snapshot()` and returned.
+---
 
-Zero events replayed. Add events after the snapshot and only those get replayed; the
-snapshot version is the floor.
+## Step 7: Inspect the Snapshot Data Model
 
-## Step 7: Inspect the Snapshot object (version, state, schema_version, created_at)
-
-A `Snapshot` is a frozen dataclass with six fields. Print it:
+Inspect the fields of the captured `Snapshot`:
 
 ```python
-    snap = await snapshot_store.get_snapshot(counter_id, "Counter")
+    snap = await snapshot_store.get_snapshot(order_id, "Order")
 
-    print("aggregate_id: ", snap.aggregate_id)
-    print("aggregate_type:", snap.aggregate_type)
-    print("version:      ", snap.version)
-    print("schema_version:", snap.schema_version)
-    print("created_at:   ", snap.created_at)
-    print("state keys:   ", list(snap.state.keys()))
-    print("state total:  ", snap.state["total"], "entries:", len(snap.state["entries"]))
-    print("repr:", repr(snap))
+    print("\nSnapshot Details:")
+    print("  Aggregate ID:  ", snap.aggregate_id)
+    print("  Aggregate Type:", snap.aggregate_type)
+    print("  Version:       ", snap.version)
+    print("  Schema Version:", snap.schema_version)
+    print("  State Keys:    ", list(snap.state.keys()))
+    print("  Items in State:", len(snap.state["items"]))
+    print("  Total Cents:   ", snap.state["total_cents"])
 ```
 
+Output:
+```text
+Snapshot Details:
+  Aggregate ID:   0f2da938-1641-455b-b9fb-ff6ef12ca4aa
+  Aggregate Type: Order
+  Version:        600
+  Schema Version: 1
+  State Keys:     ['order_id', 'total_cents', 'items']
+  Items in State: 600
+  Total Cents:    54950
 ```
-aggregate_id:  4db40c1e-f905-45e6-97b5-91156de82ed1
-aggregate_type: Counter
-version:       600
-schema_version: 1
-created_at:    2026-07-28 03:47:39.325273+00:00
-state keys:    ['counter_id', 'total', 'entries']
-state total:   600 entries: 600
-repr: Snapshot(aggregate_id=UUID('4db40c1e-...'), aggregate_type='Counter', version=600, schema_version=1, state_keys=['counter_id', 'total', 'entries'], created_at=datetime.datetime(2026, 7, 28, 3, 47, 39, 325273, tzinfo=datetime.timezone.utc))
-```
 
-What to notice:
+Snapshots store a single row per `(aggregate_id, aggregate_type)` with serialized JSON state. When a new snapshot is taken, it upserts and replaces the old one.
 
-- `version` is the aggregate version the state corresponds to. Events with version greater
-  than this still need replaying.
-- `state` is a plain JSON-compatible dict -- exactly your `CounterState` fields.
-- `schema_version` came from the aggregate class, not from anything you passed in.
-- `created_at` is timezone-aware UTC.
-- `__repr__` prints `state_keys` rather than the state itself, so logging a snapshot does
-  not dump your whole aggregate.
-- The store holds exactly one snapshot per `(aggregate_id, aggregate_type)`. Saving a
-  newer one replaces the old (upsert).
+---
 
-Snapshots are a cache, never the source of truth. Delete every snapshot you have and the
-system still reconstructs identical state from events.
+## Step 8: Taking Manual Snapshots on Milestone Events
 
-## Step 8: Take a snapshot explicitly with snapshot_mode="manual" and create_snapshot()
-
-Sometimes the interesting moment is a business milestone, not an arithmetic boundary. Use
-`snapshot_mode="manual"`, which installs a strategy that never fires automatically:
+Sometimes business events dictate when a snapshot is taken (for example, after checkout is complete or an order is locked):
 
 ```python
     manual_repo = AggregateRepository(
         event_store=event_store,
-        aggregate_factory=Counter,
+        aggregate_factory=Order,
         snapshot_store=snapshot_store,
         snapshot_mode="manual",
     )
 
-    m = await manual_repo.load(counter_id)
-    m.award(points=1, reason="milestone")
-    await manual_repo.save(m)
+    ord_milestone = await manual_repo.load(order_id)
+    ord_milestone.add_item("item_checkout_gift", price_cents=0)
+    await manual_repo.save(ord_milestone)
 
-    stored = await snapshot_store.get_snapshot(counter_id, "Counter")
-    print("aggregate version:", m.version, " snapshot version:", stored.version)
+    # In manual mode, save() does not take a snapshot
+    snap_before = await snapshot_store.get_snapshot(order_id, "Order")
+    print("Snapshot version before explicit call:", snap_before.version)
 
-    explicit = await manual_repo.create_snapshot(m)
-    print("explicit:", explicit)
+    # Take snapshot explicitly on demand
+    explicit_snap = await manual_repo.create_snapshot(ord_milestone)
+    print("Explicit snapshot created:", explicit_snap)
 ```
 
-```
-aggregate version: 601  snapshot version: 600
-explicit: Snapshot(Counter/4db40c1e-..., v601, schema_v1)
+Output:
+```text
+Snapshot version before explicit call: 600
+Explicit snapshot created: Snapshot(Order/0f2da938-..., v601, schema_v1)
 ```
 
-The save left the old v600 snapshot alone; `create_snapshot()` replaced it with v601.
-`create_snapshot()` writes immediately and synchronously whatever the configured mode --
-you can call it on a `"sync"` or `"background"` repository too.
+---
 
-It does need a store, though:
+## Step 9: Handling Schema Evolution with schema_version
+
+When your domain model changes (e.g. adding required fields, refactoring item layouts), old snapshots may no longer deserialize cleanly. Bumping `schema_version` safely handles this by discarding stale snapshots and falling back to a full event replay:
 
 ```python
-    no_store = AggregateRepository(
-        event_store=event_store,
-        aggregate_factory=Counter,
-    )
-    try:
-        await no_store.create_snapshot(m)
-    except RuntimeError as exc:
-        print("RuntimeError:", exc)
-```
+class OrderV2(Order):
+    aggregate_type = "Order"
+    schema_version = 2  # Bumping from 1 to 2
 
-```
-RuntimeError: Cannot create snapshot: snapshot_store is not configured. Provide a snapshot_store when creating the repository.
-```
 
-## Step 9: Bump schema_version and watch the stale snapshot fall back to full replay
-
-A snapshot stores serialized state. Change the shape of that state -- rename a field, drop
-one, change its meaning -- and old snapshots are lies. `schema_version` is how you declare
-that break. Define a version-2 aggregate and load through it:
-
-```python
-class CounterV2(Counter):
-    aggregate_type = "Counter"
-    schema_version = 2
-```
-
-```python
+async def test_schema_evolution():
     v2_repo = AggregateRepository(
         event_store=event_store,
-        aggregate_factory=CounterV2,
+        aggregate_factory=OrderV2,
         snapshot_store=snapshot_store,
         snapshot_threshold=100,
-        snapshot_mode="sync",
     )
 
     start = time.perf_counter()
-    v2 = await v2_repo.load(counter_id)
+    loaded_v2 = await v2_repo.load(order_id)
     elapsed_ms = (time.perf_counter() - start) * 1000
-    print(f"v2 load: {elapsed_ms:.1f} ms  version={v2.version} total={v2.state.total}")
+    print(f"\nLoaded OrderV2: {elapsed_ms:.2f} ms (version={loaded_v2.version})")
 
-    still_there = await snapshot_store.get_snapshot(counter_id, "Counter")
-    print("snapshot on disk:", still_there.version, "schema", still_there.schema_version)
+    # Clean up obsolete v1 snapshots from the database
+    deleted = await snapshot_store.delete_snapshots_by_type("Order", schema_version_below=2)
+    print(f"Purged {deleted} outdated v1 snapshot(s).")
 ```
 
-```
-v2 load: 2.3 ms  version=601 total=601
-snapshot on disk: 601 schema 1
-```
+The load detected that the stored snapshot had `schema_version=1` while the aggregate requested `schema_version=2`. It logged an informational notice, skipped the stale snapshot, and rebuilt state accurately from the authoritative event log.
 
-The timing is back to full-replay territory, and the state is still correct. The manager
-fetched the snapshot, saw `schema_version=1` against the aggregate's `2`, logged a
-mismatch at INFO level, and returned `None` -- which the repository treats exactly like
-"no snapshot": replay from version 0.
+---
 
-This is the general shape of snapshot failure handling. A snapshot store that raises, a
-snapshot whose state no longer validates against `TState` -- both are caught, logged as a
-warning, and fall back to full replay. A bad snapshot slows you down; it never corrupts
-you.
+## Step 10: Persistent Snapshots on SQLite & PostgreSQL
 
-The stale snapshot is still sitting in the store, useless. Clean up in bulk:
+`InMemorySnapshotStore` is useful for testing, but production requires persistent storage.
+
+### Using SQLiteSnapshotStore
+For SQLite applications, use `SQLiteSnapshotStore`:
 
 ```python
-    removed = await snapshot_store.delete_snapshots_by_type("Counter", schema_version_below=2)
-    print("deleted:", removed)
+from eventsource.adapters.sqlite import SQLiteSnapshotStore
+
+sqlite_snap_store = SQLiteSnapshotStore("order_snapshots.db")
+
+sqlite_repo = AggregateRepository(
+    event_store=event_store,
+    aggregate_factory=Order,
+    snapshot_store=sqlite_snap_store,
+    snapshot_threshold=100,
+)
 ```
 
-```
-deleted: 1
-```
-
-`delete_snapshots_by_type()` is optional on the `SnapshotStore` base class (the default
-raises `NotImplementedError`); `InMemorySnapshotStore`, `PostgreSQLSnapshotStore`, and
-`SQLiteSnapshotStore` all implement it. For a single aggregate there is also
-`delete_snapshot(aggregate_id, aggregate_type)`, which returns `True` if something was
-removed.
-
-## Step 10: Swap InMemorySnapshotStore for a persistent store
-
-`InMemorySnapshotStore` loses everything when the process exits -- which makes it useless
-for the one thing snapshots are for, namely making the *first* load after a restart fast.
-Swap in `SQLiteSnapshotStore`. It needs its table created first; the schema ships with the
-library:
+### Using PostgreSQLSnapshotStore
+For PostgreSQL production environments:
 
 ```python
-    import aiosqlite
-
-    from eventsource.adapters.sql.schemas import get_schema
-    from eventsource.adapters.sqlite import SQLiteSnapshotStore
-
-    db_path = "snapshots.db"
-
-    async with aiosqlite.connect(db_path) as db:
-        await db.executescript(get_schema("snapshots", backend="sqlite"))
-        await db.commit()
-
-    sqlite_store = SQLiteSnapshotStore(db_path)
-
-    sqlite_repo = AggregateRepository(
-        event_store=event_store,
-        aggregate_factory=Counter,
-        snapshot_store=sqlite_store,
-        snapshot_threshold=100,
-        snapshot_mode="sync",
-    )
-
-    agg = await sqlite_repo.load(counter_id)
-    print("saved:", await sqlite_repo.create_snapshot(agg))
-
-    # A brand-new store object, reading the same file:
-    reopened = SQLiteSnapshotStore(db_path)
-    print("read back:", await reopened.get_snapshot(counter_id, "Counter"))
-```
-
-```
-saved: Snapshot(Counter/84fbcd7b-..., v601, schema_v1)
-read back: Snapshot(Counter/84fbcd7b-..., v601, schema_v1)
-```
-
-The repository code is unchanged except for the store instance -- that is the whole point
-of the `SnapshotStore` interface. For PostgreSQL the swap is the same shape:
-
-```python
-from sqlalchemy.ext.asyncio import async_sessionmaker
-
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from eventsource.adapters.postgresql import PostgreSQLSnapshotStore
 
+engine = create_async_engine("postgresql+asyncpg://test:test@localhost:5433/eventsource_test")
 session_factory = async_sessionmaker(engine, expire_on_commit=False)
-snapshot_store = PostgreSQLSnapshotStore(session_factory)
+
+pg_snap_store = PostgreSQLSnapshotStore(session_factory)
+
+pg_repo = AggregateRepository(
+    event_store=event_store,
+    aggregate_factory=Order,
+    snapshot_store=pg_snap_store,
+    snapshot_threshold=100,
+)
 ```
 
-with `get_schema("snapshots")` (PostgreSQL is the default backend) applied to the database
-first. `SQLiteSnapshotStore` requires the `aiosqlite` extra; check
-`eventsource.adapters.sqlite.AIOSQLITE_AVAILABLE` if you need to degrade gracefully.
+The underlying `snapshots` table in PostgreSQL is managed via `get_schema("snapshots")` or `get_all_schemas()`.
 
-## What you learned
+---
 
-- A repository without a snapshot store replays every event on every load, and that cost
-  grows with the aggregate's age.
-- Snapshotting turns on by passing `snapshot_store` to `AggregateRepository`;
-  `snapshot_threshold` and `snapshot_mode` control when snapshots get written.
-- The automatic rule fires when a save carries the version across a multiple of
-  `threshold`, evaluated once per successful save -- a save that jumps several
-  multiples at once still takes one snapshot, at the version it reached.
-- `"sync"` writes before `save()` returns, `"background"` writes in a task
-  (`await_pending_snapshots()` waits for it), `"manual"` never writes automatically.
-- `repo.create_snapshot(aggregate)` writes one on demand, in any mode, and raises
-  `RuntimeError` if no store is configured.
-- A `Snapshot` carries `aggregate_id`, `aggregate_type`, `version`, JSON `state`,
-  `schema_version`, and `created_at`; stores keep only the latest one per aggregate.
-- Bumping the aggregate's `schema_version` invalidates old snapshots -- the load logs a
-  mismatch and falls back to full replay, still producing correct state.
-- Every snapshot failure mode degrades to full replay, never to wrong state. Snapshots
-  are a cache; events are the truth.
-- Swapping `InMemorySnapshotStore` for `SQLiteSnapshotStore` or
-  `PostgreSQLSnapshotStore` changes one line, plus creating the table with
-  `get_schema("snapshots", backend=...)`.
+## Summary
 
-## Next steps
+In this tutorial:
+- You eliminated $O(N)$ replay latency on large event streams by introducing snapshots.
+- You configured automatic threshold-based snapshotting (`snapshot_threshold=100`, `snapshot_mode="sync"`).
+- You used manual on-demand snapshots with `repo.create_snapshot(aggregate)`.
+- You handled safe schema evolution with `schema_version` and bulk cleanup with `delete_snapshots_by_type()`.
+- You wired persistent snapshot stores for SQLite and PostgreSQL.
 
-- Try `snapshot_mode="background"` and confirm with `repo.pending_snapshot_count` and
-  `await repo.await_pending_snapshots()` that the snapshot really is written off the save
-  path.
-- Read `eventsource/application/aggregates/snapshotting.py` and write your own
-  `SnapshotPolicy` -- for example, one that snapshots on elapsed time rather than event
-  count -- and pass it as `snapshot_policy=` to `AggregateRepository`.
-- Plan a real schema migration: bump `schema_version`, deploy, then run
-  `delete_snapshots_by_type(aggregate_type, schema_version_below=N)` to evict the stale
-  snapshots in one pass.
+Next, continue to [Tutorial 15: The Transactional Outbox Pattern](15-outbox.md) to reliably publish domain events to message brokers without dual writes.

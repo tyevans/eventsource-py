@@ -973,6 +973,7 @@ including how to move an aggregate from one style to another, read
 
 ## Next Steps
 
-With a working aggregate, the next step is testing it properly. Continue to
-[Testing Your Aggregates](08-testing.md), or read ahead to
-[Building Projections](06-projections.md) to see these events drive a read model.
+Now that your aggregate can evaluate commands and collect uncommitted events in memory,
+the next step is persistence. Continue to [Tutorial 4: The Aggregate Repository](04-repository.md)
+to bind your aggregate to an event store, replay historical streams across requests,
+and publish committed events to an event bus.

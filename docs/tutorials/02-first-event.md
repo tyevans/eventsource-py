@@ -13,10 +13,10 @@ Before you start you need:
 - **`eventsource-py` installed.** From a clone of the repository, `uv sync --all-extras`;
   otherwise `pip install eventsource-py`. Nothing in this tutorial needs an optional
   extra -- the core install (pydantic + sqlalchemy) is enough.
-- **A general idea of what event sourcing is.** If you have worked through the earlier
-  material in the tutorial series, you are set; if not, all you need to know is that an
-  event-sourced system stores a history of things that happened instead of a single
-  mutable row.
+- **A general idea of what event sourcing is.** If you have worked through
+  [Tutorial 1: Getting Started](01-getting-started.md), you are set; if not, all you need
+  to know is that an event-sourced system stores a history of things that happened instead
+  of a single mutable row.
 
 You do **not** need Docker, a database, or a message broker. Everything below runs
 in-process, and every snippet can be pasted into one file and run top to bottom:
@@ -859,6 +859,7 @@ rejected`, and `round-trip ok`.
 
 ## Next Steps
 
-With events defined, the next step is folding them into state. Continue to the next
-tutorial to build an aggregate that records these events and rebuilds an order from its
-history, then persist that history in an event store.
+With events defined, the next step is folding them into state. Continue to
+[Tutorial 3: Your First Aggregate](03-first-aggregate.md) to build an aggregate that
+records these events and rebuilds an order from its history, then persist that history in
+an event store.

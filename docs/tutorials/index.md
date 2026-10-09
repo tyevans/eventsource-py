@@ -2,10 +2,10 @@
 
 This is a hands-on, in-progress series that takes you from "I have heard of event
 sourcing" to a running, tested, production-shaped service built with `eventsource-py`.
-The roadmap below sketches a full 21-part arc across four phases; **10 tutorials are
-written so far** (2, 3, 6, 7, 8, 11, 12, 14, 15, and 16). Start with
-[Tutorial 2: First Event](02-first-event.md) -- it is the earliest one that exists and
-the real entry point today, even though it is not numbered 1.
+The roadmap below sketches a full 21-part arc across four phases; **all 21 tutorials are
+written** (1-21). Start with
+[Tutorial 1: Getting Started](01-getting-started.md) to install the library, define your
+first event, and append to an in-memory event store.
 
 The series is a *learning* path, not a lookup table. Every tutorial is written to be
 typed out and run: you write code, run it, see output, and only then read the
@@ -47,21 +47,27 @@ lands against a model you already understand.
 
 | # | Tutorial | Status |
 | --- | --- | --- |
-| 1 | Introduction / setup | planned |
+| 1 | [Getting Started](01-getting-started.md) | written |
 | 2 | [First Event](02-first-event.md) | written |
 | 3 | [First Aggregate](03-first-aggregate.md) | written |
-| 4-5 | Repository, optimistic concurrency | planned |
+| 4 | [Repository](04-repository.md) | written |
+| 5 | [Optimistic Concurrency](05-optimistic-concurrency.md) | written |
 | 6 | [Projections](06-projections.md) | written |
 | 7 | [Event Bus](07-event-bus.md) | written |
 | 8 | [Testing](08-testing.md) | written |
-| 9-10 | DLQ, checkpoints | planned |
+| 9 | [Dead Letter Queue](09-dlq.md) | written |
+| 10 | [Checkpoints & Lag](10-checkpoints.md) | written |
 | 11 | [PostgreSQL](11-postgresql.md) | written |
 | 12 | [SQLite](12-sqlite.md) | written |
-| 13 | Advisory locks | planned |
+| 13 | [Advisory Locks](13-locking.md) | written |
 | 14 | [Snapshotting](14-snapshotting.md) | written |
 | 15 | [Outbox pattern](15-outbox.md) | written |
 | 16 | [Multi-Tenancy](16-multi-tenancy.md) | written |
-| 17-21 | Distributed buses, observability, sagas, live migration | planned |
+| 17 | [Distributed Streaming](17-distributed-streaming.md) | written |
+| 18 | [Observability](18-observability.md) | written |
+| 19 | [Sagas & Process Managers](19-sagas.md) | written |
+| 20 | [Event Upcasting](20-upcasting.md) | written |
+| 21 | [Live Migration](21-live-migration.md) | written |
 
 Below is the roadmap for all four phases, written up front as a design target. The
 sections and tutorial numbers it references describe the intended shape of the finished
@@ -104,14 +110,13 @@ checklist that goes with deploying any of this. This is the phase where Docker a
 `docker-compose.test.yml` brings up the PostgreSQL 15 and Redis 7 services the backend
 tutorials use.
 
-**Phase 4 (Tutorials 16-21) covers the pieces real deployments need.** Tenant isolation
-via `TenantDomainEvent` and the contextvar-based tenant scopes, so one store serves many
-customers without leaking rows between them. A distributed event bus -- Redis, Kafka, or
-RabbitMQ, whichever fits, each behind the same `EventBus` interface you already know.
-OpenTelemetry traces that follow a command from HTTP request through append, publish,
-and projection. And the advanced aggregate patterns: process managers, sagas, and the
-live migration tooling in `eventsource.application.migration` for moving a running
-system from one event store to another with dual-write and cutover.
+**Phase 4 (Tutorials 16-21) covers the pieces real deployments need.**
+- [Tutorial 16: Multi-Tenancy](16-multi-tenancy.md): Tenant isolation via `TenantDomainEvent`, `tenant_scope()`, and `TenantAwareRepository`, so one store serves many customers without leaking rows between them.
+- [Tutorial 17: Distributed Streaming](17-distributed-streaming.md): Distributed event delivery beyond single-process buses, demonstrating `KafkaEventBus`, consumer groups, partition assignment, and comparisons with `RabbitMQEventBus` and `RedisEventBus`.
+- [Tutorial 18: Observability](18-observability.md): OpenTelemetry distributed tracing and metrics across stream appends, bus delivery, and projection handlers with `traceparent`, `tracestate`, `correlation_id`, and `SubscriptionMetrics`.
+- [Tutorial 19: Sagas and Process Managers](19-sagas.md): Multi-aggregate workflow orchestration (`OrderProcessManager`), provenance chaining via `DomainCommand.caused_by(event)`, and compensating transactions (`CancelOrder`).
+- [Tutorial 20: Event Schema Evolution and Upcasting](20-upcasting.md): Preserving immutable historical logs with `event_version`, tolerant readers, and in-flight JSON upcasting.
+- [Tutorial 21: Zero-Downtime Live Migration](21-live-migration.md): Moving live event stores with zero downtime using the 5-phase migration lifecycle (`DualWriteInterceptor`, position mapping, bulk copier, consistency verification, and cutover).
 
 Two things worth setting expectations on. First, these later phases are a menu, not a
 queue -- you almost certainly do not need all three message buses, and picking one is
@@ -252,10 +257,10 @@ front of you actually asks for -- there is no penalty for adding one later.
 | --- | --- | --- |
 | `postgresql` | `asyncpg>=0.30` | Tutorial 11 -- PostgreSQL |
 | `sqlite` | `aiosqlite>=0.19` | Tutorial 12 -- SQLite |
-| `redis` | `redis>=8.0,<9.0` | Tutorial 17 -- Redis |
-| `kafka` | `aiokafka>=0.12,<1.0` | Tutorial 18 -- Kafka |
-| `rabbitmq` | `aio-pika>=9.0` | Tutorial 19 -- RabbitMQ |
-| `telemetry` | `opentelemetry-api`, `opentelemetry-sdk` (both `>=1.16.0,<2.0`) | Tutorial 20 -- Observability |
+| `kafka` | `aiokafka>=0.12,<1.0` | Tutorial 17 -- Distributed Streaming |
+| `rabbitmq` | `aio-pika>=9.0` | Tutorial 17 -- Distributed Streaming |
+| `redis` | `redis>=8.0,<9.0` | Tutorial 17 -- Distributed Streaming |
+| `telemetry` | `opentelemetry-api`, `opentelemetry-sdk` (both `>=1.16.0,<2.0`) | Tutorial 18 -- Observability |
 
 Combine them in one command:
 

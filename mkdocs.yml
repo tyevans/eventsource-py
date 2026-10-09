@@ -69,14 +69,27 @@ nav:
       - Installation: installation.md
   - Tutorials:
       - tutorials/index.md
+      - "1. Getting Started": tutorials/01-getting-started.md
       - "2. First Event": tutorials/02-first-event.md
       - "3. First Aggregate": tutorials/03-first-aggregate.md
+      - "4. Repository": tutorials/04-repository.md
+      - "5. Optimistic Concurrency": tutorials/05-optimistic-concurrency.md
       - "6. Projections": tutorials/06-projections.md
       - "7. Event Bus": tutorials/07-event-bus.md
       - "8. Testing": tutorials/08-testing.md
+      - "9. Dead Letter Queue": tutorials/09-dlq.md
+      - "10. Checkpoints & Lag": tutorials/10-checkpoints.md
       - "11. PostgreSQL": tutorials/11-postgresql.md
+      - "12. SQLite": tutorials/12-sqlite.md
+      - "13. Advisory Locks": tutorials/13-locking.md
       - "14. Snapshotting": tutorials/14-snapshotting.md
+      - "15. Outbox Pattern": tutorials/15-outbox.md
       - "16. Multi-Tenancy": tutorials/16-multi-tenancy.md
+      - "17. Distributed Streaming": tutorials/17-distributed-streaming.md
+      - "18. Observability": tutorials/18-observability.md
+      - "19. Sagas & Process Managers": tutorials/19-sagas.md
+      - "20. Event Upcasting": tutorials/20-upcasting.md
+      - "21. Live Migration": tutorials/21-live-migration.md
   - Guides:
       - guides/index.md
       - Database Schema: guides/database-schema.md

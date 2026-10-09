@@ -465,4 +465,10 @@ class PostgreSQLLockManager:
         return len(self._held_locks)
 
 
-__all__ = ["PostgreSQLLockManager"]
+# Alias for backwards compatibility and explicit naming
+PostgreSQLAdvisoryLock = PostgreSQLLockManager
+
+__all__ = [
+    "PostgreSQLAdvisoryLock",
+    "PostgreSQLLockManager",
+]
