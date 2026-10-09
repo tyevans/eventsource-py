@@ -14,6 +14,8 @@ scenarios:
 - Additive column reconciliation executes on read models without data loss
 - Polymorphic JSON serializer derives wire names without type drift
 - Schema drift rejects breaking column deletions or datatype alterations
+- 64-bit integer boundary validation prevents out-of-range serialization
+- Non-string dictionary keys serialize cleanly without manual string casting
 ---
 
 # US-0017: Reconcile Read Model Schema Variations and Serialize Polymorphic Events
@@ -48,6 +50,22 @@ Given a proposed read model schema modification that attempts to drop columns or
 When the additive reconciliation engine audits the migration plan
 Then the operation is rejected with an informative schema conflict exception
 And destructive operations are prevented in automated pipelines.
+```
+
+### Scenario 4: 64-bit integer boundary validation prevents out-of-range serialization
+```gherkin
+Given an event payload containing an integer exceeding 64-bit signed/unsigned range
+When the event payload is serialized via json_dumps
+Then a ValueError is raised specifying that integer exceeds 64-bit range
+And out-of-range integer corruption is prevented at the storage perimeter.
+```
+
+### Scenario 5: Non-string dictionary keys serialize cleanly without manual string casting
+```gherkin
+Given an event payload containing dictionary keys typed as UUID or integer
+When serialized to JSON via json_dumps
+Then the payload serializes without TypeError
+And round-trip deserialization preserves key fidelity.
 ```
 
 ## Implementation Status & Verification

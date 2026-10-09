@@ -73,3 +73,9 @@ governing_adrs:
 - [`US-0003`](../../user_stories/accepted/us-0003-publish-and-subscribe-to-events-via-message-buses.md): Publish and Subscribe to Events via Message Buses
 - [`US-0009`](../../user_stories/accepted/us-0009-coordinate-subscriptions-and-delivery-guarantees.md): Coordinate Subscriptions with Delivery Guarantees and DLQ Error Isolation
 - [`US-0011`](../../user_stories/accepted/us-0011-distributed-locking-resilient-lifecycle.md): Coordinate Distributed Advisory Locks and Resilient Connection Lifecycle
+- [`US-0014`](../../user_stories/accepted/us-0014-stage-and-publish-events-via-transactional-outbox.md): Stage and Publish Events via Transactional Outbox
+- [`US-0022`](../../user_stories/accepted/us-0022-inspect-replay-and-purge-broker-dead-letter-queues.md): Inspect, Replay, and Purge Broker Dead-Letter Queues with Loop Protection
+- [`US-0023`](../../user_stories/accepted/us-0023-dynamically-pause-resume-and-drain-subscriptions.md): Dynamically Pause, Resume, and Drain Subscriptions During Operational Interventions
+- [`US-0024`](../../user_stories/accepted/us-0024-monitor-subscription-health-via-composite-checks-and-probes.md): Monitor Subscription Health via Composite Checks and Kubernetes Probes
+- [`US-0025`](../../user_stories/accepted/us-0025-handle-kafka-consumer-group-rebalances-and-partition-lag.md): Handle Kafka Consumer Group Rebalances and Partition Lag Monitoring
+- [`US-0026`](../../user_stories/accepted/us-0026-coordinate-peer-health-and-redistribute-subscriptions.md): Coordinate Peer Health and Redistribute Subscriptions on Instance Eviction
