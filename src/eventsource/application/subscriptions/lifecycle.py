@@ -1,20 +1,10 @@
 """
 Subscription lifecycle management for coordinating start/stop operations.
 
-The SubscriptionLifecycleManager follows the Single Responsibility Principle
-by handling only subscription lifecycle operations:
+Handles:
 - Starting individual and multiple subscriptions
 - Stopping individual and multiple subscriptions
 - Coordinating transition from catch-up to live events
-
-Example:
-    >>> lifecycle = SubscriptionLifecycleManager(
-    ...     event_store=event_store,
-    ...     event_bus=event_bus,
-    ...     checkpoint_repo=checkpoint_repo,
-    ... )
-    >>> results = await lifecycle.start_all(subscriptions)
-    >>> await lifecycle.stop_all()
 """
 
 import asyncio
@@ -36,12 +26,13 @@ from eventsource.observability.attributes import (
     ATTR_POSITION,
     ATTR_SUBSCRIPTION_NAME,
 )
-from eventsource.ports.exceptions import SubscriptionError
+from eventsource.ports.exceptions import SubscriptionError, TransitionError
 
 if TYPE_CHECKING:
     from eventsource.application.subscriptions.retry import CircuitBreaker
     from eventsource.ports.bus import SubscribableEventBus
     from eventsource.ports.checkpoints import SubscriptionPositions
+    from eventsource.ports.coordination import LeaderElector
     from eventsource.ports.store import GlobalEventFeed
 
 logger = logging.getLogger(__name__)
@@ -72,29 +63,42 @@ class SubscriptionLifecycleManager:
         checkpoint_repo: "SubscriptionPositions",
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
+        leader_elector: "LeaderElector | None" = None,
     ) -> None:
-        """
-        Initialize the lifecycle manager.
-
-        Args:
-            event_store: Event store for historical events
-            event_bus: Event bus for live events
-            checkpoint_repo: Checkpoint repository for position tracking
-            tracer: Optional custom Tracer instance. If not provided, one is
-                   created based on enable_tracing setting.
-            enable_tracing: Whether to enable OpenTelemetry tracing.
-                          Ignored if tracer is explicitly provided.
-        """
-        # Composition-based tracing (replaces TracingMixin)
+        """Initialize the lifecycle manager."""
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
 
         self.event_store = event_store
         self.event_bus = event_bus
         self.checkpoint_repo = checkpoint_repo
+        self.leader_elector = leader_elector
 
         self._coordinators: dict[str, TransitionCoordinator] = {}
         self._start_resolver = StartFromResolver(event_store, checkpoint_repo)
+
+    async def verify_leadership_lease(self) -> bool:
+        """
+        Verify leadership lease renewal immediately prior to executing cluster transitions.
+
+        Re-verifies lease renewal directly with the elector to ensure leadership status
+        is currently held and valid, eliminating split-brain windows.
+
+        Returns:
+            True if uncoordinated or if lease renewal succeeded; False otherwise.
+        """
+        if self.leader_elector is None:
+            return True
+        try:
+            renewed = await self.leader_elector.renew()
+            return bool(renewed and self.leader_elector.is_leader)
+        except Exception as e:
+            logger.error(
+                "Leadership lease renewal failed",
+                extra={"identity": self.leader_elector.identity, "error": str(e)},
+                exc_info=True,
+            )
+            return False
 
     async def start_subscription(self, subscription: Subscription) -> None:
         """
@@ -116,6 +120,13 @@ class SubscriptionLifecycleManager:
             {ATTR_SUBSCRIPTION_NAME: name},
         ) as span:
             try:
+                # Leadership lease verification guard: ensure lease is renewed and valid
+                if self.leader_elector is not None and not await self.verify_leadership_lease():
+                    raise TransitionError(
+                        f"Instance '{self.leader_elector.identity}' does not hold a valid leadership lease; "
+                        f"unauthorized cluster transition blocked for subscription '{name}'"
+                    )
+
                 # Resolve starting position
                 start_position = await self._start_resolver.resolve(subscription)
                 subscription.last_processed_position = start_position
@@ -251,21 +262,13 @@ class SubscriptionLifecycleManager:
         # Log summary
         succeeded = sum(1 for r in results.values() if r is None)
         failed = sum(1 for r in results.values() if r is not None)
-
         if failed > 0:
             logger.warning(
                 "Some subscriptions failed to start",
-                extra={
-                    "succeeded": succeeded,
-                    "failed": failed,
-                    "failures": {k: str(v) for k, v in results.items() if v is not None},
-                },
+                extra={"succeeded": succeeded, "failed": failed},
             )
         else:
-            logger.info(
-                "All subscriptions started successfully",
-                extra={"count": succeeded},
-            )
+            logger.info("All subscriptions started successfully", extra={"count": succeeded})
 
         return results
 
@@ -353,48 +356,12 @@ class SubscriptionLifecycleManager:
         return self._coordinators.get(name)
 
     def get_handler_circuit_breaker(self, name: str) -> "CircuitBreaker | None":
-        """
-        Get the handler circuit breaker of whichever runner is currently
-        active for a subscription.
-
-        Guards the subscriber's `handle()`/`handle_batch()` calls -- see
-        `CatchUpRunner.handler_circuit_breaker` for the full reasoning
-        behind keeping it distinct from `get_infra_circuit_breaker`. A thin
-        lookup over `get_coordinator()` -- passed to `HealthCheckProvider`
-        as a live accessor rather than a value captured once, because the
-        underlying `CircuitBreaker` instance changes when a subscription
-        transitions from catch-up to live (each runner constructs its own).
-        Looking it up fresh on every health check means the health checker
-        always reports the breaker actually guarding delivery right now,
-        not a stale one from a runner that no longer exists.
-
-        Args:
-            name: Subscription name
-
-        Returns:
-            The active runner's handler CircuitBreaker, or None if no
-            coordinator exists for this subscription yet, or if
-            `circuit_breaker_enabled=False` left both runners without one.
-        """
+        """Get active runner's handler CircuitBreaker for subscription, if any."""
         coordinator = self.get_coordinator(name)
         return coordinator.handler_circuit_breaker if coordinator else None
 
     def get_infra_circuit_breaker(self, name: str) -> "CircuitBreaker | None":
-        """
-        Get the infrastructure circuit breaker of whichever runner is
-        currently active for a subscription.
-
-        Guards read-batch/checkpoint-save. See `get_handler_circuit_breaker`
-        for why this is a separate lookup rather than one shared breaker.
-
-        Args:
-            name: Subscription name
-
-        Returns:
-            The active runner's infra CircuitBreaker, or None if no
-            coordinator exists for this subscription yet, or if
-            `circuit_breaker_enabled=False` left both runners without one.
-        """
+        """Get active runner's infra CircuitBreaker for subscription, if any."""
         coordinator = self.get_coordinator(name)
         return coordinator.infra_circuit_breaker if coordinator else None
 

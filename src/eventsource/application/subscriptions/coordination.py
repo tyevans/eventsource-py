@@ -22,41 +22,6 @@ to other instances so they can prepare to take over its work.
 - ShutdownNotification: Broadcast when an instance begins shutdown
 - HeartbeatMessage: Periodic health broadcasts for peer monitoring
 - WorkRedistributionCoordinator: Coordinates shutdown signaling
-
-Example:
-    >>> from eventsource.application.subscriptions.coordination import (
-    ...     LeaderElector,
-    ...     LeaderChangeCallback,
-    ... )
-    >>>
-    >>> class MyLeaderElector:
-    ...     # Implementation satisfying LeaderElector protocol
-    ...     pass
-    >>>
-    >>> async def on_leader_change(is_leader: bool) -> None:
-    ...     if is_leader:
-    ...         print("Became leader")
-    ...     else:
-    ...         print("Lost leadership")
-    >>>
-    >>> elector = MyLeaderElector(identity="instance-1")
-    >>> elector.on_leader_change(on_leader_change)
-    >>> await elector.try_acquire()
-
-Work Redistribution Example:
-    >>> from eventsource.application.subscriptions.coordination import (
-    ...     WorkRedistributionCoordinator,
-    ...     ShutdownNotification,
-    ...     ShutdownIntent,
-    ... )
-    >>>
-    >>> coordinator = WorkRedistributionCoordinator(instance_id="worker-1")
-    >>>
-    >>> async def on_peer_shutdown(notification: ShutdownNotification) -> None:
-    ...     print(f"Peer {notification.instance_id} is shutting down")
-    ...     # Prepare to claim orphaned work
-    >>>
-    >>> coordinator.on_peer_shutdown(on_peer_shutdown)
 """
 
 import asyncio
@@ -68,6 +33,7 @@ from enum import Enum
 from typing import Any
 
 from eventsource.ports.coordination import LeaderChangeCallback, LeaderElector
+from eventsource.ports.exceptions import TransitionError
 
 logger = logging.getLogger(__name__)
 
@@ -458,33 +424,11 @@ class WorkRedistributionCoordinator:
 
     Example:
         >>> coordinator = WorkRedistributionCoordinator(instance_id="worker-1")
-        >>>
-        >>> # Register for peer shutdown notifications
-        >>> async def on_peer_shutdown(notification: ShutdownNotification) -> None:
-        ...     print(f"Peer {notification.instance_id} is shutting down")
-        ...     print(f"Subscriptions to claim: {notification.subscriptions}")
-        ...
-        >>> coordinator.on_peer_shutdown(on_peer_shutdown)
-        >>>
-        >>> # Create shutdown notification for this instance
         >>> notification = coordinator.create_shutdown_notification(
         ...     intent=ShutdownIntent.GRACEFUL,
-        ...     subscriptions=["order-projection", "inventory-sync"],
-        ...     in_flight_count=15,
-        ...     drain_timeout_seconds=30.0,
+        ...     subscriptions=["order-projection"],
         ... )
         >>> # Publish notification to message bus...
-
-    Integration with LeaderElector:
-        >>> from eventsource.adapters.memory.coordination import InMemoryLeaderElector
-        >>> elector = InMemoryLeaderElector(_identity="worker-1")
-        >>> coordinator = WorkRedistributionCoordinator(
-        ...     instance_id="worker-1",
-        ...     leader_elector=elector,
-        ... )
-        >>>
-        >>> # On shutdown, leadership will be released automatically
-        >>> notification = coordinator.create_shutdown_notification(...)
 
     Attributes:
         instance_id: Unique identifier for this instance
@@ -842,15 +786,7 @@ class WorkRedistributionCoordinator:
         self._peer_shutdown_callbacks.append(callback)
 
     def remove_peer_shutdown_callback(self, callback: PeerShutdownCallback) -> bool:
-        """
-        Remove a peer shutdown callback.
-
-        Args:
-            callback: The callback to remove
-
-        Returns:
-            True if removed, False if not found
-        """
+        """Remove a peer shutdown callback; returns True if removed, False if not found."""
         try:
             self._peer_shutdown_callbacks.remove(callback)
             return True
@@ -867,15 +803,7 @@ class WorkRedistributionCoordinator:
         self._heartbeat_callbacks.append(callback)
 
     def remove_heartbeat_callback(self, callback: HeartbeatCallback) -> bool:
-        """
-        Remove a heartbeat callback.
-
-        Args:
-            callback: The callback to remove
-
-        Returns:
-            True if removed, False if not found
-        """
+        """Remove a heartbeat callback; returns True if removed, False if not found."""
         try:
             self._heartbeat_callbacks.remove(callback)
             return True
@@ -895,15 +823,7 @@ class WorkRedistributionCoordinator:
         self._peer_timeout_callbacks.append(callback)
 
     def remove_peer_timeout_callback(self, callback: PeerTimeoutCallback) -> bool:
-        """
-        Remove a peer timeout callback.
-
-        Args:
-            callback: The callback to remove
-
-        Returns:
-            True if removed, False if not found
-        """
+        """Remove a peer timeout callback; returns True if removed, False if not found."""
         try:
             self._peer_timeout_callbacks.remove(callback)
             return True
@@ -923,34 +843,41 @@ class WorkRedistributionCoordinator:
         self._work_assignment_callbacks.append(callback)
 
     def remove_work_assignment_callback(self, callback: WorkAssignmentCallback) -> bool:
-        """
-        Remove a work assignment callback.
-
-        Args:
-            callback: The callback to remove
-
-        Returns:
-            True if removed, False if not found
-        """
+        """Remove a work assignment callback; returns True if removed, False if not found."""
         try:
             self._work_assignment_callbacks.remove(callback)
             return True
         except ValueError:
             return False
 
+    async def verify_leadership_lease(self) -> bool:
+        """
+        Verify leadership lease renewal immediately prior to acting.
+
+        Returns:
+            True if leadership lease is valid and renewed, False otherwise.
+        """
+        if self.leader_elector is None:
+            return False
+        return await verify_leadership_lease(self.leader_elector)
+
     async def initiate_leadership_handoff(self) -> bool:
         """
         Initiate leadership handoff if this instance is the leader.
 
-        Should be called before shutdown if using leader election.
+        Re-verifies leadership lease renewal before performing release.
 
         Returns:
-            True if leadership was released, False if not leader
+            True if leadership was released, False if not leader or lease expired
         """
         if self.leader_elector is None:
             return False
 
-        if not self.leader_elector.is_leader:
+        if not await self.verify_leadership_lease():
+            logger.warning(
+                "Leadership lease expired or not held; handoff skipped",
+                extra={"instance_id": self.instance_id},
+            )
             return False
 
         logger.info(
@@ -960,6 +887,68 @@ class WorkRedistributionCoordinator:
 
         await self.leader_elector.release()
         return True
+
+    async def create_work_assignment(
+        self,
+        target_instance_id: str,
+        subscriptions: list[str] | tuple[str, ...],
+        priority: int = 0,
+    ) -> WorkAssignment:
+        """
+        Create a work assignment for a peer instance.
+
+        Re-verifies leadership lease renewal immediately before issuing work assignment
+        to eliminate split-brain windows.
+
+        Args:
+            target_instance_id: Instance that should handle this work
+            subscriptions: Subscriptions to assign
+            priority: Assignment priority
+
+        Returns:
+            WorkAssignment ready for publishing
+
+        Raises:
+            TransitionError: If instance does not hold a valid leadership lease
+        """
+        if self.leader_elector is not None and not await self.verify_leadership_lease():
+            raise TransitionError(
+                f"Instance '{self.instance_id}' does not hold an active leadership lease; "
+                "cannot issue work assignment"
+            )
+
+        return WorkAssignment(
+            target_instance_id=target_instance_id,
+            subscriptions=tuple(subscriptions),
+            source_instance_id=self.instance_id,
+            assigned_at=datetime.now(UTC),
+            priority=priority,
+        )
+
+
+async def verify_leadership_lease(elector: LeaderElector | None) -> bool:
+    """
+    Verify leadership lease renewal immediately prior to executing cluster operations.
+
+    Args:
+        elector: The leader elector holding the lease, or None if uncoordinated.
+
+    Returns:
+        True if uncoordinated or if lease is successfully renewed and held;
+        False if lease renewal failed or leadership is lost.
+    """
+    if elector is None:
+        return True
+    try:
+        renewed = await elector.renew()
+        return bool(renewed and elector.is_leader)
+    except Exception as e:
+        logger.error(
+            "Leadership lease renewal failed",
+            extra={"identity": elector.identity, "error": str(e)},
+            exc_info=True,
+        )
+        return False
 
 
 __all__ = [
@@ -984,6 +973,7 @@ __all__ = [
     # InMemoryLeaderElector/SharedLeaderState now live in
     # eventsource.adapters.memory.coordination)
     "LeaderElector",
+    "verify_leadership_lease",
     # Work redistribution
     "PeerInfo",
     "WorkRedistributionCoordinator",
