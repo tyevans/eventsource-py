@@ -15,7 +15,15 @@ MIGRATION_DIR = (
 # module -> the migration-package modules it is allowed to import from
 ALLOWED: dict[str, set[str]] = {
     "error_classification": set(),
-    "exceptions": {"error_classification"},
+    "exceptions_base": {"error_classification"},
+    "exceptions_cutover": {"error_classification", "exceptions_base"},
+    "exceptions_operations": {"error_classification", "exceptions_base"},
+    "exceptions": {
+        "error_classification",
+        "exceptions_base",
+        "exceptions_cutover",
+        "exceptions_operations",
+    },
     "circuit_breaker": {"error_classification", "exceptions"},
     "error_handling": {"error_classification", "exceptions", "circuit_breaker"},
 }
