@@ -132,7 +132,6 @@ grandfathered = [
   "src/eventsource/application/subscriptions/subscription.py",
   "src/eventsource/application/subscriptions/transition.py",
   "tests/integration/e2e/test_full_flow.py",
-  "tests/integration/readmodels/test_enhanced_features.py",
   "tests/integration/readmodels/test_projection.py",
   "tests/integration/readmodels/test_repositories.py",
   "tests/integration/repositories/test_dlq.py",
