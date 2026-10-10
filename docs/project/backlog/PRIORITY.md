@@ -31,7 +31,7 @@ Strict sequential order of execution for engineering tasks.
 - **TASK-REFACTOR-eventsource-adapters-sqlite-readmodels (Complete)**: [`TASK-REFACTOR-eventsource-adapters-sqlite-readmodels`](complete/TASK-REFACTOR-eventsource-adapters-sqlite-readmodels.md)
 - **TASK-REFACTOR-eventsource-application-aggregates-repository (Complete)**: [`TASK-REFACTOR-eventsource-application-aggregates-repository`](complete/TASK-REFACTOR-eventsource-application-aggregates-repository.md)
 - **TASK-REFACTOR-eventsource-application-migration-bulk_copier (Complete)**: [`TASK-REFACTOR-eventsource-application-migration-bulk_copier`](complete/TASK-REFACTOR-eventsource-application-migration-bulk_copier.md)
-- **TASK-REFACTOR-eventsource-application-migration-consistency (Refined)**: [`TASK-REFACTOR-eventsource-application-migration-consistency`](refined/TASK-REFACTOR-eventsource-application-migration-consistency.md)
+- **TASK-REFACTOR-eventsource-application-migration-consistency (Complete)**: [`TASK-REFACTOR-eventsource-application-migration-consistency`](complete/TASK-REFACTOR-eventsource-application-migration-consistency.md)
 - **TASK-REFACTOR-eventsource-application-migration-coordinator (Refined)**: [`TASK-REFACTOR-eventsource-application-migration-coordinator`](refined/TASK-REFACTOR-eventsource-application-migration-coordinator.md)
 - **TASK-REFACTOR-eventsource-application-migration-cutover (Refined)**: [`TASK-REFACTOR-eventsource-application-migration-cutover`](refined/TASK-REFACTOR-eventsource-application-migration-cutover.md)
 - **TASK-REFACTOR-eventsource-application-migration-dual_write (Refined)**: [`TASK-REFACTOR-eventsource-application-migration-dual_write`](refined/TASK-REFACTOR-eventsource-application-migration-dual_write.md)
