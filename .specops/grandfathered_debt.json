@@ -37,7 +37,6 @@
     "src/eventsource/application/subscriptions/coordination.py": 990,
     "src/eventsource/application/subscriptions/error_handling.py": 1105,
     "src/eventsource/application/subscriptions/health.py": 860,
-    "tests/integration/conftest.py": 761,
     "tests/integration/e2e/test_full_flow.py": 540,
     "tests/integration/migrations/test_migration_schema_postgresql.py": 830,
     "tests/integration/observability/test_distributed_tracing.py": 634,
