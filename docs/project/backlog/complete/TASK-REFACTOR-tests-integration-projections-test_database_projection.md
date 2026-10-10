@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-integration-projections-test_database_projection
 title: Refactor and Decompose Legacy File test_database_projection.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
