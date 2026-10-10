@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-eventsource-__init__
 title: Refactor and Decompose Legacy File __init__.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
