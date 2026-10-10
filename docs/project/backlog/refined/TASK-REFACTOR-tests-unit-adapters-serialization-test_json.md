@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-unit-adapters-serialization-test_json
 title: Refactor and Decompose Legacy File test_json.py
-status: Proposed
+status: Refined
 created: 2026-09-29
 governing_adrs:
   - ADR-0002
