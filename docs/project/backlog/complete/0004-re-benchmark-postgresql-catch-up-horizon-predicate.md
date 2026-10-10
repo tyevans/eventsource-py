@@ -1,8 +1,7 @@
 ---
 id: '0004'
 title: Re-Benchmark PostgreSQL Catch-Up Horizon Predicate at Scale
-status: Refined
-created: 2026-10-07
+status: Complete
 governing_adrs:
 - ADR-0007
 - ADR-0119
