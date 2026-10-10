@@ -21,6 +21,11 @@ from eventsource.adapters.kafka.consumer_message import KafkaConsumerMessageMixi
 from eventsource.adapters.kafka.consumer_retry import KafkaConsumerRetryMixin
 from eventsource.ports.exceptions import EventBusConnectionError
 
+try:
+    from opentelemetry.propagate import extract
+except ImportError:
+    extract = None  # type: ignore[assignment]
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
