@@ -36,7 +36,7 @@ Strict sequential order of execution for engineering tasks.
 - **TASK-REFACTOR-eventsource-application-migration-cutover (Complete)**: [`TASK-REFACTOR-eventsource-application-migration-cutover`](complete/TASK-REFACTOR-eventsource-application-migration-cutover.md)
 - **TASK-REFACTOR-eventsource-application-migration-dual_write (Complete)**: [`TASK-REFACTOR-eventsource-application-migration-dual_write`](complete/TASK-REFACTOR-eventsource-application-migration-dual_write.md)
 - **TASK-REFACTOR-eventsource-application-migration-exceptions (Complete)**: [`TASK-REFACTOR-eventsource-application-migration-exceptions`](complete/TASK-REFACTOR-eventsource-application-migration-exceptions.md)
-- **TASK-REFACTOR-eventsource-application-migration-metrics (Refined)**: [`TASK-REFACTOR-eventsource-application-migration-metrics`](refined/TASK-REFACTOR-eventsource-application-migration-metrics.md)
+- **TASK-REFACTOR-eventsource-application-migration-metrics (Complete)**: [`TASK-REFACTOR-eventsource-application-migration-metrics`](complete/TASK-REFACTOR-eventsource-application-migration-metrics.md)
 - **TASK-REFACTOR-eventsource-application-migration-position_mapper (Refined)**: [`TASK-REFACTOR-eventsource-application-migration-position_mapper`](refined/TASK-REFACTOR-eventsource-application-migration-position_mapper.md)
 - **TASK-REFACTOR-eventsource-application-migration-router (Refined)**: [`TASK-REFACTOR-eventsource-application-migration-router`](refined/TASK-REFACTOR-eventsource-application-migration-router.md)
 - **TASK-REFACTOR-eventsource-application-migration-status_streamer (Refined)**: [`TASK-REFACTOR-eventsource-application-migration-status_streamer`](refined/TASK-REFACTOR-eventsource-application-migration-status_streamer.md)
