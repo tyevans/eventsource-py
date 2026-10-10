@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-eventsource-application-migration-subscription_migrator
 title: Refactor and Decompose Legacy File subscription_migrator.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
