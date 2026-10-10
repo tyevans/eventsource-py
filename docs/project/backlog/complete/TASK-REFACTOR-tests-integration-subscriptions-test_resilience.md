@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-integration-subscriptions-test_resilience
 title: Refactor and Decompose Legacy File test_resilience.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
