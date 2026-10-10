@@ -12,13 +12,16 @@ This module provides:
 """
 
 import logging
-from dataclasses import dataclass
-from enum import Enum
 from typing import TYPE_CHECKING
 
+from eventsource.application.subscriptions.resolver import StartFromResolver
 from eventsource.application.subscriptions.runners.catchup import CatchUpRunner
 from eventsource.application.subscriptions.runners.live import LiveRunner
 from eventsource.application.subscriptions.subscription import Subscription, render_position
+from eventsource.application.subscriptions.transition_models import (
+    TransitionPhase,
+    TransitionResult,
+)
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_BUFFER_SIZE,
@@ -41,95 +44,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class TransitionPhase(Enum):
-    """
-    Phases of the catch-up to live transition.
-
-    The transition follows this sequence:
-    1. NOT_STARTED: Initial state
-    2. INITIAL_CATCHUP: Getting watermark and preparing
-    3. LIVE_SUBSCRIBED: Live runner started in buffer mode
-    4. FINAL_CATCHUP: Catching up to watermark position
-    5. PROCESSING_BUFFER: Processing buffered live events
-    6. LIVE: Now processing live events directly
-    7. FAILED: Transition failed with error
-    """
-
-    NOT_STARTED = "not_started"
-    INITIAL_CATCHUP = "initial_catchup"
-    LIVE_SUBSCRIBED = "live_subscribed"
-    FINAL_CATCHUP = "final_catchup"
-    PROCESSING_BUFFER = "processing_buffer"
-    LIVE = "live"
-    FAILED = "failed"
-
-
-@dataclass(frozen=True)
-class TransitionResult:
-    """
-    Result of a transition operation.
-
-    Provides statistics and outcome information for the catch-up
-    to live transition.
-
-    Attributes:
-        success: True if transition completed successfully
-        catchup_events_processed: Number of events processed during catch-up
-        buffer_events_processed: Number of events processed from the global
-            feed once buffering ends (everything past the catch-up watermark)
-        final_position: Last processed global-feed position, None if nothing
-            has been processed
-        phase_reached: The phase reached when transition ended
-        error: Exception if transition failed, None otherwise
-    """
-
-    success: bool
-    catchup_events_processed: int
-    buffer_events_processed: int
-    final_position: Position | None
-    phase_reached: TransitionPhase
-    error: Exception | None = None
-
-
 class TransitionCoordinator:
-    """
-    Coordinates the transition from catch-up to live event processing.
+    """Coordinates the transition from catch-up to live event processing.
 
-    Uses a watermark approach to ensure no events are lost:
+    Uses a watermark approach to ensure gap-free delivery:
     1. Get current max position (watermark)
-    2. Subscribe to live events (buffering)
+    2. Start live runner in buffer mode
     3. Catch up to watermark
-    4. Process buffered events (filtering duplicates)
-    5. Switch to live mode
-
-    This ensures gap-free event delivery during the transition from
-    reading historical events to receiving real-time events.
-
-    Timeline example:
-        t0: Get watermark (max_position = 1000)
-        t1: Subscribe to live events (buffering enabled)
-        t2: Events 1001, 1002 published (go to buffer)
-        t3: Catch up reads 1-1000 from store
-        t4: Events 1003, 1004 published (go to buffer)
-        t5: Catch up reads 1001-1004 from store (overlap with buffer)
-        t6: Caught up to watermark (1000), switch to buffer processing
-        t7: Process buffer: skip 1001-1004 (duplicates), continue with 1005+
-        t8: Buffer empty, switch to live mode
-
-    Attributes:
-        event_store: Event store for catch-up and position lookup
-        event_bus: Event bus for live subscription
-        checkpoint_repo: Checkpoint repository for persistence
-        subscription: The subscription being transitioned
-
-    Example:
-        >>> coordinator = TransitionCoordinator(
-        ...     event_store, event_bus, checkpoint_repo, subscription
-        ... )
-        >>> result = await coordinator.execute()
-        >>> if result.success:
-        ...     print("Now processing live events")
-        ...     live_runner = coordinator.live_runner
+    4. Process buffered events from feed
+    5. Switch to direct live mode
     """
 
     def __init__(
@@ -388,13 +311,19 @@ class TransitionCoordinator:
         """
         Clean up resources after failure.
 
-        Stops any running runners to release resources.
+        Stops any running runners to release resources, clears buffered
+        events, and reconciles subscription lag to eliminate phantom telemetry.
         """
         if self._catchup_runner and self._catchup_runner.is_running:
             await self._catchup_runner.stop()
 
-        if self._live_runner and self._live_runner.is_running:
-            await self._live_runner.stop()
+        if self._live_runner is not None:
+            if self._live_runner.is_running:
+                await self._live_runner.stop()
+            else:
+                await self._live_runner.clear_buffer()
+
+        await self.subscription.reconcile_lag(0)
 
     async def stop(self) -> None:
         """
@@ -528,86 +457,9 @@ class TransitionCoordinator:
         return None
 
 
-class StartFromResolver:
-    """
-    Resolves the start position based on configuration.
-
-    Handles different start_from values:
-    - "beginning": Start from the start of the feed (None)
-    - "end": Start from the current feed position (live-only)
-    - "checkpoint": Resume from last checkpoint
-    - Position: Start from an explicit position
-
-    Example:
-        >>> resolver = StartFromResolver(event_store, checkpoint_repo)
-        >>> position = await resolver.resolve(subscription)
-        >>> print(f"Starting from position {position}")
-    """
-
-    def __init__(
-        self,
-        event_store: "GlobalEventFeed",
-        checkpoint_repo: "SubscriptionPositions",
-    ) -> None:
-        """
-        Initialize the start position resolver.
-
-        Args:
-            event_store: Event store for getting max position
-            checkpoint_repo: Checkpoint repository for reading checkpoints
-        """
-        self.event_store = event_store
-        self.checkpoint_repo = checkpoint_repo
-
-    async def resolve(
-        self,
-        subscription: Subscription,
-    ) -> Position | None:
-        """
-        Resolve the starting position for a subscription.
-
-        Interprets the subscription's start_from configuration and
-        returns the appropriate starting position.
-
-        Args:
-            subscription: The subscription to resolve position for
-
-        Returns:
-            Starting position, or None to read from the start of the feed
-            (which is also the result when "checkpoint" finds none)
-
-        Raises:
-            ValueError: If start_from has an unknown value
-        """
-        start_from = subscription.config.start_from
-
-        if isinstance(start_from, Position):
-            # Explicit position
-            return start_from
-
-        if start_from == "beginning":
-            return None
-
-        if start_from == "end":
-            return await self.event_store.current_position()
-
-        if start_from == "checkpoint":
-            position = await self.checkpoint_repo.get_position(subscription.name)
-            if position is not None:
-                return position
-            # No checkpoint found, start from beginning
-            logger.info(
-                "No checkpoint found, starting from beginning",
-                extra={"subscription": subscription.name},
-            )
-            return None
-
-        raise ValueError(f"Unknown start_from value: {start_from}")
-
-
 __all__ = [
+    "StartFromResolver",
+    "TransitionCoordinator",
     "TransitionPhase",
     "TransitionResult",
-    "TransitionCoordinator",
-    "StartFromResolver",
 ]
