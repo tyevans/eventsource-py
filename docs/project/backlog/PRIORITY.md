@@ -14,7 +14,7 @@ Strict sequential order of execution for engineering tasks.
 - **TASK-0010 (Complete)**: [`0010-transactional-outbox-for-sqlite-adapter`](complete/0010-transactional-outbox-for-sqlite-adapter.md)
 - **TASK-REFACTOR-eventsource-__init__ (Complete)**: [`TASK-REFACTOR-eventsource-__init__`](complete/TASK-REFACTOR-eventsource-__init__.md)
 - **TASK-REFACTOR-eventsource-adapters-kafka-bus (Complete)**: [`TASK-REFACTOR-eventsource-adapters-kafka-bus`](complete/TASK-REFACTOR-eventsource-adapters-kafka-bus.md)
-- **TASK-REFACTOR-eventsource-adapters-kafka-consumer (Refined)**: [`TASK-REFACTOR-eventsource-adapters-kafka-consumer`](refined/TASK-REFACTOR-eventsource-adapters-kafka-consumer.md)
+- **TASK-REFACTOR-eventsource-adapters-kafka-consumer (Complete)**: [`TASK-REFACTOR-eventsource-adapters-kafka-consumer`](complete/TASK-REFACTOR-eventsource-adapters-kafka-consumer.md)
 - **TASK-REFACTOR-eventsource-adapters-memory-readmodels (Refined)**: [`TASK-REFACTOR-eventsource-adapters-memory-readmodels`](refined/TASK-REFACTOR-eventsource-adapters-memory-readmodels.md)
 - **TASK-REFACTOR-eventsource-adapters-postgresql-readmodels (Refined)**: [`TASK-REFACTOR-eventsource-adapters-postgresql-readmodels`](refined/TASK-REFACTOR-eventsource-adapters-postgresql-readmodels.md)
 - **TASK-REFACTOR-eventsource-adapters-postgresql-store (Refined)**: [`TASK-REFACTOR-eventsource-adapters-postgresql-store`](refined/TASK-REFACTOR-eventsource-adapters-postgresql-store.md)
