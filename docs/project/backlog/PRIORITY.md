@@ -26,7 +26,7 @@ Strict sequential order of execution for engineering tasks.
 - **TASK-REFACTOR-eventsource-adapters-redis-bus (Complete)**: [`TASK-REFACTOR-eventsource-adapters-redis-bus`](complete/TASK-REFACTOR-eventsource-adapters-redis-bus.md)
 - **TASK-REFACTOR-eventsource-adapters-sql-migration-migration (Complete)**: [`TASK-REFACTOR-eventsource-adapters-sql-migration-migration`](complete/TASK-REFACTOR-eventsource-adapters-sql-migration-migration.md)
 - **TASK-REFACTOR-eventsource-adapters-sql-migration-position_mapping (Complete)**: [`TASK-REFACTOR-eventsource-adapters-sql-migration-position_mapping`](complete/TASK-REFACTOR-eventsource-adapters-sql-migration-position_mapping.md)
-- **TASK-REFACTOR-eventsource-adapters-sql-migration-routing (Refined)**: [`TASK-REFACTOR-eventsource-adapters-sql-migration-routing`](refined/TASK-REFACTOR-eventsource-adapters-sql-migration-routing.md)
+- **TASK-REFACTOR-eventsource-adapters-sql-migration-routing (Complete)**: [`TASK-REFACTOR-eventsource-adapters-sql-migration-routing`](complete/TASK-REFACTOR-eventsource-adapters-sql-migration-routing.md)
 - **TASK-REFACTOR-eventsource-adapters-sql-readmodel_schema (Refined)**: [`TASK-REFACTOR-eventsource-adapters-sql-readmodel_schema`](refined/TASK-REFACTOR-eventsource-adapters-sql-readmodel_schema.md)
 - **TASK-REFACTOR-eventsource-adapters-sqlite-readmodels (Refined)**: [`TASK-REFACTOR-eventsource-adapters-sqlite-readmodels`](refined/TASK-REFACTOR-eventsource-adapters-sqlite-readmodels.md)
 - **TASK-REFACTOR-eventsource-application-aggregates-repository (Refined)**: [`TASK-REFACTOR-eventsource-application-aggregates-repository`](refined/TASK-REFACTOR-eventsource-application-aggregates-repository.md)
