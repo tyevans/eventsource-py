@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-eventsource-application-migration-bulk_copier
 title: Refactor and Decompose Legacy File bulk_copier.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
