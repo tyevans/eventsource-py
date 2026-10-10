@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-integration-readmodels-test_enhanced_features
 title: Refactor and Decompose Legacy File test_enhanced_features.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
