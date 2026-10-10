@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-eventsource-application-subscriptions-shutdown
 title: Refactor and Decompose Legacy File shutdown.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
