@@ -1,12 +1,11 @@
 ---
 id: REFACTOR-tests-integration-observability-test_tracing_integration
 title: Refactor and Decompose Legacy File test_tracing_integration.py
-status: Proposed
-created: 2026-09-29
+status: Refined
 governing_adrs:
-  - ADR-0002
+- ADR-0002
 governing_stories:
-  - US-0012
+- US-0012
 target_bc: core
 ---
 
