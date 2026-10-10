@@ -68,7 +68,7 @@ Strict sequential order of execution for engineering tasks.
 - **TASK-REFACTOR-tests-conftest (Refined)**: [`TASK-REFACTOR-tests-conftest`](refined/TASK-REFACTOR-tests-conftest.md)
 - **TASK-REFACTOR-tests-integration-bus-test_kafka (Refined)**: [`TASK-REFACTOR-tests-integration-bus-test_kafka`](refined/TASK-REFACTOR-tests-integration-bus-test_kafka.md)
 - **TASK-REFACTOR-tests-integration-bus-test_rabbitmq (Refined)**: [`TASK-REFACTOR-tests-integration-bus-test_rabbitmq`](refined/TASK-REFACTOR-tests-integration-bus-test_rabbitmq.md)
-- **TASK-REFACTOR-tests-integration-bus-test_redis (Proposed)**: [`TASK-REFACTOR-tests-integration-bus-test_redis`](proposed/TASK-REFACTOR-tests-integration-bus-test_redis.md)
+- **TASK-REFACTOR-tests-integration-bus-test_redis (Refined)**: [`TASK-REFACTOR-tests-integration-bus-test_redis`](refined/TASK-REFACTOR-tests-integration-bus-test_redis.md)
 - **TASK-REFACTOR-tests-integration-conftest (Proposed)**: [`TASK-REFACTOR-tests-integration-conftest`](proposed/TASK-REFACTOR-tests-integration-conftest.md)
 - **TASK-REFACTOR-tests-integration-migrations-test_migration_schema_postgresql (Proposed)**: [`TASK-REFACTOR-tests-integration-migrations-test_migration_schema_postgresql`](proposed/TASK-REFACTOR-tests-integration-migrations-test_migration_schema_postgresql.md)
 - **TASK-REFACTOR-tests-integration-observability-test_distributed_tracing (Proposed)**: [`TASK-REFACTOR-tests-integration-observability-test_distributed_tracing`](proposed/TASK-REFACTOR-tests-integration-observability-test_distributed_tracing.md)
