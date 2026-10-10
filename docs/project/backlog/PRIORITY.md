@@ -61,7 +61,7 @@ Strict sequential order of execution for engineering tasks.
 - **TASK-REFACTOR-eventsource-domain-exceptions (Refined)**: [`TASK-REFACTOR-eventsource-domain-exceptions`](refined/TASK-REFACTOR-eventsource-domain-exceptions.md)
 - **TASK-REFACTOR-eventsource-observability-tracer (Refined)**: [`TASK-REFACTOR-eventsource-observability-tracer`](refined/TASK-REFACTOR-eventsource-observability-tracer.md)
 - **TASK-REFACTOR-eventsource-ports-migration-models (Refined)**: [`TASK-REFACTOR-eventsource-ports-migration-models`](refined/TASK-REFACTOR-eventsource-ports-migration-models.md)
-- **TASK-REFACTOR-eventsource-ports-migration-repositories (Proposed)**: [`TASK-REFACTOR-eventsource-ports-migration-repositories`](proposed/TASK-REFACTOR-eventsource-ports-migration-repositories.md)
+- **TASK-REFACTOR-eventsource-ports-migration-repositories (Refined)**: [`TASK-REFACTOR-eventsource-ports-migration-repositories`](refined/TASK-REFACTOR-eventsource-ports-migration-repositories.md)
 - **TASK-REFACTOR-examples-projection_example (Proposed)**: [`TASK-REFACTOR-examples-projection_example`](proposed/TASK-REFACTOR-examples-projection_example.md)
 - **TASK-REFACTOR-examples-subscriptions-multi_subscriber (Proposed)**: [`TASK-REFACTOR-examples-subscriptions-multi_subscriber`](proposed/TASK-REFACTOR-examples-subscriptions-multi_subscriber.md)
 - **TASK-REFACTOR-examples-subscriptions-resilient_projection (Proposed)**: [`TASK-REFACTOR-examples-subscriptions-resilient_projection`](proposed/TASK-REFACTOR-examples-subscriptions-resilient_projection.md)
