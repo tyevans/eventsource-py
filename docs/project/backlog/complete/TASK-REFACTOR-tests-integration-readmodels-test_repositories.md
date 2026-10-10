@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-integration-readmodels-test_repositories
 title: Refactor and Decompose Legacy File test_repositories.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
