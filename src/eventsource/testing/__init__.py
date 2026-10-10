@@ -38,7 +38,6 @@ Note:
 from eventsource.testing import conformance_ports
 from eventsource.testing.assertions import EventAssertions
 from eventsource.testing.bdd import (
-    DeciderScenario,
     given_events,
     then_event_count,
     then_event_published,
@@ -55,6 +54,7 @@ from eventsource.testing.conformance import EventBusConformanceSuite
 from eventsource.testing.conformance_ports import *  # noqa: F403
 from eventsource.testing.harness import InMemoryTestHarness
 from eventsource.testing.recording import RecordingEventBus
+from eventsource.testing.scenario import DeciderScenario
 
 __all__ = [
     # Core classes
