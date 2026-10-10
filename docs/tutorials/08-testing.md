@@ -247,6 +247,40 @@ for event in scenario.events:
     print(f"Produced: {event}")
 ```
 
+### Multi-aggregate scenarios in DeciderScenario
+
+`DeciderScenario` supports multi-aggregate scenarios without requiring database
+infrastructure or real event stores. Pass events with distinct `aggregate_id` values to
+`given(*events)`; each aggregate's state is evolved independently:
+
+```python
+order_1 = uuid4()
+order_2 = uuid4()
+
+scenario = (
+    DeciderScenario(Order)
+    .given(
+        OrderCreated(aggregate_id=order_1, aggregate_version=1,
+                     customer_id=uuid4(), total=Decimal("50.00")),
+        OrderPaid(aggregate_id=order_1, aggregate_version=2,
+                  amount=Decimal("50.00")),
+        OrderCreated(aggregate_id=order_2, aggregate_version=1,
+                     customer_id=uuid4(), total=Decimal("75.00")),
+    )
+)
+
+# when() routes to the aggregate identified on the command (or explicit aggregate_id=...)
+scenario.when(ShipOrder(order_id=order_1, tracking_number="TRACK-1"))
+scenario.then_events(OrderShipped)
+
+# Individual aggregate states are inspectable
+assert scenario.get_state(order_1).status == "paid"
+assert scenario.get_state(order_2).status == "created"
+```
+
+`when()` inspects the command to resolve the target aggregate ID, or you can specify
+`when(command, aggregate_id=order_1)` explicitly.
+
 `DeciderScenario` isolates pure domain logic: no repository, no store, no bus. When you
 need to test the aggregate's full lifecycle -- loading through `AggregateRepository`,
 saving, and what gets published on the bus -- move to the async path in the rest of
@@ -483,9 +517,9 @@ def order_created(order_id: UUID, **overrides) -> OrderCreated:
 ### Given: seeding history with given_events(harness, [...])
 
 `given_events` groups the events you hand it by `(aggregate_id, aggregate_type)` and
-appends each group to `harness.event_store` with `expected_version=0` -- i.e. it assumes
-every aggregate is fresh. It is `async`, and it returns immediately if the list is empty.
-It writes to the *store*, not the bus, so seeded history never pollutes
+appends each group to `harness.event_store`. It supports multi-aggregate setup in a single
+call as well as across sequential calls. It is `async`, and it returns immediately if the
+list is empty. It writes to the *store*, not the bus, so seeded history never pollutes
 `published_events`.
 
 ```python
@@ -855,14 +889,16 @@ the `postgres` / `sqlite` / `redis` markers.
 
 ## Common pitfalls
 
-### Forgetting expected_version semantics in given_events
+### Multi-aggregate and stream version semantics in given_events
 
-`given_events` always appends with `expected_version=0`. Two consequences:
+`given_events` automatically partitions events by aggregate ID and stream category,
+defaulting to `ExpectedVersion.any_()` so both single-aggregate and multi-aggregate scenarios
+can seed history across one or multiple setup calls without optimistic locking conflicts.
+However:
 
-- Calling it twice for the same aggregate in one test raises `OptimisticLockError` --
-  build the whole history in a single call.
-- The versions you set with `with_version` must run 1, 2, 3... in order. Skip one and the
-  aggregate's version validation rejects the history when you load it.
+- The versions you set with `with_version` must run 1, 2, 3... in order for each aggregate. Skip
+  one and the aggregate's version validation rejects the history when you load it.
+- If you specifically need to assert that streams are fresh, pass `expected_version=ExpectedVersion.no_stream()`.
 
 ### Leaking state between tests
 

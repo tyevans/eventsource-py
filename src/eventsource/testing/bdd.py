@@ -40,7 +40,6 @@ Note:
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Sequence
 from typing import Any
 from uuid import UUID
@@ -48,9 +47,9 @@ from uuid import UUID
 from eventsource.domain import StreamId
 from eventsource.domain.aggregate import AggregateRoot
 from eventsource.domain.event import DomainEvent
-from eventsource.domain.exceptions import CommandRejectedError
 from eventsource.ports import ExpectedVersion
 from eventsource.testing.harness import InMemoryTestHarness
+from eventsource.testing.scenario import DeciderScenario
 
 
 class _Missing:
@@ -68,7 +67,9 @@ _MISSING = _Missing()
 
 async def given_events(
     harness: InMemoryTestHarness,
-    events: Sequence[DomainEvent],
+    events: Sequence[DomainEvent] | DomainEvent,
+    *,
+    expected_version: ExpectedVersion | None = None,
 ) -> None:
     """
     Set up the test scenario with pre-existing events.
@@ -77,9 +78,12 @@ async def given_events(
     events to the event store. Events are grouped by aggregate and
     appended in order.
 
+    Supports both single-aggregate and multi-aggregate event history setup.
+
     Args:
         harness: The InMemoryTestHarness instance
-        events: The events that represent the initial state
+        events: The events that represent the initial state (single event or sequence)
+        expected_version: Optional stream version expectation (defaults to ExpectedVersion.any_())
 
     Example:
         >>> harness = InMemoryTestHarness()
@@ -91,27 +95,26 @@ async def given_events(
         ...                     event_type="PaymentReceived", aggregate_version=2,
         ...                     amount=Decimal("99.99")),
         ... ])
-
-    Note:
-        Events are assumed to be for fresh aggregates (expected_version=0).
-        For complex scenarios with multiple aggregates, events are
-        automatically grouped by (aggregate_id, aggregate_type).
     """
-    if not events:
+    event_list = [events] if isinstance(events, DomainEvent) else list(events)
+
+    if not event_list:
         return
 
     # Group events by aggregate (aggregate_id, aggregate_type)
     by_aggregate: dict[tuple[UUID, str], list[DomainEvent]] = {}
-    for event in events:
+    for event in event_list:
         key = (event.aggregate_id, event.aggregate_type)
         by_aggregate.setdefault(key, []).append(event)
+
+    version_constraint = expected_version or ExpectedVersion.any_()
 
     # Append each aggregate's events to the store
     for (agg_id, agg_type), agg_events in by_aggregate.items():
         await harness.event_store.append(
             StreamId(aggregate_id=agg_id, category=agg_type),
             agg_events,
-            ExpectedVersion.no_stream(),
+            version_constraint,
         )
 
 
@@ -357,104 +360,6 @@ def then_event_count(
             f"got {actual_count}.\n"
             f"Published: {event_types}"
         )
-
-
-class DeciderScenario:
-    """
-    Synchronous given/when/then harness for decider-style domains.
-
-    Works with a DeciderAggregate subclass or the three functions directly.
-    No store, no event loop, no fixtures: ``given`` folds events through
-    ``evolve`` from ``initial_state``, ``when`` runs ``decide`` capturing
-    events or the raised exception, ``then_*`` assert.
-
-    Example:
-        >>> (DeciderScenario(OrderAggregate)
-        ...     .given(OrderCreated(aggregate_id=oid, aggregate_version=1, ...))
-        ...     .when(ShipOrder(order_id=oid, tracking_number="T"))
-        ...     .then_events(OrderShipped))
-
-    The scenario has no aggregate id of its own: ``initial_state()`` takes no
-    arguments and the command names the aggregate it targets.
-    """
-
-    def __init__(
-        self,
-        aggregate_class: type[Any] | None = None,
-        *,
-        decide: Callable[[Any, Any], list[DomainEvent]] | None = None,
-        evolve: Callable[[Any, DomainEvent], Any] | None = None,
-        initial_state: Callable[[], Any] | None = None,
-    ) -> None:
-        if aggregate_class is not None:
-            decide = aggregate_class.decide
-            evolve = aggregate_class.evolve
-            initial_state = aggregate_class.initial_state
-        if decide is None or evolve is None or initial_state is None:
-            raise TypeError(
-                "DeciderScenario needs an aggregate class or all of "
-                "decide=, evolve=, initial_state="
-            )
-        self._decide = decide
-        self._evolve = evolve
-        self._state = initial_state()
-        self._events: list[DomainEvent] | None = None
-        self._error: BaseException | None = None
-
-    @property
-    def events(self) -> list[DomainEvent]:
-        """Events produced by when(); empty before when() or on rejection."""
-        return list(self._events) if self._events is not None else []
-
-    def given(self, *events: DomainEvent) -> DeciderScenario:
-        """Fold prior events into state via evolve."""
-        for event in events:
-            self._state = self._evolve(self._state, event)
-        return self
-
-    def when(self, command: object) -> DeciderScenario:
-        """Run decide, capturing produced events or the raised exception."""
-        self._events = None
-        self._error = None
-        try:
-            self._events = list(self._decide(command, self._state))
-        except Exception as exc:  # noqa: BLE001 - the exception IS the result
-            self._error = exc
-        return self
-
-    def then_events(self, *event_types: type[DomainEvent]) -> DeciderScenario:
-        """Assert the command produced exactly these event types, in order."""
-        if self._events is None and self._error is None:
-            raise AssertionError("call when() before then_events()")
-        if self._error is not None:
-            raise AssertionError(
-                f"expected events {[t.__name__ for t in event_types]} but the "
-                f"command was rejected: {self._error!r}"
-            )
-        assert self._events is not None  # narrows for mypy; guaranteed by the checks above
-        actual = [type(e).__name__ for e in self._events]
-        expected = [t.__name__ for t in event_types]
-        if actual != expected:
-            raise AssertionError(f"expected events {expected}, got {actual}")
-        return self
-
-    def then_rejected(
-        self,
-        exc_type: type[BaseException] = CommandRejectedError,
-        match: str | None = None,
-    ) -> DeciderScenario:
-        """Assert the command was rejected with exc_type (default CommandRejectedError)."""
-        if self._events is None and self._error is None:
-            raise AssertionError("call when() before then_rejected()")
-        if self._error is None:
-            raise AssertionError(f"expected rejection but command produced {self.events!r}")
-        if not isinstance(self._error, exc_type):
-            raise AssertionError(
-                f"expected {exc_type.__name__}, got {type(self._error).__name__}: {self._error}"
-            )
-        if match is not None and not re.search(match, str(self._error)):
-            raise AssertionError(f"rejection message {str(self._error)!r} does not match {match!r}")
-        return self
 
 
 __all__ = [

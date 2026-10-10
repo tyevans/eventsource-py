@@ -110,13 +110,6 @@ deleted `repositories/` package -- is closed (2026-08-04). The selectors are
 retargeted and `tests/unit/test_mutmut_configure.py` now fails when one goes
 stale or when `mutation.sh`'s selector list drifts from the Python table.
 
-## given_events supports one aggregate per scenario (P3)
-
-The testing harness's `given_events` seeds a single aggregate stream per
-scenario; multi-aggregate scenarios need manual store setup. Behavior is
-documented in docs/tutorials/08-testing.md (~line 323); this entry exists so
-the limitation is tracked as improvable, closing a ledger note from the
-aggregates slice (2026-07-31).
 
 ## Buffered live events dropped on stop/transition-failure leave lag inflated (P3)
 
