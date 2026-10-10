@@ -29,6 +29,13 @@ import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from eventsource.adapters._bus.retry_scheduler import RetryScheduler
+from eventsource.adapters.kafka.consumer_helpers import (
+    create_dlq_headers,
+    get_header_value,
+    get_retry_delay_remaining,
+    warn_uncommitted,
+)
 from eventsource.adapters.kafka.models import DeserializationError
 from eventsource.adapters.kafka.serialization import EventSerializer
 from eventsource.domain.event import DomainEvent
@@ -125,6 +132,7 @@ class KafkaConsumerLoop:
 
         self._consuming = False
         self._consume_task: asyncio.Task[None] | None = None
+        self._retry_scheduler = RetryScheduler(custom_logger=logger)
 
     # =========================================================================
     # Properties
@@ -206,7 +214,22 @@ class KafkaConsumerLoop:
                     if self._shutdown_event.is_set() or not self._consuming:
                         break
 
-                    await self._process_message(message)
+                    # Check if message has a future retry_after timestamp
+                    remaining = get_retry_delay_remaining(message.headers)
+                    if remaining > 0:
+                        # Non-blocking async timer for retried message:
+                        # schedule processing without blocking the consume loop,
+                        # allowing concurrent partition messages to continue processing.
+                        async def _retry_action(msg: Any = message) -> None:
+                            await self._process_message(msg, skip_await_retry=True)
+
+                        self._retry_scheduler.schedule(
+                            remaining,
+                            _retry_action,
+                            name=f"kafka-retry-p{message.partition}-o{message.offset}",
+                        )
+                    else:
+                        await self._process_message(message)
 
                     # Reset reconnect delay on successful message processing
                     reconnect_delay = 1.0
@@ -266,13 +289,22 @@ class KafkaConsumerLoop:
         self._consuming = False
         logger.info("Consumer stopped")
 
-    async def stop(self) -> None:
+    async def drain_retries(self, timeout: float | None = None) -> None:
+        """Wait for any scheduled non-blocking retries to complete.
+
+        Args:
+            timeout: Maximum seconds to wait. If None, waits indefinitely.
+        """
+        await self._retry_scheduler.drain(timeout)
+
+    async def stop(self, timeout: float | None = None) -> None:
         """Stop the consumer loop gracefully.
 
         Sets the consuming flag to False which will cause the consume loop
-        to exit on its next iteration.
+        to exit on its next iteration, and drains any in-flight retry tasks.
         """
         self._consuming = False
+        await self._retry_scheduler.drain(timeout)
         logger.info("Stop consuming requested")
 
     def start_in_background(self) -> asyncio.Task[None]:
@@ -297,7 +329,7 @@ class KafkaConsumerLoop:
     # Message Processing
     # =========================================================================
 
-    async def _process_message(self, message: Any) -> None:
+    async def _process_message(self, message: Any, skip_await_retry: bool = False) -> None:
         """Process a single Kafka message with optional tracing.
 
         Deserializes the event, dispatches to handlers, and commits offset
@@ -309,6 +341,8 @@ class KafkaConsumerLoop:
 
         Args:
             message: The Kafka ConsumerRecord to process.
+            skip_await_retry: If True, bypass inline await_retry_after (used
+                when scheduled by a non-blocking retry timer).
         """
         self._stats.events_consumed += 1
         self._stats.last_consume_at = datetime.now(UTC)
@@ -373,9 +407,13 @@ class KafkaConsumerLoop:
                 },
                 context=context,
             ) as span:
-                await self._process_message_with_span(message, event_type_name, span)
+                await self._process_message_with_span(
+                    message, event_type_name, span, skip_await_retry=skip_await_retry
+                )
         else:
-            await self._process_message_with_span(message, event_type_name, None)
+            await self._process_message_with_span(
+                message, event_type_name, None, skip_await_retry=skip_await_retry
+            )
 
     def _extract_trace_context(
         self,
@@ -406,6 +444,7 @@ class KafkaConsumerLoop:
         message: Any,
         event_type_name: str,
         span: Any,
+        skip_await_retry: bool = False,
     ) -> None:
         """Process message with optional span updates.
 
@@ -416,6 +455,7 @@ class KafkaConsumerLoop:
             message: The Kafka message.
             event_type_name: The event type name.
             span: The current tracing span, or None.
+            skip_await_retry: If True, bypass inline await_retry_after.
         """
         # Start timing for consume duration histogram
         start_time = time.perf_counter()
@@ -423,11 +463,9 @@ class KafkaConsumerLoop:
         # Get retry count from headers (for retried messages)
         retry_count = self._get_retry_count(message.headers)
 
-        # Honor the backoff this message was republished with. `retry_after`
-        # used to be written and never read, so the configured RetryPolicy had
-        # no effect on this backend at all -- the same config that made the
-        # RabbitMQ consumer back off made the Kafka consumer hot-loop.
-        await self._await_retry_after(message.headers)
+        # Honor the backoff this message was republished with (unless scheduled via non-blocking timer)
+        if not skip_await_retry:
+            await self._await_retry_after(message.headers)
 
         try:
             # Deserialize event - catch DeserializationError separately
@@ -557,23 +595,8 @@ class KafkaConsumerLoop:
         headers: list[tuple[str, bytes]] | None,
         key: str,
     ) -> str | None:
-        """Get a header value by key.
-
-        Args:
-            headers: List of header tuples.
-            key: The header key to find.
-
-        Returns:
-            The decoded header value, or None if not found.
-        """
-        if not headers:
-            return None
-
-        for header_key, header_value in headers:
-            if header_key == key:
-                return header_value.decode("utf-8")
-
-        return None
+        """Get a header value by key."""
+        return get_header_value(headers, key)
 
     async def _await_retry_after(self, headers: list[tuple[str, bytes]] | None) -> None:
         """Wait until a republished message's scheduled retry time.
@@ -969,23 +992,12 @@ class KafkaConsumerLoop:
             )
 
     def _warn_uncommitted(self, message: Any, stage: str) -> None:
-        """Log that an offset was deliberately left uncommitted.
-
-        Reached only when neither the retry topic nor the DLQ accepted the
-        message. Leaving the offset uncommitted means Kafka redelivers it,
-        which is noisy but preserves the event; committing would discard it
-        with no record anywhere.
-        """
-        logger.critical(
-            "Offset left uncommitted: message was neither retried nor sent to the DLQ. "
-            "It will be redelivered.",
-            extra={
-                "stage": stage,
-                "topic": message.topic,
-                "partition": message.partition,
-                "offset": message.offset,
-                "event_id": self._get_header_value(message.headers, "event_id"),
-            },
+        """Log that an offset was deliberately left uncommitted."""
+        warn_uncommitted(
+            logger,
+            message,
+            stage,
+            self._get_header_value(message.headers, "event_id"),
         )
 
     def _calculate_retry_delay(self, retry_count: int) -> float:
@@ -1110,27 +1122,11 @@ class KafkaConsumerLoop:
         retry_count: int,
         reason: str,
     ) -> list[tuple[str, bytes]]:
-        """Create DLQ-specific headers.
-
-        Args:
-            message: The failed message.
-            error: The exception that caused the failure.
-            retry_count: Number of retry attempts.
-            reason: Reason for DLQ routing.
-
-        Returns:
-            List of DLQ header tuples.
-        """
-        error_message = str(error)[:1000]  # Truncate to avoid huge headers
-
-        return [
-            ("dlq_reason", reason.encode("utf-8")),
-            ("dlq_error_type", type(error).__name__.encode("utf-8")),
-            ("dlq_error_message", error_message.encode("utf-8")),
-            ("dlq_retry_count", str(retry_count).encode("utf-8")),
-            ("dlq_timestamp", datetime.now(UTC).isoformat().encode("utf-8")),
-            ("dlq_original_topic", message.topic.encode("utf-8")),
-            ("dlq_original_partition", str(message.partition).encode("utf-8")),
-            ("dlq_original_offset", str(message.offset).encode("utf-8")),
-            ("dlq_consumer_group", self._config.consumer_group.encode("utf-8")),
-        ]
+        """Create DLQ-specific headers."""
+        return create_dlq_headers(
+            message,
+            error,
+            retry_count,
+            reason,
+            self._config.consumer_group,
+        )

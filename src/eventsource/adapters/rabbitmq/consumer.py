@@ -22,6 +22,7 @@ from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from eventsource.adapters._bus.retry_scheduler import RetryScheduler
 from eventsource.adapters.rabbitmq import death_headers, serialization
 from eventsource.domain.event import DomainEvent
 from eventsource.domain.exceptions import HandlerDispatchError
@@ -102,6 +103,7 @@ class RabbitMQConsumer:
         self._consumer_task: asyncio.Task[None] | None = None
 
         self._logger = logging.getLogger("eventsource.adapters.rabbitmq")
+        self._retry_scheduler = RetryScheduler(custom_logger=self._logger)
 
     # =========================================================================
     # State
@@ -672,22 +674,28 @@ class RabbitMQConsumer:
                 },
             )
 
-            # Apply backoff delay
+            async def _do_retry() -> None:
+                await self._republish_for_retry(message, retry_count + 1)
+                await message.ack()  # Ack original, republished copy will be processed
+
+                self._logger.info(
+                    f"Republished message for retry {retry_count + 1}",
+                    extra={
+                        "message_id": message.message_id,
+                        "event_type": event_type_name,
+                        "retry_count": retry_count + 1,
+                    },
+                )
+
+            # Non-blocking async retry scheduling: do not block the consume loop
             if delay > 0:
-                await asyncio.sleep(delay)
-
-            # Retry - republish with incremented retry count
-            await self._republish_for_retry(message, retry_count + 1)
-            await message.ack()  # Ack original, republished copy will be processed
-
-            self._logger.info(
-                f"Republished message for retry {retry_count + 1}",
-                extra={
-                    "message_id": message.message_id,
-                    "event_type": event_type_name,
-                    "retry_count": retry_count + 1,
-                },
-            )
+                self._retry_scheduler.schedule(
+                    delay,
+                    _do_retry,
+                    name=f"rabbitmq-retry-{message.message_id}",
+                )
+            else:
+                await _do_retry()
 
     async def _republish_for_retry(
         self,
@@ -855,29 +863,21 @@ class RabbitMQConsumer:
         self._logger.debug("Consumer stopped")
 
     async def drain_in_flight(self, timeout: float) -> None:
-        """Wait for any in-flight message processing to complete.
-
-        This is a simple implementation that waits a portion of the timeout
-        to allow any ongoing message handlers to complete. In the current
-        implementation, handlers run synchronously within the consumer loop,
-        so once the consumer stops, no handlers should be running.
-
-        A more sophisticated implementation could track active handlers
-        with a counter or semaphore for more precise draining.
+        """Wait for any in-flight message processing and retries to complete.
 
         Args:
             timeout: Maximum time available for draining.
                     Actual drain time is min(timeout / 4, 5.0) seconds.
         """
-        # In current implementation, handlers run synchronously in consumer loop
-        # So if consumer is stopped, no handlers are running
-        # This is a placeholder for future async handler support
-        drain_time = min(timeout / 4, 5.0)  # Wait up to 5 seconds
-
+        await self.drain_retries(timeout)
+        drain_time = min(timeout / 4, 5.0)
         if drain_time > 0:
-            self._logger.debug(
-                f"Draining in-flight messages ({drain_time:.2f}s)",
-                extra={"drain_time_seconds": drain_time},
-            )
             await asyncio.sleep(drain_time)
-            self._logger.debug("Drain period completed")
+
+    async def drain_retries(self, timeout: float | None = None) -> None:
+        """Wait for all pending non-blocking retry tasks to complete.
+
+        Args:
+            timeout: Maximum seconds to wait. If None, waits indefinitely.
+        """
+        await self._retry_scheduler.drain(timeout)

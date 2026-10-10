@@ -173,11 +173,13 @@ async def test_failure_below_max_retries_republishes_with_incremented_count(
     message = _message({"event_type": "ConsumerTestEvent", "x-retry-count": 1})
 
     await consumer._process_message(message)
+    await consumer.drain_retries()
 
     exchange.publish.assert_awaited_once()
     retry_message = exchange.publish.await_args.args[0]
     assert retry_message.headers["x-retry-count"] == 2
     assert exchange.publish.await_args.kwargs["routing_key"] == "Order.ConsumerTestEvent"
+
     message.ack.assert_awaited_once()
 
 
