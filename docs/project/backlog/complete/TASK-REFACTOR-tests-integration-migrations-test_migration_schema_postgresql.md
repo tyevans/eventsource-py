@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-integration-migrations-test_migration_schema_postgresql
 title: Refactor and Decompose Legacy File test_migration_schema_postgresql.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
