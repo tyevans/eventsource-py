@@ -57,7 +57,7 @@ Strict sequential order of execution for engineering tasks.
 - **TASK-REFACTOR-eventsource-application-subscriptions-shutdown (Refined)**: [`TASK-REFACTOR-eventsource-application-subscriptions-shutdown`](refined/TASK-REFACTOR-eventsource-application-subscriptions-shutdown.md)
 - **TASK-REFACTOR-eventsource-application-subscriptions-subscription (Refined)**: [`TASK-REFACTOR-eventsource-application-subscriptions-subscription`](refined/TASK-REFACTOR-eventsource-application-subscriptions-subscription.md)
 - **TASK-REFACTOR-eventsource-application-subscriptions-transition (Refined)**: [`TASK-REFACTOR-eventsource-application-subscriptions-transition`](refined/TASK-REFACTOR-eventsource-application-subscriptions-transition.md)
-- **TASK-REFACTOR-eventsource-domain-aggregate (Proposed)**: [`TASK-REFACTOR-eventsource-domain-aggregate`](proposed/TASK-REFACTOR-eventsource-domain-aggregate.md)
+- **TASK-REFACTOR-eventsource-domain-aggregate (Refined)**: [`TASK-REFACTOR-eventsource-domain-aggregate`](refined/TASK-REFACTOR-eventsource-domain-aggregate.md)
 - **TASK-REFACTOR-eventsource-domain-exceptions (Proposed)**: [`TASK-REFACTOR-eventsource-domain-exceptions`](proposed/TASK-REFACTOR-eventsource-domain-exceptions.md)
 - **TASK-REFACTOR-eventsource-observability-tracer (Proposed)**: [`TASK-REFACTOR-eventsource-observability-tracer`](proposed/TASK-REFACTOR-eventsource-observability-tracer.md)
 - **TASK-REFACTOR-eventsource-ports-migration-models (Proposed)**: [`TASK-REFACTOR-eventsource-ports-migration-models`](proposed/TASK-REFACTOR-eventsource-ports-migration-models.md)
