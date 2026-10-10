@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-unit-adapters-sql-migration-test_position_mapping_repository
 title: Refactor and Decompose Legacy File test_position_mapping_repository.py
-status: Refined
+status: Complete
 created: 2026-09-29
 governing_adrs:
   - ADR-0002
