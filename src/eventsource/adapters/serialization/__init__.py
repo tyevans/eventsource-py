@@ -13,6 +13,13 @@ Example:
     >>> json_str = json_dumps(data)
 """
 
+from eventsource.adapters.serialization.delta import (
+    DeltaChainError,
+    DeltaCodec,
+    DeltaIntegrityError,
+    DeltaPayload,
+    is_delta_dict,
+)
 from eventsource.adapters.serialization.json import (
     EventSourceJSONEncoder,
     json_dumps,
@@ -20,7 +27,12 @@ from eventsource.adapters.serialization.json import (
 )
 
 __all__ = [
+    "DeltaChainError",
+    "DeltaCodec",
+    "DeltaIntegrityError",
+    "DeltaPayload",
     "EventSourceJSONEncoder",
+    "is_delta_dict",
     "json_dumps",
     "json_loads",
 ]

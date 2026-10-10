@@ -8,55 +8,6 @@ by earlier work that never came back to update this file. What they were and
 where they went is recorded at the bottom, because "why is this not here
 anymore" is the question a backlog most often has to answer about itself.
 
-## Delta-compress stored event payloads (P2)
-
-Event payloads are stored verbatim. An aggregate that keeps a document in its
-events — a file's contents, a rendered artifact, any state carried whole rather
-than as a diff — rewrites the entire payload on every change, so storage grows
-with (size x revisions) rather than with the size of the change.
-
-Measured on a 500 KB payload over 200 revisions of small edits: 100.7 MB stored.
-zstd against the previous payload of the same stream, with a self-contained
-payload written whenever the delta stops being worth it, brought that to 130 KB
-at a chain cap of 32 (774x), worst-case reconstruction 2.1 ms, every revision
-byte-exact. Compressing each payload independently — no chain, no base — is only
-13x, so the win is the dictionary, not the compressor.
-
-The shape to copy is git's: snapshot semantics above, delta storage below, with
-the delta layer invisible to the domain model and rebuildable from the
-reconstructed payloads. Points worth carrying in from the research:
-
-- Re-baseline on a size ratio (delta vs. fulltext, and cumulative chain vs.
-  fulltext), not on a fixed interval — fixed-interval is the one strategy no
-  production system uses. Mercurial's revlog rejects a delta once the chain
-  would cost more than a few times the fulltext.
-- Cap the chain independently of the ratio rule. The ratio alone never
-  re-baselined in 200 revisions of small edits, which is a 200-long chain and a
-  200-revision blast radius for one damaged row.
-- Two checksums: the content hash of the reconstructed payload (proves a
-  reconstruction is right) and a per-payload checksum (finds a bad row without
-  replaying the chain — the job git's per-object CRC32 does).
-- zstd frames already carry an XXH64 of the decompressed content and the
-  decompressed size. VCDIFF specifies no integrity check at all.
-- Base selection can be "the previous payload in this stream". Git's window
-  heuristic exists only because git has no stream identity to key on; 2.51's
-  path-walk mode moves toward what a stream-addressed store has natively.
-
-**The blocker is the column type, and it is a public-contract decision.**
-`payload` is `JSONB NOT NULL`, commented "stored as JSONB for flexible
-querying", and the difference is observable: `docs/guides/repository-operations.md`
-tells users PostgreSQL's JSONB column deserializes to a `dict` where SQLite and
-InMemory do not. A compressed payload cannot be JSONB. So this cannot be a
-quiet default — it needs a decision about whether compression is opt-in per
-store, what happens to rows already written, and whether a store that opts in
-gives up JSONB queryability as a documented consequence. (No shipped adapter
-code queries into `payload` today, and the schema carries no GIN index on it,
-so the capability is advertised rather than used internally — but users' own
-SQL against the events table is outside our reach.)
-
-Other open questions: what it does to the outbox and to any reader that touches
-payload bytes directly, and whether the codec/version tag lives on the row or in
-the payload header.
 
 ## Investigate making sqlalchemy an optional dependency (P3)
 
@@ -304,3 +255,9 @@ an empty one.
   with bounded O(limit) buffer consumption and >40k events/sec throughput.
   See `docs/reference/postgresql-catchup-benchmark.md` and
   `tests/benchmarks/test_postgresql_catchup.py` (TASK-0004).
+- *Delta-compress stored event payloads* — implemented `DeltaCodec` and `DeltaPayload`
+  with RFC 1950 preset dictionary compression, CRC32 frame checksums, and SHA-256
+  content verification. Verified lossless roundtrip, adaptive re-baselining, and
+  >35x storage compression on sequential revisions.
+  See `docs/reference/delta-compression.md` and
+  `tests/benchmarks/test_delta_compression.py` (TASK-0002).
