@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-eventsource-adapters-rabbitmq-connection
 title: Refactor and Decompose Legacy File connection.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
