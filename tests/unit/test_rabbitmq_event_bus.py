@@ -4094,12 +4094,11 @@ class TestRabbitMQProcessMessage:
         bus.subscribe(ConsumerTestEvent, failing_handler)
 
         await bus._process_message(mock_message)
-
+        await bus._consumer.drain_retries()
         # Message should be acked (original removed from queue) and republished
         mock_message.ack.assert_called_once()
         mock_exchange.publish.assert_called_once()
         assert bus.stats.events_processed_failed == 1
-
         # Verify retry count was incremented
         call_args = mock_exchange.publish.call_args
         new_message = call_args[0][0]
@@ -5900,7 +5899,7 @@ class TestHandleFailedMessage:
 
         error = ValueError("Test error")
         await bus._handle_failed_message(mock_message, error, retry_count=0)
-
+        await bus._consumer.drain_retries()
         # Should republish, not send to DLQ
         mock_exchange.publish.assert_called_once()
         mock_message.ack.assert_called_once()
@@ -5949,10 +5948,10 @@ class TestHandleFailedMessage:
 
         error = ValueError("Test error")
         await bus._handle_failed_message(mock_message, error, retry_count=1)
+        await bus._consumer.drain_retries()
 
         call_args = mock_exchange.publish.call_args
         new_message = call_args[0][0]
-
         assert new_message.headers["x-retry-count"] == 2
 
 
@@ -6014,8 +6013,8 @@ class TestProcessMessageWithRetry:
             raise ValueError("Intentional failure")
 
         bus.subscribe_to_all_events(failing_handler)
-
         await bus._process_message(mock_message)
+        await bus._consumer.drain_retries()
 
         # Should have republished with retry_count + 1 = 3
         call_args = mock_exchange.publish.call_args
@@ -6036,8 +6035,8 @@ class TestProcessMessageWithRetry:
             raise ValueError("Intentional failure")
 
         bus.subscribe_to_all_events(failing_handler)
-
         await bus._process_message(mock_message)
+        await bus._consumer.drain_retries()
 
         # Should have republished with retry_count = 1
         call_args = mock_exchange.publish.call_args
