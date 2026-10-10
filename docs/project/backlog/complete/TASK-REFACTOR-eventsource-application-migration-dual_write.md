@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-eventsource-application-migration-dual_write
 title: Refactor and Decompose Legacy File dual_write.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
