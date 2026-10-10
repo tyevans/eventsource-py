@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-eventsource-application-subscriptions-metrics
 title: Refactor and Decompose Legacy File metrics.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
