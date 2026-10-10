@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-eventsource-application-subscriptions-error_handling
 title: Refactor and Decompose Legacy File error_handling.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
