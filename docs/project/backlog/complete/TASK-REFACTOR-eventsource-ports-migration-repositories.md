@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-eventsource-ports-migration-repositories
 title: Refactor and Decompose Legacy File repositories.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
