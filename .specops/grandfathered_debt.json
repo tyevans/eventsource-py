@@ -38,7 +38,6 @@
     "src/eventsource/application/subscriptions/error_handling.py": 1105,
     "src/eventsource/application/subscriptions/health.py": 860,
     "tests/integration/e2e/test_full_flow.py": 540,
-    "tests/unit/application/aggregates/test_tenant_repository.py": 758,
     "tests/unit/application/migration/test_bulk_copier.py": 1393,
     "tests/unit/application/migration/test_chaos.py": 1788,
     "tests/unit/application/migration/test_consistency_verifier.py": 1085,
