@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-eventsource-application-subscriptions-runners-catchup
 title: Refactor and Decompose Legacy File catchup.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
