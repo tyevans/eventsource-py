@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-integration-conftest
 title: Refactor and Decompose Legacy File conftest.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
