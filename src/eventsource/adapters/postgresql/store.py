@@ -28,7 +28,12 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from eventsource.adapters._sql.positions import IntPositionCodec
 from eventsource.adapters.postgresql.store_append import PostgreSQLEventStoreAppendMixin
-from eventsource.adapters.postgresql.store_read import PostgreSQLEventStoreReadMixin
+from eventsource.adapters.postgresql.store_read import (
+    _HORIZON_PREDICATE,
+    _HORIZON_QUERY,
+    _SELECT_COLUMNS,
+    PostgreSQLEventStoreReadMixin,
+)
 from eventsource.adapters.sql.schemas import get_schema
 from eventsource.domain.event_registry import EventRegistry, default_registry
 from eventsource.ports import EventStoreConnectionError
@@ -181,4 +186,7 @@ __all__ = [
     "PostgreSQLEventStore",
     "PostgreSQLEventStoreAppendMixin",
     "PostgreSQLEventStoreReadMixin",
+    "_HORIZON_PREDICATE",
+    "_HORIZON_QUERY",
+    "_SELECT_COLUMNS",
 ]
