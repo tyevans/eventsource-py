@@ -1,0 +1,1 @@
+"""RabbitMQ integration tests package."""
