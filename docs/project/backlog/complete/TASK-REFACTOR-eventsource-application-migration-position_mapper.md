@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-eventsource-application-migration-position_mapper
 title: Refactor and Decompose Legacy File position_mapper.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
