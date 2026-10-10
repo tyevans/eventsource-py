@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-unit-adapters-test_snapshots_tracing
 title: Refactor and Decompose Legacy File test_snapshots_tracing.py
-status: Proposed
+status: Refined
 created: 2026-09-29
 governing_adrs:
   - ADR-0002
