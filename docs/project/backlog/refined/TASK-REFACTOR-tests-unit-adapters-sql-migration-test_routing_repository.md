@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-unit-adapters-sql-migration-test_routing_repository
 title: Refactor and Decompose Legacy File test_routing_repository.py
-status: Proposed
+status: Refined
 created: 2026-09-29
 governing_adrs:
   - ADR-0002
