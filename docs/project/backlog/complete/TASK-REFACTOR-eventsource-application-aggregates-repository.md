@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-eventsource-application-aggregates-repository
 title: Refactor and Decompose Legacy File repository.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
