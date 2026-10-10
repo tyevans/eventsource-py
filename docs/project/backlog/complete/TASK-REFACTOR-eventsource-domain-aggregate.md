@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-eventsource-domain-aggregate
 title: Refactor and Decompose Legacy File aggregate.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
