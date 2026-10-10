@@ -38,7 +38,6 @@
     "src/eventsource/application/subscriptions/error_handling.py": 1105,
     "src/eventsource/application/subscriptions/health.py": 860,
     "tests/integration/e2e/test_full_flow.py": 540,
-    "tests/integration/subscriptions/test_resilience.py": 1420,
     "tests/repositories/test_sqlite_repos.py": 679,
     "tests/unit/adapters/serialization/test_json.py": 707,
     "tests/unit/adapters/sql/migration/test_audit_log_repository.py": 853,
