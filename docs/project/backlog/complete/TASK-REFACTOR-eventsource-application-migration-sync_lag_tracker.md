@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-eventsource-application-migration-sync_lag_tracker
 title: Refactor and Decompose Legacy File sync_lag_tracker.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
