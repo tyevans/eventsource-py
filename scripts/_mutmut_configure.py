@@ -37,7 +37,7 @@ MODULES: dict[str, tuple[str, str | list[str]]] = {
         "src/eventsource/adapters/sql/checkpoints.py",
         [
             "tests/unit/adapters/test_sqlite_conformance.py",
-            "tests/unit/adapters/test_checkpoint_position.py",
+            "tests/unit/adapters/test_checkpoint_position/",
             "tests/unit/adapters/test_sql_checkpoint_tracing.py",
             "tests/repositories/test_sqlite_repos/test_checkpoint_repository.py",
         ],
