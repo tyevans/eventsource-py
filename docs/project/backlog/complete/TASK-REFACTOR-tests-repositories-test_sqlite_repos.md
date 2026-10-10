@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-repositories-test_sqlite_repos
 title: Refactor and Decompose Legacy File test_sqlite_repos.py
-status: Refined
+status: Complete
 created: 2026-09-29
 governing_adrs:
   - ADR-0002
