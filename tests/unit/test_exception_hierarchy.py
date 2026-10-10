@@ -36,7 +36,7 @@ SANCTIONED_NON_EVENTSOURCE_ERRORS: dict[str, str] = {
     # Optional-dependency import sentinels: subclass ImportError so that a
     # missing extra is indistinguishable from a missing package to callers
     # that guard imports. Never raised during normal operation.
-    "eventsource.adapters.redis.bus:RedisNotAvailableError": "optional-dependency import sentinel",
+    "eventsource.adapters.redis.config:RedisNotAvailableError": "optional-dependency import sentinel",
     "eventsource.adapters.kafka.models:KafkaNotAvailableError": "optional-dependency import sentinel",
     "eventsource.adapters.sqlite.snapshots:SQLiteNotAvailableError": (
         "optional-dependency import sentinel"
