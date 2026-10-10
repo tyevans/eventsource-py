@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-eventsource-application-projections-coordinator
 title: Refactor and Decompose Legacy File coordinator.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
