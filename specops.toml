@@ -86,7 +86,6 @@ version = "0.1.0"
 
 [invariants.file_limits]
 grandfathered = [
-  "examples/subscriptions/resilient_projection.py",
   "src/eventsource/__init__.py",
   "src/eventsource/adapters/kafka/bus.py",
   "src/eventsource/adapters/kafka/consumer.py",
