@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-eventsource-application-projections-base
 title: Refactor and Decompose Legacy File base.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
