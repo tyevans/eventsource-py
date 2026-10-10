@@ -33,7 +33,7 @@ Strict sequential order of execution for engineering tasks.
 - **TASK-REFACTOR-eventsource-application-migration-bulk_copier (Refined)**: [`TASK-REFACTOR-eventsource-application-migration-bulk_copier`](refined/TASK-REFACTOR-eventsource-application-migration-bulk_copier.md)
 - **TASK-REFACTOR-eventsource-application-migration-consistency (Refined)**: [`TASK-REFACTOR-eventsource-application-migration-consistency`](refined/TASK-REFACTOR-eventsource-application-migration-consistency.md)
 - **TASK-REFACTOR-eventsource-application-migration-coordinator (Refined)**: [`TASK-REFACTOR-eventsource-application-migration-coordinator`](refined/TASK-REFACTOR-eventsource-application-migration-coordinator.md)
-- **TASK-REFACTOR-eventsource-application-migration-cutover (Proposed)**: [`TASK-REFACTOR-eventsource-application-migration-cutover`](proposed/TASK-REFACTOR-eventsource-application-migration-cutover.md)
+- **TASK-REFACTOR-eventsource-application-migration-cutover (Refined)**: [`TASK-REFACTOR-eventsource-application-migration-cutover`](refined/TASK-REFACTOR-eventsource-application-migration-cutover.md)
 - **TASK-REFACTOR-eventsource-application-migration-dual_write (Proposed)**: [`TASK-REFACTOR-eventsource-application-migration-dual_write`](proposed/TASK-REFACTOR-eventsource-application-migration-dual_write.md)
 - **TASK-REFACTOR-eventsource-application-migration-exceptions (Proposed)**: [`TASK-REFACTOR-eventsource-application-migration-exceptions`](proposed/TASK-REFACTOR-eventsource-application-migration-exceptions.md)
 - **TASK-REFACTOR-eventsource-application-migration-metrics (Proposed)**: [`TASK-REFACTOR-eventsource-application-migration-metrics`](proposed/TASK-REFACTOR-eventsource-application-migration-metrics.md)
