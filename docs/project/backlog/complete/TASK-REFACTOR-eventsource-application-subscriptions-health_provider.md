@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-eventsource-application-subscriptions-health_provider
 title: Refactor and Decompose Legacy File health_provider.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
