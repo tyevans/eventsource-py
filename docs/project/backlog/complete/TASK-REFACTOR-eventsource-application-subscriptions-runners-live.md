@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-eventsource-application-subscriptions-runners-live
 title: Refactor and Decompose Legacy File live.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
