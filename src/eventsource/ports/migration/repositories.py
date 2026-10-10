@@ -1,25 +1,19 @@
 """
 Protocols for migration persistence.
 
-These Protocols define the persistence contracts used by the live-migration
-use cases in `eventsource.application.migration`. They are colocated in the
-ports ring (not adapters) because they are pure interfaces over the
-migration data models -- no sqlalchemy or other driver dependency appears
-here or in `eventsource.ports.migration.models`. Concrete implementations
-(`PostgreSQLMigrationRepository`, etc.) live in
-`eventsource.adapters.sql.migration`.
+Defines persistence contracts for live-migration use cases in
+`eventsource.application.migration`. Colocated in ports ring without
+ORM/SQL dependencies. Concrete implementations live in adapters.
 """
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Protocol, runtime_checkable
 from uuid import UUID
 
+from eventsource.ports.migration.audit import MigrationAuditLogRepository
 from eventsource.ports.migration.models import (
-    AuditEventType,
     Migration,
-    MigrationAuditEntry,
     MigrationPhase,
     PositionMapping,
     TenantMigrationState,
@@ -242,6 +236,27 @@ class TenantRoutingRepository(Protocol):
         Args:
             tenant_id: Tenant UUID
             state: New migration state
+            migration_id: Active migration ID (if applicable)
+        """
+        ...
+
+    async def switch_routing(
+        self,
+        tenant_id: UUID,
+        store_id: str,
+        state: TenantMigrationState = TenantMigrationState.MIGRATED,
+        migration_id: UUID | None = None,
+    ) -> None:
+        """
+        Atomically update store_id and migration_state for a tenant.
+
+        Executes the route switch and state transition within a single atomic
+        transaction boundary, guaranteeing all-or-nothing cutover semantics.
+
+        Args:
+            tenant_id: Tenant UUID
+            store_id: Target store identifier
+            state: Target migration state (default MIGRATED)
             migration_id: Active migration ID (if applicable)
         """
         ...
@@ -503,102 +518,6 @@ class PositionMappingRepository(Protocol):
 
         Returns:
             Number of mappings deleted
-        """
-        ...
-
-
-@runtime_checkable
-class MigrationAuditLogRepository(Protocol):
-    """
-    Protocol for migration audit log persistence.
-
-    Provides append-only operations for recording audit events and
-    query operations for compliance reporting and debugging.
-
-    Implementations must ensure:
-    - Audit entries are immutable once written
-    - Timestamps are accurate and use UTC
-    - All required fields are properly validated
-    """
-
-    async def record(self, entry: MigrationAuditEntry) -> int:
-        """
-        Record an audit log entry.
-
-        Args:
-            entry: The audit entry to record (id field will be ignored)
-
-        Returns:
-            The generated ID for the audit entry
-        """
-        ...
-
-    async def get_by_migration(
-        self,
-        migration_id: UUID,
-        event_types: list[AuditEventType] | None = None,
-        since: datetime | None = None,
-        until: datetime | None = None,
-        limit: int | None = None,
-    ) -> list[MigrationAuditEntry]:
-        """
-        Get audit entries for a migration.
-
-        Args:
-            migration_id: The migration ID to query
-            event_types: Optional filter by event types
-            since: Optional filter for entries after this time
-            until: Optional filter for entries before this time
-            limit: Optional maximum number of entries to return
-
-        Returns:
-            List of audit entries, ordered by occurred_at ascending
-        """
-        ...
-
-    async def get_by_id(self, entry_id: int) -> MigrationAuditEntry | None:
-        """
-        Get an audit entry by ID.
-
-        Args:
-            entry_id: The audit entry ID
-
-        Returns:
-            The audit entry or None if not found
-        """
-        ...
-
-    async def get_latest(
-        self,
-        migration_id: UUID,
-        event_type: AuditEventType | None = None,
-    ) -> MigrationAuditEntry | None:
-        """
-        Get the most recent audit entry for a migration.
-
-        Args:
-            migration_id: The migration ID to query
-            event_type: Optional filter by event type
-
-        Returns:
-            The most recent audit entry or None if none exist
-        """
-        ...
-
-    async def count_by_migration(
-        self,
-        migration_id: UUID,
-        event_type: AuditEventType | None = None,
-    ) -> int:
-        """
-        Count audit entries for a migration.
-
-        Args:
-            migration_id: The migration ID to query
-            event_type: Optional filter by event type
-
-        Returns:
-            Number of matching audit entries
         """
         ...
 

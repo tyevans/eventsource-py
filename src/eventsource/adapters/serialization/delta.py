@@ -21,12 +21,14 @@ import zlib
 from dataclasses import dataclass
 from typing import Any
 
+from eventsource.domain.exceptions import EventSourceError
 
-class DeltaIntegrityError(ValueError):
+
+class DeltaIntegrityError(EventSourceError, ValueError):
     """Raised when delta payload checksum or content hash fails verification."""
 
 
-class DeltaChainError(RuntimeError):
+class DeltaChainError(EventSourceError, RuntimeError):
     """Raised when a delta chain cannot be reconstructed due to missing base."""
 
 
