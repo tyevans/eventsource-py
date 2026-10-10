@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-eventsource-application-subscriptions-retry
 title: Refactor and Decompose Legacy File retry.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
