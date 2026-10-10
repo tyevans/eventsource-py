@@ -1,8 +1,7 @@
 ---
 id: 0009
 title: Non-Blocking Backoff for Kafka and RabbitMQ Retries
-status: Refined
-created: 2026-10-07
+status: Complete
 governing_adrs:
 - ADR-0007
 - ADR-0110
