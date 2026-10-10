@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-eventsource-application-migration-status_streamer
 title: Refactor and Decompose Legacy File status_streamer.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
