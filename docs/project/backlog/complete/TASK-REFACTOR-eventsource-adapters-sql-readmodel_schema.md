@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-eventsource-adapters-sql-readmodel_schema
 title: Refactor and Decompose Legacy File readmodel_schema.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
