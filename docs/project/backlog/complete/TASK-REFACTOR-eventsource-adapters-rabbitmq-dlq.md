@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-eventsource-adapters-rabbitmq-dlq
 title: Refactor and Decompose Legacy File dlq.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
