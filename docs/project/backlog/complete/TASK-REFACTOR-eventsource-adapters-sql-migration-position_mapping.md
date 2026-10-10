@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-eventsource-adapters-sql-migration-position_mapping
 title: Refactor and Decompose Legacy File position_mapping.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
