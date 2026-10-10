@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-integration-bus-test_redis
 title: Refactor and Decompose Legacy File test_redis.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
