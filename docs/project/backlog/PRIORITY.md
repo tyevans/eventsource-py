@@ -9,7 +9,7 @@ Strict sequential order of execution for engineering tasks.
 - **TASK-0005 (Complete)**: [`0005-multi-aggregate-support-in-scenario-testing-harness`](complete/0005-multi-aggregate-support-in-scenario-testing-harness.md)
 - **TASK-0006 (Complete)**: [`0006-reconcile-dropped-live-events-on-transition`](complete/0006-reconcile-dropped-live-events-on-transition.md)
 - **TASK-0007 (Complete)**: [`0007-atomic-routing-switch-in-migration-cutover`](complete/0007-atomic-routing-switch-in-migration-cutover.md)
-- **TASK-0008 (Refined)**: [`0008-decompose-monolithic-modules-subscription-manager`](refined/0008-decompose-monolithic-modules-subscription-manager.md)
+- **TASK-0008 (Complete)**: [`0008-decompose-monolithic-modules-subscription-manager`](complete/0008-decompose-monolithic-modules-subscription-manager.md)
 - **TASK-0009 (Refined)**: [`0009-non-blocking-backoff-for-kafka-and-rabbitmq`](refined/0009-non-blocking-backoff-for-kafka-and-rabbitmq.md)
 - **TASK-0010 (Refined)**: [`0010-transactional-outbox-for-sqlite-adapter`](refined/0010-transactional-outbox-for-sqlite-adapter.md)
 - **TASK-REFACTOR-eventsource-__init__ (Proposed)**: [`TASK-REFACTOR-eventsource-__init__`](proposed/TASK-REFACTOR-eventsource-__init__.md)

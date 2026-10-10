@@ -1,8 +1,7 @@
 ---
 id: 0008
 title: Decompose Monolithic Modules SubscriptionManager and Shutdown
-status: Refined
-created: 2026-10-07
+status: Complete
 governing_adrs:
 - ADR-0002
 - ADR-0007
