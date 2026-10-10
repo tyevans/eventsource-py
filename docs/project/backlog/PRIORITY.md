@@ -63,7 +63,7 @@ Strict sequential order of execution for engineering tasks.
 - **TASK-REFACTOR-eventsource-ports-migration-models (Complete)**: [`TASK-REFACTOR-eventsource-ports-migration-models`](complete/TASK-REFACTOR-eventsource-ports-migration-models.md)
 - **TASK-REFACTOR-eventsource-ports-migration-repositories (Complete)**: [`TASK-REFACTOR-eventsource-ports-migration-repositories`](complete/TASK-REFACTOR-eventsource-ports-migration-repositories.md)
 - **TASK-REFACTOR-examples-projection_example (Complete)**: [`TASK-REFACTOR-examples-projection_example`](complete/TASK-REFACTOR-examples-projection_example.md)
-- **TASK-REFACTOR-examples-subscriptions-multi_subscriber (Refined)**: [`TASK-REFACTOR-examples-subscriptions-multi_subscriber`](refined/TASK-REFACTOR-examples-subscriptions-multi_subscriber.md)
+- **TASK-REFACTOR-examples-subscriptions-multi_subscriber (Complete)**: [`TASK-REFACTOR-examples-subscriptions-multi_subscriber`](complete/TASK-REFACTOR-examples-subscriptions-multi_subscriber.md)
 - **TASK-REFACTOR-examples-subscriptions-resilient_projection (Refined)**: [`TASK-REFACTOR-examples-subscriptions-resilient_projection`](refined/TASK-REFACTOR-examples-subscriptions-resilient_projection.md)
 - **TASK-REFACTOR-tests-conftest (Refined)**: [`TASK-REFACTOR-tests-conftest`](refined/TASK-REFACTOR-tests-conftest.md)
 - **TASK-REFACTOR-tests-integration-bus-test_kafka (Refined)**: [`TASK-REFACTOR-tests-integration-bus-test_kafka`](refined/TASK-REFACTOR-tests-integration-bus-test_kafka.md)
