@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-unit-application-migration-test_bulk_copier
 title: Refactor and Decompose Legacy File test_bulk_copier.py
-status: Proposed
+status: Refined
 created: 2026-09-29
 governing_adrs:
   - ADR-0002
