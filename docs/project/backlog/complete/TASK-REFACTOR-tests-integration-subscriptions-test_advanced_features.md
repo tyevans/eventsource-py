@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-integration-subscriptions-test_advanced_features
 title: Refactor and Decompose Legacy File test_advanced_features.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
