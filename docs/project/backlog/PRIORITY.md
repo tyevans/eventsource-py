@@ -66,7 +66,7 @@ Strict sequential order of execution for engineering tasks.
 - **TASK-REFACTOR-examples-subscriptions-multi_subscriber (Refined)**: [`TASK-REFACTOR-examples-subscriptions-multi_subscriber`](refined/TASK-REFACTOR-examples-subscriptions-multi_subscriber.md)
 - **TASK-REFACTOR-examples-subscriptions-resilient_projection (Refined)**: [`TASK-REFACTOR-examples-subscriptions-resilient_projection`](refined/TASK-REFACTOR-examples-subscriptions-resilient_projection.md)
 - **TASK-REFACTOR-tests-conftest (Refined)**: [`TASK-REFACTOR-tests-conftest`](refined/TASK-REFACTOR-tests-conftest.md)
-- **TASK-REFACTOR-tests-integration-bus-test_kafka (Proposed)**: [`TASK-REFACTOR-tests-integration-bus-test_kafka`](proposed/TASK-REFACTOR-tests-integration-bus-test_kafka.md)
+- **TASK-REFACTOR-tests-integration-bus-test_kafka (Refined)**: [`TASK-REFACTOR-tests-integration-bus-test_kafka`](refined/TASK-REFACTOR-tests-integration-bus-test_kafka.md)
 - **TASK-REFACTOR-tests-integration-bus-test_rabbitmq (Proposed)**: [`TASK-REFACTOR-tests-integration-bus-test_rabbitmq`](proposed/TASK-REFACTOR-tests-integration-bus-test_rabbitmq.md)
 - **TASK-REFACTOR-tests-integration-bus-test_redis (Proposed)**: [`TASK-REFACTOR-tests-integration-bus-test_redis`](proposed/TASK-REFACTOR-tests-integration-bus-test_redis.md)
 - **TASK-REFACTOR-tests-integration-conftest (Proposed)**: [`TASK-REFACTOR-tests-integration-conftest`](proposed/TASK-REFACTOR-tests-integration-conftest.md)
