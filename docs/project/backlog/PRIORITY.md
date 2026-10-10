@@ -28,7 +28,7 @@ Strict sequential order of execution for engineering tasks.
 - **TASK-REFACTOR-eventsource-adapters-sql-migration-position_mapping (Complete)**: [`TASK-REFACTOR-eventsource-adapters-sql-migration-position_mapping`](complete/TASK-REFACTOR-eventsource-adapters-sql-migration-position_mapping.md)
 - **TASK-REFACTOR-eventsource-adapters-sql-migration-routing (Complete)**: [`TASK-REFACTOR-eventsource-adapters-sql-migration-routing`](complete/TASK-REFACTOR-eventsource-adapters-sql-migration-routing.md)
 - **TASK-REFACTOR-eventsource-adapters-sql-readmodel_schema (Complete)**: [`TASK-REFACTOR-eventsource-adapters-sql-readmodel_schema`](complete/TASK-REFACTOR-eventsource-adapters-sql-readmodel_schema.md)
-- **TASK-REFACTOR-eventsource-adapters-sqlite-readmodels (Refined)**: [`TASK-REFACTOR-eventsource-adapters-sqlite-readmodels`](refined/TASK-REFACTOR-eventsource-adapters-sqlite-readmodels.md)
+- **TASK-REFACTOR-eventsource-adapters-sqlite-readmodels (Complete)**: [`TASK-REFACTOR-eventsource-adapters-sqlite-readmodels`](complete/TASK-REFACTOR-eventsource-adapters-sqlite-readmodels.md)
 - **TASK-REFACTOR-eventsource-application-aggregates-repository (Refined)**: [`TASK-REFACTOR-eventsource-application-aggregates-repository`](refined/TASK-REFACTOR-eventsource-application-aggregates-repository.md)
 - **TASK-REFACTOR-eventsource-application-migration-bulk_copier (Refined)**: [`TASK-REFACTOR-eventsource-application-migration-bulk_copier`](refined/TASK-REFACTOR-eventsource-application-migration-bulk_copier.md)
 - **TASK-REFACTOR-eventsource-application-migration-consistency (Refined)**: [`TASK-REFACTOR-eventsource-application-migration-consistency`](refined/TASK-REFACTOR-eventsource-application-migration-consistency.md)
