@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-eventsource-adapters-postgresql-readmodels
 title: Refactor and Decompose Legacy File readmodels.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
