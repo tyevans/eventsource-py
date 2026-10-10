@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-eventsource-observability-tracer
 title: Refactor and Decompose Legacy File tracer.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
