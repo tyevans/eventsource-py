@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-integration-repositories-test_dlq
 title: Refactor and Decompose Legacy File test_dlq.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
