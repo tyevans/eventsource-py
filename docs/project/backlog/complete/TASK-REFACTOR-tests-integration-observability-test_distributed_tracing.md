@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-integration-observability-test_distributed_tracing
 title: Refactor and Decompose Legacy File test_distributed_tracing.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
