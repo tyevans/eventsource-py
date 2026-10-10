@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-eventsource-application-subscriptions-transition
 title: Refactor and Decompose Legacy File transition.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
