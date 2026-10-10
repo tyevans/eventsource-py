@@ -159,6 +159,7 @@ class SQLiteReadModelRepository[TModel: _BaseReadModel](
 
         return self._model_class.model_validate(data)
 
+    @property
     def model_class(self) -> type[TModel]:
         """Get the model class this repository manages.
 
