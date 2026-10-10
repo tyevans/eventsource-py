@@ -3,7 +3,7 @@
 Strict sequential order of execution for engineering tasks.
 
 - **TASK-0001 (Complete)**: [`0001-initial-architecture-spike-and-setup`](complete/0001-initial-architecture-spike-and-setup.md)
-- **TASK-0002 (Refined)**: [`0002-delta-compress-stored-event-payloads`](refined/0002-delta-compress-stored-event-payloads.md)
+- **TASK-0002 (Complete)**: [`0002-delta-compress-stored-event-payloads`](complete/0002-delta-compress-stored-event-payloads.md)
 - **TASK-0003 (Complete)**: [`0003-verify-leadership-lease-renewal-before-acting`](complete/0003-verify-leadership-lease-renewal-before-acting.md)
 - **TASK-0004 (Complete)**: [`0004-re-benchmark-postgresql-catch-up-horizon-predicate`](complete/0004-re-benchmark-postgresql-catch-up-horizon-predicate.md)
 - **TASK-0005 (Complete)**: [`0005-multi-aggregate-support-in-scenario-testing-harness`](complete/0005-multi-aggregate-support-in-scenario-testing-harness.md)
@@ -164,8 +164,8 @@ Strict sequential order of execution for engineering tasks.
 - **TASK-REFACTOR-tests-unit-testing-test_bdd (Proposed)**: [`TASK-REFACTOR-tests-unit-testing-test_bdd`](proposed/TASK-REFACTOR-tests-unit-testing-test_bdd.md)
 - **TASK-REFACTOR-tests-unit-testing-test_builder (Proposed)**: [`TASK-REFACTOR-tests-unit-testing-test_builder`](proposed/TASK-REFACTOR-tests-unit-testing-test_builder.md)
 - **TASK-REFACTOR-tests-unit-testing-test_harness (Proposed)**: [`TASK-REFACTOR-tests-unit-testing-test_harness`](proposed/TASK-REFACTOR-tests-unit-testing-test_harness.md)
-- **TASK-0002 (Refined)**: [`0002-delta-compress-stored-event-payloads`](refined/0002-delta-compress-stored-event-payloads.md)
-- **TASK-0002 (Refined)**: [`0002-delta-compress-stored-event-payloads`](refined/0002-delta-compress-stored-event-payloads.md)
+- **TASK-0002 (Complete)**: [`0002-delta-compress-stored-event-payloads`](complete/0002-delta-compress-stored-event-payloads.md)
+- **TASK-0002 (Complete)**: [`0002-delta-compress-stored-event-payloads`](complete/0002-delta-compress-stored-event-payloads.md)
 - **TASK-0003 (Complete)**: [`0003-verify-leadership-lease-renewal-before-acting`](complete/0003-verify-leadership-lease-renewal-before-acting.md)
 - **TASK-REFACTOR-tests-integration-end-to-end-test_full_flow (Proposed)**: [`TASK-REFACTOR-tests-integration-end-to-end-test_full_flow`](proposed/TASK-REFACTOR-tests-integration-end-to-end-test_full_flow.md)
 - **TASK-REFACTOR-tests-unit-application-migration-test_phase_three_integration (Proposed)**: [`TASK-REFACTOR-tests-unit-application-migration-test_phase_three_integration`](proposed/TASK-REFACTOR-tests-unit-application-migration-test_phase_three_integration.md)

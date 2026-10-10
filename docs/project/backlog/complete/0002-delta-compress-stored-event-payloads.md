@@ -1,8 +1,7 @@
 ---
 id: '0002'
 title: Delta-Compress Stored Event Payloads
-status: Refined
-created: 2026-10-07
+status: Complete
 governing_adrs:
 - ADR-0007
 - ADR-0101
