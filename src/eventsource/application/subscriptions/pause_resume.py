@@ -198,6 +198,11 @@ class PauseResumeController:
                     extra={"subscription": name, "error": str(e)},
                     exc_info=True,
                 )
+                coordinator = self._lifecycle.get_coordinator(name)
+                if coordinator and coordinator.live_runner:
+                    await coordinator.live_runner.clear_buffer()
+                else:
+                    await subscription.reconcile_lag(0)
                 return False
 
     async def pause_all(

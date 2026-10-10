@@ -26,6 +26,10 @@ from eventsource.application.subscriptions.retry import (
     CircuitBreaker,
     RetryableOperation,
 )
+from eventsource.application.subscriptions.runners.live_models import (
+    LiveRunnerStats,
+    _LiveEventHandler,
+)
 from eventsource.application.subscriptions.subscriber import settle_handler_result
 from eventsource.application.subscriptions.subscription import (
     Subscription,
@@ -56,24 +60,6 @@ if TYPE_CHECKING:
     from eventsource.ports.store import GlobalEventFeed
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class LiveRunnerStats:
-    """
-    Statistics for live event processing.
-
-    Attributes:
-        events_received: Total envelopes read from the global feed while draining
-        events_processed: Events successfully processed by subscriber
-        events_skipped_filtered: Events skipped due to event type filtering
-        events_failed: Events that failed during processing
-    """
-
-    events_received: int = 0
-    events_processed: int = 0
-    events_skipped_filtered: int = 0
-    events_failed: int = 0
 
 
 @dataclass
@@ -963,6 +949,24 @@ class LiveRunner:
 
             return processed
 
+    async def clear_buffer(self) -> int:
+        """
+        Clear buffered wakes and pause buffer, reconciling subscription lag.
+
+        Called when a transition is aborted or runner is stopped before
+        the buffer could be drained into the feed.
+
+        Returns:
+            Total count of dropped buffered wakes that were cleared.
+        """
+        dropped = self._buffered_wakes + self._paused_wakes
+        self._buffered_wakes = 0
+        self._paused_wakes = 0
+        self._events_buffered_during_pause = 0
+        self._buffer_enabled = False
+        await self.subscription.reconcile_lag(0)
+        return dropped
+
     async def stop(self) -> None:
         """
         Stop the live runner.
@@ -985,6 +989,9 @@ class LiveRunner:
                     self.event_bus.unsubscribe(event_type, handler)
                 self._handlers.clear()
                 self._subscribed = False
+
+            # Clear buffered wakes and reconcile lag
+            await self.clear_buffer()
 
             logger.info(
                 "Live runner stopped",
@@ -1135,35 +1142,6 @@ class LiveRunner:
         """
         assert self._metrics is not None
         return self._metrics
-
-
-class _LiveEventHandler:
-    """
-    Internal handler wrapper for event bus subscription.
-
-    This class wraps the LiveRunner to provide a handler interface
-    compatible with the EventBus subscription mechanism.
-    """
-
-    def __init__(self, runner: LiveRunner) -> None:
-        """
-        Initialize the handler wrapper.
-
-        Args:
-            runner: The LiveRunner to route events to
-        """
-        self._runner = runner
-
-    async def handle(self, event: DomainEvent) -> None:
-        """
-        Handle an event from the event bus.
-
-        Routes the event to the LiveRunner for processing.
-
-        Args:
-            event: The event to handle
-        """
-        await self._runner._handle_live_event(event)
 
 
 __all__ = [
