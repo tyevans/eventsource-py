@@ -27,6 +27,8 @@ from eventsource.adapters.rabbitmq.consumer_retry import RabbitMQConsumerRetryMi
 from eventsource.observability import OTEL_AVAILABLE
 from eventsource.observability.attributes import (
     ATTR_AGGREGATE_ID,  # noqa: F401
+    ATTR_HANDLER_NAME,  # noqa: F401
+    ATTR_HANDLER_SUCCESS,  # noqa: F401
 )
 
 # OpenTelemetry propagation import - kept separate for distributed tracing.
