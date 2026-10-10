@@ -1,7 +1,6 @@
 {
   "version": 1,
   "files": {
-    "examples/subscriptions/resilient_projection.py": 535,
     "src/eventsource/__init__.py": 600,
     "src/eventsource/adapters/kafka/bus.py": 1023,
     "src/eventsource/adapters/kafka/consumer.py": 1136,
