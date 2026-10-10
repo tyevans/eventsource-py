@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-unit-adapters-test_memory_checkpoints
 title: Refactor and Decompose Legacy File test_memory_checkpoints.py
-status: Refined
+status: Complete
 created: 2026-09-29
 governing_adrs:
   - ADR-0002
