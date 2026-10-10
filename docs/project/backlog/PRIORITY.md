@@ -20,7 +20,7 @@ Strict sequential order of execution for engineering tasks.
 - **TASK-REFACTOR-eventsource-adapters-postgresql-store (Complete)**: [`TASK-REFACTOR-eventsource-adapters-postgresql-store`](complete/TASK-REFACTOR-eventsource-adapters-postgresql-store.md)
 - **TASK-REFACTOR-eventsource-adapters-rabbitmq-bus (Complete)**: [`TASK-REFACTOR-eventsource-adapters-rabbitmq-bus`](complete/TASK-REFACTOR-eventsource-adapters-rabbitmq-bus.md)
 - **TASK-REFACTOR-eventsource-adapters-rabbitmq-connection (Complete)**: [`TASK-REFACTOR-eventsource-adapters-rabbitmq-connection`](complete/TASK-REFACTOR-eventsource-adapters-rabbitmq-connection.md)
-- **TASK-REFACTOR-eventsource-adapters-rabbitmq-consumer (Refined)**: [`TASK-REFACTOR-eventsource-adapters-rabbitmq-consumer`](refined/TASK-REFACTOR-eventsource-adapters-rabbitmq-consumer.md)
+- **TASK-REFACTOR-eventsource-adapters-rabbitmq-consumer (Complete)**: [`TASK-REFACTOR-eventsource-adapters-rabbitmq-consumer`](complete/TASK-REFACTOR-eventsource-adapters-rabbitmq-consumer.md)
 - **TASK-REFACTOR-eventsource-adapters-rabbitmq-dlq (Refined)**: [`TASK-REFACTOR-eventsource-adapters-rabbitmq-dlq`](refined/TASK-REFACTOR-eventsource-adapters-rabbitmq-dlq.md)
 - **TASK-REFACTOR-eventsource-adapters-rabbitmq-publisher (Refined)**: [`TASK-REFACTOR-eventsource-adapters-rabbitmq-publisher`](refined/TASK-REFACTOR-eventsource-adapters-rabbitmq-publisher.md)
 - **TASK-REFACTOR-eventsource-adapters-redis-bus (Refined)**: [`TASK-REFACTOR-eventsource-adapters-redis-bus`](refined/TASK-REFACTOR-eventsource-adapters-redis-bus.md)

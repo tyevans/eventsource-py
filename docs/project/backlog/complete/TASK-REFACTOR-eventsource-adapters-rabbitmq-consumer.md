@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-eventsource-adapters-rabbitmq-consumer
 title: Refactor and Decompose Legacy File consumer.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
