@@ -40,7 +40,6 @@
     "src/eventsource/application/subscriptions/coordination.py": 990,
     "src/eventsource/application/subscriptions/error_handling.py": 1105,
     "src/eventsource/application/subscriptions/health.py": 860,
-    "src/eventsource/application/subscriptions/shutdown.py": 1537,
     "src/eventsource/application/subscriptions/subscription.py": 839,
     "src/eventsource/application/subscriptions/transition.py": 613,
     "src/eventsource/domain/aggregate.py": 951,
