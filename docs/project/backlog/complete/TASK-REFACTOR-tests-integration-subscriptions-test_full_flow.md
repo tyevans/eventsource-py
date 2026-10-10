@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-integration-subscriptions-test_full_flow
 title: Refactor and Decompose Legacy File test_full_flow.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
