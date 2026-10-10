@@ -131,7 +131,6 @@ grandfathered = [
   "src/eventsource/application/subscriptions/shutdown.py",
   "src/eventsource/application/subscriptions/subscription.py",
   "src/eventsource/application/subscriptions/transition.py",
-  "tests/integration/bus/test_rabbitmq.py",
   "tests/integration/bus/test_redis.py",
   "tests/integration/conftest.py",
   "tests/integration/e2e/test_full_flow.py",
