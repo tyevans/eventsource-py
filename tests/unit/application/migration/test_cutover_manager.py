@@ -94,19 +94,20 @@ def mock_router():
 @pytest.fixture
 def mock_routing_repo():
     """Create a mock TenantRoutingRepository."""
-    repo = MagicMock()
-    repo.set_migration_state = AsyncMock()
-    repo.set_routing = AsyncMock()
-    repo.get_routing = AsyncMock()
-
-    # Default routing
-    routing = TenantRouting(
-        tenant_id=uuid4(),
-        store_id="source-store",
-        migration_state=TenantMigrationState.DUAL_WRITE,
+    r = TenantRouting(
+        tenant_id=uuid4(), store_id="source-store", migration_state=TenantMigrationState.DUAL_WRITE
     )
-    repo.get_routing.return_value = routing
+    repo = MagicMock(
+        get_routing=AsyncMock(return_value=r),
+        set_migration_state=AsyncMock(),
+        set_routing=AsyncMock(),
+    )
 
+    async def _switch(t_id, s_id, state=TenantMigrationState.MIGRATED, migration_id=None):
+        await repo.set_routing(t_id, s_id)
+        await repo.set_migration_state(t_id, state, migration_id=migration_id)
+
+    repo.switch_routing = AsyncMock(side_effect=_switch)
     return repo
 
 
@@ -131,19 +132,13 @@ def mock_lag_tracker():
 @pytest.fixture
 def config():
     """Create a test migration config."""
-    return MigrationConfig(
-        cutover_max_lag_events=100,
-        cutover_timeout_ms=500,
-    )
+    return MigrationConfig(cutover_max_lag_events=100, cutover_timeout_ms=500)
 
 
 @pytest.fixture
 def strict_config():
     """Create a strict migration config (low lag tolerance)."""
-    return MigrationConfig(
-        cutover_max_lag_events=10,
-        cutover_timeout_ms=100,
-    )
+    return MigrationConfig(cutover_max_lag_events=10, cutover_timeout_ms=100)
 
 
 def create_lock_context_manager(lock_manager: MagicMock):

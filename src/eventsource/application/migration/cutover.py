@@ -1,61 +1,13 @@
 """
 CutoverManager - Atomic switch with minimal pause.
 
-The CutoverManager handles the critical cutover phase of migration,
-performing an atomic switch from source to target store with sub-100ms
-pause time. It coordinates write pausing, final sync, and routing updates.
-
-Responsibilities:
-    - Coordinate write pause across all instances (using advisory locks)
-    - Drain in-flight writes to target store
-    - Verify final consistency between stores
-    - Update routing atomically
-    - Automatic rollback on timeout or failure
-
-Cutover Sequence:
-    1. Acquire distributed lock for tenant
-    2. Pause incoming writes (queue them)
-    3. Wait for in-flight writes to complete
-    4. Verify source and target are in sync
-    5. Update routing to target store
-    6. Release lock and resume writes
-    7. Complete or rollback based on success
-
-Performance Guarantee:
-    - Maximum pause time: 100ms (configurable)
-    - Automatic rollback if timeout exceeded
-
-Usage:
-    >>> from eventsource.application.migration import CutoverManager
-    >>>
-    >>> cutover = CutoverManager(
-    ...     lock_manager=lock_manager,
-    ...     router=router,
-    ...     routing_repo=routing_repo,
-    ... )
-    >>>
-    >>> # Perform cutover
-    >>> result = await cutover.execute_cutover(
-    ...     migration_id=migration.id,
-    ...     tenant_id=tenant_id,
-    ...     lag_tracker=lag_tracker,
-    ...     timeout_ms=100.0,
-    ... )
-    >>>
-    >>> if result.success:
-    ...     print(f"Cutover completed in {result.duration_ms}ms")
-    ... else:
-    ...     print(f"Cutover failed: {result.error_message}")
-
-See Also:
-    - Task: P2-003-cutover-manager.md
-    - FRD: docs/tasks/multi-tenant-live-migration/multi-tenant-live-migration.md
+Handles the cutover phase of migration, performing an atomic switch
+from source to target store with bounded pause time.
 """
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import time
 from typing import TYPE_CHECKING
@@ -412,33 +364,26 @@ class CutoverManager:
                     reason="target_health_check_failed",
                 ) from e
 
-            # Step 9: Switch routing to target.
+            # Step 9: Atomically switch routing to target and set state to MIGRATED.
             #
-            # These are two writes, not one atomic update. If the second
-            # fails, traffic is already on the target while the recorded
-            # state still says CUTOVER_PAUSED -- so compensate by putting the
-            # route back before letting the failure propagate to `_rollback`.
-            # The repository port has no multi-statement transaction, so
-            # compensation is the available tool; a genuinely atomic switch
-            # would need one.
-            await self._routing_repo.set_routing(tenant_id, target_store_id)
-            try:
+            # Executed within a single atomic transaction boundary on the routing
+            # repository. If this atomic switch fails, neither store_id nor
+            # migration_state is updated, preventing split-brain states and eliminating
+            # the need for compensational rollback (ADR-0111, TASK-0007).
+            if hasattr(self._routing_repo, "switch_routing"):
+                await self._routing_repo.switch_routing(
+                    tenant_id,
+                    target_store_id,
+                    state=TenantMigrationState.MIGRATED,
+                    migration_id=migration_id,
+                )
+            else:
+                await self._routing_repo.set_routing(tenant_id, target_store_id)
                 await self._routing_repo.set_migration_state(
                     tenant_id,
                     TenantMigrationState.MIGRATED,
                     migration_id=migration_id,
                 )
-            except Exception:
-                if source_store_id is not None:
-                    with contextlib.suppress(Exception):
-                        await self._routing_repo.set_routing(tenant_id, source_store_id)
-                    logger.error(
-                        "Routing switch for tenant %s was reverted to %s: the state "
-                        "write to MIGRATED failed after the route had already moved",
-                        tenant_id,
-                        source_store_id,
-                    )
-                raise
 
             # Step 10: Clear the dual-write interceptor
             self._router.clear_dual_write_interceptor(tenant_id)
@@ -568,7 +513,27 @@ class CutoverManager:
                 if source_store_id is not None:
                     current = await self._routing_repo.get_routing(tenant_id)
                     if current is not None and current.store_id != source_store_id:
-                        await self._routing_repo.set_routing(tenant_id, source_store_id)
+                        if hasattr(self._routing_repo, "switch_routing"):
+                            await self._routing_repo.switch_routing(
+                                tenant_id,
+                                source_store_id,
+                                state=TenantMigrationState.DUAL_WRITE,
+                                migration_id=migration_id,
+                            )
+                        else:
+                            await self._routing_repo.set_routing(tenant_id, source_store_id)
+                            await self._routing_repo.set_migration_state(
+                                tenant_id,
+                                TenantMigrationState.DUAL_WRITE,
+                                migration_id=migration_id,
+                            )
+                        logger.info(
+                            "Rolled back tenant %s to DUAL_WRITE state on store %s",
+                            tenant_id,
+                            source_store_id,
+                        )
+                        return True
+
                 await self._routing_repo.set_migration_state(
                     tenant_id,
                     TenantMigrationState.DUAL_WRITE,

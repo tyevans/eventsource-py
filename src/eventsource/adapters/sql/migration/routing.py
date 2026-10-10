@@ -1,54 +1,8 @@
 """
 TenantRoutingRepository - Data access for tenant routing configuration.
 
-The TenantRoutingRepository manages tenant-to-store routing entries,
-enabling the TenantStoreRouter to determine which store(s) should
-handle operations for each tenant.
-
-This module provides a protocol definition and PostgreSQL implementation
-for managing tenant routing configuration during migrations.
-
-Responsibilities:
-    - Create and update tenant routing entries
-    - Atomic routing state transitions
-    - Query routing by tenant ID
-    - Cache-friendly query patterns
-    - Audit trail for routing changes
-
-Database Table:
-    Uses the `tenant_routing` table defined in PREREQ-002.
-
-Routing States:
-    - NORMAL: Tenant uses configured store (no migration active)
-    - BULK_COPY: Route reads to source; writes to source only
-    - DUAL_WRITE: Route writes through DualWriteInterceptor
-    - CUTOVER_PAUSED: Block writes, await cutover completion
-    - MIGRATED: Route all operations to target store
-
-Usage:
-    >>> from eventsource.adapters.sql.migration import (
-    ...     TenantRoutingRepository,
-    ...     PostgreSQLTenantRoutingRepository,
-    ... )
-    >>>
-    >>> repo = PostgreSQLTenantRoutingRepository(conn)
-    >>>
-    >>> # Get routing for tenant
-    >>> routing = await repo.get_routing(tenant_id)
-    >>>
-    >>> # Update routing state
-    >>> await repo.set_migration_state(tenant_id, TenantMigrationState.DUAL_WRITE)
-    >>>
-    >>> # Atomic cutover
-    >>> await repo.set_migration_state(
-    ...     tenant_id,
-    ...     TenantMigrationState.MIGRATED,
-    ...     migration_id=migration.id,
-    ... )
-
-See Also:
-    - Task: P1-004-routing-repository.md
-    - Schema: PREREQ-002-migration-schema.md
+Manages tenant-to-store routing entries and migration state transitions
+in PostgreSQL with caching support.
 """
 
 from __future__ import annotations
@@ -357,6 +311,64 @@ class PostgreSQLTenantRoutingRepository:
             # Invalidate cache
             await self._invalidate_cache(tenant_id)
 
+    async def switch_routing(
+        self,
+        tenant_id: UUID,
+        store_id: str,
+        state: TenantMigrationState = TenantMigrationState.MIGRATED,
+        migration_id: UUID | None = None,
+    ) -> None:
+        """
+        Atomically update both store_id and migration_state in a single transaction.
+
+        Args:
+            tenant_id: Tenant UUID
+            store_id: Target store identifier
+            state: Target migration state (default MIGRATED)
+            migration_id: Active migration ID (if applicable)
+        """
+        with self._tracer.span(
+            "eventsource.routing_repo.switch_routing",
+            {
+                ATTR_TENANT_ID: str(tenant_id),
+                "store_id": store_id,
+                "migration_state": state.value,
+                ATTR_DB_SYSTEM: "postgresql",
+            },
+        ):
+            now = datetime.now(UTC)
+
+            query = text("""
+                INSERT INTO tenant_routing (
+                    tenant_id, store_id, migration_state,
+                    active_migration_id, created_at, updated_at
+                ) VALUES (
+                    :tenant_id, :store_id, :state,
+                    :migration_id, :created_at, :updated_at
+                )
+                ON CONFLICT (tenant_id) DO UPDATE
+                SET store_id = EXCLUDED.store_id,
+                    migration_state = EXCLUDED.migration_state,
+                    active_migration_id = EXCLUDED.active_migration_id,
+                    updated_at = EXCLUDED.updated_at
+            """)
+
+            async with sql_connection(self._conn, write=True) as conn:
+                await conn.execute(
+                    query,
+                    {
+                        "tenant_id": tenant_id,
+                        "store_id": store_id,
+                        "state": state.value,
+                        "migration_id": migration_id,
+                        "created_at": now,
+                        "updated_at": now,
+                    },
+                )
+
+            # Invalidate cache
+            await self._invalidate_cache(tenant_id)
+
     async def clear_migration_state(self, tenant_id: UUID) -> None:
         """
         Reset migration state to NORMAL.
@@ -506,49 +518,22 @@ class PostgreSQLTenantRoutingRepository:
             return routing
 
     async def _set_cache(self, tenant_id: UUID, routing: TenantRouting) -> None:
-        """
-        Add routing to cache.
-
-        Args:
-            tenant_id: Tenant UUID
-            routing: TenantRouting instance to cache
-        """
+        """Add routing to cache."""
         async with self._cache_lock:
             self._cache[tenant_id] = (routing, time.monotonic())
 
     async def _invalidate_cache(self, tenant_id: UUID) -> None:
-        """
-        Remove routing from cache.
-
-        Args:
-            tenant_id: Tenant UUID
-        """
+        """Remove routing from cache."""
         async with self._cache_lock:
             self._cache.pop(tenant_id, None)
 
     async def clear_cache(self) -> None:
-        """
-        Clear all cached routing entries.
-
-        Useful for testing or when a bulk update has occurred.
-        """
+        """Clear all cached routing entries."""
         async with self._cache_lock:
             self._cache.clear()
 
-    # =========================================================================
-    # Helper methods
-    # =========================================================================
-
     def _row_to_routing(self, row: Sequence[Any]) -> TenantRouting:
-        """
-        Convert database row to TenantRouting instance.
-
-        Args:
-            row: Database row tuple from SELECT query
-
-        Returns:
-            TenantRouting instance
-        """
+        """Convert database row tuple to TenantRouting instance."""
         return TenantRouting(
             tenant_id=row[0],
             store_id=row[1],
