@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-unit-adapters-test_checkpoint_position
 title: Refactor and Decompose Legacy File test_checkpoint_position.py
-status: Refined
+status: Complete
 created: 2026-09-29
 governing_adrs:
   - ADR-0002
