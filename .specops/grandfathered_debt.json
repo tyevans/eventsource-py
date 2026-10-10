@@ -40,7 +40,6 @@
     "src/eventsource/application/subscriptions/coordination.py": 990,
     "src/eventsource/application/subscriptions/error_handling.py": 1105,
     "src/eventsource/application/subscriptions/health.py": 860,
-    "src/eventsource/ports/migration/models.py": 1175,
     "src/eventsource/ports/migration/repositories.py": 611,
     "tests/conftest.py": 726,
     "tests/integration/bus/test_kafka.py": 2435,
