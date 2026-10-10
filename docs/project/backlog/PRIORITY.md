@@ -79,7 +79,7 @@ Strict sequential order of execution for engineering tasks.
 - **TASK-REFACTOR-tests-integration-readmodels-test_repositories (Complete)**: [`TASK-REFACTOR-tests-integration-readmodels-test_repositories`](complete/TASK-REFACTOR-tests-integration-readmodels-test_repositories.md)
 - **TASK-REFACTOR-tests-integration-repositories-test_dlq (Complete)**: [`TASK-REFACTOR-tests-integration-repositories-test_dlq`](complete/TASK-REFACTOR-tests-integration-repositories-test_dlq.md)
 - **TASK-REFACTOR-tests-integration-subscriptions-test_advanced_features (Complete)**: [`TASK-REFACTOR-tests-integration-subscriptions-test_advanced_features`](complete/TASK-REFACTOR-tests-integration-subscriptions-test_advanced_features.md)
-- **TASK-REFACTOR-tests-integration-subscriptions-test_full_flow (Refined)**: [`TASK-REFACTOR-tests-integration-subscriptions-test_full_flow`](refined/TASK-REFACTOR-tests-integration-subscriptions-test_full_flow.md)
+- **TASK-REFACTOR-tests-integration-subscriptions-test_full_flow (Complete)**: [`TASK-REFACTOR-tests-integration-subscriptions-test_full_flow`](complete/TASK-REFACTOR-tests-integration-subscriptions-test_full_flow.md)
 - **TASK-REFACTOR-tests-integration-subscriptions-test_resilience (Refined)**: [`TASK-REFACTOR-tests-integration-subscriptions-test_resilience`](refined/TASK-REFACTOR-tests-integration-subscriptions-test_resilience.md)
 - **TASK-REFACTOR-tests-repositories-test_sqlite_repos (Proposed)**: [`TASK-REFACTOR-tests-repositories-test_sqlite_repos`](proposed/TASK-REFACTOR-tests-repositories-test_sqlite_repos.md)
 - **TASK-REFACTOR-tests-unit-adapters-serialization-test_json (Proposed)**: [`TASK-REFACTOR-tests-unit-adapters-serialization-test_json`](proposed/TASK-REFACTOR-tests-unit-adapters-serialization-test_json.md)
