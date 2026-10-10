@@ -38,7 +38,6 @@
     "src/eventsource/application/subscriptions/error_handling.py": 1105,
     "src/eventsource/application/subscriptions/health.py": 860,
     "tests/integration/e2e/test_full_flow.py": 540,
-    "tests/integration/readmodels/test_repositories.py": 914,
     "tests/integration/repositories/test_dlq.py": 547,
     "tests/integration/subscriptions/test_advanced_features.py": 1510,
     "tests/integration/subscriptions/test_full_flow.py": 673,
