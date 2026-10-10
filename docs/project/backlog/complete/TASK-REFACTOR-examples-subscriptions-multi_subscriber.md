@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-examples-subscriptions-multi_subscriber
 title: Refactor and Decompose Legacy File multi_subscriber.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
