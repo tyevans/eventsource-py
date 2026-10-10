@@ -16,7 +16,7 @@ Strict sequential order of execution for engineering tasks.
 - **TASK-REFACTOR-eventsource-adapters-kafka-bus (Complete)**: [`TASK-REFACTOR-eventsource-adapters-kafka-bus`](complete/TASK-REFACTOR-eventsource-adapters-kafka-bus.md)
 - **TASK-REFACTOR-eventsource-adapters-kafka-consumer (Complete)**: [`TASK-REFACTOR-eventsource-adapters-kafka-consumer`](complete/TASK-REFACTOR-eventsource-adapters-kafka-consumer.md)
 - **TASK-REFACTOR-eventsource-adapters-memory-readmodels (Complete)**: [`TASK-REFACTOR-eventsource-adapters-memory-readmodels`](complete/TASK-REFACTOR-eventsource-adapters-memory-readmodels.md)
-- **TASK-REFACTOR-eventsource-adapters-postgresql-readmodels (Refined)**: [`TASK-REFACTOR-eventsource-adapters-postgresql-readmodels`](refined/TASK-REFACTOR-eventsource-adapters-postgresql-readmodels.md)
+- **TASK-REFACTOR-eventsource-adapters-postgresql-readmodels (Complete)**: [`TASK-REFACTOR-eventsource-adapters-postgresql-readmodels`](complete/TASK-REFACTOR-eventsource-adapters-postgresql-readmodels.md)
 - **TASK-REFACTOR-eventsource-adapters-postgresql-store (Refined)**: [`TASK-REFACTOR-eventsource-adapters-postgresql-store`](refined/TASK-REFACTOR-eventsource-adapters-postgresql-store.md)
 - **TASK-REFACTOR-eventsource-adapters-rabbitmq-bus (Refined)**: [`TASK-REFACTOR-eventsource-adapters-rabbitmq-bus`](refined/TASK-REFACTOR-eventsource-adapters-rabbitmq-bus.md)
 - **TASK-REFACTOR-eventsource-adapters-rabbitmq-connection (Refined)**: [`TASK-REFACTOR-eventsource-adapters-rabbitmq-connection`](refined/TASK-REFACTOR-eventsource-adapters-rabbitmq-connection.md)
