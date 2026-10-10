@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-eventsource-application-migration-cutover
 title: Refactor and Decompose Legacy File cutover.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
