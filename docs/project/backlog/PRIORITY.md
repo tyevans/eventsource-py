@@ -22,7 +22,7 @@ Strict sequential order of execution for engineering tasks.
 - **TASK-REFACTOR-eventsource-adapters-rabbitmq-connection (Refined)**: [`TASK-REFACTOR-eventsource-adapters-rabbitmq-connection`](refined/TASK-REFACTOR-eventsource-adapters-rabbitmq-connection.md)
 - **TASK-REFACTOR-eventsource-adapters-rabbitmq-consumer (Refined)**: [`TASK-REFACTOR-eventsource-adapters-rabbitmq-consumer`](refined/TASK-REFACTOR-eventsource-adapters-rabbitmq-consumer.md)
 - **TASK-REFACTOR-eventsource-adapters-rabbitmq-dlq (Refined)**: [`TASK-REFACTOR-eventsource-adapters-rabbitmq-dlq`](refined/TASK-REFACTOR-eventsource-adapters-rabbitmq-dlq.md)
-- **TASK-REFACTOR-eventsource-adapters-rabbitmq-publisher (Proposed)**: [`TASK-REFACTOR-eventsource-adapters-rabbitmq-publisher`](proposed/TASK-REFACTOR-eventsource-adapters-rabbitmq-publisher.md)
+- **TASK-REFACTOR-eventsource-adapters-rabbitmq-publisher (Refined)**: [`TASK-REFACTOR-eventsource-adapters-rabbitmq-publisher`](refined/TASK-REFACTOR-eventsource-adapters-rabbitmq-publisher.md)
 - **TASK-REFACTOR-eventsource-adapters-redis-bus (Proposed)**: [`TASK-REFACTOR-eventsource-adapters-redis-bus`](proposed/TASK-REFACTOR-eventsource-adapters-redis-bus.md)
 - **TASK-REFACTOR-eventsource-adapters-sql-migration-migration (Proposed)**: [`TASK-REFACTOR-eventsource-adapters-sql-migration-migration`](proposed/TASK-REFACTOR-eventsource-adapters-sql-migration-migration.md)
 - **TASK-REFACTOR-eventsource-adapters-sql-migration-position_mapping (Proposed)**: [`TASK-REFACTOR-eventsource-adapters-sql-migration-position_mapping`](proposed/TASK-REFACTOR-eventsource-adapters-sql-migration-position_mapping.md)
