@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-eventsource-adapters-kafka-bus
 title: Refactor and Decompose Legacy File bus.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
