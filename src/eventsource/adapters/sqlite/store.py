@@ -18,16 +18,24 @@ sufficient; there is no gap to skip.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from eventsource.adapters._common import check_expected, describe_expected
 from eventsource.adapters._sql.positions import IntPositionCodec
-from eventsource.adapters.serialization import json_dumps, json_loads
+from eventsource.adapters.serialization import json_dumps
 from eventsource.adapters.sql.schemas import get_schema
+from eventsource.adapters.sqlite.queries import (
+    apply_additive_updates,
+    build_read_all_query,
+    build_read_category_query,
+    build_read_stream_query,
+    row_to_envelope,
+)
 from eventsource.domain import StreamId
 from eventsource.domain.event import DomainEvent
 from eventsource.domain.event_registry import EventRegistry, default_registry
@@ -40,9 +48,9 @@ from eventsource.ports import (
     ExpectedVersion,
     FeedReadOptions,
     Position,
-    ReadDirection,
     StreamReadOptions,
 )
+from eventsource.ports.outbox import outbox_event_data
 
 try:
     import aiosqlite
@@ -53,12 +61,6 @@ except ImportError:  # pragma: no cover - exercised only without the optional de
     aiosqlite = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
-
-
-_SELECT_COLUMNS = """
-    global_position, event_id, event_type, aggregate_type, aggregate_id,
-    tenant_id, actor_id, version, timestamp, payload, created_at
-"""
 
 
 class SQLiteEventStore:
@@ -91,6 +93,7 @@ class SQLiteEventStore:
         store_id: str | None = None,
         wal_mode: bool = True,
         busy_timeout: int = 5000,
+        outbox_enabled: bool = False,
     ) -> None:
         if not AIOSQLITE_AVAILABLE:
             raise ImportError(
@@ -101,35 +104,24 @@ class SQLiteEventStore:
         self._event_registry = event_registry or default_registry
         self._wal_mode = wal_mode
         self._busy_timeout = busy_timeout
+        self._outbox_enabled = outbox_enabled
         self._connection: aiosqlite.Connection | None = None
-        # Defaults to the database path, which is unique only within a host
-        # -- and is "sqlite::memory:" for every in-memory store. Pass
-        # store_id explicitly when two such stores could meet; see
-        # Position's docstring.
         self._store_id = store_id or f"sqlite:{database}"
         self._codec = IntPositionCodec(self._store_id)
         self._lock = asyncio.Lock()
-        # Dedicated lock for connection setup, distinct from `self._lock`
-        # (held around `append`'s read-check-write sequence). `append` calls
-        # `_conn()` before acquiring `self._lock`; guarding connection setup
-        # with the same lock would be fine for that ordering, but a separate
-        # lock keeps `_conn()` safe to call from any code path (readers too)
-        # without coupling to append's locking discipline.
         self._init_lock = asyncio.Lock()
 
     @property
     def store_id(self) -> str:
         return self._store_id
 
-    async def _conn(self) -> aiosqlite.Connection:
-        """Return the live connection, opening and initializing it on first use.
+    @property
+    def outbox_enabled(self) -> bool:
+        """Whether `append` also writes to `event_outbox` in the same transaction."""
+        return self._outbox_enabled
 
-        Double-checked locking around `self._init_lock` (mirroring
-        `PostgreSQLEventStore._ensure_schema`'s pattern): without it, two
-        concurrent first-callers can each open an `aiosqlite.connect()` --
-        a non-daemon background thread each -- and the loser's connection
-        is simply discarded, leaking its thread for the process lifetime.
-        """
+    async def _conn(self) -> aiosqlite.Connection:
+        """Return the live connection, opening and initializing it on first use."""
         if self._connection is not None:
             return self._connection
 
@@ -140,9 +132,6 @@ class SQLiteEventStore:
             try:
                 conn = await aiosqlite.connect(self._database)
             except (aiosqlite.Error, OSError) as e:
-                # Without this the user sees a bare
-                # `sqlite3.OperationalError: unable to open database file`
-                # with nothing naming the library, the adapter, or the path.
                 raise EventStoreConnectionError(
                     f"could not open the SQLite database at {self._database!r}: {e}",
                     store=type(self).__name__,
@@ -156,23 +145,11 @@ class SQLiteEventStore:
 
             schema = get_schema("all", backend="sqlite", additive=False)
             await conn.executescript(schema)
-            await self._apply_additive_updates(conn)
+            await apply_additive_updates(conn)
             await conn.commit()
 
             self._connection = conn
             return conn
-
-    async def _apply_additive_updates(self, conn: aiosqlite.Connection) -> None:
-        """Apply additive schema fragments SQLite cannot express idempotently.
-
-        SQLite has no `ADD COLUMN IF NOT EXISTS`, and this schema is applied
-        on every first connection -- including to a file that already carries
-        the column from an earlier process.
-        """
-        async with conn.execute("PRAGMA table_info(projection_checkpoints)") as cursor:
-            columns = {row[1] for row in await cursor.fetchall()}
-        if "position_token" not in columns:
-            await conn.execute("ALTER TABLE projection_checkpoints ADD COLUMN position_token TEXT")
 
     async def close(self) -> None:
         """Close the underlying connection, if open. Safe to call multiple times."""
@@ -247,6 +224,9 @@ class SQLiteEventStore:
                     if first_position is None:
                         first_position = self._codec.encode(global_position)
 
+                    if self._outbox_enabled:
+                        await self._write_to_outbox(conn, event, category, now)
+
                 await conn.commit()
                 return AppendResult(stream=stream, new_version=version, position=first_position)
 
@@ -275,15 +255,43 @@ class SQLiteEventStore:
                     ) from e
                 raise
             except BaseException:
-                # Any non-IntegrityError failure mid-batch (e.g. an
-                # OperationalError, or a serialization failure from
-                # `json_dumps`/`event.model_dump`) still leaves a dirty open
-                # transaction on the shared connection -- the *next*
-                # `append()`'s `commit()` would silently commit a torn
-                # batch. Roll back on every exception, not just the
-                # classified IntegrityError path above.
                 await conn.rollback()
                 raise
+
+    async def _write_to_outbox(
+        self,
+        conn: aiosqlite.Connection,
+        event: DomainEvent,
+        category: str,
+        now: str,
+    ) -> None:
+        """Write one outbox row for `event`, on `conn`, before commit.
+
+        Runs inside the same transaction as the event INSERT, before
+        `conn.commit()` -- providing atomic persistence between event store
+        and outbox.
+        """
+        outbox_id = uuid4()
+        event_data = outbox_event_data(event)
+        await conn.execute(
+            """
+            INSERT INTO event_outbox (
+                id, event_id, event_type, aggregate_id, aggregate_type,
+                tenant_id, event_data, created_at, status
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+            """,
+            (
+                str(outbox_id),
+                str(event.event_id),
+                event.event_type,
+                str(event.aggregate_id),
+                category,
+                str(event.tenant_id) if event.tenant_id else None,
+                json.dumps(event_data),
+                now,
+            ),
+        )
 
     def read_stream(
         self,
@@ -299,31 +307,9 @@ class SQLiteEventStore:
         options: StreamReadOptions,
     ) -> AsyncIterator[EventEnvelope]:
         conn = await self._conn()
-
-        query_parts = [
-            f"SELECT {_SELECT_COLUMNS} FROM events"  # nosec B608 -- constant column list
-            " WHERE aggregate_id = ? AND aggregate_type = ?"
-        ]
-        params: list[Any] = [str(stream.aggregate_id), stream.category]
-
-        if options.from_version is not None:
-            query_parts.append("AND version >= ?")
-            params.append(options.from_version)
-        if options.to_version is not None:
-            query_parts.append("AND version <= ?")
-            params.append(options.to_version)
-
-        if options.direction == ReadDirection.BACKWARD:
-            query_parts.append("ORDER BY version DESC")
-        else:
-            query_parts.append("ORDER BY version ASC")
-
-        if options.limit is not None:
-            query_parts.append("LIMIT ?")
-            params.append(options.limit)
-
+        sql, params = build_read_stream_query(stream, options)
         async with self._lock:
-            cursor = await conn.execute("\n".join(query_parts), params)
+            cursor = await conn.execute(sql, params)
             rows = await cursor.fetchall()
 
         for row in rows:
@@ -366,32 +352,10 @@ class SQLiteEventStore:
         options: FeedReadOptions,
     ) -> AsyncIterator[EventEnvelope]:
         conn = await self._conn()
-
-        query_parts = [
-            f"SELECT {_SELECT_COLUMNS} FROM events WHERE 1=1"  # nosec B608 -- constant column list
-        ]
-        params: list[Any] = []
-
-        if from_position is not None:
-            query_parts.append("AND global_position > ?")
-            params.append(self._codec.value_of(from_position))
-
-        if options.tenant_id is not None:
-            query_parts.append("AND tenant_id = ?")
-            params.append(str(options.tenant_id))
-
-        if options.aggregate_type is not None:
-            query_parts.append("AND aggregate_type = ?")
-            params.append(options.aggregate_type)
-
-        query_parts.append("ORDER BY global_position ASC")
-
-        if options.limit is not None:
-            query_parts.append("LIMIT ?")
-            params.append(options.limit)
-
+        pos_val = self._codec.value_of(from_position) if from_position is not None else None
+        sql, params = build_read_all_query(pos_val, options)
         async with self._lock:
-            cursor = await conn.execute("\n".join(query_parts), params)
+            cursor = await conn.execute(sql, params)
             rows = await cursor.fetchall()
 
         for row in rows:
@@ -420,70 +384,16 @@ class SQLiteEventStore:
         options: CategoryReadOptions,
     ) -> AsyncIterator[EventEnvelope]:
         conn = await self._conn()
-
-        query_parts = [
-            f"SELECT {_SELECT_COLUMNS} FROM events"  # nosec B608 -- constant column list
-            " WHERE aggregate_type = ?"
-        ]
-        params: list[Any] = [category]
-
-        if options.tenant_id is not None:
-            query_parts.append("AND tenant_id = ?")
-            params.append(str(options.tenant_id))
-
-        # Filtered and ordered by `created_at` (storage time), not `timestamp`
-        # (the event's own `occurred_at`) -- this matches the port contract
-        # (`EventEnvelope.stored_at`), mirroring the memory adapter's
-        # `read_category`, which filters/orders on `stored_at`. `from_timestamp`
-        # is inclusive per the port contract, hence `>=`.
-        if options.from_timestamp is not None:
-            # `created_at` is TEXT, so this is a *lexical* comparison, and the
-            # stored values are all `datetime.now(UTC).isoformat()` -- offset
-            # `+00:00`. A bound rendered at any other offset sorts by its
-            # printed digits rather than the instant it denotes (a `+05:00`
-            # bound sorts after every stored row, silently returning nothing),
-            # so normalize to UTC before formatting. A naive datetime is read
-            # as UTC rather than compared offset-free, which would sort it
-            # ahead of every stored row for the same instant.
-            bound = options.from_timestamp
-            bound = bound.replace(tzinfo=UTC) if bound.tzinfo is None else bound.astimezone(UTC)
-            query_parts.append("AND created_at >= ?")
-            params.append(bound.isoformat())
-
-        # `created_at` alone ties within a batch (SQLite stamps one `now`
-        # per batch), so `global_position` breaks the tie deterministically.
-        query_parts.append("ORDER BY created_at ASC, global_position ASC")
-
-        if options.limit is not None:
-            query_parts.append("LIMIT ?")
-            params.append(options.limit)
-
+        sql, params = build_read_category_query(category, options)
         async with self._lock:
-            cursor = await conn.execute("\n".join(query_parts), params)
+            cursor = await conn.execute(sql, params)
             rows = await cursor.fetchall()
 
         for row in rows:
             yield self._row_to_envelope(row)
 
     def _row_to_envelope(self, row: Any) -> EventEnvelope:
-        event = self._deserialize_event(row["event_type"], row["payload"])
-        stream_id = StreamId(
-            aggregate_id=UUID(row["aggregate_id"]),
-            category=row["aggregate_type"],
-        )
-        stored_at = datetime.fromisoformat(row["created_at"]).replace(tzinfo=UTC)
-        return EventEnvelope(
-            event=event,
-            stream_id=stream_id,
-            stream_version=row["version"],
-            position=self._codec.encode(row["global_position"]),
-            stored_at=stored_at,
-        )
-
-    def _deserialize_event(self, event_type: str, payload: str) -> DomainEvent:
-        event_class = self._event_registry.get(event_type)
-        data = json_loads(payload)
-        return event_class.model_validate(data)
+        return row_to_envelope(row, self._codec, self._event_registry)
 
 
 __all__ = ["AIOSQLITE_AVAILABLE", "SQLiteEventStore"]
