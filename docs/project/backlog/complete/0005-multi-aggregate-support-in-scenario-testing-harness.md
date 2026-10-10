@@ -1,8 +1,7 @@
 ---
 id: '0005'
 title: Multi-Aggregate Support in Scenario Testing Harness
-status: Refined
-created: 2026-10-07
+status: Complete
 governing_adrs:
 - ADR-0003
 - ADR-0007
