@@ -1,12 +1,11 @@
 ---
 id: REFACTOR-eventsource-application-migration-exceptions
 title: Refactor and Decompose Legacy File exceptions.py
-status: Proposed
-created: 2026-09-29
+status: Refined
 governing_adrs:
-  - ADR-0002
+- ADR-0002
 governing_stories:
-  - US-0012
+- US-0012
 target_bc: core
 ---
 
