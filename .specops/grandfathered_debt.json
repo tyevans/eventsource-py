@@ -40,7 +40,6 @@
     "src/eventsource/application/subscriptions/coordination.py": 990,
     "src/eventsource/application/subscriptions/error_handling.py": 1105,
     "src/eventsource/application/subscriptions/health.py": 860,
-    "src/eventsource/application/subscriptions/retry.py": 643,
     "src/eventsource/application/subscriptions/runners/catchup.py": 1051,
     "src/eventsource/application/subscriptions/runners/live.py": 1172,
     "src/eventsource/application/subscriptions/shutdown.py": 1537,
