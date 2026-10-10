@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-integration-readmodels-test_projection
 title: Refactor and Decompose Legacy File test_projection.py
-status: Refined
+status: Complete
 governing_adrs:
 - ADR-0002
 governing_stories:
