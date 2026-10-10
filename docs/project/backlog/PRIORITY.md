@@ -167,7 +167,7 @@ Strict sequential order of execution for engineering tasks.
 - **TASK-0002 (Complete)**: [`0002-delta-compress-stored-event-payloads`](complete/0002-delta-compress-stored-event-payloads.md)
 - **TASK-0002 (Complete)**: [`0002-delta-compress-stored-event-payloads`](complete/0002-delta-compress-stored-event-payloads.md)
 - **TASK-0003 (Complete)**: [`0003-verify-leadership-lease-renewal-before-acting`](complete/0003-verify-leadership-lease-renewal-before-acting.md)
-- **TASK-REFACTOR-tests-integration-end-to-end-test_full_flow (Proposed)**: [`TASK-REFACTOR-tests-integration-end-to-end-test_full_flow`](proposed/TASK-REFACTOR-tests-integration-end-to-end-test_full_flow.md)
+- **TASK-REFACTOR-tests-integration-end-to-end-test_full_flow (Refined)**: [`TASK-REFACTOR-tests-integration-end-to-end-test_full_flow`](refined/TASK-REFACTOR-tests-integration-end-to-end-test_full_flow.md)
 - **TASK-REFACTOR-tests-unit-application-migration-test_phase_three_integration (Proposed)**: [`TASK-REFACTOR-tests-unit-application-migration-test_phase_three_integration`](proposed/TASK-REFACTOR-tests-unit-application-migration-test_phase_three_integration.md)
 - **TASK-REFACTOR-tests-unit-application-migration-test_phase_two_integration (Proposed)**: [`TASK-REFACTOR-tests-unit-application-migration-test_phase_two_integration`](proposed/TASK-REFACTOR-tests-unit-application-migration-test_phase_two_integration.md)
 - **TASK-0156 (Complete)**: [`0156-define-aggregates-and-record-committed-events`](complete/0156-define-aggregates-and-record-committed-events.md)
