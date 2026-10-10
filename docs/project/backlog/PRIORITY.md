@@ -90,7 +90,7 @@ Strict sequential order of execution for engineering tasks.
 - **TASK-REFACTOR-tests-unit-adapters-test_checkpoint_position (Complete)**: [`TASK-REFACTOR-tests-unit-adapters-test_checkpoint_position`](complete/TASK-REFACTOR-tests-unit-adapters-test_checkpoint_position.md)
 - **TASK-REFACTOR-tests-unit-adapters-test_memory_checkpoints (Complete)**: [`TASK-REFACTOR-tests-unit-adapters-test_memory_checkpoints`](complete/TASK-REFACTOR-tests-unit-adapters-test_memory_checkpoints.md)
 - **TASK-REFACTOR-tests-unit-adapters-test_memory_dlq (Complete)**: [`TASK-REFACTOR-tests-unit-adapters-test_memory_dlq`](complete/TASK-REFACTOR-tests-unit-adapters-test_memory_dlq.md)
-- **TASK-REFACTOR-tests-unit-adapters-test_postgresql_snapshots (Refined)**: [`TASK-REFACTOR-tests-unit-adapters-test_postgresql_snapshots`](refined/TASK-REFACTOR-tests-unit-adapters-test_postgresql_snapshots.md)
+- **TASK-REFACTOR-tests-unit-adapters-test_postgresql_snapshots (Complete)**: [`TASK-REFACTOR-tests-unit-adapters-test_postgresql_snapshots`](complete/TASK-REFACTOR-tests-unit-adapters-test_postgresql_snapshots.md)
 - **TASK-REFACTOR-tests-unit-adapters-test_snapshots_tracing (Refined)**: [`TASK-REFACTOR-tests-unit-adapters-test_snapshots_tracing`](refined/TASK-REFACTOR-tests-unit-adapters-test_snapshots_tracing.md)
 - **TASK-REFACTOR-tests-unit-adapters-test_sql_checkpoint_tracing (Refined)**: [`TASK-REFACTOR-tests-unit-adapters-test_sql_checkpoint_tracing`](refined/TASK-REFACTOR-tests-unit-adapters-test_sql_checkpoint_tracing.md)
 - **TASK-REFACTOR-tests-unit-adapters-test_sqlite_outbox (Proposed)**: [`TASK-REFACTOR-tests-unit-adapters-test_sqlite_outbox`](proposed/TASK-REFACTOR-tests-unit-adapters-test_sqlite_outbox.md)
