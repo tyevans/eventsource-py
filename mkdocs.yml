@@ -119,6 +119,7 @@ nav:
   - Reference:
       - Event Store Protocol: reference/event-store-protocol.md
       - Serialization Limits: reference/serialization-limits.md
+      - PostgreSQL Catch-Up Benchmark: reference/postgresql-catchup-benchmark.md
   - API Reference:
       - api/index.md
       - Events: api/events.md

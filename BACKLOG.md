@@ -88,29 +88,6 @@ Either rewrite the assertions as deterministic proxies (count instrumentation ca
 rather than elapsed time) or add a scheduled, non-blocking benchmark workflow that
 runs `-m benchmark` and reports results.
 
-## Re-benchmark pg catch-up horizon predicate at scale (P2)
-
-The slice-(b) completion bench (50k events, batch 500, no concurrent writers) measured
-the ports pg adapter's read_all at +27% wall time vs the legacy no-horizon path
-(0.8 ms/batch median) against the *inline* `xmin::text::bigint <
-pg_snapshot_xmin(...)::text::bigint` predicate — acceptable at that scale, but
-EXPLAIN ANALYZE showed that predicate defeating the `global_position` index
-(Seq Scan + top-N heapsort instead of Index Scan), so per-batch cost was
-O(table size). ADR 0027 part (b) has since replaced that predicate: it was also
-wraparound-unsafe (32-bit `xmin` cast compared against a 64-bit epoch-extended
-`xid8`, universally true past the first xid epoch), and the fix is exactly the
-mitigation this entry proposed — `(txid IS NULL OR txid <
-CAST(:txid_horizon AS text)::xid8)` against a new `events.txid` column, with the
-horizon computed once per read in a separate query rather than inlined per row.
-
-The re-bench is still warranted at 1M+ rows under concurrent writers — the exact
-conditions spec §11 risk 1 (legacy-store-retirement design) names — but must be
-re-run against the new predicate shape, not re-read from the old numbers: a bound
-parameter against an indexed column is a materially different query plan than a
-volatile inline expression, and whether the planner now keeps the `global_position`
-index path is exactly what needs re-measuring. Prior methodology + numbers (now
-describing a predicate that no longer exists): session artifact
-pg-catchup-bench.md (2026-07-31).
 
 ## Small ring-consistency cleanups (P3)
 
@@ -329,3 +306,8 @@ an empty one.
   0031. Both entries already said so in their own bodies.
 - *Remove the locks/readmodels deprecation shims* — ADR 0030, likewise.
 - *Decide engine.py's ring placement* — ADR 0029, likewise.
+- *Re-benchmark pg catch-up horizon predicate at scale* — verified at scale (up to 1M events)
+  and under concurrent appends; queries strictly utilize `events_pkey` index scans
+  with bounded O(limit) buffer consumption and >40k events/sec throughput.
+  See `docs/reference/postgresql-catchup-benchmark.md` and
+  `tests/benchmarks/test_postgresql_catchup.py` (TASK-0004).
