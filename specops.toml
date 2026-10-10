@@ -86,7 +86,6 @@ version = "0.1.0"
 
 [invariants.file_limits]
 grandfathered = [
-  "examples/projection_example.py",
   "examples/subscriptions/multi_subscriber.py",
   "examples/subscriptions/resilient_projection.py",
   "src/eventsource/__init__.py",

@@ -1,7 +1,6 @@
 {
   "version": 1,
   "files": {
-    "examples/projection_example.py": 595,
     "examples/subscriptions/multi_subscriber.py": 760,
     "examples/subscriptions/resilient_projection.py": 535,
     "src/eventsource/__init__.py": 600,
