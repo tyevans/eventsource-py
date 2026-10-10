@@ -1,20 +1,10 @@
 """
-Health check module for subscription management (facade).
-
-Provides comprehensive health checks that incorporate:
-- Subscription state and statistics
-- Error rates and patterns
-- Circuit breaker state
-- Retry statistics
-- DLQ backlog
-- Lag metrics
+Health status and checker re-exports.
 """
 
 from __future__ import annotations
 
 from eventsource.application.subscriptions.health_check import (
-    HealthCheckConfig,
-    HealthCheckResult,
     HealthIndicator,
     HealthStatus,
 )
@@ -32,19 +22,12 @@ from eventsource.application.subscriptions.health_subscription import (
 )
 
 __all__ = [
-    # Status
-    "HealthStatus",
-    # Indicators
     "HealthIndicator",
-    "HealthCheckResult",
-    # Config
-    "HealthCheckConfig",
-    # Checkers
-    "SubscriptionHealthChecker",
-    "ManagerHealthChecker",
-    # Manager Health API
-    "ManagerHealth",
-    "SubscriptionHealth",
-    "ReadinessStatus",
+    "HealthStatus",
     "LivenessStatus",
+    "ManagerHealth",
+    "ManagerHealthChecker",
+    "ReadinessStatus",
+    "SubscriptionHealth",
+    "SubscriptionHealthChecker",
 ]
