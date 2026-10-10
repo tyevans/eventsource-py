@@ -55,7 +55,7 @@ Strict sequential order of execution for engineering tasks.
 - **TASK-REFACTOR-eventsource-application-subscriptions-runners-catchup (Refined)**: [`TASK-REFACTOR-eventsource-application-subscriptions-runners-catchup`](refined/TASK-REFACTOR-eventsource-application-subscriptions-runners-catchup.md)
 - **TASK-REFACTOR-eventsource-application-subscriptions-runners-live (Refined)**: [`TASK-REFACTOR-eventsource-application-subscriptions-runners-live`](refined/TASK-REFACTOR-eventsource-application-subscriptions-runners-live.md)
 - **TASK-REFACTOR-eventsource-application-subscriptions-shutdown (Refined)**: [`TASK-REFACTOR-eventsource-application-subscriptions-shutdown`](refined/TASK-REFACTOR-eventsource-application-subscriptions-shutdown.md)
-- **TASK-REFACTOR-eventsource-application-subscriptions-subscription (Proposed)**: [`TASK-REFACTOR-eventsource-application-subscriptions-subscription`](proposed/TASK-REFACTOR-eventsource-application-subscriptions-subscription.md)
+- **TASK-REFACTOR-eventsource-application-subscriptions-subscription (Refined)**: [`TASK-REFACTOR-eventsource-application-subscriptions-subscription`](refined/TASK-REFACTOR-eventsource-application-subscriptions-subscription.md)
 - **TASK-REFACTOR-eventsource-application-subscriptions-transition (Proposed)**: [`TASK-REFACTOR-eventsource-application-subscriptions-transition`](proposed/TASK-REFACTOR-eventsource-application-subscriptions-transition.md)
 - **TASK-REFACTOR-eventsource-domain-aggregate (Proposed)**: [`TASK-REFACTOR-eventsource-domain-aggregate`](proposed/TASK-REFACTOR-eventsource-domain-aggregate.md)
 - **TASK-REFACTOR-eventsource-domain-exceptions (Proposed)**: [`TASK-REFACTOR-eventsource-domain-exceptions`](proposed/TASK-REFACTOR-eventsource-domain-exceptions.md)
