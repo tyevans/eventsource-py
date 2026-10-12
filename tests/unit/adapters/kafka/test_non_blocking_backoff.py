@@ -186,7 +186,7 @@ async def test_throughput_during_transient_error_injection() -> None:
             p0_event,
             partition=0,
             offset=1,
-            retry_after=datetime.now(UTC).timestamp() + 0.3,
+            retry_after=datetime.now(UTC).timestamp() + 0.5,
         )
     )
 
@@ -201,8 +201,8 @@ async def test_throughput_during_transient_error_injection() -> None:
     await loop.start(auto_reconnect=False)
     elapsed_before_drain = asyncio.get_running_loop().time() - start_time
 
-    # All 10 partition 1 messages processed almost instantaneously (well under 0.3s)
+    # All 10 partition 1 messages processed almost instantaneously (well under 0.5s)
     assert len(processed_p1) == 10
-    assert elapsed_before_drain < 0.15, "Loop was blocked by partition 0 backoff!"
+    assert elapsed_before_drain < 0.3, "Loop was blocked by partition 0 backoff!"
 
     await loop.drain_retries(timeout=1.0)

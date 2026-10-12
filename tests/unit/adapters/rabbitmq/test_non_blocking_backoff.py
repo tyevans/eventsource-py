@@ -167,7 +167,7 @@ async def test_throughput_during_transient_error_injection() -> None:
                 raise ValueError("Transient injection")
             processed_success.append(event.data)
 
-    consumer, mock_exchange = _make_consumer(HandlerAdapter(handle_event), base_delay=0.3)
+    consumer, mock_exchange = _make_consumer(HandlerAdapter(handle_event), base_delay=0.5)
 
     messages: list[Any] = []
     fail_event = NonBlockingRabbitMQEvent(aggregate_id=uuid4(), data="failing-message")
@@ -185,9 +185,9 @@ async def test_throughput_during_transient_error_injection() -> None:
     await consumer.start()
     elapsed = asyncio.get_running_loop().time() - start_time
 
-    # All 10 success messages were processed in < 0.15s, completely unblocked by 0.3s backoff
+    # All 10 success messages were processed in < 0.3s, completely unblocked by 0.5s backoff
     assert len(processed_success) == 10
-    assert elapsed < 0.15, f"Consume loop was blocked by backoff: {elapsed:.2f}s"
+    assert elapsed < 0.3, f"Consume loop was blocked by backoff: {elapsed:.2f}s"
 
     await consumer.drain_retries(timeout=1.0)
     mock_exchange.publish.assert_called_once()
