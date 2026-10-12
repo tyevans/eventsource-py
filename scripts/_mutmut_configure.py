@@ -38,7 +38,7 @@ MODULES: dict[str, tuple[str, str | list[str]]] = {
         [
             "tests/unit/adapters/test_sqlite_conformance.py",
             "tests/unit/adapters/test_checkpoint_position/",
-            "tests/unit/adapters/test_sql_checkpoint_tracing.py",
+            "tests/unit/adapters/test_sql_checkpoint_tracing/",
             "tests/repositories/test_sqlite_repos/test_checkpoint_repository.py",
         ],
     ),
