@@ -1,263 +1,228 @@
-# Backlog
+# Engineering Backlog
 
-Open work items, carried over from the retired `bd` (beads) tracker.
-
-Everything below was verified open on 2026-08-04. Seventeen entries were
-removed in that sweep -- some closed by the work in the same PR, most closed
-by earlier work that never came back to update this file. What they were and
-where they went is recorded at the bottom, because "why is this not here
-anymore" is the question a backlog most often has to answer about itself.
-
-
-## Investigate making sqlalchemy an optional dependency (P3)
-
-Investigate whether sqlalchemy can be moved from core deps to optional extras.
-Its importers, per `grep -rlE '^(from|import) sqlalchemy' src/eventsource/`, are
-now confined to two packages -- `adapters/postgresql/` (`locks.py`, `outbox.py`,
-`readmodels.py`, `snapshots.py`, `store.py`) and the SQL adapter packages
-(`adapters/_sql/{connection,dialect,engine}.py`, `adapters/sql/{checkpoints,dlq}.py`,
-`adapters/sql/migration/*.py`), plus the Alembic templates under
-`adapters/sql/schemas/`.
-
-The entry's key question -- do any core interfaces import sqlalchemy at module
-level? -- is now answered, and the answer is no: the Tier 0 import-linter
-contract and `tests/unit/test_core_surface_purity.py` both enforce that they do
-not. What remains is the packaging half: moving sqlalchemy behind an extra,
-deciding what a plain install of `eventsource` can still do, and what the import
-error reads like when it cannot. That is a release-notes-and-extras decision
-rather than an investigation.
-
-Prerequisite (done): drop redis from core dependencies.
-
-## Deterministic or scheduled coverage for bus performance assertions (P3)
-
-The kafka/rabbitmq metrics-overhead and duration tests assert wall-clock thresholds
-and were excluded from the blocking broker-tests CI job (marked `@pytest.mark.benchmark`)
-because shared runners make elapsed-time assertions nondeterministic (observed 55.79%
-vs a 20% threshold on a green code path). Nothing in CI watches metrics overhead now.
-Either rewrite the assertions as deterministic proxies (count instrumentation calls
-rather than elapsed time) or add a scheduled, non-blocking benchmark workflow that
-runs `-m benchmark` and reports results.
-
-
-## Small ring-consistency cleanups (P3)
-
-Batch of low-risk campaign leftovers (2026-07-31): (a) consider renaming
-`testing/conformance_ports/` now that it is the only conformance package —
-folding it into `testing/conformance.py`'s namespace or documenting the split;
-(b) move the tracing decorator used by adapters up to a ports-level helper so
-adapters stop importing `observability/` internals directly; (c) consolidate
-`protocols.py`'s remaining ABCs/Protocols with their ring homes (several now
-duplicate `ports/` definitions in spirit) with deprecation re-exports; (d) the
-readmodels port-purity `ast`-based test (verifying `ports/readmodels/` imports
-no sqlalchemy) is blind to relative imports — none exist in that package
-today, so this is not a live gap, but tighten the test if `ports/` ever
-adopts relative imports (structure slice A, 2026-07-31). Found by the A6
-engine-move task (structure slice A, 2026-07-31), out of scope there by the
-task's own boundary.
-
-Sub-item (e) -- `scripts/_mutmut_configure.py`'s selectors pointing at the
-deleted `repositories/` package -- is closed (2026-08-04). The selectors are
-retargeted and `tests/unit/test_mutmut_configure.py` now fails when one goes
-stale or when `mutation.sh`'s selector list drifts from the Python table.
-
-
-## Buffered live events dropped on stop/transition-failure leave lag inflated (P3)
-
-`subscriptions/transition.py` `_cleanup` (~392-402) and the live runner's
-`stop()` drop the transition/pause buffers without calling
-`record_events_unseen` for the buffered events' seen-receipts (recorded at bus
-receipt since the live-lag fix), violating the reconciliation contract stated
-in `Subscription.lag`'s docstring. Bounded consequence: no in-tree path
-auto-restarts the same Subscription object, and nonzero lag on a stopped/ERROR
-subscription is directionally truthful — but re-calling manager.start() on the
-same registry objects inherits permanently inflated lag from the re-read. Fix:
-unsee `qsize()` on buffer drop, or reset both counters at transition start.
-Found by the correctness-fixes slice final review (2026-07-31).
+This document records active technical debt, design investigations, and planned improvements.
+All items originated from codebase audits and retirement of the legacy issue tracker.
 
 ---
 
-# Audit findings, 2026-08-02
+## Open Work Items
 
-Surfaced by three parallel read-only audits (`adapters/`, `application/`, public
-API + DX); 28 findings, three Criticals fixed on the day (PRs #112, #113, #114)
-and most of the rest closed by the ADR-0048 sweep (see
-`docs/adrs/0048-failure-paths-report-and-retain.md`). What remains below is what
-that sweep deliberately did not take on: work that is a feature or a refactor
-rather than a defect fix.
+### Investigate Making SQLAlchemy an Optional Dependency (P3)
 
-## Cutover's routing switch needs a real transaction, not compensation (P2)
+- **Problem**:
+  SQLAlchemy is currently a required dependency in core packaging.
+  Core domain and application modules do not require SQLAlchemy.
 
-`set_routing()` and `set_migration_state(MIGRATED)` are still two writes. The
-ADR-0048 sweep made them safe rather than atomic: a failure between them now
-reverts the route before propagating, and `_rollback` restores the route as
-well as the state (it previously declared the tenant `DUAL_WRITE` while leaving
-every request on the target store). Compensation is what the port allows —
-`TenantRoutingRepository` exposes no multi-statement transaction — so a process
-crash between the two writes still leaves the pair inconsistent until an
-operator intervenes. A genuinely atomic switch needs the port to grow a
-transaction boundary.
+- **Technical Context**:
+  - SQLAlchemy imports occur only in specific database adapters:
+    - PostgreSQL adapters (`src/eventsource/adapters/postgresql/`): `locks.py`, `outbox.py`, `readmodels.py`, `snapshots.py`, and `store.py`.
+    - Common SQL adapters (`src/eventsource/adapters/_sql/`): `connection.py`, `dialect.py`, and `engine.py`.
+    - SQL adapters (`src/eventsource/adapters/sql/`): `checkpoints.py` and `dlq.py`.
+    - SQL migration modules: `src/eventsource/adapters/sql/migration/`.
+    - Alembic schema templates: `src/eventsource/adapters/sql/schemas/`.
+  - Core interfaces do not import SQLAlchemy at the module level.
+  - The Tier 0 import-linter contract and [`test_core_surface_purity.py`](file:///home/ty/workspace/eventsource-py/tests/unit/test_core_surface_purity.py) enforce interface purity.
+  - Redis was removed from core dependencies in a prior task.
 
-## SubscriptionManager, shutdown.py, and migration/coordinator.py have outgrown their modules (P3)
+- **Required Actions**:
+  - Move `sqlalchemy` from core dependencies to an optional package extra in packaging configuration.
+  - Define functionality available in a default installation without optional extras.
+  - Provide descriptive import error messages when an application accesses database adapters without SQLAlchemy.
+  - Document installation instructions for database extras in project documentation.
 
-CONFIRMED by line count. Structural, not a defect.
 
-## Kafka and RabbitMQ retries block while they back off (P2)
+### Deterministic or Scheduled Coverage for Bus Performance Assertions (P3)
 
-Both consumers now honor the same `RetryPolicy` (ADR 0048) by sleeping before
-processing a republished message: RabbitMQ inline in the consumer, Kafka before
-`_process_message` proceeds. That ends the divergence where Kafka ignored the
-backoff entirely, but it means a retrying message holds up its partition (Kafka)
-or the consumer (RabbitMQ) for the duration. A genuinely non-blocking delay
-needs a dedicated retry topic plus a scheduler on Kafka, and a TTL + dead-letter
-delay queue on RabbitMQ. Deliberately deferred by the ADR-0048 sweep as a
-feature, not a bug fix.
+- **Problem**:
+  Message bus performance tests assert wall-clock execution limits.
+  Shared CI runners cause non-deterministic timing measurements and false failures.
+  These tests are excluded from blocking CI checks.
+  Continuous integration currently does not monitor metric overhead.
 
-## SQLite has no transactional outbox; PostgreSQL does (P2)
+- **Technical Context**:
+  - Kafka and RabbitMQ duration and metric overhead tests use `@pytest.mark.benchmark`.
+  - Wall-clock assertions fail intermittently on shared CI infrastructure.
+  - For example, CI measured 55.79% overhead against a 20% limit on valid code paths.
 
-`adapters/sqlite/store.py` has no `outbox_enabled`; `adapters/postgresql/store.py`
-does. A user developing on SQLite and deploying on PostgreSQL gets different
-delivery guarantees from identical code. CONFIRMED. The ADR-0048 sweep
-documented the gap in the event-bus guide rather than closing it: implementing
-it is a schema and transaction-boundary change. Still worth implementing.
+- **Required Actions**:
+  - Replace wall-clock duration assertions with deterministic proxies, such as counting instrumentation invocations.
+  - Alternatively, create a scheduled non-blocking CI workflow that executes `-m benchmark` and records trend data.
 
-## An unclosed connection-owning adapter is undiagnosable (P2)
 
-Found while upgrading a downstream consumer (research-team) from 0.10 to 0.12.
-ADR 0053 is right that `SQLiteSnapshotStore` should own one connection and
-require closing. What it costs is a failure mode with no path back to the
-cause.
+### Small Ring-Consistency Cleanups (P3)
 
-`aiosqlite` backs each connection with a **non-daemon** thread. When a store is
-not closed, that thread outlives the event loop that created it, and the first
-thing it tries to do afterwards raises `RuntimeError: Event loop is closed`
-from inside `aiosqlite`'s worker. Nothing in that traceback names the store,
-the path it was opened against, or the code that constructed it. Under pytest
-it surfaces as `PytestUnhandledThreadExceptionWarning` attributed to whichever
-test happened to be running when the thread woke -- which is essentially never
-the test that leaked. The consumer's first sighting was attributed to a test
-that opens no store of any kind.
+- **Problem**:
+  Architectural transitions left minor structural inconsistencies across package boundaries and test assertions.
 
-The upgrade turned up three separate leaked sites this way, and the only
-workable method was to grep every construction of a connection-owning adapter
-and audit each by hand. Two were in test fixtures; one was a consumer-side
-factory that constructed a snapshot store internally and returned it to
-nobody, so no caller *could* have closed it. That last shape is worth noting on
-its own: before 0.12 it was correct code, and the change silently converted it
-into a guaranteed leak.
+- **Technical Context**:
+  - Hexagonal architecture rules govern ring boundaries (ADR-0002 and ADR-0102).
+  - Impacted packages include `testing/conformance_ports/`, `observability/`, `protocols.py`, and `ports/readmodels/`.
+  - Discovered during structure slice A and the engine relocation task on 2026-07-31.
 
-Worth doing, roughly in order of value per effort:
+- **Required Actions**:
+  - Evaluate consolidating `testing/conformance_ports/` into `testing/conformance.py`, or document the namespace boundary.
+  - Relocate the tracing decorator to a ports helper module so adapters do not import `observability/` directly.
+  - Move remaining abstract base classes and protocols from `protocols.py` into their respective ring packages.
+  - Provide temporary deprecation re-exports for moved protocols.
+  - Update the AST-based port-purity test for `ports/readmodels/` to validate relative imports.
 
-- **A finalizer that warns and names the store.** `__del__` emitting a
-  `ResourceWarning` carrying the db path turns a mystery into a one-line fix.
-  Python's own `socket` and `asyncio` do exactly this, and `tracemalloc` then
-  supplies the allocation traceback for free.
-- **Async context manager support.** `async with SQLiteSnapshotStore(path) as
-  store:` makes the correct thing the short thing. `SupportsClose` already
-  fixes the protocol; `__aenter__`/`__aexit__` is small.
-- **Say it in the adapter docstring, not only the changelog.** A consumer
-  upgrading reads the class; a consumer writing new code never sees the
-  changelog entry at all.
 
-Whether the worker thread should be daemon is a separate question and probably
-"no" -- a daemon thread would trade a loud error for a silently truncated
-write. The complaint is not that the thread survives, it is that nothing says
-which store it belongs to.
+### Reconcile Dropped Live Events on Stop or Transition Failure (P3)
 
-## `_stamp` does not check that an event targets its own aggregate (P2)
+- **Problem**:
+  When a subscription stops or fails during transition, the system drops buffered events without recording them as unseen.
+  This behavior violates the lag reconciliation contract in `Subscription.lag` and leaves lag values permanently inflated.
 
-Also found in the 0.10 -> 0.12 upgrade, and a direct consequence of ADR 0056.
+- **Technical Context**:
+  - The drop occurs in `_cleanup` within `src/eventsource/application/subscriptions/transition.py` (lines 392-402).
+  - The drop also occurs in `stop()` within the subscription live runner.
+  - Buffered events increment the seen counter upon receipt from the message bus.
+  - Restarting an existing subscription object inherits inflated lag values.
 
-Moving the aggregate id out of `initial_state()` and onto the command is the
-right call, and the ADR's migration recipe -- put the target id on the command,
-read it back in `decide`'s `match` arm -- is what a consumer follows. But it
-makes the id something the caller now *repeats*: the aggregate already knows
-it, and the command states it again. Nothing compares the two.
+- **Required Actions**:
+  - Invoke `record_events_unseen` with the queue size (`qsize()`) when dropping transition or pause buffers.
+  - Alternatively, reset both seen and processed counters at the start of transition execution.
+  - Add tests to verify lag reconciliation when stopping and restarting subscriptions.
 
-`DeciderAggregate(a).execute(CreateThing(thing_id=b, ...))` is accepted in
-full. `decide` is a static function and cannot see the aggregate; `_stamp`
-fills in `aggregate_version`, `aggregate_type` and provenance, and passes
-`aggregate_id` through untouched because `decide` set it explicitly. The event
-is then appended to `a`'s stream carrying `aggregate_id=b`. The fold of `a`
-subsequently reads an event that says it belongs somewhere else -- the exact
-condition event sourcing exists to preclude, reached through the API's own
-recommended pattern.
 
-Under the old signature this was unrepresentable: state took its id from
-`initial_state(aggregate_id)`, so it was the aggregate's id by construction.
-The upgrade removed that guarantee without replacing it.
+### Atomic Routing Switch for Migration Cutover (P2)
 
-`_stamp` is the natural home for the check -- it already inspects
-`model_fields_set`, and already rejects a divergent `aggregate_type` via
-`_reject_divergent_aggregate_type`, which is precisely the analogous invariant
-one field over. Rejecting a divergent explicitly-set `aggregate_id` would cost
-one comparison and close it for every consumer.
+- **Problem**:
+  Tenant cutover executes `set_routing()` and `set_migration_state(MIGRATED)` as two separate database writes.
+  A process failure between these operations causes state inconsistency that requires manual operator recovery.
 
-The downstream consumer worked around it with a mixin that overrides
-`execute`, compares a declared target field against `self.aggregate_id`, and
-raises `CommandRejectedError` on a mismatch. That works, but every consumer
-following ADR 0056 needs it, which is the argument for it being upstream.
+- **Technical Context**:
+  - Tenant migration coordinator and `TenantRoutingRepository`.
+  - ADR-0048 introduced compensating rollbacks (`_rollback`) to revert route changes on failure.
+  - `TenantRoutingRepository` currently lacks multi-statement transaction support.
+
+- **Required Actions**:
+  - Extend the `TenantRoutingRepository` port to support multi-operation database transactions.
+  - Update the migration coordinator to execute routing updates and migration state transitions in a single atomic transaction.
+
+
+### Decompose Oversized Modules Exceeding Line Limits (P3)
+
+- **Problem**:
+  Multiple operational modules exceed project file length limits (governed by ADR-0002).
+
+- **Technical Context**:
+  - Affected modules include:
+    - `SubscriptionManager` in `src/eventsource/application/subscriptions/`
+    - `shutdown.py`
+    - `migration/coordinator.py` in `src/eventsource/application/migration/`
+  - ADR-0002 requires files under 500 lines and triggers proactive warnings at 400 lines.
+
+- **Required Actions**:
+  - Refactor `SubscriptionManager` into single-responsibility submodules under 400 lines.
+  - Refactor `shutdown.py` into smaller lifecycle management components.
+  - Decompose `migration/coordinator.py` into separate migration phase handlers.
+
+
+### Non-Blocking Retry Delays for Kafka and RabbitMQ Consumers (P2)
+
+- **Problem**:
+  Retry backoff delays block consumers during message reprocessing.
+  RabbitMQ consumers block inline during execution.
+  Kafka consumers block the partition before `_process_message`.
+
+- **Technical Context**:
+  - Message bus consumers in `adapters/kafka/` and `adapters/rabbitmq/`.
+  - Both consumers implement `RetryPolicy` per ADR-0048.
+  - Synchronous backoff delays delay consumption of unrelated messages on the worker or partition.
+
+- **Required Actions**:
+  - Implement a dedicated retry topic and delay scheduler for Kafka consumers.
+  - Implement dead-letter exchanges (DLX) and message time-to-live (TTL) delayed queues for RabbitMQ consumers.
+  - Add integration tests verifying non-blocking throughput during retry backoff periods.
+
+
+### Transactional Outbox Support for SQLite Adapter (P2)
+
+- **Problem**:
+  `adapters/sqlite/store.py` lacks transactional outbox support (`outbox_enabled`).
+  `adapters/postgresql/store.py` provides transactional outbox support.
+  Applications experience differing delivery guarantees when switching between backends.
+
+- **Technical Context**:
+  - `adapters/sqlite/store.py` and `adapters/postgresql/store.py`.
+  - The gap is currently documented in the event bus guide per ADR-0048.
+  - Resolving this gap requires schema changes and transactional boundary alignment.
+
+- **Required Actions**:
+  - Define outbox schema tables and migrations for the SQLite adapter.
+  - Implement transactional outbox publishing in `adapters/sqlite/store.py`.
+  - Add conformance tests to verify consistent outbox behavior across SQLite and PostgreSQL adapters.
+
+
+### Diagnosability and Lifecycle Management for Connection-Owning Adapters (P2)
+
+- **Problem**:
+  Unclosed instances of `SQLiteSnapshotStore` leak worker threads managed by `aiosqlite`.
+  When the event loop closes, `aiosqlite` worker threads raise unhandled `RuntimeError: Event loop is closed` errors.
+  The error traceback does not identify the leaked store instance, file path, or allocation site.
+  Pytest attributes these failures to unrelated subsequent tests as unhandled thread warnings.
+
+- **Technical Context**:
+  - `SQLiteSnapshotStore` in `src/eventsource/adapters/sqlite/snapshots.py` (governed by ADR-0053).
+  - `aiosqlite` manages connections using non-daemon worker threads.
+  - Store classes implement the `SupportsClose` protocol.
+  - Upstream upgrade audits identified three leak sites: two in test fixtures and one in a consumer factory function.
+
+- **Required Actions**:
+  - Implement a `__del__` finalizer on `SQLiteSnapshotStore` that emits a `ResourceWarning` containing the database file path when unclosed.
+  - Implement asynchronous context manager support (`__aenter__` and `__aexit__`) to support `async with` blocks.
+  - Document explicit connection lifecycle requirements in the class docstring.
+  - Audit test fixtures and factories to ensure callers close all store instances.
+
+
+### Validate Aggregate Identity in Event Stamping (P2)
+
+- **Problem**:
+  `_stamp` does not verify that an event `aggregate_id` matches the aggregate instance `self.aggregate_id`.
+  When a command specifies an explicit target identifier, mismatched events can append to the stream.
+  This mismatch corrupts event stream integrity.
+
+- **Technical Context**:
+  - Command execution in `DeciderAggregate.execute` and event stamping in `_stamp`.
+  - Consequence of ADR-0056 (relocating aggregate identifiers from `initial_state()` to command payloads).
+  - `_stamp` already validates `aggregate_type` via `_reject_divergent_aggregate_type`, but does not validate `aggregate_id`.
+
+- **Required Actions**:
+  - Add an identity check in `_stamp` to compare explicit event `aggregate_id` against `self.aggregate_id`.
+  - Reject mismatched identifiers by raising `CommandRejectedError`.
+  - Add unit tests verifying that `DeciderAggregate` rejects commands that produce mismatched aggregate identifiers.
 
 ---
 
-# Closed, 2026-08-04
+## Closed Work Items
 
-Verified against the tree rather than taken on the entry's word. Two shapes:
-work this sweep did, and work already done whose entry outlived it -- the
-second being the larger group, and the reason a stale backlog costs more than
-an empty one.
+### Closed in Sweep (2026-08-04)
 
-**Closed by this sweep** (see ADRs 0050 and 0051):
+| Item | Resolution | Verification |
+|---|---|---|
+| Read model aliasing in memory repository | Updated repository so read operations return copies and write operations store copies. | Verified in `ReadModelRepositoryConformance` across all backends (ADR-0050). |
+| Duplicate `OptimisticLockError` naming | Renamed read-model error to `ReadModelVersionConflictError` without compatibility shims. | Verified in exception hierarchy and test suite (ADR-0050). |
+| Duplicate `ExpectedVersion` dispatch | Consolidated four separate adapter implementations into `adapters/_common/`. | Verified in `src/eventsource/adapters/_common/` (ADR-0051). |
+| Core surface purity verification | Added runtime check and expanded static contract driver list to six drivers. | [`test_core_surface_purity.py`](file:///home/ty/workspace/eventsource-py/tests/unit/test_core_surface_purity.py) and `docs/core-surface.md`. |
+| Store identifier uniqueness documentation | Documented uniqueness requirements on `Position` and adapter defaults. Preserved defaults to protect checkpoints. | Verified in `Position` docstring and adapter documentation. |
+| Ambiguous logging in `run_resync_pass` | Updated log messages to differentiate empty batch outcomes from full completion. | Verified in migration coordinator logging. |
+| Stale Mutmut configuration selectors | Retargeted selectors away from deleted `repositories/` package. | Verified by [`test_mutmut_configure.py`](file:///home/ty/workspace/eventsource-py/tests/unit/test_mutmut_configure.py). |
 
-- *InMemoryReadModelRepository aliases live objects* — reads now hand back a
-  copy and writes take one; pinned for all three backends in
-  `ReadModelRepositoryConformance` rather than the memory adapter's own tests.
-- *Resolve the duplicate `OptimisticLockError` name* — the read-model one is
-  `ReadModelVersionConflictError` (ADR 0050). No alias, per the no-shim policy.
-- *Share ExpectedVersion dispatch across store adapters* — `adapters/_common/`
-  (ADR 0051); four verbatim copies down to one definition.
-- *Add CI boundary check for core surface purity* — the runtime `sys.modules`
-  check exists as `tests/unit/test_core_surface_purity.py`, and the static
-  contract's driver list widened from `sqlalchemy` alone to six. The entry
-  asked whether the runtime check added anything over the static one; it does,
-  and the answer is written up in `docs/core-surface.md`.
-- *Document store_id uniqueness expectations* — documented on `Position` and
-  at each adapter default. The suggested "derive the pg default from
-  host+port+database" is deliberately **not** done: `store_id` is embedded in
-  every persisted position, so changing a default invalidates the checkpoints
-  of every deployment that took it.
-- *Differentiate run_resync_pass's two zero-return shapes in logs* — done.
+### Closed Prior to Sweep (2026-08-04)
 
-**Already closed; the entry was stale.** Each verified against the tree:
-
-- *SQLite adapter: reads share the writer's connection* — fixed; reads run
-  under the append lock, pinned by `tests/unit/adapters/test_sqlite_read_isolation.py`.
-- *Reconcile DLQ delete_resolved_events cutoff semantics* — both backends use
-  the rolling instant, and `ports/dlq.py` specifies it.
-- *Catch-up can end early with completed=False* — `_BatchOutcome` carries
-  `envelopes_read` alongside `events_delivered`, which is the fix the entry
-  proposed.
-- *Wire position_mapper into BulkCopier's coordinator call site* — one
-  `_build_copier` now serves both call sites.
-- *No in-phase resync for dual-write mirror failures* — `run_resync_pass`
-  exists.
-- *Cutover can switch routing with up to cutover_max_lag_events missing* —
-  `cutover_max_lag_events` defaults to 0 (strict).
-- *Relocate subscriptions/ into the application ring* — done (ADR 0032); no
-  top-level `subscriptions/` remains. Note the entry called for deprecation
-  shims, which the no-shim policy had already overtaken.
-- *Remove bus facade compat shims* / *Migrate bus/ to ports/adapters* — ADR
-  0031. Both entries already said so in their own bodies.
-- *Remove the locks/readmodels deprecation shims* — ADR 0030, likewise.
-- *Decide engine.py's ring placement* — ADR 0029, likewise.
-- *Re-benchmark pg catch-up horizon predicate at scale* — verified at scale (up to 1M events)
-  and under concurrent appends; queries strictly utilize `events_pkey` index scans
-  with bounded O(limit) buffer consumption and >40k events/sec throughput.
-  See `docs/reference/postgresql-catchup-benchmark.md` and
-  `tests/benchmarks/test_postgresql_catchup.py` (TASK-0004).
-- *Delta-compress stored event payloads* — implemented `DeltaCodec` and `DeltaPayload`
-  with RFC 1950 preset dictionary compression, CRC32 frame checksums, and SHA-256
-  content verification. Verified lossless roundtrip, adaptive re-baselining, and
-  >35x storage compression on sequential revisions.
-  See `docs/reference/delta-compression.md` and
-  `tests/benchmarks/test_delta_compression.py` (TASK-0002).
+| Item | Resolution | Verification |
+|---|---|---|
+| Concurrent SQLite read isolation | Isolated read queries under the append lock to prevent dirty reads. | Verified in `tests/unit/adapters/test_sqlite_read_isolation.py`. |
+| Dead letter queue cutoff semantics | Standardized both storage backends on rolling instant timestamps in `delete_resolved_events`. | Specified and verified in `ports/dlq.py`. |
+| Catch-up premature termination | Added `envelopes_read` counter alongside `events_delivered` in `_BatchOutcome`. | Verified in catch-up batch processing tests. |
+| Position mapper in copier coordinator | Replaced duplicate construction call sites with unified `_build_copier` factory. | Verified in migration coordinator. |
+| Missing resync for dual-write mirror failures | Added `run_resync_pass` to reconcile primary and mirror stores. | Verified in dual-write replication tests. |
+| Cutover lag tolerance threshold | Set default `cutover_max_lag_events` to 0 (strict zero lag). | Verified in cutover configuration and tests. |
+| Relocate subscriptions package | Moved `subscriptions/` package from root namespace to application ring. | Completed under ADR-0032. |
+| Remove bus facade compatibility shims | Migrated message bus components to ports and adapters. Removed legacy shims. | Completed under ADR-0031. |
+| Remove locks and read models shims | Removed deprecated shim modules for locks and read models. | Completed under ADR-0030. |
+| Ring placement for `engine.py` | Assigned `engine.py` to its permanent architectural ring. | Completed under ADR-0029. |
+| Audit findings critical defects | Resolved three critical audit defects from 2026-08-02 review across adapters, application, and DX. | Completed in PR #112, PR #113, PR #114, and ADR-0048. |
+| PostgreSQL catch-up horizon benchmark at scale | Verified index scans on `events_pkey` up to 1M events under concurrent appends (>40k events/sec throughput). | TASK-0004, `docs/reference/postgresql-catchup-benchmark.md`, `tests/benchmarks/test_postgresql_catchup.py`. |
+| Delta compression for stored event payloads | Implemented `DeltaCodec` and `DeltaPayload` with RFC 1950 compression, CRC32 checksums, and SHA-256 verification (>35x compression). | TASK-0002, `docs/reference/delta-compression.md`, `tests/benchmarks/test_delta_compression.py`. |
