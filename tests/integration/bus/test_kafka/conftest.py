@@ -23,6 +23,10 @@ from tests.integration.conftest import (
     TestOrderCreated,
 )
 
+pytest_plugins = [
+    "tests.integration.bus.test_kafka.helpers_metrics",
+]
+
 # ============================================================================
 # Testcontainers Detection
 # ============================================================================
