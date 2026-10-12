@@ -23,9 +23,11 @@ from tests.integration.conftest import (
     TestOrderCreated,
 )
 
-pytest_plugins = [
-    "tests.integration.bus.test_kafka.helpers_metrics",
-]
+from .helpers_metrics import (
+    event_registry,
+    metrics_provider,
+    metrics_setup,
+)
 
 # ============================================================================
 # Testcontainers Detection
@@ -162,10 +164,13 @@ def sample_customer_id() -> Any:
 
 __all__ = [
     "KAFKA_TESTCONTAINERS_AVAILABLE",
+    "event_registry",
     "kafka_bootstrap_servers",
     "kafka_container",
     "kafka_event_bus",
     "kafka_event_bus_factory",
+    "metrics_provider",
+    "metrics_setup",
     "sample_customer_id",
     "skip_if_no_kafka_infra",
 ]
