@@ -1,7 +1,7 @@
 ---
 id: 0181
 title: Support non-numeric task IDs in spec-ops worktree and claimer
-status: Proposed
+status: Refined
 governing_adrs:
 - ADR-0005
 target_bc: core

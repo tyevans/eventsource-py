@@ -398,7 +398,7 @@ whose source lives in a package you would otherwise have to pick a subdirectory 
 | `test_projection_base.py`, `test_projection_decorators.py`, `test_projection_protocols.py`, `test_projection_coordinator.py` | projection base classes and wiring |
 | `test_subscription_config.py`, `test_subscription_manager.py`, `test_catchup_runner.py`, `test_live_runner.py` | subscription lifecycle and runners |
 | `test_protocols.py`, `test_exceptions.py`, `test_json_encoder.py`, `test_conformance.py`, `test_fixtures.py` | `protocols.py`, `exceptions.py`, serialization, the shipped conformance suites, and the shared fixtures themselves |
-| `test_additional_coverage.py`, `test_edge_cases.py` | grab-bag coverage and boundary cases across modules |
+| `test_additional_coverage.py`, `test_edge_cases/` | grab-bag coverage and boundary cases across modules |
 
 The package subdirectories mirror source packages one-for-one: `aggregates/`, `bus/`,
 `handlers/`, `migration/`, `migrations/`, `multitenancy/`, `observability/`,

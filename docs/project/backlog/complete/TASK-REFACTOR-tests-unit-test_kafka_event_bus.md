@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-unit-test_kafka_event_bus
 title: Refactor and Decompose Legacy File test_kafka_event_bus.py
-status: Refined
+status: Complete
 created: 2026-09-29
 governing_adrs:
   - ADR-0002
