@@ -41,7 +41,6 @@
     "tests/unit/application/migration/test_phase2_integration.py": 2579,
     "tests/unit/application/migration/test_phase3_integration.py": 2196,
 
-    "tests/unit/application/migration/test_sync_lag_tracker.py": 1230,
     "tests/unit/application/migration/test_write_pause.py": 876,
     "tests/unit/application/projections/test_projection_base.py": 1537,
     "tests/unit/application/projections/test_projection_coordinator.py": 729,

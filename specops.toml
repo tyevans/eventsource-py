@@ -135,7 +135,6 @@ grandfathered = [
   "tests/unit/application/migration/test_phase2_integration.py",
   "tests/unit/application/migration/test_phase3_integration.py",
 
-  "tests/unit/application/migration/test_sync_lag_tracker.py",
   "tests/unit/application/migration/test_write_pause.py",
   "tests/unit/application/projections/test_projection_base.py",
   "tests/unit/application/projections/test_projection_coordinator.py",
