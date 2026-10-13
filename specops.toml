@@ -132,7 +132,6 @@ grandfathered = [
   "src/eventsource/application/subscriptions/subscription.py",
   "src/eventsource/application/subscriptions/transition.py",
   "tests/unit/application/migration/test_chaos.py",
-  "tests/unit/application/migration/test_consistency_verifier.py",
   "tests/unit/application/migration/test_coordinator.py",
   "tests/unit/application/migration/test_coordinator_dual_write.py",
   "tests/unit/application/migration/test_coordinator_subscriptions.py",
