@@ -41,7 +41,6 @@
     "tests/unit/application/migration/test_phase2_integration.py": 2579,
     "tests/unit/application/migration/test_phase3_integration.py": 2196,
 
-    "tests/unit/application/subscriptions/test_subscriber.py": 829,
     "tests/unit/application/subscriptions/test_subscription_config.py": 513,
     "tests/unit/application/subscriptions/test_subscription_manager.py": 1500,
     "tests/unit/application/subscriptions/test_subscription_state.py": 1119,
