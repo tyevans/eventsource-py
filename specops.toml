@@ -134,14 +134,6 @@ grandfathered = [
 
   "tests/unit/application/migration/test_phase2_integration.py",
   "tests/unit/application/migration/test_phase3_integration.py",
-
-
-
-
-
-
-
-  "tests/unit/testing/test_harness.py",
 ]
 
 [audit.provenance]
