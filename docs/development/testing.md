@@ -417,7 +417,7 @@ a flat module is fine.
 Nothing in this tier opens a socket. Modules named after a server-backed backend belong
 here precisely because they drive the client against mocks:
 `test_postgresql_event_store.py` states in its own docstring that "all database
-interactions are mocked using `unittest.mock`", and `readmodels/test_postgresql.py` and
+interactions are mocked using `unittest.mock`", and `readmodels/test_postgresql/` and
 `readmodels/test_sqlite.py` do the same to assert on generated SQL. Roughly 48 modules in
 the tier import from `unittest.mock`. That is why these tests run on a `dev`-only install
 with no drivers present.
