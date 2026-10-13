@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-unit-application-migration-test_cutover_manager
 title: Refactor and Decompose Legacy File test_cutover_manager.py
-status: Proposed
+status: Refined
 created: 2026-09-29
 governing_adrs:
   - ADR-0002
@@ -22,6 +22,8 @@ Target decomposition destination: `tests/unit/application/migration/test_cutover
 - `test_cutover_manager_mock.py`: mock_router, mock_routing_repo, mock_lag_tracker
 
 ## AST Decomposition Blueprint
+> All extracted submodules must be strictly under 400 lines (and <500 lines limit per ADR-0002). Submodules projected over 400 lines must be further divided during implementation.
+
 Decomposition Blueprint for tests/unit/application/migration/test_cutover_manager.py (1487 lines):
   Submodule 'test_cutover_manager_lock.py' (~1285 lines):
     - [function] mock_lock_manager (lines 59-74)

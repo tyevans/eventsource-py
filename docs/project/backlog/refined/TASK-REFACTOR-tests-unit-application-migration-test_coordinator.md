@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-unit-application-migration-test_coordinator
 title: Refactor and Decompose Legacy File test_coordinator.py
-status: Proposed
+status: Refined
 created: 2026-09-29
 governing_adrs:
   - ADR-0002
@@ -22,6 +22,8 @@ Target decomposition destination: `tests/unit/application/migration/test_coordin
 - `test_coordinator_status.py`: TestGetStatus, TestBuildStatus, TestStatusQueueManagement
 
 ## AST Decomposition Blueprint
+> All extracted submodules must be strictly under 400 lines (and <500 lines limit per ADR-0002). Submodules projected over 400 lines must be further divided during implementation.
+
 Decomposition Blueprint for tests/unit/application/migration/test_coordinator.py (1097 lines):
   Submodule 'test_coordinator_migration.py' (~836 lines):
     - [class] TestMigrationCoordinatorInit (lines 51-101)

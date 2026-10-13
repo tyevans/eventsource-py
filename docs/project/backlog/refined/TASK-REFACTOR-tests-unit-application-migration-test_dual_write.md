@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-unit-application-migration-test_dual_write
 title: Refactor and Decompose Legacy File test_dual_write.py
-status: Proposed
+status: Refined
 created: 2026-09-29
 governing_adrs:
   - ADR-0002
@@ -22,6 +22,8 @@ Target decomposition destination: `tests/unit/application/migration/test_dual_wr
 - `test_dual_write_store.py`: create_mock_store, source_store, target_store
 
 ## AST Decomposition Blueprint
+> All extracted submodules must be strictly under 400 lines (and <500 lines limit per ADR-0002). Submodules projected over 400 lines must be further divided during implementation.
+
 Decomposition Blueprint for tests/unit/application/migration/test_dual_write.py (951 lines):
   Submodule 'test_dual_write_failure.py' (~781 lines):
     - [class] TestFailureStats (lines 173-212)

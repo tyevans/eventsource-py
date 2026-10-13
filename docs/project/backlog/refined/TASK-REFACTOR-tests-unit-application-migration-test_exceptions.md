@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-unit-application-migration-test_exceptions
 title: Refactor and Decompose Legacy File test_exceptions.py
-status: Proposed
+status: Refined
 created: 2026-09-29
 governing_adrs:
   - ADR-0002
@@ -22,6 +22,8 @@ Target decomposition destination: `tests/unit/application/migration/test_excepti
 - `test_exceptions_hierarchy.py`: TestExceptionHierarchy
 
 ## AST Decomposition Blueprint
+> All extracted submodules must be strictly under 400 lines (and <500 lines limit per ADR-0002). Submodules projected over 400 lines must be further divided during implementation.
+
 Decomposition Blueprint for tests/unit/application/migration/test_exceptions.py (582 lines):
   Submodule 'test_exceptions_error.py' (~475 lines):
     - [class] TestMigrationError (lines 39-95)
