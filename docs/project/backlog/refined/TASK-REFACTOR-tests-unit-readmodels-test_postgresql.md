@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-unit-readmodels-test_postgresql
 title: Refactor and Decompose Legacy File test_postgresql.py
-status: Proposed
+status: Refined
 created: 2026-09-29
 governing_adrs:
   - ADR-0002

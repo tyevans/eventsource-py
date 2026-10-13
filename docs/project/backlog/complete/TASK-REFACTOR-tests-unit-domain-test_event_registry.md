@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-unit-domain-test_event_registry
 title: Refactor and Decompose Legacy File test_event_registry.py
-status: Refined
+status: Complete
 created: 2026-09-29
 governing_adrs:
   - ADR-0002
