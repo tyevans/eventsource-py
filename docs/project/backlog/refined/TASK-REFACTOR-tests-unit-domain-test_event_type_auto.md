@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-unit-domain-test_event_type_auto
 title: Refactor and Decompose Legacy File test_event_type_auto.py
-status: Proposed
+status: Refined
 created: 2026-09-29
 governing_adrs:
   - ADR-0002
