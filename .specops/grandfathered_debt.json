@@ -42,7 +42,6 @@
     "tests/unit/application/migration/test_phase3_integration.py": 2196,
 
 
-    "tests/unit/domain/test_create_event.py": 587,
     "tests/unit/domain/test_deferred_state.py": 623,
     "tests/unit/domain/test_domain_event.py": 908,
     "tests/unit/domain/test_event_registry.py": 755,
