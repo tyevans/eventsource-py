@@ -137,7 +137,6 @@ grandfathered = [
 
 
 
-  "tests/unit/ports/test_migration_models.py",
   "tests/unit/readmodels/test_in_memory.py",
   "tests/unit/readmodels/test_postgresql.py",
   "tests/unit/readmodels/test_projection.py",
