@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-unit-application-migration-test_load_benchmarks
 title: Refactor and Decompose Legacy File test_load_benchmarks.py
-status: Refined
+status: Complete
 created: 2026-09-29
 governing_adrs:
   - ADR-0002

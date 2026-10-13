@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-unit-application-projections-test_tenant_filter
 title: Refactor and Decompose Legacy File test_tenant_filter.py
-status: Proposed
+status: Refined
 created: 2026-09-29
 governing_adrs:
   - ADR-0002
