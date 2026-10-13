@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-unit-testing-test_builder
 title: Refactor and Decompose Legacy File test_builder.py
-status: Refined
+status: Complete
 created: 2026-09-29
 governing_adrs:
   - ADR-0002
