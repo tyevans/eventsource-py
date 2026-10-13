@@ -43,7 +43,6 @@
 
     "tests/unit/application/migration/test_sync_lag_tracker.py": 1230,
     "tests/unit/application/migration/test_write_pause.py": 876,
-    "tests/unit/application/projections/test_projection_base.py": 1537,
     "tests/unit/application/projections/test_projection_coordinator.py": 729,
     "tests/unit/application/projections/test_replay.py": 592,
     "tests/unit/application/projections/test_tenant_filter.py": 603,
