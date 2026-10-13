@@ -28,19 +28,11 @@ except PackageNotFoundError:
     __version__ = "0.0.0.dev0"
 
 if TYPE_CHECKING:
-    # Multi-tenancy support (DX-010)
-    # Exceptions - available immediately
-    # Aggregates (Task 07, Task 08)
-    # Core-rings surface: domain value objects, boundary ports, and the adapters.
-    # Shared async engine factory
-    # Event bus (Task 10)
     from eventsource.adapters._bus.base import BaseEventBus
     from eventsource.adapters._bus.registry import SubscriptionRegistry
     from eventsource.adapters._bus.retry import RetryPolicy
     from eventsource.adapters._sql.engine import create_async_engine
     from eventsource.adapters._sql.positions import IntPositionCodec
-
-    # Kafka Event bus
     from eventsource.adapters.kafka import (
         KAFKA_AVAILABLE,
         KafkaEventBus,
@@ -48,8 +40,6 @@ if TYPE_CHECKING:
         KafkaEventBusStats,
         KafkaNotAvailableError,
     )
-
-    # Repository infrastructure (Task 12)
     from eventsource.adapters.memory import (
         InMemoryCheckpointRepository,
         InMemoryDLQRepository,
@@ -57,16 +47,12 @@ if TYPE_CHECKING:
         InMemoryOutboxRepository,
     )
     from eventsource.adapters.memory.bus import InMemoryEventBus
-
-    # Snapshots
     from eventsource.adapters.memory.snapshots import InMemorySnapshotStore
     from eventsource.adapters.postgresql import (
         ASYNCPG_AVAILABLE,
         PostgreSQLEventStore,
         PostgreSQLOutboxRepository,
     )
-
-    # RabbitMQ Event bus
     from eventsource.adapters.rabbitmq import (
         RABBITMQ_AVAILABLE,
         RabbitMQEventBus,
@@ -74,8 +60,6 @@ if TYPE_CHECKING:
         RabbitMQEventBusStats,
         RabbitMQNotAvailableError,
     )
-
-    # Redis Event bus (Task 11)
     from eventsource.adapters.redis import (
         REDIS_AVAILABLE,
         RedisEventBus,
@@ -83,23 +67,14 @@ if TYPE_CHECKING:
         RedisEventBusStats,
         RedisNotAvailableError,
     )
-
-    # Serialization utilities
-    from eventsource.adapters.serialization import EventSourceJSONEncoder
     from eventsource.adapters.sql import SQLCheckpointRepository, SQLDLQRepository
-
-    # Projections (Task 09)
     from eventsource.adapters.sql.projection import DatabaseProjection
-
-    # ReadModel Projections (Phase 3)
     from eventsource.adapters.sql.readmodel_projection import ReadModelProjection
     from eventsource.adapters.sqlite import (
         AIOSQLITE_AVAILABLE,
         SQLiteEventStore,
-        SQLiteOutboxRepository,  # noqa: F401 -- conditionally exported, see __all__ below
+        SQLiteOutboxRepository,  # noqa: F401
     )
-
-    # Sync adapters (DX-005)
     from eventsource.adapters.sync import SyncEventStoreAdapter
     from eventsource.application.aggregates.repository import AggregateRepository
     from eventsource.application.projections.base import (
@@ -121,14 +96,8 @@ if TYPE_CHECKING:
     from eventsource.domain.aggregate import AggregateRoot, DeclarativeAggregate
     from eventsource.domain.command import DomainCommand
     from eventsource.domain.decider import DeciderAggregate
-
-    # Decorators - canonical location for @handles (TD-006)
     from eventsource.domain.decorators import handles
-
-    # Core event primitives (Task 02)
     from eventsource.domain.event import DomainEvent
-
-    # Event registry (Task 03)
     from eventsource.domain.event_registry import (
         EventRegistry,
         default_registry,
@@ -174,8 +143,6 @@ if TYPE_CHECKING:
         tenant_scope_sync,
     )
     from eventsource.domain.tenant_events import TenantDomainEvent
-
-    # Types - available immediately
     from eventsource.domain.types import (
         AggregateId,
         CausationId,
@@ -216,8 +183,6 @@ if TYPE_CHECKING:
         ProjectionFailureCount,
     )
     from eventsource.ports.exceptions import PositionDecodeError, PositionForeignError
-
-    # Protocols - canonical location (TD-007)
     from eventsource.ports.handlers import (
         AsyncEventHandler,
         EventHandler,
@@ -231,21 +196,15 @@ if TYPE_CHECKING:
     from eventsource.testing.recording import RecordingEventBus
 
 __all__ = [
-    # Version
     "__version__",
-    # Types
     "AggregateId",
     "EventId",
     "TenantId",
     "CorrelationId",
     "CausationId",
-    # Engine factory
     "create_async_engine",
-    # Events (Task 02)
     "DomainEvent",
-    # Commands (Task 05 - decider feature)
     "DomainCommand",
-    # Event Registry (Task 03)
     "EventRegistry",
     "default_registry",
     "register_event",
@@ -255,17 +214,14 @@ __all__ = [
     "list_registered_events",
     "EventTypeNotFoundError",
     "DuplicateEventTypeError",
-    # Store adapters
     "InMemoryEventStore",
     "PostgreSQLEventStore",
     "ASYNCPG_AVAILABLE",
-    # Aggregates (Task 07, Task 08)
     "AggregateRoot",
     "AggregateRepository",
     "DeclarativeAggregate",
     "DeciderAggregate",
     "handles",
-    # Event Bus (Task 10)
     "EventBus",
     "BaseEventBus",
     "EventHandlerFunc",
@@ -274,31 +230,26 @@ __all__ = [
     "SubscriptionRegistry",
     "RetryPolicy",
     "RecordingEventBus",
-    # Protocols (TD-007)
     "EventHandler",
     "SyncEventHandler",
     "FlexibleEventHandler",
     "EventSubscriber",
     "FlexibleEventSubscriber",
-    # Redis Event Bus (Task 11)
     "RedisEventBus",
     "RedisEventBusConfig",
     "RedisEventBusStats",
     "RedisNotAvailableError",
     "REDIS_AVAILABLE",
-    # RabbitMQ Event Bus
     "RabbitMQEventBus",
     "RabbitMQEventBusConfig",
     "RabbitMQEventBusStats",
     "RabbitMQNotAvailableError",
     "RABBITMQ_AVAILABLE",
-    # Kafka Event Bus
     "KafkaEventBus",
     "KafkaEventBusConfig",
     "KafkaEventBusStats",
     "KafkaNotAvailableError",
     "KAFKA_AVAILABLE",
-    # Exceptions
     "AggregateNotCreatedError",
     "AggregateNotFoundError",
     "CommandRejectedError",
@@ -308,7 +259,6 @@ __all__ = [
     "HandlerDispatchError",
     "OptimisticLockError",
     "ProjectionError",
-    # Repository infrastructure (Task 12)
     "CheckpointRepository",
     "SQLCheckpointRepository",
     "InMemoryCheckpointRepository",
@@ -326,37 +276,29 @@ __all__ = [
     "OutboxEntry",
     "OutboxStats",
     "outbox_event_data",
-    "EventSourceJSONEncoder",
-    # Projections (Task 09)
     "Projection",
     "CheckpointTrackingProjection",
     "DeclarativeProjection",
     "StoreProjection",
     "ProjectionOptions",
     "DatabaseProjection",
-    # Projection replay / rebuild
     "replay",
     "ReplayFailure",
     "ReplayReport",
     "ReplayFailedError",
-    # ReadModel Projections (Phase 3)
     "ReadModelProjection",
     "ReadModel",
     "AggregateTypeNotSetError",
     "AggregateTypeMismatchError",
     "AggregateIdMismatchError",
-    # Snapshots
     "Snapshot",
     "SnapshotStore",
     "InMemorySnapshotStore",
-    # Snapshot exceptions
     "SnapshotError",
     "SnapshotDeserializationError",
     "SnapshotSchemaVersionError",
     "SnapshotNotFoundError",
-    # Sync adapters (DX-005)
     "SyncEventStoreAdapter",
-    # Multi-tenancy (DX-010)
     "tenant_context",
     "TenantContextToken",
     "get_current_tenant",
@@ -370,9 +312,7 @@ __all__ = [
     "TenantContextNotSetError",
     "TenantContextResetError",
     "TenantMismatchError",
-    # Core-rings surface (Task 14): domain value objects
     "StreamId",
-    # Core-rings surface: boundary ports
     "Position",
     "EventEnvelope",
     "EventPublisher",
@@ -390,13 +330,10 @@ __all__ = [
     "CategoryQuery",
     "FullEventStore",
     "collect",
-    # Core-rings surface: adapters
     "IntPositionCodec",
-    # Core-rings surface: exceptions
     "DuplicateEventError",
     "PositionDecodeError",
     "PositionForeignError",
-    # Optional-driver availability flags
     "AIOSQLITE_AVAILABLE",
     "SQLiteEventStore",
 ]

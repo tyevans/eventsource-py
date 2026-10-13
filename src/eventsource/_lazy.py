@@ -100,7 +100,6 @@ LAZY_EXPORTS: dict[str, str] = {
     "OutboxEntry": "eventsource.ports",
     "OutboxStats": "eventsource.ports",
     "outbox_event_data": "eventsource.ports",
-    "EventSourceJSONEncoder": "eventsource.adapters.serialization",
     "Projection": "eventsource.application.projections.base",
     "CheckpointTrackingProjection": "eventsource.application.projections.base",
     "DeclarativeProjection": "eventsource.application.projections.base",

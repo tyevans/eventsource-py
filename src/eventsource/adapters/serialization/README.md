@@ -11,8 +11,7 @@ The package exposes:
 | Exported Name | Kind | Signature | Purpose |
 |---|---|---|---|
 | `json_dumps` | function | `json_dumps(obj: Any) -> str` | Fast JSON serialization to string with native UUID, datetime, and non-string key support. |
-| `json_loads` | function | `json_loads(s: str) -> Any` | Fast JSON deserialization from string to Python primitives. |
-| `EventSourceJSONEncoder` | class | `json.JSONEncoder` subclass | Compatibility shim for stdlib `json.dumps(..., cls=EventSourceJSONEncoder)` consumers. |
+| `json_loads` | function | `json_loads(s: str \| bytes) -> Any` | Fast JSON deserialization from string or bytes to Python primitives. |
 
 ```python
 from uuid import uuid4
@@ -34,13 +33,11 @@ data = json_loads(raw)
 
 ## Import Locations
 
-All three serialization utilities are exported from:
+Both JSON serialization utilities are exported from:
 
 ```python
-from eventsource.adapters.serialization import json_dumps, json_loads, EventSourceJSONEncoder
+from eventsource.adapters.serialization import json_dumps, json_loads
 ```
-
-`EventSourceJSONEncoder` is additionally re-exported from the top-level package namespace (`eventsource.EventSourceJSONEncoder`).
 
 ---
 

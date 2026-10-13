@@ -66,56 +66,9 @@ Example:
     >>> parsed = json_loads(json_str)
 """
 
-import json
-from datetime import datetime
 from typing import Any
-from uuid import UUID
 
 import orjson
-
-
-class EventSourceJSONEncoder(json.JSONEncoder):
-    """
-    Custom JSON encoder that handles UUID and datetime objects.
-
-    `json_dumps`/`json_loads` no longer use this class -- orjson (a core
-    dependency) serializes UUID and datetime natively, so there is no
-    stdlib-backed path left that needs it. It is kept because
-    `eventsource.adapters.postgresql.outbox` and
-    `eventsource.adapters.sqlite.outbox` still call stdlib
-    `json.dumps(event_data, cls=EventSourceJSONEncoder)` directly at their
-    `add_event` call sites (bypassing `json_dumps` entirely) -- migrating
-    those call sites is out of scope for this change. It is also public
-    API, re-exported from `eventsource.adapters.serialization` and the top-level
-    `eventsource` package.
-
-    Example:
-        >>> import json
-        >>> from uuid import uuid4
-        >>> from datetime import datetime, UTC
-        >>>
-        >>> data = {"id": uuid4(), "timestamp": datetime.now(UTC)}
-        >>> json_str = json.dumps(data, cls=EventSourceJSONEncoder)
-    """
-
-    def default(self, obj: Any) -> Any:
-        """
-        Convert non-serializable objects to JSON-serializable formats.
-
-        Args:
-            obj: Object to serialize
-
-        Returns:
-            JSON-serializable representation
-
-        Raises:
-            TypeError: If object type is not supported
-        """
-        if isinstance(obj, UUID):
-            return str(obj)
-        if isinstance(obj, datetime):
-            return obj.isoformat()
-        return super().default(obj)
 
 
 def _orjson_default(obj: Any) -> Any:
@@ -231,7 +184,6 @@ def json_loads(s: str | bytes) -> Any:
 
 
 __all__ = [
-    "EventSourceJSONEncoder",
     "json_dumps",
     "json_loads",
 ]

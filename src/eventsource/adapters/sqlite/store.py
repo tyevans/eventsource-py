@@ -18,7 +18,6 @@ sufficient; there is no gap to skip.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime
@@ -265,12 +264,7 @@ class SQLiteEventStore:
         category: str,
         now: str,
     ) -> None:
-        """Write one outbox row for `event`, on `conn`, before commit.
-
-        Runs inside the same transaction as the event INSERT, before
-        `conn.commit()` -- providing atomic persistence between event store
-        and outbox.
-        """
+        """Write one outbox row for `event` on `conn` inside the append transaction."""
         outbox_id = uuid4()
         event_data = outbox_event_data(event)
         await conn.execute(
@@ -288,7 +282,7 @@ class SQLiteEventStore:
                 str(event.aggregate_id),
                 category,
                 str(event.tenant_id) if event.tenant_id else None,
-                json.dumps(event_data),
+                json_dumps(event_data),
                 now,
             ),
         )

@@ -6,7 +6,6 @@ Provides append, outbox writing, and integrity error classification.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
@@ -199,12 +198,6 @@ class PostgreSQLEventStoreAppendMixin:
         `eventsource.ports.outbox.OutboxRepository`; the payload
         shape (six keys, `payload` = `model_dump(mode="json")`) must
         match what it expects exactly.
-
-        Uses stdlib `json.dumps` rather than this module's `json_dumps`
-        (orjson-backed): the payload returned from `ports.outbox.outbox_event_data`
-        is already reduced to JSON-safe primitives (`str`/`dict`/`None`),
-        so the two would serialize identically, but stdlib is used to mirror the
-        legacy store byte-for-byte and avoid any doubt.
         """
         outbox_id = uuid4()
         now = datetime.now(UTC)
@@ -231,7 +224,7 @@ class PostgreSQLEventStoreAppendMixin:
                 "aggregate_id": event.aggregate_id,
                 "aggregate_type": aggregate_type,
                 "tenant_id": str(event.tenant_id) if event.tenant_id else None,
-                "event_data": json.dumps(event_data),
+                "event_data": json_dumps(event_data),
                 "created_at": now,
             },
         )

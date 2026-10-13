@@ -10,14 +10,12 @@ from .test_dumps_loads import (
     TestJsonLoads,
 )
 from .test_encoder import (
-    TestEventSourceJSONEncoder,
     TestNewModuleExports,
 )
 from .test_non_finite_floats import TestDomainEventRejectsNonFiniteFloats
 
 __all__ = [
     "TestDomainEventRejectsNonFiniteFloats",
-    "TestEventSourceJSONEncoder",
     "TestJsonDumps",
     "TestJsonDumpsPydanticModels",
     "TestJsonDumpsUnsupportedTypes",
