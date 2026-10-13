@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-unit-test_rabbitmq_event_bus
 title: Refactor and Decompose Legacy File test_rabbitmq_event_bus.py
-status: Proposed
+status: Refined
 created: 2026-09-29
 governing_adrs:
   - ADR-0002
