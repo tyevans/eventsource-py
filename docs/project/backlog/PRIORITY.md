@@ -195,4 +195,3 @@ Strict sequential order of execution for engineering tasks.
 - **TASK-0178 (Complete)**: [`0178-monitor-subscription-health-via-composite-checks-a`](complete/0178-monitor-subscription-health-via-composite-checks-a.md)
 - **TASK-0179 (Complete)**: [`0179-handle-kafka-consumer-group-rebalances-and-partiti`](complete/0179-handle-kafka-consumer-group-rebalances-and-partiti.md)
 - **TASK-0180 (Complete)**: [`0180-coordinate-peer-health-and-redistribute-subscripti`](complete/0180-coordinate-peer-health-and-redistribute-subscripti.md)
-- **TASK-0181 (Refined)**: [`0181-support-non-numeric-task-ids-in-spec-ops-worktree-`](refined/0181-support-non-numeric-task-ids-in-spec-ops-worktree-.md)
