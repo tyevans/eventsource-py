@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-unit-application-migration-test_write_pause
 title: Refactor and Decompose Legacy File test_write_pause.py
-status: Proposed
+status: Refined
 created: 2026-09-29
 governing_adrs:
   - ADR-0002
