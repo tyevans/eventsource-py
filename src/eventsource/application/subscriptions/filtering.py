@@ -30,69 +30,27 @@ from __future__ import annotations
 
 import fnmatch
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from eventsource.application.subscriptions.filtering_models import (
+    FilterStats,
+    is_wildcard_pattern,
+    matches_event_type,
+    matches_pattern,
+)
 from eventsource.ports.subscribers import get_subscribed_event_types
 
 if TYPE_CHECKING:
     from eventsource.application.subscriptions.config import SubscriptionConfig
     from eventsource.domain.event import DomainEvent
+    from eventsource.ports.envelopes import EventEnvelope
     from eventsource.ports.subscribers import Subscriber
 
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class FilterStats:
-    """
-    Statistics for event filtering.
-
-    Tracks how many events were evaluated and how many matched/skipped
-    to help with debugging and monitoring filter effectiveness.
-
-    Attributes:
-        events_evaluated: Total events checked against filter
-        events_matched: Events that passed the filter
-        events_skipped: Events that were filtered out
-    """
-
-    events_evaluated: int = 0
-    events_matched: int = 0
-    events_skipped: int = 0
-
-    @property
-    def match_rate(self) -> float:
-        """
-        Calculate the match rate as a percentage.
-
-        Returns:
-            Percentage of events that matched (0.0 to 1.0)
-        """
-        if self.events_evaluated == 0:
-            return 1.0
-        return self.events_matched / self.events_evaluated
-
-    def record_match(self) -> None:
-        """Record that an event matched the filter."""
-        self.events_evaluated += 1
-        self.events_matched += 1
-
-    def record_skip(self) -> None:
-        """Record that an event was filtered out."""
-        self.events_evaluated += 1
-        self.events_skipped += 1
-
-    def to_dict(self) -> dict[str, int | float]:
-        """Convert to dictionary for serialization."""
-        return {
-            "events_evaluated": self.events_evaluated,
-            "events_matched": self.events_matched,
-            "events_skipped": self.events_skipped,
-            "match_rate": round(self.match_rate, 4),
-        }
 
 
 @dataclass
@@ -122,27 +80,6 @@ class EventFilter:
             When specified, only events belonging to the specified tenant
             are matched. Useful for tenant-specific subscriptions during
             multi-tenant migrations.
-
-    Example:
-        >>> # Match specific event types
-        >>> filter = EventFilter(event_types=(OrderCreated, OrderShipped))
-        >>>
-        >>> # Match patterns
-        >>> filter = EventFilter(event_type_patterns=("Order*",))
-        >>>
-        >>> # Match aggregate types
-        >>> filter = EventFilter(aggregate_types=("Order", "Payment"))
-        >>>
-        >>> # Match specific tenant
-        >>> from uuid import UUID
-        >>> filter = EventFilter(tenant_id=UUID("12345678-1234-5678-1234-567812345678"))
-        >>>
-        >>> # Combine filters (all must match)
-        >>> filter = EventFilter(
-        ...     event_type_patterns=("*Created",),
-        ...     aggregate_types=("Order",),
-        ...     tenant_id=my_tenant_id,
-        ... )
     """
 
     # Exact event type class matching
@@ -160,19 +97,39 @@ class EventFilter:
     # Internal state
     _event_type_set: set[type[DomainEvent]] | None = field(default=None, init=False, repr=False)
     _aggregate_type_set: set[str] | None = field(default=None, init=False, repr=False)
+    _exact_patterns: frozenset[str] = field(default_factory=frozenset, init=False, repr=False)
+    _compiled_patterns: tuple[re.Pattern[str], ...] = field(default=(), init=False, repr=False)
+    _has_any_filter: bool = field(default=False, init=False, repr=False)
     _stats: FilterStats = field(default_factory=FilterStats, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        """Initialize internal sets for fast lookups.
+        """Initialize internal sets and pre-compiled patterns for fast lookups.
 
-        Note: We only create sets for non-empty tuples. Empty tuples are treated
-        as "no filter" (pass-through) rather than "match nothing". This is safer
-        as it avoids accidentally filtering all events.
+        Note: We only create sets for non-empty tuples. Empty tuples for
+        event_types and aggregate_types are treated as "no filter"
+        (pass-through) rather than "match nothing".
         """
         if self.event_types:
             self._event_type_set = set(self.event_types)
         if self.aggregate_types:
             self._aggregate_type_set = set(self.aggregate_types)
+        if self.event_type_patterns is not None:
+            exact: list[str] = []
+            compiled: list[re.Pattern[str]] = []
+            for pattern in self.event_type_patterns:
+                if is_wildcard_pattern(pattern):
+                    compiled.append(re.compile(fnmatch.translate(pattern)))
+                else:
+                    exact.append(pattern)
+            self._exact_patterns = frozenset(exact)
+            self._compiled_patterns = tuple(compiled)
+
+        self._has_any_filter = bool(
+            self._event_type_set is not None
+            or self.event_type_patterns is not None
+            or self._aggregate_type_set is not None
+            or self.tenant_id is not None
+        )
 
     @classmethod
     def from_config(cls, config: SubscriptionConfig) -> EventFilter:
@@ -229,7 +186,6 @@ class EventFilter:
         event_types = config.event_types
 
         if event_types is None:
-            # Fall back to subscriber's declared types
             subscribed = get_subscribed_event_types(subscriber)
             if subscribed:
                 event_types = tuple(subscribed)
@@ -245,16 +201,11 @@ class EventFilter:
         """
         Create filter from event type name patterns.
 
-        Convenience method for creating pattern-based filters.
-
         Args:
             *patterns: Wildcard patterns for event type names
 
         Returns:
             EventFilter instance
-
-        Example:
-            >>> filter = EventFilter.from_patterns("Order*", "Payment*")
         """
         return cls(event_type_patterns=patterns)
 
@@ -282,43 +233,28 @@ class EventFilter:
         """
         Check if an event matches all filter criteria.
 
-        The filter returns True if:
-        - No filters are configured (pass-through), OR
-        - The event matches ALL configured criteria
-
-        For a match:
-        - event_types: Event type must be in the set
-        - event_type_patterns: Event type name must match at least one pattern
-        - aggregate_types: Event's aggregate type must be in the set
-        - tenant_id: Event's tenant_id must match the configured tenant_id
-
         Args:
             event: The event to check
 
         Returns:
             True if the event matches, False otherwise
         """
-        # Fast path: no filtering configured
-        if not self.is_configured:
+        if not self._has_any_filter:
             self._stats.record_match()
             return True
 
-        # Check event type matching (exact types)
         if not self._matches_event_type(event):
             self._stats.record_skip()
             return False
 
-        # Check event type patterns
         if not self._matches_event_type_pattern(event):
             self._stats.record_skip()
             return False
 
-        # Check aggregate type
         if not self._matches_aggregate_type(event):
             self._stats.record_skip()
             return False
 
-        # Check tenant ID
         if not self._matches_tenant_id(event):
             self._stats.record_skip()
             return False
@@ -326,16 +262,25 @@ class EventFilter:
         self._stats.record_match()
         return True
 
-    def _matches_event_type(self, event: DomainEvent) -> bool:
+    def matches_envelope(self, envelope: EventEnvelope) -> bool:
         """
-        Check if event matches configured event types.
+        Check if an event envelope matches all filter criteria.
+
+        Fast-paths when no filter criteria are active.
 
         Args:
-            event: The event to check
+            envelope: The event envelope to check
 
         Returns:
-            True if matches or no event types configured
+            True if the envelope's event matches, False otherwise
         """
+        if not self._has_any_filter:
+            self._stats.record_match()
+            return True
+        return self.matches(envelope.event)
+
+    def _matches_event_type(self, event: DomainEvent) -> bool:
+        """Check if event matches configured event types."""
         if self._event_type_set is None:
             return True
         return type(event) in self._event_type_set
@@ -344,50 +289,29 @@ class EventFilter:
         """
         Check if event type name matches any configured pattern.
 
-        Uses fnmatch for wildcard pattern matching:
-        - "*" matches everything
-        - "Order*" matches "OrderCreated", "OrderShipped", etc.
-        - "?" matches any single character
-
-        Args:
-            event: The event to check
-
-        Returns:
-            True if matches any pattern or no patterns configured
+        Checks exact pattern names in O(1) via `_exact_patterns` first, then
+        evaluates pre-compiled wildcard regexes in `_compiled_patterns`.
         """
         if self.event_type_patterns is None:
             return True
 
         event_type_name = event.event_type
-        for pattern in self.event_type_patterns:
-            if fnmatch.fnmatch(event_type_name, pattern):
-                return True
-        return False
+        if event_type_name in self._exact_patterns:
+            return True
+        if not self._compiled_patterns:
+            return False
+        return any(
+            pattern.match(event_type_name) is not None for pattern in self._compiled_patterns
+        )
 
     def _matches_aggregate_type(self, event: DomainEvent) -> bool:
-        """
-        Check if event's aggregate type is in configured types.
-
-        Args:
-            event: The event to check
-
-        Returns:
-            True if matches or no aggregate types configured
-        """
+        """Check if event's aggregate type is in configured types."""
         if self._aggregate_type_set is None:
             return True
         return event.aggregate_type in self._aggregate_type_set
 
     def _matches_tenant_id(self, event: DomainEvent) -> bool:
-        """
-        Check if event's tenant_id matches the configured tenant_id.
-
-        Args:
-            event: The event to check
-
-        Returns:
-            True if tenant_id matches or no tenant_id configured
-        """
+        """Check if event's tenant_id matches the configured tenant_id."""
         if self.tenant_id is None:
             return True
         return event.tenant_id == self.tenant_id
@@ -397,9 +321,6 @@ class EventFilter:
         """
         Get event type names for query optimization.
 
-        Returns list of event type names from configured event types,
-        which can be used to optimize queries at the event store level.
-
         Returns:
             List of event type name strings, or None if no types configured
         """
@@ -407,7 +328,6 @@ class EventFilter:
             return None
 
         names = [event_type.event_type_name() for event_type in self._event_type_set]
-
         return names if names else None
 
     def reset_stats(self) -> None:
@@ -431,44 +351,6 @@ class EventFilter:
             return "EventFilter(all)"
 
         return f"EventFilter({', '.join(parts)})"
-
-
-def matches_event_type(
-    event: DomainEvent,
-    event_types: tuple[type[DomainEvent], ...] | None,
-) -> bool:
-    """
-    Utility function to check if event matches given types.
-
-    This is a standalone function for cases where creating a full
-    EventFilter is overkill.
-
-    Args:
-        event: The event to check
-        event_types: Event types to match, or None for all
-
-    Returns:
-        True if event type matches or no types specified
-    """
-    if event_types is None:
-        return True
-    return type(event) in event_types
-
-
-def matches_pattern(event_type_name: str, pattern: str) -> bool:
-    """
-    Check if an event type name matches a wildcard pattern.
-
-    Uses fnmatch-style pattern matching.
-
-    Args:
-        event_type_name: The event type name to check
-        pattern: The wildcard pattern
-
-    Returns:
-        True if the name matches the pattern
-    """
-    return fnmatch.fnmatch(event_type_name, pattern)
 
 
 __all__ = [
