@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-unit-application-migration-test_coordinator_subscriptions
 title: Refactor and Decompose Legacy File test_coordinator_subscriptions.py
-status: Refined
+status: Complete
 created: 2026-09-29
 governing_adrs:
   - ADR-0002
