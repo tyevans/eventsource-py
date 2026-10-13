@@ -1,0 +1,244 @@
+"""Tests for network partition and process crash simulations during migration."""
+
+from __future__ import annotations
+
+from uuid import UUID, uuid4
+
+import pytest
+
+from eventsource.adapters.memory import InMemoryEventStore
+from eventsource.application.migration.dual_write import DualWriteInterceptor
+from eventsource.domain import StreamId
+from eventsource.ports import ExpectedVersion
+
+from ._fixtures import (
+    _REGISTRY,
+    ChaosTestEvent,
+    FailureConfig,
+    FailureInjectableStore,
+    FailureMode,
+    InjectedFailureError,
+    create_test_events,
+)
+
+# =============================================================================
+# Network Partition Simulation Tests
+# =============================================================================
+
+
+class TestNetworkPartitionSimulation:
+    """Tests for network partition simulation scenarios."""
+
+    @pytest.mark.asyncio
+    async def test_append_fails_during_network_partition(
+        self,
+        target_store: FailureInjectableStore,
+        tenant_id: UUID,
+    ) -> None:
+        """Test that appends fail when store is partitioned."""
+        # Simulate network partition
+        target_store.simulate_network_partition()
+
+        aggregate_id = uuid4()
+        event = ChaosTestEvent(
+            aggregate_id=aggregate_id,
+            tenant_id=tenant_id,
+        )
+
+        with pytest.raises(InjectedFailureError) as exc_info:
+            await target_store.append(
+                StreamId(aggregate_id=aggregate_id, category="ChaosAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
+            )
+
+        assert "Network partition" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_reads_fail_during_network_partition(
+        self,
+        source_store: FailureInjectableStore,
+        tenant_id: UUID,
+    ) -> None:
+        """Test that reads fail when store is partitioned."""
+        # Create event before partition
+        await create_test_events(source_store, tenant_id, count=1)
+
+        # Simulate network partition
+        source_store.simulate_network_partition()
+
+        with pytest.raises(InjectedFailureError) as exc_info:
+            await source_store.current_position()
+
+        assert "Network partition" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_partition_heals_and_operations_resume(
+        self,
+        source_store: FailureInjectableStore,
+        tenant_id: UUID,
+    ) -> None:
+        """Test that operations resume after partition heals."""
+        # Create events before partition
+        await create_test_events(source_store, tenant_id, count=5)
+
+        # Simulate partition
+        source_store.simulate_network_partition()
+
+        # Verify failure during partition
+        with pytest.raises(InjectedFailureError):
+            await source_store.current_position()
+
+        # Heal partition
+        source_store.heal_network_partition()
+
+        # Operations should work now
+        count = 0
+        async for _ in source_store.read_all():
+            count += 1
+        assert count == 5
+
+    @pytest.mark.asyncio
+    async def test_dual_write_handles_target_partition(
+        self,
+        tenant_id: UUID,
+    ) -> None:
+        """Test dual-write continues to source when target is partitioned."""
+        # Use regular InMemoryEventStore for source (no failure injection)
+        source_store = InMemoryEventStore(event_registry=_REGISTRY)
+        target_store = FailureInjectableStore()
+
+        interceptor = DualWriteInterceptor(
+            source_store=source_store,
+            target_store=target_store,
+            tenant_id=tenant_id,
+            enable_tracing=False,
+        )
+
+        # Partition the target store
+        target_store.simulate_network_partition()
+
+        aggregate_id = uuid4()
+        event = ChaosTestEvent(
+            aggregate_id=aggregate_id,
+            tenant_id=tenant_id,
+        )
+        stream = StreamId(aggregate_id=aggregate_id, category="ChaosAggregate")
+
+        # Write should succeed (source is authoritative)
+        await interceptor.append(stream, [event], ExpectedVersion.no_stream())
+
+        # Verify event in source
+        source_events = [envelope async for envelope in source_store.read_stream(stream)]
+        assert len(source_events) == 1
+
+        # Verify failure was recorded
+        stats = interceptor.get_failure_stats()
+        assert stats.total_failures >= 1
+
+
+# =============================================================================
+# Process Crash Simulation Tests - Dual Write
+# =============================================================================
+
+
+class TestProcessCrashDuringDualWrite:
+    """Tests for process crash simulation during dual-write phase."""
+
+    @pytest.mark.asyncio
+    async def test_dual_write_no_data_loss_on_source(
+        self,
+        tenant_id: UUID,
+    ) -> None:
+        """Test that dual-write ensures no data loss on source during failures."""
+        # Use regular store for source, failing store for target
+        source_store = InMemoryEventStore(event_registry=_REGISTRY)
+        target_store = FailureInjectableStore()
+
+        interceptor = DualWriteInterceptor(
+            source_store=source_store,
+            target_store=target_store,
+            tenant_id=tenant_id,
+            enable_tracing=False,
+        )
+
+        # Set target to fail intermittently
+        target_store.set_failure(
+            FailureConfig(
+                mode=FailureMode.INTERMITTENT,
+                fail_rate=0.5,  # 50% failure rate
+                error_message="Random target failure",
+            )
+        )
+
+        events_written = 0
+        for i in range(20):
+            aggregate_id = uuid4()
+
+            event = ChaosTestEvent(
+                aggregate_id=aggregate_id,
+                tenant_id=tenant_id,
+                sequence=i,
+            )
+
+            # All writes should succeed (source is authoritative); a
+            # source-store failure would raise and fail the test.
+            await interceptor.append(
+                StreamId(aggregate_id=aggregate_id, category="ChaosAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
+            )
+            events_written += 1
+
+        assert events_written == 20
+
+        # Verify ALL events in source (no data loss)
+        source_count = 0
+        async for envelope in source_store.read_all():
+            if envelope.event.tenant_id == tenant_id:
+                source_count += 1
+        assert source_count == 20
+
+        # Some failures should have been recorded
+        stats = interceptor.get_failure_stats()
+        assert stats.total_failures > 0
+
+    @pytest.mark.asyncio
+    async def test_dual_write_source_failure_propagates(
+        self,
+        target_store: FailureInjectableStore,
+        tenant_id: UUID,
+    ) -> None:
+        """Test that source store failure propagates to caller."""
+        source_store = FailureInjectableStore()
+
+        interceptor = DualWriteInterceptor(
+            source_store=source_store,
+            target_store=target_store,
+            tenant_id=tenant_id,
+            enable_tracing=False,
+        )
+
+        # Fail the source store
+        source_store.set_failure(
+            FailureConfig(
+                mode=FailureMode.FAIL_ALL,
+                error_message="Source store failure",
+            )
+        )
+
+        aggregate_id = uuid4()
+        event = ChaosTestEvent(
+            aggregate_id=aggregate_id,
+            tenant_id=tenant_id,
+        )
+
+        # Source failure should propagate
+        with pytest.raises(InjectedFailureError) as exc_info:
+            await interceptor.append(
+                StreamId(aggregate_id=aggregate_id, category="ChaosAggregate"),
+                [event],
+                ExpectedVersion.no_stream(),
+            )
+
+        assert "Source store failure" in str(exc_info.value)
