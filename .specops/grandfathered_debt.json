@@ -42,7 +42,6 @@
     "tests/unit/application/migration/test_phase3_integration.py": 2196,
 
 
-    "tests/unit/domain/test_tenant_context_properties.py": 519,
     "tests/unit/observability/test_projection_tracing.py": 591,
     "tests/unit/ports/test_migration_models.py": 1085,
     "tests/unit/readmodels/test_in_memory.py": 778,
