@@ -41,7 +41,6 @@
     "tests/unit/application/migration/test_phase2_integration.py": 2579,
     "tests/unit/application/migration/test_phase3_integration.py": 2196,
 
-    "tests/unit/application/subscriptions/test_coordination.py": 1499,
     "tests/unit/application/subscriptions/test_error_handling.py": 857,
     "tests/unit/application/subscriptions/test_filtering.py": 721,
     "tests/unit/application/subscriptions/test_health.py": 988,
