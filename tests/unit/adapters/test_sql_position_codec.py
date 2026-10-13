@@ -12,9 +12,10 @@ class TestIntPositionCodec:
         assert codec.decode(pos.to_str()) == pos
         assert codec.value_of(pos) == 42
 
-    def test_legacy_bare_int_checkpoint_decodes(self) -> None:
+    def test_legacy_bare_int_checkpoint_raises_decode_error(self) -> None:
         codec = IntPositionCodec(store_id="pg:main")
-        assert codec.decode("12345") == Position("pg:main", (12345,))
+        with pytest.raises(PositionDecodeError):
+            codec.decode("12345")
 
     def test_foreign_store_decode_raises(self) -> None:
         codec = IntPositionCodec(store_id="pg:main")
