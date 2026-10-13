@@ -138,7 +138,7 @@ grandfathered = [
 
 
 
-  "tests/unit/test_event_bus.py",
+
   "tests/unit/test_kafka_event_bus.py",
   "tests/unit/test_rabbitmq_event_bus.py",
   "tests/unit/test_redis_event_bus.py",
