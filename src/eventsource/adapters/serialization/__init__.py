@@ -6,7 +6,7 @@ throughout the eventsource library, particularly JSON serialization
 with support for UUIDs and datetimes.
 
 Example:
-    >>> from eventsource.adapters.serialization import json_dumps, EventSourceJSONEncoder
+    >>> from eventsource.adapters.serialization import json_dumps, json_loads
     >>> from uuid import uuid4
     >>>
     >>> data = {"id": uuid4()}
@@ -21,7 +21,6 @@ from eventsource.adapters.serialization.delta import (
     is_delta_dict,
 )
 from eventsource.adapters.serialization.json import (
-    EventSourceJSONEncoder,
     json_dumps,
     json_loads,
 )
@@ -31,7 +30,6 @@ __all__ = [
     "DeltaCodec",
     "DeltaIntegrityError",
     "DeltaPayload",
-    "EventSourceJSONEncoder",
     "is_delta_dict",
     "json_dumps",
     "json_loads",

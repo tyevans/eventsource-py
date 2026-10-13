@@ -7,11 +7,11 @@ Governed by:
 
 from __future__ import annotations
 
-import json
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
+from eventsource.adapters.serialization import json_loads
 from eventsource.ports.migration.models import (
     Migration,
     MigrationConfig,
@@ -69,7 +69,7 @@ def row_to_migration(row: Sequence[Any]) -> Migration:
     Returns:
         Migration instance
     """
-    config_data = row[15] if isinstance(row[15], dict) else json.loads(row[15])
+    config_data = row[15] if isinstance(row[15], dict) else json_loads(row[15])
 
     return Migration(
         id=row[0],

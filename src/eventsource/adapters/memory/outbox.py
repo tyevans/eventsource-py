@@ -7,10 +7,10 @@ aggregate changes, then published asynchronously by a background worker.
 """
 
 import asyncio
-import json
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
+from eventsource.adapters.serialization import json_dumps
 from eventsource.domain.event import DomainEvent
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
@@ -77,8 +77,6 @@ class InMemoryOutboxRepository:
             outbox_id = uuid4()
             now = datetime.now(UTC)
 
-            # outbox_event_data() is JSON-safe by construction, so no custom
-            # encoder is needed here.
             event_data = outbox_event_data(event)
 
             async with self._lock:
@@ -89,7 +87,7 @@ class InMemoryOutboxRepository:
                     aggregate_id=event.aggregate_id,
                     aggregate_type=event.aggregate_type,
                     tenant_id=event.tenant_id,
-                    event_data=json.dumps(event_data),
+                    event_data=json_dumps(event_data),
                     created_at=now,
                     status="pending",
                 )

@@ -1,8 +1,9 @@
 """Position and ExpectedVersion value objects for the store ports."""
 
-import json
 from dataclasses import dataclass
 from typing import Any
+
+import orjson
 
 from eventsource.ports.exceptions import PositionDecodeError, PositionForeignError
 
@@ -71,19 +72,19 @@ class Position:
         return self.key >= other.key
 
     def to_str(self) -> str:
-        return json.dumps({"s": self.store_id, "k": list(self.key)}, separators=(",", ":"))
+        return orjson.dumps({"s": self.store_id, "k": list(self.key)}).decode()
 
     @classmethod
     def from_str(cls, raw: str) -> "Position":
         try:
-            data: Any = json.loads(raw)
+            data: Any = orjson.loads(raw)
             store_id = data["s"]
             key = data["k"]
             if not isinstance(store_id, str) or not isinstance(key, list):
                 raise TypeError
             if not all(isinstance(e, (int, str)) and not isinstance(e, bool) for e in key):
                 raise TypeError
-        except (json.JSONDecodeError, TypeError, KeyError) as exc:
+        except (orjson.JSONDecodeError, TypeError, KeyError, ValueError) as exc:
             raise PositionDecodeError(f"not a position: {raw!r}") from exc
         return cls(store_id=store_id, key=tuple(key))
 

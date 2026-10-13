@@ -11,7 +11,6 @@ in-transaction by `adapters/postgresql/store.py::_write_to_outbox`; that
 pairing is the table contract this adapter and the store share.
 """
 
-import json
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -19,7 +18,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from eventsource.adapters._sql.connection import sql_connection
-from eventsource.adapters.serialization import EventSourceJSONEncoder
+from eventsource.adapters.serialization import json_dumps
 from eventsource.domain.event import DomainEvent
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
@@ -109,11 +108,7 @@ class PostgreSQLOutboxRepository:
                 "aggregate_id": event.aggregate_id,
                 "aggregate_type": event.aggregate_type,
                 "tenant_id": event.tenant_id,
-                # The encoder is redundant for this JSON-safe payload, but is
-                # left in place so the parameter binding here matches every
-                # other write path in this module without a second
-                # serialization delta in this commit.
-                "event_data": json.dumps(event_data, cls=EventSourceJSONEncoder),
+                "event_data": json_dumps(event_data),
                 "created_at": now,
             }
 

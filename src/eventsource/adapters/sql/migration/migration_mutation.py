@@ -7,13 +7,13 @@ Governed by:
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from sqlalchemy import text
 
+from eventsource.adapters.serialization import json_dumps
 from eventsource.adapters.sql.migration.migration_helpers import (
     VALID_TRANSITIONS,
     _token,
@@ -118,7 +118,7 @@ class PostgreSQLMigrationMutationMixin:
                 "events_copied": migration.events_copied,
                 "last_source_position_token": _token(migration.last_source_position),
                 "last_target_position_token": _token(migration.last_target_position),
-                "config": json.dumps(migration.config.to_dict()),
+                "config": json_dumps(migration.config.to_dict()),
                 "error_count": migration.error_count,
                 "created_at": now,
                 "updated_at": now,

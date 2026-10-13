@@ -9,12 +9,11 @@ This adapter reads and writes `event_outbox` rows using the schema in
 `src/eventsource/migrations/templates/sqlite/outbox.sql`.
 """
 
-import json
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from eventsource.adapters.serialization import EventSourceJSONEncoder
+from eventsource.adapters.serialization import json_dumps
 from eventsource.domain.event import DomainEvent
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
@@ -123,9 +122,7 @@ class SQLiteOutboxRepository:
                     str(event.aggregate_id),
                     event.aggregate_type,
                     str(event.tenant_id) if event.tenant_id else None,
-                    # The encoder is redundant for this JSON-safe payload; see
-                    # the postgresql adapter for why it is left in place.
-                    json.dumps(event_data, cls=EventSourceJSONEncoder),
+                    json_dumps(event_data),
                     now.isoformat(),
                 ),
             )
