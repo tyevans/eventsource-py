@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-unit-test_redis_event_bus_tracing
 title: Refactor and Decompose Legacy File test_redis_event_bus_tracing.py
-status: Refined
+status: Complete
 created: 2026-09-29
 governing_adrs:
   - ADR-0002
