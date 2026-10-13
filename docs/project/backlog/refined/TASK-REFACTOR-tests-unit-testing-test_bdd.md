@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-unit-testing-test_bdd
 title: Refactor and Decompose Legacy File test_bdd.py
-status: Proposed
+status: Refined
 created: 2026-09-29
 governing_adrs:
   - ADR-0002
