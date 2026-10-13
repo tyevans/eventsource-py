@@ -36,17 +36,6 @@
     "src/eventsource/application/projections/coordinator.py": 636,
     "src/eventsource/application/subscriptions/coordination.py": 990,
     "src/eventsource/application/subscriptions/error_handling.py": 1105,
-    "src/eventsource/application/subscriptions/health.py": 860,
-
-    "tests/unit/application/migration/test_phase2_integration.py": 2579,
-    "tests/unit/application/migration/test_phase3_integration.py": 2196,
-
-
-
-
-
-
-
-    "tests/unit/testing/test_harness.py": 604
+    "src/eventsource/application/subscriptions/health.py": 860
   }
 }
