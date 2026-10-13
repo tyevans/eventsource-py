@@ -43,7 +43,7 @@
 
 
 
-    "tests/unit/readmodels/test_postgresql.py": 508,
+
     "tests/unit/readmodels/test_projection.py": 868,
     "tests/unit/readmodels/test_schema.py": 631,
     "tests/unit/readmodels/test_soft_delete.py": 525,

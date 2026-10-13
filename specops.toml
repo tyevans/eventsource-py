@@ -137,7 +137,7 @@ grandfathered = [
 
 
 
-  "tests/unit/readmodels/test_postgresql.py",
+
   "tests/unit/readmodels/test_projection.py",
   "tests/unit/readmodels/test_schema.py",
   "tests/unit/readmodels/test_soft_delete.py",
