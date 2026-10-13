@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-unit-application-subscriptions-test_error_handling
 title: Refactor and Decompose Legacy File test_error_handling.py
-status: Refined
+status: Complete
 created: 2026-09-29
 governing_adrs:
   - ADR-0002
