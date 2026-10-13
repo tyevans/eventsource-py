@@ -141,9 +141,6 @@ grandfathered = [
 
 
 
-  "tests/unit/testing/test_assertions.py",
-  "tests/unit/testing/test_bdd.py",
-  "tests/unit/testing/test_builder.py",
   "tests/unit/testing/test_harness.py",
 ]
 

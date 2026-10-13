@@ -47,9 +47,6 @@
 
 
 
-    "tests/unit/testing/test_assertions.py": 625,
-    "tests/unit/testing/test_bdd.py": 841,
-    "tests/unit/testing/test_builder.py": 722,
     "tests/unit/testing/test_harness.py": 604
   }
 }
