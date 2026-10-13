@@ -54,7 +54,10 @@ class TestKafkaEventBusGaugeMetrics:
             bus = KafkaEventBus()
 
         # Replace the bus's metrics with one using our test meter
-        bus._metrics = KafkaEventBusMetrics(self.meter)
+        test_metrics = KafkaEventBusMetrics(self.meter)
+        bus._connection_manager.metrics = test_metrics
+        bus._publisher._metrics = test_metrics
+        bus._consumer_loop._metrics = test_metrics
         bus._meter = self.meter
 
         return bus
@@ -153,7 +156,7 @@ class TestKafkaEventBusGaugeMetrics:
             await bus.connect()
 
             # Manually set consuming to simulate start
-            bus._consuming = True
+            bus._consumer_loop._consuming = True
             bus._register_consumer_lag_gauge()
 
             # Verify gauge registered flag is set

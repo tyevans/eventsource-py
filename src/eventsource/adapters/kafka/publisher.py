@@ -125,6 +125,30 @@ class KafkaPublisher:
         else:
             await asyncio.gather(*(self._await_publish_ack(handle) for handle in pending))
 
+    def _record_publish_error(self, event: DomainEvent, span: Any, error: Exception) -> None:
+        """Record span status, error metrics, and stats on publish failure."""
+        if span:
+            span.set_status(Status(StatusCode.ERROR, str(error)))
+            span.record_exception(error)
+
+        if self._metrics:
+            self._metrics.publish_errors.add(
+                1,
+                attributes={
+                    "messaging.system": "kafka",
+                    "messaging.destination": self._config.topic_name,
+                    "event.type": event.event_type,
+                    "error.type": type(error).__name__,
+                },
+            )
+
+        logger.error(
+            "Failed to publish event",
+            extra={"error": str(error)},
+            exc_info=True,
+        )
+        self._stats.last_error_at = datetime.now(UTC)
+
     async def _begin_publish_single_event(
         self,
         event: DomainEvent,
@@ -132,26 +156,12 @@ class KafkaPublisher:
     ) -> tuple[Any, DomainEvent, Any]:
         """Serialize and hand a single event to the producer.
 
-        Creates an OpenTelemetry span for the publish operation if tracing
-        is enabled. The span is kept open (started via ``start_span``, not
-        the context-manager form) so it can be closed later once the
-        acknowledgment has been awaited -- this lets ``publish_all`` batch
-        the ack-await across events while still tracing the full operation.
-
-        Args:
-            event: The event to publish.
-            background: Whether the caller intends to skip waiting for
-                acknowledgment (used to decide how the returned future is
-                handled by the caller).
-
-        Returns:
-            A ``(future, event, span)`` tuple. ``span`` is the tracing span
-            (or None) that must be ended by the caller after awaiting the
-            future (or immediately, for background publishes once tracked).
+        Returns a ``(future, event, span)`` tuple where ``span`` is closed
+        by the caller once acknowledgment is awaited or background tracking
+        is attached.
         """
         producer = self._connection.require_producer()
 
-        # Serialize event
         key = self._get_partition_key(event)
         value = self._serialize_event(event)
         headers = self._create_headers(event)
@@ -173,7 +183,6 @@ class KafkaPublisher:
                 },
             )
 
-            # Inject trace context into headers for distributed tracing
             if PROPAGATION_AVAILABLE and inject is not None:
                 carrier: dict[str, str] = {}
                 inject(carrier)
@@ -188,40 +197,15 @@ class KafkaPublisher:
                 headers=headers,
             )
         except Exception as e:
+            self._record_publish_error(event, span, e)
             if span:
-                span.set_status(Status(StatusCode.ERROR, str(e)))
-                span.record_exception(e)
                 span.end()
-
-            # Increment publish_errors counter
-            if self._metrics:
-                self._metrics.publish_errors.add(
-                    1,
-                    attributes={
-                        "messaging.system": "kafka",
-                        "messaging.destination": self._config.topic_name,
-                        "event.type": event.event_type,
-                        "error.type": type(e).__name__,
-                    },
-                )
-
-            logger.error(
-                "Failed to publish event",
-                extra={"error": str(e)},
-                exc_info=True,
-            )
-            self._stats.last_error_at = datetime.now(UTC)
             raise
 
         return future, event, span
 
     async def _await_publish_ack(self, handle: tuple[Any, DomainEvent, Any]) -> None:
-        """Await broker acknowledgment for a single previously-sent event.
-
-        Args:
-            handle: The ``(future, event, span)`` tuple returned by
-                ``_begin_publish_single_event``.
-        """
+        """Await broker acknowledgment for a single previously-sent event."""
         future, event, span = handle
 
         try:
@@ -243,7 +227,6 @@ class KafkaPublisher:
                     },
                 )
 
-            # Increment messages_published counter on confirmed success
             if self._metrics:
                 self._metrics.messages_published.add(
                     1,
@@ -255,28 +238,7 @@ class KafkaPublisher:
                 )
 
         except Exception as e:
-            if span:
-                span.set_status(Status(StatusCode.ERROR, str(e)))
-                span.record_exception(e)
-
-            # Increment publish_errors counter
-            if self._metrics:
-                self._metrics.publish_errors.add(
-                    1,
-                    attributes={
-                        "messaging.system": "kafka",
-                        "messaging.destination": self._config.topic_name,
-                        "event.type": event.event_type,
-                        "error.type": type(e).__name__,
-                    },
-                )
-
-            logger.error(
-                "Failed to publish event",
-                extra={"error": str(e)},
-                exc_info=True,
-            )
-            self._stats.last_error_at = datetime.now(UTC)
+            self._record_publish_error(event, span, e)
             raise
         finally:
             if span:

@@ -15,7 +15,7 @@ from eventsource.ports.exceptions import EventBusConnectionError
 
 if TYPE_CHECKING:
     from eventsource.adapters.kafka.config import KafkaEventBusConfig
-    from eventsource.adapters.kafka.metrics import KafkaEventBusMetrics
+    from eventsource.adapters.kafka.connection import KafkaConnectionManager
     from eventsource.adapters.kafka.models import KafkaEventBusStats
     from eventsource.adapters.kafka.publisher import KafkaPublisher
 
@@ -27,11 +27,9 @@ class KafkaBusPublishMixin:
 
     # Declared for type checking; provided by KafkaEventBus / BaseEventBus
     _config: KafkaEventBusConfig
+    _connection_manager: KafkaConnectionManager
     _publisher: KafkaPublisher
     _stats: KafkaEventBusStats
-    _metrics: KafkaEventBusMetrics | None
-    _connected: bool
-    _producer: Any
     _track_background: Any
 
     async def publish(
@@ -53,7 +51,7 @@ class KafkaBusPublishMixin:
             EventBusConnectionError: If not connected to Kafka.
             KafkaError: If publishing fails and background=False.
         """
-        if not self._connected or not self._producer:
+        if not self._connection_manager.is_connected or not self._connection_manager.producer:
             raise EventBusConnectionError("Not connected to Kafka. Call connect() first.")
 
         if not events:
@@ -87,15 +85,16 @@ class KafkaBusPublishMixin:
         self._stats.events_published += len(events)
         self._stats.last_publish_at = datetime.now(UTC)
 
-        if self._metrics:
+        metrics = self._connection_manager.metrics
+        if metrics:
             duration_ms = (time.perf_counter() - start_time) * 1000
-            self._metrics.publish_duration.record(
+            metrics.publish_duration.record(
                 duration_ms,
                 attributes={
                     "messaging.destination": self._config.topic_name,
                 },
             )
-            self._metrics.batch_publish_size.record(len(events))
+            metrics.batch_publish_size.record(len(events))
 
         logger.debug(
             "Events published successfully",

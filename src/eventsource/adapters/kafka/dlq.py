@@ -17,12 +17,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
+from eventsource.adapters.kafka.consumer_helpers import get_header_value
+from eventsource.adapters.serialization import json_loads
 from eventsource.ports.exceptions import EventBusConnectionError
 
 if TYPE_CHECKING:
@@ -31,49 +32,13 @@ if TYPE_CHECKING:
     from eventsource.adapters.kafka.models import KafkaEventBusStats
     from eventsource.adapters.kafka.serialization import EventSerializer
 
-# Optional aiokafka import - fail gracefully if not installed. The canonical
-# KAFKA_AVAILABLE flag lives on bus.py (checked at construction, re-exported
-# from adapters/kafka/__init__.py) -- this module only needs the guard to
-# import safely, not a second copy of the flag.
 try:
     from aiokafka import AIOKafkaConsumer, TopicPartition
 except ImportError:
     AIOKafkaConsumer = None
     TopicPartition = None
 
-# Named explicitly so the logger name is stable and matches the facade's
-# pre-extraction "eventsource.bus.kafka" logger.
 logger = logging.getLogger("eventsource.bus.kafka")
-
-
-def _get_header_value(
-    headers: list[tuple[str, bytes]] | None,
-    key: str,
-) -> str | None:
-    """Get a header value by key.
-
-    Pure, stateless duplicate of ``KafkaConsumerLoop._get_header_value``.
-    Lifted here rather than reused via a ``KafkaConsumerLoop`` instance
-    because that collaborator requires handler-routing dependencies (retry
-    policy, handler lookup, shutdown event, ...) that have no bearing on DLQ
-    administration -- constructing one just to call a pure header-lookup
-    helper would be a heavier coupling than duplicating ~8 lines.
-
-    Args:
-        headers: List of header tuples.
-        key: The header key to find.
-
-    Returns:
-        The decoded header value, or None if not found.
-    """
-    if not headers:
-        return None
-
-    for header_key, header_value in headers:
-        if header_key == key:
-            return header_value.decode("utf-8")
-
-    return None
 
 
 class KafkaDLQAdmin:
@@ -99,28 +64,9 @@ class KafkaDLQAdmin:
     ) -> AsyncIterator[Any]:
         """Build, start, and always stop a throwaway ``AIOKafkaConsumer``.
 
-        All three DLQ operations need their own short-lived consumer with
-        slightly different construction kwargs (topic subscription,
-        group_id, timeout, auto-commit). This centralizes the
-        build/start/stop boilerplate and guarantees ``stop()`` runs even if
-        the caller's body raises.
-
         Construction goes through
         :meth:`~eventsource.adapters.kafka.config.KafkaEventBusConfig.get_consumer_config`
-        -- the same builder the long-lived main consumer uses -- so DLQ
-        consumers never silently miss a field (security settings, fetch
-        bounds, ...) that the main consumer gets.
-
-        Args:
-            *topics: Topics to subscribe to at construction time. Omit to
-                build an unsubscribed consumer (e.g. for manual ``assign``).
-            **kwargs: Overrides forwarded to
-                :meth:`KafkaEventBusConfig.get_consumer_config`, merged over
-                the shared defaults (e.g. ``group_id=None`` for an unmanaged
-                consumer, ``consumer_timeout_ms=...`` for a bounded poll).
-
-        Yields:
-            The started ``AIOKafkaConsumer``.
+        so DLQ consumers share the main consumer's security and fetch settings.
         """
         consumer_kwargs = self._config.get_consumer_config(**kwargs)
         dlq_consumer = AIOKafkaConsumer(*topics, **consumer_kwargs)
@@ -138,10 +84,6 @@ class KafkaDLQAdmin:
     ) -> list[dict[str, Any]]:
         """Retrieve messages from the dead letter queue.
 
-        Creates a consumer to read DLQ messages. By default, reads without
-        committing offsets (inspection mode). When use_consumer_group=True,
-        uses the configured DLQ consumer group for coordinated processing.
-
         Args:
             limit: Maximum number of messages to retrieve.
             timeout_ms: Timeout for polling in milliseconds.
@@ -150,15 +92,6 @@ class KafkaDLQAdmin:
 
         Returns:
             List of DLQ message dictionaries with headers and payload.
-            Each message contains:
-            - topic: DLQ topic name
-            - partition: Partition number
-            - offset: Message offset
-            - key: Message key (decoded)
-            - timestamp: Message timestamp
-            - headers: All headers as string dict
-            - payload: Deserialized JSON payload or hex-encoded bytes
-            - replay_count: Number of times this message has been replayed
 
         Raises:
             EventBusConnectionError: If not connected to Kafka.
@@ -190,19 +123,16 @@ class KafkaDLQAdmin:
                     if count >= limit:
                         break
 
-                    # Parse headers into dict
                     headers: dict[str, str] = {}
                     if message.headers:
                         for key, value in message.headers:
                             headers[key] = value.decode("utf-8")
 
-                    # Get replay count from headers
                     replay_count = int(headers.get("dlq_replay_count", "0"))
 
-                    # Try to decode value as JSON
                     try:
-                        payload = json.loads(message.value.decode("utf-8"))
-                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        payload = json_loads(message.value) if message.value else None
+                    except (ValueError, TypeError):
                         payload = message.value.hex() if message.value else None
 
                     messages.append(
@@ -305,7 +235,7 @@ class KafkaDLQAdmin:
 
                 # Enforce replay limit unless forced
                 if not force and current_replay_count >= self._config.dlq_max_replay_attempts:
-                    event_type = _get_header_value(message.headers, "event_type")
+                    event_type = get_header_value(message.headers, "event_type")
                     logger.warning(
                         "Replay rejected: max replay attempts exceeded",
                         extra={
@@ -351,7 +281,7 @@ class KafkaDLQAdmin:
                         "dlq_partition": partition,
                         "dlq_offset": offset,
                         "target_topic": self._config.topic_name,
-                        "event_type": _get_header_value(original_headers, "event_type"),
+                        "event_type": get_header_value(original_headers, "event_type"),
                         "replay_count": new_replay_count,
                     },
                 )

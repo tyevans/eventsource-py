@@ -124,7 +124,7 @@ class TestKafkaEventBusMetricsConfig:
             config = KafkaEventBusConfig()
             bus = KafkaEventBus(config=config)
 
-        assert bus._metrics is not None
+        assert bus._connection_manager.metrics is not None
 
     @skip_if_no_otel_metrics
     def test_metrics_disabled_when_config_false(self) -> None:
@@ -133,7 +133,7 @@ class TestKafkaEventBusMetricsConfig:
             config = KafkaEventBusConfig(enable_metrics=False)
             bus = KafkaEventBus(config=config)
 
-        assert bus._metrics is None
+        assert bus._connection_manager.metrics is None
 
     def test_metrics_none_when_otel_unavailable(self) -> None:
         """Test metrics is None when OpenTelemetry not installed."""
@@ -147,7 +147,7 @@ class TestKafkaEventBusMetricsConfig:
             config = KafkaEventBusConfig(enable_metrics=True)
             bus = KafkaEventBus(config=config)
 
-        assert bus._metrics is None
+        assert bus._connection_manager.metrics is None
 
 
 @pytest.mark.skipif(not KAFKA_AVAILABLE, reason="aiokafka not installed")
@@ -177,7 +177,10 @@ class TestKafkaEventBusCounterMetrics:
         with patch.object(KafkaEventBusConfig, "_validate_security_config"):
             bus = KafkaEventBus()
 
-        bus._metrics = KafkaEventBusMetrics(self.meter)
+        test_metrics = KafkaEventBusMetrics(self.meter)
+        bus._connection_manager.metrics = test_metrics
+        bus._publisher._metrics = test_metrics
+        bus._consumer_loop._metrics = test_metrics
         bus._meter = self.meter
 
         return bus
@@ -198,7 +201,7 @@ class TestKafkaEventBusCounterMetrics:
         )
 
         handlers = bus._handlers_for(SampleOrderCreated)
-        await bus._dispatch_to_handlers(event, handlers)
+        await bus._consumer_loop._dispatch_to_handlers(event, handlers)
 
         metrics_data = self.reader.get_metrics_data()
         invocation_count = _get_metric_value(metrics_data, "kafka.eventbus.handler.invocations")
@@ -225,7 +228,7 @@ class TestKafkaEventBusCounterMetrics:
         handlers = bus._handlers_for(SampleOrderCreated)
 
         with pytest.raises(HandlerDispatchError):
-            await bus._dispatch_to_handlers(event, handlers)
+            await bus._consumer_loop._dispatch_to_handlers(event, handlers)
 
         metrics_data = self.reader.get_metrics_data()
         error_count = _get_metric_value(metrics_data, "kafka.eventbus.handler.errors")
@@ -308,7 +311,10 @@ class TestKafkaEventBusHistogramMetrics:
         with patch.object(KafkaEventBusConfig, "_validate_security_config"):
             bus = KafkaEventBus()
 
-        bus._metrics = KafkaEventBusMetrics(self.meter)
+        test_metrics = KafkaEventBusMetrics(self.meter)
+        bus._connection_manager.metrics = test_metrics
+        bus._publisher._metrics = test_metrics
+        bus._consumer_loop._metrics = test_metrics
         bus._meter = self.meter
 
         return bus
@@ -333,7 +339,7 @@ class TestKafkaEventBusHistogramMetrics:
         )
 
         handlers = bus._handlers_for(SampleOrderCreated)
-        await bus._dispatch_to_handlers(event, handlers)
+        await bus._consumer_loop._dispatch_to_handlers(event, handlers)
 
         metrics_data = self.reader.get_metrics_data()
         duration_recorded = _has_histogram_data(metrics_data, "kafka.eventbus.handler.duration")
