@@ -138,7 +138,6 @@ grandfathered = [
 
   "tests/unit/domain/test_aggregate_snapshot_methods.py",
   "tests/unit/domain/test_create_event.py",
-  "tests/unit/domain/test_deferred_state.py",
   "tests/unit/domain/test_domain_event.py",
   "tests/unit/domain/test_event_registry.py",
   "tests/unit/domain/test_event_type_auto.py",
