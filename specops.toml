@@ -140,7 +140,7 @@ grandfathered = [
 
 
 
-  "tests/unit/test_redis_event_bus.py",
+
   "tests/unit/test_redis_event_bus_tracing.py",
   "tests/unit/testing/test_assertions.py",
   "tests/unit/testing/test_bdd.py",
