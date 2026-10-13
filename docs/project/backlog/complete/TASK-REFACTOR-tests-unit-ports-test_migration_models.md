@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-unit-ports-test_migration_models
 title: Refactor and Decompose Legacy File test_migration_models.py
-status: Refined
+status: Complete
 created: 2026-09-29
 governing_adrs:
   - ADR-0002
