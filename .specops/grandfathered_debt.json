@@ -37,7 +37,6 @@
     "src/eventsource/application/subscriptions/coordination.py": 990,
     "src/eventsource/application/subscriptions/error_handling.py": 1105,
     "src/eventsource/application/subscriptions/health.py": 860,
-    "tests/unit/application/migration/test_chaos.py": 1788,
     "tests/unit/application/migration/test_coordinator.py": 1097,
     "tests/unit/application/migration/test_coordinator_dual_write.py": 1034,
     "tests/unit/application/migration/test_coordinator_subscriptions.py": 1081,
