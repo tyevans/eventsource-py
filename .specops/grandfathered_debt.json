@@ -44,7 +44,6 @@
 
     "tests/unit/domain/test_domain_event.py": 908,
     "tests/unit/domain/test_event_registry.py": 755,
-    "tests/unit/domain/test_event_type_auto.py": 656,
     "tests/unit/domain/test_tenant_context_properties.py": 519,
     "tests/unit/observability/test_projection_tracing.py": 591,
     "tests/unit/ports/test_migration_models.py": 1085,
