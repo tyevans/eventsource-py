@@ -43,7 +43,6 @@
 
 
     "tests/unit/domain/test_tenant_context_properties.py": 519,
-    "tests/unit/observability/test_projection_tracing.py": 591,
     "tests/unit/ports/test_migration_models.py": 1085,
     "tests/unit/readmodels/test_in_memory.py": 778,
     "tests/unit/readmodels/test_postgresql.py": 508,

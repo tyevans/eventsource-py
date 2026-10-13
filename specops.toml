@@ -137,7 +137,6 @@ grandfathered = [
 
 
   "tests/unit/domain/test_tenant_context_properties.py",
-  "tests/unit/observability/test_projection_tracing.py",
   "tests/unit/ports/test_migration_models.py",
   "tests/unit/readmodels/test_in_memory.py",
   "tests/unit/readmodels/test_postgresql.py",
