@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-unit-application-migration-test_status_streamer
 title: Refactor and Decompose Legacy File test_status_streamer.py
-status: Refined
+status: Complete
 created: 2026-09-29
 governing_adrs:
   - ADR-0002
