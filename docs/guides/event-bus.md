@@ -166,15 +166,19 @@ transactional outbox between the store and the bus rather than relying on the
 bus. And because redelivery after a consumer crash or rebalance is normal,
 every handler you register must be idempotent.
 
-**The outbox is not available on every store.** `PostgreSQLEventStore` takes an
-`outbox_enabled=True` constructor flag, which makes it write the outbox row in
-the same transaction as the append. `SQLiteEventStore` has no such flag —
-`SQLiteOutboxRepository` exists, but enqueuing through it is a *separate* write
-from the append, so the gap the outbox is meant to close is still open. A
-service developed against SQLite and deployed against PostgreSQL therefore gets
-different delivery guarantees from the same code, with nothing in the API to
-say so. If you rely on the transactional outbox, develop against PostgreSQL
-too.
+**Transactional outbox support across stores.** Both SQL stores —
+`PostgreSQLEventStore(outbox_enabled=True)` and
+`SQLiteEventStore(..., outbox_enabled=True)` — accept an `outbox_enabled=True`
+constructor flag that writes `event_outbox` rows in the same database
+transaction as `append()`. A relay worker then polls pending entries via the
+matching `OutboxRepository` implementation (`PostgreSQLOutboxRepository`,
+`SQLiteOutboxRepository`, or `InMemoryOutboxRepository` for in-process unit
+tests) and publishes them to the bus. Because `SQLiteEventStore` and
+`PostgreSQLEventStore` share identical atomic append-plus-outbox semantics,
+services developed and tested against SQLite preserve the same transactional
+outbox guarantees when deployed against PostgreSQL. (`InMemoryEventStore` has
+no database transaction boundary and does not take `outbox_enabled`; pair it
+with `InMemoryOutboxRepository` when testing outbox consumers directly.)
 
 Ordering is also weaker than it looks. Kafka gives you per-aggregate ordering
 via the partition key; Redis and RabbitMQ do not promise cross-consumer

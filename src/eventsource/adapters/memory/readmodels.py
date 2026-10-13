@@ -63,7 +63,7 @@ class InMemoryReadModelRepository[TModel: ReadModel](
 
     Note:
         - All data is lost when the repository instance is garbage collected
-        - Use `clear()` method for test teardown
+        - Use `truncate()` method for test teardown
         - Query performance is O(n) - acceptable for testing but not production
     """
 
@@ -255,12 +255,6 @@ class InMemoryReadModelRepository[TModel: ReadModel](
                 count = len(self._models)
                 self._models.clear()
                 return count
-
-    async def clear(self) -> None:
-        """
-        Clear all data. Alias for truncate() for test compatibility.
-        """
-        await self.truncate()
 
     async def save_with_version_check(self, model: TModel) -> None:
         """

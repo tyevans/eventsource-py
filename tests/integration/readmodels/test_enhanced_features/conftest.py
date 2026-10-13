@@ -34,7 +34,7 @@ async def enhanced_inmemory_repo() -> AsyncIterator[InMemoryReadModelRepository[
         EnhancedTestModel, enable_tracing=False
     )
     yield repo
-    await repo.clear()
+    await repo.truncate()
 
 
 @pytest_asyncio.fixture

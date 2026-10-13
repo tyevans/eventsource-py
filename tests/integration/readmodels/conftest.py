@@ -83,7 +83,7 @@ async def inmemory_repo() -> AsyncGenerator[InMemoryReadModelRepository[OrderSum
         OrderSummary, enable_tracing=False
     )
     yield repo
-    await repo.clear()
+    await repo.truncate()
 
 
 # ============================================================================
