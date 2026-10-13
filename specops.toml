@@ -133,7 +133,6 @@ grandfathered = [
   "src/eventsource/application/subscriptions/transition.py",
 
   "tests/unit/application/migration/test_phase2_integration.py",
-  "tests/unit/application/migration/test_phase3_integration.py",
 ]
 
 [audit.provenance]
