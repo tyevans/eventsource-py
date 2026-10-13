@@ -266,3 +266,23 @@ class TestSQLCheckpointRepositoryPosition:
             assert read_position < position2
         finally:
             await store.close()
+
+
+class TestIntPositionCodecStrictToken:
+    """Verify IntPositionCodec strictly requires encoded Position tokens."""
+
+    def test_bare_integer_string_raises_decode_error(self) -> None:
+        from eventsource.adapters._sql.positions import IntPositionCodec
+        from eventsource.ports.exceptions import PositionDecodeError
+
+        codec = IntPositionCodec(store_id="pg:main")
+        with pytest.raises(PositionDecodeError):
+            codec.decode("12345")
+
+    def test_valid_encoded_position_round_trips(self) -> None:
+        from eventsource.adapters._sql.positions import IntPositionCodec
+
+        codec = IntPositionCodec(store_id="pg:main")
+        encoded = codec.encode(42)
+        assert codec.decode(encoded.to_str()) == encoded
+        assert codec.value_of(encoded) == 42

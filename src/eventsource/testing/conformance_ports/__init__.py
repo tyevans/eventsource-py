@@ -1,27 +1,27 @@
 """Port conformance suites (Clean Architecture ring: testing helpers).
 
-Each suite is an ABC test mixin with an abstract `store` pytest fixture.
-Backend adapters subclass a suite and provide `store`, yielding a fresh
-adapter instance, to verify conformance to the corresponding port
-contract. Suites are sqlalchemy-free: they import only from
-`eventsource.ports`, `eventsource.domain`,
+Each suite is an ABC test mixin that verifies a backend adapter conforms
+to the corresponding port contract. Suites are sqlalchemy-free: they
+import only from `eventsource.ports`, `eventsource.domain`,
 `eventsource.domain.exceptions`, and pytest/stdlib.
 
 Suites: `AppenderConformance`, `StreamReaderConformance`,
 `EventLookupConformance`, `GlobalFeedConformance`, `CategoryQueryConformance`,
-`SnapshotConformance`, `SnapshotTypeInvalidationConformance`,
-`SnapshotStoreConformance`, `SnapshotDeserializationConformance`,
-`ProjectionCheckpointsConformance`,
+`EventBusConformanceSuite`, `SnapshotConformance`,
+`SnapshotTypeInvalidationConformance`, `SnapshotStoreConformance`,
+`SnapshotDeserializationConformance`, `ProjectionCheckpointsConformance`,
 `SubscriptionPositionsConformance`, `CheckpointRepositoryConformance`,
 `DLQRepositoryConformance`, `DistributedLockConformance`, `OutboxRepositoryConformance`,
 `ReadModelRepositoryConformance`, `SupportsCloseConformance`,
 `LeaderElectorConformance`.
 
-This package sits beside the legacy `eventsource.testing.conformance`
-module and will replace it once all adapters migrate to the port suites.
+All port conformance suites live cohesively in `eventsource.testing.conformance_ports`.
+`eventsource.testing.conformance` is retained as a thin compatibility re-export
+for `EventBusConformanceSuite`.
 """
 
 from eventsource.testing.conformance_ports.appender import AppenderConformance
+from eventsource.testing.conformance_ports.bus import EventBusConformanceSuite
 from eventsource.testing.conformance_ports.category import CategoryQueryConformance
 from eventsource.testing.conformance_ports.checkpoints import (
     CheckpointRepositoryConformance,
@@ -53,6 +53,7 @@ __all__ = [
     "EventLookupConformance",
     "GlobalFeedConformance",
     "CategoryQueryConformance",
+    "EventBusConformanceSuite",
     "SnapshotConformance",
     "SnapshotTypeInvalidationConformance",
     "SnapshotStoreConformance",

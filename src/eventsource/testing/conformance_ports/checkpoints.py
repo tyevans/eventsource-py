@@ -40,7 +40,7 @@ class ProjectionCheckpointsConformance(ABC):
         await store.update_checkpoint("P", uuid4(), "Updated")
         await store.update_checkpoint("P", uuid4(), "Updated")
 
-        (checkpoint,) = [c for c in await store.get_all_checkpoints() if c.projection_name == "P"]
+        (checkpoint,) = (c for c in await store.get_all_checkpoints() if c.projection_name == "P")
         assert checkpoint.events_processed == 3
 
     async def test_last_write_wins(self, store: ProjectionCheckpoints) -> None:
@@ -118,20 +118,6 @@ class SubscriptionPositionsConformance(ABC):
         """
         return Position(store_id="conformance", key=(n,))
 
-    async def write_legacy_int_row(
-        self,
-        store: SubscriptionPositions,
-        subscription_id: str,
-        value: int,
-    ) -> None:
-        """Write a row carrying only a legacy integer position, no token.
-
-        Overridable: adapters with a legacy integer column write one here
-        directly. The default opts out, because an adapter with no such
-        column has no legacy row to read.
-        """
-        pytest.skip("adapter has no legacy int column")
-
     async def test_absent_position_reads_none(self, store: SubscriptionPositions) -> None:
         assert await store.get_position("Missing") is None
 
@@ -163,12 +149,6 @@ class SubscriptionPositionsConformance(ABC):
         position = Position(store_id="s", key=(7, "abc"))
         await store.save_position("S", position, uuid4(), "Created")
         assert await store.get_position("S") == position
-
-    async def test_legacy_int_only_row_reads_none(self, store: SubscriptionPositions) -> None:
-        # A row predating tokens carries no token to return. Reading None
-        # restarts catch-up rather than inventing a store_id.
-        await self.write_legacy_int_row(store, "Legacy", 42)
-        assert await store.get_position("Legacy") is None
 
     async def test_tokens_from_another_store_are_returned_but_not_comparable(
         self, store: SubscriptionPositions

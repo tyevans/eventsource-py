@@ -11,10 +11,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, TypeVar, runtime_checkable
 from uuid import UUID
 
-from eventsource.ports.readmodels.model import ReadModel
+from .model import ReadModel
 
 if TYPE_CHECKING:
-    from eventsource.ports.readmodels.query import Query
+    from .query import Query
 
 # Type variable for read model types
 TModel = TypeVar("TModel", bound=ReadModel)
@@ -43,7 +43,6 @@ class ReadModelRepository(Protocol[TModel]):
         ...     order_number: str
         ...     status: str
         ...
-        >>> # Using with a concrete implementation
         >>> repo: ReadModelRepository[OrderSummary] = InMemoryReadModelRepository(OrderSummary)
         >>> await repo.save(OrderSummary(id=uuid4(), order_number="ORD-001", status="pending"))
         >>> summary = await repo.get(some_uuid)
@@ -57,16 +56,7 @@ class ReadModelRepository(Protocol[TModel]):
             id: Unique identifier of the read model
 
         Returns:
-            The read model if found, None otherwise
-
-        Note:
-            Returns None for soft-deleted records unless the implementation
-            is configured otherwise.
-
-        Example:
-            >>> summary = await repo.get(order_id)
-            >>> if summary is None:
-            ...     print("Order not found")
+            The read model if found, None otherwise (including soft-deleted records).
         """
         ...
 
@@ -75,21 +65,13 @@ class ReadModelRepository(Protocol[TModel]):
         Get multiple read models by their IDs.
 
         Efficiently retrieves multiple records in a single database query.
-        Missing IDs are silently ignored (not included in results).
+        Missing IDs and soft-deleted records are excluded from results.
 
         Args:
             ids: List of unique identifiers
 
         Returns:
-            List of found read models. Order is not guaranteed to match
-            input order. Missing IDs are not included.
-
-        Note:
-            Soft-deleted records are excluded from results.
-
-        Example:
-            >>> summaries = await repo.get_many([id1, id2, id3])
-            >>> # len(summaries) may be less than 3 if some IDs don't exist
+            List of found read models (order is not guaranteed to match input).
         """
         ...
 
@@ -107,17 +89,6 @@ class ReadModelRepository(Protocol[TModel]):
 
         Args:
             model: The read model to save
-
-        Note:
-            Implementations may raise ReadModelVersionConflictError if version
-            conflicts are detected (when optimistic locking is enabled).
-
-        Example:
-            >>> summary = OrderSummary(id=uuid4(), order_number="ORD-001", status="pending")
-            >>> await repo.save(summary)
-            >>> # Later...
-            >>> summary.status = "shipped"
-            >>> await repo.save(summary)  # Updates existing record
         """
         ...
 
@@ -130,14 +101,6 @@ class ReadModelRepository(Protocol[TModel]):
 
         Args:
             models: List of read models to save
-
-        Note:
-            All models should be of the same type. The operation is
-            typically atomic (all succeed or all fail).
-
-        Example:
-            >>> models = [model1, model2, model3]
-            >>> await repo.save_many(models)  # Single database round-trip
         """
         ...
 
@@ -153,11 +116,6 @@ class ReadModelRepository(Protocol[TModel]):
 
         Returns:
             True if a record was deleted, False if the ID was not found
-
-        Example:
-            >>> deleted = await repo.delete(order_id)
-            >>> if not deleted:
-            ...     print("Order was already deleted or never existed")
         """
         ...
 
@@ -172,13 +130,7 @@ class ReadModelRepository(Protocol[TModel]):
             id: Unique identifier of the read model to soft delete
 
         Returns:
-            True if a record was soft-deleted, False if not found
-            or already soft-deleted
-
-        Example:
-            >>> await repo.soft_delete(order_id)
-            >>> # Record still exists but won't appear in find() results
-            >>> summary = await repo.get(order_id)  # Returns None
+            True if a record was soft-deleted, False if not found or already soft-deleted
         """
         ...
 
@@ -193,14 +145,7 @@ class ReadModelRepository(Protocol[TModel]):
             id: Unique identifier of the read model to restore
 
         Returns:
-            True if a record was restored, False if not found
-            or was not soft-deleted
-
-        Example:
-            >>> await repo.soft_delete(order_id)
-            >>> # Later, user wants to undo...
-            >>> await repo.restore(order_id)
-            >>> summary = await repo.get(order_id)  # Now returns the record
+            True if a record was restored, False if not found or was not soft-deleted
         """
         ...
 
@@ -216,15 +161,6 @@ class ReadModelRepository(Protocol[TModel]):
 
         Returns:
             The soft-deleted read model if found, None otherwise
-
-        Note:
-            Use this method for admin interfaces, auditing, or
-            implementing restore functionality.
-
-        Example:
-            >>> deleted_order = await repo.get_deleted(order_id)
-            >>> if deleted_order:
-            ...     print(f"Order was deleted at {deleted_order.deleted_at}")
         """
         ...
 
@@ -232,24 +168,12 @@ class ReadModelRepository(Protocol[TModel]):
         """
         Find only soft-deleted read models matching a query.
 
-        Convenience method for retrieving soft-deleted records.
-        Only returns records that have been soft-deleted.
-
         Args:
             query: Query with filters, ordering, pagination.
                    If None, returns all soft-deleted records.
 
         Returns:
             List of soft-deleted read models
-
-        Note:
-            Useful for implementing "trash" or "recently deleted"
-            views in admin interfaces.
-
-        Example:
-            >>> deleted_orders = await repo.find_deleted(Query(limit=100))
-            >>> for order in deleted_orders:
-            ...     print(f"{order.id} deleted at {order.deleted_at}")
         """
         ...
 
@@ -263,12 +187,7 @@ class ReadModelRepository(Protocol[TModel]):
             id: Unique identifier to check
 
         Returns:
-            True if the read model exists and is not soft-deleted,
-            False otherwise
-
-        Example:
-            >>> if await repo.exists(order_id):
-            ...     print("Order exists")
+            True if the read model exists and is not soft-deleted, False otherwise
         """
         ...
 
@@ -291,20 +210,12 @@ class ReadModelRepository(Protocol[TModel]):
         asked for.
 
         This is Python's semantics, not SQL's three-valued logic, and it is
-        a deliberate choice against the grain of the SQL adapters. The
-        reasoning: `find` is defined over read models, which are objects
-        whose optional fields are `None`, not over table rows. A caller
-        writing `Filter.ne("status", "cancelled")` is asking for "everything
-        that is not cancelled", and a row whose status was never set is not
-        cancelled. SQL's answer -- silently dropping those rows -- is the
-        single most common surprise in this area, and it is invisible: it
-        looks like a smaller result set, never like an error. The SQL
+        a deliberate choice against the grain of the SQL adapters. The SQL
         adapters therefore emit an explicit `IS NULL OR ...` for the two
         NULL-tolerant operators.
 
         **`in` with an empty list matches nothing; `not_in` with an empty
-        list matches everything.** The degenerate cases follow from the rule
-        above rather than from any dialect's handling of empty arrays.
+        list matches everything.**
 
         Args:
             query: Query with filters, ordering, pagination.
@@ -315,23 +226,7 @@ class ReadModelRepository(Protocol[TModel]):
 
         Raises:
             ValueError: If a filter names a field the read model does not
-                have, or an operator outside `Filter`'s eight. Both are
-                caller bugs, and both MUST fail loudly: reporting them as
-                "nothing matched" hides a typo behind an empty result set.
-
-        Warning:
-            Without a limit, this may return a large number of records.
-            Consider using pagination for production queries.
-
-        Example:
-            >>> from eventsource.ports.readmodels import Query, Filter
-            >>> query = Query(
-            ...     filters=[Filter.eq("status", "shipped")],
-            ...     order_by="created_at",
-            ...     order_direction="desc",
-            ...     limit=100,
-            ... )
-            >>> shipped_orders = await repo.find(query)
+                have, or an operator outside `Filter`'s eight.
         """
         ...
 
@@ -339,26 +234,18 @@ class ReadModelRepository(Protocol[TModel]):
         """
         Count read models matching a query.
 
-        Useful for pagination or checking how many records match
-        without retrieving them all.
-
         Filters, NULL handling, and the unknown-field/unknown-operator
         errors are exactly `find()`'s -- `count(q)` is always
         `len(find(q))` with `limit`/`offset` ignored.
 
         Args:
-            query: Query with filters.
-                   If None, counts all non-deleted records.
+            query: Query with filters. If None, counts all non-deleted records.
 
         Returns:
             Number of matching read models
 
         Raises:
             ValueError: As `find()` -- unknown field name or unknown operator.
-
-        Example:
-            >>> total = await repo.count()  # Total non-deleted records
-            >>> pending = await repo.count(Query(filters=[Filter.eq("status", "pending")]))
         """
         ...
 
@@ -367,19 +254,9 @@ class ReadModelRepository(Protocol[TModel]):
         Delete all read models (for projection reset).
 
         Removes ALL records from the repository, including soft-deleted ones.
-        Use with caution - this is typically only called during projection
-        rebuilds.
 
         Returns:
             Number of records deleted
-
-        Warning:
-            This operation is irreversible and removes all data.
-
-        Example:
-            >>> # During projection reset
-            >>> deleted_count = await repo.truncate()
-            >>> print(f"Cleared {deleted_count} records")
         """
         ...
 
@@ -391,17 +268,6 @@ class ReadModelRepository(Protocol[TModel]):
         version before updating. If versions don't match, raises
         ReadModelVersionConflictError. On successful save, the version is incremented.
 
-        This method is useful when:
-        - Multiple processes may update the same read model
-        - You need to ensure no lost updates
-        - You want explicit control over concurrency
-
-        The optimistic locking pattern:
-        1. Read model with current version N
-        2. When saving, check that DB version is still N
-        3. If match, save with version N+1
-        4. If mismatch, raise ReadModelVersionConflictError
-
         Args:
             model: The read model to save. Must already exist in the database.
 
@@ -409,31 +275,6 @@ class ReadModelRepository(Protocol[TModel]):
             ReadModelVersionConflictError: If the version in database doesn't match
                 the model's version (concurrent modification detected)
             ReadModelNotFoundError: If the model doesn't exist in the database
-
-        Note:
-            Unlike `save()` which uses upsert semantics, this method requires
-            the model to already exist. Use `save()` to create new models,
-            then `save_with_version_check()` for subsequent updates when
-            optimistic locking is needed.
-
-        Example:
-            >>> # Load a model
-            >>> summary = await repo.get(order_id)
-            >>> if summary is None:
-            ...     raise ValueError("Order not found")
-            ...
-            >>> # Modify it
-            >>> summary.status = "shipped"
-            >>>
-            >>> # Save with version check
-            >>> try:
-            ...     await repo.save_with_version_check(summary)
-            ... except ReadModelVersionConflictError as e:
-            ...     # Handle conflict - reload and retry or fail
-            ...     print(f"Conflict: expected v{e.expected_version}, "
-            ...           f"found v{e.actual_version}")
-            ...     # Reload and retry if desired
-            ...     fresh = await repo.get(order_id)
         """
         ...
 
