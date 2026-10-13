@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-unit-application-subscriptions-test_transition
 title: Refactor and Decompose Legacy File test_transition.py
-status: Refined
+status: Complete
 created: 2026-09-29
 governing_adrs:
   - ADR-0002
