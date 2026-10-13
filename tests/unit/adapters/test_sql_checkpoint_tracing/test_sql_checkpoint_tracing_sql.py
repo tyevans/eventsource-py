@@ -65,14 +65,6 @@ class TestSQLCheckpointRepositoryTracerIntegration:
 
         assert repo._tracer.enabled is False
 
-    def test_conn_backward_compat_attribute_is_the_constructor_arg(self, sqlite_engine):
-        """`repo.conn` is kept for backwards-compatible attribute access and
-        must be the exact object passed to the constructor, not None or a
-        copy."""
-        repo = SQLCheckpointRepository(sqlite_engine)
-
-        assert repo.conn is sqlite_engine
-
 
 @pytest.mark.skipif(not AIOSQLITE_AVAILABLE, reason="aiosqlite not installed")
 class TestSQLCheckpointRepositorySpanCreation:

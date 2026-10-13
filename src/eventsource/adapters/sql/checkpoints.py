@@ -60,8 +60,6 @@ class SQLCheckpointRepository:
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
         self._conn = conn
-        # Kept for backwards-compatible attribute access.
-        self.conn = conn
 
     async def get_checkpoint(self, projection_name: str) -> UUID | None:
         """

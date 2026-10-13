@@ -10,14 +10,16 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from eventsource.adapters._sql.connection import sql_connection
 from eventsource.adapters._sql.dialect import (
-    Dialect,
     dialect_of,
     json_param,
-    json_result,
     ts_param,
     ts_result,
     uuid_param,
-    uuid_result,
+)
+from eventsource.adapters.sql.dlq_helpers import (
+    row_to_dlq_entry,
+    row_to_dlq_stats,
+    rows_to_projection_failure_counts,
 )
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
@@ -37,17 +39,6 @@ class SQLDLQRepository:
     Stores failed events in the `dead_letter_queue` table. Dialect
     differences (UUID/timestamp/JSON representation) are resolved per call
     via `eventsource.adapters._sql.dialect`.
-
-    Example:
-        >>> async with engine.begin() as conn:
-        ...     repo = SQLDLQRepository(conn)
-        ...     await repo.add_failed_event(
-        ...         event_id=event.event_id,
-        ...         projection_name="MyProjection",
-        ...         event_type="MyEvent",
-        ...         event_data=event.to_dict(),
-        ...         error=exc,
-        ...     )
     """
 
     def __init__(
@@ -66,25 +57,9 @@ class SQLDLQRepository:
         """
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
-        self._conn = conn
-        # Kept for backwards-compatible attribute access.
         self.conn = conn
 
-    @staticmethod
-    def _row_to_entry(row: Any, dialect: Dialect) -> DLQEntry:
-        return DLQEntry(
-            id=row[0],
-            event_id=uuid_result(row[1]),  # type: ignore[arg-type]
-            projection_name=row[2],
-            event_type=row[3],
-            event_data=json_result(row[4]),
-            error_message=row[5],
-            error_stacktrace=row[6],
-            retry_count=row[7],
-            first_failed_at=ts_result(row[8]),
-            last_failed_at=ts_result(row[9]),
-            status=row[10],
-        )
+    _row_to_entry = staticmethod(row_to_dlq_entry)
 
     async def add_failed_event(
         self,
@@ -133,7 +108,7 @@ class SQLDLQRepository:
                     status = 'failed'
             """)
 
-            async with sql_connection(self._conn, write=True) as conn:
+            async with sql_connection(self.conn, write=True) as conn:
                 dialect = dialect_of(conn)
                 params = {
                     "event_id": uuid_param(event_id, dialect),
@@ -172,7 +147,6 @@ class SQLDLQRepository:
             span_attributes[ATTR_PROJECTION_NAME] = projection_name
 
         with self._tracer.span("eventsource.dlq.get", span_attributes):
-            # Build query dynamically based on filters
             where_clauses = ["status = :status"]
             params: dict[str, Any] = {"status": status, "limit": limit}
 
@@ -182,7 +156,6 @@ class SQLDLQRepository:
 
             where_clause = " AND ".join(where_clauses)
 
-            # where_clause is built from safe static strings only
             query = text(f"""
                 SELECT id, event_id, projection_name, event_type, event_data,
                        error_message, error_stacktrace, retry_count,
@@ -193,7 +166,7 @@ class SQLDLQRepository:
                 LIMIT :limit
             """)  # nosec B608
 
-            async with sql_connection(self._conn, write=False) as conn:
+            async with sql_connection(self.conn, write=False) as conn:
                 dialect = dialect_of(conn)
                 result = await conn.execute(query, params)
                 rows = result.fetchall()
@@ -223,7 +196,7 @@ class SQLDLQRepository:
                 WHERE id = :dlq_id
             """)
 
-            async with sql_connection(self._conn, write=False) as conn:
+            async with sql_connection(self.conn, write=False) as conn:
                 dialect = dialect_of(conn)
                 result = await conn.execute(query, {"dlq_id": dlq_id})
                 row = result.fetchone()
@@ -262,7 +235,7 @@ class SQLDLQRepository:
                 WHERE id = :dlq_id
             """)
 
-            async with sql_connection(self._conn, write=True) as conn:
+            async with sql_connection(self.conn, write=True) as conn:
                 dialect = dialect_of(conn)
                 await conn.execute(
                     query,
@@ -290,7 +263,7 @@ class SQLDLQRepository:
                 WHERE id = :dlq_id
             """)
 
-            async with sql_connection(self._conn, write=True) as conn:
+            async with sql_connection(self.conn, write=True) as conn:
                 await conn.execute(query, {"dlq_id": dlq_id})
 
     async def get_failure_stats(self) -> DLQStats:
@@ -301,9 +274,6 @@ class SQLDLQRepository:
             DLQStats with failure statistics
         """
         with self._tracer.span("eventsource.dlq.get_stats", {}):
-            # SUM(CASE WHEN ...) works on both PostgreSQL and SQLite, unlike
-            # PostgreSQL-only COUNT(*) FILTER (WHERE ...) -- take the SQLite
-            # formulation for both dialects.
             query = text("""
                 SELECT
                     SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as total_failed,
@@ -314,18 +284,11 @@ class SQLDLQRepository:
                 WHERE status IN ('failed', 'retrying')
             """)
 
-            async with sql_connection(self._conn, write=False) as conn:
+            async with sql_connection(self.conn, write=False) as conn:
                 result = await conn.execute(query)
                 row = result.fetchone()
 
-            oldest_failure = ts_result(row[3]) if row else None
-
-            return DLQStats(
-                total_failed=row[0] if row and row[0] else 0,
-                total_retrying=row[1] if row and row[1] else 0,
-                affected_projections=row[2] if row and row[2] else 0,
-                oldest_failure=oldest_failure.isoformat() if oldest_failure else None,
-            )
+            return row_to_dlq_stats(row)
 
     async def get_projection_failure_counts(self) -> list[ProjectionFailureCount]:
         """
@@ -347,29 +310,15 @@ class SQLDLQRepository:
                 ORDER BY failure_count DESC
             """)
 
-            async with sql_connection(self._conn, write=False) as conn:
+            async with sql_connection(self.conn, write=False) as conn:
                 result = await conn.execute(query)
                 rows = result.fetchall()
 
-            counts = []
-            for row in rows:
-                oldest = ts_result(row[2])
-                most_recent = ts_result(row[3])
-                counts.append(
-                    ProjectionFailureCount(
-                        projection_name=row[0],
-                        failure_count=row[1],
-                        oldest_failure=oldest.isoformat() if oldest else None,
-                        most_recent_failure=most_recent.isoformat() if most_recent else None,
-                    )
-                )
-            return counts
+            return rows_to_projection_failure_counts(list(rows))
 
     async def delete_resolved_events(self, older_than_days: int = 30) -> int:
         """
         Delete resolved events older than specified days.
-
-        Useful for periodic cleanup to prevent DLQ table growth.
 
         Args:
             older_than_days: Delete resolved events older than this many days
@@ -381,8 +330,6 @@ class SQLDLQRepository:
             "eventsource.dlq.delete_resolved",
             {"older_than_days": older_than_days},
         ):
-            # Cutoff computed in Python (rather than a dialect-specific SQL
-            # interval expression) so one query serves both dialects.
             cutoff = datetime.now(UTC) - timedelta(days=older_than_days)
 
             query = text("""
@@ -392,7 +339,7 @@ class SQLDLQRepository:
                 RETURNING id
             """)
 
-            async with sql_connection(self._conn, write=True) as conn:
+            async with sql_connection(self.conn, write=True) as conn:
                 dialect = dialect_of(conn)
                 result = await conn.execute(query, {"cutoff": ts_param(cutoff, dialect)})
                 return len(result.fetchall())
