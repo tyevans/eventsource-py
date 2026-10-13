@@ -38,7 +38,6 @@
     "src/eventsource/application/subscriptions/error_handling.py": 1105,
     "src/eventsource/application/subscriptions/health.py": 860,
 
-    "tests/unit/application/migration/test_load_benchmarks.py": 1608,
     "tests/unit/application/migration/test_migration_metrics.py": 964,
     "tests/unit/application/migration/test_phase2_integration.py": 2579,
     "tests/unit/application/migration/test_phase3_integration.py": 2196,
