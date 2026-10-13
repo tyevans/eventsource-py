@@ -46,7 +46,6 @@
 
 
     "tests/unit/test_edge_cases.py": 556,
-    "tests/unit/test_event_bus.py": 988,
     "tests/unit/test_kafka_event_bus.py": 1858,
     "tests/unit/test_rabbitmq_event_bus.py": 11571,
     "tests/unit/test_redis_event_bus.py": 1248,
