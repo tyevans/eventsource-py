@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-unit-application-subscriptions-test_manager_pause_resume
 title: Refactor and Decompose Legacy File test_manager_pause_resume.py
-status: Proposed
+status: Refined
 created: 2026-09-29
 governing_adrs:
   - ADR-0002
