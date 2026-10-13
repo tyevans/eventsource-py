@@ -44,7 +44,6 @@
     "tests/unit/application/migration/test_migration_metrics.py": 964,
     "tests/unit/application/migration/test_phase2_integration.py": 2579,
     "tests/unit/application/migration/test_phase3_integration.py": 2196,
-    "tests/unit/application/migration/test_position_mapper.py": 925,
     "tests/unit/application/migration/test_router.py": 1398,
     "tests/unit/application/migration/test_status_streamer.py": 963,
     "tests/unit/application/migration/test_subscription_migrator.py": 1166,
