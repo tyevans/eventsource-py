@@ -42,7 +42,6 @@
     "tests/unit/application/migration/test_phase3_integration.py": 2196,
 
     "tests/unit/application/projections/test_projection_coordinator.py": 729,
-    "tests/unit/application/projections/test_replay.py": 592,
     "tests/unit/application/projections/test_tenant_filter.py": 603,
     "tests/unit/application/subscriptions/test_catchup_runner.py": 927,
     "tests/unit/application/subscriptions/test_coordination.py": 1499,
