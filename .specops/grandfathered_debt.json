@@ -37,7 +37,6 @@
     "src/eventsource/application/subscriptions/coordination.py": 990,
     "src/eventsource/application/subscriptions/error_handling.py": 1105,
     "src/eventsource/application/subscriptions/health.py": 860,
-    "tests/unit/application/migration/test_cutover_manager.py": 1487,
     "tests/unit/application/migration/test_dual_write.py": 951,
     "tests/unit/application/migration/test_exceptions.py": 582,
     "tests/unit/application/migration/test_final_integration.py": 2378,
