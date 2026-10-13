@@ -40,7 +40,6 @@
 
     "tests/unit/application/migration/test_final_integration.py": 2378,
     "tests/unit/application/migration/test_load_benchmarks.py": 1608,
-    "tests/unit/application/migration/test_migration_metrics.py": 964,
     "tests/unit/application/migration/test_phase2_integration.py": 2579,
     "tests/unit/application/migration/test_phase3_integration.py": 2196,
     "tests/unit/application/migration/test_router.py": 1398,
