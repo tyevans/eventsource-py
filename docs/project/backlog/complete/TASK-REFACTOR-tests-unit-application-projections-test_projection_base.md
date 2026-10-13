@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-unit-application-projections-test_projection_base
 title: Refactor and Decompose Legacy File test_projection_base.py
-status: Refined
+status: Complete
 created: 2026-09-29
 governing_adrs:
   - ADR-0002

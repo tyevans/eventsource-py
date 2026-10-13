@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-unit-application-subscriptions-test_live_runner
 title: Refactor and Decompose Legacy File test_live_runner.py
-status: Proposed
+status: Refined
 created: 2026-09-29
 governing_adrs:
   - ADR-0002
