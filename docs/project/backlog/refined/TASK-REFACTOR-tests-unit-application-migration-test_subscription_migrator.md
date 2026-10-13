@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-unit-application-migration-test_subscription_migrator
 title: Refactor and Decompose Legacy File test_subscription_migrator.py
-status: Proposed
+status: Refined
 created: 2026-09-29
 governing_adrs:
   - ADR-0002
@@ -22,6 +22,8 @@ Target decomposition destination: `tests/unit/application/migration/test_subscri
 - `test_subscription_migrator_pos.py`: source_pos, target_pos
 
 ## AST Decomposition Blueprint
+> All extracted submodules must be strictly under 400 lines (and <500 lines limit per ADR-0002). Submodules projected over 400 lines must be further divided during implementation.
+
 Decomposition Blueprint for tests/unit/application/migration/test_subscription_migrator.py (1166 lines):
   Submodule 'test_subscription_migrator_migration.py' (~1097 lines):
     - [class] TestSubscriptionMigratorPlanMigration (lines 93-275)

@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-unit-application-migration-test_migration_metrics
 title: Refactor and Decompose Legacy File test_migration_metrics.py
-status: Proposed
+status: Refined
 created: 2026-09-29
 governing_adrs:
   - ADR-0002
@@ -22,6 +22,8 @@ Target decomposition destination: `tests/unit/application/migration/test_migrati
 - `test_migration_metrics_tel.py`: TestMetricsWithMockedOTel
 
 ## AST Decomposition Blueprint
+> All extracted submodules must be strictly under 400 lines (and <500 lines limit per ADR-0002). Submodules projected over 400 lines must be further divided during implementation.
+
 Decomposition Blueprint for tests/unit/application/migration/test_migration_metrics.py (964 lines):
   Submodule 'test_migration_metrics_no.py' (~791 lines):
     - [class] TestNoOpInstruments (lines 40-67)

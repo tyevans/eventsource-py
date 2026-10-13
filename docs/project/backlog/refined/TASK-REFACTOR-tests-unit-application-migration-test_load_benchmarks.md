@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-unit-application-migration-test_load_benchmarks
 title: Refactor and Decompose Legacy File test_load_benchmarks.py
-status: Proposed
+status: Refined
 created: 2026-09-29
 governing_adrs:
   - ADR-0002
@@ -22,6 +22,8 @@ Target decomposition destination: `tests/unit/application/migration/test_load_be
 - `test_load_benchmarks_result.py`: BenchmarkResult, LatencyResult
 
 ## AST Decomposition Blueprint
+> All extracted submodules must be strictly under 400 lines (and <500 lines limit per ADR-0002). Submodules projected over 400 lines must be further divided during implementation.
+
 Decomposition Blueprint for tests/unit/application/migration/test_load_benchmarks.py (1608 lines):
   Submodule 'test_load_benchmarks_memory.py' (~1367 lines):
     - [class] MemoryResult (lines 174-181)

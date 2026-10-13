@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-unit-application-migration-test_final_integration
 title: Refactor and Decompose Legacy File test_final_integration.py
-status: Proposed
+status: Refined
 created: 2026-09-29
 governing_adrs:
   - ADR-0002
@@ -22,6 +22,8 @@ Target decomposition destination: `tests/unit/application/migration/test_final_i
 - `test_final_integration_repository.py`: InMemoryRoutingRepository, InMemoryAuditLogRepository, InMemoryPositionMappingRepository, InMemoryCheckpointRepository
 
 ## AST Decomposition Blueprint
+> All extracted submodules must be strictly under 400 lines (and <500 lines limit per ADR-0002). Submodules projected over 400 lines must be further divided during implementation.
+
 Decomposition Blueprint for tests/unit/application/migration/test_final_integration.py (2378 lines):
   Submodule 'test_final_integration_migration.py' (~1823 lines):
     - [class] InMemoryMigrationRepository (lines 141-285)
