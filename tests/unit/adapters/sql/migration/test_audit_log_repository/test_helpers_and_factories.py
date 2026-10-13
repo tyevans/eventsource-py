@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
 
+from eventsource.adapters.serialization import json_dumps
 from eventsource.adapters.sql.migration.audit_log import (
     PostgreSQLMigrationAuditLogRepository,
 )
@@ -42,7 +42,7 @@ class TestPostgreSQLMigrationAuditLogRepositoryHelpers:
             "phase_changed",  # event_type
             "pending",  # old_phase
             "bulk_copy",  # new_phase
-            json.dumps({"key": "value"}),  # details (JSON string)
+            json_dumps({"key": "value"}),  # details (JSON string)
             "admin@example.com",  # operator
             now,  # occurred_at
         )

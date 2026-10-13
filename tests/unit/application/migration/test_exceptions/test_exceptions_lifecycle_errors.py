@@ -38,6 +38,7 @@ class TestMigrationError:
         assert error.migration_id is None
         assert error.tenant_id is None
         assert error.recoverable is False
+        assert error.is_recoverable is False
         assert error.suggested_action is None
 
     def test_with_migration_id(self) -> None:
@@ -58,6 +59,7 @@ class TestMigrationError:
         """Test creating recoverable error."""
         error = MigrationError("Error", recoverable=True)
         assert error.recoverable is True
+        assert error.is_recoverable is True
         assert "(recoverable)" in str(error)
 
     def test_with_suggested_action(self) -> None:

@@ -36,7 +36,7 @@ class MigrationError(EventSourceError):
         message: Human-readable error description.
         migration_id: The ID of the migration that caused the error, if applicable.
         tenant_id: The tenant ID involved, if applicable.
-        recoverable: Whether this error can be recovered from (legacy attribute).
+        recoverable: Whether the operation can be automatically recovered or retried.
         suggested_action: Suggested action for recovery.
         classification: Rich error classification metadata (P4-004).
     """
@@ -78,6 +78,11 @@ class MigrationError(EventSourceError):
         return " ".join(parts)
 
     @property
+    def is_recoverable(self) -> bool:
+        """Whether this error is classified as recoverable or transient."""
+        return self.recoverable or self.classification.recoverability != ErrorRecoverability.FATAL
+
+    @property
     def classification(self) -> ErrorClassification:
         """
         Get the error classification for this exception.
@@ -105,8 +110,8 @@ class MigrationError(EventSourceError):
         """
         Get the recoverability classification of this error.
 
-        Note: This is different from the legacy 'recoverable' boolean.
-        Use this for new code that needs detailed recoverability info.
+        Distinguishes between RECOVERABLE (operator action), TRANSIENT
+        (automatic retry), and FATAL (must abort) recoverability categories.
 
         Returns:
             ErrorRecoverability enum value.

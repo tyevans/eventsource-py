@@ -64,6 +64,12 @@ class TestRoutingStateTransitions:
             target_store_id=target_store_id,
         )
 
+        mock_routing_repo.switch_routing.assert_called_once_with(
+            tenant_id,
+            target_store_id,
+            state=TenantMigrationState.MIGRATED,
+            migration_id=migration_id,
+        )
         mock_routing_repo.set_routing.assert_called_once_with(
             tenant_id,
             target_store_id,

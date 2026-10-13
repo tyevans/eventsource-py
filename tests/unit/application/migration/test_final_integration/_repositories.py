@@ -243,6 +243,17 @@ class InMemoryRoutingRepository:
             routing.active_migration_id = migration_id
             routing.updated_at = datetime.now(UTC)
 
+    async def switch_routing(
+        self,
+        tenant_id: UUID,
+        store_id: str,
+        state: TenantMigrationState = TenantMigrationState.MIGRATED,
+        migration_id: UUID | None = None,
+    ) -> None:
+        """Atomically update store_id and migration_state for a tenant."""
+        await self.set_routing(tenant_id, store_id)
+        await self.set_migration_state(tenant_id, state, migration_id=migration_id)
+
     async def clear_migration_state(self, tenant_id: UUID) -> None:
         """Reset migration state to NORMAL."""
         await self.set_migration_state(
