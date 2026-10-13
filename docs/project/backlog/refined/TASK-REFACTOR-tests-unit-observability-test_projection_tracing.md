@@ -1,7 +1,7 @@
 ---
 id: REFACTOR-tests-unit-observability-test_projection_tracing
 title: Refactor and Decompose Legacy File test_projection_tracing.py
-status: Proposed
+status: Refined
 created: 2026-09-29
 governing_adrs:
   - ADR-0002
