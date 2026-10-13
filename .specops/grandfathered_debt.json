@@ -48,7 +48,6 @@
 
     "tests/unit/test_rabbitmq_event_bus.py": 11571,
     "tests/unit/test_redis_event_bus.py": 1248,
-    "tests/unit/test_redis_event_bus_tracing.py": 701,
     "tests/unit/testing/test_assertions.py": 625,
     "tests/unit/testing/test_bdd.py": 841,
     "tests/unit/testing/test_builder.py": 722,
