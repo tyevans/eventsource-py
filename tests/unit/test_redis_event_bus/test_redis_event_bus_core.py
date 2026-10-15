@@ -35,8 +35,6 @@ def _make_sample_order(order_number: str = "ORD-001") -> SampleOrderCreated:
 
 
 class TestRedisEventBusConnection:
-    """Tests for connection management."""
-
     async def test_connect(self, config: RedisEventBusConfig, mock_redis: AsyncMock) -> None:
         with (
             patch("eventsource.adapters.redis.bus.REDIS_AVAILABLE", True),
@@ -45,7 +43,6 @@ class TestRedisEventBusConnection:
             mock_aioredis.from_url = AsyncMock(return_value=mock_redis)
             bus_instance = RedisEventBus(config=config)
             await bus_instance.connect()
-
             assert bus_instance.is_connected is True
             mock_redis.ping.assert_called_once()
             mock_redis.xgroup_create.assert_called_once()
@@ -60,7 +57,6 @@ class TestRedisEventBusConnection:
             bus_instance = RedisEventBus(config=config)
             await bus_instance.connect()
             await bus_instance.disconnect()
-
             assert bus_instance.is_connected is False
             mock_redis.aclose.assert_called_once()
 
@@ -75,7 +71,6 @@ class TestRedisEventBusConnection:
             bus_instance = RedisEventBus(config=config)
             await bus_instance.connect()
             await bus_instance.connect()
-
             assert bus_instance.is_connected is True
             assert mock_redis.ping.call_count == 1
             await bus_instance.disconnect()
@@ -93,14 +88,11 @@ class TestRedisEventBusConnection:
             mock_aioredis.from_url = AsyncMock(return_value=mock_redis)
             bus_instance = RedisEventBus(config=config)
             await bus_instance.connect()
-
             assert bus_instance.is_connected is True
             await bus_instance.disconnect()
 
 
 class TestRedisEventBusPublish:
-    """Tests for event publishing."""
-
     async def test_publish_single_event(self, bus: RedisEventBus, mock_redis: AsyncMock) -> None:
         await bus.publish([_make_sample_order()])
         mock_redis.xadd.assert_called_once()
@@ -128,13 +120,11 @@ class TestRedisEventBusPublish:
     async def test_publish_serializes_event(
         self, bus: RedisEventBus, mock_redis: AsyncMock
     ) -> None:
-        aggregate_id = uuid4()
-        customer_id = uuid4()
+        aggregate_id, customer_id = uuid4(), uuid4()
         event = SampleOrderCreated(
             aggregate_id=aggregate_id, order_number="ORD-001", customer_id=customer_id
         )
         await bus.publish([event])
-
         fields = mock_redis.xadd.call_args.kwargs["fields"]
         assert fields["event_id"] == str(event.event_id)
         assert fields["aggregate_id"] == str(aggregate_id)
@@ -153,15 +143,12 @@ class TestRedisEventBusPublish:
         mock_redis.xadd = slow_xadd
         await asyncio.wait_for(bus.publish([_make_sample_order()], background=True), timeout=1.0)
         assert bus.get_background_task_count() == 1
-
         release.set()
         await bus._drain_background(timeout=5.0)
         assert bus.get_background_task_count() == 0
 
 
 class TestRedisEventBusStreamInfo:
-    """Tests for stream info retrieval."""
-
     async def test_get_stream_info(self, bus: RedisEventBus, mock_redis: AsyncMock) -> None:
         mock_redis.xinfo_stream.return_value = {
             "length": 100,
@@ -185,14 +172,11 @@ class TestRedisEventBusStreamInfo:
             patch("eventsource.adapters.redis.bus.REDIS_AVAILABLE", True),
             patch("eventsource.adapters.redis.bus.aioredis"),
         ):
-            bus_instance = RedisEventBus(config=config)
-            info = await bus_instance.get_stream_info()
+            info = await RedisEventBus(config=config).get_stream_info()
             assert info["connected"] is False
 
 
 class TestRedisEventBusStatistics:
-    """Tests for statistics."""
-
     async def test_get_stats_dict(self, bus: RedisEventBus, mock_redis: AsyncMock) -> None:
         await bus.publish([_make_sample_order()])
         stats = bus.get_stats_dict()
@@ -207,8 +191,6 @@ class TestRedisEventBusStatistics:
 
 
 class TestRedisEventBusShutdown:
-    """Tests for shutdown."""
-
     async def test_shutdown(self, bus: RedisEventBus, mock_redis: AsyncMock) -> None:
         await bus.shutdown()
         assert bus.is_connected is False
@@ -216,8 +198,6 @@ class TestRedisEventBusShutdown:
 
 
 class TestRedisEventBusErrorHandling:
-    """Tests for error handling."""
-
     def test_redis_not_available_error(self) -> None:
         with (
             patch("eventsource.adapters.redis.bus.REDIS_AVAILABLE", False),

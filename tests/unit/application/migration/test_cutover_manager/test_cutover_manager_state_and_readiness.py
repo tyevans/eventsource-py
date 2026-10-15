@@ -9,12 +9,20 @@ from eventsource.ports import Position
 from eventsource.ports.migration.models import (
     CutoverResult,
     SyncLag,
-    TenantMigrationState,
     TenantRouting,
+)
+from eventsource.ports.migration.models import (
+    TenantMigrationState as State,
 )
 from tests.unit.application.migration.test_cutover_manager._fixtures import (
     create_lock_context_manager,
 )
+
+
+async def _run_cutover(mgr, mid, tid, tracker, store_id, **kw):
+    return await mgr.execute_cutover(
+        migration_id=mid, tenant_id=tid, lag_tracker=tracker, target_store_id=store_id, **kw
+    )
 
 
 class TestRoutingStateTransitions:
@@ -28,15 +36,11 @@ class TestRoutingStateTransitions:
         mock_lag_tracker,
         mock_routing_repo,
     ):
-        await cutover_manager.execute_cutover(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            lag_tracker=mock_lag_tracker,
-            target_store_id=target_store_id,
+        await _run_cutover(
+            cutover_manager, migration_id, tenant_id, mock_lag_tracker, target_store_id
         )
         calls = mock_routing_repo.set_migration_state.call_args_list
-        assert calls[0][0][1] == TenantMigrationState.CUTOVER_PAUSED
-        assert calls[1][0][1] == TenantMigrationState.MIGRATED
+        assert (calls[0][0][1], calls[1][0][1]) == (State.CUTOVER_PAUSED, State.MIGRATED)
 
     @pytest.mark.asyncio
     async def test_routing_updated_to_target(
@@ -48,17 +52,11 @@ class TestRoutingStateTransitions:
         mock_lag_tracker,
         mock_routing_repo,
     ):
-        await cutover_manager.execute_cutover(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            lag_tracker=mock_lag_tracker,
-            target_store_id=target_store_id,
+        await _run_cutover(
+            cutover_manager, migration_id, tenant_id, mock_lag_tracker, target_store_id
         )
         mock_routing_repo.switch_routing.assert_called_once_with(
-            tenant_id,
-            target_store_id,
-            state=TenantMigrationState.MIGRATED,
-            migration_id=migration_id,
+            tenant_id, target_store_id, state=State.MIGRATED, migration_id=migration_id
         )
         mock_routing_repo.set_routing.assert_called_once_with(tenant_id, target_store_id)
 
@@ -72,11 +70,8 @@ class TestRoutingStateTransitions:
         mock_lag_tracker,
         mock_router,
     ):
-        await cutover_manager.execute_cutover(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            lag_tracker=mock_lag_tracker,
-            target_store_id=target_store_id,
+        await _run_cutover(
+            cutover_manager, migration_id, tenant_id, mock_lag_tracker, target_store_id
         )
         mock_router.clear_dual_write_interceptor.assert_called_once_with(tenant_id)
 
@@ -87,13 +82,12 @@ class TestCutoverReadinessValidation:
         self, cutover_manager, tenant_id, mock_lag_tracker, mock_routing_repo, config
     ):
         mock_routing_repo.get_routing.return_value = TenantRouting(
-            tenant_id=tenant_id, store_id="source", migration_state=TenantMigrationState.DUAL_WRITE
+            tenant_id=tenant_id, store_id="source", migration_state=State.DUAL_WRITE
         )
-        ready, error = await cutover_manager.validate_cutover_readiness(
+        ready, err = await cutover_manager.validate_cutover_readiness(
             tenant_id=tenant_id, lag_tracker=mock_lag_tracker, config=config
         )
-        assert ready is True
-        assert error is None
+        assert (ready, err) == (True, None)
 
     @pytest.mark.asyncio
     async def test_validate_readiness_fails_on_high_lag(
@@ -105,71 +99,67 @@ class TestCutoverReadinessValidation:
             target_position=Position(store_id="target", key=(100,)),
             timestamp=datetime.now(UTC),
         )
-        ready, error = await cutover_manager.validate_cutover_readiness(
+        ready, err = await cutover_manager.validate_cutover_readiness(
             tenant_id=tenant_id, lag_tracker=mock_lag_tracker, config=strict_config
         )
-        assert ready is False
-        assert "lag too high" in error.lower()
+        assert ready is False and "lag too high" in err.lower()
 
     @pytest.mark.asyncio
     async def test_validate_readiness_fails_wrong_state(
         self, cutover_manager, tenant_id, mock_lag_tracker, mock_routing_repo
     ):
         mock_routing_repo.get_routing.return_value = TenantRouting(
-            tenant_id=tenant_id, store_id="source", migration_state=TenantMigrationState.BULK_COPY
+            tenant_id=tenant_id, store_id="source", migration_state=State.BULK_COPY
         )
-        ready, error = await cutover_manager.validate_cutover_readiness(
+        ready, err = await cutover_manager.validate_cutover_readiness(
             tenant_id=tenant_id, lag_tracker=mock_lag_tracker
         )
-        assert ready is False
-        assert "DUAL_WRITE" in error
+        assert ready is False and "DUAL_WRITE" in err
 
     @pytest.mark.asyncio
     async def test_validate_readiness_fails_no_routing(
         self, cutover_manager, tenant_id, mock_lag_tracker, mock_routing_repo
     ):
         mock_routing_repo.get_routing.return_value = None
-        ready, error = await cutover_manager.validate_cutover_readiness(
+        ready, err = await cutover_manager.validate_cutover_readiness(
             tenant_id=tenant_id, lag_tracker=mock_lag_tracker
         )
-        assert ready is False
-        assert "routing" in error.lower()
+        assert ready is False and "routing" in err.lower()
 
     @pytest.mark.asyncio
     async def test_validate_readiness_fails_lock_held(
         self, cutover_manager, tenant_id, mock_lag_tracker, mock_routing_repo, mock_lock_manager
     ):
         mock_routing_repo.get_routing.return_value = TenantRouting(
-            tenant_id=tenant_id, store_id="source", migration_state=TenantMigrationState.DUAL_WRITE
+            tenant_id=tenant_id, store_id="source", migration_state=State.DUAL_WRITE
         )
         mock_lock_manager.try_acquire.return_value = None
-        ready, error = await cutover_manager.validate_cutover_readiness(
+        ready, err = await cutover_manager.validate_cutover_readiness(
             tenant_id=tenant_id, lag_tracker=mock_lag_tracker
         )
-        assert ready is False
-        assert "lock" in error.lower()
+        assert ready is False and "lock" in err.lower()
 
 
 class TestCutoverResult:
     def test_cutover_result_creation(self):
-        result = CutoverResult(success=True, duration_ms=50.5, events_synced=10)
-        assert result.success is True
-        assert result.duration_ms == 50.5
-        assert result.events_synced == 10
-        assert result.error_message is None
-        assert result.rolled_back is False
+        r = CutoverResult(success=True, duration_ms=50.5, events_synced=10)
+        assert (r.success, r.duration_ms, r.events_synced, r.error_message, r.rolled_back) == (
+            True,
+            50.5,
+            10,
+            None,
+            False,
+        )
 
     def test_cutover_result_within_timeout(self):
         assert CutoverResult(success=True, duration_ms=50.0).within_timeout is True
         assert CutoverResult(success=True, duration_ms=150.0).within_timeout is False
 
     def test_cutover_result_with_error(self):
-        result = CutoverResult(
+        r = CutoverResult(
             success=False, duration_ms=200.0, error_message="Timeout exceeded", rolled_back=True
         )
-        assert result.success is False
-        assert result.error_message == "Timeout exceeded"
-        assert result.rolled_back is True
+        assert (r.success, r.error_message, r.rolled_back) == (False, "Timeout exceeded", True)
 
 
 class TestEdgeCases:
@@ -185,46 +175,39 @@ class TestEdgeCases:
         mock_lag_tracker,
     ):
         create_lock_context_manager(mock_lock_manager)
-        manager = CutoverManager(
+        mgr = CutoverManager(
             lock_manager=mock_lock_manager,
             router=mock_router,
             routing_repo=mock_routing_repo,
             enable_tracing=False,
         )
-        result = await manager.execute_cutover(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            lag_tracker=mock_lag_tracker,
-            target_store_id=target_store_id,
-            timeout_ms=0.0,
+        res = await _run_cutover(
+            mgr, migration_id, tenant_id, mock_lag_tracker, target_store_id, timeout_ms=0.0
         )
-        assert result.success is False
+        assert res.success is False
 
     @pytest.mark.asyncio
     async def test_cutover_with_very_large_timeout(
         self, cutover_manager, tenant_id, migration_id, target_store_id, mock_lag_tracker
     ):
-        result = await cutover_manager.execute_cutover(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            lag_tracker=mock_lag_tracker,
-            target_store_id=target_store_id,
+        res = await _run_cutover(
+            cutover_manager,
+            migration_id,
+            tenant_id,
+            mock_lag_tracker,
+            target_store_id,
             timeout_ms=100000.0,
         )
-        assert result.success is True
-        assert result.duration_ms < 1000
+        assert res.success is True and res.duration_ms < 1000
 
     @pytest.mark.asyncio
     async def test_multiple_cutover_attempts(
         self, cutover_manager, tenant_id, migration_id, target_store_id, mock_lag_tracker
     ):
-        kwargs = {
-            "migration_id": migration_id,
-            "tenant_id": tenant_id,
-            "lag_tracker": mock_lag_tracker,
-            "target_store_id": target_store_id,
-        }
-        result1 = await cutover_manager.execute_cutover(**kwargs)
-        result2 = await cutover_manager.execute_cutover(**kwargs)
-        assert result1.success is True
-        assert result2.success is True
+        r1 = await _run_cutover(
+            cutover_manager, migration_id, tenant_id, mock_lag_tracker, target_store_id
+        )
+        r2 = await _run_cutover(
+            cutover_manager, migration_id, tenant_id, mock_lag_tracker, target_store_id
+        )
+        assert r1.success is True and r2.success is True
