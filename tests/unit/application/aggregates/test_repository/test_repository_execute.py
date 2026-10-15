@@ -227,17 +227,67 @@ class TestTenantAwareRepositoryGetOrNone:
 
     @pytest.mark.asyncio
     async def test_get_or_none_propagates_tenant_mismatch_error(self) -> None:
-        expected_tenant = uuid4()
-        actual_tenant = uuid4()
         mock_repo = MagicMock()
         mock_repo.load = AsyncMock(
-            side_effect=TenantMismatchError(
-                expected=expected_tenant,
-                actual=actual_tenant,
-                event_ids=[uuid4()],
-            )
+            side_effect=TenantMismatchError(expected=uuid4(), actual=uuid4(), event_ids=[uuid4()])
         )
         tenant_repo: TenantAwareRepository[TenantAccount] = TenantAwareRepository(mock_repo)
-
         with pytest.raises(TenantMismatchError):
             await tenant_repo.get_or_none(uuid4())
+
+
+class TestAggregateRepositoryExists:
+    @pytest.mark.asyncio
+    async def test_exists_returns_true_when_aggregate_exists(self) -> None:
+        repo = AggregateRepository(event_store=_make_store(), aggregate_factory=Account)
+        agg_id = uuid4()
+        await repo.execute(agg_id, OpenAccount(account_id=agg_id, owner="alice"))
+        assert await repo.exists(agg_id) is True
+
+    @pytest.mark.asyncio
+    async def test_exists_returns_false_when_not_found(self) -> None:
+        repo = AggregateRepository(event_store=_make_store(), aggregate_factory=Account)
+        assert await repo.exists(uuid4()) is False
+
+
+class TestTenantAwareRepositoryExists:
+    def setup_method(self) -> None:
+        clear_tenant_context()
+
+    def teardown_method(self) -> None:
+        clear_tenant_context()
+
+    @pytest.mark.asyncio
+    async def test_exists_returns_true_when_aggregate_exists(self) -> None:
+        base_repo = AggregateRepository(event_store=_make_store(), aggregate_factory=TenantAccount)
+        tenant_repo = TenantAwareRepository(base_repo, require_tenant_context=True)
+        tenant_id, agg_id = uuid4(), uuid4()
+        async with tenant_scope(tenant_id):
+            await tenant_repo.execute(
+                agg_id, OpenTenantAccount(account_id=agg_id, owner="alice", tenant_id=tenant_id)
+            )
+            assert await tenant_repo.exists(agg_id) is True
+
+    @pytest.mark.asyncio
+    async def test_exists_returns_false_when_not_found(self) -> None:
+        base_repo = AggregateRepository(event_store=_make_store(), aggregate_factory=TenantAccount)
+        tenant_repo = TenantAwareRepository(base_repo, require_tenant_context=True)
+        async with tenant_scope(uuid4()):
+            assert await tenant_repo.exists(uuid4()) is False
+
+    @pytest.mark.asyncio
+    async def test_exists_propagates_missing_tenant_context(self) -> None:
+        base_repo = AggregateRepository(event_store=_make_store(), aggregate_factory=TenantAccount)
+        tenant_repo = TenantAwareRepository(base_repo, require_tenant_context=True)
+        with pytest.raises(TenantContextNotSetError):
+            await tenant_repo.exists(uuid4())
+
+    @pytest.mark.asyncio
+    async def test_exists_propagates_tenant_mismatch_error(self) -> None:
+        mock_repo = MagicMock()
+        mock_repo.exists = AsyncMock(
+            side_effect=TenantMismatchError(expected=uuid4(), actual=uuid4(), event_ids=[uuid4()])
+        )
+        tenant_repo: TenantAwareRepository[TenantAccount] = TenantAwareRepository(mock_repo)
+        with pytest.raises(TenantMismatchError):
+            await tenant_repo.exists(uuid4())
