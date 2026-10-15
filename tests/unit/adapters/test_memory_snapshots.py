@@ -10,6 +10,23 @@ from eventsource.adapters.memory.snapshots import InMemorySnapshotStore
 from eventsource.ports.snapshots import Snapshot
 
 
+def _snap(
+    aggregate_id=None,
+    aggregate_type: str = "Order",
+    version: int = 1,
+    state: dict | None = None,
+    schema_version: int = 1,
+) -> Snapshot:
+    return Snapshot(
+        aggregate_id=aggregate_id or uuid4(),
+        aggregate_type=aggregate_type,
+        version=version,
+        state=state if state is not None else {},
+        schema_version=schema_version,
+        created_at=datetime.now(UTC),
+    )
+
+
 class TestInMemorySnapshotStore:
     """Tests for the InMemorySnapshotStore implementation."""
 
@@ -21,25 +38,15 @@ class TestInMemorySnapshotStore:
     @pytest.fixture
     def sample_snapshot(self):
         """Create a sample snapshot for testing."""
-        return Snapshot(
-            aggregate_id=uuid4(),
-            aggregate_type="Order",
-            version=100,
-            state={"status": "shipped", "items": ["item1", "item2"]},
-            schema_version=1,
-            created_at=datetime.now(UTC),
-        )
+        return _snap(version=100, state={"status": "shipped", "items": ["item1", "item2"]})
 
     @pytest.mark.asyncio
     async def test_save_and_get_snapshot(self, store, sample_snapshot):
         """Test basic save and retrieve cycle."""
         await store.save_snapshot(sample_snapshot)
-
         loaded = await store.get_snapshot(
-            sample_snapshot.aggregate_id,
-            sample_snapshot.aggregate_type,
+            sample_snapshot.aggregate_id, sample_snapshot.aggregate_type
         )
-
         assert loaded == sample_snapshot
 
     @pytest.mark.asyncio
@@ -52,24 +59,8 @@ class TestInMemorySnapshotStore:
     async def test_save_overwrites_existing_snapshot(self, store):
         """Test upsert behavior - new snapshot replaces old."""
         aggregate_id = uuid4()
-
-        snapshot_v1 = Snapshot(
-            aggregate_id=aggregate_id,
-            aggregate_type="Order",
-            version=50,
-            state={"status": "pending"},
-            schema_version=1,
-            created_at=datetime.now(UTC),
-        )
-
-        snapshot_v2 = Snapshot(
-            aggregate_id=aggregate_id,
-            aggregate_type="Order",
-            version=100,
-            state={"status": "shipped"},
-            schema_version=1,
-            created_at=datetime.now(UTC),
-        )
+        snapshot_v1 = _snap(aggregate_id=aggregate_id, version=50, state={"status": "pending"})
+        snapshot_v2 = _snap(aggregate_id=aggregate_id, version=100, state={"status": "shipped"})
 
         await store.save_snapshot(snapshot_v1)
         await store.save_snapshot(snapshot_v2)
@@ -82,18 +73,12 @@ class TestInMemorySnapshotStore:
     async def test_delete_snapshot_returns_true_when_exists(self, store, sample_snapshot):
         """Test delete returns True when snapshot exists."""
         await store.save_snapshot(sample_snapshot)
-
         result = await store.delete_snapshot(
-            sample_snapshot.aggregate_id,
-            sample_snapshot.aggregate_type,
+            sample_snapshot.aggregate_id, sample_snapshot.aggregate_type
         )
-
         assert result is True
         assert (
-            await store.get_snapshot(
-                sample_snapshot.aggregate_id,
-                sample_snapshot.aggregate_type,
-            )
+            await store.get_snapshot(sample_snapshot.aggregate_id, sample_snapshot.aggregate_type)
             is None
         )
 
@@ -107,11 +92,9 @@ class TestInMemorySnapshotStore:
     async def test_snapshot_exists_returns_true(self, store, sample_snapshot):
         """Test snapshot_exists returns True when present."""
         await store.save_snapshot(sample_snapshot)
-
         assert (
             await store.snapshot_exists(
-                sample_snapshot.aggregate_id,
-                sample_snapshot.aggregate_type,
+                sample_snapshot.aggregate_id, sample_snapshot.aggregate_type
             )
             is True
         )
@@ -125,20 +108,10 @@ class TestInMemorySnapshotStore:
     async def test_clear_removes_all_snapshots(self, store):
         """Test clear() removes all snapshots."""
         for _ in range(5):
-            snapshot = Snapshot(
-                aggregate_id=uuid4(),
-                aggregate_type="Order",
-                version=1,
-                state={},
-                schema_version=1,
-                created_at=datetime.now(UTC),
-            )
-            await store.save_snapshot(snapshot)
+            await store.save_snapshot(_snap())
 
         assert store.snapshot_count == 5
-
         await store.clear()
-
         assert store.snapshot_count == 0
 
     @pytest.mark.asyncio
@@ -149,28 +122,10 @@ class TestInMemorySnapshotStore:
         user_ids = [uuid4() for _ in range(2)]
 
         for agg_id in order_ids:
-            await store.save_snapshot(
-                Snapshot(
-                    aggregate_id=agg_id,
-                    aggregate_type="Order",
-                    version=1,
-                    state={},
-                    schema_version=1,
-                    created_at=datetime.now(UTC),
-                )
-            )
+            await store.save_snapshot(_snap(aggregate_id=agg_id, aggregate_type="Order"))
 
         for agg_id in user_ids:
-            await store.save_snapshot(
-                Snapshot(
-                    aggregate_id=agg_id,
-                    aggregate_type="User",
-                    version=1,
-                    state={},
-                    schema_version=1,
-                    created_at=datetime.now(UTC),
-                )
-            )
+            await store.save_snapshot(_snap(aggregate_id=agg_id, aggregate_type="User"))
 
         # Delete Order snapshots
         deleted = await store.delete_snapshots_by_type("Order")
@@ -183,16 +138,7 @@ class TestInMemorySnapshotStore:
         """Test bulk deletion with schema version filter."""
         # Create snapshots with different schema versions
         for schema_v in [1, 2, 3]:
-            await store.save_snapshot(
-                Snapshot(
-                    aggregate_id=uuid4(),
-                    aggregate_type="Order",
-                    version=1,
-                    state={},
-                    schema_version=schema_v,
-                    created_at=datetime.now(UTC),
-                )
-            )
+            await store.save_snapshot(_snap(schema_version=schema_v))
 
         # Delete only schema_version < 3
         deleted = await store.delete_snapshots_by_type("Order", schema_version_below=3)
@@ -204,16 +150,7 @@ class TestInMemorySnapshotStore:
     async def test_delete_snapshots_by_type_no_matches(self, store):
         """Test bulk deletion when no snapshots match."""
         # Create snapshots for Order type
-        await store.save_snapshot(
-            Snapshot(
-                aggregate_id=uuid4(),
-                aggregate_type="Order",
-                version=1,
-                state={},
-                schema_version=1,
-                created_at=datetime.now(UTC),
-            )
-        )
+        await store.save_snapshot(_snap(aggregate_type="Order"))
 
         # Try to delete User snapshots (none exist)
         deleted = await store.delete_snapshots_by_type("User")
@@ -228,14 +165,7 @@ class TestInMemorySnapshotStore:
 
         async def save_and_read():
             for i in range(10):
-                snapshot = Snapshot(
-                    aggregate_id=aggregate_id,
-                    aggregate_type="Order",
-                    version=i,
-                    state={"iteration": i},
-                    schema_version=1,
-                    created_at=datetime.now(UTC),
-                )
+                snapshot = _snap(aggregate_id=aggregate_id, version=i, state={"iteration": i})
                 await store.save_snapshot(snapshot)
                 await store.get_snapshot(aggregate_id, "Order")
 
@@ -249,23 +179,11 @@ class TestInMemorySnapshotStore:
     async def test_different_aggregate_types_are_separate(self, store):
         """Test that same ID with different types are separate."""
         aggregate_id = uuid4()
-
-        order_snapshot = Snapshot(
-            aggregate_id=aggregate_id,
-            aggregate_type="Order",
-            version=10,
-            state={"type": "order"},
-            schema_version=1,
-            created_at=datetime.now(UTC),
+        order_snapshot = _snap(
+            aggregate_id=aggregate_id, aggregate_type="Order", version=10, state={"type": "order"}
         )
-
-        user_snapshot = Snapshot(
-            aggregate_id=aggregate_id,
-            aggregate_type="User",
-            version=20,
-            state={"type": "user"},
-            schema_version=1,
-            created_at=datetime.now(UTC),
+        user_snapshot = _snap(
+            aggregate_id=aggregate_id, aggregate_type="User", version=20, state={"type": "user"}
         )
 
         await store.save_snapshot(order_snapshot)
@@ -283,16 +201,7 @@ class TestInMemorySnapshotStore:
         assert store.snapshot_count == 0
 
         for i in range(3):
-            await store.save_snapshot(
-                Snapshot(
-                    aggregate_id=uuid4(),
-                    aggregate_type="Order",
-                    version=i,
-                    state={},
-                    schema_version=1,
-                    created_at=datetime.now(UTC),
-                )
-            )
+            await store.save_snapshot(_snap(version=i))
 
         assert store.snapshot_count == 3
 
@@ -305,16 +214,7 @@ class TestInMemorySnapshotStore:
     async def test_delete_snapshots_by_type_schema_version_edge_case(self, store):
         """Test schema version filter boundary condition."""
         # Create snapshot with exactly the boundary version
-        await store.save_snapshot(
-            Snapshot(
-                aggregate_id=uuid4(),
-                aggregate_type="Order",
-                version=1,
-                state={},
-                schema_version=5,
-                created_at=datetime.now(UTC),
-            )
-        )
+        await store.save_snapshot(_snap(schema_version=5))
 
         # Delete schema_version < 5 should NOT delete this snapshot
         deleted = await store.delete_snapshots_by_type("Order", schema_version_below=5)
