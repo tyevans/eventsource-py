@@ -35,6 +35,10 @@ class InMemoryDLQRepository:
         """Return total number of DLQ entries currently stored."""
         return len(self._entries)
 
+    def __bool__(self) -> bool:
+        """Repository instances are always truthy even when empty."""
+        return True
+
     def _make_key(self, event_id: UUID, projection_name: str) -> str:
         return f"{event_id}:{projection_name}"
 
@@ -57,11 +61,9 @@ class InMemoryDLQRepository:
             ATTR_DB_SYSTEM: "memory",
         }
         with self._tracer.span("eventsource.dlq.add", attrs):
-            now = datetime.now(UTC)
-            key = self._make_key(event_id, projection_name)
+            now, key = datetime.now(UTC), self._make_key(event_id, projection_name)
             async with self._lock:
-                existing = self._entries.get(key)
-                if existing:
+                if existing := self._entries.get(key):
                     existing.retry_count = retry_count
                     existing.last_failed_at = now
                     existing.error_message = str(error)
@@ -82,8 +84,7 @@ class InMemoryDLQRepository:
                         last_failed_at=now,
                         status="failed",
                     )
-                    self._entries[key] = entry
-                    self._by_id[self._id_counter] = entry
+                    self._entries[key] = self._by_id[self._id_counter] = entry
 
     async def get_failed_events(
         self,
@@ -92,14 +93,10 @@ class InMemoryDLQRepository:
         limit: int = 100,
     ) -> list[DLQEntry]:
         """Get failed events from the DLQ."""
-        span_attributes: dict[str, Any] = {
-            "limit": limit,
-            "status_filter": status,
-            ATTR_DB_SYSTEM: "memory",
-        }
+        attrs: dict[str, Any] = {"limit": limit, "status_filter": status, ATTR_DB_SYSTEM: "memory"}
         if projection_name:
-            span_attributes[ATTR_PROJECTION_NAME] = projection_name
-        with self._tracer.span("eventsource.dlq.get", span_attributes):
+            attrs[ATTR_PROJECTION_NAME] = projection_name
+        with self._tracer.span("eventsource.dlq.get", attrs):
             async with self._lock:
                 entries = [
                     e
@@ -126,12 +123,10 @@ class InMemoryDLQRepository:
             ATTR_DB_SYSTEM: "memory",
         }
         with self._tracer.span("eventsource.dlq.resolve", attrs):
-            now = datetime.now(UTC)
             async with self._lock:
-                entry = self._by_id.get(dlq_id)
-                if entry is not None:
+                if (entry := self._by_id.get(dlq_id)) is not None:
                     entry.status = "resolved"
-                    entry.resolved_at = now
+                    entry.resolved_at = datetime.now(UTC)
                     entry.resolved_by = str(resolved_by) if resolved_by else None
 
     async def mark_retrying(self, dlq_id: int | str) -> None:
@@ -140,8 +135,7 @@ class InMemoryDLQRepository:
             "eventsource.dlq.retry", {"dlq.id": str(dlq_id), ATTR_DB_SYSTEM: "memory"}
         ):
             async with self._lock:
-                entry = self._by_id.get(dlq_id)
-                if entry is not None:
+                if (entry := self._by_id.get(dlq_id)) is not None:
                     entry.status = "retrying"
 
     async def get_failure_stats(self) -> DLQStats:
@@ -161,42 +155,33 @@ class InMemoryDLQRepository:
         """Get failure counts grouped by projection."""
         with self._tracer.span("eventsource.dlq.get_projection_counts", {ATTR_DB_SYSTEM: "memory"}):
             async with self._lock:
-                projection_stats: dict[str, list[DLQEntry]] = {}
+                by_proj: dict[str, list[DLQEntry]] = {}
                 for entry in self._entries.values():
                     if entry.status in ("failed", "retrying"):
-                        projection_stats.setdefault(entry.projection_name, []).append(entry)
+                        by_proj.setdefault(entry.projection_name, []).append(entry)
                 result = []
-                for projection_name, entries in projection_stats.items():
-                    firsts = [e.first_failed_at for e in entries if e.first_failed_at]
-                    lasts = [e.last_failed_at for e in entries if e.last_failed_at]
-                    result.append(
-                        ProjectionFailureCount(
-                            projection_name=projection_name,
-                            failure_count=len(entries),
-                            oldest_failure=min(firsts).isoformat() if firsts else None,
-                            most_recent_failure=max(lasts).isoformat() if lasts else None,
-                        )
-                    )
+                for proj, items in by_proj.items():
+                    firsts = [e.first_failed_at.isoformat() for e in items if e.first_failed_at]
+                    lasts = [e.last_failed_at.isoformat() for e in items if e.last_failed_at]
+                    oldest, recent = min(firsts, default=None), max(lasts, default=None)
+                    result.append(ProjectionFailureCount(proj, len(items), oldest, recent))
                 result.sort(key=lambda x: x.failure_count, reverse=True)
                 return result
 
     async def delete_resolved_events(self, older_than_days: int = 30) -> int:
         """Delete resolved events older than specified days."""
-        with self._tracer.span(
-            "eventsource.dlq.delete_resolved",
-            {"older_than_days": older_than_days, ATTR_DB_SYSTEM: "memory"},
-        ):
+        attrs = {"older_than_days": older_than_days, ATTR_DB_SYSTEM: "memory"}
+        with self._tracer.span("eventsource.dlq.delete_resolved", attrs):
             cutoff = datetime.now(UTC) - timedelta(days=older_than_days)
             async with self._lock:
-                keys_to_delete = [
+                keys = [
                     k
                     for k, e in self._entries.items()
                     if e.status == "resolved" and e.resolved_at and e.resolved_at < cutoff
                 ]
-                for key in keys_to_delete:
-                    removed = self._entries.pop(key)
-                    self._by_id.pop(removed.id, None)
-                return len(keys_to_delete)
+                for key in keys:
+                    self._by_id.pop(self._entries.pop(key).id, None)
+                return len(keys)
 
     async def clear(self) -> None:
         """Clear all entries. Useful for test setup/teardown."""

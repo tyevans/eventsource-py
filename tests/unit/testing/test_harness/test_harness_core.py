@@ -181,11 +181,23 @@ class TestHarnessRepr:
     async def test_outbox_repo_publish_events_and_len(self) -> None:
         """outbox_repo, publish_events(persist=...), and len(harness) work together."""
         from eventsource.adapters.memory.outbox import InMemoryOutboxRepository
+        from eventsource.testing.recording import RecordingEventBus
 
         harness = InMemoryTestHarness()
         assert isinstance(harness.outbox_repo, InMemoryOutboxRepository)
         assert harness.outbox_repo._enable_tracing is False
         assert len(harness) == 0
+        assert bool(harness) is True
+        assert bool(harness.event_bus) is True
+
+        rm_repo = harness.create_read_model_repository(SampleReadModel)
+        assert len(rm_repo) == 0
+        assert bool(rm_repo) is True
+
+        rec_bus = RecordingEventBus(wrapped=harness.event_bus)
+        assert len(rec_bus) == 0
+        assert bool(rec_bus) is True
+        assert rec_bus.wrapped is harness.event_bus
 
         await harness.publish_events()
         assert len(harness) == 0

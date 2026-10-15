@@ -96,6 +96,7 @@ class TestDLQEntryTypedReturns:
             aggregate_type: str = "Sample"
 
         assert len(repo) == 0
+        assert bool(repo) is True
         await repo.add_failed_event(uuid4(), "Proj", "SampleEvent", {}, Exception("boom"))
         assert len(repo) == 1
         entry = (await repo.get_failed_events())[0]
@@ -107,20 +108,24 @@ class TestDLQEntryTypedReturns:
         assert resolved is not None and resolved.status == "resolved"
         await repo.clear()
         assert len(repo) == 0
+        assert bool(repo) is True
         assert await repo.get_failed_event_by_id(entry.id) is None
 
         cp_repo = InMemoryCheckpointRepository(enable_tracing=False)
         assert len(cp_repo) == 0
+        assert bool(cp_repo) is True
         await cp_repo.update_checkpoint("Proj", uuid4(), "SampleEvent")
         assert len(cp_repo) == 1
 
         outbox = InMemoryOutboxRepository(enable_tracing=False)
         assert len(outbox) == 0
+        assert bool(outbox) is True
         await outbox.add_event(SampleEvent(aggregate_id=uuid4()))
         assert len(outbox) == 1
 
         snaps = InMemorySnapshotStore(enable_tracing=False)
         assert len(snaps) == 0
+        assert bool(snaps) is True
         await snaps.save_snapshot(
             Snapshot(
                 aggregate_id=uuid4(),

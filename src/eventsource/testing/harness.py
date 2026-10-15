@@ -44,18 +44,7 @@ TModel = TypeVar("TModel", bound=ReadModel)
 
 
 class InMemoryTestHarness:
-    """
-    Pre-configured test infrastructure for event sourcing tests.
-
-    Provides in-memory implementations of all infrastructure components,
-    wired together and ready to use:
-    - event_store: InMemoryEventStore for persisting events
-    - event_bus: InMemoryEventBus for publishing/subscribing to events
-    - checkpoint_repo: InMemoryCheckpointRepository for projection checkpoints
-    - dlq_repo: InMemoryDLQRepository for dead letter queue
-    - outbox_repo: InMemoryOutboxRepository for transactional outbox entries
-    - snapshot_store: InMemorySnapshotStore for aggregate state snapshots
-    """
+    """Pre-configured test infrastructure bundling in-memory stores, bus, and repositories."""
 
     def __init__(self) -> None:
         """Initialize the test harness with fresh in-memory components (tracing disabled)."""
@@ -69,6 +58,10 @@ class InMemoryTestHarness:
     def __len__(self) -> int:
         """Return the number of currently published events."""
         return len(self.published_events)
+
+    def __bool__(self) -> bool:
+        """Harness instances are always truthy even when no events have been published."""
+        return True
 
     @property
     def event_store(self) -> InMemoryEventStore:
@@ -120,15 +113,11 @@ class InMemoryTestHarness:
             return
         by_aggregate: dict[tuple[UUID, str], list[DomainEvent]] = {}
         for event in events:
-            key = (event.aggregate_id, event.aggregate_type)
-            by_aggregate.setdefault(key, []).append(event)
+            by_aggregate.setdefault((event.aggregate_id, event.aggregate_type), []).append(event)
         version_constraint = expected_version or ExpectedVersion.any_()
         for (agg_id, agg_type), agg_events in by_aggregate.items():
-            await self._event_store.append(
-                StreamId(aggregate_id=agg_id, category=agg_type),
-                agg_events,
-                version_constraint,
-            )
+            stream_id = StreamId(aggregate_id=agg_id, category=agg_type)
+            await self._event_store.append(stream_id, agg_events, version_constraint)
 
     async def publish_events(
         self,
@@ -159,20 +148,18 @@ class InMemoryTestHarness:
         with_snapshots: bool = False,
     ) -> AggregateRepository[TAggregate]:
         """Create an AggregateRepository pre-wired to the harness store, bus, and optional snapshot store."""
+        use_snaps = with_snapshots or snapshot_threshold is not None
         return AggregateRepository(
             event_store=self._event_store,
             aggregate_factory=aggregate_factory,
             event_publisher=self._event_bus,
-            snapshot_store=self._snapshot_store
-            if (with_snapshots or snapshot_threshold is not None)
-            else None,
+            snapshot_store=self._snapshot_store if use_snaps else None,
             snapshot_threshold=snapshot_threshold,
             enable_tracing=False,
         )
 
     def create_read_model_repository(
-        self,
-        model_class: type[TModel],
+        self, model_class: type[TModel]
     ) -> InMemoryReadModelRepository[TModel]:
         """Create an InMemoryReadModelRepository with tracing disabled for tests."""
         return InMemoryReadModelRepository(model_class, enable_tracing=False)
