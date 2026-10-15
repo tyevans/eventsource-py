@@ -17,21 +17,25 @@ from tests.unit.application.aggregates.test_tenant_repository._fixtures import (
 )
 
 
-class TestTenantAwareRepositoryLoad:
-    """Tests for load() method."""
+def _build_mock_repo(**attrs: object) -> MagicMock:
+    repo = MagicMock(aggregate_type="Order")
+    for k, v in attrs.items():
+        setattr(repo, k, v)
+    return repo
 
-    @pytest.fixture
-    def mock_repo(self) -> MagicMock:
-        repo = MagicMock()
-        repo.load = AsyncMock(return_value=MockAggregate())
-        repo.aggregate_type = "Order"
-        return repo
 
+class _ClearTenantMixin:
     def setup_method(self) -> None:
         clear_tenant_context()
 
     def teardown_method(self) -> None:
         clear_tenant_context()
+
+
+class TestTenantAwareRepositoryLoad(_ClearTenantMixin):
+    @pytest.fixture
+    def mock_repo(self) -> MagicMock:
+        return _build_mock_repo(load=AsyncMock(return_value=MockAggregate()))
 
     async def test_load_delegates_to_repository(self, mock_repo: MagicMock) -> None:
         tenant_repo: TenantAwareRepository[MockAggregate] = TenantAwareRepository(mock_repo)
@@ -44,16 +48,14 @@ class TestTenantAwareRepositoryLoad:
         self, mock_repo: MagicMock
     ) -> None:
         tenant_repo = TenantAwareRepository(mock_repo, require_tenant_context=False)
-        aggregate_id = uuid4()
-        result = await tenant_repo.load(aggregate_id)
+        result = await tenant_repo.load(uuid4())
         mock_repo.load.assert_called_once()
         assert result is not None
 
     async def test_load_with_requirement_requires_context(self, mock_repo: MagicMock) -> None:
         tenant_repo = TenantAwareRepository(mock_repo, require_tenant_context=True)
-        aggregate_id = uuid4()
         with pytest.raises(TenantContextNotSetError):
-            await tenant_repo.load(aggregate_id)
+            await tenant_repo.load(uuid4())
 
     async def test_load_with_requirement_and_context_succeeds(self, mock_repo: MagicMock) -> None:
         tenant_repo = TenantAwareRepository(mock_repo, require_tenant_context=True)
@@ -64,21 +66,10 @@ class TestTenantAwareRepositoryLoad:
         assert result is not None
 
 
-class TestTenantAwareRepositoryExists:
-    """Tests for exists() method."""
-
+class TestTenantAwareRepositoryExists(_ClearTenantMixin):
     @pytest.fixture
     def mock_repo(self) -> MagicMock:
-        repo = MagicMock()
-        repo.exists = AsyncMock(return_value=True)
-        repo.aggregate_type = "Order"
-        return repo
-
-    def setup_method(self) -> None:
-        clear_tenant_context()
-
-    def teardown_method(self) -> None:
-        clear_tenant_context()
+        return _build_mock_repo(exists=AsyncMock(return_value=True))
 
     async def test_exists_delegates_to_repository(self, mock_repo: MagicMock) -> None:
         tenant_repo: TenantAwareRepository[MockAggregate] = TenantAwareRepository(mock_repo)
@@ -91,16 +82,14 @@ class TestTenantAwareRepositoryExists:
         self, mock_repo: MagicMock
     ) -> None:
         tenant_repo = TenantAwareRepository(mock_repo, require_tenant_context=False)
-        aggregate_id = uuid4()
-        result = await tenant_repo.exists(aggregate_id)
+        result = await tenant_repo.exists(uuid4())
         mock_repo.exists.assert_called_once()
         assert result is True
 
     async def test_exists_with_requirement_requires_context(self, mock_repo: MagicMock) -> None:
         tenant_repo = TenantAwareRepository(mock_repo, require_tenant_context=True)
-        aggregate_id = uuid4()
         with pytest.raises(TenantContextNotSetError):
-            await tenant_repo.exists(aggregate_id)
+            await tenant_repo.exists(uuid4())
 
     async def test_exists_with_requirement_and_context_succeeds(self, mock_repo: MagicMock) -> None:
         tenant_repo = TenantAwareRepository(mock_repo, require_tenant_context=True)
@@ -111,21 +100,10 @@ class TestTenantAwareRepositoryExists:
         assert result is True
 
 
-class TestTenantAwareRepositoryLoadOrCreate:
-    """Tests for load_or_create() method."""
-
+class TestTenantAwareRepositoryLoadOrCreate(_ClearTenantMixin):
     @pytest.fixture
     def mock_repo(self) -> MagicMock:
-        repo = MagicMock()
-        repo.load_or_create = AsyncMock(return_value=MockAggregate())
-        repo.aggregate_type = "Order"
-        return repo
-
-    def setup_method(self) -> None:
-        clear_tenant_context()
-
-    def teardown_method(self) -> None:
-        clear_tenant_context()
+        return _build_mock_repo(load_or_create=AsyncMock(return_value=MockAggregate()))
 
     async def test_load_or_create_delegates_to_repository(self, mock_repo: MagicMock) -> None:
         tenant_repo: TenantAwareRepository[MockAggregate] = TenantAwareRepository(mock_repo)
@@ -138,20 +116,14 @@ class TestTenantAwareRepositoryLoadOrCreate:
         self, mock_repo: MagicMock
     ) -> None:
         tenant_repo = TenantAwareRepository(mock_repo, require_tenant_context=True)
-        aggregate_id = uuid4()
         with pytest.raises(TenantContextNotSetError):
-            await tenant_repo.load_or_create(aggregate_id)
+            await tenant_repo.load_or_create(uuid4())
 
 
 class TestTenantAwareRepositoryCreateNew:
-    """Tests for create_new() method."""
-
     @pytest.fixture
     def mock_repo(self) -> MagicMock:
-        repo = MagicMock()
-        repo.create_new = MagicMock(return_value=MockAggregate())
-        repo.aggregate_type = "Order"
-        return repo
+        return _build_mock_repo(create_new=MagicMock(return_value=MockAggregate()))
 
     def test_create_new_delegates_to_repository(self, mock_repo: MagicMock) -> None:
         tenant_repo: TenantAwareRepository[MockAggregate] = TenantAwareRepository(mock_repo)
@@ -162,13 +134,9 @@ class TestTenantAwareRepositoryCreateNew:
 
 
 class TestTenantAwareRepositoryProperties:
-    """Tests for repository properties."""
-
     @pytest.fixture
     def mock_repo(self) -> MagicMock:
-        repo = MagicMock()
-        repo.aggregate_type = "Order"
-        return repo
+        return _build_mock_repo()
 
     def test_repository_property(self, mock_repo: MagicMock) -> None:
         tenant_repo: TenantAwareRepository[MockAggregate] = TenantAwareRepository(mock_repo)
@@ -195,20 +163,11 @@ class TestTenantAwareRepositoryProperties:
         assert "validate_on_save=True" in repr_str
 
 
-class TestReadsAreNotTenantIsolated:
-    """Tests asserting that require_tenant_context is a precondition check, not read isolation."""
-
-    def setup_method(self) -> None:
-        clear_tenant_context()
-
-    def teardown_method(self) -> None:
-        clear_tenant_context()
-
+class TestReadsAreNotTenantIsolated(_ClearTenantMixin):
     @pytest.fixture
     def tenant_repo(self) -> TenantAwareRepository[TenantOrderAggregate]:
         base: AggregateRepository[TenantOrderAggregate] = AggregateRepository(
-            event_store=InMemoryEventStore(),
-            aggregate_factory=TenantOrderAggregate,
+            event_store=InMemoryEventStore(), aggregate_factory=TenantOrderAggregate
         )
         return TenantAwareRepository(base, require_tenant_context=True)
 
