@@ -52,8 +52,8 @@ class TestReplayDLQMessage:
     ) -> None:
         """Test replay_dlq_message returns False when exchange not initialized."""
         bus = RabbitMQEventBus(config=config_with_dlq)
-        bus._connected = True
-        bus._exchange = None
+        bus._connection_manager._connected = True
+        bus._topology._exchange = None
 
         result = await bus.replay_dlq_message("test-id")
 
@@ -65,9 +65,9 @@ class TestReplayDLQMessage:
     ) -> None:
         """Test replay_dlq_message returns False when DLQ disabled."""
         bus = RabbitMQEventBus(config=config_without_dlq)
-        bus._connected = True
-        bus._exchange = AsyncMock()
-        bus._channel = AsyncMock()
+        bus._connection_manager._connected = True
+        bus._topology._exchange = AsyncMock()
+        bus._connection_manager._channel = AsyncMock()
 
         result = await bus.replay_dlq_message("test-id")
 
@@ -79,9 +79,9 @@ class TestReplayDLQMessage:
     ) -> None:
         """Test replay_dlq_message returns False when channel not initialized."""
         bus = RabbitMQEventBus(config=config_with_dlq)
-        bus._connected = True
-        bus._exchange = AsyncMock()
-        bus._channel = None
+        bus._connection_manager._connected = True
+        bus._topology._exchange = AsyncMock()
+        bus._connection_manager._channel = None
 
         result = await bus.replay_dlq_message("test-id")
 
@@ -93,7 +93,7 @@ class TestReplayDLQMessage:
     ) -> None:
         """Test successful message replay."""
         bus = RabbitMQEventBus(config=config_with_dlq)
-        bus._connected = True
+        bus._connection_manager._connected = True
 
         mock_channel = AsyncMock()
         mock_exchange = AsyncMock()
@@ -115,8 +115,8 @@ class TestReplayDLQMessage:
 
         mock_queue.get.side_effect = [mock_message, None]
         mock_channel.get_queue.return_value = mock_queue
-        bus._channel = mock_channel
-        bus._exchange = mock_exchange
+        bus._connection_manager._channel = mock_channel
+        bus._topology._exchange = mock_exchange
 
         result = await bus.replay_dlq_message("target-id")
 
@@ -130,7 +130,7 @@ class TestReplayDLQMessage:
     ) -> None:
         """Test replay_dlq_message returns False when message not found."""
         bus = RabbitMQEventBus(config=config_with_dlq)
-        bus._connected = True
+        bus._connection_manager._connected = True
 
         mock_channel = AsyncMock()
         mock_exchange = AsyncMock()
@@ -143,8 +143,8 @@ class TestReplayDLQMessage:
 
         mock_queue.get.side_effect = [mock_message, None]
         mock_channel.get_queue.return_value = mock_queue
-        bus._channel = mock_channel
-        bus._exchange = mock_exchange
+        bus._connection_manager._channel = mock_channel
+        bus._topology._exchange = mock_exchange
 
         result = await bus.replay_dlq_message("non-existent-id")
 
@@ -156,13 +156,13 @@ class TestReplayDLQMessage:
     async def test_handles_exception(self, config_with_dlq: RabbitMQEventBusConfig) -> None:
         """Test that exceptions are handled gracefully."""
         bus = RabbitMQEventBus(config=config_with_dlq)
-        bus._connected = True
+        bus._connection_manager._connected = True
 
         mock_channel = AsyncMock()
         mock_exchange = AsyncMock()
         mock_channel.get_queue.side_effect = Exception("Queue error")
-        bus._channel = mock_channel
-        bus._exchange = mock_exchange
+        bus._connection_manager._channel = mock_channel
+        bus._topology._exchange = mock_exchange
 
         result = await bus.replay_dlq_message("test-id")
 

@@ -30,7 +30,7 @@ class TestRabbitMQDispatchEvent:
     def bus(self, config: RabbitMQEventBusConfig) -> RabbitMQEventBus:
         """Create bus instance for testing."""
         bus = RabbitMQEventBus(config=config)
-        bus._connected = True
+        bus._connection_manager._connected = True
         return bus
 
     @pytest.mark.asyncio
@@ -283,7 +283,7 @@ class TestRabbitMQConsumerLoopErrorHandling:
                 yield mock_msg
                 if message_count >= 2:
                     # Simulate stop being called
-                    bus._consuming = False
+                    bus._consumer._consuming = False
 
         mock_queue_iter = AsyncMock()
         mock_queue_iter.__aenter__ = AsyncMock(return_value=controlled_iterator())

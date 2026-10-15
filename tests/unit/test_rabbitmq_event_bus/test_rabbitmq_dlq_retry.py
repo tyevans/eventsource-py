@@ -153,7 +153,7 @@ class TestRepublishForRetry:
     ) -> None:
         """Test that retry count is incremented in republished message."""
         mock_exchange = AsyncMock()
-        bus._exchange = mock_exchange
+        bus._topology._exchange = mock_exchange
 
         await bus._republish_for_retry(mock_message, 1)
 
@@ -173,7 +173,7 @@ class TestRepublishForRetry:
     ) -> None:
         """Test that x-last-retry-at timestamp is added."""
         mock_exchange = AsyncMock()
-        bus._exchange = mock_exchange
+        bus._topology._exchange = mock_exchange
 
         await bus._republish_for_retry(mock_message, 1)
 
@@ -191,7 +191,7 @@ class TestRepublishForRetry:
     ) -> None:
         """Test that original headers are preserved."""
         mock_exchange = AsyncMock()
-        bus._exchange = mock_exchange
+        bus._topology._exchange = mock_exchange
 
         await bus._republish_for_retry(mock_message, 2)
 
@@ -207,7 +207,7 @@ class TestRepublishForRetry:
     ) -> None:
         """Test that message body is preserved."""
         mock_exchange = AsyncMock()
-        bus._exchange = mock_exchange
+        bus._topology._exchange = mock_exchange
 
         await bus._republish_for_retry(mock_message, 1)
 
@@ -222,7 +222,7 @@ class TestRepublishForRetry:
     ) -> None:
         """Test that original routing key is used."""
         mock_exchange = AsyncMock()
-        bus._exchange = mock_exchange
+        bus._topology._exchange = mock_exchange
 
         await bus._republish_for_retry(mock_message, 1)
 
@@ -236,7 +236,7 @@ class TestRepublishForRetry:
         self, bus: RabbitMQEventBus, mock_message: MagicMock
     ) -> None:
         """Test that RuntimeError is raised if exchange not initialized."""
-        bus._exchange = None
+        bus._topology._exchange = None
 
         with pytest.raises(RuntimeError, match="Exchange not initialized"):
             await bus._republish_for_retry(mock_message, 1)

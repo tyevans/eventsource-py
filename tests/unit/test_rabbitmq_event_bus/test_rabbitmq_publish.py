@@ -301,8 +301,8 @@ class TestRabbitMQPublish:
         bus = RabbitMQEventBus(config=config)
 
         # Manually set connected but leave exchange as None
-        bus._connected = True
-        bus._exchange = None
+        bus._connection_manager._connected = True
+        bus._topology._exchange = None
 
         with pytest.raises(RuntimeError, match="Exchange not initialized"):
             await bus.publish([event])

@@ -14,24 +14,21 @@ from typing import TYPE_CHECKING, Any, Self
 if TYPE_CHECKING:
     from aio_pika.abc import (
         AbstractChannel,
-        AbstractQueue,
         AbstractRobustConnection,
     )
 
     from eventsource.adapters.rabbitmq.config import RabbitMQEventBusConfig
     from eventsource.adapters.rabbitmq.connection import RabbitMQConnectionManager
+    from eventsource.adapters.rabbitmq.consumer import RabbitMQConsumer
+    from eventsource.adapters.rabbitmq.topology import RabbitMQTopology
 
 
 class RabbitMQEventBusConnectionMixin:
     """Mixin providing connection lifecycle and reconnection handling for RabbitMQEventBus."""
 
     _connection_manager: RabbitMQConnectionManager
-    _consumer_task: asyncio.Task[None] | None
-    _consuming: bool
-    _exchange: Any
-    _dlq_exchange: Any
-    _consumer_queue: AbstractQueue | None
-    _dlq_queue: AbstractQueue | None
+    _consumer: RabbitMQConsumer
+    _topology: RabbitMQTopology
     _config: RabbitMQEventBusConfig
 
     if TYPE_CHECKING:
@@ -72,21 +69,21 @@ class RabbitMQEventBusConnectionMixin:
         task before closing the connection.
         """
         # Stop consumer if running
-        if self._consumer_task:
-            self._consumer_task.cancel()
+        if self._consumer._consumer_task:
+            self._consumer._consumer_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                await self._consumer_task
-            self._consumer_task = None
+                await self._consumer._consumer_task
+            self._consumer._consumer_task = None
 
         await self._connection_manager.disconnect()
 
-        self._consuming = False
+        self._consumer._consuming = False
 
         # Clear exchange/queue references
-        self._exchange = None
-        self._dlq_exchange = None
-        self._consumer_queue = None
-        self._dlq_queue = None
+        self._topology._exchange = None
+        self._topology._dlq_exchange = None
+        self._topology._consumer_queue = None
+        self._topology._dlq_queue = None
 
     async def __aenter__(self: Self) -> Self:
         """Async context manager entry.

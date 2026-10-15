@@ -151,10 +151,10 @@ class TestRabbitMQEventBusInit:
 
         bus = RabbitMQEventBus()
 
-        assert bus._connection is None
-        assert bus._channel is None
-        assert bus._connected is False
-        assert bus._consuming is False
+        assert bus._connection_manager._connection is None
+        assert bus._connection_manager._channel is None
+        assert bus._connection_manager._connected is False
+        assert bus._consumer._consuming is False
 
 
 class TestRabbitMQEventBusUrlSanitization:

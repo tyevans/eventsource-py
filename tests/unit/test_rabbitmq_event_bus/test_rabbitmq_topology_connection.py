@@ -48,12 +48,12 @@ class TestRabbitMQConnectionWithTopology:
         await bus.connect()
 
         # Verify all components are set up
-        assert bus._connection is not None
-        assert bus._channel is not None
-        assert bus._exchange is not None
-        assert bus._consumer_queue is not None
-        assert bus._dlq_exchange is not None
-        assert bus._dlq_queue is not None
+        assert bus._connection_manager._connection is not None
+        assert bus._connection_manager._channel is not None
+        assert bus._topology._exchange is not None
+        assert bus._topology._consumer_queue is not None
+        assert bus._topology._dlq_exchange is not None
+        assert bus._topology._dlq_queue is not None
         assert bus.is_connected is True
 
     @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
@@ -83,8 +83,8 @@ class TestRabbitMQConnectionWithTopology:
 
         # Verify cleanup was attempted
         assert bus.is_connected is False
-        assert bus._exchange is None
-        assert bus._consumer_queue is None
+        assert bus._topology._exchange is None
+        assert bus._topology._consumer_queue is None
 
     @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio

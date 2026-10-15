@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from eventsource.ports.exceptions import EventBusConnectionError
 
 if TYPE_CHECKING:
+    from eventsource.adapters.rabbitmq.connection import RabbitMQConnectionManager
     from eventsource.adapters.rabbitmq.topology import RabbitMQTopology
     from eventsource.domain.event import DomainEvent
 
@@ -19,7 +20,7 @@ class RabbitMQEventBusTopologyMixin:
     """Mixin providing topology declarations and queue bindings for RabbitMQEventBus."""
 
     _topology: RabbitMQTopology
-    _connected: bool
+    _connection_manager: RabbitMQConnectionManager
 
     async def _declare_exchange(self) -> None:
         """Declare the main event exchange.
@@ -74,7 +75,7 @@ class RabbitMQEventBusTopologyMixin:
             >>> await bus.bind_event_type(OrderCreated)
             >>> # Now queue will receive OrderCreated events
         """
-        if not self._connected:
+        if not self._connection_manager._connected:
             raise EventBusConnectionError("Not connected or queue/exchange not initialized")
         await self._topology.bind_event_type(event_type)
 
@@ -100,6 +101,6 @@ class RabbitMQEventBusTopologyMixin:
             >>> # Bind to specific routing key on direct exchange
             >>> await bus.bind_routing_key("Order.OrderCreated")
         """
-        if not self._connected:
+        if not self._connection_manager._connected:
             raise EventBusConnectionError("Not connected or queue/exchange not initialized")
         await self._topology.bind_routing_key(routing_key)

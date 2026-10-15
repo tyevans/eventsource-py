@@ -78,7 +78,7 @@ class TestRabbitMQStartConsuming:
         from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus(config=config)
-        bus._connected = True  # Pretend connected but no queue
+        bus._connection_manager._connected = True  # Pretend connected but no queue
 
         with pytest.raises(RuntimeError, match="Consumer queue not initialized"):
             await bus.start_consuming()
@@ -181,11 +181,11 @@ class TestRabbitMQStopConsuming:
         from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus()
-        bus._consuming = True
+        bus._consumer._consuming = True
 
         await bus.stop_consuming()
 
-        assert bus._consuming is False
+        assert bus._consumer._consuming is False
 
     @pytest.mark.asyncio
     async def test_stop_consuming_when_already_stopped(self) -> None:
@@ -193,11 +193,11 @@ class TestRabbitMQStopConsuming:
         from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
         bus = RabbitMQEventBus()
-        assert bus._consuming is False
+        assert bus._consumer._consuming is False
 
         await bus.stop_consuming()
 
-        assert bus._consuming is False
+        assert bus._consumer._consuming is False
 
 
 class TestRabbitMQStartConsumingInBackground:

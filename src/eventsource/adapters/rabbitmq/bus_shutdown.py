@@ -10,11 +10,12 @@ import asyncio
 import contextlib
 import logging
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from eventsource.adapters.rabbitmq.connection import RabbitMQConnectionManager
     from eventsource.adapters.rabbitmq.consumer import RabbitMQConsumer
+    from eventsource.adapters.rabbitmq.topology import RabbitMQTopology
 
 
 class RabbitMQEventBusShutdownMixin:
@@ -23,13 +24,8 @@ class RabbitMQEventBusShutdownMixin:
     _shutdown_initiated: bool
     _logger: logging.Logger
     _consumer: RabbitMQConsumer
-    _consuming: bool
-    _consumer_task: asyncio.Task[None] | None
     _connection_manager: RabbitMQConnectionManager
-    _exchange: Any
-    _dlq_exchange: Any
-    _consumer_queue: Any
-    _dlq_queue: Any
+    _topology: RabbitMQTopology
 
     if TYPE_CHECKING:
 
@@ -176,23 +172,23 @@ class RabbitMQEventBusShutdownMixin:
         """
         self._logger.warning("Forcing disconnect")
 
-        self._consuming = False
+        self._consumer._consuming = False
         self._shutdown_initiated = True
 
         # Cancel consumer task immediately
-        if self._consumer_task:
-            self._consumer_task.cancel()
+        if self._consumer._consumer_task:
+            self._consumer._consumer_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
-                await self._consumer_task
-            self._consumer_task = None
+                await self._consumer._consumer_task
+            self._consumer._consumer_task = None
 
         await self._connection_manager.force_disconnect()
 
         # Clear exchange/queue references
-        self._exchange = None
-        self._dlq_exchange = None
-        self._consumer_queue = None
-        self._dlq_queue = None
+        self._topology._exchange = None
+        self._topology._dlq_exchange = None
+        self._topology._consumer_queue = None
+        self._topology._dlq_queue = None
 
         self._logger.info("Forced disconnect completed")
 

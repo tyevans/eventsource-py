@@ -291,4 +291,4 @@ class TestRabbitMQExchangeDeclaration:
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
 
-        assert bus._exchange is mock_exchange
+        assert bus._topology._exchange is mock_exchange

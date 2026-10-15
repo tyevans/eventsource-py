@@ -41,7 +41,7 @@ class TestGetDLQMessages:
     ) -> None:
         """Test get_dlq_messages returns empty list when not connected."""
         bus = RabbitMQEventBus(config=config_with_dlq)
-        assert bus._connected is False
+        assert bus._connection_manager._connected is False
 
         result = await bus.get_dlq_messages(limit=10)
 
@@ -53,7 +53,7 @@ class TestGetDLQMessages:
     ) -> None:
         """Test get_dlq_messages returns empty list when DLQ disabled."""
         bus = RabbitMQEventBus(config=config_without_dlq)
-        bus._connected = True
+        bus._connection_manager._connected = True
 
         result = await bus.get_dlq_messages(limit=10)
 
@@ -65,8 +65,8 @@ class TestGetDLQMessages:
     ) -> None:
         """Test get_dlq_messages returns empty list when channel not initialized."""
         bus = RabbitMQEventBus(config=config_with_dlq)
-        bus._connected = True
-        bus._channel = None
+        bus._connection_manager._connected = True
+        bus._connection_manager._channel = None
 
         result = await bus.get_dlq_messages(limit=10)
 
@@ -78,7 +78,7 @@ class TestGetDLQMessages:
         from eventsource.adapters.rabbitmq import DLQMessage
 
         bus = RabbitMQEventBus(config=config_with_dlq)
-        bus._connected = True
+        bus._connection_manager._connected = True
 
         mock_channel = AsyncMock()
         mock_queue = AsyncMock()
@@ -98,7 +98,7 @@ class TestGetDLQMessages:
         # First call returns message, second call returns None
         mock_queue.get.side_effect = [mock_message, None]
         mock_channel.get_queue.return_value = mock_queue
-        bus._channel = mock_channel
+        bus._connection_manager._channel = mock_channel
 
         result = await bus.get_dlq_messages(limit=10)
 
@@ -120,7 +120,7 @@ class TestGetDLQMessages:
     ) -> None:
         """Test that messages are rejected with requeue to preserve them."""
         bus = RabbitMQEventBus(config=config_with_dlq)
-        bus._connected = True
+        bus._connection_manager._connected = True
 
         mock_channel = AsyncMock()
         mock_queue = AsyncMock()
@@ -132,7 +132,7 @@ class TestGetDLQMessages:
 
         mock_queue.get.side_effect = [mock_message, None]
         mock_channel.get_queue.return_value = mock_queue
-        bus._channel = mock_channel
+        bus._connection_manager._channel = mock_channel
 
         await bus.get_dlq_messages(limit=10)
 
@@ -143,7 +143,7 @@ class TestGetDLQMessages:
     async def test_respects_limit_parameter(self, config_with_dlq: RabbitMQEventBusConfig) -> None:
         """Test that limit parameter is respected."""
         bus = RabbitMQEventBus(config=config_with_dlq)
-        bus._connected = True
+        bus._connection_manager._connected = True
 
         mock_channel = AsyncMock()
         mock_queue = AsyncMock()
@@ -159,7 +159,7 @@ class TestGetDLQMessages:
 
         mock_queue.get.side_effect = messages + [None]
         mock_channel.get_queue.return_value = mock_queue
-        bus._channel = mock_channel
+        bus._connection_manager._channel = mock_channel
 
         result = await bus.get_dlq_messages(limit=3)
 
@@ -170,11 +170,11 @@ class TestGetDLQMessages:
     async def test_handles_exception(self, config_with_dlq: RabbitMQEventBusConfig) -> None:
         """Test that exceptions are handled gracefully."""
         bus = RabbitMQEventBus(config=config_with_dlq)
-        bus._connected = True
+        bus._connection_manager._connected = True
 
         mock_channel = AsyncMock()
         mock_channel.get_queue.side_effect = Exception("Queue not found")
-        bus._channel = mock_channel
+        bus._connection_manager._channel = mock_channel
 
         result = await bus.get_dlq_messages(limit=10)
 
@@ -186,7 +186,7 @@ class TestGetDLQMessages:
     ) -> None:
         """Test that string retry count is converted to int."""
         bus = RabbitMQEventBus(config=config_with_dlq)
-        bus._connected = True
+        bus._connection_manager._connected = True
 
         mock_channel = AsyncMock()
         mock_queue = AsyncMock()
@@ -198,7 +198,7 @@ class TestGetDLQMessages:
 
         mock_queue.get.side_effect = [mock_message, None]
         mock_channel.get_queue.return_value = mock_queue
-        bus._channel = mock_channel
+        bus._connection_manager._channel = mock_channel
 
         result = await bus.get_dlq_messages(limit=10)
 

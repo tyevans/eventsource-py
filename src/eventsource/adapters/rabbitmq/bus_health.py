@@ -17,10 +17,9 @@ from eventsource.adapters.rabbitmq.models import (
 )
 
 if TYPE_CHECKING:
-    from aio_pika.abc import AbstractQueue, AbstractRobustChannel
-
     from eventsource.adapters.rabbitmq.config import RabbitMQEventBusConfig
     from eventsource.adapters.rabbitmq.connection import RabbitMQConnectionManager
+    from eventsource.adapters.rabbitmq.consumer import RabbitMQConsumer
     from eventsource.adapters.rabbitmq.topology import RabbitMQTopology
 
 
@@ -29,12 +28,9 @@ class RabbitMQEventBusHealthMixin:
 
     _stats: RabbitMQEventBusStats
     _config: RabbitMQEventBusConfig
-    _connected: bool
-    _channel: AbstractRobustChannel | None
     _topology: RabbitMQTopology
     _connection_manager: RabbitMQConnectionManager
-    _consumer_queue: AbstractQueue | None
-    _consuming: bool
+    _consumer: RabbitMQConsumer
     _logger: logging.Logger
 
     if TYPE_CHECKING:
@@ -145,7 +141,7 @@ class RabbitMQEventBusHealthMixin:
             >>> print(bus.stats.events_published)  # 0
         """
         # Preserve connected_at if still connected to maintain accurate uptime
-        connected_at = self._stats.connected_at if self._connected else None
+        connected_at = self._stats.connected_at if self._connection_manager._connected else None
         self._stats = RabbitMQEventBusStats(connected_at=connected_at)
         # Keep the connection manager's stats reference in sync -- it was
         # handed the original instance at construction time.
@@ -177,7 +173,7 @@ class RabbitMQEventBusHealthMixin:
             >>> print(f"State: {info.state}, Consumers: {info.consumer_count}")
         """
         # Handle not connected state
-        if not self._connected or not self._channel:
+        if not self._connection_manager._connected or not self._connection_manager._channel:
             return QueueInfo(
                 name=self._config.queue_name,
                 message_count=0,
@@ -225,7 +221,7 @@ class RabbitMQEventBusHealthMixin:
             >>> result = await bus.health_check()
             >>> if result.healthy:
             ...     print("Event bus is healthy")
-            ... else:
+            >>> else:
             ...     print(f"Unhealthy: {result.error}")
             ...     print(f"Details: {result.details}")
         """
@@ -236,9 +232,12 @@ class RabbitMQEventBusHealthMixin:
         connection_status = connection_slice["connection_status"]
         channel_status = connection_slice["channel_status"]
 
+        channel = self._connection_manager._channel
+        consumer_queue = self._topology.consumer_queue
+
         # Check consumer queue accessibility (passive declare owned by RabbitMQTopology)
         queue_status = "not_initialized"
-        if self._consumer_queue and self._channel and not self._channel.is_closed:
+        if consumer_queue and channel and not channel.is_closed:
             queue_info = await self._topology.queue_health(self._config.queue_name)
             if queue_info is None:
                 # Channel closed between our gate above and the topology call --
@@ -254,17 +253,17 @@ class RabbitMQEventBusHealthMixin:
                 error_messages.append(f"Queue check failed: {queue_info.error}")
             else:
                 queue_status = "accessible"
-        elif not self._consumer_queue:
+        elif not consumer_queue:
             queue_status = "not_initialized"
             # Don't mark as unhealthy if we simply haven't connected yet
-            if self._connected:
+            if self._connection_manager._connected:
                 healthy = False
                 error_messages.append("Consumer queue not initialized")
 
         # Check DLQ status if enabled (passive declare owned by RabbitMQTopology)
         dlq_status: str | None = None
         if self._config.enable_dlq:
-            if self._channel and not self._channel.is_closed:
+            if channel and not channel.is_closed:
                 dlq_info = await self._topology.queue_health(self._config.dlq_queue_name)
                 if dlq_info is None:
                     # Channel closed between our gate above and the topology
@@ -295,7 +294,7 @@ class RabbitMQEventBusHealthMixin:
             "exchange": self._config.exchange_name,
             "queue": self._config.queue_name,
             "consumer_group": self._config.consumer_group,
-            "consuming": self._consuming,
+            "consuming": self._consumer._consuming,
             "dlq_enabled": self._config.enable_dlq,
         }
 
