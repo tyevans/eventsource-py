@@ -519,4 +519,7 @@ async def test_event_bus_published_of_type() -> None:
 
 Use `harness.clear_published_events()`, `bus.clear_published_events()`, or
 `recording_bus.clear_published_events()` between phases of a test when you want
-to reset the recorded publication history.
+to reset the recorded publication history. When using the functional BDD helpers
+from `eventsource.testing.bdd`, pass `event_type=...` to
+`then_event_count(harness, count, event_type=MoneyDeposited)` to assert the
+count of a specific event type rather than the total event count.
