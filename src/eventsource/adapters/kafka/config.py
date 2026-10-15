@@ -9,56 +9,12 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-# Pinned explicitly so log records from this module carry the same public
-# logger name as the rest of the Kafka backend.
 logger = logging.getLogger("eventsource.bus.kafka")
 
 
 @dataclass
 class KafkaEventBusConfig:
-    """Configuration for Kafka event bus.
-
-    Provides settings for connecting to Apache Kafka and managing
-    producer, consumer, retry, DLQ, security, and observability behavior.
-
-    Attributes:
-        bootstrap_servers: Kafka broker addresses (comma-separated).
-        topic_prefix: Prefix for topic names ({topic_prefix}.stream).
-        consumer_group: Consumer group ID for coordinated consumption.
-        consumer_name: Unique name for this consumer instance.
-        acks: Producer acknowledgment level ("0", "1", or "all").
-        compression_type: Message compression (None, "gzip", "snappy", "lz4", "zstd").
-        producer_max_batch_bytes: Max bytes of a producer batch before send.
-        linger_ms: Time to wait for additional messages before sending batch.
-        auto_offset_reset: Offset reset policy ("earliest" or "latest").
-        session_timeout_ms: Consumer session timeout in milliseconds.
-        heartbeat_interval_ms: Consumer heartbeat interval in milliseconds.
-        max_poll_interval_ms: Max time between poll calls in milliseconds.
-        fetch_max_bytes: Max bytes returned per fetch across partitions.
-        max_partition_fetch_bytes: Max bytes returned per partition in a fetch.
-        max_retries: Maximum retry attempts before sending to DLQ.
-        retry_base_delay: Base delay in seconds for exponential backoff.
-        retry_max_delay: Maximum delay in seconds between retries.
-        retry_jitter: Fraction of delay to randomize (0.0 to 1.0).
-        enable_dlq: Whether to enable dead letter queue.
-        dlq_topic_suffix: Suffix for DLQ topic name.
-        dlq_consumer_group: Consumer group for DLQ processing.
-        dlq_max_replay_attempts: Maximum times a DLQ message can be replayed.
-        security_protocol: "PLAINTEXT", "SSL", "SASL_PLAINTEXT", or "SASL_SSL".
-        sasl_mechanism: "PLAIN", "SCRAM-SHA-256", or "SCRAM-SHA-512".
-        sasl_username: Username for SASL authentication.
-        sasl_password: Password for SASL authentication.
-        ssl_cafile: Path to CA certificate file.
-        ssl_certfile: Path to client certificate for mTLS.
-        ssl_keyfile: Path to client private key for mTLS.
-        ssl_check_hostname: Whether to verify server hostname.
-        enable_tracing: Enable OpenTelemetry tracing if available.
-        enable_metrics: Enable OpenTelemetry metrics if available.
-        shutdown_timeout: Timeout in seconds for graceful shutdown.
-
-    Raises:
-        ValueError: If security configuration is invalid.
-    """
+    """Configuration for Kafka event bus (connection, producer/consumer, retry, DLQ, security)."""
 
     # Connection
     bootstrap_servers: str = "localhost:9092"
@@ -89,8 +45,8 @@ class KafkaEventBusConfig:
     # DLQ settings
     enable_dlq: bool = True
     dlq_topic_suffix: str = ".dlq"
-    dlq_consumer_group: str | None = None  # Consumer group for DLQ processing
-    dlq_max_replay_attempts: int = 3  # Maximum times a message can be replayed
+    dlq_consumer_group: str | None = None
+    dlq_max_replay_attempts: int = 3
 
     # Security
     security_protocol: str = "PLAINTEXT"
@@ -102,37 +58,19 @@ class KafkaEventBusConfig:
     ssl_keyfile: str | None = None
     ssl_check_hostname: bool = True
 
-    # Observability
+    # Observability & Shutdown
     enable_tracing: bool = True
     enable_metrics: bool = True
-
-    # Shutdown
     shutdown_timeout: float = 30.0
 
     def __post_init__(self) -> None:
-        """Auto-generate consumer_name if not provided and validate configuration.
-
-        Raises:
-            ValueError: If security configuration is invalid.
-        """
+        """Auto-generate consumer_name if not provided and validate security configuration."""
         if self.consumer_name is None:
-            hostname = socket.gethostname()
-            unique_id = uuid.uuid4().hex[:8]
-            self.consumer_name = f"{hostname}-{unique_id}"
-
-        # Validate security configuration
+            self.consumer_name = f"{socket.gethostname()}-{uuid.uuid4().hex[:8]}"
         self._validate_security_config()
 
     def _validate_security_config(self) -> None:
-        """Validate security configuration consistency.
-
-        Validates that the security protocol, SASL mechanism, and SSL/TLS
-        configuration are consistent and complete. Logs warnings for insecure
-        configurations that may be acceptable for development but not production.
-
-        Raises:
-            ValueError: If security configuration is invalid.
-        """
+        """Validate security protocol, SASL mechanism, and SSL/TLS configuration."""
         valid_protocols = {"PLAINTEXT", "SSL", "SASL_PLAINTEXT", "SASL_SSL"}
         if self.security_protocol not in valid_protocols:
             raise ValueError(
@@ -140,7 +78,6 @@ class KafkaEventBusConfig:
                 f"Must be one of: {valid_protocols}"
             )
 
-        # SASL validation
         if self.security_protocol.startswith("SASL_"):
             valid_mechanisms = {"PLAIN", "SCRAM-SHA-256", "SCRAM-SHA-512"}
             if not self.sasl_mechanism:
@@ -153,14 +90,12 @@ class KafkaEventBusConfig:
             if not self.sasl_username or not self.sasl_password:
                 raise ValueError("sasl_username and sasl_password required for SASL authentication")
 
-        # SSL file validation for mTLS
         if self.security_protocol in ("SSL", "SASL_SSL"):
             if self.ssl_certfile and not self.ssl_keyfile:
                 raise ValueError("ssl_keyfile required when ssl_certfile is provided (mTLS)")
             if self.ssl_keyfile and not self.ssl_certfile:
                 raise ValueError("ssl_certfile required when ssl_keyfile is provided (mTLS)")
 
-        # Warn about insecure configurations
         if self.security_protocol == "PLAINTEXT":
             logger.warning("Using PLAINTEXT security protocol - not recommended for production")
         if self.security_protocol == "SASL_PLAINTEXT":
@@ -179,11 +114,7 @@ class KafkaEventBusConfig:
         return f"{self.topic_name}{self.dlq_topic_suffix}"
 
     def get_producer_config(self) -> dict[str, Any]:
-        """Get aiokafka producer configuration dict.
-
-        Returns:
-            Dictionary of producer configuration for AIOKafkaProducer.
-        """
+        """Get aiokafka producer configuration dict."""
         config: dict[str, Any] = {
             "bootstrap_servers": self.bootstrap_servers,
             "acks": self.acks,
@@ -195,26 +126,7 @@ class KafkaEventBusConfig:
         return config
 
     def get_consumer_config(self, **overrides: Any) -> dict[str, Any]:
-        """Get aiokafka consumer configuration dict.
-
-        This is the single construction path for every ``AIOKafkaConsumer``
-        built from this config -- the long-lived main consumer (via
-        :class:`~eventsource.adapters.kafka.connection.KafkaConnectionManager`)
-        and every short-lived DLQ consumer (via
-        :class:`~eventsource.adapters.kafka.dlq.KafkaDLQAdmin`) both call this
-        method so a field added here reaches every consumer automatically.
-        Callers that need different values for a specific client (e.g. a DLQ
-        consumer's ``group_id`` or a one-shot ``consumer_timeout_ms``) pass
-        them as keyword overrides rather than constructing a second dict.
-
-        Args:
-            **overrides: Keys to override or add on top of the derived
-                defaults, e.g. ``group_id=None`` for an unmanaged DLQ
-                consumer or ``consumer_timeout_ms=5000`` for a bounded poll.
-
-        Returns:
-            Dictionary of consumer configuration for AIOKafkaConsumer.
-        """
+        """Get aiokafka consumer configuration dict with optional overrides."""
         config: dict[str, Any] = {
             "bootstrap_servers": self.bootstrap_servers,
             "group_id": self.consumer_group,
@@ -225,34 +137,20 @@ class KafkaEventBusConfig:
             "max_poll_interval_ms": self.max_poll_interval_ms,
             "fetch_max_bytes": self.fetch_max_bytes,
             "max_partition_fetch_bytes": self.max_partition_fetch_bytes,
-            "enable_auto_commit": False,  # Manual commit for at-least-once
+            "enable_auto_commit": False,
         }
         self._add_security_config(config)
         config.update(overrides)
         return config
 
     def get_security_config(self) -> dict[str, Any]:
-        """Get just the security portion of the config as its own dict.
-
-        For code paths that need to build Kafka client kwargs by some means
-        other than :meth:`get_producer_config` / :meth:`get_consumer_config`
-        (e.g. clients that intentionally omit consumer-specific settings).
-        Delegates to :meth:`_add_security_config` so there is exactly one
-        derivation of the security dict, not a second copy that can drift.
-
-        Returns:
-            Dictionary of security settings.
-        """
+        """Get the security portion of the config as its own dict."""
         config: dict[str, Any] = {}
         self._add_security_config(config)
         return config
 
     def _add_security_config(self, config: dict[str, Any]) -> None:
-        """Add security configuration to a config dict.
-
-        Args:
-            config: The configuration dictionary to add security settings to.
-        """
+        """Add security configuration to a config dict."""
         config["security_protocol"] = self.security_protocol
 
         if self.sasl_mechanism:
@@ -268,49 +166,25 @@ class KafkaEventBusConfig:
         if self.ssl_keyfile:
             config["ssl_keyfile"] = self.ssl_keyfile
 
-        # Only set ssl_check_hostname if using SSL
         if "SSL" in self.security_protocol:
             config["ssl_check_hostname"] = self.ssl_check_hostname
 
     def create_ssl_context(self) -> ssl.SSLContext | None:
-        """Create an SSL context from configuration.
-
-        Creates and configures an SSLContext based on the security settings.
-        This is useful when you need to customize the SSL context beyond what
-        aiokafka provides by default, or for testing SSL configurations.
-
-        Returns:
-            Configured SSLContext if using SSL/TLS, None otherwise.
-
-        Raises:
-            ssl.SSLError: If certificate files are invalid or cannot be loaded.
-            FileNotFoundError: If specified certificate files do not exist.
-
-        Example:
-            >>> config = KafkaEventBusConfig(
-            ...     security_protocol="SSL",
-            ...     ssl_cafile="/path/to/ca.crt",
-            ... )
-            >>> context = config.create_ssl_context()
-            >>> assert context is not None
-        """
+        """Create and configure an SSLContext if using SSL/TLS, else None."""
         if "SSL" not in self.security_protocol:
             return None
 
         context = ssl.create_default_context()
 
-        # Load CA certificates
         if self.ssl_cafile:
             context.load_verify_locations(self.ssl_cafile)
 
-        # Load client certificate for mTLS
         if self.ssl_certfile and self.ssl_keyfile:
             context.load_cert_chain(
                 certfile=self.ssl_certfile,
                 keyfile=self.ssl_keyfile,
             )
 
-        # Configure hostname verification
         if not self.ssl_check_hostname:
             context.check_hostname = False
             context.verify_mode = ssl.CERT_NONE
@@ -321,25 +195,7 @@ class KafkaEventBusConfig:
         return context
 
     def get_sanitized_config(self) -> dict[str, Any]:
-        """Get configuration with sensitive values redacted.
-
-        Returns a copy of the configuration suitable for logging and debugging,
-        with passwords and private key paths replaced with placeholder values.
-        This prevents accidental credential exposure in logs.
-
-        Returns:
-            Configuration dictionary safe for logging. Sensitive values
-            (sasl_password, ssl_keyfile) are redacted with "***".
-
-        Example:
-            >>> config = KafkaEventBusConfig(
-            ...     sasl_password="secret123",
-            ...     ssl_keyfile="/path/to/key",
-            ... )
-            >>> sanitized = config.get_sanitized_config()
-            >>> assert sanitized["sasl_password"] == "***"
-            >>> assert sanitized["ssl_keyfile"] == "***"
-        """
+        """Get configuration dictionary safe for logging with secrets redacted."""
         return {
             "bootstrap_servers": self.bootstrap_servers,
             "topic_prefix": self.topic_prefix,

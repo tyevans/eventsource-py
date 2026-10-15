@@ -1,12 +1,4 @@
-"""Split-phase Kafka publish (send handoff, then batched ack-await).
-
-Extracted from ``KafkaEventBus`` so the send/ack mechanics -- including the
-0.6.0 fixes for per-aggregate ordering and plain-``asyncio.Future`` handling
-around ``producer.send()`` -- live in one focused collaborator. The facade's
-``publish()`` remains the public orchestrator (guard rails, timing, and
-aggregate statistics); it delegates the actual event handoff to
-``KafkaPublisher.publish_all()``.
-"""
+"""Split-phase Kafka publish (send handoff, then batched ack-await)."""
 
 from __future__ import annotations
 
@@ -36,7 +28,6 @@ if TYPE_CHECKING:
     from eventsource.adapters.kafka.metrics import KafkaEventBusMetrics
     from eventsource.adapters.kafka.models import KafkaEventBusStats
 
-# OpenTelemetry propagation imports -- kept optional, matching bus.py.
 try:
     from opentelemetry.propagate import inject
     from opentelemetry.trace import Status, StatusCode
@@ -48,8 +39,6 @@ except ImportError:
     StatusCode = None  # type: ignore[assignment, misc]
     PROPAGATION_AVAILABLE = False
 
-# Pinned explicitly to keep the public logger name stable across the
-# bus/kafka package split.
 logger = logging.getLogger("eventsource.bus.kafka")
 
 
@@ -57,10 +46,9 @@ class KafkaPublisher:
     """Owns the send/ack mechanics for publishing events to Kafka.
 
     Publishing is split into two phases: every event is handed to
-    ``producer.send()`` sequentially (never gathered concurrently, since
-    concurrent sends could reorder same-partition-key messages across an
-    await boundary), then acknowledgments are awaited -- or, for background
-    publishes, tracked via a done-callback on the returned future.
+    ``producer.send()`` sequentially to preserve per-aggregate ordering,
+    then acknowledgments are awaited (or tracked via done-callback for
+    background publishes).
     """
 
     def __init__(
@@ -73,17 +61,6 @@ class KafkaPublisher:
         tracer: Tracer,
         enable_tracing: bool,
     ) -> None:
-        """Initialize the publisher.
-
-        Args:
-            config: Kafka configuration (topic name, etc).
-            connection: Connection manager owning the active producer.
-            serializer: Event serializer.
-            stats: Shared statistics object (mutated in place on errors).
-            metrics: Shared metrics container, or None if metrics disabled.
-            tracer: Tracer used to create publish spans.
-            enable_tracing: Whether tracing is enabled for this bus instance.
-        """
         self._config = config
         self._connection = connection
         self._serializer = serializer
@@ -97,28 +74,11 @@ class KafkaPublisher:
         events: Sequence[DomainEvent],
         background: bool,
     ) -> None:
-        """Hand every event to the producer, then resolve delivery.
-
-        Sends are issued in a plain sequential loop (not gathered) so that
-        same-partition-key ordering is preserved. For durable publishes, acks
-        are then awaited together via ``asyncio.gather``. For background
-        publishes, each future is tracked via a done-callback instead of
-        being awaited.
-
-        Args:
-            events: The domain events to publish, in order.
-            background: If True, track delivery via callback instead of
-                awaiting acknowledgment.
-        """
-        pending = []
-        for event in events:
-            pending.append(await self._begin_publish_single_event(event, background))
+        """Hand every event to the producer sequentially, then resolve delivery."""
+        pending = [await self._begin_publish_single_event(event, background) for event in events]
 
         if background:
             for future, published_event, span in pending:
-                # For background publishes, add a callback to track delivery
-                # asynchronously. The span closes immediately after handoff,
-                # matching non-batched background semantics.
                 self._track_background_publish(future, published_event, span)
                 if span:
                     span.end()
@@ -142,11 +102,7 @@ class KafkaPublisher:
                 },
             )
 
-        logger.error(
-            "Failed to publish event",
-            extra={"error": str(error)},
-            exc_info=True,
-        )
+        logger.error("Failed to publish event", extra={"error": str(error)}, exc_info=True)
         self._stats.last_error_at = datetime.now(UTC)
 
     async def _begin_publish_single_event(
@@ -154,12 +110,7 @@ class KafkaPublisher:
         event: DomainEvent,
         background: bool,
     ) -> tuple[Any, DomainEvent, Any]:
-        """Serialize and hand a single event to the producer.
-
-        Returns a ``(future, event, span)`` tuple where ``span`` is closed
-        by the caller once acknowledgment is awaited or background tracking
-        is attached.
-        """
+        """Serialize and hand a single event to the producer."""
         producer = self._connection.require_producer()
 
         key = self._get_partition_key(event)
@@ -250,23 +201,12 @@ class KafkaPublisher:
         event: DomainEvent,
         span: Any,
     ) -> None:
-        """Track a background publish using a callback.
-
-        Adds a callback to the future to track delivery success/failure
-        for background publishes. This ensures that errors are not silently
-        lost and metrics are updated correctly.
-
-        Args:
-            future: The future from producer.send()
-            event: The domain event being published (for metrics).
-            span: The current tracing span, or None.
-        """
+        """Track a background publish using a done-callback on the future."""
         event_type = event.event_type
         event_id = str(event.event_id)
         topic = self._config.topic_name
 
         def on_send_success(record_metadata: Any) -> None:
-            """Callback for successful background publish."""
             logger.debug(
                 "Background event published successfully",
                 extra={
@@ -277,8 +217,6 @@ class KafkaPublisher:
                     "event_id": event_id,
                 },
             )
-
-            # Increment messages_published counter on confirmed success
             if self._metrics:
                 self._metrics.messages_published.add(
                     1,
@@ -290,20 +228,12 @@ class KafkaPublisher:
                 )
 
         def on_send_error(exc: Exception) -> None:
-            """Callback for failed background publish."""
             logger.error(
                 "Background event publish failed",
-                extra={
-                    "error": str(exc),
-                    "event_type": event_type,
-                    "event_id": event_id,
-                },
-                exc_info=False,  # Exception is passed, don't need traceback
+                extra={"error": str(exc), "event_type": event_type, "event_id": event_id},
+                exc_info=False,
             )
-
             self._stats.last_error_at = datetime.now(UTC)
-
-            # Increment publish_errors counter
             if self._metrics:
                 self._metrics.publish_errors.add(
                     1,
@@ -314,14 +244,10 @@ class KafkaPublisher:
                         "error.type": type(exc).__name__,
                     },
                 )
-
             if span:
                 span.set_status(Status(StatusCode.ERROR, str(exc)))
                 span.record_exception(exc)
 
-        # Track the result. producer.send() returns a plain asyncio.Future,
-        # which only supports add_done_callback (no separate success/error
-        # callback registration), so dispatch to the right handler ourselves.
         def on_done(fut: asyncio.Future[Any]) -> None:
             if fut.cancelled():
                 return
@@ -334,42 +260,15 @@ class KafkaPublisher:
         future.add_done_callback(on_done)
 
     def _get_partition_key(self, event: DomainEvent) -> bytes:
-        """Get the partition key for an event.
-
-        Uses aggregate_id to ensure events for the same aggregate
-        are sent to the same partition, preserving order.
-
-        Args:
-            event: The domain event.
-
-        Returns:
-            Partition key as bytes.
-        """
+        """Return aggregate_id encoded as UTF-8 bytes for partition ordering."""
         return str(event.aggregate_id).encode("utf-8")
 
     def _serialize_event(self, event: DomainEvent) -> bytes:
-        """Serialize an event to bytes using the configured serializer.
-
-        Args:
-            event: The domain event to serialize.
-
-        Returns:
-            Serialized event as bytes (format depends on serializer).
-        """
+        """Serialize an event to bytes using the configured serializer."""
         return self._serializer.serialize(event)
 
     def _create_headers(self, event: DomainEvent) -> list[tuple[str, bytes]]:
-        """Create Kafka headers from event metadata.
-
-        Headers enable routing and filtering without deserializing the
-        message body.
-
-        Args:
-            event: The domain event.
-
-        Returns:
-            List of header tuples (name, value).
-        """
+        """Create Kafka headers from event metadata."""
         headers: list[tuple[str, bytes]] = [
             ("event_id", str(event.event_id).encode("utf-8")),
             ("event_type", event.event_type.encode("utf-8")),
@@ -379,13 +278,10 @@ class KafkaPublisher:
             ("occurred_at", event.occurred_at.isoformat().encode("utf-8")),
             ("correlation_id", str(event.correlation_id).encode("utf-8")),
         ]
-
-        # Optional headers
         if event.tenant_id:
             headers.append(("tenant_id", str(event.tenant_id).encode("utf-8")))
         if event.causation_id:
             headers.append(("causation_id", str(event.causation_id).encode("utf-8")))
         if event.actor_id:
             headers.append(("actor_id", str(event.actor_id).encode("utf-8")))
-
         return headers
