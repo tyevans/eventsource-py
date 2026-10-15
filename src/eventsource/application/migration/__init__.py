@@ -1,8 +1,4 @@
-"""Multi-tenant live migration system for zero-downtime tenant event store transitions.
-
-Key Components: MigrationCoordinator, TenantStoreRouter, BulkCopier, DualWriteInterceptor, CutoverManager.
-Phases: PENDING -> BULK_COPY -> DUAL_WRITE -> CUTOVER -> COMPLETED.
-"""
+"""Multi-tenant live migration system for zero-downtime tenant event store transitions."""
 
 from eventsource.application.migration.bulk_copier import BulkCopier
 from eventsource.application.migration.circuit_breaker import (
@@ -29,13 +25,9 @@ from eventsource.application.migration.error_classification import (
     ErrorSeverity,
     RetryConfig,
 )
-from eventsource.application.migration.error_handling import (
-    ErrorHandler,
-    classify_exception,
-)
+from eventsource.application.migration.error_handling import ErrorHandler, classify_exception
 from eventsource.application.migration.exceptions import (
     CircuitBreakerOpenError,
-    # Core exceptions
     ConsistencyError,
     CutoverError,
     CutoverTimeoutError,
@@ -86,8 +78,7 @@ from eventsource.ports.migration.models import (
     TenantRouting,
 )
 
-__all__ = [
-    # Models
+__all__ = [  # fmt: skip
     "Migration",
     "MigrationConfig",
     "MigrationPhase",
@@ -100,12 +91,10 @@ __all__ = [
     "PositionMapping",
     "SyncLag",
     "CutoverResult",
-    # Write Pause
     "WritePauseManager",
     "WritePausedError",
     "PauseMetrics",
     "PauseState",
-    # Exceptions
     "MigrationError",
     "MigrationNotFoundError",
     "MigrationAlreadyExistsError",
@@ -114,7 +103,6 @@ __all__ = [
     "CutoverTimeoutError",
     "ConsistencyError",
     "PositionMappingError",
-    # Error Classification (P4-004)
     "ErrorSeverity",
     "ErrorRecoverability",
     "ErrorClassification",
@@ -128,7 +116,6 @@ __all__ = [
     "TRANSIENT_RETRY_CONFIG",
     "CONNECTIVITY_RETRY_CONFIG",
     "CUTOVER_RETRY_CONFIG",
-    # Components
     "MigrationCoordinator",
     "TenantStoreRouter",
     "BulkCopier",
@@ -145,15 +132,12 @@ __all__ = [
     "SyncLagTracker",
     "LagSample",
     "LagStats",
-    # Consistency Verification
     "VerificationLevel",
     "VerificationReport",
     "StreamConsistency",
     "ConsistencyViolation",
-    # Status Streaming (P4-002)
     "StatusStreamer",
     "StatusStreamManager",
-    # Migration Metrics (P4-003)
     "MigrationMetrics",
     "MigrationMetricSnapshot",
     "ActiveMigrationsTracker",

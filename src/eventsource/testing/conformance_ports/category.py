@@ -29,16 +29,10 @@ class CategoryQueryConformance(ABC):
     async def test_only_named_category_returned(self, store: _AppenderCategory) -> None:
         stream_a = make_stream(category="CategoryA", aggregate_id=uuid4())
         stream_b = make_stream(category="CategoryB", aggregate_id=uuid4())
-        await store.append(
-            stream_a, [ConformanceEvent(aggregate_id=stream_a.aggregate_id)], ExpectedVersion.any_()
-        )
-        await store.append(
-            stream_b, [ConformanceEvent(aggregate_id=stream_b.aggregate_id)], ExpectedVersion.any_()
-        )
-        await store.append(
-            stream_a, [ConformanceEvent(aggregate_id=stream_a.aggregate_id)], ExpectedVersion.any_()
-        )
-
+        any_ver = ExpectedVersion.any_()
+        await store.append(stream_a, [ConformanceEvent(aggregate_id=stream_a.aggregate_id)], any_ver)  # fmt: skip
+        await store.append(stream_b, [ConformanceEvent(aggregate_id=stream_b.aggregate_id)], any_ver)  # fmt: skip
+        await store.append(stream_a, [ConformanceEvent(aggregate_id=stream_a.aggregate_id)], any_ver)  # fmt: skip
         envelopes = await collect(store.read_category("CategoryA"))
         assert len(envelopes) == 2
         assert all(e.stream_id.category == "CategoryA" for e in envelopes)
@@ -48,23 +42,17 @@ class CategoryQueryConformance(ABC):
         for i in range(4):
             ev = ConformanceEvent(aggregate_id=stream.aggregate_id, payload=str(i))
             await store.append(stream, [ev], ExpectedVersion.any_())
-
         envelopes = await collect(store.read_category("Ordered"))
         stored_ats = [e.stored_at for e in envelopes]
         assert stored_ats == sorted(stored_ats)
 
     async def test_from_timestamp_honored(self, store: _AppenderCategory) -> None:
         stream = make_stream(category="Timestamped")
-        early_ev = ConformanceEvent(aggregate_id=stream.aggregate_id, payload="early")
-        await store.append(stream, [early_ev], ExpectedVersion.any_())
+        await store.append(stream, [ConformanceEvent(aggregate_id=stream.aggregate_id, payload="early")], ExpectedVersion.any_())  # fmt: skip
         early_envelopes = await collect(store.read_category("Timestamped"))
         cutoff = early_envelopes[0].stored_at + timedelta(milliseconds=1)
-
         await asyncio.sleep(0.01)
-
-        late_ev = ConformanceEvent(aggregate_id=stream.aggregate_id, payload="late")
-        await store.append(stream, [late_ev], ExpectedVersion.any_())
-
+        await store.append(stream, [ConformanceEvent(aggregate_id=stream.aggregate_id, payload="late")], ExpectedVersion.any_())  # fmt: skip
         opts = CategoryReadOptions(from_timestamp=cutoff)
         envelopes = await collect(store.read_category("Timestamped", opts))
         assert [e.event.payload for e in envelopes] == ["late"]  # type: ignore[attr-defined]
@@ -74,32 +62,21 @@ class CategoryQueryConformance(ABC):
     ) -> None:
         """The same instant expressed in another timezone must filter the same."""
         stream = make_stream(category="Offsets")
-        early_ev = ConformanceEvent(aggregate_id=stream.aggregate_id, payload="early")
-        await store.append(stream, [early_ev], ExpectedVersion.any_())
+        await store.append(stream, [ConformanceEvent(aggregate_id=stream.aggregate_id, payload="early")], ExpectedVersion.any_())  # fmt: skip
         early_envelopes = await collect(store.read_category("Offsets"))
         cutoff = early_envelopes[0].stored_at + timedelta(milliseconds=1)
-
         await asyncio.sleep(0.01)
-
-        late_ev = ConformanceEvent(aggregate_id=stream.aggregate_id, payload="late")
-        await store.append(stream, [late_ev], ExpectedVersion.any_())
-
+        await store.append(stream, [ConformanceEvent(aggregate_id=stream.aggregate_id, payload="late")], ExpectedVersion.any_())  # fmt: skip
         shifted = cutoff.astimezone(timezone(timedelta(hours=5)))
-        envelopes = await collect(
-            store.read_category("Offsets", CategoryReadOptions(from_timestamp=shifted))
-        )
+        envelopes = await collect(store.read_category("Offsets", CategoryReadOptions(from_timestamp=shifted)))  # fmt: skip
         assert [e.event.payload for e in envelopes] == ["late"]  # type: ignore[attr-defined]
 
     async def test_from_timestamp_is_inclusive(self, store: _AppenderCategory) -> None:
         stream = make_stream(category="Inclusive")
-        ev = ConformanceEvent(aggregate_id=stream.aggregate_id, payload="boundary")
-        await store.append(stream, [ev], ExpectedVersion.any_())
+        await store.append(stream, [ConformanceEvent(aggregate_id=stream.aggregate_id, payload="boundary")], ExpectedVersion.any_())  # fmt: skip
         envelopes = await collect(store.read_category("Inclusive"))
         boundary_stored_at = envelopes[0].stored_at
-
-        envelopes = await collect(
-            store.read_category("Inclusive", CategoryReadOptions(from_timestamp=boundary_stored_at))
-        )
+        envelopes = await collect(store.read_category("Inclusive", CategoryReadOptions(from_timestamp=boundary_stored_at)))  # fmt: skip
         assert [e.event.payload for e in envelopes] == ["boundary"]  # type: ignore[attr-defined]
 
     async def test_tenant_filter_honored(self, store: _AppenderCategory) -> None:
@@ -109,10 +86,7 @@ class CategoryQueryConformance(ABC):
         ev_b = ConformanceEvent(aggregate_id=stream.aggregate_id, tenant_id=tenant_b, payload="2")
         await store.append(stream, [ev_a], ExpectedVersion.any_())
         await store.append(stream, [ev_b], ExpectedVersion.any_())
-
-        envelopes = await collect(
-            store.read_category("Tenanted", CategoryReadOptions(tenant_id=tenant_a))
-        )
+        envelopes = await collect(store.read_category("Tenanted", CategoryReadOptions(tenant_id=tenant_a)))  # fmt: skip
         assert [e.event.payload for e in envelopes] == ["1"]  # type: ignore[attr-defined]
 
     async def test_limit_honored(self, store: _AppenderCategory) -> None:
@@ -120,7 +94,6 @@ class CategoryQueryConformance(ABC):
         for i in range(5):
             ev = ConformanceEvent(aggregate_id=stream.aggregate_id, payload=str(i))
             await store.append(stream, [ev], ExpectedVersion.any_())
-
         envelopes = await collect(store.read_category("Limited", CategoryReadOptions(limit=2)))
         assert len(envelopes) == 2
 
@@ -131,20 +104,13 @@ class CategoryQueryConformance(ABC):
         await store.append(stream, [ev_0], ExpectedVersion.any_())
         early_envelopes = await collect(store.read_category("Combo"))
         cutoff = early_envelopes[0].stored_at
-
         await asyncio.sleep(0.01)
-
         for i in range(1, 5):
-            ev = ConformanceEvent(
-                aggregate_id=stream.aggregate_id, tenant_id=tenant_a, payload=str(i)
-            )
+            ev = ConformanceEvent(aggregate_id=stream.aggregate_id, tenant_id=tenant_a, payload=str(i))  # fmt: skip
             await store.append(stream, [ev], ExpectedVersion.any_())
         ev_x = ConformanceEvent(aggregate_id=stream.aggregate_id, tenant_id=tenant_b, payload="x")
         await store.append(stream, [ev_x], ExpectedVersion.any_())
-
-        opts = CategoryReadOptions(
-            from_timestamp=cutoff + timedelta(milliseconds=1), tenant_id=tenant_a, limit=2
-        )
+        opts = CategoryReadOptions(from_timestamp=cutoff + timedelta(milliseconds=1), tenant_id=tenant_a, limit=2)  # fmt: skip
         envelopes = await collect(store.read_category("Combo", opts))
         assert [e.event.payload for e in envelopes] == ["1", "2"]  # type: ignore[attr-defined]
 
@@ -153,10 +119,7 @@ class CategoryQueryConformance(ABC):
     ) -> None:
         """Batch ties on storage timestamp must break by stream/insertion order."""
         stream = make_stream(category="Determinism")
-        batch = [
-            ConformanceEvent(aggregate_id=stream.aggregate_id, payload=str(i)) for i in range(5)
-        ]
+        batch = [ConformanceEvent(aggregate_id=stream.aggregate_id, payload=str(i)) for i in range(5)]  # fmt: skip
         await store.append(stream, batch, ExpectedVersion.any_())
-
         envelopes = await collect(store.read_category("Determinism", CategoryReadOptions(limit=3)))
         assert [e.event.payload for e in envelopes] == ["0", "1", "2"]  # type: ignore[attr-defined]

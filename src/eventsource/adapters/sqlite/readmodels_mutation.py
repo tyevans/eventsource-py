@@ -9,7 +9,7 @@ from uuid import UUID
 
 from eventsource.adapters.serialization import json_dumps
 from eventsource.observability import Tracer
-from eventsource.observability.attributes import (
+from eventsource.observability.attributes import (  # fmt: skip
     ATTR_BATCH_SIZE,
     ATTR_DB_OPERATION,
     ATTR_DB_SYSTEM,
@@ -60,15 +60,12 @@ class SQLiteReadModelMutationMixin[TModel: _BaseReadModel]:
             f"ON CONFLICT(id) DO UPDATE SET {update_clause}, version = version + 1"
         )
 
+    def _op_attrs(self, op: str, **extra: Any) -> dict[str, Any]:
+        return {ATTR_READMODEL_TYPE: self._model_class.__name__, ATTR_DB_SYSTEM: "sqlite", ATTR_DB_OPERATION: op, **extra}  # fmt: skip
+
     async def save(self, model: TModel) -> None:
         """Save or update a read model with upsert semantics and version increment."""
-        attrs = {
-            ATTR_READMODEL_TYPE: self._model_class.__name__,
-            ATTR_READMODEL_ID: str(model.id),
-            ATTR_DB_SYSTEM: "sqlite",
-            ATTR_DB_OPERATION: "UPSERT",
-        }
-        with self._tracer.span("eventsource.readmodel.save", attrs):
+        with self._tracer.span("eventsource.readmodel.save", self._op_attrs("UPSERT", **{ATTR_READMODEL_ID: str(model.id)})):  # fmt: skip
             now = datetime.now(UTC)
             await self._connection.execute(
                 self._build_upsert_query(), self._model_to_values(model, now)
@@ -77,16 +74,9 @@ class SQLiteReadModelMutationMixin[TModel: _BaseReadModel]:
 
     async def save_many(self, models: Iterable[TModel]) -> None:
         """Save multiple read models in a batch within a single transaction."""
-        model_list = list(models)
-        if not model_list:
+        if not (model_list := list(models)):
             return
-        attrs = {
-            ATTR_READMODEL_TYPE: self._model_class.__name__,
-            ATTR_BATCH_SIZE: len(model_list),
-            ATTR_DB_SYSTEM: "sqlite",
-            ATTR_DB_OPERATION: "UPSERT",
-        }
-        with self._tracer.span("eventsource.readmodel.save_many", attrs):
+        with self._tracer.span("eventsource.readmodel.save_many", self._op_attrs("UPSERT", **{ATTR_BATCH_SIZE: len(model_list)})):  # fmt: skip
             now, query = datetime.now(UTC), self._build_upsert_query()
             for model in model_list:
                 await self._connection.execute(query, self._model_to_values(model, now))
@@ -94,13 +84,7 @@ class SQLiteReadModelMutationMixin[TModel: _BaseReadModel]:
 
     async def delete(self, id: UUID) -> bool:
         """Hard-delete a read model by ID; returns True if a record was deleted."""
-        attrs = {
-            ATTR_READMODEL_TYPE: self._model_class.__name__,
-            ATTR_READMODEL_ID: str(id),
-            ATTR_DB_SYSTEM: "sqlite",
-            ATTR_DB_OPERATION: "DELETE",
-        }
-        with self._tracer.span("eventsource.readmodel.delete", attrs):
+        with self._tracer.span("eventsource.readmodel.delete", self._op_attrs("DELETE", **{ATTR_READMODEL_ID: str(id)})):  # fmt: skip
             query = f"DELETE FROM {self._table_name} WHERE id = ?"  # nosec B608
             cursor = await self._connection.execute(query, (str(id),))
             await self._connection.commit()
@@ -108,12 +92,7 @@ class SQLiteReadModelMutationMixin[TModel: _BaseReadModel]:
 
     async def truncate(self) -> int:
         """Delete all read models (including soft-deleted) and return count deleted."""
-        attrs = {
-            ATTR_READMODEL_TYPE: self._model_class.__name__,
-            ATTR_DB_SYSTEM: "sqlite",
-            ATTR_DB_OPERATION: "DELETE",
-        }
-        with self._tracer.span("eventsource.readmodel.truncate", attrs):
+        with self._tracer.span("eventsource.readmodel.truncate", self._op_attrs("DELETE")):
             query = f"DELETE FROM {self._table_name}"  # nosec B608
             cursor = await self._connection.execute(query)
             await self._connection.commit()
@@ -121,17 +100,9 @@ class SQLiteReadModelMutationMixin[TModel: _BaseReadModel]:
 
     async def save_with_version_check(self, model: TModel) -> None:
         """Save a read model with optimistic locking version check."""
-        attrs = {
-            ATTR_READMODEL_TYPE: self._model_class.__name__,
-            ATTR_READMODEL_ID: str(model.id),
-            ATTR_DB_SYSTEM: "sqlite",
-            ATTR_DB_OPERATION: "UPDATE",
-            ATTR_EXPECTED_VERSION: model.version,
-        }
+        attrs = self._op_attrs("UPDATE", **{ATTR_READMODEL_ID: str(model.id), ATTR_EXPECTED_VERSION: model.version})  # fmt: skip
         with self._tracer.span("eventsource.readmodel.save_with_version_check", attrs):
-            update_fields = [
-                f for f in self._field_names if f not in ("id", "created_at", "version")
-            ]
+            update_fields = [f for f in self._field_names if f not in ("id", "created_at", "version")]  # fmt: skip
             set_clause = ", ".join(f"{f} = ?" for f in update_fields)
             query = (
                 f"UPDATE {self._table_name} SET {set_clause}, version = version + 1 "  # nosec B608
@@ -151,8 +122,7 @@ class SQLiteReadModelMutationMixin[TModel: _BaseReadModel]:
                     f"SELECT version FROM {self._table_name} WHERE id = ?",  # nosec B608
                     (str(model.id),),
                 )
-                check_row = await check_cursor.fetchone()
-                if check_row is None:
+                if (check_row := await check_cursor.fetchone()) is None:
                     raise ReadModelNotFoundError(model.id)
                 raise ReadModelVersionConflictError(
                     model.id, expected_version=model.version, actual_version=check_row[0]

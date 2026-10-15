@@ -31,87 +31,46 @@ class PauseResumeController:
         """Initialize the pause/resume controller."""
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
-        self._registry = registry
-        self._lifecycle = lifecycle
+        self._registry, self._lifecycle = registry, lifecycle
 
     async def pause(self, name: str, reason: PauseReason | None = None) -> bool:
         """Pause a specific subscription by name, returning True if paused."""
         with self._tracer.span("eventsource.pause_resume.pause", {ATTR_SUBSCRIPTION_NAME: name}):
-            subscription = self._registry.get(name)
-            if subscription is None:
+            if (subscription := self._registry.get(name)) is None:
                 logger.warning("Cannot pause subscription: not found", extra={"subscription": name})
                 return False
-
             if not subscription.is_running:
-                logger.warning(
-                    "Cannot pause subscription: not running",
-                    extra={"subscription": name, "state": subscription.state.value},
-                )
+                logger.warning("Cannot pause subscription: not running", extra={"subscription": name, "state": subscription.state.value})  # fmt: skip
                 return False
-
             try:
                 pause_reason = reason or PauseReason.MANUAL
                 await subscription.pause(reason=pause_reason)
-                logger.info(
-                    "Subscription paused",
-                    extra={
-                        "subscription": name,
-                        "reason": pause_reason.value,
-                        "position": render_position(subscription.last_processed_position),
-                    },
-                )
+                logger.info("Subscription paused", extra={"subscription": name, "reason": pause_reason.value, "position": render_position(subscription.last_processed_position)})  # fmt: skip
                 return True
             except Exception as e:
-                logger.error(
-                    "Failed to pause subscription",
-                    extra={"subscription": name, "error": str(e)},
-                    exc_info=True,
-                )
+                logger.error("Failed to pause subscription", extra={"subscription": name, "error": str(e)}, exc_info=True)  # fmt: skip
                 return False
 
     async def resume(self, name: str) -> bool:
         """Resume a paused subscription by name and process any buffered events."""
         with self._tracer.span("eventsource.pause_resume.resume", {ATTR_SUBSCRIPTION_NAME: name}):
-            subscription = self._registry.get(name)
-            if subscription is None:
-                logger.warning(
-                    "Cannot resume subscription: not found", extra={"subscription": name}
-                )
+            if (subscription := self._registry.get(name)) is None:
+                logger.warning("Cannot resume subscription: not found", extra={"subscription": name})  # fmt: skip
                 return False
-
             if not subscription.is_paused:
-                logger.warning(
-                    "Cannot resume subscription: not paused",
-                    extra={"subscription": name, "state": subscription.state.value},
-                )
+                logger.warning("Cannot resume subscription: not paused", extra={"subscription": name, "state": subscription.state.value})  # fmt: skip
                 return False
-
             try:
                 await subscription.resume()
                 coordinator = self._lifecycle.get_coordinator(name)
                 runner = coordinator.live_runner if coordinator else None
                 if runner and runner.pause_buffer_size > 0:
                     processed = await runner.process_pause_buffer()
-                    logger.info(
-                        "Processed pause buffer after resume",
-                        extra={"subscription": name, "events_processed": processed},
-                    )
-
-                logger.info(
-                    "Subscription resumed",
-                    extra={
-                        "subscription": name,
-                        "position": render_position(subscription.last_processed_position),
-                        "state": subscription.state.value,
-                    },
-                )
+                    logger.info("Processed pause buffer after resume", extra={"subscription": name, "events_processed": processed})  # fmt: skip
+                logger.info("Subscription resumed", extra={"subscription": name, "position": render_position(subscription.last_processed_position), "state": subscription.state.value})  # fmt: skip
                 return True
             except Exception as e:
-                logger.error(
-                    "Failed to resume subscription",
-                    extra={"subscription": name, "error": str(e)},
-                    exc_info=True,
-                )
+                logger.error("Failed to resume subscription", extra={"subscription": name, "error": str(e)}, exc_info=True)  # fmt: skip
                 coordinator = self._lifecycle.get_coordinator(name)
                 if coordinator and coordinator.live_runner:
                     await coordinator.live_runner.clear_buffer()
@@ -127,14 +86,7 @@ class PauseResumeController:
             for name, sub in self._registry.items()
         }
         paused_count = sum(1 for r in results.values() if r)
-        logger.info(
-            "Paused all subscriptions",
-            extra={
-                "reason": pause_reason.value,
-                "paused_count": paused_count,
-                "total_count": len(self._registry),
-            },
-        )
+        logger.info("Paused all subscriptions", extra={"reason": pause_reason.value, "paused_count": paused_count, "total_count": len(self._registry)})  # fmt: skip
         return results
 
     async def resume_all(self) -> dict[str, bool]:
@@ -144,10 +96,7 @@ class PauseResumeController:
             for name, sub in self._registry.items()
         }
         resumed_count = sum(1 for r in results.values() if r)
-        logger.info(
-            "Resumed all subscriptions",
-            extra={"resumed_count": resumed_count, "total_count": len(self._registry)},
-        )
+        logger.info("Resumed all subscriptions", extra={"resumed_count": resumed_count, "total_count": len(self._registry)})  # fmt: skip
         return results
 
     def get_paused(self) -> list[Subscription]:

@@ -46,12 +46,10 @@ class SubscriptionMigratorExecutionMixin:
     ) -> MigrationSummary:
         """Migrate subscription checkpoints to target store positions."""
         mid, tid, n_subs = str(migration_id), str(tenant_id), len(subscription_names)
-        attrs = {"migration.id": mid, "tenant.id": tid, "dry_run": dry_run}
-        attrs["subscription_count"] = n_subs
+        attrs = {"migration.id": mid, "tenant.id": tid, "dry_run": dry_run, "subscription_count": n_subs}  # fmt: skip
         with self._tracer.span(f"{_SPAN_PREFIX}.migrate_subscriptions", attrs):
             start_time = datetime.now(UTC)
-            extra = {"migration_id": mid, "tenant_id": tid, "dry_run": dry_run}
-            extra["subscription_count"] = n_subs
+            extra = {"migration_id": mid, "tenant_id": tid, "dry_run": dry_run, "subscription_count": n_subs}  # fmt: skip
             logger.info("Starting subscription migration", extra=extra)
             if dry_run:
                 plan = await self.plan_migration(migration_id, tenant_id, subscription_names)
@@ -87,8 +85,7 @@ class SubscriptionMigratorExecutionMixin:
                     fail_cnt += int(not result.success)
             end_time = datetime.now(UTC)
             dur_ms = (end_time - start_time).total_seconds() * 1000
-            done_extra = {"migration_id": mid, "successful_count": ok_cnt, "failed_count": fail_cnt}
-            done_extra.update(skipped_count=skip_cnt, duration_ms=dur_ms)
+            done_extra = {"migration_id": mid, "successful_count": ok_cnt, "failed_count": fail_cnt, "skipped_count": skip_cnt, "duration_ms": dur_ms}  # fmt: skip
             logger.info("Subscription migration completed", extra=done_extra)
             counts, times = (ok_cnt, fail_cnt, skip_cnt), (start_time, end_time, dur_ms)
             return MigrationSummary(migration_id, tenant_id, results, *counts, *times)
@@ -115,8 +112,7 @@ class SubscriptionMigratorExecutionMixin:
             except PositionMappingError as e:
                 err_ctx = {**log_ctx, "position": current_pos.to_str(), "error": str(e)}
                 logger.error("Failed to translate position", extra=err_ctx)
-                err_msg = f"Position translation failed: {e}"
-                return SubscriptionMigrationResult(name, False, current_pos, error_message=err_msg)
+                return SubscriptionMigrationResult(name, False, current_pos, error_message=f"Position translation failed: {e}")  # fmt: skip
             target_pos = tr.target_position
             try:
                 await self._checkpoint_repo.save_position(
@@ -125,19 +121,12 @@ class SubscriptionMigratorExecutionMixin:
                     event_id=cp.last_event_id,
                     event_type=cp.last_event_type or "Unknown",
                 )
-                ok_ctx = {**log_ctx, "source_position": current_pos.to_str()}
-                ok_ctx.update(target_position=target_pos.to_str(), is_exact=tr.is_exact)
+                ok_ctx = {**log_ctx, "source_position": current_pos.to_str(), "target_position": target_pos.to_str(), "is_exact": tr.is_exact}  # fmt: skip
                 logger.info("Subscription checkpoint migrated", extra=ok_ctx)
-                args = (name, True, current_pos, target_pos, tr.is_exact)
-                return SubscriptionMigrationResult(
-                    *args, tr.nearest_source_position, migrated_at=datetime.now(UTC)
-                )
+                return SubscriptionMigrationResult(name, True, current_pos, target_pos, tr.is_exact, tr.nearest_source_position, migrated_at=datetime.now(UTC))  # fmt: skip
             except Exception as e:
                 logger.error("Failed to update checkpoint", extra={**log_ctx, "error": str(e)})
-                err = f"Checkpoint update failed: {e}"
-                return SubscriptionMigrationResult(
-                    name, False, current_pos, target_pos, error_message=err
-                )
+                return SubscriptionMigrationResult(name, False, current_pos, target_pos, error_message=f"Checkpoint update failed: {e}")  # fmt: skip
 
     async def migrate_tenant_subscriptions(
         self,
@@ -148,16 +137,12 @@ class SubscriptionMigratorExecutionMixin:
         dry_run: bool = False,
     ) -> MigrationSummary:
         mid, tid = str(migration_id), str(tenant_id)
-        span_attrs = {"migration.id": mid, "tenant.id": tid, "dry_run": dry_run}
-        with self._tracer.span(f"{_SPAN_PREFIX}.migrate_tenant_subscriptions", span_attrs):
+        with self._tracer.span(f"{_SPAN_PREFIX}.migrate_tenant_subscriptions", {"migration.id": mid, "tenant.id": tid, "dry_run": dry_run}):  # fmt: skip
             if subscription_names is None:
                 checkpoints = await self._checkpoint_repo.get_all_checkpoints()
                 subscription_names = [c.projection_name for c in checkpoints]
-            extra = {"migration_id": mid, "tenant_id": tid, "dry_run": dry_run}
-            extra["subscription_count"] = len(subscription_names)
-            logger.info("Migrating tenant subscriptions", extra=extra)
-            subs = subscription_names
-            return await self.migrate_subscriptions(migration_id, tenant_id, subs, dry_run=dry_run)
+            logger.info("Migrating tenant subscriptions", extra={"migration_id": mid, "tenant_id": tid, "dry_run": dry_run, "subscription_count": len(subscription_names)})  # fmt: skip
+            return await self.migrate_subscriptions(migration_id, tenant_id, subscription_names, dry_run=dry_run)  # fmt: skip
 
 
 __all__ = ["SubscriptionMigratorExecutionMixin"]
