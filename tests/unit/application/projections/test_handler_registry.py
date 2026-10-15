@@ -29,8 +29,6 @@ class _BadThreeParamAsyncHandler:
 
 
 class TestHandlerSignatureError:
-    """Tests for HandlerSignatureError exception class."""
-
     def test_exception_attributes(self):
         error = HandlerSignatureError(
             "_handle_order", "OrderProjection", TestEvent, 3, is_async_required=True
@@ -48,8 +46,7 @@ class TestHandlerSignatureError:
         assert error.reason == "too many parameters"
 
     def test_exception_message_format_async(self):
-        error = HandlerSignatureError("_handle", "MyProjection", TestEvent, 3)
-        message = str(error)
+        message = str(HandlerSignatureError("_handle", "MyProjection", TestEvent, 3))
         assert "Handler '_handle' in MyProjection has invalid signature" in message
         assert "@handles(TestEvent)" in message
         assert "Expected one of:" in message
@@ -73,13 +70,9 @@ class TestHandlerSignatureError:
 
 
 class TestHandlerSignatureValidation:
-    """Tests for handler signature validation in HandlerRegistry."""
-
     def test_too_many_parameters_raises_signature_error(self):
-        class BadHandler:
-            @handles(TestEvent)
-            async def _handle(self, a, b, c):
-                pass
+        class BadHandler(_BadThreeParamAsyncHandler):
+            pass
 
         with pytest.raises(HandlerSignatureError) as exc_info:
             HandlerRegistry(BadHandler(), require_async=True)
@@ -112,15 +105,12 @@ class TestHandlerSignatureValidation:
         with pytest.raises(ValueError) as exc_info:
             HandlerRegistry(BadHandler(), require_async=True)
         message = str(exc_info.value)
-        assert "must be async" in message
-        assert "async def" in message
-        assert "Change:" in message
-        assert "To:" in message
+        for part in ("must be async", "async def", "Change:", "To:"):
+            assert part in message
 
     def test_valid_single_param_handler_accepted(self):
         registry = HandlerRegistry(_SingleAsyncHandler(), require_async=True)
-        assert registry.has_handler(TestEvent)
-        assert registry.handler_count == 1
+        assert registry.has_handler(TestEvent) and registry.handler_count == 1
 
     def test_valid_two_param_handler_accepted(self):
         class GoodHandler:
@@ -129,8 +119,7 @@ class TestHandlerSignatureValidation:
                 pass
 
         registry = HandlerRegistry(GoodHandler(), require_async=True)
-        assert registry.has_handler(TestEvent)
-        assert registry.handler_count == 1
+        assert registry.has_handler(TestEvent) and registry.handler_count == 1
 
     def test_sync_handler_valid_when_async_not_required(self):
         class SyncHandler:
@@ -141,8 +130,7 @@ class TestHandlerSignatureValidation:
         registry = HandlerRegistry(SyncHandler(), require_async=False)
         assert registry.has_handler(TestEvent)
         handler_info = registry.get_handler(TestEvent)
-        assert handler_info is not None
-        assert handler_info.is_async is False
+        assert handler_info is not None and handler_info.is_async is False
 
     def test_signature_error_for_sync_handler_shows_sync_example(self):
         class BadHandler:
@@ -157,11 +145,7 @@ class TestHandlerSignatureValidation:
         assert "async def _handle" not in message
 
     def test_multiple_handlers_all_validated(self):
-        class MultiHandler:
-            @handles(TestEvent)
-            async def _handle_test(self, event):
-                pass
-
+        class MultiHandler(_SingleAsyncHandler):
             @handles(AnotherTestEvent)
             async def _handle_another(self, a, b, c, d):
                 pass
@@ -178,8 +162,6 @@ class TestHandlerSignatureValidation:
 
 
 class TestHandlerSignatureErrorImport:
-    """Tests for HandlerSignatureError import from its domain home."""
-
     def test_exception_exported_from_domain_exceptions_module(self):
         from eventsource.domain.exceptions import HandlerSignatureError as ImportedError
 
@@ -196,23 +178,14 @@ class TestHandlerSignatureErrorImport:
 
 
 class TestHandlerRegistryBasic:
-    """Basic tests for HandlerRegistry functionality."""
-
     def test_get_subscribed_events(self):
-        class Handler:
-            @handles(TestEvent)
-            async def _handle_test(self, event):
-                pass
-
+        class Handler(_SingleAsyncHandler):
             @handles(AnotherTestEvent)
             async def _handle_another(self, event):
                 pass
 
-        registry = HandlerRegistry(Handler(), require_async=True)
-        events = registry.get_subscribed_events()
-        assert len(events) == 2
-        assert TestEvent in events
-        assert AnotherTestEvent in events
+        events = HandlerRegistry(Handler(), require_async=True).get_subscribed_events()
+        assert len(events) == 2 and TestEvent in events and AnotherTestEvent in events
 
     def test_has_handler(self):
         registry = HandlerRegistry(_SingleAsyncHandler(), require_async=True)
@@ -225,13 +198,11 @@ class TestHandlerRegistryBasic:
             async def _handle_test(self, event):
                 pass
 
-        registry = HandlerRegistry(Handler(), require_async=True)
-        handler_info = registry.get_handler(TestEvent)
+        handler_info = HandlerRegistry(Handler(), require_async=True).get_handler(TestEvent)
         assert handler_info is not None
         assert handler_info.event_type is TestEvent
         assert handler_info.handler_name == "_handle_test"
-        assert handler_info.is_async is True
-        assert handler_info.param_count == 1
+        assert handler_info.is_async is True and handler_info.param_count == 1
 
     def test_get_handler_returns_none_for_unregistered(self):
         registry = HandlerRegistry(_SingleAsyncHandler(), require_async=True)
@@ -242,6 +213,4 @@ class TestHandlerRegistryBasic:
             pass
 
         repr_str = repr(HandlerRegistry(Handler(), require_async=True))
-        assert "HandlerRegistry" in repr_str
-        assert "Handler" in repr_str
-        assert "handlers=1" in repr_str
+        assert "HandlerRegistry" in repr_str and "Handler" in repr_str and "handlers=1" in repr_str

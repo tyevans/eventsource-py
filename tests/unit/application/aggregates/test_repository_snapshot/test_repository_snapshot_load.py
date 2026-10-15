@@ -48,17 +48,28 @@ def _make_events(aggregate_id: UUID, count: int) -> list[TestEvent]:
     ]
 
 
+def _make_repo(event_store: InMemoryEventStore, snapshot_store: Any = None, **kwargs: Any):
+    return AggregateRepository(
+        event_store=event_store,
+        aggregate_factory=TestAggregate,
+        snapshot_store=snapshot_store,
+        **kwargs,
+    )
+
+
+@pytest.fixture
+def event_store() -> InMemoryEventStore:
+    return InMemoryEventStore(event_registry=_REGISTRY)
+
+
+@pytest.fixture
+def snapshot_store() -> InMemorySnapshotStore:
+    return InMemorySnapshotStore()
+
+
 class TestRepositoryConstructor:
-    @pytest.fixture
-    def event_store(self) -> InMemoryEventStore:
-        return InMemoryEventStore(event_registry=_REGISTRY)
-
-    @pytest.fixture
-    def snapshot_store(self) -> InMemorySnapshotStore:
-        return InMemorySnapshotStore()
-
     def test_constructor_without_snapshot_params(self, event_store: InMemoryEventStore) -> None:
-        repo = AggregateRepository(event_store=event_store, aggregate_factory=TestAggregate)
+        repo = _make_repo(event_store)
         assert repo.snapshot_store is None
         assert repo.snapshot_threshold is None
         assert repo.snapshot_mode == "sync"
@@ -67,23 +78,15 @@ class TestRepositoryConstructor:
     def test_constructor_with_snapshot_store(
         self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
-        repo = AggregateRepository(
-            event_store=event_store,
-            aggregate_factory=TestAggregate,
-            snapshot_store=snapshot_store,
-        )
+        repo = _make_repo(event_store, snapshot_store)
         assert repo.snapshot_store is snapshot_store
         assert repo.has_snapshot_support is True
 
     def test_constructor_with_all_params(
         self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
-        repo = AggregateRepository(
-            event_store=event_store,
-            aggregate_factory=TestAggregate,
-            snapshot_store=snapshot_store,
-            snapshot_threshold=100,
-            snapshot_mode="background",
+        repo = _make_repo(
+            event_store, snapshot_store, snapshot_threshold=100, snapshot_mode="background"
         )
         assert repo.snapshot_threshold == 100
         assert repo.snapshot_mode == "background"
@@ -91,28 +94,16 @@ class TestRepositoryConstructor:
     def test_constructor_with_manual_mode(
         self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
-        repo = AggregateRepository(
-            event_store=event_store,
-            aggregate_factory=TestAggregate,
-            snapshot_store=snapshot_store,
-            snapshot_threshold=10,
-            snapshot_mode="manual",
+        repo = _make_repo(
+            event_store, snapshot_store, snapshot_threshold=10, snapshot_mode="manual"
         )
         assert repo.snapshot_mode == "manual"
 
 
 class TestRepositorySnapshotLoad:
-    @pytest.fixture
-    def event_store(self) -> InMemoryEventStore:
-        return InMemoryEventStore(event_registry=_REGISTRY)
-
-    @pytest.fixture
-    def snapshot_store(self) -> InMemorySnapshotStore:
-        return InMemorySnapshotStore()
-
     @pytest.mark.asyncio
     async def test_load_without_snapshot_store(self, event_store: InMemoryEventStore) -> None:
-        repo = AggregateRepository(event_store=event_store, aggregate_factory=TestAggregate)
+        repo = _make_repo(event_store)
         aggregate = TestAggregate(uuid4())
         aggregate.do_something("test-value")
         await repo.save(aggregate)
@@ -137,12 +128,7 @@ class TestRepositorySnapshotLoad:
             value="after_snapshot",
         )
         await event_store.append(stream, [event], ExpectedVersion.exact(5))
-        repo = AggregateRepository(
-            event_store=event_store,
-            aggregate_factory=TestAggregate,
-            snapshot_store=snapshot_store,
-        )
-        loaded = await repo.load(aggregate_id)
+        loaded = await _make_repo(event_store, snapshot_store).load(aggregate_id)
         assert loaded.version == 6
         assert loaded.state.value == "after_snapshot"
         assert loaded.state.count == 6
@@ -154,9 +140,7 @@ class TestRepositorySnapshotLoad:
         aggregate_id = uuid4()
         await snapshot_store.save_snapshot(
             _make_snapshot(
-                aggregate_id,
-                {"value": "old_snapshot", "count": 5, "items": []},
-                schema_version=99,
+                aggregate_id, {"value": "old_snapshot", "count": 5, "items": []}, schema_version=99
             )
         )
         await event_store.append(
@@ -164,12 +148,7 @@ class TestRepositorySnapshotLoad:
             _make_events(aggregate_id, 3),
             ExpectedVersion.exact(0),
         )
-        repo = AggregateRepository(
-            event_store=event_store,
-            aggregate_factory=TestAggregate,
-            snapshot_store=snapshot_store,
-        )
-        loaded = await repo.load(aggregate_id)
+        loaded = await _make_repo(event_store, snapshot_store).load(aggregate_id)
         assert loaded.version == 3
         assert loaded.state.count == 3
         assert loaded.state.value == "event_2"
@@ -179,20 +158,12 @@ class TestRepositorySnapshotLoad:
         mock_snapshot_store = MagicMock()
         mock_snapshot_store.get_snapshot = AsyncMock(side_effect=Exception("Store error"))
         aggregate_id = uuid4()
-        event = TestEvent(
-            aggregate_id=aggregate_id, aggregate_type="Test", aggregate_version=1, value="test"
-        )
         await event_store.append(
             StreamId(aggregate_id=aggregate_id, category="Test"),
-            [event],
+            _make_events(aggregate_id, 1),
             ExpectedVersion.exact(0),
         )
-        repo = AggregateRepository(
-            event_store=event_store,
-            aggregate_factory=TestAggregate,
-            snapshot_store=mock_snapshot_store,
-        )
-        loaded = await repo.load(aggregate_id)
+        loaded = await _make_repo(event_store, mock_snapshot_store).load(aggregate_id)
         assert loaded.version == 1
 
     @pytest.mark.asyncio
@@ -210,25 +181,15 @@ class TestRepositorySnapshotLoad:
             _make_events(aggregate_id, 2),
             ExpectedVersion.exact(0),
         )
-        repo = AggregateRepository(
-            event_store=event_store,
-            aggregate_factory=TestAggregate,
-            snapshot_store=snapshot_store,
-        )
-        loaded = await repo.load(aggregate_id)
+        loaded = await _make_repo(event_store, snapshot_store).load(aggregate_id)
         assert loaded.version == 2
 
     @pytest.mark.asyncio
     async def test_load_raises_not_found_when_no_events(
         self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
-        repo = AggregateRepository(
-            event_store=event_store,
-            aggregate_factory=TestAggregate,
-            snapshot_store=snapshot_store,
-        )
         with pytest.raises(AggregateNotFoundError):
-            await repo.load(uuid4())
+            await _make_repo(event_store, snapshot_store).load(uuid4())
 
     @pytest.mark.asyncio
     async def test_load_no_events_after_snapshot(
@@ -238,11 +199,6 @@ class TestRepositorySnapshotLoad:
         await snapshot_store.save_snapshot(
             _make_snapshot(aggregate_id, {"value": "snapshot_only", "count": 5, "items": []})
         )
-        repo = AggregateRepository(
-            event_store=event_store,
-            aggregate_factory=TestAggregate,
-            snapshot_store=snapshot_store,
-        )
-        loaded = await repo.load(aggregate_id)
+        loaded = await _make_repo(event_store, snapshot_store).load(aggregate_id)
         assert loaded.version == 5
         assert loaded.state.value == "snapshot_only"
