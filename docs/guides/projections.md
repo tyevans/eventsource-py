@@ -212,7 +212,13 @@ your projections or handlers directly to `ProjectionCoordinator([proj1, proj2])`
 or register them fluently with `ProjectionRegistry(projections=[...]).register(...)`.
 For subscribers implementing `EventSubscriber` (`subscribed_to()`), `SubscriberRegistry`
 indexes subscribers by event type at registration time for $O(1)$ lookup via
-`SubscriberRegistry(subscribers=[...]).register(*subscribers)`:
+`SubscriberRegistry(subscribers=[...]).register(*subscribers)`.
+
+`ProjectionRegistry`, `ProjectionCoordinator`, and `SubscriberRegistry` all
+support Pythonic container protocols (`len(registry)`, `bool(registry)` always
+`True`, `proj in registry`), fluent `.register(*items)`, `.unregister(item)`,
+and `.clear()` (plus `list(subscriber_registry)` iteration on
+`SubscriberRegistry`):
 
 ```python
 from eventsource import ProjectionCoordinator, ProjectionRegistry, SubscriberRegistry
@@ -224,14 +230,22 @@ async def coordinate_projections(
 ) -> None:
     # Pass a sequence of projections/handlers directly:
     coordinator = ProjectionCoordinator([balance_projection])
+    assert len(coordinator) == 1
+    assert balance_projection in coordinator
     await coordinator.dispatch_events(events)
 
     # Or configure a ProjectionRegistry with max_concurrency and fluent .register():
     registry = ProjectionRegistry(max_concurrency=4).register(balance_projection)
+    assert balance_projection in registry
     bounded_coordinator = ProjectionCoordinator(registry)
     await bounded_coordinator.rebuild_all(events)
+    registry.unregister(balance_projection)
+    registry.clear()
 
     # Or dispatch only to interested EventSubscribers via O(1) event-type lookup:
     subscriber_registry = SubscriberRegistry(subscribers=[balance_projection])
+    assert balance_projection in subscriber_registry
+    assert list(subscriber_registry) == [balance_projection]
     await subscriber_registry.dispatch_many(events)
+    subscriber_registry.clear()
 ```
