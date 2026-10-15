@@ -43,15 +43,19 @@ class PostgreSQLMigrationProgressMixin:
         last_target_position: Position | None = None,
     ) -> None:
         """Update bulk copy progress."""
-        with self._tracer.span(
-            "eventsource.migration_repo.update_progress",
-            {
-                "migration.id": str(migration_id),
-                "migration.events_copied": events_copied,
-                ATTR_DB_SYSTEM: "postgresql",
-            },
-        ):
+        attrs = {
+            "migration.id": str(migration_id),
+            "migration.events_copied": events_copied,
+            ATTR_DB_SYSTEM: "postgresql",
+        }
+        with self._tracer.span("eventsource.migration_repo.update_progress", attrs):
             now = datetime.now(UTC)
+            params: dict[str, Any] = {
+                "id": migration_id,
+                "events_copied": events_copied,
+                "last_source_position_token": _token(last_source_position),
+                "updated_at": now,
+            }
             if last_target_position is not None:
                 query = text("""
                     UPDATE tenant_migrations
@@ -61,13 +65,7 @@ class PostgreSQLMigrationProgressMixin:
                         updated_at = :updated_at
                     WHERE id = :id
                 """)
-                params = {
-                    "id": migration_id,
-                    "events_copied": events_copied,
-                    "last_source_position_token": _token(last_source_position),
-                    "last_target_position_token": _token(last_target_position),
-                    "updated_at": now,
-                }
+                params["last_target_position_token"] = _token(last_target_position)
             else:
                 query = text("""
                     UPDATE tenant_migrations
@@ -76,51 +74,33 @@ class PostgreSQLMigrationProgressMixin:
                         updated_at = :updated_at
                     WHERE id = :id
                 """)
-                params = {
-                    "id": migration_id,
-                    "events_copied": events_copied,
-                    "last_source_position_token": _token(last_source_position),
-                    "updated_at": now,
-                }
 
             async with _get_sql_connection()(self._conn, write=True) as conn:
                 await conn.execute(query, params)
 
-    async def set_events_total(
-        self,
-        migration_id: UUID,
-        events_total: int,
-    ) -> None:
+    async def set_events_total(self, migration_id: UUID, events_total: int) -> None:
         """Set the total events count."""
-        with self._tracer.span(
-            "eventsource.migration_repo.set_events_total",
-            {
-                "migration.id": str(migration_id),
-                "migration.events_total": events_total,
-                ATTR_DB_SYSTEM: "postgresql",
-            },
-        ):
+        attrs = {
+            "migration.id": str(migration_id),
+            "migration.events_total": events_total,
+            ATTR_DB_SYSTEM: "postgresql",
+        }
+        with self._tracer.span("eventsource.migration_repo.set_events_total", attrs):
             query = text("""
                 UPDATE tenant_migrations
                 SET events_total = :events_total,
                     updated_at = :updated_at
                 WHERE id = :id
             """)
+            params = {
+                "id": migration_id,
+                "events_total": events_total,
+                "updated_at": datetime.now(UTC),
+            }
             async with _get_sql_connection()(self._conn, write=True) as conn:
-                await conn.execute(
-                    query,
-                    {
-                        "id": migration_id,
-                        "events_total": events_total,
-                        "updated_at": datetime.now(UTC),
-                    },
-                )
+                await conn.execute(query, params)
 
-    async def record_error(
-        self,
-        migration_id: UUID,
-        error: str,
-    ) -> None:
+    async def record_error(self, migration_id: UUID, error: str) -> None:
         """Record an error occurrence (truncated to 1000 characters)."""
         with self._tracer.span(
             "eventsource.migration_repo.record_error",
@@ -135,32 +115,23 @@ class PostgreSQLMigrationProgressMixin:
                     updated_at = :updated_at
                 WHERE id = :id
             """)
+            params = {
+                "id": migration_id,
+                "error": error[:1000],
+                "error_at": now,
+                "updated_at": now,
+            }
             async with _get_sql_connection()(self._conn, write=True) as conn:
-                await conn.execute(
-                    query,
-                    {
-                        "id": migration_id,
-                        "error": error[:1000],
-                        "error_at": now,
-                        "updated_at": now,
-                    },
-                )
+                await conn.execute(query, params)
 
-    async def set_paused(
-        self,
-        migration_id: UUID,
-        paused: bool,
-        reason: str | None = None,
-    ) -> None:
+    async def set_paused(self, migration_id: UUID, paused: bool, reason: str | None = None) -> None:
         """Set migration pause state."""
-        with self._tracer.span(
-            "eventsource.migration_repo.set_paused",
-            {
-                "migration.id": str(migration_id),
-                "migration.paused": paused,
-                ATTR_DB_SYSTEM: "postgresql",
-            },
-        ):
+        attrs = {
+            "migration.id": str(migration_id),
+            "migration.paused": paused,
+            ATTR_DB_SYSTEM: "postgresql",
+        }
+        with self._tracer.span("eventsource.migration_repo.set_paused", attrs):
             now = datetime.now(UTC)
             if paused:
                 query = text("""

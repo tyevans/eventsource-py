@@ -34,22 +34,12 @@ class PauseResumeController:
         self._registry = registry
         self._lifecycle = lifecycle
 
-    async def pause(
-        self,
-        name: str,
-        reason: PauseReason | None = None,
-    ) -> bool:
+    async def pause(self, name: str, reason: PauseReason | None = None) -> bool:
         """Pause a specific subscription by name, returning True if paused."""
-        with self._tracer.span(
-            "eventsource.pause_resume.pause",
-            {ATTR_SUBSCRIPTION_NAME: name},
-        ):
+        with self._tracer.span("eventsource.pause_resume.pause", {ATTR_SUBSCRIPTION_NAME: name}):
             subscription = self._registry.get(name)
             if subscription is None:
-                logger.warning(
-                    "Cannot pause subscription: not found",
-                    extra={"subscription": name},
-                )
+                logger.warning("Cannot pause subscription: not found", extra={"subscription": name})
                 return False
 
             if not subscription.is_running:
@@ -81,15 +71,11 @@ class PauseResumeController:
 
     async def resume(self, name: str) -> bool:
         """Resume a paused subscription by name and process any buffered events."""
-        with self._tracer.span(
-            "eventsource.pause_resume.resume",
-            {ATTR_SUBSCRIPTION_NAME: name},
-        ):
+        with self._tracer.span("eventsource.pause_resume.resume", {ATTR_SUBSCRIPTION_NAME: name}):
             subscription = self._registry.get(name)
             if subscription is None:
                 logger.warning(
-                    "Cannot resume subscription: not found",
-                    extra={"subscription": name},
+                    "Cannot resume subscription: not found", extra={"subscription": name}
                 )
                 return False
 
@@ -102,19 +88,14 @@ class PauseResumeController:
 
             try:
                 await subscription.resume()
-
                 coordinator = self._lifecycle.get_coordinator(name)
-                if coordinator and coordinator.live_runner:
-                    pause_buffer_size = coordinator.live_runner.pause_buffer_size
-                    if pause_buffer_size > 0:
-                        processed = await coordinator.live_runner.process_pause_buffer()
-                        logger.info(
-                            "Processed pause buffer after resume",
-                            extra={
-                                "subscription": name,
-                                "events_processed": processed,
-                            },
-                        )
+                runner = coordinator.live_runner if coordinator else None
+                if runner and runner.pause_buffer_size > 0:
+                    processed = await runner.process_pause_buffer()
+                    logger.info(
+                        "Processed pause buffer after resume",
+                        extra={"subscription": name, "events_processed": processed},
+                    )
 
                 logger.info(
                     "Subscription resumed",
@@ -138,20 +119,13 @@ class PauseResumeController:
                     await subscription.reconcile_lag(0)
                 return False
 
-    async def pause_all(
-        self,
-        reason: PauseReason | None = None,
-    ) -> dict[str, bool]:
+    async def pause_all(self, reason: PauseReason | None = None) -> dict[str, bool]:
         """Pause all running subscriptions and return map of name to pause result."""
         pause_reason = reason or PauseReason.MANUAL
-        results: dict[str, bool] = {}
-
-        for name, subscription in self._registry.items():
-            if subscription.is_running:
-                results[name] = await self.pause(name, reason=pause_reason)
-            else:
-                results[name] = False
-
+        results = {
+            name: (await self.pause(name, reason=pause_reason) if sub.is_running else False)
+            for name, sub in self._registry.items()
+        }
         paused_count = sum(1 for r in results.values() if r)
         logger.info(
             "Paused all subscriptions",
@@ -165,21 +139,14 @@ class PauseResumeController:
 
     async def resume_all(self) -> dict[str, bool]:
         """Resume all paused subscriptions and return map of name to resume result."""
-        results: dict[str, bool] = {}
-
-        for name, subscription in self._registry.items():
-            if subscription.is_paused:
-                results[name] = await self.resume(name)
-            else:
-                results[name] = False
-
+        results = {
+            name: (await self.resume(name) if sub.is_paused else False)
+            for name, sub in self._registry.items()
+        }
         resumed_count = sum(1 for r in results.values() if r)
         logger.info(
             "Resumed all subscriptions",
-            extra={
-                "resumed_count": resumed_count,
-                "total_count": len(self._registry),
-            },
+            extra={"resumed_count": resumed_count, "total_count": len(self._registry)},
         )
         return results
 

@@ -37,8 +37,7 @@ class ConsistencyVerifier(ConsistencyStreamCheckerMixin):
         """Initialize the consistency verifier with source and target event stores."""
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
-        self._source = source_store
-        self._target = target_store
+        self._source, self._target = source_store, target_store
 
     async def verify_tenant_consistency(
         self,
@@ -52,14 +51,12 @@ class ConsistencyVerifier(ConsistencyStreamCheckerMixin):
                 f"sample_percentage must be between 0 and 100, got {sample_percentage}"
             )
 
-        with self._tracer.span(
-            "eventsource.consistency_verifier.verify_tenant",
-            {
-                "tenant_id": str(tenant_id),
-                "level": level.value,
-                "sample_percentage": sample_percentage,
-            },
-        ):
+        attrs = {
+            "tenant_id": str(tenant_id),
+            "level": level.value,
+            "sample_percentage": sample_percentage,
+        }
+        with self._tracer.span("eventsource.consistency_verifier.verify_tenant", attrs):
             start_time = time.monotonic()
             logger.info(
                 "Starting consistency verification for tenant %s, level=%s, sample=%.1f%%",
@@ -67,7 +64,6 @@ class ConsistencyVerifier(ConsistencyStreamCheckerMixin):
                 level.value,
                 sample_percentage,
             )
-
             violations: list[ConsistencyViolation] = []
             stream_results: list[StreamConsistency] = []
 
@@ -77,12 +73,13 @@ class ConsistencyVerifier(ConsistencyStreamCheckerMixin):
                 source_count, target_count = len(source_events), len(target_events)
 
                 if source_count != target_count:
+                    details = f"Expected {source_count} events, found {target_count}"
                     violations.append(
                         ConsistencyViolation(
                             violation_type="total_count_mismatch",
                             source_value=str(source_count),
                             target_value=str(target_count),
-                            details=f"Expected {source_count} events, found {target_count}",
+                            details=details,
                         )
                     )
 
@@ -91,18 +88,16 @@ class ConsistencyVerifier(ConsistencyStreamCheckerMixin):
                 all_streams = set(source_by_stream.keys()) | set(target_by_stream.keys())
 
                 for stream_id in all_streams:
-                    stream_result, stream_violations = await self._verify_stream(
-                        stream_id,
-                        source_by_stream.get(stream_id, []),
-                        target_by_stream.get(stream_id, []),
-                        level,
-                        sample_percentage,
+                    src_evts = source_by_stream.get(stream_id, [])
+                    tgt_evts = target_by_stream.get(stream_id, [])
+                    res, viols = await self._verify_stream(
+                        stream_id, src_evts, tgt_evts, level, sample_percentage
                     )
-                    stream_results.append(stream_result)
-                    violations.extend(stream_violations)
+                    stream_results.append(res)
+                    violations.extend(viols)
 
                 duration = time.monotonic() - start_time
-                streams_consistent = sum(1 for s in stream_results if s.is_consistent)
+                consistent_cnt = sum(1 for s in stream_results if s.is_consistent)
                 is_consistent = len(violations) == 0
 
                 report = VerificationReport(
@@ -112,8 +107,8 @@ class ConsistencyVerifier(ConsistencyStreamCheckerMixin):
                     source_event_count=source_count,
                     target_event_count=target_count,
                     streams_verified=len(stream_results),
-                    streams_consistent=streams_consistent,
-                    streams_inconsistent=len(stream_results) - streams_consistent,
+                    streams_consistent=consistent_cnt,
+                    streams_inconsistent=len(stream_results) - consistent_cnt,
                     sample_percentage=sample_percentage,
                     violations=violations,
                     stream_results=stream_results,
@@ -122,69 +117,43 @@ class ConsistencyVerifier(ConsistencyStreamCheckerMixin):
                 )
 
                 if is_consistent:
-                    logger.info(
-                        "Consistency verification passed for tenant %s: %d events, %d streams in %.2fs",
-                        tenant_id,
-                        source_count,
-                        len(stream_results),
-                        duration,
-                    )
+                    msg = "Consistency verification passed for tenant %s: %d events, %d streams in %.2fs"
+                    logger.info(msg, tenant_id, source_count, len(stream_results), duration)
                 else:
-                    logger.warning(
-                        "Consistency verification FAILED for tenant %s: %d violations found in %.2fs",
-                        tenant_id,
-                        len(violations),
-                        duration,
-                    )
-
+                    msg = "Consistency verification FAILED for tenant %s: %d violations found in %.2fs"
+                    logger.warning(msg, tenant_id, len(violations), duration)
                 return report
 
             except Exception as e:
                 logger.error("Consistency verification error for tenant %s: %s", tenant_id, e)
-                raise ConsistencyError(
-                    message=f"Verification failed: {e}",
-                    migration_id=UUID("00000000-0000-0000-0000-000000000000"),
-                    details=str(e),
-                ) from e
+                null_id = UUID("00000000-0000-0000-0000-000000000000")
+                raise ConsistencyError(f"Verification failed: {e}", null_id, details=str(e)) from e
 
     async def verify_event_checksums(
-        self,
-        tenant_id: UUID,
-        sample_percentage: float = 100.0,
+        self, tenant_id: UUID, sample_percentage: float = 100.0
     ) -> tuple[bool, list[ConsistencyViolation]]:
         """Verify event SHA-256 checksums match between stores."""
-        with self._tracer.span(
-            "eventsource.consistency_verifier.verify_checksums",
-            {"tenant_id": str(tenant_id), "sample_percentage": sample_percentage},
-        ):
+        attrs = {"tenant_id": str(tenant_id), "sample_percentage": sample_percentage}
+        with self._tracer.span("eventsource.consistency_verifier.verify_checksums", attrs):
             report = await self.verify_tenant_consistency(
                 tenant_id, level=VerificationLevel.HASH, sample_percentage=sample_percentage
             )
-            hash_violations = [
-                v
-                for v in report.violations
-                if v.violation_type in ("hash_mismatch", "event_missing")
-            ]
-            return len(hash_violations) == 0, hash_violations
+            types = ("hash_mismatch", "event_missing")
+            viols = [v for v in report.violations if v.violation_type in types]
+            return len(viols) == 0, viols
 
     async def verify_aggregate_versions(
-        self,
-        tenant_id: UUID,
+        self, tenant_id: UUID
     ) -> tuple[bool, list[ConsistencyViolation]]:
         """Verify aggregate versions (event counts) are consistent across stores."""
-        with self._tracer.span(
-            "eventsource.consistency_verifier.verify_aggregate_versions",
-            {"tenant_id": str(tenant_id)},
-        ):
+        attrs = {"tenant_id": str(tenant_id)}
+        with self._tracer.span("eventsource.consistency_verifier.verify_aggregate_versions", attrs):
             report = await self.verify_tenant_consistency(
                 tenant_id, level=VerificationLevel.COUNT, sample_percentage=100.0
             )
-            version_violations = [
-                v
-                for v in report.violations
-                if v.violation_type in ("version_mismatch", "count_mismatch", "stream_missing")
-            ]
-            return len(version_violations) == 0, version_violations
+            types = ("version_mismatch", "count_mismatch", "stream_missing")
+            viols = [v for v in report.violations if v.violation_type in types]
+            return len(viols) == 0, viols
 
 
 __all__ = [

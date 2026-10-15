@@ -1,17 +1,4 @@
-"""Test harness providing pre-configured in-memory infrastructure.
-
-Provides ``InMemoryTestHarness`` bundling all in-memory implementations needed
-for testing event-sourced applications without boilerplate setup.
-
-Example:
-    >>> from eventsource.testing import InMemoryTestHarness
-    >>> async def test_order_processing():
-    ...     harness = InMemoryTestHarness()
-    ...     repo = harness.create_repository(OrderAggregate)
-    ...     order = OrderAggregate.create(customer_id=customer_id)
-    ...     await repo.save(order)
-    ...     assert len(harness.published_events) == 1
-"""
+"""Test harness providing pre-configured in-memory infrastructure."""
 
 from __future__ import annotations
 
@@ -56,11 +43,9 @@ class InMemoryTestHarness:
         self._snapshot_store = InMemorySnapshotStore(enable_tracing=False)
 
     def __len__(self) -> int:
-        """Return the number of currently published events."""
         return len(self.published_events)
 
     def __bool__(self) -> bool:
-        """Harness instances are always truthy even when no events have been published."""
         return True
 
     @property
@@ -104,9 +89,7 @@ class InMemoryTestHarness:
         return self._event_bus.published_events
 
     async def append_events(
-        self,
-        *events: DomainEvent,
-        expected_version: ExpectedVersion | None = None,
+        self, *events: DomainEvent, expected_version: ExpectedVersion | None = None
     ) -> None:
         """Group events by aggregate stream and append them to the event store."""
         if not events:
@@ -133,9 +116,7 @@ class InMemoryTestHarness:
         await self._event_bus.publish(list(events))
 
     async def replay(
-        self,
-        projections: Sequence[EventSubscriber] | EventSubscriber,
-        **kwargs: Any,
+        self, projections: Sequence[EventSubscriber] | EventSubscriber, **kwargs: Any
     ) -> ReplayReport:
         """Replay events from the harness event store into one or more projections."""
         return await replay(self._event_store, projections, **kwargs)
@@ -147,7 +128,7 @@ class InMemoryTestHarness:
         snapshot_threshold: int | None = None,
         with_snapshots: bool = False,
     ) -> AggregateRepository[TAggregate]:
-        """Create an AggregateRepository pre-wired to the harness store, bus, and optional snapshot store."""
+        """Create an AggregateRepository pre-wired to the harness store, bus, and snapshot store."""
         use_snaps = with_snapshots or snapshot_threshold is not None
         return AggregateRepository(
             event_store=self._event_store,
@@ -167,12 +148,7 @@ class InMemoryTestHarness:
     def reset(self) -> None:
         """Reset all state and create fresh in-memory components."""
         self._event_store.clear()
-        self._event_store = InMemoryEventStore()
-        self._event_bus = InMemoryEventBus(enable_tracing=False)
-        self._checkpoint_repo = InMemoryCheckpointRepository(enable_tracing=False)
-        self._dlq_repo = InMemoryDLQRepository(enable_tracing=False)
-        self._outbox_repo = InMemoryOutboxRepository(enable_tracing=False)
-        self._snapshot_store = InMemorySnapshotStore(enable_tracing=False)
+        self.__init__()  # type: ignore[misc]
 
     def clear_published_events(self) -> None:
         """Clear only the published events, keeping other state."""
@@ -187,7 +163,6 @@ class InMemoryTestHarness:
         return self._event_bus.published_of_type(event_type)
 
     def __repr__(self) -> str:
-        """Return string representation for debugging."""
         return f"InMemoryTestHarness(published={len(self.published_events)})"
 
 

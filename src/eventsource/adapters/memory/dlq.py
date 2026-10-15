@@ -23,7 +23,6 @@ class InMemoryDLQRepository:
     """In-memory implementation of DLQ repository for testing."""
 
     def __init__(self, tracer: Tracer | None = None, enable_tracing: bool = True) -> None:
-        """Initialize an empty in-memory DLQ repository."""
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
         self._entries: dict[str, DLQEntry] = {}
@@ -32,11 +31,9 @@ class InMemoryDLQRepository:
         self._lock: asyncio.Lock = asyncio.Lock()
 
     def __len__(self) -> int:
-        """Return total number of DLQ entries currently stored."""
         return len(self._entries)
 
     def __bool__(self) -> bool:
-        """Repository instances are always truthy even when empty."""
         return True
 
     def _make_key(self, event_id: UUID, projection_name: str) -> str:
@@ -64,33 +61,20 @@ class InMemoryDLQRepository:
             now, key = datetime.now(UTC), self._make_key(event_id, projection_name)
             async with self._lock:
                 if existing := self._entries.get(key):
-                    existing.retry_count = retry_count
-                    existing.last_failed_at = now
-                    existing.error_message = str(error)
+                    existing.retry_count, existing.last_failed_at = retry_count, now
+                    existing.error_message, existing.status = str(error), "failed"
                     existing.error_stacktrace = traceback.format_exc()
-                    existing.status = "failed"
                 else:
                     self._id_counter += 1
                     entry = DLQEntry(
-                        id=self._id_counter,
-                        event_id=event_id,
-                        projection_name=projection_name,
-                        event_type=event_type,
-                        event_data=json_dumps(event_data),
-                        error_message=str(error),
-                        error_stacktrace=traceback.format_exc(),
-                        retry_count=retry_count,
-                        first_failed_at=now,
-                        last_failed_at=now,
-                        status="failed",
-                    )
+                        self._id_counter, event_id, projection_name, event_type,
+                        json_dumps(event_data), str(error), traceback.format_exc(),
+                        retry_count, now, now, "failed",
+                    )  # fmt: skip
                     self._entries[key] = self._by_id[self._id_counter] = entry
 
     async def get_failed_events(
-        self,
-        projection_name: str | None = None,
-        status: str = "failed",
-        limit: int = 100,
+        self, projection_name: str | None = None, status: str = "failed", limit: int = 100
     ) -> list[DLQEntry]:
         """Get failed events from the DLQ."""
         attrs: dict[str, Any] = {"limit": limit, "status_filter": status, ATTR_DB_SYSTEM: "memory"}
@@ -109,31 +93,25 @@ class InMemoryDLQRepository:
 
     async def get_failed_event_by_id(self, dlq_id: int | str) -> DLQEntry | None:
         """Get a specific failed event by its DLQ ID via O(1) index lookup."""
-        with self._tracer.span(
-            "eventsource.dlq.get_by_id", {"dlq.id": str(dlq_id), ATTR_DB_SYSTEM: "memory"}
-        ):
+        attrs = {"dlq.id": str(dlq_id), ATTR_DB_SYSTEM: "memory"}
+        with self._tracer.span("eventsource.dlq.get_by_id", attrs):
             async with self._lock:
                 return self._by_id.get(dlq_id)
 
     async def mark_resolved(self, dlq_id: int | str, resolved_by: str | UUID) -> None:
         """Mark a DLQ entry as resolved via O(1) index lookup."""
-        attrs = {
-            "dlq.id": str(dlq_id),
-            "resolved_by": str(resolved_by) if resolved_by else None,
-            ATTR_DB_SYSTEM: "memory",
-        }
+        by_str = str(resolved_by) if resolved_by else None
+        attrs = {"dlq.id": str(dlq_id), "resolved_by": by_str, ATTR_DB_SYSTEM: "memory"}
         with self._tracer.span("eventsource.dlq.resolve", attrs):
             async with self._lock:
                 if (entry := self._by_id.get(dlq_id)) is not None:
-                    entry.status = "resolved"
+                    entry.status, entry.resolved_by = "resolved", by_str
                     entry.resolved_at = datetime.now(UTC)
-                    entry.resolved_by = str(resolved_by) if resolved_by else None
 
     async def mark_retrying(self, dlq_id: int | str) -> None:
         """Mark a DLQ entry as being retried via O(1) index lookup."""
-        with self._tracer.span(
-            "eventsource.dlq.retry", {"dlq.id": str(dlq_id), ATTR_DB_SYSTEM: "memory"}
-        ):
+        attrs = {"dlq.id": str(dlq_id), ATTR_DB_SYSTEM: "memory"}
+        with self._tracer.span("eventsource.dlq.retry", attrs):
             async with self._lock:
                 if (entry := self._by_id.get(dlq_id)) is not None:
                     entry.status = "retrying"
@@ -175,10 +153,9 @@ class InMemoryDLQRepository:
             cutoff = datetime.now(UTC) - timedelta(days=older_than_days)
             async with self._lock:
                 keys = [
-                    k
-                    for k, e in self._entries.items()
+                    k for k, e in self._entries.items()
                     if e.status == "resolved" and e.resolved_at and e.resolved_at < cutoff
-                ]
+                ]  # fmt: skip
                 for key in keys:
                     self._by_id.pop(self._entries.pop(key).id, None)
                 return len(keys)

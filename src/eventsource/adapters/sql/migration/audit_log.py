@@ -33,14 +33,12 @@ class PostgreSQLMigrationAuditLogRepository:
 
     async def record(self, entry: MigrationAuditEntry) -> int:
         """Record an immutable audit log entry and return its generated ID."""
-        with self._tracer.span(
-            "eventsource.audit_log_repo.record",
-            {
-                "migration.id": str(entry.migration_id),
-                "audit.event_type": entry.event_type.value,
-                ATTR_DB_SYSTEM: "postgresql",
-            },
-        ):
+        attrs = {
+            "migration.id": str(entry.migration_id),
+            "audit.event_type": entry.event_type.value,
+            ATTR_DB_SYSTEM: "postgresql",
+        }
+        with self._tracer.span("eventsource.audit_log_repo.record", attrs):
             query = text(
                 "INSERT INTO migration_audit_log ("
                 "migration_id, event_type, old_phase, new_phase, details, operator, occurred_at"
@@ -57,11 +55,8 @@ class PostgreSQLMigrationAuditLogRepository:
                 "operator": entry.operator,
                 "occurred_at": entry.occurred_at,
             }
-
             async with sql_connection(self._conn, write=True) as conn:
-                result = await conn.execute(query, params)
-                row = result.fetchone()
-
+                row = (await conn.execute(query, params)).fetchone()
             if row is None:
                 raise RuntimeError("Failed to record audit entry - no row returned")
             return int(row[0])
@@ -75,13 +70,10 @@ class PostgreSQLMigrationAuditLogRepository:
         limit: int | None = None,
     ) -> list[MigrationAuditEntry]:
         """Get audit entries for a migration ordered by occurred_at ascending."""
-        with self._tracer.span(
-            "eventsource.audit_log_repo.get_by_migration",
-            {"migration.id": str(migration_id), ATTR_DB_SYSTEM: "postgresql"},
-        ):
+        attrs = {"migration.id": str(migration_id), ATTR_DB_SYSTEM: "postgresql"}
+        with self._tracer.span("eventsource.audit_log_repo.get_by_migration", attrs):
             conditions = ["migration_id = :migration_id"]
             params: dict[str, Any] = {"migration_id": migration_id}
-
             if event_types:
                 conditions.append("event_type = ANY(:event_types)")
                 params["event_types"] = [et.value for et in event_types]
@@ -99,39 +91,28 @@ class PostgreSQLMigrationAuditLogRepository:
                 f"details, operator, occurred_at FROM migration_audit_log WHERE {where_clause} "
                 f"ORDER BY occurred_at ASC {limit_clause}"
             )
-            query = text(sql)
-
             async with sql_connection(self._conn, write=False) as conn:
-                result = await conn.execute(query, params)
-                rows = result.fetchall()
-
+                rows = (await conn.execute(text(sql), params)).fetchall()
             return [self._row_to_entry(row) for row in rows]
 
     async def get_by_id(self, entry_id: int) -> MigrationAuditEntry | None:
         """Get an audit entry by ID, or None if not found."""
-        with self._tracer.span(
-            "eventsource.audit_log_repo.get_by_id",
-            {"audit.entry_id": entry_id, ATTR_DB_SYSTEM: "postgresql"},
-        ):
+        attrs = {"audit.entry_id": entry_id, ATTR_DB_SYSTEM: "postgresql"}
+        with self._tracer.span("eventsource.audit_log_repo.get_by_id", attrs):
             query = text(
                 "SELECT id, migration_id, event_type, old_phase, new_phase, "
                 "details, operator, occurred_at FROM migration_audit_log WHERE id = :id"
             )
             async with sql_connection(self._conn, write=False) as conn:
-                result = await conn.execute(query, {"id": entry_id})
-                row = result.fetchone()
+                row = (await conn.execute(query, {"id": entry_id})).fetchone()
             return None if row is None else self._row_to_entry(row)
 
     async def get_latest(
-        self,
-        migration_id: UUID,
-        event_type: AuditEventType | None = None,
+        self, migration_id: UUID, event_type: AuditEventType | None = None
     ) -> MigrationAuditEntry | None:
         """Get the most recent audit entry for a migration, or None if none exist."""
-        with self._tracer.span(
-            "eventsource.audit_log_repo.get_latest",
-            {"migration.id": str(migration_id), ATTR_DB_SYSTEM: "postgresql"},
-        ):
+        attrs = {"migration.id": str(migration_id), ATTR_DB_SYSTEM: "postgresql"}
+        with self._tracer.span("eventsource.audit_log_repo.get_latest", attrs):
             if event_type:
                 query = text(
                     "SELECT id, migration_id, event_type, old_phase, new_phase, details, "
@@ -152,21 +133,15 @@ class PostgreSQLMigrationAuditLogRepository:
                 params = {"migration_id": migration_id}
 
             async with sql_connection(self._conn, write=False) as conn:
-                result = await conn.execute(query, params)
-                row = result.fetchone()
-
+                row = (await conn.execute(query, params)).fetchone()
             return None if row is None else self._row_to_entry(row)
 
     async def count_by_migration(
-        self,
-        migration_id: UUID,
-        event_type: AuditEventType | None = None,
+        self, migration_id: UUID, event_type: AuditEventType | None = None
     ) -> int:
         """Count audit entries for a migration, optionally filtered by event type."""
-        with self._tracer.span(
-            "eventsource.audit_log_repo.count_by_migration",
-            {"migration.id": str(migration_id), ATTR_DB_SYSTEM: "postgresql"},
-        ):
+        attrs = {"migration.id": str(migration_id), ATTR_DB_SYSTEM: "postgresql"}
+        with self._tracer.span("eventsource.audit_log_repo.count_by_migration", attrs):
             if event_type:
                 query = text(
                     "SELECT COUNT(*) FROM migration_audit_log "
@@ -183,9 +158,7 @@ class PostgreSQLMigrationAuditLogRepository:
                 params = {"migration_id": migration_id}
 
             async with sql_connection(self._conn, write=False) as conn:
-                result = await conn.execute(query, params)
-                row = result.fetchone()
-
+                row = (await conn.execute(query, params)).fetchone()
             return 0 if row is None else int(row[0])
 
     def _row_to_entry(self, row: Sequence[Any]) -> MigrationAuditEntry:
