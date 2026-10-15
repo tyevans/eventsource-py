@@ -29,6 +29,30 @@ from tests.unit.application.migration.test_phase3_integration._repositories impo
 )
 
 
+def _setup_coord(
+    source_store: InMemoryEventStore,
+    target_store: InMemoryEventStore,
+    migration_repo: InMemoryMigrationRepository,
+    routing_repo: InMemoryRoutingRepository,
+    router: TenantStoreRouter,
+    lock_manager: MockLockManager,
+    position_mapper: PositionMapper,
+    checkpoint_repo: InMemoryCheckpointRepository | None = None,
+) -> MigrationCoordinator:
+    router.register_store("dedicated", target_store)
+    return MigrationCoordinator(
+        source_store=source_store,
+        migration_repo=migration_repo,
+        routing_repo=routing_repo,
+        router=router,
+        lock_manager=lock_manager,
+        position_mapper=position_mapper,
+        checkpoint_repo=checkpoint_repo,
+        source_store_id="default",
+        enable_tracing=False,
+    )
+
+
 class TestFullMigrationWithVerificationAndSubscriptions:
     @pytest.mark.asyncio
     async def test_full_lifecycle_with_verification_enabled(
@@ -44,32 +68,16 @@ class TestFullMigrationWithVerificationAndSubscriptions:
         tenant_id: UUID,
     ) -> None:
         await create_test_events(source_store, tenant_id, count=5)
-        coordinator = MigrationCoordinator(
-            source_store=source_store,
-            migration_repo=migration_repo,
-            routing_repo=routing_repo,
-            router=router,
-            lock_manager=lock_manager,
-            position_mapper=PositionMapper(position_mapping_repo, enable_tracing=False),
-            checkpoint_repo=checkpoint_repo,
-            source_store_id="default",
-            enable_tracing=False,
-        )
-        router.register_store("dedicated", target_store)
-        config = MigrationConfig(
-            batch_size=10, verify_consistency=True, migrate_subscriptions=False
-        )
+        mapper = PositionMapper(position_mapping_repo, enable_tracing=False)
+        coord_args = (source_store, target_store, migration_repo, routing_repo, router)
+        coordinator = _setup_coord(*coord_args, lock_manager, mapper, checkpoint_repo)
+        cfg = MigrationConfig(batch_size=10, verify_consistency=True, migrate_subscriptions=False)
         migration = await coordinator.start_migration(
-            tenant_id=tenant_id,
-            target_store=target_store,
-            target_store_id="dedicated",
-            config=config,
+            tenant_id=tenant_id, target_store=target_store, target_store_id="dedicated", config=cfg
         )
-        assert migration is not None
-        assert migration.config.verify_consistency is True
+        assert migration is not None and migration.config.verify_consistency is True
         await asyncio.sleep(0.1)
-        status = await coordinator.get_status(migration.id)
-        assert status.migration_id == migration.id
+        assert (await coordinator.get_status(migration.id)).migration_id == migration.id
 
     @pytest.mark.asyncio
     async def test_verify_consistency_on_coordinator(
@@ -85,31 +93,18 @@ class TestFullMigrationWithVerificationAndSubscriptions:
     ) -> None:
         await create_test_events(source_store, tenant_id, count=5)
         async for envelope in source_store.read_all():
-            if envelope.event.tenant_id == tenant_id:
-                event = envelope.event
-                await target_store.append(
-                    StreamId(aggregate_id=event.aggregate_id, category=event.aggregate_type),
-                    [event],
-                    ExpectedVersion.any_(),
-                )
-        coordinator = MigrationCoordinator(
-            source_store=source_store,
-            migration_repo=migration_repo,
-            routing_repo=routing_repo,
-            router=router,
-            lock_manager=lock_manager,
-            position_mapper=PositionMapper(position_mapping_repo, enable_tracing=False),
-            source_store_id="default",
-            enable_tracing=False,
-        )
-        router.register_store("dedicated", target_store)
+            if (e := envelope.event).tenant_id == tenant_id:
+                stream = StreamId(aggregate_id=e.aggregate_id, category=e.aggregate_type)
+                await target_store.append(stream, [e], ExpectedVersion.any_())
+        mapper = PositionMapper(position_mapping_repo, enable_tracing=False)
+        coord_args = (source_store, target_store, migration_repo, routing_repo, router)
+        coordinator = _setup_coord(*coord_args, lock_manager, mapper)
         migration = await coordinator.start_migration(
             tenant_id=tenant_id, target_store=target_store, target_store_id="dedicated"
         )
         await asyncio.sleep(0.1)
         report = await coordinator.verify_consistency(migration.id, level=VerificationLevel.COUNT)
-        assert report is not None
-        assert report.is_consistent is True
+        assert report is not None and report.is_consistent is True
         assert coordinator.get_consistency_report(migration.id) is report
 
     @pytest.mark.asyncio
@@ -125,24 +120,12 @@ class TestFullMigrationWithVerificationAndSubscriptions:
         lock_manager: MockLockManager,
         tenant_id: UUID,
     ) -> None:
-        position_mapper = PositionMapper(position_mapping_repo, enable_tracing=False)
+        mapper = PositionMapper(position_mapping_repo, enable_tracing=False)
         migration_id = uuid4()
-        await position_mapper.record_mapping(migration_id, source_pos(100), target_pos(50), uuid4())
-        await checkpoint_repo.save_position(
-            "OrderProjection", source_pos(100), uuid4(), "OrderCreated"
-        )
-        coordinator = MigrationCoordinator(
-            source_store=source_store,
-            migration_repo=migration_repo,
-            routing_repo=routing_repo,
-            router=router,
-            lock_manager=lock_manager,
-            position_mapper=position_mapper,
-            checkpoint_repo=checkpoint_repo,
-            source_store_id="default",
-            enable_tracing=False,
-        )
-        router.register_store("dedicated", target_store)
+        await mapper.record_mapping(migration_id, source_pos(100), target_pos(50), uuid4())
+        await checkpoint_repo.save_position("OrderProjection", source_pos(100), uuid4(), "Evt")
+        coord_args = (source_store, target_store, migration_repo, routing_repo, router)
+        coordinator = _setup_coord(*coord_args, lock_manager, mapper, checkpoint_repo)
         await migration_repo.create(
             Migration(
                 id=migration_id,
@@ -152,11 +135,8 @@ class TestFullMigrationWithVerificationAndSubscriptions:
                 phase=MigrationPhase.PENDING,
             )
         )
-        summary = await coordinator.migrate_subscriptions(
-            migration_id, subscription_names=["OrderProjection"]
-        )
-        assert summary is not None
-        assert summary.successful_count == 1
+        summary = await coordinator.migrate_subscriptions(migration_id, ["OrderProjection"])
+        assert summary is not None and summary.successful_count == 1
         assert coordinator.get_subscription_summary(migration_id) is summary
 
 
@@ -171,22 +151,11 @@ class TestMigrationSummary:
     ) -> None:
         await position_mapper.record_mapping(migration_id, source_pos(100), target_pos(50), uuid4())
         await checkpoint_repo.save_position("TestProjection", source_pos(100), uuid4(), "TestEvent")
-        migrator = SubscriptionMigrator(
-            position_mapper=position_mapper, checkpoint_repo=checkpoint_repo, enable_tracing=False
-        )
-        summary = await migrator.migrate_subscriptions(
-            migration_id=migration_id, tenant_id=tenant_id, subscription_names=["TestProjection"]
-        )
+        migrator = SubscriptionMigrator(position_mapper, checkpoint_repo, enable_tracing=False)
+        summary = await migrator.migrate_subscriptions(migration_id, tenant_id, ["TestProjection"])
         summary_dict = summary.to_dict()
-        for key in (
-            "migration_id",
-            "tenant_id",
-            "successful_count",
-            "failed_count",
-            "results",
-            "all_successful",
-        ):
-            assert key in summary_dict
+        keys = ("migration_id", "tenant_id", "successful_count", "failed_count", "results")
+        assert all(key in summary_dict for key in (*keys, "all_successful"))
 
     @pytest.mark.asyncio
     async def test_summary_all_successful_property(
@@ -199,14 +168,9 @@ class TestMigrationSummary:
         await position_mapper.record_mapping(migration_id, source_pos(100), target_pos(50), uuid4())
         await checkpoint_repo.save_position("Projection1", source_pos(100), uuid4(), "TestEvent")
         await checkpoint_repo.save_position("Projection2", source_pos(50), uuid4(), "TestEvent")
-        migrator = SubscriptionMigrator(
-            position_mapper=position_mapper, checkpoint_repo=checkpoint_repo, enable_tracing=False
-        )
+        migrator = SubscriptionMigrator(position_mapper, checkpoint_repo, enable_tracing=False)
         summary = await migrator.migrate_subscriptions(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            subscription_names=["Projection1", "Projection2"],
+            migration_id, tenant_id, ["Projection1", "Projection2"]
         )
         assert summary.all_successful is False
-        assert summary.successful_count == 1
-        assert summary.failed_count == 1
+        assert (summary.successful_count, summary.failed_count) == (1, 1)

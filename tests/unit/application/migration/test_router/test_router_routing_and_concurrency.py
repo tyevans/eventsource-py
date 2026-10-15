@@ -11,6 +11,16 @@ from eventsource.ports.migration.models import TenantMigrationState, TenantRouti
 from ._fixtures import async_generator_mock, create_mock_store, sid
 
 
+def _make_tracked_gen():
+    called = [False]
+
+    def gen(*args, **kwargs):
+        called[0] = True
+        return async_generator_mock([])
+
+    return called, gen
+
+
 class TestReadOperationsRouting:
     """Tests for read operation routing."""
 
@@ -24,20 +34,8 @@ class TestReadOperationsRouting:
         mock_routing_repo.get_routing.return_value = TenantRouting(
             tenant_id=tenant_id, store_id="dedicated", migration_state=TenantMigrationState.NORMAL
         )
-        default_called, dedicated_called = False, False
-
-        def default_read_category(*args, **kwargs):
-            nonlocal default_called
-            default_called = True
-            return async_generator_mock([])
-
-        def dedicated_read_category(*args, **kwargs):
-            nonlocal dedicated_called
-            dedicated_called = True
-            return async_generator_mock([])
-
-        mock_default_store.read_category = default_read_category
-        mock_dedicated_store.read_category = dedicated_read_category
+        default_called, mock_default_store.read_category = _make_tracked_gen()
+        dedicated_called, mock_dedicated_store.read_category = _make_tracked_gen()
         router = TenantStoreRouter(
             default_store=mock_default_store,
             routing_repo=mock_routing_repo,
@@ -48,23 +46,15 @@ class TestReadOperationsRouting:
             "TestAggregate", CategoryReadOptions(tenant_id=tenant_id)
         ):
             pass
-        assert dedicated_called is True
-        assert default_called is False
+        assert dedicated_called[0] is True and default_called[0] is False
 
     async def test_read_category_without_tenant_id_routes_to_default(
         self, router: TenantStoreRouter, mock_default_store: MagicMock
     ) -> None:
-        read_category_called = False
-
-        def tracked_read_category(*args, **kwargs):
-            nonlocal read_category_called
-            read_category_called = True
-            return async_generator_mock([])
-
-        mock_default_store.read_category = tracked_read_category
+        called, mock_default_store.read_category = _make_tracked_gen()
         async for _ in router.read_category("TestAggregate"):
             pass
-        assert read_category_called is True
+        assert called[0] is True
 
     async def test_event_exists_checks_all_stores(
         self,
@@ -121,21 +111,14 @@ class TestStreamOperationsRouting:
     async def test_read_all_routes_to_default_without_tenant(
         self, mock_routing_repo: AsyncMock
     ) -> None:
-        read_all_called = False
-
-        def tracked_read_all(*args, **kwargs):
-            nonlocal read_all_called
-            read_all_called = True
-            return async_generator_mock([])
-
         default_store = create_mock_store(store_id="default")
-        default_store.read_all = tracked_read_all
+        called, default_store.read_all = _make_tracked_gen()
         router = TenantStoreRouter(
             default_store=default_store, routing_repo=mock_routing_repo, enable_tracing=False
         )
         async for _ in router.read_all():
             pass
-        assert read_all_called is True
+        assert called[0] is True
 
     async def test_read_all_routes_to_tenant_store_with_tenant_id(
         self, mock_routing_repo: AsyncMock
@@ -144,22 +127,10 @@ class TestStreamOperationsRouting:
         mock_routing_repo.get_routing.return_value = TenantRouting(
             tenant_id=tenant_id, store_id="dedicated", migration_state=TenantMigrationState.NORMAL
         )
-        default_called, dedicated_called = False, False
-
-        def default_read_all(*args, **kwargs):
-            nonlocal default_called
-            default_called = True
-            return async_generator_mock([])
-
-        def dedicated_read_all(*args, **kwargs):
-            nonlocal dedicated_called
-            dedicated_called = True
-            return async_generator_mock([])
-
         default_store = create_mock_store(store_id="default")
         dedicated_store = create_mock_store(store_id="dedicated")
-        default_store.read_all = default_read_all
-        dedicated_store.read_all = dedicated_read_all
+        default_called, default_store.read_all = _make_tracked_gen()
+        dedicated_called, dedicated_store.read_all = _make_tracked_gen()
         router = TenantStoreRouter(
             default_store=default_store,
             routing_repo=mock_routing_repo,
@@ -168,27 +139,19 @@ class TestStreamOperationsRouting:
         )
         async for _ in router.read_all(options=FeedReadOptions(tenant_id=tenant_id)):
             pass
-        assert dedicated_called is True
-        assert default_called is False
+        assert dedicated_called[0] is True and default_called[0] is False
 
     async def test_read_stream_routes_to_default_without_tenant(
         self, mock_routing_repo: AsyncMock
     ) -> None:
-        read_stream_called = False
-
-        def tracked_read_stream(*args, **kwargs):
-            nonlocal read_stream_called
-            read_stream_called = True
-            return async_generator_mock([])
-
         default_store = create_mock_store(store_id="default")
-        default_store.read_stream = tracked_read_stream
+        called, default_store.read_stream = _make_tracked_gen()
         router = TenantStoreRouter(
             default_store=default_store, routing_repo=mock_routing_repo, enable_tracing=False
         )
         async for _ in router.read_stream(sid()):
             pass
-        assert read_stream_called is True
+        assert called[0] is True
 
 
 class TestConcurrentOperations:
