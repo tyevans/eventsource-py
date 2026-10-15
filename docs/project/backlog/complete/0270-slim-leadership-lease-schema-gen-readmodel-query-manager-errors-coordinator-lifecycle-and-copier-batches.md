@@ -1,7 +1,7 @@
 ---
 id: TASK-0270
 title: "Slim leadership_lease, schema_generation, test_query, manager_error_handling, coordinator_lifecycle, and bulk_copier_batches tests below 295 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: testing

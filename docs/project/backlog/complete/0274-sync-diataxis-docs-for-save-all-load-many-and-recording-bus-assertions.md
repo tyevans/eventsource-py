@@ -1,7 +1,7 @@
 ---
 id: TASK-0274
 title: "Synchronize Diataxis guides for repo.save_all, repo.load_many, and RecordingEventBus.assertions"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application

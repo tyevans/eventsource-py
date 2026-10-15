@@ -1,7 +1,7 @@
 ---
 id: TASK-0273
 title: "Add save_all and load_many batch helpers to AggregateRepository and TenantAwareRepository"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application
