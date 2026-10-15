@@ -78,38 +78,24 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
             try:
                 await self._process_event(event)
             except Exception as e:
-                err_extra = {
-                    **base_extra,
-                    "attempt": attempt + 1,
-                    "max_attempts": max_attempts,
-                    "error": str(e),
-                }
-                logger.error(
-                    "Projection %s failed to process event %s (attempt %d/%d): %s",
-                    name,
-                    event.event_id,
-                    attempt + 1,
-                    max_attempts,
-                    e,
-                    exc_info=True,
-                    extra=err_extra,
-                )
+                att = attempt + 1
+                err_extra = {**base_extra, "attempt": att, "max_attempts": max_attempts}
+                err_extra["error"] = str(e)
+                err_msg = "Projection %s failed to process event %s (attempt %d/%d): %s"
+                args = (name, event.event_id, att, max_attempts, e)
+                logger.error(err_msg, *args, exc_info=True, extra=err_extra)
                 if not self._retry_policy.should_retry(attempt, e):
                     if span is not None:
-                        span.set_attribute(ATTR_RETRY_COUNT, attempt + 1)
-                    dlq_repo = self._dlq_repo
-                    sent = (
-                        await send_to_dlq(dlq_repo, name, event, e, attempt + 1, self._tracer)
-                        if dlq_repo is not None
-                        else False
-                    )
+                        span.set_attribute(ATTR_RETRY_COUNT, att)
+                    dlq, tr = self._dlq_repo, self._tracer
+                    sent = await send_to_dlq(dlq, name, event, e, att, tr) if dlq else False
                     msg = (
                         "Event %s sent to DLQ after %d attempts"
                         if sent
                         else "Event %s failed permanently after %d attempts; NO DLQ entry was recorded"
                     )
-                    crit_extra = {**base_extra, "retry_count": attempt + 1}
-                    logger.critical(msg, event.event_id, attempt + 1, extra=crit_extra)
+                    crit_ex = {**base_extra, "retry_count": att}
+                    logger.critical(msg, event.event_id, att, extra=crit_ex)
                     raise
                 backoff = self._retry_policy.get_backoff(attempt)
                 retry_extra = {"projection": name, "event_id": eid, "backoff_seconds": backoff}
@@ -118,13 +104,8 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
                 continue
 
             await self._record_checkpoint_after_success(event, span)
-            logger.debug(
-                "Projection %s processed event %s (type: %s)",
-                name,
-                event.event_id,
-                etype,
-                extra=base_extra,
-            )
+            dbg = "Projection %s processed event %s (type: %s)"
+            logger.debug(dbg, name, event.event_id, etype, extra=base_extra)
             return
 
     async def _record_checkpoint_after_success(self, event: DomainEvent, span: Span | None) -> None:
@@ -140,22 +121,15 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
             if span is not None:
                 span.set_attribute("checkpoint.updated", False)
                 span.set_attribute("checkpoint.failed", True)
-            err_extra = {
-                "projection": self._projection_name,
-                "event_id": str(event.event_id),
-                "event_type": event.event_type,
-                "error": str(e),
-            }
-            logger.critical(
-                "Projection %s applied event %s but could not record its "
-                "checkpoint: %s. The event will be re-delivered and re-applied "
-                "on restart; this is a checkpoint-store outage, not a bad event.",
-                self._projection_name,
-                event.event_id,
-                e,
-                exc_info=True,
-                extra=err_extra,
+            pname, eid = self._projection_name, event.event_id
+            ex = {"projection": pname, "event_id": str(eid), "event_type": event.event_type}
+            ex["error"] = str(e)
+            msg = (
+                "Projection %s applied event %s but could not record its checkpoint: %s. "
+                "The event will be re-delivered and re-applied on restart; this is a "
+                "checkpoint-store outage, not a bad event."
             )
+            logger.critical(msg, pname, eid, e, exc_info=True, extra=ex)
             raise
         if span is not None:
             span.set_attribute("checkpoint.updated", True)
@@ -173,16 +147,12 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
         if self._checkpoint_repo is None:
             return None
         types = [et.__name__ for et in self.subscribed_to()]
-        return await lag_metrics_dict(
-            self._checkpoint_repo, self._projection_name, types, self._tracer
-        )
+        r, n, t = self._checkpoint_repo, self._projection_name, self._tracer
+        return await lag_metrics_dict(r, n, types, t)
 
     async def reset(self) -> None:
-        logger.warning(
-            "Resetting projection %s",
-            self._projection_name,
-            extra={"projection": self._projection_name},
-        )
+        extra = {"projection": self._projection_name}
+        logger.warning("Resetting projection %s", self._projection_name, extra=extra)
         if self._checkpoint_repo is not None:
             await reset_checkpoint(self._checkpoint_repo, self._projection_name, self._tracer)
         await self._truncate_read_models()

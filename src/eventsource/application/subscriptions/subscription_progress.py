@@ -41,20 +41,9 @@ class SubscriptionProgressMixin:
         _max_recent_errors: int
 
     async def record_event_processed(
-        self,
-        position: Position | None,
-        event_id: UUID,
-        event_type: str,
+        self, position: Position | None, event_id: UUID, event_type: str
     ) -> None:
-        """
-        Record that an event was successfully processed.
-
-        Args:
-            position: Global-feed position of the event, None if the feed
-                supplied no position for it
-            event_id: UUID of the event
-            event_type: Type of the event
-        """
+        """Record that an event was successfully processed."""
         async with self._lock:
             self.last_processed_position = position
             self.last_event_id = event_id
@@ -64,12 +53,7 @@ class SubscriptionProgressMixin:
             self.last_processed_at = datetime.now(UTC)
 
     async def record_event_failed(self, error: Exception) -> None:
-        """
-        Record that an event processing failed.
-
-        Args:
-            error: The exception that occurred
-        """
+        """Record that an event processing failed."""
         async with self._lock:
             self.events_failed += 1
             self.last_error = error
@@ -83,16 +67,7 @@ class SubscriptionProgressMixin:
         error: Exception,
         sent_to_dlq: bool = False,
     ) -> None:
-        """
-        Record detailed error information.
-
-        Args:
-            event_id: ID of the failed event
-            event_type: Type of the failed event
-            position: Global-feed position of the failed event, None if unknown
-            error: The exception that occurred
-            sent_to_dlq: Whether event was sent to DLQ
-        """
+        """Record detailed error information."""
         async with self._lock:
             error_info = RecentErrorInfo(
                 event_id=event_id,
@@ -103,46 +78,27 @@ class SubscriptionProgressMixin:
                 timestamp=datetime.now(UTC),
                 sent_to_dlq=sent_to_dlq,
             )
-
             self._recent_errors.append(error_info)
-
             if len(self._recent_errors) > self._max_recent_errors:
                 self._recent_errors = self._recent_errors[-self._max_recent_errors :]
-
             self.events_failed += 1
             self.last_error = error
             self.last_error_at = datetime.now(UTC)
-
             if sent_to_dlq:
                 self.events_dlq += 1
 
     async def record_events_seen(self, count: int) -> None:
-        """
-        Record events observed but not yet delivered.
-
-        Args:
-            count: Number of events observed in this read.
-        """
+        """Record events observed but not yet delivered."""
         async with self._lock:
             self._events_seen += count
 
     async def record_events_unseen(self, count: int) -> None:
-        """
-        Reconcile the seen-counter when a read batch is abandoned early.
-
-        Args:
-            count: Number of events read but not delivered in this batch.
-        """
+        """Reconcile the seen-counter when a read batch is abandoned early."""
         async with self._lock:
             self._events_seen = max(0, self._events_seen - count)
 
     async def reconcile_lag(self, target_lag: int = 0) -> None:
-        """
-        Reconcile the seen/delivered counters to match the target lag deficit.
-
-        Args:
-            target_lag: Desired lag deficit (events seen ahead of delivered). Defaults to 0.
-        """
+        """Reconcile the seen/delivered counters to match the target lag deficit."""
         async with self._lock:
             self._events_seen = self._events_delivered + max(0, target_lag)
 
@@ -170,6 +126,8 @@ class SubscriptionProgressMixin:
 
     def get_status(self) -> SubscriptionStatus:
         """Get a status snapshot for health checks."""
+        last_proc = self.last_processed_at.isoformat() if self.last_processed_at else None
+        started = self.started_at.isoformat() if self.started_at else None
         return SubscriptionStatus(
             name=self.name,
             state=self.state.value,
@@ -177,10 +135,8 @@ class SubscriptionProgressMixin:
             lag_events=self.lag,
             events_processed=self.events_processed,
             events_failed=self.events_failed,
-            last_processed_at=(
-                self.last_processed_at.isoformat() if self.last_processed_at else None
-            ),
-            started_at=(self.started_at.isoformat() if self.started_at else None),
+            last_processed_at=last_proc,
+            started_at=started,
             uptime_seconds=self.uptime_seconds,
             error=str(self.last_error) if self.last_error else None,
             events_dlq=self.events_dlq,
@@ -189,10 +145,8 @@ class SubscriptionProgressMixin:
 
     def __str__(self) -> str:
         """String representation."""
-        return (
-            f"Subscription({self.name}, state={self.state.value}, "
-            f"pos={render_position(self.last_processed_position) or '-'})"
-        )
+        pos = render_position(self.last_processed_position) or "-"
+        return f"Subscription({self.name}, state={self.state.value}, pos={pos})"
 
 
 __all__ = ["SubscriptionProgressMixin"]

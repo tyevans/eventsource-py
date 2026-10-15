@@ -63,6 +63,9 @@ class DeltaPayload:
         )
 
 
+type _In = bytes | str | dict[str, Any] | list[Any]
+
+
 class DeltaCodec:
     """Configurable codec for sequential stream payload delta compression."""
 
@@ -75,7 +78,6 @@ class DeltaCodec:
         min_payload_size: int = 128,
         compression_level: int = 6,
     ) -> None:
-        """Initialize the DeltaCodec with chain length, ratio, and compression thresholds."""
         self.max_chain_length = max_chain_length
         self.ratio_threshold = ratio_threshold
         self.cumulative_ratio_threshold = cumulative_ratio_threshold
@@ -83,7 +85,7 @@ class DeltaCodec:
         self.compression_level = compression_level
 
     @staticmethod
-    def _to_bytes(data: bytes | str | dict[str, Any] | list[Any]) -> bytes:
+    def _to_bytes(data: _In) -> bytes:
         if isinstance(data, bytes):
             return data
         if isinstance(data, str):
@@ -92,71 +94,43 @@ class DeltaCodec:
 
     def compress(
         self,
-        payload: bytes | str | dict[str, Any] | list[Any],
+        payload: _In,
         *,
-        base_payload: bytes | str | dict[str, Any] | list[Any] | None = None,
+        base_payload: _In | None = None,
         base_version: int | None = None,
         chain_length: int = 0,
         cumulative_chain_bytes: int = 0,
     ) -> DeltaPayload:
         """Compress payload against optional base_payload or produce a standalone baseline."""
         raw_bytes = self._to_bytes(payload)
-        raw_size = len(raw_bytes)
-        content_hash = hashlib.sha256(raw_bytes).hexdigest()
-
+        sz, h = len(raw_bytes), hashlib.sha256(raw_bytes).hexdigest()
         can_delta = (
             base_payload is not None
             and base_version is not None
             and chain_length < self.max_chain_length
-            and raw_size >= self.min_payload_size
+            and sz >= self.min_payload_size
         )
-
         if can_delta and base_payload is not None:
-            base_bytes = self._to_bytes(base_payload)
-            compressor = zlib.compressobj(level=self.compression_level, zdict=base_bytes)
-            delta_bytes = compressor.compress(raw_bytes) + compressor.flush()
-            delta_size = len(delta_bytes)
+            zdict = self._to_bytes(base_payload)
+            comp = zlib.compressobj(level=self.compression_level, zdict=zdict)
+            d_bytes = comp.compress(raw_bytes) + comp.flush()
+            d_sz = len(d_bytes)
+            ratio_ok = d_sz < (sz * self.ratio_threshold)
+            cum_ok = (cumulative_chain_bytes + d_sz) < (sz * self.cumulative_ratio_threshold)
+            if ratio_ok and cum_ok:
+                return DeltaPayload(True, base_version, d_bytes, h, zlib.crc32(d_bytes), sz, d_sz)
 
-            size_ratio_acceptable = delta_size < (raw_size * self.ratio_threshold)
-            new_cumulative = cumulative_chain_bytes + delta_size
-            cumulative_acceptable = new_cumulative < (raw_size * self.cumulative_ratio_threshold)
+        comp = zlib.compressobj(level=self.compression_level)
+        c_bytes = comp.compress(raw_bytes) + comp.flush()
+        return DeltaPayload(False, None, c_bytes, h, zlib.crc32(c_bytes), sz, len(c_bytes))
 
-            if size_ratio_acceptable and cumulative_acceptable:
-                return DeltaPayload(
-                    is_delta=True,
-                    base_version=base_version,
-                    compressed_bytes=delta_bytes,
-                    content_hash=content_hash,
-                    payload_checksum=zlib.crc32(delta_bytes),
-                    raw_size=raw_size,
-                    compressed_size=delta_size,
-                )
-
-        compressor = zlib.compressobj(level=self.compression_level)
-        comp_bytes = compressor.compress(raw_bytes) + compressor.flush()
-        return DeltaPayload(
-            is_delta=False,
-            base_version=None,
-            compressed_bytes=comp_bytes,
-            content_hash=content_hash,
-            payload_checksum=zlib.crc32(comp_bytes),
-            raw_size=raw_size,
-            compressed_size=len(comp_bytes),
-        )
-
-    def decompress(
-        self,
-        delta: DeltaPayload,
-        *,
-        base_payload: bytes | str | dict[str, Any] | list[Any] | None = None,
-    ) -> bytes:
+    def decompress(self, delta: DeltaPayload, *, base_payload: _In | None = None) -> bytes:
         """Decompress delta payload, verifying CRC32 and SHA256 content hash."""
         actual_crc = zlib.crc32(delta.compressed_bytes)
         if actual_crc != delta.payload_checksum:
             raise DeltaIntegrityError(
                 f"Checksum mismatch on compressed frame: expected {delta.payload_checksum:#x}, got {actual_crc:#x}"
             )
-
         if delta.is_delta:
             if base_payload is None:
                 raise DeltaChainError(
@@ -166,7 +140,6 @@ class DeltaCodec:
         else:
             decompressor = zlib.decompressobj()
         raw_bytes = decompressor.decompress(delta.compressed_bytes) + decompressor.flush()
-
         actual_hash = hashlib.sha256(raw_bytes).hexdigest()
         if actual_hash != delta.content_hash:
             raise DeltaIntegrityError(
@@ -174,12 +147,7 @@ class DeltaCodec:
             )
         return raw_bytes
 
-    def decompress_to_dict(
-        self,
-        delta: DeltaPayload,
-        *,
-        base_payload: bytes | str | dict[str, Any] | list[Any] | None = None,
-    ) -> Any:
+    def decompress_to_dict(self, delta: DeltaPayload, *, base_payload: _In | None = None) -> Any:
         """Decompress delta payload and parse back into Python JSON object."""
         return orjson.loads(self.decompress(delta, base_payload=base_payload))
 

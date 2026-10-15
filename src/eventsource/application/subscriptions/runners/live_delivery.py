@@ -57,17 +57,15 @@ class LiveDeliveryMixin:
         """Whether the envelope's event passes the configured event filter."""
         return self._filter is None or self._filter.matches(envelope.event)
 
-    async def _call_guarded[T](
-        self, operation: Callable[[], Awaitable[T]], operation_name: str
-    ) -> T:
-        """Call `operation` under `processing_timeout` and optional circuit breaker."""
+    async def _call_guarded[T](self, op: Callable[[], Awaitable[T]], op_name: str) -> T:
+        """Call `op` under `processing_timeout` and optional circuit breaker."""
 
         async def bounded() -> T:
             async with asyncio.timeout(self.config.processing_timeout):
-                return await operation()
+                return await op()
 
         if self._handler_circuit_breaker is not None:
-            return await self._handler_circuit_breaker.execute(bounded, operation_name)
+            return await self._handler_circuit_breaker.execute(bounded, op_name)
         return await bounded()
 
     async def _deliver_page(self, included: list[tuple[EventEnvelope, bool]]) -> None:
@@ -84,33 +82,26 @@ class LiveDeliveryMixin:
                     await self._call_guarded(op, "handle_batch")
                 except Exception as e:
                     batch_succeeded = False
-                    extra = {
-                        "subscription": self.subscription.name,
-                        "batch_size": len(deliverable),
-                        "error": str(e),
-                    }
                     msg = "Live batch handler failed, falling back to per-event delivery"
-                    logger.warning(msg, extra=extra)
+                    ex = {"subscription": self.subscription.name, "batch_size": len(deliverable)}
+                    logger.warning(msg, extra={**ex, "error": str(e)})
                 else:
-                    duration_ms = (time.perf_counter() - start_time) * 1000
                     if self._metrics:
-                        per_event_ms = duration_ms / len(deliverable)
+                        per_ev_ms = (time.perf_counter() - start_time) * 1000 / len(deliverable)
                         for ev in deliverable:
-                            self._metrics.record_event_processed(ev.event_type, per_event_ms)
-
+                            self._metrics.record_event_processed(ev.event_type, per_ev_ms)
         if not batch_succeeded:
             for envelope, _passes in included:
                 await self._process_live_event(envelope)
             return
-
-        last_envelope: EventEnvelope | None = None
+        last_env: EventEnvelope | None = None
         for envelope, passes in included:
             if not passes:
                 self._stats.events_skipped_filtered += 1
                 await self._record_filtered(envelope)
                 continue
             self._stats.events_processed += 1
-            last_envelope = envelope
+            last_env = envelope
             if self._metrics:
                 self._metrics.record_lag(self.subscription.lag)
             pos = envelope.position or self.subscription.last_processed_position
@@ -118,40 +109,30 @@ class LiveDeliveryMixin:
             await self.subscription.record_event_processed(pos, ev.event_id, ev.event_type)
             if envelope.position is not None:
                 await self._maybe_checkpoint_in_batch(envelope.position, ev)
-
-        if (
-            last_envelope is not None
-            and last_envelope.position is not None
-            and self.config.checkpoint_strategy == CheckpointStrategy.EVERY_BATCH
-        ):
-            await self._save_checkpoint_with_retry(last_envelope.position, last_envelope.event)
+        is_every_batch = self.config.checkpoint_strategy == CheckpointStrategy.EVERY_BATCH
+        if last_env is not None and last_env.position is not None and is_every_batch:
+            await self._save_checkpoint_with_retry(last_env.position, last_env.event)
 
     async def _process_live_event(self, envelope: EventEnvelope) -> None:
         """Process one envelope read from the global feed, applying filters."""
         event, position = envelope.event, envelope.position
+        sub_name, eid, etype = self.subscription.name, event.event_id, event.event_type
         span_attrs = {
-            ATTR_SUBSCRIPTION_NAME: self.subscription.name,
-            ATTR_EVENT_ID: str(event.event_id),
-            ATTR_EVENT_TYPE: event.event_type,
+            ATTR_SUBSCRIPTION_NAME: sub_name,
+            ATTR_EVENT_ID: str(eid),
+            ATTR_EVENT_TYPE: etype,
             ATTR_POSITION: render_position(position),
         }
         with self._tracer.span("eventsource.live_runner.process_event", span_attrs):
             if self._filter and not self._filter.matches(event):
                 self._stats.events_skipped_filtered += 1
-                extra = {
-                    "subscription": self.subscription.name,
-                    "event_id": str(event.event_id),
-                    "event_type": event.event_type,
-                }
+                extra = {"subscription": sub_name, "event_id": str(eid), "event_type": etype}
                 logger.debug("Event filtered out", extra=extra)
                 if position is not None:
-                    await self.subscription.record_event_processed(
-                        position, event.event_id, event.event_type
-                    )
+                    await self.subscription.record_event_processed(position, eid, etype)
                 else:
                     await self.subscription.record_events_unseen(1)
                 return
-
             assert self._flow_controller is not None
             async with await self._flow_controller.acquire():
                 start_time = time.perf_counter()
@@ -167,31 +148,22 @@ class LiveDeliveryMixin:
                     self._stats.events_processed += 1
                     duration_ms = (time.perf_counter() - start_time) * 1000
                     if self._metrics:
-                        self._metrics.record_event_processed(event.event_type, duration_ms)
+                        self._metrics.record_event_processed(etype, duration_ms)
                         self._metrics.record_lag(self.subscription.lag)
-
                     pos = position or self.subscription.last_processed_position
-                    await self.subscription.record_event_processed(
-                        pos, event.event_id, event.event_type
-                    )
+                    await self.subscription.record_event_processed(pos, eid, etype)
                     if position is not None:
                         await self._maybe_checkpoint(position, event)
                 except Exception as e:
                     self._stats.events_failed += 1
                     duration_ms = (time.perf_counter() - start_time) * 1000
                     if self._metrics:
-                        self._metrics.record_event_failed(
-                            event.event_type, type(e).__name__, duration_ms
-                        )
+                        self._metrics.record_event_failed(etype, type(e).__name__, duration_ms)
                     await self.subscription.record_event_failed(e)
                     if not self.config.continue_on_error:
                         raise
                     await self.subscription.record_events_unseen(1)
-                    extra = {
-                        "subscription": self.subscription.name,
-                        "event_id": str(event.event_id),
-                        "error": str(e),
-                    }
+                    extra = {"subscription": sub_name, "event_id": str(eid), "error": str(e)}
                     logger.warning("Live event processing failed, continuing", extra=extra)
 
 
