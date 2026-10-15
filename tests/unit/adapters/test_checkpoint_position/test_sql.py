@@ -25,8 +25,6 @@ except ImportError:
 
 @pytest.mark.skipif(not AIOSQLITE_AVAILABLE, reason="aiosqlite not installed")
 class TestSQLCheckpointRepositoryPosition:
-    """Tests for SQLCheckpointRepository position methods."""
-
     @pytest.fixture
     async def sqlite_engine(self, tmp_path):
         from eventsource import create_async_engine
@@ -45,134 +43,91 @@ class TestSQLCheckpointRepositoryPosition:
 
     @pytest.mark.asyncio
     async def test_get_position_returns_none_for_nonexistent(self, repo: SQLCheckpointRepository):
-        result = await repo.get_position("NonExistentSubscription")
-        assert result is None
+        assert await repo.get_position("NonExistentSubscription") is None
 
     @pytest.mark.asyncio
     async def test_save_position_creates_new_checkpoint(self, repo: SQLCheckpointRepository):
-        subscription_id = "TestSubscription"
-        event_id = uuid4()
-        event_type = "TestEvent"
         position = pos(100)
-
-        await repo.save_position(subscription_id, position, event_id, event_type)
-        result = await repo.get_position(subscription_id)
-        assert result == position
+        await repo.save_position("TestSubscription", position, uuid4(), "TestEvent")
+        assert await repo.get_position("TestSubscription") == position
 
     @pytest.mark.asyncio
     async def test_save_position_updates_existing_checkpoint(self, repo: SQLCheckpointRepository):
-        subscription_id = "TestSubscription"
-        first_position = pos(100)
-        second_position = pos(200)
-
-        await repo.save_position(subscription_id, first_position, uuid4(), "Event1")
-        await repo.save_position(subscription_id, second_position, uuid4(), "Event2")
-
-        result = await repo.get_position(subscription_id)
-        assert result == second_position
+        await repo.save_position("TestSubscription", pos(100), uuid4(), "Event1")
+        await repo.save_position("TestSubscription", pos(200), uuid4(), "Event2")
+        assert await repo.get_position("TestSubscription") == pos(200)
 
     @pytest.mark.asyncio
     async def test_save_position_increments_events_processed(self, repo: SQLCheckpointRepository):
-        subscription_id = "TestSubscription"
         for i in range(3):
-            await repo.save_position(subscription_id, pos(i * 100), uuid4(), f"Event{i}")
-
+            await repo.save_position("TestSubscription", pos(i * 100), uuid4(), f"Event{i}")
         checkpoints = await repo.get_all_checkpoints()
         assert len(checkpoints) == 1
         assert checkpoints[0].events_processed == 3
 
     @pytest.mark.asyncio
     async def test_save_position_updates_event_id_and_type(self, repo: SQLCheckpointRepository):
-        subscription_id = "TestSubscription"
         event_id = uuid4()
-        event_type = "TestEventType"
-        position = pos(100)
-
-        await repo.save_position(subscription_id, position, event_id, event_type)
+        await repo.save_position("TestSubscription", pos(100), event_id, "TestEventType")
         checkpoints = await repo.get_all_checkpoints()
         assert len(checkpoints) == 1
-        checkpoint = checkpoints[0]
-        assert checkpoint.last_event_id == event_id
-        assert checkpoint.last_event_type == event_type
+        assert checkpoints[0].last_event_id == event_id
+        assert checkpoints[0].last_event_type == "TestEventType"
 
     @pytest.mark.asyncio
     async def test_get_position_returns_correct_value_after_save(
         self, repo: SQLCheckpointRepository
     ):
-        subscription_id = "TestSubscription"
-        positions = [pos(n) for n in (10, 50, 100, 500, 1000)]
-
-        for position in positions:
-            await repo.save_position(subscription_id, position, uuid4(), "Event")
-            result = await repo.get_position(subscription_id)
-            assert result == position
+        for position in (pos(n) for n in (10, 50, 100, 500, 1000)):
+            await repo.save_position("TestSubscription", position, uuid4(), "Event")
+            assert await repo.get_position("TestSubscription") == position
 
     @pytest.mark.asyncio
     async def test_checkpoint_data_includes_global_position(self, repo: SQLCheckpointRepository):
-        subscription_id = "TestSubscription"
         position = pos(42)
-
-        await repo.save_position(subscription_id, position, uuid4(), "TestEvent")
+        await repo.save_position("TestSubscription", position, uuid4(), "TestEvent")
         checkpoints = await repo.get_all_checkpoints()
         assert len(checkpoints) == 1
-        checkpoint = checkpoints[0]
-        assert isinstance(checkpoint, CheckpointData)
-        assert checkpoint.position == position
+        assert isinstance(checkpoints[0], CheckpointData)
+        assert checkpoints[0].position == position
 
     @pytest.mark.asyncio
     async def test_multiple_subscriptions_independent_positions(
         self, repo: SQLCheckpointRepository
     ):
-        sub1 = "Subscription1"
-        sub2 = "Subscription2"
-        pos1 = pos(100)
-        pos2 = pos(200)
-
-        await repo.save_position(sub1, pos1, uuid4(), "Event1")
-        await repo.save_position(sub2, pos2, uuid4(), "Event2")
-
-        assert await repo.get_position(sub1) == pos1
-        assert await repo.get_position(sub2) == pos2
+        pos1, pos2 = pos(100), pos(200)
+        await repo.save_position("Subscription1", pos1, uuid4(), "Event1")
+        await repo.save_position("Subscription2", pos2, uuid4(), "Event2")
+        assert await repo.get_position("Subscription1") == pos1
+        assert await repo.get_position("Subscription2") == pos2
 
     @pytest.mark.asyncio
     async def test_get_position_returns_none_after_reset(self, repo: SQLCheckpointRepository):
-        subscription_id = "TestSubscription"
-        await repo.save_position(subscription_id, pos(100), uuid4(), "Event")
-        assert await repo.get_position(subscription_id) == pos(100)
-
-        await repo.reset_checkpoint(subscription_id)
-        assert await repo.get_position(subscription_id) is None
+        await repo.save_position("TestSubscription", pos(100), uuid4(), "Event")
+        assert await repo.get_position("TestSubscription") == pos(100)
+        await repo.reset_checkpoint("TestSubscription")
+        assert await repo.get_position("TestSubscription") is None
 
     @pytest.mark.asyncio
     async def test_update_checkpoint_does_not_set_position(self, repo: SQLCheckpointRepository):
-        subscription_id = "TestSubscription"
         event_id = uuid4()
-
-        await repo.update_checkpoint(subscription_id, event_id, "TestEvent")
-        result = await repo.get_position(subscription_id)
-        assert result is None
-
-        checkpoint = await repo.get_checkpoint(subscription_id)
-        assert checkpoint == event_id
+        await repo.update_checkpoint("TestSubscription", event_id, "TestEvent")
+        assert await repo.get_position("TestSubscription") is None
+        assert await repo.get_checkpoint("TestSubscription") == event_id
 
     @pytest.mark.asyncio
     async def test_save_position_after_update_checkpoint(self, repo: SQLCheckpointRepository):
-        subscription_id = "TestSubscription"
-        await repo.update_checkpoint(subscription_id, uuid4(), "Event1")
-        assert await repo.get_position(subscription_id) is None
-
+        await repo.update_checkpoint("TestSubscription", uuid4(), "Event1")
+        assert await repo.get_position("TestSubscription") is None
         position = pos(500)
-        await repo.save_position(subscription_id, position, uuid4(), "Event2")
-        assert await repo.get_position(subscription_id) == position
-
+        await repo.save_position("TestSubscription", position, uuid4(), "Event2")
+        assert await repo.get_position("TestSubscription") == position
         checkpoints = await repo.get_all_checkpoints()
         assert checkpoints[0].events_processed == 2
 
     @pytest.mark.asyncio
     async def test_save_position_sets_last_processed_at(self, repo: SQLCheckpointRepository):
-        subscription_id = "TestSubscription"
-        await repo.save_position(subscription_id, pos(100), uuid4(), "Event")
-
+        await repo.save_position("TestSubscription", pos(100), uuid4(), "Event")
         checkpoints = await repo.get_all_checkpoints()
         assert checkpoints[0].last_processed_at is not None
         assert isinstance(checkpoints[0].last_processed_at, datetime)
@@ -184,38 +139,27 @@ class TestSQLCheckpointRepositoryPosition:
         from eventsource.adapters.sqlite import SQLiteEventStore
         from eventsource.domain.event_registry import EventRegistry
         from eventsource.ports import ExpectedVersion
-        from eventsource.testing.conformance_ports._fixtures import (
-            ConformanceEvent,
-            make_stream,
-        )
+        from eventsource.testing.conformance_ports._fixtures import ConformanceEvent, make_stream
 
         registry = EventRegistry()
         registry.register(ConformanceEvent)
-        db_path = str(tmp_path / "store.db")
-        store = SQLiteEventStore(db_path, event_registry=registry)
-
+        store = SQLiteEventStore(str(tmp_path / "store.db"), event_registry=registry)
         try:
-            stream1 = make_stream()
+            stream1, stream2 = make_stream(), make_stream()
             result1 = await store.append(
                 stream1,
                 [ConformanceEvent(aggregate_id=stream1.aggregate_id, payload="first")],
                 ExpectedVersion.any_(),
             )
-            position1 = result1.position
-            assert position1 is not None
-
-            stream2 = make_stream()
             result2 = await store.append(
                 stream2,
                 [ConformanceEvent(aggregate_id=stream2.aggregate_id, payload="second")],
                 ExpectedVersion.any_(),
             )
-            position2 = result2.position
-            assert position2 is not None
-
+            position1, position2 = result1.position, result2.position
+            assert position1 is not None and position2 is not None
             await repo.save_position("S", position1, uuid4(), "Created")
             read_position = await repo.get_position("S")
-
             assert read_position is not None
             assert read_position == position1
             assert read_position.store_id == position1.store_id
@@ -226,8 +170,6 @@ class TestSQLCheckpointRepositoryPosition:
 
 
 class TestIntPositionCodecStrictToken:
-    """Verify IntPositionCodec strictly requires encoded Position tokens."""
-
     def test_bare_integer_string_raises_decode_error(self) -> None:
         from eventsource.adapters._sql.positions import IntPositionCodec
         from eventsource.ports.exceptions import PositionDecodeError

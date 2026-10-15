@@ -14,8 +14,6 @@ from eventsource.application.subscriptions.shutdown import (
 
 
 class TestShutdownPhaseEnum:
-    """Tests for ShutdownPhase enum."""
-
     def test_running_value(self):
         assert ShutdownPhase.RUNNING.value == "running"
 
@@ -46,8 +44,6 @@ class TestShutdownPhaseEnum:
 
 
 class TestShutdownReasonEnum:
-    """Tests for ShutdownReason enum."""
-
     def test_shutdown_reason_values(self):
         assert ShutdownReason.SIGNAL_SIGTERM.value == "signal_sigterm"
         assert ShutdownReason.SIGNAL_SIGINT.value == "signal_sigint"
@@ -68,8 +64,6 @@ class TestShutdownReasonEnum:
 
 
 class TestShutdownResultNewFields:
-    """Tests for new ShutdownResult fields."""
-
     def test_in_flight_at_start_field(self):
         result = ShutdownResult(
             phase=ShutdownPhase.STOPPED,
@@ -94,12 +88,7 @@ class TestShutdownResultNewFields:
         assert result.to_dict()["events_not_drained"] == 50
 
     def test_default_values(self):
-        result = ShutdownResult(
-            phase=ShutdownPhase.STOPPED,
-            duration_seconds=5.0,
-            subscriptions_stopped=1,
-            events_drained=10,
-        )
+        result = ShutdownResult(ShutdownPhase.STOPPED, 5.0, 1, 10)
         assert result.reason is None
         assert result.in_flight_at_start == 0
         assert result.events_not_drained == 0
@@ -108,14 +97,13 @@ class TestShutdownResultNewFields:
     async def test_events_not_drained_calculated(self):
         coordinator = ShutdownCoordinator(drain_timeout=0.1)
         coordinator.set_in_flight_count(100)
-        stop_func = AsyncMock()
 
         async def slow_drain():
             await asyncio.sleep(10.0)
             return 0
 
         coordinator.request_shutdown()
-        result = await coordinator.shutdown(stop_func=stop_func, drain_func=slow_drain)
+        result = await coordinator.shutdown(stop_func=AsyncMock(), drain_func=slow_drain)
         assert result.in_flight_at_start == 100
         assert result.events_not_drained == 100
 
@@ -123,28 +111,18 @@ class TestShutdownResultNewFields:
     async def test_events_not_drained_partial_drain(self):
         coordinator = ShutdownCoordinator()
         coordinator.set_in_flight_count(100)
-        stop_func = AsyncMock()
-        drain_func = AsyncMock(return_value=60)
-
         coordinator.request_shutdown()
-        result = await coordinator.shutdown(stop_func=stop_func, drain_func=drain_func)
+        result = await coordinator.shutdown(
+            stop_func=AsyncMock(), drain_func=AsyncMock(return_value=60)
+        )
         assert result.in_flight_at_start == 100
         assert result.events_drained == 60
         assert result.events_not_drained == 40
 
 
 class TestShutdownResult:
-    """Tests for ShutdownResult dataclass."""
-
     def test_create_result(self):
-        result = ShutdownResult(
-            phase=ShutdownPhase.STOPPED,
-            duration_seconds=5.5,
-            subscriptions_stopped=3,
-            events_drained=100,
-            checkpoints_saved=3,
-            forced=False,
-        )
+        result = ShutdownResult(ShutdownPhase.STOPPED, 5.5, 3, 100, checkpoints_saved=3)
         assert result.phase == ShutdownPhase.STOPPED
         assert result.duration_seconds == 5.5
         assert result.subscriptions_stopped == 3
@@ -155,34 +133,23 @@ class TestShutdownResult:
 
     def test_create_result_with_error(self):
         result = ShutdownResult(
-            phase=ShutdownPhase.FORCED,
-            duration_seconds=30.0,
-            subscriptions_stopped=2,
-            events_drained=50,
-            checkpoints_saved=1,
-            forced=True,
-            error="Timeout exceeded",
+            ShutdownPhase.FORCED, 30.0, 2, 50, 1, forced=True, error="Timeout exceeded"
         )
         assert result.phase == ShutdownPhase.FORCED
         assert result.forced is True
         assert result.error == "Timeout exceeded"
 
     def test_result_is_frozen(self):
-        result = ShutdownResult(
-            phase=ShutdownPhase.STOPPED,
-            duration_seconds=5.0,
-            subscriptions_stopped=1,
-            events_drained=10,
-        )
+        result = ShutdownResult(ShutdownPhase.STOPPED, 5.0, 1, 10)
         with pytest.raises(AttributeError):
             result.phase = ShutdownPhase.FORCED  # type: ignore[misc]
 
     def test_to_dict(self):
         result = ShutdownResult(
-            phase=ShutdownPhase.STOPPED,
-            duration_seconds=5.5,
-            subscriptions_stopped=3,
-            events_drained=100,
+            ShutdownPhase.STOPPED,
+            5.5,
+            3,
+            100,
             checkpoints_saved=3,
             forced=False,
             reason=ShutdownReason.PROGRAMMATIC,
@@ -203,19 +170,12 @@ class TestShutdownResult:
 
     def test_to_dict_with_error(self):
         result = ShutdownResult(
-            phase=ShutdownPhase.FORCED,
-            duration_seconds=30.0,
-            subscriptions_stopped=2,
-            events_drained=50,
-            forced=True,
-            error="Timeout exceeded",
+            ShutdownPhase.FORCED, 30.0, 2, 50, forced=True, error="Timeout exceeded"
         )
         assert result.to_dict()["error"] == "Timeout exceeded"
 
 
 class TestModuleImports:
-    """Tests for module imports."""
-
     def test_import_from_shutdown_module(self):
         from eventsource.application.subscriptions.shutdown import (
             ShutdownCoordinator,
