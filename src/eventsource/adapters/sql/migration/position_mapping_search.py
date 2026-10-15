@@ -1,9 +1,4 @@
-"""Binary search and nearest position lookup for position mapping repository.
-
-Governed by:
-- ADR-0002 (<500 lines per module)
-- ADR-0007 (Hexagonal Architecture)
-"""
+"""Binary search and nearest position lookup for position mapping repository (ADR-0002, ADR-0007)."""
 
 from __future__ import annotations
 
@@ -45,41 +40,19 @@ class PostgreSQLPositionMappingSearchMixin:
         async def count_by_migration(self, migration_id: UUID) -> int: ...
 
     async def _get_by_ordinal(self, migration_id: UUID, ordinal: int) -> PositionMapping | None:
-        """Fetch the mapping at the given zero-based row ordinal, ordered by `id`.
-
-        Private helper shared by the binary-search nearest-match lookups.
-        Relies on the monotonicity precondition documented on the class:
-        `id` order is source-position order because a single writer records
-        mappings in ascending source-position order.
-
-        Args:
-            migration_id: UUID of the migration.
-            ordinal: Zero-based position in `id` order.
-
-        Returns:
-            PositionMapping at that ordinal, or None if out of range.
-        """
+        """Fetch the mapping at the given zero-based row ordinal, ordered by `id`."""
         query = text("""
-            SELECT
-                id, migration_id, source_position_token, target_position_token,
-                event_id, mapped_at
+            SELECT id, migration_id, source_position_token, target_position_token,
+                   event_id, mapped_at
             FROM migration_position_mappings
             WHERE migration_id = :migration_id
             ORDER BY id ASC
             LIMIT 1 OFFSET :offset
         """)
-
         async with _get_sql_connection()(self._conn, write=False) as conn:
-            result = await conn.execute(
-                query,
-                {"migration_id": migration_id, "offset": ordinal},
-            )
+            result = await conn.execute(query, {"migration_id": migration_id, "offset": ordinal})
             row = result.fetchone()
-
-        if row is None:
-            return None
-
-        return row_to_mapping(row)
+        return None if row is None else row_to_mapping(row)
 
     async def _find_last_ordinal_lte(
         self,
@@ -87,29 +60,7 @@ class PostgreSQLPositionMappingSearchMixin:
         source_position: Position,
         total: int,
     ) -> int | None:
-        """Binary search over the row ordinal for the last mapping <= a position.
-
-        Positions are opaque tokens: they cannot be ordered in SQL, so the
-        nearest match is a binary search over `ORDER BY id` (which is
-        source-position order under the monotonicity precondition), with
-        the `<=` comparison performed in Python on decoded `Position`
-        values. Each step is a single-row `LIMIT 1 OFFSET k` read, giving
-        O(log n) round trips instead of loading every mapping.
-
-        Args:
-            migration_id: UUID of the migration.
-            source_position: Source position to find the nearest ordinal for.
-            total: Total mapping count for this migration (avoids a
-                redundant COUNT when the caller already has it).
-
-        Returns:
-            The greatest zero-based ordinal whose source_position <= the
-            given position, or None if no such mapping exists.
-
-        Raises:
-            PositionForeignError: If source_position is from a different
-                store than the recorded mappings.
-        """
+        """Binary search over the row ordinal for the last mapping <= a position."""
         if total == 0:
             return None
 
@@ -133,20 +84,7 @@ class PostgreSQLPositionMappingSearchMixin:
         source_position: Position,
         total: int,
     ) -> int | None:
-        """Binary search over the row ordinal for the first mapping >= a position.
-
-        Symmetric counterpart to `_find_last_ordinal_lte`, used to resolve
-        the lower bound of a source-position range to an ordinal.
-
-        Args:
-            migration_id: UUID of the migration.
-            source_position: Source position to find the nearest ordinal for.
-            total: Total mapping count for this migration.
-
-        Returns:
-            The smallest zero-based ordinal whose source_position >= the
-            given position, or None if no such mapping exists.
-        """
+        """Binary search over the row ordinal for the first mapping >= a position."""
         if total == 0:
             return None
 
@@ -169,22 +107,7 @@ class PostgreSQLPositionMappingSearchMixin:
         migration_id: UUID,
         source_position: Position,
     ) -> PositionMapping | None:
-        """Find the nearest mapping with source_position <= given position.
-
-        Mappings for a migration are recorded in ascending source-position
-        order by a single writer, so `id` order is source-position order.
-        Positions are opaque tokens and cannot be ordered in SQL, so the
-        nearest match is a binary search over the row ordinal with the
-        comparison performed in Python -- see `_find_last_ordinal_lte`.
-
-        Args:
-            migration_id: UUID of the migration
-            source_position: Source position to find nearest mapping for
-
-        Returns:
-            PositionMapping with highest source_position <= given position,
-            or None if no such mapping exists
-        """
+        """Find the nearest mapping with source_position <= given position."""
         with self._tracer.span(
             "eventsource.position_mapping_repo.find_nearest_source_position",
             {

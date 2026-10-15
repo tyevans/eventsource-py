@@ -68,16 +68,14 @@ class RedisBusConsumeMixin:
 
         while self._consuming:
             try:
-                messages = cast(
-                    DecodedStreams,
-                    await self._redis.xreadgroup(
-                        groupname=self._config.consumer_group,
-                        consumername=actual_consumer_name,
-                        streams={self._config.stream_name: ">"},
-                        count=self._config.stream_read_count,
-                        block=self._config.block_ms,
-                    ),
+                raw_msgs = await self._redis.xreadgroup(
+                    groupname=self._config.consumer_group,
+                    consumername=actual_consumer_name,
+                    streams={self._config.stream_name: ">"},
+                    count=self._config.stream_read_count,
+                    block=self._config.block_ms,
                 )
+                messages = cast(DecodedStreams, raw_msgs)
                 if not messages:
                     continue
                 for _stream_name, stream_messages in messages:
@@ -120,39 +118,29 @@ class RedisBusConsumeMixin:
         """Process a single message from the stream."""
         if not self._redis:
             return
-
         event_type_name = message_data.get("event_type", "unknown")
         event_id = message_data.get("event_id", "unknown")
         processing_start = datetime.now(UTC)
-        msg_meta = {
-            "message_id": message_id,
-            "event_type": event_type_name,
-            "event_id": event_id,
+        msg_meta = {"message_id": message_id, "event_type": event_type_name, "event_id": event_id}
+        span_attrs = {
+            ATTR_EVENT_TYPE: event_type_name,
+            ATTR_EVENT_ID: event_id,
+            ATTR_MESSAGING_SYSTEM: "redis",
+            "message.id": message_id,
+            "consumer.name": consumer_name,
         }
+        stream, group = self._config.stream_name, self._config.consumer_group
 
-        with self._tracer.span(
-            "eventsource.event_bus.process",
-            {
-                ATTR_EVENT_TYPE: event_type_name,
-                ATTR_EVENT_ID: event_id,
-                ATTR_MESSAGING_SYSTEM: "redis",
-                "message.id": message_id,
-                "consumer.name": consumer_name,
-            },
-        ) as span:
+        with self._tracer.span("eventsource.event_bus.process", span_attrs) as span:
             try:
                 logger.debug(f"Processing message {message_id}: {event_type_name}", extra=msg_meta)
-
                 if occurred_at_str := message_data.get("occurred_at"):
                     try:
                         occurred_at = datetime.fromisoformat(occurred_at_str)
                         if occurred_at.tzinfo is None:
                             occurred_at = occurred_at.replace(tzinfo=UTC)
-                        lag_seconds = (datetime.now(UTC) - occurred_at).total_seconds()
-                        logger.debug(
-                            f"Processing lag: {lag_seconds:.3f}s",
-                            extra={"lag_seconds": lag_seconds},
-                        )
+                        lag = (datetime.now(UTC) - occurred_at).total_seconds()
+                        logger.debug(f"Processing lag: {lag:.3f}s", extra={"lag_seconds": lag})
                     except (ValueError, TypeError) as e:
                         logger.warning(f"Failed to calculate processing lag: {e}")
 
@@ -162,24 +150,17 @@ class RedisBusConsumeMixin:
                         f"Unknown event type: {event_type_name}, skipping",
                         extra={"event_type": event_type_name, "message_id": message_id},
                     )
-                    await self._redis.xack(
-                        self._config.stream_name, self._config.consumer_group, message_id
-                    )
+                    await self._redis.xack(stream, group, message_id)
                     return
 
                 await self._dispatch_event(event, message_id)
-                await self._redis.xack(
-                    self._config.stream_name, self._config.consumer_group, message_id
-                )
-
+                await self._redis.xack(stream, group, message_id)
                 self._stats.events_consumed += 1
                 self._stats.events_processed_success += 1
                 duration_ms = (datetime.now(UTC) - processing_start).total_seconds() * 1000
-
                 if span:
                     span.set_attribute("processing.success", True)
                     span.set_attribute("processing.duration_ms", duration_ms)
-
                 logger.debug(
                     f"Successfully processed {event_type_name}",
                     extra={**msg_meta, "duration_ms": duration_ms},
@@ -187,11 +168,9 @@ class RedisBusConsumeMixin:
             except Exception as e:
                 self._stats.events_processed_failed += 1
                 duration_ms = (datetime.now(UTC) - processing_start).total_seconds() * 1000
-
                 if span:
                     span.set_attribute("processing.success", False)
                     span.record_exception(e)
-
                 logger.error(
                     f"Failed to process message {message_id}: {e}",
                     exc_info=True,

@@ -14,7 +14,6 @@ from eventsource.application.subscriptions.subscription import render_position
 from eventsource.ports.positions import Position
 
 _RATE_WINDOW_SECONDS = 60
-"""Width of the rolling window behind `ErrorStats.error_rate_per_minute`."""
 
 
 class ErrorCategory(Enum):
@@ -64,7 +63,6 @@ class ErrorInfo:
     dlq_id: int | str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for serialization."""
         return {
             "event_id": str(self.event_id),
             "event_type": self.event_type,
@@ -96,30 +94,16 @@ class ErrorStats:
     errors_by_category: dict[str, int] = field(default_factory=dict)
     first_error_at: datetime | None = None
     last_error_at: datetime | None = None
-
-    _rate_buckets: list[int] = field(
-        default_factory=lambda: [0] * _RATE_WINDOW_SECONDS, init=False, repr=False
-    )
-    _rate_bucket_stamps: list[int] = field(
-        default_factory=lambda: [-_RATE_WINDOW_SECONDS] * _RATE_WINDOW_SECONDS,
-        init=False,
-        repr=False,
-    )
+    _rate_buckets: list[int] = field(default_factory=lambda: [0] * _RATE_WINDOW_SECONDS, init=False, repr=False)  # fmt: skip
+    _rate_bucket_stamps: list[int] = field(default_factory=lambda: [-_RATE_WINDOW_SECONDS] * _RATE_WINDOW_SECONDS, init=False, repr=False)  # fmt: skip
 
     @property
     def error_rate_per_minute(self) -> float:
-        """Errors recorded in the last 60 seconds."""
         now = int(time.monotonic())
-        return float(
-            sum(
-                count
-                for count, stamp in zip(self._rate_buckets, self._rate_bucket_stamps, strict=True)
-                if now - stamp < _RATE_WINDOW_SECONDS
-            )
-        )
+        stamps = zip(self._rate_buckets, self._rate_bucket_stamps, strict=True)
+        return float(sum(c for c, s in stamps if now - s < _RATE_WINDOW_SECONDS))
 
     def _record_rate_sample(self) -> None:
-        """Count one error into the current second's bucket."""
         now = int(time.monotonic())
         index = now % _RATE_WINDOW_SECONDS
         if self._rate_bucket_stamps[index] != now:
@@ -128,17 +112,15 @@ class ErrorStats:
         self._rate_buckets[index] += 1
 
     def record_error(self, error_info: ErrorInfo) -> None:
-        """Record an error in statistics."""
         self.total_errors += 1
-        category = error_info.classification.category.value
-        self.errors_by_category[category] = self.errors_by_category.get(category, 0) + 1
+        cat = error_info.classification.category.value
+        self.errors_by_category[cat] = self.errors_by_category.get(cat, 0) + 1
         if error_info.classification.category == ErrorCategory.TRANSIENT:
             self.transient_errors += 1
         else:
             self.permanent_errors += 1
-        self.errors_by_type[error_info.error_type] = (
-            self.errors_by_type.get(error_info.error_type, 0) + 1
-        )
+        err_t = error_info.error_type
+        self.errors_by_type[err_t] = self.errors_by_type.get(err_t, 0) + 1
         if error_info.sent_to_dlq:
             self.dlq_count += 1
         now = datetime.now(UTC)
@@ -148,7 +130,6 @@ class ErrorStats:
         self._record_rate_sample()
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for serialization."""
         return {
             "total_errors": self.total_errors,
             "transient_errors": self.transient_errors,
@@ -157,8 +138,8 @@ class ErrorStats:
             "dlq_count": self.dlq_count,
             "errors_by_type": dict(self.errors_by_type),
             "errors_by_category": dict(self.errors_by_category),
-            "first_error_at": (self.first_error_at.isoformat() if self.first_error_at else None),
-            "last_error_at": (self.last_error_at.isoformat() if self.last_error_at else None),
+            "first_error_at": self.first_error_at.isoformat() if self.first_error_at else None,
+            "last_error_at": self.last_error_at.isoformat() if self.last_error_at else None,
             "error_rate_per_minute": self.error_rate_per_minute,
         }
 
@@ -188,15 +169,10 @@ class ErrorHandlingConfig:
 ErrorCallback = Callable[[ErrorInfo], Awaitable[None]]
 SyncErrorCallback = Callable[[ErrorInfo], None]
 
+# fmt: off
 __all__ = [
-    "ErrorCallback",
-    "ErrorCategory",
-    "ErrorClassification",
-    "ErrorHandlingConfig",
-    "ErrorHandlingStrategy",
-    "ErrorInfo",
-    "ErrorSeverity",
-    "ErrorStats",
-    "SyncErrorCallback",
-    "_RATE_WINDOW_SECONDS",
+    "ErrorCallback", "ErrorCategory", "ErrorClassification", "ErrorHandlingConfig",
+    "ErrorHandlingStrategy", "ErrorInfo", "ErrorSeverity", "ErrorStats",
+    "SyncErrorCallback", "_RATE_WINDOW_SECONDS",
 ]
+# fmt: on

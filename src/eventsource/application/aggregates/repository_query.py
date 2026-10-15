@@ -1,7 +1,4 @@
-"""Query and loading mixin for AggregateRepository.
-
-Provides aggregate hydration from snapshots and event streams.
-"""
+"""Query and loading mixin for AggregateRepository."""
 
 from __future__ import annotations
 
@@ -47,22 +44,12 @@ class AggregateRepositoryQueryMixin[TAggregate: AggregateRoot[Any]]:
         raise NotImplementedError
 
     async def load(self, aggregate_id: UUID) -> TAggregate:
-        """Load an aggregate from its snapshot (if valid) and event history.
-
-        Raises:
-            AggregateNotFoundError: If no events exist for the aggregate.
-        """
-        with self._tracer.span(
-            "eventsource.repository.load",
-            {
-                ATTR_AGGREGATE_ID: str(aggregate_id),
-                ATTR_AGGREGATE_TYPE: self._aggregate_type,
-            },
-        ) as span:
+        """Load an aggregate from its snapshot (if valid) and event history."""
+        attrs = {ATTR_AGGREGATE_ID: str(aggregate_id), ATTR_AGGREGATE_TYPE: self._aggregate_type}
+        with self._tracer.span("eventsource.repository.load", attrs) as span:
             from_version = 0
             snapshot = None
 
-            # Try to load from snapshot if configured
             if self._snapshot_store is not None:
                 snapshot = await read_valid_snapshot(
                     self._snapshot_store,
@@ -82,26 +69,21 @@ class AggregateRepositoryQueryMixin[TAggregate: AggregateRoot[Any]]:
                         from_version,
                     )
 
-            # Get events from event store (from snapshot version or 0)
             stream = self._stream(aggregate_id)
             options = StreamReadOptions(from_version=from_version + 1) if from_version > 0 else None
             events = [
                 envelope.event async for envelope in self._event_store.read_stream(stream, options)
             ]
 
-            # Handle case: no snapshot and no events
             if snapshot is None and not events:
                 raise AggregateNotFoundError(aggregate_id, self._aggregate_type)
 
-            # Create aggregate instance
             aggregate = self._aggregate_factory(aggregate_id)
 
-            # Restore from snapshot if available
             if snapshot is not None:
                 try:
                     aggregate._restore_from_snapshot(snapshot.state, snapshot.version)
                 except Exception as e:
-                    # Deserialization failed - fall back to full replay.
                     record_snapshot_miss(
                         SnapshotMissReason.STATE_RESTORE_FAILED, self._aggregate_type
                     )
@@ -113,16 +95,13 @@ class AggregateRepositoryQueryMixin[TAggregate: AggregateRoot[Any]]:
                         e,
                         exc_info=True,
                     )
-                    # Re-fetch all events
                     events = [
                         envelope.event async for envelope in self._event_store.read_stream(stream)
                     ]
                     if not events:
                         raise AggregateNotFoundError(aggregate_id, self._aggregate_type) from None
-                    # Reset aggregate
                     aggregate = self._aggregate_factory(aggregate_id)
 
-            # Apply events since snapshot (or all events if no snapshot)
             if events:
                 aggregate.load_from_history(events)
 
@@ -138,7 +117,6 @@ class AggregateRepositoryQueryMixin[TAggregate: AggregateRoot[Any]]:
                 "yes" if snapshot else "no",
                 len(events),
             )
-
             return aggregate
 
     async def get_or_none(self, aggregate_id: UUID) -> TAggregate | None:
@@ -155,8 +133,7 @@ class AggregateRepositoryQueryMixin[TAggregate: AggregateRoot[Any]]:
         results: dict[UUID, TAggregate] = {}
         for agg_id in aggregate_ids:
             if ignore_missing:
-                aggregate = await self.get_or_none(agg_id)
-                if aggregate is not None:
+                if (aggregate := await self.get_or_none(agg_id)) is not None:
                     results[agg_id] = aggregate
             else:
                 results[agg_id] = await self.load(agg_id)
@@ -171,18 +148,11 @@ class AggregateRepositoryQueryMixin[TAggregate: AggregateRoot[Any]]:
 
     async def exists(self, aggregate_id: UUID) -> bool:
         """Check if an aggregate has events in the store."""
-        with self._tracer.span(
-            "eventsource.repository.exists",
-            {
-                ATTR_AGGREGATE_ID: str(aggregate_id),
-                ATTR_AGGREGATE_TYPE: self._aggregate_type,
-            },
-        ) as span:
+        attrs = {ATTR_AGGREGATE_ID: str(aggregate_id), ATTR_AGGREGATE_TYPE: self._aggregate_type}
+        with self._tracer.span("eventsource.repository.exists", attrs) as span:
             exists = await self._event_store.get_stream_version(self._stream(aggregate_id)) > 0
-
             if span:
                 span.set_attribute("exists", exists)
-
             return exists
 
     async def get_version(self, aggregate_id: UUID) -> int:
@@ -198,6 +168,4 @@ class AggregateRepositoryQueryMixin[TAggregate: AggregateRoot[Any]]:
         return self._aggregate_factory(aggregate_id)
 
 
-__all__ = [
-    "AggregateRepositoryQueryMixin",
-]
+__all__ = ["AggregateRepositoryQueryMixin"]
